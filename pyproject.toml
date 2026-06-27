@@ -1,0 +1,69 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyreconstruct"
+dynamic = ["version"]
+description = "RECONSTRUCT in Python"
+readme = "readme.md"
+requires-python = ">=3.11,<3.12"
+license = { text = "GPL-3.0-or-later" }
+authors = [
+    { name = "Julian Falco" },
+    { name = "Michael Chirillo", email = "m.chirillo@utexas.edu" },
+]
+
+# Runtime dependencies (mirrors the former requirements.txt).
+# opencv-python -> opencv-python-headless: the app uses cv2 only for image
+# processing (no imshow/GUI), and the headless build ships no Qt plugins, which
+# avoids a plugin clash with PySide6 in frozen builds.
+dependencies = [
+    "PySide6==6.5.2",
+    "vtk==9.4.2",
+    "vedo==2025.5.4",
+    "opencv-python-headless==4.8.1.78",
+    "numpy==1.24.1",
+    "scipy==1.14.1",
+    "scikit-image==0.23.2",
+    "shapely==2.1.1",
+    "trimesh==3.18.1",
+    "zarr==2.18.2",
+    "numcodecs==0.15.0",
+    "cloud-volume==11.0.0",
+    "lxml==6.1.0",
+    "tifffile==2024.9.20",
+    "qdarkstyle==3.2.3",
+    "gitpython==3.1.50",
+    "certifi",   # CA bundle for TLS verification in the frozen app (updater)
+    "packaging",
+]
+
+[project.urls]
+Homepage = "https://github.com/SynapseWeb/PyReconstruct"
+
+[project.scripts]
+PyReconstruct = "PyReconstruct.cli:main"
+
+# Developer-only tooling (PEP 735). Installed by `uv sync`, not shipped to
+# end users. Replaces the conda-only extras from dev/environment_dev.yaml.
+[dependency-groups]
+dev = [
+    "psycopg2-binary",
+    "funlib.show.neuroglancer",
+]
+
+[tool.uv.sources]
+"funlib.show.neuroglancer" = { git = "https://github.com/funkelab/funlib.show.neuroglancer" }
+
+[tool.setuptools.packages.find]
+include = ["PyReconstruct*"]
+
+[tool.setuptools.package-data]
+PyReconstruct = ["assets/**/*", "assets/welcome_series/.welcome/*"]
+
+[tool.setuptools_scm]
+# Tag-derived version. Writes PyReconstruct/_version.py at build time so the
+# frozen app can read its version without git or installed package metadata.
+version_file = "PyReconstruct/_version.py"
+fallback_version = "0.0.0+unknown"

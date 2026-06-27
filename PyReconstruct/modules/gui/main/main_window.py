@@ -37,6 +37,9 @@ class MainWindow(QMainWindow):
         self.shortcuts_widget       =  None
         self.is_zooming             =  False
         self.restart_mainwindow     =  False
+        self._updater_pool          =  None   # in-flight update guard
+        self._pending_installer     =  None   # launched on the accepted close
+        self._pending_update_dir    =  None
         self.check_actions_enabled  =  False
         self.actions_initialized    =  False
 
@@ -398,8 +401,8 @@ class MainWindow(QMainWindow):
             )
             if not zarr_fp: return
 
-        python_bin = sys.executable
         zarr_converter = Path(assets_dir) / "scripts/start_process.py"
+        launch_prefix = script_launch_prefix()
 
         cores = determine_cpus(  # determine number of cores to use
             self.series.getOption("cpu_max")
@@ -407,8 +410,7 @@ class MainWindow(QMainWindow):
         
         if create_new:
             
-            convert_cmd = [
-                python_bin,
+            convert_cmd = launch_prefix + [
                 str(zarr_converter.absolute()),
                 "convert_zarr",
                 str(cores),
@@ -418,8 +420,7 @@ class MainWindow(QMainWindow):
             
         else:
             
-            convert_cmd = [
-                python_bin,
+            convert_cmd = launch_prefix + [
                 str(zarr_converter.absolute()),
                 "convert_zarr",
                 str(cores),
@@ -1993,11 +1994,10 @@ class MainWindow(QMainWindow):
                 
             }
 
-        python_bin = sys.executable
         zarr_converter = Path(assets_dir) / "scripts/start_process.py"
+        launch_prefix = script_launch_prefix()
         
-        convert_cmd = [
-            python_bin,
+        convert_cmd = launch_prefix + [
             str(zarr_converter.absolute()),
             "create_ng_zarr",
             f"\"{self.series.jser_fp}\""
@@ -2551,6 +2551,186 @@ class MainWindow(QMainWindow):
         clipboard = QApplication.clipboard()
         clipboard.setText(repo_info["commit"])
 
+    def checkForUpdates(self):
+        """Check for and apply an update from the user's selected channel.
+
+        Frozen (installed) builds download the matching installer from GitHub
+        Releases and launch it; source/pip installs reuse the cli pip+git path.
+        """
+        if self._updater_pool is not None:
+            notify("An update is already in progress.")
+            return
+
+        if install_kind() == "source":
+            self._updateFromSource()
+            return
+
+        channel = self.series.getOption("update_channel")
+        try:
+            info = check_for_update(channel)
+        except Exception as e:
+            notify(f"Could not check for updates:\n{e}")
+            return
+
+        if info["asset"] is None:
+            notify("No installer is available for your platform on this channel yet.")
+            return
+
+        status = info["status"]
+        remote, local = info["remote_version"], info["local_version"]
+        if status == "same":
+            notify(f"You're already up to date (version {local}).")
+            return
+        elif status == "newer":
+            if not notifyConfirm(
+                f"An update is available: {remote} (you have {local}).\n\nDownload and install now?",
+                yn=True,
+            ):
+                return
+        elif status == "older":
+            if not notifyConfirm(
+                f"The {channel} build ({remote}) is older than your version ({local}).\n\n"
+                "Install it anyway (downgrade)?",
+                yn=True,
+            ):
+                return
+        else:  # unknown
+            if not notifyConfirm(
+                f"Couldn't compare versions (remote {remote}, current {local}).\n\n"
+                f"Download and install the {channel} build anyway?",
+                yn=True,
+            ):
+                return
+
+        self._downloadAndInstall(info)
+
+    def _downloadAndInstall(self, info):
+        """Download the chosen release asset in a worker, then launch it."""
+        asset = info["asset"]
+        name = asset["name"]
+        url = asset["browser_download_url"]
+        release = info["release"]
+
+        # download into a private 0700 dir so the predictable asset name can't
+        # be pre-created/symlinked by another local user
+        tmpdir = tempfile.mkdtemp(prefix="pyrecon-update-")
+        dest = str(Path(tmpdir) / name)
+
+        progbar = getProgbar(f"Downloading {name}…", cancel=True, maximum=100)
+        # keep the dialog from auto-resetting/closing at 100% before the result handler runs
+        if hasattr(progbar, "setAutoReset"):
+            progbar.setAutoReset(False)
+            progbar.setAutoClose(False)
+        # cancel via a thread-safe flag set on the GUI thread (no cross-thread widget reads)
+        cancel_event = threading.Event()
+        if hasattr(progbar, "canceled"):
+            progbar.canceled.connect(cancel_event.set)
+
+        pool = ThreadPool()
+        self._updater_pool = pool  # in-flight guard + keeps the pool alive
+
+        def _job():
+            sha = download_asset(
+                url, dest,
+                progress_cb=worker.signals.progress.emit,
+                cancel_cb=cancel_event.is_set,
+            )
+            status, expected = fetch_checksum(release, name)  # network, off the GUI thread
+            return (sha, status, expected)
+
+        worker = pool.createWorker(_job)
+        worker.signals.progress.connect(lambda p: progbar.setValue(min(p, 99)))
+        worker.signals.result.connect(
+            lambda res: self._onUpdateDownloaded(res, dest, tmpdir, name, progbar)
+        )
+        worker.signals.error.connect(lambda err: self._onUpdateError(err, tmpdir, progbar))
+        pool.start(worker)
+
+    def _onUpdateDownloaded(self, result, dest, tmpdir, name, progbar):
+        """Verify the download, then defer the installer launch to the app close."""
+        self._updater_pool = None  # release the in-flight guard
+        progbar.close()
+        sha, checksum_status, expected = result
+
+        if checksum_status == "ok":
+            if sha.lower() != expected.lower():
+                self._cleanupUpdateDir(tmpdir)
+                notify("Update failed verification (checksum mismatch). Nothing was installed.")
+                return
+        elif checksum_status == "error":
+            self._cleanupUpdateDir(tmpdir)
+            notify("Couldn't verify the download (checksum unreachable). Not installing — please try again.")
+            return
+        else:  # "missing": no checksum was published for this asset
+            if not notifyConfirm(
+                "The download couldn't be checksum-verified (none was published).\n\nInstall anyway?",
+                yn=True,
+            ):
+                self._cleanupUpdateDir(tmpdir)
+                return
+
+        # Launch only after the window has actually closed (see closeEvent), so a
+        # cancelled save prompt doesn't leave the installer running on a live app.
+        self._pending_installer = dest
+        self._pending_update_dir = tmpdir
+        notify(
+            "Download complete. PyReconstruct will close and the installer will open — "
+            "follow its prompts, then relaunch PyReconstruct."
+        )
+        self.close()
+
+    def _onUpdateError(self, err, tmpdir, progbar):
+        self._updater_pool = None  # release the in-flight guard
+        progbar.close()
+        self._cleanupUpdateDir(tmpdir)
+        exc = err[1] if isinstance(err, (tuple, list)) and len(err) >= 2 else err
+        if isinstance(exc, UpdateCancelled):
+            return  # user cancelled the download — no message
+        notify(f"Update download failed:\n{exc}")
+
+    @staticmethod
+    def _cleanupUpdateDir(tmpdir):
+        if tmpdir:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def _updateFromSource(self):
+        """Source/pip-install update path: reuse the cli pip+git reinstall."""
+        branch = self.series.getOption("update_branch") or "main"
+        if not notifyConfirm(
+            f"This will reinstall PyReconstruct from GitHub branch '{branch}' via pip, "
+            "then restart. Continue?",
+            yn=True,
+        ):
+            return
+        from PyReconstruct import cli
+        progbar = getProgbar(f"Updating from '{branch}'… (progress in console)", cancel=False, maximum=0)
+        pool = ThreadPool()
+        self._updater_pool = pool
+
+        def _job():
+            # validate explicitly: cli.update() only prints (doesn't raise) on a
+            # missing branch, so this is what surfaces the error to the worker.
+            if not cli.validate_branch(branch):
+                raise RuntimeError(f"Branch '{branch}' not found on the remote.")
+            cli.update(branch)
+            return True
+
+        worker = pool.createWorker(_job)
+        worker.signals.result.connect(lambda _r: self._onSourceUpdateDone(progbar))
+        worker.signals.error.connect(lambda err: self._onSourceUpdateError(err, progbar))
+        pool.start(worker)
+
+    def _onSourceUpdateDone(self, progbar):
+        self._updater_pool = None
+        progbar.close()
+        self.restart()
+
+    def _onSourceUpdateError(self, err, progbar):
+        self._updater_pool = None
+        progbar.close()
+        exc = err[1] if isinstance(err, (tuple, list)) and len(err) >= 2 else err
+        notify(f"Update failed:\n{exc}")
+
     def updateCurationFromHistory(self):
         """Update the series curation from the history."""
         self.field.series_states.addState()
@@ -3091,9 +3271,23 @@ class MainWindow(QMainWindow):
         response = self.saveToJser(notify=True, close=True)
         if response == "cancel":
             event.ignore()
+            # a deferred update installer must NOT run if the user aborted the close
+            if self._pending_installer:
+                self._cleanupUpdateDir(self._pending_update_dir)
+                self._pending_installer = None
+                self._pending_update_dir = None
             return
         if self.viewer and not self.viewer.is_closed:
             self.viewer.close()
+        # launch a pending update installer now that the close is committed
+        if self._pending_installer:
+            try:
+                launch_installer(self._pending_installer)
+                # closing no longer quits on macOS, so exit explicitly here so the
+                # installer can replace the app
+                QApplication.quit()
+            except Exception as e:
+                notify(f"Could not launch the installer:\n{e}\n\nFind it at: {self._pending_installer}")
         event.accept()
 
 

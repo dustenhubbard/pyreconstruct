@@ -1,0 +1,150 @@
+name: build-installers
+
+# Builds unsigned one-click installers and publishes them to THIS repo's GitHub
+# Releases: a tag vX.Y.Z -> stable Release; a push to main -> rolling 'edge'
+# pre-release. The in-app updater (updater.GITHUB_REPO) reads these. Runs on the
+# fork as-is (no hardcoded owner). Signing is deferred (proof of concept).
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # create / update GitHub Releases
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-2022, plat: Windows, arch: x86_64 }
+          # native Apple Silicon (vtk 9.4.x ships macOS arm64 wheels); macos-14
+          # arm64 runners are plentiful, unlike the retiring/queued macos-13 x86_64.
+          - { os: macos-14,     plat: macOS,   arch: arm64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # setuptools-scm needs full history + tags
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project, build tools, PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install setuptools-scm "pyinstaller>=6,<7"
+          python -m pip install -e .
+
+      - name: Compute version
+        shell: bash
+        run: |
+          V="$(python -m setuptools_scm)"
+          case "$V" in
+            0.0.0*|*unknown*)
+              echo "::error::setuptools-scm produced a fallback version ($V) — missing tags or fetch-depth:0?"
+              exit 1 ;;
+          esac
+          echo "PYR_VERSION=$V" >> "$GITHUB_ENV"
+          echo "PYR_PUBLIC=${V%%+*}" >> "$GITHUB_ENV"
+
+      - name: Smoke test (imports; offscreen render skipped on headless CI)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYRECON_SMOKE_SKIP_RENDER: "1"
+        run: python packaging/smoke_test.py
+
+      - name: Generate macOS icon
+        if: runner.os == 'macOS'
+        run: bash packaging/macos/make_icns.sh
+
+      - name: PyInstaller freeze
+        run: pyinstaller --noconfirm packaging/PyReconstruct.spec
+
+      - name: Frozen self-test (Windows) — catches windowed-only import bugs
+        if: runner.os == 'Windows'
+        run: |
+          $p = Start-Process -FilePath "dist\PyReconstruct\PyReconstruct.exe" -ArgumentList "--selftest" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Write-Error "frozen self-test failed (exit $($p.ExitCode))"; exit 1 }
+          Write-Host "frozen self-test OK"
+
+      - name: Frozen self-test (macOS) — catches windowed-only import bugs
+        if: runner.os == 'macOS'
+        run: |
+          dist/PyReconstruct.app/Contents/MacOS/PyReconstruct --selftest
+          echo "frozen self-test OK"
+
+      - name: Build Windows installer (Inno Setup)
+        if: runner.os == 'Windows'
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DPYR_VERSION=$env:PYR_PUBLIC" "packaging\windows\PyReconstruct.iss"
+          New-Item -ItemType Directory -Force -Path dist-assets | Out-Null
+          Move-Item "packaging\windows\Output\*.exe" dist-assets\
+
+      - name: Build macOS dmg
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p dist-assets
+          ARCH="${{ matrix.arch }}" bash packaging/macos/make_dmg.sh
+          mv PyReconstruct-*.dmg dist-assets/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.plat }}-${{ matrix.arch }}
+          path: dist-assets/*
+          if-no-files-found: error
+
+  release-stable:
+    needs: build
+    # publish whatever built, even if one matrix leg failed (don't hide a good installer)
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') && (needs.build.result == 'success' || needs.build.result == 'failure') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Generate checksums
+        run: cd dist && for f in *; do [ -f "$f" ] && sha256sum "$f" > "$f.sha256"; done
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          prerelease: false
+          generate_release_notes: true
+
+  release-edge:
+    needs: build
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (needs.build.result == 'success' || needs.build.result == 'failure') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Generate checksums
+        run: cd dist && for f in *; do [ -f "$f" ] && sha256sum "$f" > "$f.sha256"; done
+      - name: Reset the rolling 'edge' pre-release (drop stale assets)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete edge --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+          # belt-and-suspenders: if the release survived a failed delete, purge its assets
+          if gh release view edge --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release view edge --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' \
+              | xargs -r -I{} gh release delete-asset edge {} --yes --repo "$GITHUB_REPOSITORY"
+          fi
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: edge
+          name: "Edge (latest main)"
+          prerelease: true
+          target_commitish: main
+          files: dist/*

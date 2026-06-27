@@ -6,6 +6,9 @@ import webbrowser
 from datetime import datetime
 import json
 import subprocess
+import tempfile
+import threading
+import shutil
 from typing import List, Union
 from pathlib import Path
 
@@ -80,10 +83,22 @@ from PyReconstruct.modules.gui.utils import (
     customExcepthook,
     get_screen_info,
     get_welcome_setup,
-    get_center_pixel
+    get_center_pixel,
+    getProgbar
 )
 
 from PyReconstruct.modules.backend.func import determine_cpus
+
+from PyReconstruct.modules.backend.threading import ThreadPool
+
+from PyReconstruct.modules.backend.updater import (
+    install_kind,
+    check_for_update,
+    download_asset,
+    fetch_checksum,
+    launch_installer,
+    UpdateCancelled,
+)
 
 from PyReconstruct.modules.gui.table import (
     HistoryTableWidget,
@@ -145,7 +160,9 @@ from PyReconstruct.modules.constants import (
     developers_mailto_str,
     repo_info,
     repo_string,
-    kharris2015
+    kharris2015,
+    script_launch_prefix,
+    is_frozen,
 )
 
 from PyReconstruct.assets.scripts.projects import (

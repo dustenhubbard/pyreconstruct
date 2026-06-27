@@ -1,0 +1,33 @@
+name: publish-pypi
+
+# Publishes the sdist + wheel to the PyPI 'pyreconstruct' project on a vX.Y.Z
+# tag, via OIDC Trusted Publishing (no API token). Guarded to the canonical
+# repo, so it is a no-op on forks (a fork has no PyPI trusted publisher and must
+# not publish to the canonical project). One-time setup: configure the Trusted
+# Publisher on PyPI for SynapseWeb/PyReconstruct, workflow publish-pypi.yml,
+# environment 'pypi'.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  id-token: write   # OIDC trusted publishing
+
+jobs:
+  pypi:
+    if: github.repository == 'SynapseWeb/PyReconstruct'
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # setuptools-scm needs full history + tags
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build sdist + wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+      - uses: pypa/gh-action-pypi-publish@release/v1
