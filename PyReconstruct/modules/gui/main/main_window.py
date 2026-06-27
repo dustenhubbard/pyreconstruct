@@ -8,6 +8,21 @@ from .main_imports import *
 
 class MainWindow(QMainWindow):
 
+    def _apply_app_icon(self):
+        """Set the window icon. Windows keeps the bare mark (matches the exe /
+        taskbar icon); macOS & Linux follow the active UI light/dark theme — the
+        white "Sonoma" squircle in light mode, the dark-glass squircle in dark."""
+        if sys.platform.startswith("win"):
+            name = "PyReconstruct.ico"
+        else:
+            light = False
+            try:
+                light = QApplication.styleHints().colorScheme() == Qt.ColorScheme.Light
+            except Exception:  # pragma: no cover - older Qt without colorScheme()
+                light = False
+            name = "PyReconstruct-light.png" if light else "PyReconstruct.png"
+        self.setWindowIcon(QPixmap(os.path.join(img_dir, name)))
+
     def __init__(self, filename):
         """Constructs a skeleton for an empty main window."""
         super().__init__() # initialize QMainWindow
@@ -16,7 +31,13 @@ class MainWindow(QMainWindow):
         sys.excepthook = customExcepthook  # defined in gui.utils
 
         self.setWindowTitle("PyReconstruct")
-        self.setWindowIcon(QPixmap(icon_path))
+        self._apply_app_icon()
+        try:  # keep the icon in sync with live OS light/dark switches
+            QApplication.styleHints().colorSchemeChanged.connect(
+                lambda *_: self._apply_app_icon()
+            )
+        except Exception:  # pragma: no cover - older Qt without the signal
+            pass
 
         ## Set main window to slightly less than monitor
         screen = QApplication.primaryScreen()
