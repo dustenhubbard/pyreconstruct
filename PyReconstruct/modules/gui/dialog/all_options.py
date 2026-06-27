@@ -441,14 +441,16 @@ class AllOptionsDialog(QDialog):
         # updates
         if is_frozen():  # installed build: choose the release channel
             channel = self.series.getOption("update_channel", use_defaults)
+            # accept legacy values ("stable"/"edge") from installs predating the rename
+            channel = {"stable": "release", "edge": "prerelease"}.get(channel, channel)
             structure = [
                 ["Update channel:"],
                 [("radio",
-                  ("Stable (latest release)", channel == "stable"),
-                  ("Bleeding edge (latest main commit)", channel == "edge"))],
+                  ("Release (recommended)", channel == "release"),
+                  ("Pre-release (experimental, latest main)", channel == "prerelease"))],
             ]
             def setOption(response):
-                self.series.setOption("update_channel", "stable" if response[0][0][1] else "edge")
+                self.series.setOption("update_channel", "release" if response[0][0][1] else "prerelease")
         else:  # source/pip install: choose the GitHub branch to reinstall from
             structure = [
                 ["Update reinstalls from a GitHub branch (source install):"],

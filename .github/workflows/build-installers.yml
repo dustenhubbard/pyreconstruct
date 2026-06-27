@@ -1,8 +1,8 @@
 name: build-installers
 
 # Builds unsigned one-click installers and publishes them to THIS repo's GitHub
-# Releases: a tag vX.Y.Z -> stable Release; a push to main -> rolling 'edge'
-# pre-release. The in-app updater (updater.GITHUB_REPO) reads these. Runs on the
+# Releases: a tag vX.Y.Z -> Release; a push to main -> rolling 'prerelease'
+# build. The in-app updater (updater.GITHUB_REPO) reads these. Runs on the
 # fork as-is (no hardcoded owner). Signing is deferred (proof of concept).
 
 on:
@@ -98,7 +98,7 @@ jobs:
           path: dist-assets/*
           if-no-files-found: error
 
-  release-stable:
+  release:
     needs: build
     # publish whatever built, even if one matrix leg failed (don't hide a good installer)
     if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') && (needs.build.result == 'success' || needs.build.result == 'failure') }}
@@ -118,7 +118,7 @@ jobs:
           prerelease: false
           generate_release_notes: true
 
-  release-edge:
+  release-prerelease:
     needs: build
     if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (needs.build.result == 'success' || needs.build.result == 'failure') }}
     runs-on: ubuntu-latest
@@ -131,20 +131,20 @@ jobs:
           merge-multiple: true
       - name: Generate checksums
         run: cd dist && for f in *; do [ -f "$f" ] && sha256sum "$f" > "$f.sha256"; done
-      - name: Reset the rolling 'edge' pre-release (drop stale assets)
+      - name: Reset the rolling 'prerelease' build (drop stale assets)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete edge --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+          gh release delete prerelease --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
           # belt-and-suspenders: if the release survived a failed delete, purge its assets
-          if gh release view edge --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release view edge --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' \
-              | xargs -r -I{} gh release delete-asset edge {} --yes --repo "$GITHUB_REPOSITORY"
+          if gh release view prerelease --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release view prerelease --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' \
+              | xargs -r -I{} gh release delete-asset prerelease {} --yes --repo "$GITHUB_REPOSITORY"
           fi
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: edge
-          name: "Edge (latest main)"
+          tag_name: prerelease
+          name: "Pre-release (experimental, latest main)"
           prerelease: true
           target_commitish: main
           files: dist/*
