@@ -11,17 +11,28 @@ class MainWindow(QMainWindow):
     def _apply_app_icon(self):
         """Set the window icon. Windows keeps the bare mark (matches the exe /
         taskbar icon); macOS & Linux follow the active UI light/dark theme — the
-        white "Sonoma" squircle in light mode, the dark-glass squircle in dark."""
+        white "Sonoma" squircle in light mode, the dark-glass squircle in dark.
+
+        The scheme comes from the theme engine (theme.current_scheme), so the
+        icon tracks the resolved chrome — i.e. it respects a manual Light/Dark
+        override, not just the raw OS scheme."""
         if sys.platform.startswith("win"):
             name = "PyReconstruct.ico"
         else:
-            light = False
-            try:
-                light = QApplication.styleHints().colorScheme() == Qt.ColorScheme.Light
-            except Exception:  # pragma: no cover - older Qt without colorScheme()
-                light = False
+            light = theme.current_scheme() == "light"
             name = "PyReconstruct-light.png" if light else "PyReconstruct.png"
         self.setWindowIcon(QPixmap(os.path.join(img_dir, name)))
+
+    def _onColorSchemeChanged(self, *_):
+        """React to a live OS light/dark switch. In System mode the chrome
+        re-resolves to follow the OS; in an explicit Light/Dark override the
+        stylesheet is left alone. The icon is always refreshed."""
+        try:
+            if theme.read_mode() == "system":
+                theme.apply_theme(QApplication.instance(), "system")
+        except Exception:  # pragma: no cover - defensive; never break on a signal
+            pass
+        self._apply_app_icon()
 
     def __init__(self, filename):
         """Constructs a skeleton for an empty main window."""
@@ -32,9 +43,9 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("PyReconstruct")
         self._apply_app_icon()
-        try:  # keep the icon in sync with live OS light/dark switches
+        try:  # keep the chrome + icon in sync with live OS light/dark switches
             QApplication.styleHints().colorSchemeChanged.connect(
-                lambda *_: self._apply_app_icon()
+                self._onColorSchemeChanged
             )
         except Exception:  # pragma: no cover - older Qt without the signal
             pass
@@ -2976,42 +2987,40 @@ class MainWindow(QMainWindow):
         self.viewer.setFocus()
     
     def setTheme(self, new_theme=None):
-        """Change the theme."""
+        """Set the UI theme.
+
+        Modes: "system" (follow the OS light/dark scheme), "light", "dark".
+        Persisted app-wide via QSettings; legacy "default"/"qdark" are accepted
+        and migrated. Called with None from the menu to prompt; called with a
+        stored value at startup / after the options dialog to (re)apply."""
         if new_theme is None:
-            theme = self.series.getOption("theme")
+            mode = theme.normalize_mode(self.series.getOption("theme"))
             structure = [
                 ["Theme:"],
-                [("radio", ("Default", theme=="default"), ("Dark", theme=="qdark"))]
+                [("radio",
+                  ("System", mode == "system"),
+                  ("Light", mode == "light"),
+                  ("Dark", mode == "dark"))]
             ]
             response, confirmed = QuickDialog.get(
                 self, structure, "Theme"
             )
             if not confirmed:
                 return
-            
+
             if response[0][0][1]:
-                new_theme = "default"
+                new_theme = "system"
             elif response[0][1][1]:
-                new_theme = "qdark"
+                new_theme = "light"
+            elif response[0][2][1]:
+                new_theme = "dark"
             else:
                 return
-        
-        app = QApplication.instance()
-        if new_theme == "default":
-            self.series.setOption("theme", "default")
-            app.setStyleSheet("")
-            app.setPalette(app.style().standardPalette())
-        elif new_theme == "qdark":
-            try:
-                import qdarkstyle
-            except:
-                notify("Unable to import dark theme.")
-                return
-            self.series.setOption("theme", "qdark")
-            app.setStyleSheet(
-                qdarkstyle.load_stylesheet_pyside6() + 
-                qdark_addon
-            )
+
+        new_theme = theme.normalize_mode(new_theme)
+        self.series.setOption("theme", new_theme)
+        theme.apply_theme(QApplication.instance(), new_theme)
+        self._apply_app_icon()
     
     def addToRecentSeries(self, series_fp : str = None):
         """Add a series to the recently opened series list."""
@@ -3333,12 +3342,3 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 notify(f"Could not launch the installer:\n{e}\n\nFind it at: {self._pending_installer}")
         event.accept()
-
-
-qdark_addon = """
-QPushButton {border: 1px solid transparent}
-QComboBox {padding-right: 40px}
-"""
-
-## Removed following as it overrides background color of qtablewidgetitems
-## QTableWidget:item:alternate {background-color: #222C36;}  

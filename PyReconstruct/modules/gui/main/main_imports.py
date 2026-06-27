@@ -87,6 +87,8 @@ from PyReconstruct.modules.gui.utils import (
     getProgbar
 )
 
+from PyReconstruct.modules.gui.utils import theme
+
 from PyReconstruct.modules.backend.func import determine_cpus
 
 from PyReconstruct.modules.backend.threading import ThreadPool

@@ -138,8 +138,9 @@ default_settings = {
     # series-related
     "series_code_pattern": "[0-9A-Za-z]+",  # MFO
 
-    # theme
-    "theme": "default",  # MFO
+    # theme: "system" (follow OS light/dark), "light", or "dark".
+    # Legacy values "default"/"qdark" are migrated by gui.utils.theme.normalize_mode.
+    "theme": "system",  # MFO
 
     # updates
     "update_channel": "release",  # "release" | "prerelease"     # MFO

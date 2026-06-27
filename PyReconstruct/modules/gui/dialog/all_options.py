@@ -18,6 +18,7 @@ from .backup import BackupDialog
 
 from PyReconstruct.modules.datatypes import Series
 from PyReconstruct.modules.constants import is_frozen
+from PyReconstruct.modules.gui.utils import theme as theme_engine
 
 class AllOptionsDialog(QDialog):
 
@@ -247,23 +248,26 @@ class AllOptionsDialog(QDialog):
         self.addOptionWidget("smoothing_3D", structure, setOption)
 
         ## Theme opts
-        
-        theme = self.series.getOption("theme")
-        
+
+        mode = theme_engine.normalize_mode(self.series.getOption("theme"))
+
         structure = [
             ["Theme:"],
-            [("radio", 
-              ("default", theme == "default"),
-              ("dark", theme == "qdark"),
+            [("radio",
+              ("System", mode == "system"),
+              ("Light", mode == "light"),
+              ("Dark", mode == "dark"),
             )],
         ]
-        
+
         def setOption(response):
-            
-            if response[0][0][1]: theme = "default"
-            elif response[0][1][1]: theme = "qdark"
-            self.series.setOption("theme", theme)
-            
+
+            if response[0][0][1]: m = "system"
+            elif response[0][1][1]: m = "light"
+            elif response[0][2][1]: m = "dark"
+            else: m = "system"
+            self.series.setOption("theme", m)
+
         self.addOptionWidget("theme", structure, setOption)
 
         # scale bar opts

@@ -4,6 +4,7 @@ from PySide6.QtWidgets import QTableWidget, QApplication, QMainWindow
 from PySide6.QtCore import Qt
 
 from PyReconstruct.modules.gui.utils import lessThan
+from PyReconstruct.modules.gui.utils import theme
 from PyReconstruct.modules.backend.func import make_unique_id
     
 
@@ -65,24 +66,16 @@ class CopyTableWidget(QTableWidget):
     def resizeColumnToContents(self, c : int):
         super().resizeColumnToContents(c)
 
-        try:
-            series = getattr(self.parent().parent(), "series")
-        except AttributeError:
-            return
-        
-        if series.getOption("theme") == "qdark":
+        # qdarkstyle renders cells slightly wider; nudge to fit. A qdarkstyle
+        # stylesheet now backs both light and dark, so gate on it being active.
+        if theme.qss_active():
             w = self.columnWidth(c)
             self.setColumnWidth(c, w + 8)
-    
+
     def resizeColumnsToContents(self):
         super().resizeColumnsToContents()
 
-        try:
-            series = getattr(self.parent().parent(), "series")
-        except AttributeError:
-            return
-        
-        if series.getOption("theme") == "qdark":
+        if theme.qss_active():
             for c in range(self.columnCount()):
                 w = self.columnWidth(c)
                 self.setColumnWidth(c, w + 8)
