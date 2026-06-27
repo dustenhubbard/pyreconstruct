@@ -12,7 +12,7 @@ def customExcepthook(exctype, value, traceback):
         "(See console for more info.)\n\n"
         "If you think this is a bug or need help, "
         "please issue a bug report at:\n\n"
-        "https://github.com/SynapseWeb/PyReconstruct/issues"
+        "https://github.com/dustenhubbard/PyReconstruct/issues"
     )
 
     active_window = QApplication.activeWindow()

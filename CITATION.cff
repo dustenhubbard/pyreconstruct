@@ -1,11 +1,37 @@
 cff-version: 1.2.0
-message: "If you use this software, please cite it as below."
-authors:
-- family-names: "Chirillo"
-  given-names: "Michael"
-- family-names: "Falco"
-  given-names: "Julian"
+message: "If you use this software, please cite the paper (the preferred citation below)."
 title: "PyReconstruct"
-version: 1.19.0
-date-released: 2025-05-28
-url: "https://github.com/synapseweb/pyreconstruct"
+authors:
+  - family-names: "Chirillo"
+    given-names: "Michael A."
+  - family-names: "Falco"
+    given-names: "Julian N."
+  - family-names: "Musslewhite"
+    given-names: "Michael D."
+  - family-names: "Lindsey"
+    given-names: "Larry F."
+  - family-names: "Harris"
+    given-names: "Kristen M."
+repository-code: "https://github.com/dustenhubbard/PyReconstruct"
+license: GPL-3.0-or-later
+preferred-citation:
+  type: article
+  title: "PyReconstruct: A fully open-source, collaborative successor to Reconstruct"
+  authors:
+    - family-names: "Chirillo"
+      given-names: "Michael A."
+    - family-names: "Falco"
+      given-names: "Julian N."
+    - family-names: "Musslewhite"
+      given-names: "Michael D."
+    - family-names: "Lindsey"
+      given-names: "Larry F."
+    - family-names: "Harris"
+      given-names: "Kristen M."
+  journal: "Proceedings of the National Academy of Sciences"
+  volume: 122
+  issue: 31
+  start: "e2505822122"
+  year: 2025
+  month: 7
+  doi: "10.1073/pnas.2505822122"
