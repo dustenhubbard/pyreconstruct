@@ -104,7 +104,7 @@ class BCProfilesDialog(QDialog):
         """
         super().__init__(parent)
 
-        self.setWindowTitle(" ")
+        self.setWindowTitle("Brightness/Contrast Profiles")
 
         title_text = QLabel(self, text="Switch to Profile")
 

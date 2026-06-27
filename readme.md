@@ -17,12 +17,12 @@ An installation guide, quickstart, and manuals can be found at our lab's [wiki s
 
 <a id="submitting-bug-reports-and-feature-requests"></a>
 
-# Then it would say lanch party, Kevin.
+# Installation
 
 In a virtual environment running Python 3.11, install bleeding-edge PyReconstruct:
 
 ```
-pip install git+https://github.com/synapseweb/pyreconstruct
+pip install git+https://github.com/SynapseWeb/PyReconstruct
 ```
 
 or stable PyReconstruct:
@@ -71,6 +71,6 @@ and this repo if you'd like:
     version = {1.19.0},
     month = {May},
     year = {2025}
-    url = {https://github.com/synapseweb/pyreconstruct},
+    url = {https://github.com/SynapseWeb/PyReconstruct},
 }
 ```

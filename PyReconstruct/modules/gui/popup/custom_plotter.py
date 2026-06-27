@@ -1550,7 +1550,7 @@ class SceneObjectList():
 
             except Exception as e:
 
-                print(f"An exception occured while exporting {obj.name} from the 3D scene:")
+                print(f"An exception occurred while exporting {obj.name} from the 3D scene:")
                 print(e)
                 
                 continue

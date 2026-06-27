@@ -122,11 +122,11 @@ class SegmentDialog(QDialog):
                 return
 
         if not self.downsample_input.text().isnumeric():
-            notify("Please enter a value value for downsampling.")
+            notify("Please enter a valid value for downsampling.")
             return
 
         if not self.min_seed_input.text().isnumeric():
-            notify("Please enter a value value for mininum seed distance.")
+            notify("Please enter a valid value for minimum seed distance.")
             return
 
         super().accept()

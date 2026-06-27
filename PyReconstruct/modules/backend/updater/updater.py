@@ -21,10 +21,9 @@ from pathlib import Path
 
 from packaging.version import Version, InvalidVersion
 
-# Repo whose GitHub Releases the updater pulls installers from. Points at the
-# fork for the POC (that is where CI publishes the installers); switch to
-# "SynapseWeb/PyReconstruct" when this lands upstream. Kept as a separate
-# literal (not imported from constants.gh_repo) so this module stays Qt-free.
+# Repo whose GitHub Releases the updater pulls installers from -- this fork, where
+# its candidate builds are published. Kept as a plain literal (not imported from
+# constants.gh_repo) so this module stays Qt-free / stdlib-only.
 GITHUB_REPO = "dustenhubbard/PyReconstruct"
 
 RELEASES_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases"

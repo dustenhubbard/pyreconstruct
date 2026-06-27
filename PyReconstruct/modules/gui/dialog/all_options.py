@@ -224,7 +224,7 @@ class AllOptionsDialog(QDialog):
             ["3D smoothing:"],
             [("radio",
                 ("Humphrey (recommended)", opt == "humphrey"),
-                ("Mutable Diffusion Laplcian", opt == "mut_dif_laplacian"),
+                ("Mutable Diffusion Laplacian", opt == "mut_dif_laplacian"),
                 ("Taubin", opt == "taubin"),
                 ("None (least smooth)", opt == "none"))],
             ["Smoothing iterations:", ("int", self.series.getOption("smoothing_iterations"))],
@@ -418,7 +418,7 @@ class AllOptionsDialog(QDialog):
 
         # 2D step
         structure = [
-            ["Course step:", ("float", self.series.getOption("big_dist", use_defaults))],
+            ["Coarse step:", ("float", self.series.getOption("big_dist", use_defaults))],
             ["Fine step:", ("float", self.series.getOption("med_dist", use_defaults))],
             ["Finest step:", ("float", self.series.getOption("small_dist", use_defaults))]
         ]
