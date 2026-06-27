@@ -141,6 +141,10 @@ default_settings = {
     # theme
     "theme": "default",  # MFO
 
+    # updates
+    "update_channel": "stable",   # "stable" | "edge"            # MFO
+    "update_branch": "main",      # source/dev installs only     # MFO
+
     # 3D
     "translate_step_3D": 0.1,  # MFO
     "rotate_step_3D": 10,  # MFO

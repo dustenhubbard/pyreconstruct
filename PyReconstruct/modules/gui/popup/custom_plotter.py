@@ -673,7 +673,7 @@ class VPlotter(vedo.Plotter):
     def getFieldCoords(self, msh : vedo.Mesh, pt : tuple):
         """Get the coordinates for a point on a mesh."""
         # get the transform and apply its inverse to a point
-        x, y, z = msh.get_transform().GetInverse().TransformFloatPoint(*pt)
+        x, y, z = msh.transform.T.GetInverse().TransformFloatPoint(*pt)
 
         # get the section
         s = self.getSectionFromZ(z)
@@ -1300,7 +1300,7 @@ class SceneObject():
     
     @property
     def tform(self):
-        fn = self.msh.get_transform().GetMatrix().GetElement
+        fn = self.msh.transform.T.GetMatrix().GetElement
         m = [[fn(i, j) for j in range(4)] for i in range(4)]
         return m
     
@@ -1322,9 +1322,16 @@ class SceneObject():
         """
         if not tform or (not concatenate and tform == self.tform):
             return
-        
-        self.msh.apply_transform(tform, concatenate=concatenate)
-        self.msh.transform = None  # long story, I'm pretty sure this is a bug with the module
+
+        # vedo 2025.x apply_transform() has no `concatenate` arg and composes onto
+        # the current transform. All callers use concatenate=False (replace), so
+        # apply the delta target @ inverse(current) to make the result == target.
+        target = np.array(tform, dtype=float)
+        if concatenate:
+            delta = target
+        else:
+            delta = target @ np.linalg.inv(np.array(self.tform, dtype=float))
+        self.msh.apply_transform(delta)
     
     def getSideLength(self):
         """Returns the side length of the object ONLY if it is of type scale_cube."""

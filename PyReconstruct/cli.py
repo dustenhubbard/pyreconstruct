@@ -1,5 +1,6 @@
 import argparse
 import subprocess
+import sys
 
 try:
     
@@ -57,6 +58,10 @@ def validate_branch(requested_branch):
     return bool(output.stdout.strip())
 
 def update(requested_branch=None):
+
+    if getattr(sys, "frozen", False):
+        print("This is a packaged build; use Help > Check for updates in the app.")
+        return
 
     if requested_branch:
 

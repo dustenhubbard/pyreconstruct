@@ -2,7 +2,20 @@ import os
 import sys
 import time
 import shutil
+import multiprocessing.spawn
 from multiprocessing import Pool, freeze_support
+
+# Frozen-build (PyInstaller) fix for Windows. This script is executed via runpy
+# as the program's __main__, but on a frozen win32 executable multiprocessing's
+# spawn does NOT re-establish __main__ in worker processes: its WINEXE path
+# assumes __main__ is the frozen entry point (run.py), not a runpy'd script. The
+# workers then can't find the worker function defined here and die unpickling the
+# first task, which hangs the Pool right after the zarr skeleton is created.
+# macOS/Linux are unaffected (that path is gated on sys.platform == 'win32').
+# Clearing WINEXE makes multiprocessing send this script's path to the workers
+# (init_main_from_path) so they re-execute it and find the worker function --
+# exactly as already happens off Windows.
+multiprocessing.spawn.WINEXE = False
 
 import cv2
 import zarr
