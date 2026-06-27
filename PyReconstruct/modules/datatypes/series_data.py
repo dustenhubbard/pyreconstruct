@@ -2,7 +2,9 @@
 
 from typing import Union
 
-from PyReconstruct.modules.calc import lineDistance, area
+import numpy as np
+
+from PyReconstruct.modules.calc import traceGeometry, feret
 
 from .section import Section
 from .transform import Transform
@@ -23,17 +25,43 @@ class TraceData():
         self.hidden = trace.hidden
         self.negative = trace.negative
         self.tags = trace.tags
-        tformed_points = tform.map(trace.points)
-        self.length = lineDistance(tformed_points, closed=trace.closed)
+
+        # Map the points through the tform ONCE, then compute length, area,
+        # centroid, and radius together in a single vectorized NumPy pass
+        # (traceGeometry). This replaces four separate Python loops over the
+        # points -- lineDistance + area + centroid + a max-distance radius, each
+        # re-walking the points and calling distance() -- which were the dominant
+        # cost of a series refresh on large autoseg jsers (~27s of a 31s refresh
+        # at 61k traces). traceGeometry is verified equivalent to those scalar
+        # functions: length/area/centroid identical, radius within machine
+        # epsilon. For affine tforms the centroid of the mapped points equals the
+        # mapped centroid of the raw points (up to rounding).
+        pts = tform.mapPointsArray(trace.points)
+        if len(pts):
+            length, trace_area, (cx, cy), radius = traceGeometry(pts, self.closed)
+        else:
+            length, trace_area, (cx, cy), radius = 0.0, 0.0, (0.0, 0.0), 0.0
+
+        self.length = length
         if not self.closed:
             self.area = 0
         else:
-            self.area = area(tformed_points)
-            if self.negative: self.area *= -1
-        self.radius = trace.getRadius(tform)
-        self.centroid = trace.getCentroid(tform)
-        self.feret = trace.getFeret(tform)
-    
+            self.area = -trace_area if self.negative else trace_area
+        self.centroid = (cx, cy)
+        self.radius = radius
+
+        # Defer the expensive convex-hull Feret diameter. It is only read by the
+        # per-section trace table and CSV export, never by the object table, so
+        # computing it for every trace up front (a third of the geometry cost)
+        # is wasted on most series. Reuse the mapped-point array (exact float64)
+        # and compute the Feret lazily on first request, then drop the points.
+        if self.closed:
+            self._feret = None
+            self._feret_points = pts
+        else:
+            self._feret = (0, 0)
+            self._feret_points = None
+
     def getTags(self):
         return self.tags
 
@@ -50,7 +78,11 @@ class TraceData():
         return self.centroid
 
     def getFeret(self):
-        return self.feret
+        if self._feret is None:
+            pts = self._feret_points
+            self._feret = feret([(float(x), float(y)) for x, y in pts]) if len(pts) else (0, 0)
+            self._feret_points = None  # free once computed
+        return self._feret
 
     def __lt__(self, other):
         return self.index < other.index

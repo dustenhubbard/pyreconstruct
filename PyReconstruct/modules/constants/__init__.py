@@ -53,3 +53,8 @@ from .getdatetime import(
     get_now,
     remove_days_from_today
 )
+
+from .fast_json import (
+    fast_loads,
+    fast_dumps
+)

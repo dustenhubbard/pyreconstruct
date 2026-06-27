@@ -23,7 +23,9 @@ from .host_tree import HostTree
 from PyReconstruct.modules.constants import (
     createHiddenDir,
     welcome_series_dir,
-    getDateTime
+    getDateTime,
+    fast_loads,
+    fast_dumps
 )
 from PyReconstruct.modules.constants import welcome_series_dir, default_traces
 from PyReconstruct.modules.gui.utils import getProgbar
@@ -48,8 +50,8 @@ class Series():
         self.sections = sections
         self.name = os.path.basename(self.filepath)[:-4]
 
-        with open(filepath, "r") as f:
-            series_data = json.load(f)
+        with open(filepath, "rb") as f:
+            series_data = fast_loads(f.read())
 
         Series.updateJSON(series_data)
 
@@ -168,8 +170,8 @@ class Series():
             return series
 
         # load json
-        with open(fp, "r") as f:
-            jser_data = json.load(f)
+        with open(fp, "rb") as f:
+            jser_data = fast_loads(f.read())
         
         # UPDATE FROM OLD JSER FORMATS
         updated_jser_data = {}
@@ -220,8 +222,8 @@ class Series():
         series_data["log_set"] = []
         Series.updateJSON(series_data)
         series_fp = os.path.join(hidden_dir, sname + ".ser")
-        with open(series_fp, "w") as f:
-            json.dump(series_data, f)
+        with open(series_fp, "wb") as f:
+            f.write(fast_dumps(series_data))
         if progbar.wasCanceled():
             return None
         progress += 1
@@ -244,8 +246,8 @@ class Series():
             # gather the section numbers and section filenames
             sections[snum] = filename
                 
-            with open(section_fp, "w") as f:
-                json.dump(section_data, f)
+            with open(section_fp, "wb") as f:
+                f.write(fast_dumps(section_data))
             
             if progbar.wasCanceled():
                 return None
@@ -309,12 +311,12 @@ class Series():
             fp = os.path.join(self.hidden_dir, filename)
 
             if ext.isnumeric():
-                with open(fp, "r") as f:
-                    filedata = json.load(f)
+                with open(fp, "rb") as f:
+                    filedata = fast_loads(f.read())
                 jser_data["sections"][int(ext)] = filedata
             elif ext == "ser":
-                with open(fp, "r") as f:
-                    filedata = json.load(f)
+                with open(fp, "rb") as f:
+                    filedata = fast_loads(f.read())
                 # manually remove log set from series data if exists
                 if filedata.get("log_set"): del(filedata["log_set"])
                 # add the log_set string to the log
@@ -335,11 +337,11 @@ class Series():
             progbar.setValue(progress/final_value * 100)
             progress += 1
         
-        save_str = json.dumps(jser_data)
+        save_bytes = fast_dumps(jser_data)
 
         jser_fp = self.jser_fp if not save_fp else save_fp
-        with open(jser_fp, "w") as f:
-            f.write(save_str)
+        with open(jser_fp, "wb") as f:
+            f.write(save_bytes)
         
         if close:
             self.close()
@@ -788,9 +790,10 @@ class Series():
             return
 
         d = self.getDict()
-        with open(self.filepath, "w") as f:
-            f.write(json.dumps(d, indent=1))
-    
+        with open(self.filepath, "wb") as f:
+            # internal hidden working file -- write compact bytes
+            f.write(fast_dumps(d))
+
     def getwdir(self) -> str:
         """Get the working directory of the series.
         
@@ -810,20 +813,42 @@ class Series():
         section = Section(section_num, self)
         return section
     
-    def enumerateSections(self, show_progress : bool = True, message : str = "Loading series data...", series_states=None, breakable=True):
+    def enumerateSections(self, show_progress : bool = True, message : str = "Loading series data...", series_states=None, breakable=True, section_numbers=None):
         """Allow iteration through the sections.
 
         Proper use in a for loop: for snum, section in series.enumerateSections():
-        
+
             Params:
                 show_progress (bool): True if progress should be displayed
                 message (str): the message to display by the progress bar
                 series_states (dict): section number : SectionStates object (use with GUI for undo/redo)
                 breakable (bool): True if sereis state is breakable
+                section_numbers (iterable): if given, only iterate these section
+                    numbers (used to avoid loading every section for operations
+                    that only touch a few objects)
             Returns:
                 (SeriesIterator): an iterable object for for loops
         """
-        return SeriesIterator(self, show_progress, message, series_states, breakable)
+        return SeriesIterator(self, show_progress, message, series_states, breakable, section_numbers)
+
+    def getObjectSections(self, obj_names) -> set:
+        """Return the set of section numbers that contain any of the objects.
+
+        Uses the in-memory object index (data["objects"][name].traces is keyed
+        by section number) so callers can restrict a series-wide pass to only
+        the sections that actually contain the targeted objects.
+
+            Params:
+                obj_names (iterable): the object names to look up
+            Returns:
+                (set): the section numbers containing any of the objects
+        """
+        snums = set()
+        for name in obj_names:
+            obj_data = self.data["objects"].get(name)
+            if obj_data:
+                snums.update(obj_data.traces.keys())
+        return snums
 
     def modifyAlignments(self, alignment_dict : dict, series_states=None, log_event=True):
         """Modify the series's alignment.
@@ -1112,7 +1137,8 @@ class Series():
         """
         for snum, section in self.enumerateSections(
             message="Deleting object(s)...",
-            series_states=series_states
+            series_states=series_states,
+            section_numbers=self.getObjectSections(obj_names)
         ):
             modified = False
             for obj_name in obj_names:
@@ -1143,13 +1169,14 @@ class Series():
 
         for snum, section in self.enumerateSections(
                 message="Copying object(s)...",
-                series_states=series_states
+                series_states=series_states,
+                section_numbers=self.getObjectSections(obj_names)
         ):
 
             modified = False
 
             for obj_name in obj_names:
-                
+
                 if obj_name in section.contours:
 
                     traces = section.contours[obj_name].getTraces()
@@ -1183,7 +1210,8 @@ class Series():
         """
         for snum, section in self.enumerateSections(
             message="Deleting trace(s)...",
-            series_states=series_states
+            series_states=series_states,
+            section_numbers=self.getObjectSections([trace_name])
         ):
             if trace_name in section.contours:
                 contour = section.contours[trace_name]
@@ -1235,7 +1263,8 @@ class Series():
         attrs_migrated = False
         for snum, section in self.enumerateSections(
             message="Modifying object(s)...",
-            series_states=series_states
+            series_states=series_states,
+            section_numbers=self.getObjectSections(obj_names)
         ):
 
             ## Move object attrs
@@ -1279,9 +1308,18 @@ class Series():
                     for obj_name in obj_names:
                         if obj_name in section.contours:
                             traces += section.contours[obj_name].getTraces()
-                            
+
                 section.save()
-        
+
+        ## Migrate attrs even if no sections were iterated (e.g. an object with
+        ## no traces): the loop above does this on its first iteration, so this
+        ## only fires when the loop did not run.
+        if name and not attrs_migrated:
+            for obj_name in obj_names:
+                if obj_name != name:
+                    self.renameObjAttrs(obj_name, name)
+            attrs_migrated = True
+
         self.modified = True
 
     def smoothObject(self, obj_names: list, series_states=None, log_event=True) -> list:
@@ -1312,8 +1350,11 @@ class Series():
 
         for snum, section in self.enumerateSections(
                 message="Smoothing traces...",
-                series_states=series_states
+                series_states=series_states,
+                section_numbers=self.getObjectSections(obj_names)
         ):
+
+            section_modified = False
 
             for obj_name in obj_names:
 
@@ -1364,10 +1405,15 @@ class Series():
                     if smoothed_any:
 
                         section.modified_contours.add(obj_name)
+                        section_modified = True
 
-            section.save()
+            # only re-serialize sections that actually changed (previously every
+            # section was saved, recomputing its full geometry index each time)
+            if section_modified:
 
-            self.modified = True
+                section.save()
+
+                self.modified = True
 
         return malformed
 
@@ -1448,7 +1494,8 @@ class Series():
         """
         for snum, section in self.enumerateSections(
             message="Modifying radii...",
-            series_states=series_states
+            series_states=series_states,
+            section_numbers=self.getObjectSections(obj_names)
         ):
             traces = []
             for name in obj_names:
@@ -1470,7 +1517,8 @@ class Series():
         """
         for snum, section in self.enumerateSections(
             message="Modifying shapes...",
-            series_states=series_states
+            series_states=series_states,
+            section_numbers=self.getObjectSections(obj_names)
         ):
             traces = []
             for name in obj_names:
@@ -1501,7 +1549,8 @@ class Series():
         """
         for snum, section in self.enumerateSections(
             message="Removing trace tags...",
-            series_states=series_states
+            series_states=series_states,
+            section_numbers=self.getObjectSections(obj_names)
         ):
             traces = []
             for obj_name in obj_names:
@@ -1535,7 +1584,8 @@ class Series():
         """
         for snum, section in self.enumerateSections(
             message="Hiding object(s)..." if hide else "Unhiding object(s)...",
-            series_states=series_states
+            series_states=series_states,
+            section_numbers=self.getObjectSections(obj_names)
         ):
             modified = False
             for name in obj_names:
@@ -2783,7 +2833,8 @@ class Series():
 
         for snum, section in self.enumerateSections(
             message="Splitting object...",
-            series_states=series_states
+            series_states=series_states,
+            section_numbers=self.getObjectSections([name])
         ):
             if name in section.contours:
                 traces = section.contours[name].getTraces()
@@ -2888,27 +2939,36 @@ class Series():
     
 class SeriesIterator():
 
-    def __init__(self, series : Series, show_progress : bool, message : str, series_states, breakable=True):
+    def __init__(self, series : Series, show_progress : bool, message : str, series_states, breakable=True, section_numbers=None):
         """Create the series iterator object.
-        
+
             Params:
                 series (Series): the series object
                 show_progress (bool): show progress dialog if True
                 message (str): the message to show
                 series_states (dict): section number : SectionStates (for use with GUI)
                 breakable (bool): True if series state is breakable
+                section_numbers (iterable): if given, restrict iteration to
+                    these section numbers
         """
         self.series = series
         self.section = None
         self.show_progress = show_progress
         self.message = message
         self.series_states = series_states
+        self.section_subset = None if section_numbers is None else set(section_numbers)
         if self.series_states is not None:
             self.series_states.addState(breakable)
-    
+
     def __iter__(self):
         """Allow the user to iterate through the sections."""
-        self.section_numbers = sorted(list(self.series.sections.keys()))
+        if self.section_subset is None:
+            self.section_numbers = sorted(list(self.series.sections.keys()))
+        else:
+            # restrict to the requested subset (intersected with existing sections)
+            self.section_numbers = sorted(
+                n for n in self.section_subset if n in self.series.sections
+            )
         self.sni = 0
         if self.show_progress:
             self.progbar = getProgbar(
