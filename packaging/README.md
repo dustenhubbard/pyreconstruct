@@ -87,8 +87,8 @@ the 3D viewport still renders **blank** in the frozen app:
 
 ```
 PyReconstruct-<version>-Windows-x86_64-Setup.exe
-PyReconstruct-<version>-macOS-x86_64.dmg
+PyReconstruct-<version>-macOS-arm64.dmg
 ```
 
-`<version>` is the setuptools-scm string: `1.20.0` on a tag, `1.20.0.devN+gHASH`
-for the rolling `edge` (main) build.
+`<version>` is the setuptools-scm string: `1.20.0` on a tag, `1.20.1.devN+gHASH`
+for the rolling `prerelease` (main) build.

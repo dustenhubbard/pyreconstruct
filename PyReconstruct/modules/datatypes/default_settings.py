@@ -142,7 +142,7 @@ default_settings = {
     "theme": "default",  # MFO
 
     # updates
-    "update_channel": "stable",   # "stable" | "edge"            # MFO
+    "update_channel": "release",  # "release" | "prerelease"     # MFO
     "update_branch": "main",      # source/dev installs only     # MFO
 
     # 3D

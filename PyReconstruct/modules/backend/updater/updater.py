@@ -71,20 +71,22 @@ def fetch_releases(timeout=15):
 def pick_release(releases, channel):
     """Pick the release for a channel.
 
-    stable -> newest non-prerelease, non-draft release.
-    edge   -> the rolling 'edge' pre-release (CI publishes it on every main
-              push); falls back to the newest pre-release.
+    release    -> newest non-prerelease, non-draft release.
+    prerelease -> the rolling 'prerelease' build (CI publishes it on every main
+                  push); falls back to the newest pre-release.
     """
+    # accept legacy channel values ("stable"/"edge") from installs predating the rename
+    channel = {"stable": "release", "edge": "prerelease"}.get(channel, channel)
     rels = [r for r in (releases or []) if not r.get("draft")]
-    if channel == "edge":
+    if channel == "prerelease":
         for r in rels:
-            if r.get("tag_name") == "edge":
+            if r.get("tag_name") == "prerelease":
                 return r
         for r in rels:
             if r.get("prerelease"):
                 return r
         return None
-    # stable
+    # release (stable)
     for r in rels:
         if not r.get("prerelease"):
             return r
