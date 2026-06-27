@@ -10,8 +10,10 @@ a machine with a real display (macOS or Windows). It loads theme.py directly by
 path, so the only dependencies are PySide6 and qdarkstyle — none of the heavy
 PyReconstruct runtime deps (vtk/vedo/zarr/...).
 
-    uv run --no-project dev/theme_preview.py    # deps + Python 3.11 via PEP 723
-    # or:  pip install PySide6==6.5.2 qdarkstyle==3.2.3 && python dev/theme_preview.py
+    uv run --script dev/theme_preview.py        # deps + Python 3.11 via PEP 723
+    # explicit equivalent (no PEP 723 reliance):
+    #   uv run --no-project --python 3.11 --with PySide6==6.5.2 --with qdarkstyle==3.2.3 dev/theme_preview.py
+    # or plain pip:  pip install PySide6==6.5.2 qdarkstyle==3.2.3 && python dev/theme_preview.py
 
 The System/Light/Dark buttons APPLY a theme in-memory only; they do NOT write to
 QSettings, so running this never disturbs the real app's saved theme preference.
