@@ -32,16 +32,18 @@ TOOL_SVGS = {
         'L5 13.5c-.7-1 .6-2.3 1.7-1.6L8 13" fill="none" stroke="#000000" '
         'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'
     ),
-    # knife / split (prototype i-knife)
+    # knife — slim scalpel / trimming blade (a pointed cutting blade, distinct
+    # from the open-trace pencil)
     "knife": _svg(
-        '<path d="M4 14L16 3l4 4-9 8-7-1z" fill="none" stroke="#000000" '
-        'stroke-width="1.6" stroke-linejoin="round"/>'
-        '<path d="M4 20h7" stroke="#000000" stroke-width="1.7" stroke-linecap="round"/>'
-    ),
-    # scissors — scalpel blade, the prototype's cut tool (i-scalpel)
-    "scissors": _svg(
         '<path d="M6 18l9-9 4-4-3 8-7 7-3-2z" fill="none" stroke="#000000" '
         'stroke-width="1.6" stroke-linejoin="round"/>'
+    ),
+    # scissors — literal scissors (two finger loops + crossed blades)
+    "scissors": _svg(
+        '<circle cx="6" cy="6" r="3" fill="none" stroke="#000000" stroke-width="1.6"/>'
+        '<circle cx="6" cy="18" r="3" fill="none" stroke="#000000" stroke-width="1.6"/>'
+        '<path d="M20 4L8.12 15.88M14.47 14.48L20 20M8.12 8.12L12 12" fill="none" '
+        'stroke="#000000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>'
     ),
     # closed trace — closed contour with vertices (prototype i-poly)
     "closedtrace": _svg(
