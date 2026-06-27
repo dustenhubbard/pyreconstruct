@@ -33,22 +33,45 @@ import importlib.util
 import os
 import sys
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QPixmap, QPainter, QColor, QIcon
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QPushButton, QLabel, QLineEdit, QComboBox, QSpinBox, QCheckBox, QRadioButton,
-    QListWidget, QTableWidget, QTableWidgetItem, QProgressBar, QTabWidget,
-    QGroupBox, QDialog, QDialogButtonBox, QPlainTextEdit,
+    QPushButton, QToolButton, QLabel, QLineEdit, QComboBox, QSpinBox, QCheckBox,
+    QRadioButton, QListWidget, QTableWidget, QTableWidgetItem, QProgressBar,
+    QTabWidget, QGroupBox, QDialog, QDialogButtonBox, QPlainTextEdit,
 )
 
-# --- load the real theme engine standalone (no package __init__) -------------
-_THEME_PATH = os.path.normpath(os.path.join(
-    os.path.dirname(__file__),
-    "..", "PyReconstruct", "modules", "gui", "utils", "theme.py",
-))
-_spec = importlib.util.spec_from_file_location("pyrecon_theme_preview", _THEME_PATH)
-theme = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(theme)
+
+def _load_by_path(mod_name, *rel):
+    path = os.path.normpath(os.path.join(os.path.dirname(__file__), *rel))
+    spec = importlib.util.spec_from_file_location(mod_name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# --- load the real theme engine + icon artwork standalone (no package init) ---
+_U = ("..", "PyReconstruct", "modules", "gui", "utils")
+theme = _load_by_path("pyrecon_theme_preview", *_U, "theme.py")
+icon_svgs = _load_by_path("pyrecon_icon_svgs_preview", *_U, "icon_svgs.py")
+
+
+def _render_tinted(svg, size_px, color_hex):
+    """Mirror of gui.utils.icons.render_svg_tinted (kept local so the harness
+    needs only the pure-data icon_svgs, not the package-relative icons module)."""
+    r = QSvgRenderer(bytes(svg))
+    pm = QPixmap(size_px, size_px)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    r.render(p)
+    p.end()
+    p = QPainter(pm)
+    p.setCompositionMode(QPainter.CompositionMode_SourceIn)
+    p.fillRect(pm.rect(), QColor(color_hex))
+    p.end()
+    return pm
 
 
 def _colorscheme_name(app):
@@ -107,6 +130,7 @@ class Preview(QMainWindow):
         root.addLayout(row)
 
         root.addWidget(self._controls_group())
+        root.addWidget(self._icons_group())
 
         # selection accent surfaces: a list and a table, both pre-selected
         sel_row = QHBoxLayout()
@@ -163,6 +187,27 @@ class Preview(QMainWindow):
         grid.addWidget(tabs, 3, 0, 1, 4)
         return g
 
+    def _icons_group(self):
+        g = QGroupBox("Tool icons — modern set (tint with theme)")
+        grid = QGridLayout(g)
+        self._icon_btns = []
+        for i, name in enumerate(icon_svgs.TOOL_SVGS):
+            btn = QToolButton()
+            btn.setAutoRaise(True)
+            btn.setIconSize(QSize(26, 26))
+            btn.setToolTip(name)
+            lab = QLabel(name)
+            lab.setAlignment(Qt.AlignCenter)
+            cell = QVBoxLayout()
+            cell.setSpacing(2)
+            cell.addWidget(btn, alignment=Qt.AlignCenter)
+            cell.addWidget(lab)
+            holder = QWidget()
+            holder.setLayout(cell)
+            grid.addWidget(holder, i // 5, i % 5)
+            self._icon_btns.append((btn, icon_svgs.TOOL_SVGS[name]))
+        return g
+
     def set_mode(self, mode):
         # apply only — never persist, so the real app's saved theme is untouched
         self.mode = theme.normalize_mode(mode)
@@ -183,15 +228,20 @@ class Preview(QMainWindow):
             act.setChecked(m == self.mode)
         for m, btn in self._mode_btns.items():
             btn.setChecked(m == self.mode)
+        # re-tint the tool icons to the scheme's icon color
+        icol = theme.icon_color(scheme)
+        for btn, svg in getattr(self, "_icon_btns", []):
+            btn.setIcon(QIcon(_render_tinted(svg, 26, icol)))
         self.status.setText(
             f"<b>Selected mode:</b> {self.mode} &nbsp;|&nbsp; "
             f"<b>Resolved scheme:</b> {scheme} &nbsp;|&nbsp; "
             f"<b>OS colorScheme():</b> {os_name} &nbsp;|&nbsp; "
             f"<b>App's saved pref:</b> {saved} &nbsp;|&nbsp; "
-            f"<b>accent:</b> {theme.ACCENT}"
+            f"<b>accent:</b> {theme.ACCENT} &nbsp;|&nbsp; "
+            f"<b>icon:</b> {icol}"
         )
         self.statusBar().showMessage(
-            f"theme.py @ {_THEME_PATH}  —  apply-only (saved preference not modified)"
+            f"theme.py @ {theme.__file__}  —  apply-only (saved preference not modified)"
         )
 
     def open_dialog(self):

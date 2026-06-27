@@ -16,6 +16,8 @@ from PyReconstruct.modules.constants import (
 )
 from PyReconstruct.modules.gui.dialog import TracePaletteDialog, QuickDialog
 from PyReconstruct.modules.gui.popup import TextWidget
+from PyReconstruct.modules.gui.utils import icons as icon_utils
+from PyReconstruct.modules.gui.utils import theme
 
 
 class MousePalette():
@@ -113,31 +115,55 @@ class MousePalette():
         y += (10 + self.mblen) * pos
         button.setGeometry(x, y, self.mblen, self.mblen)
     
+    @staticmethod
+    def _stripped(name : str) -> str:
+        """Tool name -> icon key/filename (lower-cased, spaces/slashes removed)."""
+        stripped = name
+        for c in (" ", "/"):
+            stripped = stripped.replace(c, "")
+        return stripped.lower()
+
+    def _mode_icon_px(self) -> int:
+        """Render size for a mode icon — padded within the button like the
+        prototype (icon ~60% of the button)."""
+        return round(self.mblen * 0.6)
+
+    def refreshModeIcons(self):
+        """Re-tint the mode-button icons to the current theme. Call when the
+        theme changes so the monochrome line icons follow light/dark."""
+        color = theme.icon_color()
+        icon_px = self._mode_icon_px()
+        for name, (b, _mode, _pos) in self.mode_buttons.items():
+            stripped = self._stripped(name)
+            if icon_utils.has_icon(stripped):
+                b.setIcon(icon_utils.tool_icon(stripped, icon_px, color))
+                b.setIconSize(QSize(icon_px, icon_px))
+
     def createModeButton(self, name : str, pos : int):
         """Creates a new mouse mode button.
-        
+
             Params:
-                name (str): the name of the button (and PNG file)
+                name (str): the name of the button (and icon key)
                 pos (int): the position of the button
         """
         b = ModeButton(self.mainwindow, self)
         mouse_mode = pos
 
-        # filter name to get filename
-        stripped_name = name
-        characters_to_remove = (" ", "/")
-        for c in characters_to_remove:
-            stripped_name = stripped_name.replace(c, "")
-        stripped_name = stripped_name.lower()
-        # open the icon file
-        icon_fp = os.path.join(loc.img_dir, stripped_name + ".png")
-        pixmap = QPixmap(icon_fp)
+        # filter name to get the stripped icon key / filename
+        stripped_name = self._stripped(name)
 
         self.placeModeButton(b, pos)
 
-        # format the button
-        b.setIcon(QIcon(pixmap))
-        b.setIconSize(QSize(self.mblen, self.mblen))
+        # format the button — prefer the modern theme-tinted SVG icon; fall back
+        # to the legacy PNG for tools without one (Flag/Host then set a glyph).
+        if icon_utils.has_icon(stripped_name):
+            icon_px = self._mode_icon_px()
+            b.setIcon(icon_utils.tool_icon(stripped_name, icon_px))
+            b.setIconSize(QSize(icon_px, icon_px))
+        else:
+            icon_fp = os.path.join(loc.img_dir, stripped_name + ".png")
+            b.setIcon(QIcon(QPixmap(icon_fp)))
+            b.setIconSize(QSize(self.mblen, self.mblen))
         # b.setText(name)
         b.setToolTip(f"{name}")
 

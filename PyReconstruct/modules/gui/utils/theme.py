@@ -46,6 +46,11 @@ ACCENT_TEXT = "#ffffff"   # text drawn on the accent
 GROUND_DARK = "#19232d"   # qdarkstyle DarkPalette ground (informational)
 GROUND_LIGHT = "#fafafa"  # qdarkstyle LightPalette ground (informational)
 
+# Tool-button icon color (the monochrome line icons tint to this per scheme).
+# Provisional — from the v1 prototype's resting tool color (its --txt-dim).
+ICON_DARK = "#9aa7bb"     # icons on dark chrome
+ICON_LIGHT = "#54627a"    # icons on light chrome
+
 
 # --- pure mode/scheme logic (no Qt) ------------------------------------------
 def normalize_mode(value) -> str:
@@ -129,6 +134,16 @@ def current_scheme(app=None, mode=None) -> str:
     if mode is None:
         mode = read_mode()
     return resolve_scheme(normalize_mode(mode), system_is_light(app))
+
+
+def icon_color(scheme=None, app=None) -> str:
+    """Hex color the monochrome tool icons should tint to for a scheme.
+
+    Defaults to the scheme currently in effect.
+    """
+    if scheme is None:
+        scheme = current_scheme(app)
+    return ICON_DARK if scheme == "dark" else ICON_LIGHT
 
 
 # --- stylesheet construction -------------------------------------------------

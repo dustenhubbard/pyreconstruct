@@ -30,6 +30,8 @@ class MainWindow(QMainWindow):
         try:
             if theme.read_mode() == "system":
                 theme.apply_theme(QApplication.instance(), "system")
+                if self.mouse_palette is not None:
+                    self.mouse_palette.refreshModeIcons()
         except Exception:  # pragma: no cover - defensive; never break on a signal
             pass
         self._apply_app_icon()
@@ -3021,6 +3023,8 @@ class MainWindow(QMainWindow):
         self.series.setOption("theme", new_theme)
         theme.apply_theme(QApplication.instance(), new_theme)
         self._apply_app_icon()
+        if self.mouse_palette is not None:
+            self.mouse_palette.refreshModeIcons()
     
     def addToRecentSeries(self, series_fp : str = None):
         """Add a series to the recently opened series list."""
