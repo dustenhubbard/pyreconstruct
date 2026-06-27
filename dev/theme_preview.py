@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.11,<3.12"
+# dependencies = ["PySide6==6.5.2", "qdarkstyle==3.2.3"]
+# ///
 """Standalone visual preview for the UI theme engine (gui.utils.theme).
 
 A tiny window of representative Qt widgets driven by the REAL theme module, for
@@ -6,8 +10,8 @@ a machine with a real display (macOS or Windows). It loads theme.py directly by
 path, so the only dependencies are PySide6 and qdarkstyle — none of the heavy
 PyReconstruct runtime deps (vtk/vedo/zarr/...).
 
-    pip install PySide6==6.5.2 qdarkstyle==3.2.3
-    python dev/theme_preview.py
+    uv run --no-project dev/theme_preview.py    # deps + Python 3.11 via PEP 723
+    # or:  pip install PySide6==6.5.2 qdarkstyle==3.2.3 && python dev/theme_preview.py
 
 The System/Light/Dark buttons APPLY a theme in-memory only; they do NOT write to
 QSettings, so running this never disturbs the real app's saved theme preference.
