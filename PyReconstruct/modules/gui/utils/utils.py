@@ -210,14 +210,14 @@ def setMainWindow(mw):
     mainwindow = mw
 
 
-def notify(message):
-    """Notify the user."""
+def notify(message, title="PyReconstruct"):
+    """Show an informational message to the user."""
 
     if QApplication.instance() and not qt_offscreen:
         
         QMessageBox.information(
             mainwindow,
-            "Message",
+            title,
             message,
             QMessageBox.Ok
         )
@@ -227,11 +227,11 @@ def notify(message):
     else:
 
         print(message)
-        input("Press any key to continue...")
+        input("Press Enter to continue...")
 
 
-def notifyConfirm(message, yn=False):
-    """Notify the user and give option to OK or cancel."""
+def notifyConfirm(message, yn=False, title="Confirm"):
+    """Ask the user to confirm. Returns True if they accept (Yes / OK)."""
 
     if yn:
 
@@ -239,7 +239,7 @@ def notifyConfirm(message, yn=False):
             
             response = QMessageBox.question(
                 mainwindow,
-                " ",
+                title,
                 message,
                 QMessageBox.Yes,
                 QMessageBox.No
@@ -258,7 +258,7 @@ def notifyConfirm(message, yn=False):
         
             response = QMessageBox.warning(
                 mainwindow,
-                " ",
+                title,
                 message,
                 QMessageBox.Ok,
                 QMessageBox.Cancel
@@ -418,7 +418,7 @@ def getProgbar(text, cancel=True, maximum=100):
                     mainwindow
                 )
             progbar.setMinimumDuration(1500)
-            progbar.setWindowTitle(" ")
+            progbar.setWindowTitle("PyReconstruct")
             progbar.setWindowModality(Qt.WindowModal)
             if not cancel:
                 progbar.setCancelButton(None)

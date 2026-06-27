@@ -136,7 +136,7 @@ class TracePaletteDialog(QuickTabDialog):
         text = self.tab_widget.tabText(index)
         response = QMessageBox.warning(
             self,
-            "",
+            "Remove Palette",
             f"WARNING: Are you sure you would like to remove {text}?",
             QMessageBox.Ok,
             QMessageBox.Cancel

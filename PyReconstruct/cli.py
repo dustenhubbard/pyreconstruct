@@ -51,7 +51,7 @@ def open_file(filename):
 
 def validate_branch(requested_branch):
 
-    repo = "https://github.com/synapseweb/pyreconstruct"
+    repo = "https://github.com/SynapseWeb/PyReconstruct"
     cmd = f"git ls-remote --heads {repo} refs/heads/{requested_branch}"
     output = subprocess.run(cmd.split(" "), capture_output=True, text=True)
 
@@ -76,7 +76,7 @@ def update(requested_branch=None):
         if requested_branch == "unknown":
             requested_branch = "main"
     
-    link = f"git+https://github.com/synapseweb/pyreconstruct@{requested_branch}"
+    link = f"git+https://github.com/SynapseWeb/PyReconstruct@{requested_branch}"
 
     ## Run two commands to easily install new dependencies
     

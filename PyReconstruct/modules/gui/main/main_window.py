@@ -1675,7 +1675,7 @@ class MainWindow(QMainWindow):
         if new_alignment_name in self.field.section.tforms:
             QMessageBox.information(
                 self,
-                " ",
+                "Alignment Exists",
                 "This alignment already exists.",
                 QMessageBox.Ok
             )
@@ -2313,7 +2313,7 @@ class MainWindow(QMainWindow):
             elif Path(output_fp).exists():
 
                 notify(
-                    f"To prevent accidnetally overwriting previously offloaded logs, "
+                    f"To prevent accidentally overwriting previously offloaded logs, "
                     f"please provide a filename that does not yet exist."
                 )
 
