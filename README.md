@@ -11,7 +11,7 @@
 PyReconstruct is an open-source application for annotating and 3D-reconstructing
 serial-section and volume electron-microscopy data — a modern, actively
 maintained successor to *Reconstruct*, developed in the Kristen Harris Lab at
-the University of Texas at Austin.
+The University of Texas at Austin.
 
 ## Install
 
