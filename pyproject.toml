@@ -35,6 +35,7 @@ dependencies = [
     "tifffile==2024.9.20",
     "qdarkstyle==3.2.3",
     "gitpython==3.1.50",
+    "orjson==3.11.8",   # fast JSON on the hot jser load/save paths (stdlib fallback)
     "certifi",   # CA bundle for TLS verification in the frozen app (updater)
     "packaging",
 ]
