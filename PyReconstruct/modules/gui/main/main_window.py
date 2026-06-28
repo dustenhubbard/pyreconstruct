@@ -256,6 +256,9 @@ class MainWindow(QMainWindow):
         self.togglebc_act.setChecked(not self.mouse_palette.bc_hidden)
         self.togglesb_act.setChecked(not self.mouse_palette.sb_hidden)
 
+        ## Check for lists panel collapse (UI v1 Slice 3)
+        self.togglelistspanel_act.setChecked(self.field.table_manager.listsPanelCollapsed())
+
         ## Group visibility
         for group, viz in self.series.groups_visibility.items():
             try:
@@ -702,6 +705,7 @@ class MainWindow(QMainWindow):
         
         # create the menus
         self.createMenuBar()
+        self._applyListsPanelState()
         self.createContextMenus()
         if not self.actions_initialized:
             self.createShortcuts()
@@ -1626,6 +1630,15 @@ class MainWindow(QMainWindow):
         """Collapse/expand the left lists dock panel (UI v1 Slice 3)."""
         manager = self.field.table_manager
         collapsed = not manager.listsPanelCollapsed()
+        manager.setListsPanelCollapsed(collapsed)
+        self.togglelistspanel_act.setChecked(collapsed)
+
+    def _applyListsPanelState(self):
+        """Apply the saved lists-panel collapsed state to the docks and sync the
+        menu checkbox. Called after the menu is (re)built on series open / restart,
+        once the docks have been restored (UI v1 Slice 3)."""
+        manager = self.field.table_manager
+        collapsed = manager.listsPanelCollapsed()
         manager.setListsPanelCollapsed(collapsed)
         self.togglelistspanel_act.setChecked(collapsed)
 

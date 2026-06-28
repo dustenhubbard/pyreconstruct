@@ -361,3 +361,59 @@ def test_b4_mainwindow_toggle_flips_state_and_checkbox(qapp):
     mw.toggleListsPanel()
     assert tables["object"][0].isHidden() is False
     assert mw.togglelistspanel_act.isChecked() is False
+
+
+# --- B5: restore collapsed state on open + sync the checkbox; survive restart -----
+
+def _mainwindow_with(mgr):
+    from PyReconstruct.modules.gui.main.main_window import MainWindow
+    from PySide6.QtGui import QAction
+
+    mw = MainWindow.__new__(MainWindow)
+
+    class _Field:
+        pass
+
+    mw.field = _Field()
+    mw.field.table_manager = mgr
+    mw.togglelistspanel_act = QAction()
+    mw.togglelistspanel_act.setCheckable(True)
+    return mw
+
+
+def test_b5_apply_state_collapsed_hides_docks_and_checks_box(qapp):
+    win, tables = _win_with_docks({"object": 1, "trace": 1})
+    mgr = _bare_manager(_FakeSeries(["object", "trace"], collapsed=True))
+    mgr.tables = tables
+    mw = _mainwindow_with(mgr)
+
+    mw._applyListsPanelState()
+
+    assert all(d.isHidden() for ds in tables.values() for d in ds)
+    assert mw.togglelistspanel_act.isChecked() is True
+
+
+def test_b5_apply_state_expanded_shows_docks_and_unchecks_box(qapp):
+    win, tables = _win_with_docks({"object": 1})
+    mgr = _bare_manager(_FakeSeries(["object"], collapsed=False))
+    mgr.tables = tables
+    mw = _mainwindow_with(mgr)
+
+    mw._applyListsPanelState()
+
+    assert not tables["object"][0].isHidden()
+    assert mw.togglelistspanel_act.isChecked() is False
+
+
+def test_b5_collapsed_state_survives_restart(qapp):
+    # The run.py restart recreates MainWindow and re-enters openSeries; the global
+    # QSettings value must persist. Simulate by reading it from a fresh series.
+    _clear("lists_panel_collapsed")
+    s1 = Series.__new__(Series)
+    s1.options = {}
+    mgr1 = _bare_manager(s1)
+    mgr1.setListsPanelCollapsed(True)  # user collapses; writes global QSettings
+
+    s2 = Series.__new__(Series)  # "restarted" process reads the same global setting
+    s2.options = {}
+    assert s2.getOption("lists_panel_collapsed") is True
