@@ -158,3 +158,23 @@ def test_b2_newtable_single_dock_no_crash(qapp, monkeypatch):
     mgr = mgrmod.TableManager(None, None, None, win)
     mgr.newTable("object")  # no tabify partner — must not raise
     assert win.dockWidgetArea(mgr.tables["object"][0]) == Qt.LeftDockWidgetArea
+
+
+def test_b2_tab_group_survives_anchor_close(qapp, monkeypatch):
+    # Closing the anchor (object) dock must not fragment the group: a later dock
+    # still joins the single existing tab group via whatever dock remains.
+    monkeypatch.setattr(mgrmod, "table_type_classes", _stub_table_classes())
+    win = _qmainwindow()
+    mgr = mgrmod.TableManager(None, None, None, win)
+    for tt in ("object", "trace", "ztrace"):
+        mgr.newTable(tt)
+
+    obj = mgr.tables["object"][0]          # the anchor
+    mgr.tables["object"].remove(obj)
+    obj.close(); obj.setParent(None)
+
+    mgr.newTable("flag")                   # anchors onto the remaining group
+
+    group = set(win.tabifiedDockWidgets(mgr.tables["trace"][0]))
+    assert mgr.tables["ztrace"][0] in group
+    assert mgr.tables["flag"][0] in group  # one group, not fragmented
