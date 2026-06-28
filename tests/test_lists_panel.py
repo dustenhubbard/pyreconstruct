@@ -277,3 +277,11 @@ def test_b3_restore_skips_welcome_series():
     fw, opened = _bare_field(_FakeSeries(["object"], welcome=True))
     fw._restoreOpenTables()
     assert opened == []
+
+
+def test_b3_restore_skips_invalid_types():
+    # a stale/corrupted open_tables entry (e.g. a type removed in a future version)
+    # must not crash field loading — skip it.
+    fw, opened = _bare_field(_FakeSeries(["object", "bogus", "trace"]))
+    fw._restoreOpenTables()
+    assert opened == ["object", "trace"]

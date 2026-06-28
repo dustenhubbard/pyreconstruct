@@ -483,11 +483,14 @@ class FieldWidgetBase:
     def _restoreOpenTables(self):
         """Auto-open the saved list docks on series open (UI v1 Slice 3). The
         welcome series opens nothing. Iterates a snapshot since openList -> newTable
-        updates the open_tables option as each dock opens."""
+        updates the open_tables option as each dock opens. Unknown types (corrupted
+        QSettings, or a type removed in a future version) are skipped, not fatal."""
         if self.series.isWelcomeSeries():
             return
+        from PyReconstruct.modules.backend.table.manager import table_type_classes
         for list_type in list(self.series.getOption("open_tables")):
-            self.openList(list_type)
+            if list_type in table_type_classes:
+                self.openList(list_type)
     
     def updateData(self, clear_tracking=True) -> None:
         """Update the series data object and the tables.
