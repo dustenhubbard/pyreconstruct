@@ -448,9 +448,12 @@ class AllOptionsDialog(QDialog):
                 [("radio",
                   ("Release (recommended)", channel == "release"),
                   ("Pre-release (experimental, latest main)", channel == "prerelease"))],
+                [("check", ("Check for updates on startup",
+                            self.series.getOption("update_check_on_startup", use_defaults)))],
             ]
             def setOption(response):
                 self.series.setOption("update_channel", "release" if response[0][0][1] else "prerelease")
+                self.series.setOption("update_check_on_startup", response[1][0][1])
         else:  # source/pip install: choose the GitHub branch to reinstall from
             structure = [
                 ["Update reinstalls from a GitHub branch (source install):"],
