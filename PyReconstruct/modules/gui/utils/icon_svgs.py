@@ -32,13 +32,15 @@ TOOL_SVGS = {
         'L5 13.5c-.7-1 .6-2.3 1.7-1.6L8 13" fill="none" stroke="#000000" '
         'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'
     ),
-    # knife — chef's / kitchen knife, outline silhouette (blade + grip in one
-    # stroked path): straight spine, full belly sweeping to the tip, big enough
-    # to read clearly. No fill, matching the rest of the line-icon set.
+    # knife — chef's / kitchen knife on the diagonal (tip up-right, grip
+    # down-left, like the other tools): outline blade (straight spine + full
+    # belly to the tip) with a FILLED grip.
     "knife": _svg(
-        '<path d="M22 10L9 6.7 8.5 9.7 3 9.7Q2 11.6 3 13.5L8.5 13.5 9.5 16.3'
-        'Q16.5 16.3 22 10Z" fill="none" stroke="#000000" stroke-width="1.7" '
-        'stroke-linejoin="round" stroke-linecap="round"/>'
+        '<g transform="rotate(-40 12 12)">'
+        '<path d="M22 10L9 6.7 9 16.3Q16.5 16.3 22 10Z" fill="none" '
+        'stroke="#000000" stroke-width="1.7" stroke-linejoin="round"/>'
+        '<rect x="2.3" y="9.4" width="7.2" height="4.2" rx="2" fill="#000000"/>'
+        '</g>'
     ),
     # scissors — literal scissors (two finger loops + crossed blades)
     "scissors": _svg(
