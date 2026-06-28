@@ -464,10 +464,11 @@ def test_whole_slice_open_collapse_restart_cycle(qapp, monkeypatch):
     # User collapses the panel
     mw1.toggleListsPanel()
     assert mgr1.tables["object"][0].isHidden() is True
+    assert mw1.togglelistspanel_act.isChecked() is True          # checkbox updates in real time
 
     # Boot 2 = restart: same global QSettings
     series2, mgr2, mw2 = boot()
     assert series2.getOption("open_tables") == ["object"]        # open_tables persisted
-    assert mgr2.tables["object"], "Object list not restored after restart"
+    assert len(mgr2.tables["object"]) == 1, "Object list not restored after restart"
     assert mgr2.tables["object"][0].isHidden() is True            # collapse persisted + applied
     assert mw2.togglelistspanel_act.isChecked() is True          # checkbox synced
