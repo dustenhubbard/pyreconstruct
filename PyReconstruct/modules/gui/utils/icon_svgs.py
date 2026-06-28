@@ -32,14 +32,11 @@ TOOL_SVGS = {
         'L5 13.5c-.7-1 .6-2.3 1.7-1.6L8 13" fill="none" stroke="#000000" '
         'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'
     ),
-    # knife — utility / box-cutter knife (rounded handle + angled snap-off blade)
+    # knife — chef's / kitchen knife (tapered blade with a curved belly + grip)
     "knife": _svg(
-        '<rect x="2.5" y="9" width="11" height="6" rx="1.8" fill="none" '
-        'stroke="#000000" stroke-width="1.6"/>'
-        '<path d="M12 9.5L21 4l1 2-7.5 6.5z" fill="none" stroke="#000000" '
-        'stroke-width="1.5" stroke-linejoin="round"/>'
-        '<path d="M15 8.2l1 1.9M17.5 6.6l1 1.9" stroke="#000000" '
-        'stroke-width="1.1" stroke-linecap="round"/>'
+        '<path d="M21.5 4L10 12 9 15Q15.5 14 21.5 4Z" fill="#000000" stroke="none"/>'
+        '<path d="M9.5 14L4.5 19" fill="none" stroke="#000000" '
+        'stroke-width="3.4" stroke-linecap="round"/>'
     ),
     # scissors — literal scissors (two finger loops + crossed blades)
     "scissors": _svg(
