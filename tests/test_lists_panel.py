@@ -417,3 +417,57 @@ def test_b5_collapsed_state_survives_restart(qapp):
     s2 = Series.__new__(Series)  # "restarted" process reads the same global setting
     s2.options = {}
     assert s2.getOption("lists_panel_collapsed") is True
+
+
+# --- Whole-slice: open -> collapse -> restart, end to end -------------------------
+
+def test_whole_slice_open_collapse_restart_cycle(qapp, monkeypatch):
+    """Composed lifecycle across a simulated run.py restart: each 'boot' is a fresh
+    series + manager + field + window reading the SAME global QSettings. Proves
+    open_tables AND lists_panel_collapsed both persist and are re-applied, and the
+    menu checkbox stays in sync. (Reachability/persistence end-to-end.)"""
+    from types import SimpleNamespace
+    from PySide6.QtWidgets import QMainWindow
+    from PySide6.QtGui import QAction
+    import PyReconstruct.modules.gui.main.field_widget_1_base as fwmod
+    from PyReconstruct.modules.gui.main.main_window import MainWindow
+
+    monkeypatch.setattr(mgrmod, "table_type_classes", _stub_table_classes())
+    _clear("open_tables", "lists_panel_collapsed")
+
+    def boot():
+        series = Series.__new__(Series)
+        series.options = {}
+        series.filepath = "/nonexistent/not-a-welcome.ser"  # isWelcomeSeries -> False
+        win = QMainWindow()
+        mgr = mgrmod.TableManager(series, None, None, win)
+
+        field = fwmod.FieldWidgetBase.__new__(fwmod.FieldWidgetBase)
+        field.series = series
+        field.section = None
+        field.table_manager = mgr
+        field._restoreOpenTables()  # createField step
+
+        mw = MainWindow.__new__(MainWindow)
+        mw.field = SimpleNamespace(table_manager=mgr)
+        mw.togglelistspanel_act = QAction()
+        mw.togglelistspanel_act.setCheckable(True)
+        mw._applyListsPanelState()  # openSeries-after-createMenuBar step
+        return series, mgr, mw
+
+    # Boot 1: defaults -> Object auto-opens, panel expanded
+    _, mgr1, mw1 = boot()
+    assert mgr1.tables["object"], "Object list did not auto-open"
+    assert mgr1.tables["object"][0].isHidden() is False
+    assert mw1.togglelistspanel_act.isChecked() is False
+
+    # User collapses the panel
+    mw1.toggleListsPanel()
+    assert mgr1.tables["object"][0].isHidden() is True
+
+    # Boot 2 = restart: same global QSettings
+    series2, mgr2, mw2 = boot()
+    assert series2.getOption("open_tables") == ["object"]        # open_tables persisted
+    assert mgr2.tables["object"], "Object list not restored after restart"
+    assert mgr2.tables["object"][0].isHidden() is True            # collapse persisted + applied
+    assert mw2.togglelistspanel_act.isChecked() is True          # checkbox synced
