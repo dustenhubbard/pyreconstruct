@@ -183,8 +183,8 @@ def test_b2_tab_group_survives_anchor_close(qapp, monkeypatch):
 # --- B3: auto-open promoted lists + keep open_tables synced -----------------------
 
 class _FakeSeries:
-    def __init__(self, open_tables=("object",), welcome=False):
-        self._opts = {"open_tables": list(open_tables)}
+    def __init__(self, open_tables=("object",), welcome=False, collapsed=False):
+        self._opts = {"open_tables": list(open_tables), "lists_panel_collapsed": collapsed}
         self._welcome = welcome
 
     def getOption(self, k):
@@ -285,3 +285,79 @@ def test_b3_restore_skips_invalid_types():
     fw, opened = _bare_field(_FakeSeries(["object", "bogus", "trace"]))
     fw._restoreOpenTables()
     assert opened == ["object", "trace"]
+
+
+# --- B4: collapse/expand toggle for the left lists panel --------------------------
+
+def _win_with_docks(qty_by_type):
+    from PySide6.QtWidgets import QMainWindow, QDockWidget
+    from PySide6.QtCore import Qt
+    win = QMainWindow()
+    tables = {tt: [] for tt in mgrmod.table_type_classes}
+    for tt, n in qty_by_type.items():
+        for _ in range(n):
+            d = QDockWidget(win)
+            win.addDockWidget(Qt.LeftDockWidgetArea, d)
+            tables[tt].append(d)
+    return win, tables
+
+
+def test_b4_listsPanelCollapsed_reads_option():
+    mgr = _bare_manager(_FakeSeries(collapsed=True))
+    assert mgr.listsPanelCollapsed() is True
+    mgr.series.setOption("lists_panel_collapsed", False)
+    assert mgr.listsPanelCollapsed() is False
+
+
+def test_b4_set_collapsed_hides_and_shows_all_left_docks(qapp):
+    win, tables = _win_with_docks({"object": 1, "trace": 1})
+    mgr = _bare_manager(_FakeSeries(["object", "trace"]))
+    mgr.tables = tables
+
+    mgr.setListsPanelCollapsed(True)
+    assert all(d.isHidden() for ds in tables.values() for d in ds)
+    assert mgr.series.getOption("lists_panel_collapsed") is True
+
+    mgr.setListsPanelCollapsed(False)
+    assert not any(d.isHidden() for ds in tables.values() for d in ds)
+    assert mgr.series.getOption("lists_panel_collapsed") is False
+
+
+def test_b4_collapse_does_not_close_docks_or_change_open_tables(qapp):
+    # collapse hides (not closes) so open_tables is untouched
+    win, tables = _win_with_docks({"object": 1, "trace": 1})
+    s = _FakeSeries(["object", "trace"])
+    mgr = _bare_manager(s)
+    mgr.tables = tables
+    mgr.setListsPanelCollapsed(True)
+    assert s.getOption("open_tables") == ["object", "trace"]
+    assert tables["object"] and tables["trace"]  # still tracked/open
+
+
+def test_b4_mainwindow_toggle_flips_state_and_checkbox(qapp):
+    from PyReconstruct.modules.gui.main.main_window import MainWindow
+    from PySide6.QtGui import QAction
+
+    win, tables = _win_with_docks({"object": 1})
+    s = _FakeSeries(["object"], collapsed=False)
+    mgr = _bare_manager(s)
+    mgr.tables = tables
+
+    mw = MainWindow.__new__(MainWindow)
+
+    class _Field:
+        pass
+
+    mw.field = _Field()
+    mw.field.table_manager = mgr
+    mw.togglelistspanel_act = QAction()
+    mw.togglelistspanel_act.setCheckable(True)
+
+    mw.toggleListsPanel()
+    assert tables["object"][0].isHidden() is True
+    assert s.getOption("lists_panel_collapsed") is True
+    assert mw.togglelistspanel_act.isChecked() is True
+
+    mw.toggleListsPanel()
+    assert tables["object"][0].isHidden() is False
+    assert mw.togglelistspanel_act.isChecked() is False

@@ -99,6 +99,18 @@ class TableManager():
         if self.tables.get(table_type):
             return
         self._syncOpenTables(table_type, False)
+
+    def listsPanelCollapsed(self) -> bool:
+        """Whether the left lists panel is collapsed (global preference)."""
+        return self.series.getOption("lists_panel_collapsed")
+
+    def setListsPanelCollapsed(self, collapsed : bool):
+        """Hide/show every list dock and persist the choice. Collapse HIDES the
+        docks (it does not close them), so open_tables is untouched."""
+        for tt in self.tables:
+            for t in self.tables[tt]:
+                t.setHidden(collapsed)
+        self.series.setOption("lists_panel_collapsed", collapsed)
     
     def updateObjects(self, obj_names : list = None, clear_tracking=True):
         """Update the object info for the OBJECT AND TRACE LISTS ONLY.

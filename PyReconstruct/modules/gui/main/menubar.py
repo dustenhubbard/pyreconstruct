@@ -348,6 +348,7 @@ def return_view_menu(self):
             ("findview_act", "Set zoom when finding contours...", "", self.setFindZoom),
             None,
             ("toggleztraces_act", "Toggle show Z-traces", "", self.toggleZtraces),
+            ("togglelistspanel_act", "Collapse lists panel", "checkbox", self.toggleListsPanel),
             None,
             {
                 "attr_name": "palettemenu",

@@ -1621,7 +1621,14 @@ class MainWindow(QMainWindow):
         self.field.deselectAllTraces()
         self.series.setOption("show_ztraces", not self.series.getOption("show_ztraces"))
         self.field.generateView(generate_image=False)
-    
+
+    def toggleListsPanel(self):
+        """Collapse/expand the left lists dock panel (UI v1 Slice 3)."""
+        manager = self.field.table_manager
+        collapsed = not manager.listsPanelCollapsed()
+        manager.setListsPanelCollapsed(collapsed)
+        self.togglelistspanel_act.setChecked(collapsed)
+
     def setToObject(self, obj_name : str, section_num : int):
         """Focus the field on an object from a specified section.
         
