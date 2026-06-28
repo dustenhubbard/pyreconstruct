@@ -178,3 +178,102 @@ def test_b2_tab_group_survives_anchor_close(qapp, monkeypatch):
     group = set(win.tabifiedDockWidgets(mgr.tables["trace"][0]))
     assert mgr.tables["ztrace"][0] in group
     assert mgr.tables["flag"][0] in group  # one group, not fragmented
+
+
+# --- B3: auto-open promoted lists + keep open_tables synced -----------------------
+
+class _FakeSeries:
+    def __init__(self, open_tables=("object",), welcome=False):
+        self._opts = {"open_tables": list(open_tables)}
+        self._welcome = welcome
+
+    def getOption(self, k):
+        return self._opts[k]
+
+    def setOption(self, k, v):
+        self._opts[k] = v
+
+    def isWelcomeSeries(self):
+        return self._welcome
+
+
+def _bare_manager(series):
+    mgr = mgrmod.TableManager.__new__(mgrmod.TableManager)
+    mgr.series = series
+    mgr.tables = {tt: [] for tt in mgrmod.table_type_classes}
+    mgr._suppress_open_tables_sync = False
+    return mgr
+
+
+def test_b3_sync_adds_type_to_open_tables():
+    s = _FakeSeries(["object"])
+    mgr = _bare_manager(s)
+    mgr._syncOpenTables("trace", True)
+    assert s.getOption("open_tables") == ["object", "trace"]
+    mgr._syncOpenTables("trace", True)  # idempotent
+    assert s.getOption("open_tables") == ["object", "trace"]
+
+
+def test_b3_onclosed_removes_type_when_last_closes():
+    s = _FakeSeries(["object", "trace"])
+    mgr = _bare_manager(s)
+    mgr.tables["trace"] = []  # last trace dock just removed itself
+    mgr.onTableClosed("trace")
+    assert s.getOption("open_tables") == ["object"]
+
+
+def test_b3_onclosed_keeps_type_if_another_still_open():
+    s = _FakeSeries(["object", "trace"])
+    mgr = _bare_manager(s)
+    mgr.tables["trace"] = ["still-open"]  # another trace dock remains
+    mgr.onTableClosed("trace")
+    assert s.getOption("open_tables") == ["object", "trace"]
+
+
+def test_b3_closeall_suppresses_sync():
+    s = _FakeSeries(["object", "trace"])
+    mgr = _bare_manager(s)
+    mgr._suppress_open_tables_sync = True
+    mgr.tables["trace"] = []
+    mgr.onTableClosed("trace")
+    assert s.getOption("open_tables") == ["object", "trace"]  # preserved across teardown
+
+
+def test_b3_sync_does_not_corrupt_global_default():
+    from PyReconstruct.modules.datatypes.default_settings import default_settings
+
+    _clear("open_tables")
+    s = Series.__new__(Series)
+    s.options = {}
+    mgr = _bare_manager(s)
+    snapshot = list(default_settings["open_tables"])
+    mgr._syncOpenTables("trace", True)  # would corrupt the default if it mutated the alias
+    assert default_settings["open_tables"] == snapshot
+    assert s.getOption("open_tables") == ["object", "trace"]
+
+
+def _bare_field(series):
+    import PyReconstruct.modules.gui.main.field_widget_1_base as fwmod
+    fw = fwmod.FieldWidgetBase.__new__(fwmod.FieldWidgetBase)
+    fw.series = series
+    fw.section = object()
+    opened = []
+
+    class FakeMgr:
+        def newTable(self, lt, section=None):
+            opened.append(lt)
+
+    fw.table_manager = FakeMgr()
+    return fw, opened
+
+
+def test_b3_restore_opens_saved_tables():
+    fw, opened = _bare_field(_FakeSeries(["object", "trace"]))
+    fw._restoreOpenTables()
+    assert opened == ["object", "trace"]
+
+
+def test_b3_restore_skips_welcome_series():
+    fw, opened = _bare_field(_FakeSeries(["object"], welcome=True))
+    fw._restoreOpenTables()
+    assert opened == []

@@ -40,6 +40,9 @@ class TableManager():
 
         # allow the list docks to nest/tab into a single group (UI v1 Slice 3)
         self.mainwindow.setDockNestingEnabled(True)
+
+        # guards open_tables persistence during programmatic teardown (closeAll)
+        self._suppress_open_tables_sync = False
     
     def newTable(self, table_type : str, section=None):
         """Create a new object list widget."""
@@ -72,6 +75,30 @@ class TableManager():
         self.mainwindow.addDockWidget(Qt.LeftDockWidgetArea, new_table)
         if anchor is not None:
             self.mainwindow.tabifyDockWidget(anchor, new_table)
+
+        self._syncOpenTables(table_type, True)
+
+    def _syncOpenTables(self, table_type : str, is_open : bool):
+        """Add/remove a list type from the global open_tables option so the panel
+        restores the same lists next open. Writes back a NEW list (the qsettings
+        defaults are a shallow copy, so never mutate the returned list in place)."""
+        if self._suppress_open_tables_sync or self.series is None:
+            return
+        current = list(self.series.getOption("open_tables"))
+        if is_open and table_type not in current:
+            current.append(table_type)
+        elif not is_open and table_type in current:
+            current.remove(table_type)
+        else:
+            return
+        self.series.setOption("open_tables", current)
+
+    def onTableClosed(self, table_type : str):
+        """Called from DataTable.closeEvent after a dock removes itself; drop the
+        type from open_tables only when no dock of that type remains."""
+        if self.tables.get(table_type):
+            return
+        self._syncOpenTables(table_type, False)
     
     def updateObjects(self, obj_names : list = None, clear_tracking=True):
         """Update the object info for the OBJECT AND TRACE LISTS ONLY.
@@ -200,7 +227,13 @@ class TableManager():
     def closeAll(self):
         """Close all tables."""
         # iterate a copy: each close() fires closeEvent, which removes the table
-        # from self.tables[name] mid-iteration (data_table.py) and would skip tables
-        for n, l in self.tables.items():
-            for t in l.copy():
-                t.close()
+        # from self.tables[name] mid-iteration (data_table.py) and would skip tables.
+        # suppress open_tables sync: this is programmatic teardown (e.g. series
+        # switch), not the user closing lists, so the saved preference must persist.
+        self._suppress_open_tables_sync = True
+        try:
+            for n, l in self.tables.items():
+                for t in l.copy():
+                    t.close()
+        finally:
+            self._suppress_open_tables_sync = False
