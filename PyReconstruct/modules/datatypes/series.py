@@ -1283,7 +1283,7 @@ class Series():
                         
                 attrs_migrated = True
             
-            if snum not in sections:  # skip sections that are not included
+            if sections is not None and snum not in sections:  # None = all sections
                 continue
 
             traces = []

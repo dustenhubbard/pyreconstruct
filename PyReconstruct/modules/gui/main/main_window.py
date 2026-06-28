@@ -809,7 +809,8 @@ class MainWindow(QMainWindow):
                 
         if not zarr_fp.endswith("zarr"):
             notify("Selected file is not a valid zarr.")
-        
+            return
+
         groups = [f for f in os.listdir(zarr_fp) if not f.startswith(".") and not f=="raw"]
 
         structure = [
@@ -1807,7 +1808,8 @@ class MainWindow(QMainWindow):
             
             if len(names) == 0:
                 notify("Please select traces for calibration.")
-            
+                return
+
             # prompt user for length of each trace name
             trace_lengths = {}
             for name in names:
@@ -1840,7 +1842,8 @@ class MainWindow(QMainWindow):
             return
         if response <= 0:
             notify("Magnification cannot be less than or equal to zero.")
-        
+            return
+
         self.saveAllData()
         
         self.field.setMag(response)
@@ -3110,7 +3113,8 @@ class MainWindow(QMainWindow):
                 
         if not zarr_fp.endswith("zarr"):  # TODO: Validate zarrs more appropriately
             notify("Selected file is not a valid zarr.")
-        
+            return
+
         groups = [f for f in os.listdir(zarr_fp) if not f.startswith(".") and not f=="raw"]
 
         structure = [
