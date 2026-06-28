@@ -37,9 +37,9 @@ TOOL_SVGS = {
     # belly to the tip) with a FILLED grip.
     "knife": _svg(
         '<g transform="rotate(-40 12 12)">'
-        '<path d="M22 10L9 6.7 9 16.3Q16.5 16.3 22 10Z" fill="none" '
+        '<path d="M23 10.5L9 8 9 14Q17 13.4 23 10.5Z" fill="none" '
         'stroke="#000000" stroke-width="1.7" stroke-linejoin="round"/>'
-        '<rect x="2.3" y="9.4" width="7.2" height="4.2" rx="2" fill="#000000"/>'
+        '<rect x="2.3" y="9.4" width="7.4" height="4.2" rx="2" fill="#000000"/>'
         '</g>'
     ),
     # scissors — literal scissors (two finger loops + crossed blades)
