@@ -37,6 +37,9 @@ class TableManager():
         self.section = section
         self.mainwindow = mainwindow
         self.series_states = series_states
+
+        # allow the list docks to nest/tab into a single group (UI v1 Slice 3)
+        self.mainwindow.setDockNestingEnabled(True)
     
     def newTable(self, table_type : str, section=None):
         """Create a new object list widget."""
@@ -55,9 +58,20 @@ class TableManager():
             )
         
         new_table = table_type_classes[table_type](*args)
+
+        # find an already-open list dock to tab the new one onto, so all list
+        # types share a single left dock group (UI v1 Slice 3)
+        anchor = None
+        for tt in self.tables:
+            if self.tables[tt]:
+                anchor = self.tables[tt][0]
+                break
+
         self.tables[table_type].append(new_table)
 
         self.mainwindow.addDockWidget(Qt.LeftDockWidgetArea, new_table)
+        if anchor is not None:
+            self.mainwindow.tabifyDockWidget(anchor, new_table)
     
     def updateObjects(self, obj_names : list = None, clear_tracking=True):
         """Update the object info for the OBJECT AND TRACE LISTS ONLY.
@@ -185,6 +199,8 @@ class TableManager():
     
     def closeAll(self):
         """Close all tables."""
+        # iterate a copy: each close() fires closeEvent, which removes the table
+        # from self.tables[name] mid-iteration (data_table.py) and would skip tables
         for n, l in self.tables.items():
-            for t in l:
+            for t in l.copy():
                 t.close()

@@ -74,3 +74,87 @@ def test_b1_resolves_via_global_qsettings_not_internal_options():
     # value lives in global QSettings, readable by an independent instance
     other = _global_series()
     assert other.getOption("open_tables") == ["object", "ztrace"]
+
+
+# --- B2: tabify the list docks into one left group + fix closeAll skip-bug --------
+
+import PyReconstruct.modules.backend.table.manager as mgrmod  # noqa: E402
+
+
+class _StubDock:
+    """Stand-in for a DataTable: a no-widget object that mirrors the one behavior
+    closeAll depends on — closeEvent removing itself from manager.tables[name]."""
+    def __init__(self, manager, name):
+        self.manager = manager
+        self.name = name
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+        self.manager.tables[self.name].remove(self)  # mirrors data_table.py:351
+
+
+def test_b2_closeall_closes_every_table():
+    # Reproduces the mutate-while-iterate skip-bug: closing a table removes it from
+    # the same list closeAll iterates, so a plain `for t in l` skips half.
+    mgr = mgrmod.TableManager.__new__(mgrmod.TableManager)
+    mgr.tables = {tt: [] for tt in mgrmod.table_type_classes}
+    tables = [_StubDock(mgr, "object") for _ in range(4)]
+    mgr.tables["object"].extend(tables)
+
+    mgr.closeAll()
+
+    assert mgr.tables["object"] == [], "closeAll left tables open (skip-bug)"
+    assert all(t.closed for t in tables), "not every table received close()"
+
+
+def _qmainwindow():
+    from PySide6.QtWidgets import QMainWindow
+    return QMainWindow()
+
+
+def _stub_table_classes():
+    from PySide6.QtWidgets import QDockWidget, QWidget
+
+    class StubTableDock(QDockWidget):
+        def __init__(self, *args):
+            super().__init__()
+            self.setWidget(QWidget())
+
+    return {k: StubTableDock for k in mgrmod.table_type_classes}
+
+
+def test_b2_init_enables_dock_nesting(qapp):
+    win = _qmainwindow()
+    mgrmod.TableManager(None, None, None, win)
+    assert win.isDockNestingEnabled() is True
+
+
+def test_b2_newtable_tabifies_into_one_left_group(qapp, monkeypatch):
+    from PySide6.QtCore import Qt
+
+    monkeypatch.setattr(mgrmod, "table_type_classes", _stub_table_classes())
+    win = _qmainwindow()
+    mgr = mgrmod.TableManager(None, None, None, win)
+
+    for tt in ("object", "trace", "ztrace"):
+        mgr.newTable(tt)
+
+    obj_dock = mgr.tables["object"][0]
+    for tt in ("object", "trace", "ztrace"):
+        d = mgr.tables[tt][0]
+        assert win.dockWidgetArea(d) == Qt.LeftDockWidgetArea
+
+    tabbed = set(win.tabifiedDockWidgets(obj_dock))
+    assert mgr.tables["trace"][0] in tabbed
+    assert mgr.tables["ztrace"][0] in tabbed
+
+
+def test_b2_newtable_single_dock_no_crash(qapp, monkeypatch):
+    from PySide6.QtCore import Qt
+
+    monkeypatch.setattr(mgrmod, "table_type_classes", _stub_table_classes())
+    win = _qmainwindow()
+    mgr = mgrmod.TableManager(None, None, None, win)
+    mgr.newTable("object")  # no tabify partner — must not raise
+    assert win.dockWidgetArea(mgr.tables["object"][0]) == Qt.LeftDockWidgetArea

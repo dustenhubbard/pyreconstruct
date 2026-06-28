@@ -43,3 +43,13 @@ def _isolate_qsettings(tmp_path_factory):
     )
 
     yield cfg
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    """A single QApplication for widget tests (offscreen). Reuses the singleton so it
+    coexists with any module-local qapp fixtures."""
+    pytest.importorskip("PySide6")
+    from PySide6.QtWidgets import QApplication
+
+    return QApplication.instance() or QApplication([])
