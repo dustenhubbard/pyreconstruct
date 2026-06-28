@@ -58,7 +58,9 @@ def test_render_tints_opaque_pixels(qapp):
     from PySide6.QtGui import QColor
     color = "#4c8dff"
     target = QColor(color)
-    pm = icons.render_svg_tinted(icon_svgs.TOOL_SVGS["knife"], 40, color)
+    # use a solid-filled icon (pointer) so there are plenty of fully-opaque
+    # pixels to assert exactness on; thin line-art icons are mostly anti-aliased
+    pm = icons.render_svg_tinted(icon_svgs.TOOL_SVGS["pointer"], 40, color)
     assert not pm.isNull() and pm.size().width() == 40
     img = pm.toImage()
     opaque = exact = 0
