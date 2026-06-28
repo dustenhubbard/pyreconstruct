@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "pyreconstruct"
 dynamic = ["version"]
 description = "RECONSTRUCT in Python"
-readme = "readme.md"
+readme = "README.md"
 requires-python = ">=3.11,<3.12"
 license = { text = "GPL-3.0-or-later" }
 authors = [
