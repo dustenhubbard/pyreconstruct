@@ -72,6 +72,10 @@ class MainWindow(QMainWindow):
         ## Prompt for username
         self.changeUsername()
 
+        ## Opt-in background update check (frozen builds), once the window is up
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(2500, self.checkForUpdatesStartup)
+
     def openWelcomeSeries(self):
         """Open a welcome series."""
 
@@ -2575,141 +2579,104 @@ class MainWindow(QMainWindow):
         clipboard.setText(repo_info["commit"])
 
     def checkForUpdates(self):
-        """Check for and apply an update from the user's selected channel.
+        """Manual update check (Help -> Check for updates).
 
-        Frozen (installed) builds download the matching installer from GitHub
-        Releases and launch it; source/pip installs reuse the cli pip+git path.
+        Frozen builds query GitHub Releases off the GUI thread, then present the
+        UpdateDialog (the download + verify happen there). Source/pip installs
+        reuse the cli pip+git path.
         """
         if self._updater_pool is not None:
             notify("An update is already in progress.")
             return
-
         if install_kind() == "source":
             self._updateFromSource()
             return
-
         channel = self.series.getOption("update_channel")
-        try:
-            info = check_for_update(channel)
-        except Exception as e:
-            notify(f"Could not check for updates:\n{e}")
-            return
-
-        if info["asset"] is None:
-            notify("No installer is available for your platform on this channel yet.")
-            return
-
-        status = info["status"]
-        remote, local = info["remote_version"], info["local_version"]
-        if status == "same":
-            notify(f"You're already up to date (version {local}).")
-            return
-        elif status == "newer":
-            if not notifyConfirm(
-                f"An update is available: {remote} (you have {local}).\n\nDownload and install now?",
-                yn=True,
-            ):
-                return
-        elif status == "older":
-            if not notifyConfirm(
-                f"The {channel} build ({remote}) is older than your version ({local}).\n\n"
-                "Install it anyway (downgrade)?",
-                yn=True,
-            ):
-                return
-        else:  # unknown
-            if not notifyConfirm(
-                f"Couldn't compare versions (remote {remote}, current {local}).\n\n"
-                f"Download and install the {channel} build anyway?",
-                yn=True,
-            ):
-                return
-
-        self._downloadAndInstall(info)
-
-    def _downloadAndInstall(self, info):
-        """Download the chosen release asset in a worker, then launch it."""
-        asset = info["asset"]
-        name = asset["name"]
-        url = asset["browser_download_url"]
-        release = info["release"]
-
-        # download into a private 0700 dir so the predictable asset name can't
-        # be pre-created/symlinked by another local user
-        tmpdir = tempfile.mkdtemp(prefix="pyrecon-update-")
-        dest = str(Path(tmpdir) / name)
-
-        progbar = getProgbar(f"Downloading {name}…", cancel=True, maximum=100)
-        # keep the dialog from auto-resetting/closing at 100% before the result handler runs
-        if hasattr(progbar, "setAutoReset"):
-            progbar.setAutoReset(False)
-            progbar.setAutoClose(False)
-        # cancel via a thread-safe flag set on the GUI thread (no cross-thread widget reads)
-        cancel_event = threading.Event()
-        if hasattr(progbar, "canceled"):
-            progbar.canceled.connect(cancel_event.set)
-
-        pool = ThreadPool()
-        self._updater_pool = pool  # in-flight guard + keeps the pool alive
-
-        def _job():
-            sha = download_asset(
-                url, dest,
-                progress_cb=worker.signals.progress.emit,
-                cancel_cb=cancel_event.is_set,
-            )
-            status, expected = fetch_checksum(release, name)  # network, off the GUI thread
-            return (sha, status, expected)
-
-        worker = pool.createWorker(_job)
-        worker.signals.progress.connect(lambda p: progbar.setValue(min(p, 99)))
-        worker.signals.result.connect(
-            lambda res: self._onUpdateDownloaded(res, dest, tmpdir, name, progbar)
+        progbar = getProgbar("Checking for updates…", cancel=False, maximum=0)
+        self._runUpdateCheck(
+            channel,
+            on_result=lambda info: (progbar.close(), self._onCheckResult(info, channel, manual=True)),
+            on_error=lambda exc: (progbar.close(), notify(f"Could not check for updates:\n{exc}")),
         )
-        worker.signals.error.connect(lambda err: self._onUpdateError(err, tmpdir, progbar))
+
+    def _runUpdateCheck(self, channel, on_result, on_error):
+        """Resolve the available update off the GUI thread, then dispatch."""
+        pool = ThreadPool()
+        self._updater_pool = pool
+        worker = pool.createWorker(lambda: check_for_update(channel))
+
+        def _done(info):
+            self._updater_pool = None
+            on_result(info)
+
+        def _err(err):
+            self._updater_pool = None
+            exc = err[1] if isinstance(err, (tuple, list)) and len(err) >= 2 else err
+            on_error(exc)
+
+        worker.signals.result.connect(_done)
+        worker.signals.error.connect(_err)
         pool.start(worker)
 
-    def _onUpdateDownloaded(self, result, dest, tmpdir, name, progbar):
-        """Verify the download, then defer the installer launch to the app close."""
-        self._updater_pool = None  # release the in-flight guard
-        progbar.close()
-        sha, checksum_status, expected = result
-
-        if checksum_status == "ok":
-            if sha.lower() != expected.lower():
-                self._cleanupUpdateDir(tmpdir)
-                notify("Update failed verification (checksum mismatch). Nothing was installed.")
-                return
-        elif checksum_status == "error":
-            self._cleanupUpdateDir(tmpdir)
-            notify("Couldn't verify the download (checksum unreachable). Not installing — please try again.")
+    def _onCheckResult(self, info, channel, manual):
+        """Open the update dialog (or, for a manual check, report status)."""
+        if info["asset"] is None:
+            if manual:
+                notify("No installer is available for your platform on this channel yet.")
             return
-        else:  # "missing": no checksum was published for this asset
-            if not notifyConfirm(
-                "The download couldn't be checksum-verified (none was published).\n\nInstall anyway?",
-                yn=True,
-            ):
-                self._cleanupUpdateDir(tmpdir)
+        if info["status"] == "same":
+            if manual:
+                notify(f"You're already up to date (version {info['local_version']}).")
+            return
+        if not manual and info["status"] != "newer":
+            return  # the background check only surfaces a genuine upgrade
+        from PyReconstruct.modules.gui.dialog.update_dialog import UpdateDialog
+        dialog = UpdateDialog(self, info, channel)
+        # the dialog downloads + verifies, sets _pending_installer, and accepts;
+        # closing then launches the installer (see closeEvent).
+        if dialog.exec() and self._pending_installer:
+            self.close()
+
+    def checkForUpdatesStartup(self):
+        """Opt-in background check on launch; quietly surfaces a genuine upgrade.
+
+        Frozen builds only, gated to once per 24h via QSettings so it never burns
+        the anonymous GitHub rate limit. Any failure is swallowed — a background
+        convenience must never disrupt startup.
+        """
+        try:
+            if install_kind() != "frozen" or self.series is None:
                 return
+            if not self.series.getOption("update_check_on_startup"):
+                return
+            import time
+            settings = QSettings("KHLab", "PyReconstruct")
+            try:
+                last = float(settings.value("last_update_check_epoch", 0) or 0)
+            except (TypeError, ValueError):
+                last = 0
+            if time.time() - last < 24 * 3600:
+                return
+            settings.setValue("last_update_check_epoch", time.time())
+            channel = self.series.getOption("update_channel")
+            self._runUpdateCheck(
+                channel,
+                on_result=lambda info: self._onStartupCheck(info, channel),
+                on_error=lambda exc: None,  # silent on a background failure
+            )
+        except Exception:
+            pass
 
-        # Launch only after the window has actually closed (see closeEvent), so a
-        # cancelled save prompt doesn't leave the installer running on a live app.
-        self._pending_installer = dest
-        self._pending_update_dir = tmpdir
-        notify(
-            "Download complete. PyReconstruct will close and the installer will open — "
-            "follow its prompts, then relaunch PyReconstruct."
-        )
-        self.close()
-
-    def _onUpdateError(self, err, tmpdir, progbar):
-        self._updater_pool = None  # release the in-flight guard
-        progbar.close()
-        self._cleanupUpdateDir(tmpdir)
-        exc = err[1] if isinstance(err, (tuple, list)) and len(err) >= 2 else err
-        if isinstance(exc, UpdateCancelled):
-            return  # user cancelled the download — no message
-        notify(f"Update download failed:\n{exc}")
+    def _onStartupCheck(self, info, channel):
+        if not (info.get("asset") and info.get("status") == "newer"):
+            return
+        remote = info["remote_version"]
+        if self.statusbar:
+            self.statusbar.showMessage(
+                f"Update available: {remote}  —  Help ▸ Check for updates", 15000
+            )
+        if notifyConfirm(f"PyReconstruct {remote} is available.\n\nView the update now?", yn=True):
+            self._onCheckResult(info, channel, manual=True)
 
     @staticmethod
     def _cleanupUpdateDir(tmpdir):
