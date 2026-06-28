@@ -157,6 +157,10 @@ default_settings = {
     "scale_bar_width": 25,  # displayed as this percentage of the screen (min should be 20)
     "show_scale_bar_text": True,
     "show_scale_bar_ticks": True,
+
+    # lists panel (UI v1 Slice 3) — global, not per-series
+    "lists_panel_collapsed": False,    # left list-dock group collapsed?
+    "open_tables": ["object"],         # which list docks auto-open (Object promoted/default-on)
 }
 
 default_series_settings = {
