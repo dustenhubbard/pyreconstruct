@@ -32,14 +32,18 @@ TOOL_SVGS = {
         'L5 13.5c-.7-1 .6-2.3 1.7-1.6L8 13" fill="none" stroke="#000000" '
         'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'
     ),
-    # knife — chef's / kitchen knife on the diagonal (tip up-right, grip
-    # down-left, like the other tools): outline blade (straight spine + full
-    # belly to the tip) with a FILLED grip.
+    # knife — chef's knife matching the IconExperience reference: a wide OUTLINE
+    # blade (tip lower-left), a solid bolster collar, a FILLED (darkened) handle,
+    # and a ring/loop at the end. Built horizontally then rotated to the
+    # reference's tip-down-left pose. Proportions traced from the reference.
     "knife": _svg(
-        '<g transform="rotate(-40 12 12)">'
-        '<path d="M23 10.5L9 8 9 14Q17 13.4 23 10.5Z" fill="none" '
-        'stroke="#000000" stroke-width="1.7" stroke-linejoin="round"/>'
-        '<rect x="2.3" y="9.4" width="7.4" height="4.2" rx="2" fill="#000000"/>'
+        '<g transform="rotate(-45 12 12)">'
+        '<path d="M-1.5 12 14.5 9 14.5 15.4Q6 16.2 -1.5 12Z" fill="none" '
+        'stroke="#000000" stroke-width="1.2" stroke-linejoin="round"/>'
+        '<path d="M14.2 9.2 15.9 9.2 15.9 15.2 14.2 15.2Z" fill="#000000"/>'
+        '<rect x="15.8" y="10.1" width="4.9" height="3.8" rx="1.9" fill="#000000"/>'
+        '<circle cx="22.6" cy="12" r="2.3" fill="none" stroke="#000000" '
+        'stroke-width="1.7"/>'
         '</g>'
     ),
     # scissors — literal scissors (two finger loops + crossed blades)
