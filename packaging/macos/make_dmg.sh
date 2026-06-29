@@ -18,7 +18,7 @@ STAGE="$(mktemp -d)/PyReconstruct"
 mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"   # drag-and-drop target in the mounted dmg
-cp "$(dirname "$0")/dmg-readme.txt" "$STAGE/How to open PyReconstruct.txt"  # unsigned-app first-launch help
+cp "$(dirname "$0")/dmg-readme.txt" "$STAGE/Read Before First Launch.txt"  # unsigned-app first-launch help
 
 hdiutil create -volname "PyReconstruct ${PYR_PUBLIC}" -srcfolder "$STAGE" \
     -fs HFS+ -format UDZO -ov "$OUT"
