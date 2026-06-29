@@ -3,7 +3,30 @@ import re
 
 from PySide6.QtWidgets import QWidget, QStyle, QSlider
 from PySide6.QtGui import QIcon, QPixmap, QColor, QFont
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize, Qt, QSettings
+
+# Palette-visibility preferences are global (a UI choice, not per-series) and
+# persist across launches. Map each in-memory flag to its QSettings key.
+PALETTE_VIS_KEYS = {
+    "palette_hidden": "palette/trace_hidden",
+    "inc_hidden":     "palette/inc_hidden",
+    "bc_hidden":      "palette/bc_hidden",
+    "sb_hidden":      "palette/sb_hidden",
+}
+
+
+def load_palette_visibility(settings : QSettings) -> dict:
+    """Read the persisted palette-visibility flags (default: all shown)."""
+    return {
+        attr: settings.value(key, False, type=bool)
+        for attr, key in PALETTE_VIS_KEYS.items()
+    }
+
+
+def save_palette_visibility(settings : QSettings, state : dict) -> None:
+    """Persist the palette-visibility flags."""
+    for attr, key in PALETTE_VIS_KEYS.items():
+        settings.setValue(key, bool(state[attr]))
 
 from .buttons import PaletteButton, ModeButton, MoveableButton
 from .scale_bar import ScaleBar
@@ -90,17 +113,18 @@ class MousePalette():
         self.bc_y = 0.8
         self.createBCButtons()
 
-        self.palette_hidden = False
-        self.inc_hidden = False
-        self.bc_hidden = False
-        self.sb_hidden = False
-        
+        # restore persisted palette-visibility preferences (global, across launches)
+        self.loadVisibilityState()
+
         self.help_widget = None
 
         # create scale palette
         self.sb_x = 0.01
         self.sb_y = 0.99
         self.createSB()
+
+        # apply the restored visibility now that every palette widget exists
+        self.applyVisibilityState()
     
     def placeModeButton(self, button, pos : int):
         """Place the mode button in the main window.
@@ -598,29 +622,54 @@ class MousePalette():
             "sb": (fx1, fx2 - 10, fy1, fy2 - 50)
         }
 
+    def loadVisibilityState(self):
+        """Restore palette-visibility flags from the persisted preferences."""
+        for attr, value in load_palette_visibility(QSettings("KHLab", "PyReconstruct")).items():
+            setattr(self, attr, value)
+
+    def saveVisibilityState(self):
+        """Persist the current palette-visibility flags so they survive a restart."""
+        state = {attr: getattr(self, attr) for attr in PALETTE_VIS_KEYS}
+        save_palette_visibility(QSettings("KHLab", "PyReconstruct"), state)
+
+    def applyVisibilityState(self):
+        """Show/hide palette widgets to match the current visibility flags."""
+        for w in (self.palette_buttons + [self.label]):
+            w.hide() if self.palette_hidden else w.show()
+        for b in self.inc_buttons:
+            b.hide() if self.inc_hidden else b.show()
+        for b, slider in self.bc_widgets:
+            b.hide() if self.bc_hidden else b.show()
+            slider.hide() if self.bc_hidden else slider.show()
+        self.sb.hide() if self.sb_hidden else self.sb.show()
+
     def togglePalette(self):
         """Hide/Unhide the mouse palette."""
         self.palette_hidden = not self.palette_hidden
         for w in (self.palette_buttons + [self.label]):
             w.hide() if self.palette_hidden else w.show()
-    
+        self.saveVisibilityState()
+
     def toggleIncrement(self):
         """Hide/Unhide the increment buttons."""
         self.inc_hidden = not self.inc_hidden
         for b in self.inc_buttons:
             b.hide() if self.inc_hidden else b.show()
-    
+        self.saveVisibilityState()
+
     def toggleBC(self):
         """Hide/Unhide the brightness/contrast buttons."""
         self.bc_hidden = not self.bc_hidden
         for b, s in self.bc_widgets:
             b.hide() if self.bc_hidden else b.show()
             s.hide() if self.bc_hidden else s.show()
-    
+        self.saveVisibilityState()
+
     def toggleSB(self):
         """Hide/Unhide the scale bar."""
         self.sb_hidden = not self.sb_hidden
         self.sb.hide() if self.sb_hidden else self.sb.show()
+        self.saveVisibilityState()
     
     def resetPos(self):
         """Reset the positions of the buttons."""

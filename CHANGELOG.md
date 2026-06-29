@@ -12,6 +12,11 @@ the next tagged release.
 ## [Unreleased]
 
 ### Added
+- **"What's new" on first launch.** On the first launch of a new version — a
+  fresh install or after an update — PyReconstruct shows a dismissible "What's
+  new" dialog with that version's release notes, read from the bundled
+  `CHANGELOG.md` (offline-safe) with a link to the full notes on GitHub. It
+  appears once per version and is modeless, so it never blocks startup.
 - **Intel macOS installer.** CI now builds a native x86_64 `.dmg`
   (`PyReconstruct-<version>-macOS-x86_64.dmg`) on a `macos-15-intel` runner
   alongside the Apple Silicon arm64 build, so Intel Macs get a native installer.
@@ -45,6 +50,11 @@ the next tagged release.
 - Renamed the updater channels to **Release** and **Pre-release (experimental)**.
 
 ### Fixed
+- **No username prompt on launch.** Startup no longer opens a blocking "Enter
+  your username" dialog that stole focus and ignored a previously saved name.
+  The username is now resolved silently: a name saved on this machine is reused,
+  otherwise the OS login is used and saved. "Change username..." in the menu
+  still sets it explicitly.
 - Declared the `orjson` dependency in `pyproject.toml`. It powers the jser
   load/save speedups but was previously only in `requirements.txt`, so a
   pyproject-based install silently dropped it and lost both the speedup and the
