@@ -3011,10 +3011,12 @@ class MainWindow(QMainWindow):
     def setTheme(self, new_theme=None):
         """Set the UI theme.
 
-        Modes: "system" (follow the OS light/dark scheme), "light", "dark".
-        Persisted app-wide via QSettings; legacy "default"/"qdark" are accepted
-        and migrated. Called with None from the menu to prompt; called with a
-        stored value at startup / after the options dialog to (re)apply."""
+        Modes: "system" (follow the OS light/dark scheme), "light", "dark", and
+        the named "studio" (dark) / "atlas" (light) concept themes (the v1.30
+        UI overhaul's teal palette). Persisted app-wide via QSettings; legacy
+        "default"/"qdark" are accepted and migrated. Called with None from the
+        menu to prompt; called with a stored value at startup / after the
+        options dialog to (re)apply."""
         if new_theme is None:
             mode = theme.normalize_mode(self.series.getOption("theme"))
             structure = [
@@ -3022,7 +3024,9 @@ class MainWindow(QMainWindow):
                 [("radio",
                   ("System", mode == "system"),
                   ("Light", mode == "light"),
-                  ("Dark", mode == "dark"))]
+                  ("Dark", mode == "dark"),
+                  ("Studio (dark)", mode == "studio"),
+                  ("Atlas (light)", mode == "atlas"))]
             ]
             response, confirmed = QuickDialog.get(
                 self, structure, "Theme"
@@ -3036,6 +3040,10 @@ class MainWindow(QMainWindow):
                 new_theme = "light"
             elif response[0][2][1]:
                 new_theme = "dark"
+            elif response[0][3][1]:
+                new_theme = "studio"
+            elif response[0][4][1]:
+                new_theme = "atlas"
             else:
                 return
 
