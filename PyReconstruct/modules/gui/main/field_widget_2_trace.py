@@ -22,8 +22,7 @@ from PyReconstruct.modules.calc import (
     cutTraces,
 )
 from PyReconstruct.modules.gui.table import (
-    CopyTableWidget, 
-    getCopyTableWidget, 
+    CopyTableWidget,
     TraceTableWidget,
     ZtraceTableWidget
 )

@@ -1,4 +1,5 @@
-from .copy_table_widget import CopyTableWidget, getCopyTableWidget
+from .copy_table_widget import CopyTableWidget
+from .object_model import ObjectTableModel, ObjectTableView
 from .object import ObjectTableWidget
 from .section import SectionTableWidget
 from .trace import TraceTableWidget
