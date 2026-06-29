@@ -1,9 +1,13 @@
 import os
 import re
 
-from PySide6.QtWidgets import QWidget, QStyle, QSlider
-from PySide6.QtGui import QIcon, QPixmap, QColor, QFont
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtWidgets import (
+    QWidget, QStyle, QSlider, QFrame, QLabel, QVBoxLayout, QHBoxLayout,
+)
+from PySide6.QtGui import (
+    QIcon, QPixmap, QColor, QFont, QPainter, QPen, QPainterPath,
+)
+from PySide6.QtCore import QSize, Qt, QRectF
 
 from .buttons import PaletteButton, ModeButton, MoveableButton
 from .scale_bar import ScaleBar
@@ -20,6 +24,116 @@ from PyReconstruct.modules.gui.utils import icons as icon_utils
 from PyReconstruct.modules.gui.utils import theme
 
 
+class PaletteCard(QFrame):
+    """The floating tool-palette card — the v1 prototype's ``.palette``.
+
+    A rounded, faintly translucent panel that holds the mode buttons. Everything
+    is hand-painted in :meth:`paintEvent` (no ``QGraphicsEffect``, which Qt does
+    not apply under ``QWidget.render``/``grab`` and so would not show in the
+    offscreen preview): a layered soft drop shadow for the floating lift, the
+    rounded translucent body + hairline border (the translucency lets the field
+    show faintly through, standing in for the prototype's ``backdrop-filter:
+    blur`` — which Qt has no native equivalent for), and a soft accent halo
+    behind the active tool (the prototype's ``.tool.active`` glow).
+
+    The widget is larger than the visible card by :data:`SHADOW_MARGIN` on every
+    side so the cast shadow has room to fall without being clipped to the body.
+    """
+
+    #: transparent padding around the visible body, holding the cast shadow
+    SHADOW_MARGIN = 16
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.tool_buttons = []   # mode buttons, for drawing the active halo
+        self.dividers = []       # thin group separators
+        self.header = None       # the "TOOLS" caption
+        self._radius = 14.0      # prototype --r-lg
+        self._bg = QColor("#161b22")
+        self._bg.setAlphaF(0.92)
+        self._border = QColor("#2a313c")
+        self._accent = QColor(theme.ACCENT)
+        self._shadow_strength = 140  # peak shadow alpha (tuned per scheme)
+
+    def bodyRect(self) -> QRectF:
+        """The visible (rounded) card rect inside the shadow padding."""
+        m = self.SHADOW_MARGIN
+        return QRectF(self.rect()).adjusted(m, m, -m, -m)
+
+    def applyTheme(self, tokens: dict, accent_hex: str,
+                   alpha: float = 0.92, shadow_alpha: int = 140):
+        """Recolor the card, header, and dividers for the active theme."""
+        self._bg = QColor(tokens["panel"])
+        self._bg.setAlphaF(alpha)
+        self._border = QColor(tokens["hair"])
+        self._accent = QColor(accent_hex)
+        self._shadow_strength = shadow_alpha
+        if self.header is not None:
+            self.header.setStyleSheet(
+                "color: %s; background: transparent;" % tokens["txt_faint"]
+            )
+        for d in self.dividers:
+            line = getattr(d, "line", d)  # recolor the inset hairline
+            line.setStyleSheet(
+                "background-color: %s; border: 0px;" % tokens["hair"]
+            )
+        self.update()
+
+    @staticmethod
+    def _rounded(rect: QRectF, radius: float) -> QPainterPath:
+        path = QPainterPath()
+        path.addRoundedRect(rect, radius, radius)
+        return path
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        body = self.bodyRect()
+
+        # soft drop shadow (prototype --shadow): layered, offset-down rounded
+        # rects painted largest/faintest first.
+        steps = 12
+        for i in range(steps, 0, -1):
+            frac = i / steps
+            grow = frac * 7.0
+            dy = frac * 9.0 + 2.0
+            alpha = int(self._shadow_strength * (1.0 - frac) * 0.5) + 3
+            col = QColor(0, 0, 0, max(0, min(255, alpha)))
+            sr = body.adjusted(-grow, -grow + dy, grow, grow + dy)
+            p.fillPath(self._rounded(sr, self._radius + grow), col)
+
+        inner = body.adjusted(0.5, 0.5, -0.5, -0.5)
+        path = self._rounded(inner, self._radius)
+
+        # translucent body
+        p.fillPath(path, self._bg)
+
+        # active-tool halo, clipped to the body so it never bleeds past the
+        # rounded corners; the button paints its opaque accent fill on top,
+        # leaving the halo as a glow rim.
+        p.save()
+        p.setClipPath(path)
+        for b in self.tool_buttons:
+            if b.isChecked():
+                base = QRectF(b.geometry())
+                for grow, a in ((7.0, 42), (4.0, 70), (1.5, 105)):
+                    c = QColor(self._accent)
+                    c.setAlpha(a)
+                    gl = base.adjusted(-grow, -grow + 3.0, grow, grow + 3.0)
+                    p.fillPath(self._rounded(gl, 12.0), c)
+                break
+        p.restore()
+
+        # hairline border on top of body + halo
+        pen = QPen(self._border)
+        pen.setWidthF(1.0)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        p.drawPath(path)
+        p.end()
+
+
 class MousePalette():
 
     def __init__(self, mainwindow : QWidget):
@@ -34,7 +148,7 @@ class MousePalette():
         self.series = self.mainwindow.series
         self.series : Series
         
-        self.mblen = 40  # mode button size
+        self.mblen = 38  # mode (tool) button size — prototype .tool is 38px
         self.pblen = 40  # palette button size
         self.ibw = 90  # inc button width
         self.ibh = 35  # inc button height
@@ -42,21 +156,17 @@ class MousePalette():
 
         self.is_dragging = False
 
-        # create mode buttons
+        # active theme tokens for the floating tool-palette chrome
+        self._tokens = theme.tokens()
+
+        # create the floating tool palette (mode buttons in a docked card).
+        # mode_x/mode_y record which field edge the card is docked to (right by
+        # default, left when left-handed); the field's corner-text painter reads
+        # mode_x to stay clear of the palette, so it is kept in sync here.
         self.mode_x = 0.99
         self.mode_y = 0.01
         self.mode_buttons = {}
-        self.createModeButton("Pointer", 0)
-        self.createModeButton("Pan/Zoom", 1)
-        self.createModeButton("Knife", 2)
-        self.createModeButton("Scissors", 3)
-        self.createModeButton("Closed Trace", 4)
-        self.createModeButton("Open Trace", 5)
-        self.createModeButton("Stamp", 6)
-        self.createModeButton("Grid", 7)
-        self.createModeButton("Flag", 8)
-        self.createModeButton("Host", 9)
-        self.createModeButton("Ztool", 10)
+        self.createPaletteCard()
 
         # create palette buttons
         self.trace_x = 0.51
@@ -104,17 +214,6 @@ class MousePalette():
         self.sb_y = 0.99
         self.createSB()
     
-    def placeModeButton(self, button, pos : int):
-        """Place the mode button in the main window.
-        
-            Params:
-                button (ModeButton): the button to place
-                pos (int): the position of the button
-        """
-        x, y = self.getButtonCoords("mode")
-        y += (10 + self.mblen) * pos
-        button.setGeometry(x, y, self.mblen, self.mblen)
-    
     @staticmethod
     def _stripped(name : str) -> str:
         """Tool name -> icon key/filename (lower-cased, spaces/slashes removed)."""
@@ -124,81 +223,153 @@ class MousePalette():
         return stripped.lower()
 
     def _mode_icon_px(self) -> int:
-        """Render size for a mode icon — padded within the button like the
-        prototype (icon ~60% of the button)."""
-        return round(self.mblen * 0.6)
+        """Render size for a mode icon — 20px line icons inside the 38px tool
+        button, matching the prototype's ``.tool svg{width:20px}``."""
+        return 20
 
-    def refreshModeIcons(self):
-        """Re-tint the mode-button icons to the current theme. Call when the
-        theme changes (or the active tool changes) so the monochrome line icons
-        follow light/dark and the active tool pops like the prototype: accent
-        background + white icon, resting tools at the theme icon color."""
-        resting = theme.icon_color()
-        icon_px = self._mode_icon_px()
-        for name, (b, _mode, _pos) in self.mode_buttons.items():
-            stripped = self._stripped(name)
-            self._applyModeButtonStyle(b)
-            if icon_utils.has_icon(stripped):
-                color = theme.ACCENT_TEXT if b.isChecked() else resting
-                b.setIcon(icon_utils.tool_icon(stripped, icon_px, color))
-                b.setIconSize(QSize(icon_px, icon_px))
+    # tool display name -> the series option holding its keyboard shortcut, so
+    # the keycap hint + tooltip show the user's *current* (override-aware) key.
+    # Scissors and Ztool have no shortcut option (and so no keycap).
+    _SHORTCUT_OPTS = {
+        "Pointer": "usepointer_act",
+        "Pan/Zoom": "usepanzoom_act",
+        "Knife": "useknife_act",
+        "Closed Trace": "usectrace_act",
+        "Open Trace": "useotrace_act",
+        "Stamp": "usestamp_act",
+        "Grid": "usegrid_act",
+        "Flag": "useflag_act",
+        "Host": "usehost_act",
+    }
 
-    @staticmethod
-    def _applyModeButtonStyle(button):
-        """Give the active (checked) mode button the prototype's accent fill so
-        the selected tool reads as selected; resting buttons keep the chrome's
-        own styling. Re-applied on theme/active changes so it follows light/dark.
+    def _modeShortcut(self, name : str) -> str:
+        """The current keyboard shortcut for a mode (or "" if it has none)."""
+        opt = self._SHORTCUT_OPTS.get(name)
+        if not opt:
+            return ""
+        try:
+            return self.series.getOption(opt) or ""
+        except Exception:
+            return ""
+
+    def createPaletteCard(self):
+        """Build the floating tool-palette card and its mode buttons.
+
+        Buttons keep their original top-to-bottom order (which also encodes the
+        mouse-mode index); thin dividers separate them into the prototype's tool
+        families: navigate · cut · trace · annotate.
         """
-        if button.isChecked():
-            button.setStyleSheet(
-                "QPushButton { background-color: %s; border: 1px solid %s; "
-                "border-radius: 6px; }" % (theme.ACCENT, theme.ACCENT)
-            )
-        else:
-            button.setStyleSheet("")
+        self.tool_card = PaletteCard(self.mainwindow)
+        sm = PaletteCard.SHADOW_MARGIN
+        # pin to the button width + 7px padding (prototype --pal-w:52px) plus the
+        # transparent shadow margin, so the header caption can never widen the
+        # visible card past the prototype.
+        self.tool_card.setFixedWidth(self.mblen + 14 + 2 * sm)
+        layout = QVBoxLayout(self.tool_card)
+        layout.setContentsMargins(7 + sm, 6 + sm, 7 + sm, 7 + sm)
+        layout.setSpacing(3)
+
+        # "TOOLS" caption (prototype .ph)
+        header = QLabel("TOOLS", self.tool_card)
+        hf = QFont()
+        hf.setPixelSize(9)
+        hf.setBold(True)
+        hf.setLetterSpacing(QFont.AbsoluteSpacing, 0.7)
+        header.setFont(hf)
+        header.setAlignment(Qt.AlignHCenter)
+        header.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.tool_card.header = header
+        layout.addWidget(header)
+
+        # groups preserve the legacy order; (name, mouse_mode) — mouse_mode is
+        # the int passed to changeMouseMode and must stay 0..10 as before.
+        groups = [
+            [("Pointer", 0), ("Pan/Zoom", 1)],                       # navigate
+            [("Knife", 2), ("Scissors", 3)],                         # cut
+            [("Closed Trace", 4), ("Open Trace", 5), ("Stamp", 6)],  # trace
+            [("Grid", 7), ("Flag", 8), ("Host", 9), ("Ztool", 10)],  # annotate
+        ]
+        for gi, group in enumerate(groups):
+            if gi > 0:
+                div = self._makeDivider()
+                layout.addWidget(div)
+                self.tool_card.dividers.append(div)
+            for name, mouse_mode in group:
+                b = self.createModeButton(name, mouse_mode)
+                layout.addWidget(b, 0, Qt.AlignHCenter)
+                self.tool_card.tool_buttons.append(b)
+
+        # initial styling + placement
+        self.refreshModeIcons()
+        self.tool_card.show()
+        self.placePaletteCard()
+
+    def _makeDivider(self) -> QWidget:
+        """A thin, inset group separator (prototype .palette .div: 1px hairline
+        inset 6px from each edge). The hairline lives inside a transparent
+        wrapper whose layout supplies the inset (a bare QWidget's contentsMargins
+        do not inset its background fill)."""
+        wrap = QWidget(self.tool_card)
+        wrap.setFixedHeight(1)
+        wrap.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        h = QHBoxLayout(wrap)
+        h.setContentsMargins(6, 0, 6, 0)
+        h.setSpacing(0)
+        line = QWidget(wrap)
+        line.setFixedHeight(1)
+        line.setStyleSheet(
+            "background-color: %s; border: 0px;" % self._tokens["hair"]
+        )
+        h.addWidget(line)
+        wrap.line = line  # the colored hairline (recolored on theme change)
+        return wrap
 
     def createModeButton(self, name : str, pos : int):
-        """Creates a new mouse mode button.
+        """Create one mouse-mode button for the tool-palette card.
 
             Params:
-                name (str): the name of the button (and icon key)
-                pos (int): the position of the button
+                name (str): the mode display name (and icon key)
+                pos (int): the mouse-mode index passed to changeMouseMode
         """
-        b = ModeButton(self.mainwindow, self)
+        b = ModeButton(self.tool_card, self)
+        b.mode_name = name
+        b.setFixedSize(self.mblen, self.mblen)
         mouse_mode = pos
 
-        # filter name to get the stripped icon key / filename
         stripped_name = self._stripped(name)
 
-        self.placeModeButton(b, pos)
-
-        # format the button — prefer the modern theme-tinted SVG icon; fall back
-        # to the legacy PNG for tools without one (Flag/Host then set a glyph).
+        # prefer the modern theme-tinted SVG icon; Flag/Host fall back to a glyph
         if icon_utils.has_icon(stripped_name):
             icon_px = self._mode_icon_px()
-            b.setIcon(icon_utils.tool_icon(stripped_name, icon_px))
+            b.setIcon(icon_utils.tool_icon(
+                stripped_name, icon_px, self._tokens["txt_dim"]))
             b.setIconSize(QSize(icon_px, icon_px))
-        else:
-            icon_fp = os.path.join(loc.img_dir, stripped_name + ".png")
-            b.setIcon(QIcon(QPixmap(icon_fp)))
-            b.setIconSize(QSize(self.mblen, self.mblen))
-        # b.setText(name)
-        b.setToolTip(f"{name}")
 
         b.setCheckable(True)
-        if pos == 0:  # make the first button selected by default
+
+        # tooltip (name + shortcut) and the small bottom-right keycap hint
+        key = self._modeShortcut(name)
+        if key:
+            b.setToolTip("%s  (%s)" % (name, key))
+            kc = QLabel(key, b)
+            kf = QFont("Monospace")
+            kf.setStyleHint(QFont.Monospace)
+            kf.setPixelSize(9)
+            kc.setFont(kf)
+            kc.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            kc.setAlignment(Qt.AlignRight | Qt.AlignBottom)
+            kc.setGeometry(2, 2, self.mblen - 5, self.mblen - 4)
+            b.keycap = kc
+        else:
+            b.setToolTip(name)
+
+        if pos == 0:  # Pointer selected by default
             b.setChecked(True)
-            # the default-selected tool gets the active treatment (accent bg +
-            # white icon); refreshModeIcons re-applies it on theme/selection.
-            self._applyModeButtonStyle(b)
-            if icon_utils.has_icon(stripped_name):
-                b.setIcon(icon_utils.tool_icon(
-                    stripped_name, self._mode_icon_px(), theme.ACCENT_TEXT))
         b.clicked.connect(lambda : self.activateModeButton(name))
         # dictionary -- name : (button object, mouse mode, position)
         self.mode_buttons[name] = (b, mouse_mode, pos)
 
-        # manually enter dialog function for pointer and grid
+        # right-click dialogs / glyph tools (unchanged behavior)
         if name == "Pointer":
             b.setRightClickEvent(self.mainwindow.modifyPointer)
         elif name == "Closed Trace" or name == "Open Trace":
@@ -207,17 +378,137 @@ class MousePalette():
             b.setRightClickEvent(self.mainwindow.modifyGrid)
         elif name == "Flag":
             b.setRightClickEvent(self.modifyFlag)
-            # manually set the flag text and color
-            self.setFlag()
+            self.setFlag()  # sets the flag glyph + color
         elif name == "Knife":
             b.setRightClickEvent(self.mainwindow.modifyKnife)
         elif name == "Host":
+            # glyph tool (no SVG): size it like the 20px line icons so the
+            # centered ⎋ doesn't crowd the corner keycap
             f = b.font()
-            f.setPointSize(25)
+            f.setPointSize(15)
             b.setFont(f)
             b.setText("⎋")
 
         b.show()
+        return b
+
+    def styleModeButton(self, button):
+        """Style one mode button for its current state (resting/hover/active)
+        and theme.
+
+        Resting = transparent with a ``txt_dim`` icon; hover = faint ``panel_2``
+        fill + brighter ``txt`` icon; active = accent fill + white icon (the soft
+        glow is painted by the card behind it). Flag/Host are glyph tools, so
+        their color rides on the button ``color`` rather than an icon tint.
+        """
+        t = self._tokens
+        active = button.isChecked()
+        if active:
+            button.setStyleSheet(
+                "QPushButton { background-color: %s; border: 0px; "
+                "border-radius: 10px; color: %s; }"
+                % (theme.ACCENT, theme.ACCENT_TEXT)
+            )
+        else:
+            button.setStyleSheet(
+                "QPushButton { background-color: transparent; border: 0px; "
+                "border-radius: 10px; color: %s; }"
+                "QPushButton:hover { background-color: %s; color: %s; }"
+                % (t["txt_dim"], t["panel_2"], t["txt"])
+            )
+
+        stripped = self._stripped(button.mode_name)
+        if icon_utils.has_icon(stripped):
+            if active:
+                color = theme.ACCENT_TEXT
+            elif getattr(button, "_hovered", False):
+                color = t["txt"]
+            else:
+                color = t["txt_dim"]
+            px = self._mode_icon_px()
+            button.setIcon(icon_utils.tool_icon(stripped, px, color))
+            button.setIconSize(QSize(px, px))
+
+        if button.keycap is not None:
+            if active:
+                button.keycap.setStyleSheet(
+                    "color: rgba(255, 255, 255, 0.72); background: transparent;")
+            else:
+                button.keycap.setStyleSheet(
+                    "color: %s; background: transparent;" % t["txt_faint"])
+
+    def refreshModeIcons(self):
+        """Re-style the tool palette for the current theme / active tool.
+
+        Called on theme changes and after the active tool changes so the card,
+        icons, keycaps, dividers, and the active-tool accent all follow
+        light/dark (prototype: active = accent bg + white icon + glow; resting
+        tools at the theme icon color).
+        """
+        self._tokens = theme.tokens()
+        card = getattr(self, "tool_card", None)
+        if card is not None:
+            # lighter cast shadow on light chrome (prototype's light --shadow)
+            shadow_alpha = 55 if theme.current_scheme() == "light" else 140
+            card.applyTheme(self._tokens, theme.ACCENT, shadow_alpha=shadow_alpha)
+        for _name, (b, _mode, _pos) in self.mode_buttons.items():
+            self.styleModeButton(b)
+        if card is not None:
+            card.update()
+
+    def _fieldRect(self):
+        """Field bounds in main-window coordinates: (x1, x2, y1, y2)."""
+        field = self.mainwindow.field
+        fx1 = field.x()
+        fy1 = field.y()
+        return fx1, fx1 + field.width(), fy1, fy1 + field.height()
+
+    def placePaletteCard(self):
+        """Dock the tool-palette card to a field edge, vertically centered.
+
+        Right edge by default; the left edge when the user is left-handed. The
+        chosen side is mirrored into mode_x so the field's corner-text painter
+        keeps clear of the palette.
+        """
+        card = getattr(self, "tool_card", None)
+        if card is None:
+            return
+        # width is pinned (setFixedWidth); height hugs the laid-out content. The
+        # widget extends past the visible body by SHADOW_MARGIN on each side, so
+        # dock the *body* (not the widget) to the field edge.
+        cw = card.width()
+        ch = card.sizeHint().height()
+        sm = card.SHADOW_MARGIN
+        fx1, fx2, fy1, fy2 = self._fieldRect()
+        margin = 14  # prototype right:14px
+        left_handed = bool(self.series.getOption("left_handed"))
+        if left_handed:
+            x = fx1 + margin - sm           # body left -> fx1 + margin
+            self.mode_x = 0.01
+        else:
+            x = fx2 - margin + sm - cw      # body right -> fx2 - margin
+            self.mode_x = 0.99
+        y = fy1 + (fy2 - fy1 - ch) / 2
+        if y < fy1:
+            y = fy1
+        card.setGeometry(int(round(x)), int(round(y)), cw, ch)
+        card.raise_()
+
+    def toggleHandedness(self):
+        """Flip the tool palette to the other field edge and persist it."""
+        self.series.setOption(
+            "left_handed", not bool(self.series.getOption("left_handed")))
+        self.applyHandedness()
+
+    def applyHandedness(self):
+        """Reposition the palette for the current left_handed setting and keep
+        the View-menu checkbox in sync."""
+        self.placePaletteCard()
+        act = getattr(self.mainwindow, "lefthanded_act", None)
+        if act is not None:
+            blocked = act.blockSignals(True)
+            act.setChecked(bool(self.series.getOption("left_handed")))
+            act.blockSignals(blocked)
     
     def placePaletteButton(self, button : PaletteButton, pos : int):
         """Place the palette button in the main window.
@@ -678,9 +969,11 @@ class MousePalette():
     
     def resetPos(self):
         """Reset the positions of the buttons."""
-        self.mode_x = 0.99
+        # the tool card docks by handedness (placePaletteCard recomputes this);
+        # kept here so mode_x reflects the docked side immediately.
+        self.mode_x = 0.01 if self.series.getOption("left_handed") else 0.99
         self.mode_y = 0.01
-        
+
         self.trace_x = 0.51
         self.trace_y = 0.99
 
@@ -814,7 +1107,9 @@ class MousePalette():
             self.mainwindow.field.generateView(generate_image=False)
         
         button = self.mode_buttons["Flag"][0]
-        button.setFont(QFont("Courier New", 25, QFont.Bold))
+        # glyph tool (no SVG): size the ⚑ like the 20px line icons so it sits
+        # cleanly beside the corner keycap
+        button.setFont(QFont("Courier New", 15, QFont.Bold))
         button.setText("⚑")
         s = f"({','.join(map(str, color))})"
         # button.setStyleSheet(f"color:rgb{s}")
@@ -879,9 +1174,7 @@ class MousePalette():
         
     def resize(self):
         """Move the buttons to fit the main window."""
-        for mbname in self.mode_buttons:
-            button, mode, pos = self.mode_buttons[mbname]
-            self.placeModeButton(button, pos)
+        self.placePaletteCard()
         for i, pb in enumerate(self.palette_buttons):
             self.placePaletteButton(pb, i)
         self.placePaletteSideButtons()
@@ -897,9 +1190,8 @@ class MousePalette():
 
     def close(self):
         """Close all buttons"""
-        for bname in self.mode_buttons:
-            button, _, __ = self.mode_buttons[bname]
-            button.close()
+        # closing the card closes its child mode buttons, keycaps, and dividers
+        self.tool_card.close()
         for pb in self.palette_buttons:
             pb.close()
         for b in self.palette_side_buttons:

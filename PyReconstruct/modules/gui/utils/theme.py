@@ -51,6 +51,32 @@ GROUND_LIGHT = "#fafafa"  # qdarkstyle LightPalette ground (informational)
 ICON_DARK = "#9aa7bb"     # icons on dark chrome
 ICON_LIGHT = "#54627a"    # icons on light chrome
 
+# Floating-chrome surface tokens (the tool-palette card, its dividers, keycaps,
+# and tool tooltips). This chrome floats ON TOP of the qdarkstyle base, so the
+# values come from the v1 prototype's :root tokens per scheme rather than being
+# derived from qdarkstyle. The resting icon color (``txt_dim``) intentionally
+# matches ICON_DARK / ICON_LIGHT above.
+_TOKENS = {
+    "dark": {
+        "panel": "#161b22",     # card body
+        "panel_2": "#1d232c",   # button hover fill
+        "elev": "#222a35",      # tooltip body
+        "hair": "#2a313c",      # card border / dividers
+        "txt": "#e6eaf0",       # hovered icon/text
+        "txt_dim": ICON_DARK,   # resting icon/text
+        "txt_faint": "#6c7889", # header + keycap
+    },
+    "light": {
+        "panel": "#ffffff",
+        "panel_2": "#f4f6fa",
+        "elev": "#ffffff",
+        "hair": "#dbe1ea",
+        "txt": "#16202e",
+        "txt_dim": ICON_LIGHT,
+        "txt_faint": "#8893a6",
+    },
+}
+
 
 # --- pure mode/scheme logic (no Qt) ------------------------------------------
 def normalize_mode(value) -> str:
@@ -144,6 +170,17 @@ def icon_color(scheme=None, app=None) -> str:
     if scheme is None:
         scheme = current_scheme(app)
     return ICON_DARK if scheme == "dark" else ICON_LIGHT
+
+
+def tokens(scheme=None, app=None) -> dict:
+    """Floating-chrome surface tokens (panel/hair/elev/txt…) for a scheme.
+
+    Defaults to the scheme currently in effect. Returns the shared module dict
+    for the scheme — callers read from it and must not mutate it.
+    """
+    if scheme is None:
+        scheme = current_scheme(app)
+    return _TOKENS["light"] if scheme == "light" else _TOKENS["dark"]
 
 
 # --- stylesheet construction -------------------------------------------------

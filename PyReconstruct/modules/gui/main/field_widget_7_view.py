@@ -194,6 +194,11 @@ class FieldWidgetView(FieldWidgetPaint):
             self.mouse_mode == CLOSEDTRACE):
             cursor = self.pencil_l if self.series.getOption("left_handed") else self.pencil_r
             if cursor != self.cursor(): self.setCursor(cursor)
+
+        # flip the floating tool palette to the matching field edge
+        palette = getattr(self.mainwindow, "mouse_palette", None)
+        if palette is not None:
+            palette.applyHandedness()
     
     def endPendingEvents(self):
         """End ongoing events that are connected to the mouse."""

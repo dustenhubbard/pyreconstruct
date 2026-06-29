@@ -86,6 +86,27 @@ class ModeButton(MoveableButton):
 
     def __init__(self, parent, manager):
         super().__init__(parent, manager, "mode")
+        self.mode_name = None   # display name, set by MousePalette.createModeButton
+        self.keycap = None      # the small shortcut-hint label (or None)
+        self._hovered = False
+
+    def mouseMoveEvent(self, event):
+        """Docked in the tool-palette card — not individually draggable (the
+        card is edge-docked and flips with the left-handed option), so the
+        MoveableButton drag is intentionally suppressed. Clicks/right-clicks
+        still work via press/release."""
+        pass
+
+    def enterEvent(self, event):
+        """Brighten the resting icon on hover (prototype's ``.tool:hover``)."""
+        self._hovered = True
+        self.manager.styleModeButton(self)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hovered = False
+        self.manager.styleModeButton(self)
+        super().leaveEvent(event)
 
     def highlightButton(self):
         """Mode buttons show their active state via the accent fill applied by
