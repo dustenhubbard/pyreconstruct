@@ -22,7 +22,6 @@ from PyReconstruct.modules.gui.utils import (
 from PyReconstruct.modules.gui.table import (
     HistoryTableWidget,
     ObjectTableWidget,
-    getCopyTableWidget
 )
 
 
