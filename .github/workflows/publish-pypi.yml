@@ -1,11 +1,13 @@
 name: publish-pypi
 
-# Publishes the sdist + wheel to the PyPI 'pyreconstruct' project on a vX.Y.Z
-# tag, via OIDC Trusted Publishing (no API token). Guarded to the canonical
-# repo, so it is a no-op on forks (a fork has no PyPI trusted publisher and must
-# not publish to the canonical project). One-time setup: configure the Trusted
-# Publisher on PyPI for SynapseWeb/PyReconstruct, workflow publish-pypi.yml,
-# environment 'pypi'.
+# Publishes the sdist + wheel to the PyPI 'pyreconstruct' project on a final
+# vX.Y.Z tag, via OIDC Trusted Publishing (no API token). Guarded to the
+# canonical repo, so it is a no-op on forks (a fork has no PyPI trusted publisher
+# and must not publish to the canonical project). Semver pre-release tags
+# (vX.Y.Z-alpha.N / -beta.N / -rc.N) are skipped: those ship installers via
+# GitHub Releases (build-installers.yml), not PyPI. One-time setup: configure the
+# Trusted Publisher on PyPI for SynapseWeb/PyReconstruct, workflow
+# publish-pypi.yml, environment 'pypi'.
 
 on:
   push:
@@ -16,7 +18,9 @@ permissions:
 
 jobs:
   pypi:
-    if: github.repository == 'SynapseWeb/PyReconstruct'
+    # canonical repo only, and only for FINAL tags -- a semver pre-release tag
+    # carries a hyphen (v1.30.0-alpha.1) and must not reach PyPI.
+    if: ${{ github.repository == 'SynapseWeb/PyReconstruct' && !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     environment: pypi
     steps:

@@ -1,9 +1,14 @@
 name: build-installers
 
 # Builds unsigned one-click installers and publishes them to THIS repo's GitHub
-# Releases: a tag vX.Y.Z -> Release; a push to main -> rolling 'prerelease'
-# build. The in-app updater (updater.GITHUB_REPO) reads these. Runs on the
-# fork as-is (no hardcoded owner). Signing is deferred (proof of concept).
+# Releases:
+#   * a final tag vX.Y.Z          -> stable Release      (prerelease: false)
+#   * a pre-release tag vX.Y.Z-…  -> GitHub pre-release   (prerelease: true)
+#     e.g. v1.30.0-alpha.1 / -beta.1 / -rc.1 for the UI overhaul
+#   * a push to main              -> rolling 'prerelease' build
+# The in-app updater (updater.GITHUB_REPO) reads these: the 'release' channel
+# serves stable Releases, the 'prerelease' channel serves the pre-releases. Runs
+# on the fork as-is (no hardcoded owner). Signing is deferred (proof of concept).
 
 on:
   push:
@@ -112,10 +117,23 @@ jobs:
           merge-multiple: true
       - name: Generate checksums
         run: cd dist && for f in *; do [ -f "$f" ] && sha256sum "$f" > "$f.sha256"; done
+      - name: Classify tag (semver pre-release -> GitHub pre-release)
+        id: tag
+        shell: bash
+        run: |
+          # A semver pre-release tag carries a hyphen after the version
+          # (v1.30.0-alpha.1 / -beta.1 / -rc.1); a final release (v1.30.0) has none.
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "Publishing $GITHUB_REF_NAME as a GitHub pre-release."
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "Publishing $GITHUB_REF_NAME as a stable release."
+          fi
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          prerelease: false
+          prerelease: ${{ steps.tag.outputs.prerelease }}
           generate_release_notes: true
 
   release-prerelease:
