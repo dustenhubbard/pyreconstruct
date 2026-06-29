@@ -40,7 +40,7 @@ def get_zarr_array(zarr: zarr.hierarchy.Group, path: str="raw"):
 
     else:
 
-        return ValueError("No zarr array found.")
+        raise ValueError("No zarr array found.")
 
 
 def get_true_mag(zarr_array):
@@ -474,7 +474,10 @@ def labelsToObjects(series : Series, data_fp : str, group : str, ids: list = Non
             the threadpool
     """
 
-    data_zg, sections, section_start = getLabelsToObjectsData(data_fp, group)
+    data = getLabelsToObjectsData(data_fp, group)
+    if data is None:  # group not present in the zarr
+        return
+    data_zg, sections, section_start = data
 
     ## Create threadpool and iterate across sections
     setDT()
@@ -683,6 +686,9 @@ def importSection(data_zg, group, snum, series, ids=None):
         alignment = raw.attrs["alignment"]
         tform = Transform(alignment[str(snum)])
     except KeyError:
+        return
+
+    if snum not in series.sections:  # section not in the current series
         return
 
     ## Load section and corresponding data

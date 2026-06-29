@@ -948,12 +948,12 @@ class Series():
             self,
             obj_name : str,
             cross_sectioned : bool = True,
-            z_points : list = [],
+            z_points : list = None,
             ztrace_color : tuple = (0, 0, 0),
             log_event=True
     ):
         """Create a ztrace from an existing object in the series.
-        
+
             Params:
                 obj_name (str): the name of the object to create the ztrace from
                 cross_sectioned (bool): True if one ztrace point per section, False if multiple per section
@@ -961,6 +961,11 @@ class Series():
                 ztrace_color (tuple): color of ztrace to display in field
                 log_event (bool): True if event should be logged
         """
+        # A fresh list per call: a shared mutable default would let the points
+        # generated for one object leak into the next from-object ztrace.
+        if z_points is None:
+            z_points = []
+
         if not z_points:  # append name with "_zlen" if creating from obj
             ztrace_name = f"{obj_name}_zlen"
         else:  # use tracing_trace name

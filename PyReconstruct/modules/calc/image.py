@@ -21,6 +21,8 @@ def getImgDims(img_fp: Union[str, Path]) -> Tuple[height, width]:
     else:
 
         img = cv2.imread(str(img_fp), cv2.IMREAD_GRAYSCALE)
+        if img is None:  # cv2 returns None (no exception) for a missing/unreadable image
+            raise FileNotFoundError(f"Could not read image: {img_fp}")
         return img.shape
 
 

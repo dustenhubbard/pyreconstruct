@@ -478,6 +478,9 @@ class ImportWidget(QWidget):
     
     def accept(self):
         """Called when OK is pressed."""
+        # rebuild from scratch so a re-submit (after a sibling tab failed
+        # validation) doesn't accumulate stale responses
+        self.responses = []
         for input in self.inputs:
             response, is_valid = input.getResponse()
             if not is_valid:

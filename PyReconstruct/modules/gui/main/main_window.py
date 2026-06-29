@@ -1970,8 +1970,10 @@ class MainWindow(QMainWindow):
 
         ## Get options from user
         
+        # default to the second section when there is one, else the only section
+        default_start = all_sections[1] if len(all_sections) > 1 else all_sections[0]
         structure = [
-            ["From section", ("int", all_sections[1]),
+            ["From section", ("int", default_start),
              "to section", ("int", all_sections[-1]), " "],
             ["Group padding (px):", ("int", 50)],
             ["Groups:"],
@@ -2997,6 +2999,8 @@ class MainWindow(QMainWindow):
 
         # open the other series
         o_series = Series.openJser(jser_fp)
+        if o_series is None:  # user cancelled the open
+            return
 
         # check the manigifcations
         if not checkMag(self.series, o_series):
