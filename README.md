@@ -85,6 +85,14 @@ A full installation guide, quickstart, and manuals live on the
 [repo wiki](https://github.com/SynapseWeb/PyReconstruct/wiki),
 and in-app under **Help ▸ Online resources**.
 
+## Documentation
+
+- **[User guide](docs/USER_GUIDE.md)** — installing and updating, opening and
+  building a series, the tracing tools, the data lists, alignment, 3D
+  reconstruction, and backups.
+- **[Contributing guide](CONTRIBUTING.md)** — development setup, running the
+  tests, the code layout, and the branch/PR conventions.
+
 ## Performance
 
 Large autosegmented series — those with tens to hundreds of thousands of traces —
