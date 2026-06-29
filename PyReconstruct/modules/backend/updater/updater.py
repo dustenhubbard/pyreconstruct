@@ -93,7 +93,14 @@ def pick_release(releases, channel):
 
 
 def pick_asset(release, platform_tag):
-    """Pick the installer asset matching this platform tag (e.g. 'Windows-x86_64')."""
+    """Pick the installer asset matching this platform tag (e.g. 'Windows-x86_64').
+
+    The substring match is unambiguous because ``platform_asset_tag`` always
+    carries the OS label and the arch tokens are not substrings of each other:
+    'macOS-x86_64' and 'macOS-arm64' (and 'Windows-x86_64') each match exactly
+    one asset and never another arch's or OS's. If asset tags are ever shortened
+    to bare 'x86_64'/'arm64', that guarantee is lost -- keep the OS-label prefix.
+    """
     if not release:
         return None
     for a in release.get("assets", []):

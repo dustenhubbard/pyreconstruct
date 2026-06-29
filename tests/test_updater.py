@@ -67,6 +67,48 @@ def test_pick_asset_no_match_or_no_release():
     assert U.pick_asset(None, "Windows-x86_64") is None
 
 
+# A release that ships BOTH macOS arches (the dual-runner CI build): each arch
+# must resolve to its own dmg with no cross-arch mismatch. This is the guarantee
+# the substring match in pick_asset relies on -- "x86_64" and "arm64" are not
+# substrings of each other, and the "macOS-" label keeps the Windows x86_64
+# asset from matching a macOS tag -- so an Intel Mac never offers the arm64 dmg
+# and an Apple Silicon Mac never offers the x86_64 dmg.
+_DUAL_MAC_RELEASE = _rel(
+    "v1.21.0",
+    assets=[
+        "PyReconstruct-1.21.0-Windows-x86_64-Setup.exe",
+        "PyReconstruct-1.21.0-Windows-x86_64-Setup.exe.sha256",
+        "PyReconstruct-1.21.0-macOS-arm64.dmg",
+        "PyReconstruct-1.21.0-macOS-arm64.dmg.sha256",
+        "PyReconstruct-1.21.0-macOS-x86_64.dmg",
+        "PyReconstruct-1.21.0-macOS-x86_64.dmg.sha256",
+    ],
+)
+
+@pytest.mark.parametrize("tag,expected", [
+    ("macOS-arm64",  "PyReconstruct-1.21.0-macOS-arm64.dmg"),
+    ("macOS-x86_64", "PyReconstruct-1.21.0-macOS-x86_64.dmg"),
+])
+def test_pick_asset_dual_macos_arches_no_cross_match(tag, expected):
+    a = U.pick_asset(_DUAL_MAC_RELEASE, tag)
+    assert a["name"] == expected
+    assert not a["name"].endswith(".sha256")
+
+def test_pick_asset_intel_mac_tag_does_not_grab_arm64_or_windows():
+    # End-to-end-ish: the running-platform tag an Intel Mac would compute.
+    a = U.pick_asset(_DUAL_MAC_RELEASE, "macOS-x86_64")
+    assert "arm64" not in a["name"] and "Windows" not in a["name"]
+
+def test_pick_asset_arm64_only_release_gives_intel_mac_no_false_update():
+    # The Intel build leg is additive: if it is unavailable, a release ships
+    # arm64-only. An Intel Mac (tag macOS-x86_64) must then get NO asset, never
+    # the arm64 dmg -- arm64 can't run on Intel (Rosetta translates x86_64 ->
+    # arm64, not the reverse), so a false match would be an unrunnable download.
+    rel = U.pick_release(RELEASES, "release")  # v1.20.0: macOS-arm64 dmg only
+    assert U.pick_asset(rel, "macOS-x86_64") is None
+    assert U.pick_asset(rel, "macOS-arm64")["name"].endswith("macOS-arm64.dmg")
+
+
 # ---- asset_version ----------------------------------------------------------
 @pytest.mark.parametrize("name,ver", [
     ("PyReconstruct-1.20.0-Windows-x86_64.exe", "1.20.0"),
@@ -143,3 +185,15 @@ def test_platform_asset_tag_shape():
     tag = II.platform_asset_tag()
     label, _, arch = tag.partition("-")
     assert label in ("Windows", "macOS", "Linux") and arch
+
+@pytest.mark.parametrize("machine,expected_dmg", [
+    ("x86_64", "PyReconstruct-1.21.0-macOS-x86_64.dmg"),
+    ("arm64",  "PyReconstruct-1.21.0-macOS-arm64.dmg"),
+])
+def test_platform_asset_tag_drives_pick_asset_on_macos(monkeypatch, machine, expected_dmg):
+    # Simulate the running machine: macOS on the given CPU arch. The tag the app
+    # computes must select that arch's dmg out of a dual-arch release.
+    monkeypatch.setattr(II.sys, "platform", "darwin")
+    monkeypatch.setattr(II._platform, "machine", lambda: machine)
+    tag = II.platform_asset_tag()
+    assert U.pick_asset(_DUAL_MAC_RELEASE, tag)["name"] == expected_dmg
