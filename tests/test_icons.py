@@ -16,7 +16,8 @@ from PyReconstruct.modules.gui.utils import theme
 
 
 # tools whose palette buttons load a PNG today and should get a modern SVG
-# (Flag/Host stay as glyphs and are intentionally absent)
+# (Flag/Host historically fell back to glyphs; they now have Studio-set icons
+# too — see STUDIO_ICONS below)
 EXPECTED_TOOLS = {
     "pointer", "panzoom", "knife", "scissors", "closedtrace",
     "opentrace", "stamp", "grid", "ztool",
@@ -26,6 +27,16 @@ EXPECTED_TOOLS = {
 def test_expected_tools_present():
     assert EXPECTED_TOOLS <= set(icon_svgs.TOOL_SVGS), \
         "every standard mode tool must have a modern SVG"
+
+
+# Studio-layout chrome icons (activity rail panels + the tool rail's Flag/Host
+# tiles); these replace the mockup's placeholder unicode glyphs.
+STUDIO_ICONS = {"objects", "traces", "sections", "scene3d", "settings", "flag", "host"}
+
+
+def test_studio_chrome_icons_present():
+    assert STUDIO_ICONS <= set(icon_svgs.TOOL_SVGS), \
+        "the Studio activity/tool rails must have stroked vector icons (no unicode glyphs)"
 
 
 def test_svgs_are_wellformed_bytes():
@@ -56,7 +67,7 @@ def qapp():
 def test_render_tints_opaque_pixels(qapp):
     from PyReconstruct.modules.gui.utils import icons
     from PySide6.QtGui import QColor
-    color = "#4c8dff"
+    color = "#e84d8a"  # any vivid non-grayscale tint exercises the exactness check
     target = QColor(color)
     # use a solid-filled icon (pointer) so there are plenty of fully-opaque
     # pixels to assert exactness on; thin line-art icons are mostly anti-aliased
@@ -77,12 +88,14 @@ def test_render_tints_opaque_pixels(qapp):
 
 def test_tool_icon_known_and_unknown(qapp):
     from PyReconstruct.modules.gui.utils import icons
-    assert icons.has_icon("knife") and not icons.has_icon("flag")
+    # known tools (incl. the now-present Flag/Host) resolve; an unknown name does not
+    assert icons.has_icon("knife") and icons.has_icon("flag") and icons.has_icon("host")
+    assert not icons.has_icon("no_such_tool")
     icon = icons.tool_icon("knife", 32, "#ffffff")
     assert not icon.isNull()
     assert not icon.pixmap(32, 32).isNull()
     # unknown tool -> empty icon (caller falls back to PNG/glyph)
-    assert icons.tool_icon("flag", 32).isNull()
+    assert icons.tool_icon("no_such_tool", 32).isNull()
 
 
 def test_tool_icon_defaults_to_theme_color(qapp):

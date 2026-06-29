@@ -99,4 +99,74 @@ TOOL_SVGS = {
         '<path d="M7 6l10 6-10 6" fill="none" stroke="#000000" stroke-width="1.8" '
         'stroke-linecap="round" stroke-linejoin="round"/>'
     ),
+
+    # --- Studio layout chrome icons -----------------------------------------
+    # Same 24x24 stroked grid + solid-black artwork as the tools above, so they
+    # tint through the identical render_svg_tinted path. The activity rail and
+    # the tool rail's Flag/Host tiles reference these (replacing the mockup's
+    # placeholder unicode glyphs ▣ ⤳ ▤ ⚑ ◈ ⚙ ⊹).
+
+    # activity rail · Objects — a solid segmented-object silhouette
+    "objects": _svg(
+        '<path d="M12 4c4 0 7 3 7 7 0 4.2-3.2 9-7 9s-7-3.4-7-7.5C5 7.6 8 4 12 4z" '
+        'fill="#000000" stroke="none"/>'
+    ),
+    # activity rail · Traces — a freehand path with two vertices
+    "traces": _svg(
+        '<path d="M5 17c2.5-.5 3.5-6 7-8 2.6-1.5 4.6.5 6 2.5" fill="none" '
+        'stroke="#000000" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<circle cx="5" cy="17" r="1.8" fill="#000000"/>'
+        '<circle cx="18" cy="11.5" r="1.8" fill="#000000"/>'
+    ),
+    # activity rail · Sections — an isometric z-stack of section planes
+    "sections": _svg(
+        '<path d="M12 4l8 4-8 4-8-4z" fill="none" stroke="#000000" stroke-width="1.5" '
+        'stroke-linejoin="round"/>'
+        '<path d="M4 12l8 4 8-4" fill="none" stroke="#000000" stroke-width="1.5" '
+        'stroke-linecap="round" stroke-linejoin="round"/>'
+        '<path d="M4 16l8 4 8-4" fill="none" stroke="#000000" stroke-width="1.5" '
+        'stroke-linecap="round" stroke-linejoin="round"/>'
+    ),
+    # activity rail · 3D scene — a cube
+    "scene3d": _svg(
+        '<path d="M12 3.5L20 8v8l-8 4.5L4 16V8z" fill="none" stroke="#000000" '
+        'stroke-width="1.5" stroke-linejoin="round"/>'
+        '<path d="M4 8l8 4.5 8-4.5M12 12.5V20.5" fill="none" stroke="#000000" '
+        'stroke-width="1.4" stroke-linejoin="round"/>'
+    ),
+    # activity rail · Settings — a gear
+    "settings": _svg(
+        '<circle cx="12" cy="12" r="3" fill="none" stroke="#000000" stroke-width="1.6"/>'
+        '<path d="M12 3.2v2.6M12 18.2v2.6M3.2 12h2.6M18.2 12h2.6'
+        'M5.8 5.8L7.6 7.6M16.4 16.4L18.2 18.2M18.2 5.8L16.4 7.6M5.8 18.2L7.6 16.4" '
+        'fill="none" stroke="#000000" stroke-width="1.6" stroke-linecap="round"/>'
+    ),
+    # tool rail / activity rail · Flag — flag on a pole
+    "flag": _svg(
+        '<path d="M6 3.5v17" fill="none" stroke="#000000" stroke-width="1.7" '
+        'stroke-linecap="round"/>'
+        '<path d="M6.8 4.2h10.5l-2.6 3.6 2.6 3.6H6.8z" fill="#000000" stroke="none"/>'
+    ),
+    # tool rail · Host — a host→hosted relationship (two linked nodes)
+    "host": _svg(
+        '<circle cx="7" cy="7.5" r="2.7" fill="none" stroke="#000000" stroke-width="1.6"/>'
+        '<circle cx="16.5" cy="16.5" r="2.7" fill="none" stroke="#000000" stroke-width="1.6"/>'
+        '<path d="M8.9 9.4L14.6 14.6" fill="none" stroke="#000000" stroke-width="1.6" '
+        'stroke-linecap="round"/>'
+    ),
+    # Objects-panel filter field · Search — a magnifier
+    "search": _svg(
+        '<circle cx="11" cy="11" r="6" fill="none" stroke="#000000" stroke-width="1.7"/>'
+        '<path d="M15.5 15.5L20 20" fill="none" stroke="#000000" stroke-width="1.7" '
+        'stroke-linecap="round"/>'
+    ),
+    # section-nav pill chevrons
+    "chevron_left": _svg(
+        '<path d="M14 6l-6 6 6 6" fill="none" stroke="#000000" stroke-width="2" '
+        'stroke-linecap="round" stroke-linejoin="round"/>'
+    ),
+    "chevron_right": _svg(
+        '<path d="M10 6l6 6-6 6" fill="none" stroke="#000000" stroke-width="2" '
+        'stroke-linecap="round" stroke-linejoin="round"/>'
+    ),
 }
