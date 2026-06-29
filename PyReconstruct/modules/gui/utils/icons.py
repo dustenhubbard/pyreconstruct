@@ -23,10 +23,36 @@ def has_icon(name: str) -> bool:
     return name in TOOL_SVGS
 
 
+def _device_pixel_ratio() -> float:
+    """Effective device pixel ratio (physical px per logical px).
+
+    1.0 when there's no live application/screen (e.g. headless/offscreen),
+    so renders stay deterministic in tests.
+    """
+    try:
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app is not None:
+            dpr = float(app.devicePixelRatio())
+            if dpr > 0:
+                return dpr
+    except Exception:  # pragma: no cover - defensive; never break rendering
+        pass
+    return 1.0
+
+
 def render_svg_tinted(svg: bytes, size_px: int, color_hex: str) -> QPixmap:
-    """Render an SVG to a square pixmap and tint every opaque pixel to color."""
+    """Render an SVG to a square pixmap and tint every opaque pixel to color.
+
+    The pixmap is rendered at the screen's physical resolution (size_px * dpr)
+    and tagged with the device pixel ratio, so on a retina/HiDPI display it lays
+    out at ``size_px`` logical pixels but stays crisp instead of being upscaled
+    from a logical-size bitmap.
+    """
+    dpr = _device_pixel_ratio()
+    phys = max(1, round(size_px * dpr))
     renderer = QSvgRenderer(bytes(svg))
-    pm = QPixmap(size_px, size_px)
+    pm = QPixmap(phys, phys)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
     renderer.render(p)
@@ -35,6 +61,7 @@ def render_svg_tinted(svg: bytes, size_px: int, color_hex: str) -> QPixmap:
     p.setCompositionMode(QPainter.CompositionMode_SourceIn)
     p.fillRect(pm.rect(), QColor(color_hex))
     p.end()
+    pm.setDevicePixelRatio(dpr)
     return pm
 
 

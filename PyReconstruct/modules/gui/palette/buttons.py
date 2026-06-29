@@ -87,6 +87,12 @@ class ModeButton(MoveableButton):
     def __init__(self, parent, manager):
         super().__init__(parent, manager, "mode")
 
+    def highlightButton(self):
+        """Mode buttons show their active state via the accent fill applied by
+        MousePalette (prototype's active tool = accent bg + white icon), so the
+        legacy yellow selection border is suppressed here."""
+        pass
+
 
 class PaletteButton(MoveableButton):
 

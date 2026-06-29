@@ -130,14 +130,32 @@ class MousePalette():
 
     def refreshModeIcons(self):
         """Re-tint the mode-button icons to the current theme. Call when the
-        theme changes so the monochrome line icons follow light/dark."""
-        color = theme.icon_color()
+        theme changes (or the active tool changes) so the monochrome line icons
+        follow light/dark and the active tool pops like the prototype: accent
+        background + white icon, resting tools at the theme icon color."""
+        resting = theme.icon_color()
         icon_px = self._mode_icon_px()
         for name, (b, _mode, _pos) in self.mode_buttons.items():
             stripped = self._stripped(name)
+            self._applyModeButtonStyle(b)
             if icon_utils.has_icon(stripped):
+                color = theme.ACCENT_TEXT if b.isChecked() else resting
                 b.setIcon(icon_utils.tool_icon(stripped, icon_px, color))
                 b.setIconSize(QSize(icon_px, icon_px))
+
+    @staticmethod
+    def _applyModeButtonStyle(button):
+        """Give the active (checked) mode button the prototype's accent fill so
+        the selected tool reads as selected; resting buttons keep the chrome's
+        own styling. Re-applied on theme/active changes so it follows light/dark.
+        """
+        if button.isChecked():
+            button.setStyleSheet(
+                "QPushButton { background-color: %s; border: 1px solid %s; "
+                "border-radius: 6px; }" % (theme.ACCENT, theme.ACCENT)
+            )
+        else:
+            button.setStyleSheet("")
 
     def createModeButton(self, name : str, pos : int):
         """Creates a new mouse mode button.
@@ -170,6 +188,12 @@ class MousePalette():
         b.setCheckable(True)
         if pos == 0:  # make the first button selected by default
             b.setChecked(True)
+            # the default-selected tool gets the active treatment (accent bg +
+            # white icon); refreshModeIcons re-applies it on theme/selection.
+            self._applyModeButtonStyle(b)
+            if icon_utils.has_icon(stripped_name):
+                b.setIcon(icon_utils.tool_icon(
+                    stripped_name, self._mode_icon_px(), theme.ACCENT_TEXT))
         b.clicked.connect(lambda : self.activateModeButton(name))
         # dictionary -- name : (button object, mouse mode, position)
         self.mode_buttons[name] = (b, mouse_mode, pos)
@@ -363,7 +387,8 @@ class MousePalette():
             for name, button_info in self.mode_buttons.items():
                 button, mode, pos = button_info
                 if name == bname:
-                    button.setChecked(not button.isChecked())    
+                    button.setChecked(not button.isChecked())
+                    self.refreshModeIcons()
                     return
 
         for name, button_info in self.mode_buttons.items():
@@ -373,7 +398,10 @@ class MousePalette():
                 self.mainwindow.changeMouseMode(mode)
                 self.selected_mode = name
             else:
-                button.setChecked(False)      
+                button.setChecked(False)
+        # re-tint so the active tool gets the accent bg + white icon and the
+        # rest return to the resting theme color (prototype's active state).
+        self.refreshModeIcons()
     
     def activatePaletteButton(self, bpos : int):
         """Executed when palette button is clicked: changes mouse trace.
