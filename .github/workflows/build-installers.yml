@@ -118,21 +118,49 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4          # needed for packaging/linux/ (no build leg)
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+      - name: Package the Linux .sh installer
+        # The Linux installer is a script bundle (no frozen binary), so it has no
+        # build-matrix leg — assemble it here and ship it as a release asset.
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          STAGE="PyReconstruct-linux-installer"
+          mkdir -p "$STAGE"
+          cp packaging/linux/install.sh packaging/linux/uninstall.sh \
+             packaging/linux/pyreconstruct.desktop.in packaging/linux/README.md "$STAGE"/
+          # Standalone installs pin to this exact tag, so a vX.Y.Z asset installs
+          # vX.Y.Z (not bleeding main).
+          sed -i "s#DEFAULT_SOURCE=\"git+https://github.com/dustenhubbard/PyReconstruct.git\"#DEFAULT_SOURCE=\"git+https://github.com/dustenhubbard/PyReconstruct.git@${GITHUB_REF_NAME}\"#" "$STAGE/install.sh"
+          tar -czf "dist/PyReconstruct-${VERSION}-Linux-installer.tar.gz" "$STAGE"
       - name: Generate checksums
         run: cd dist && for f in *; do [ -f "$f" ] && sha256sum "$f" > "$f.sha256"; done
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
           prerelease: false
+          # Stage a release as a hidden DRAFT (e.g. for a live demo): set the repo
+          # variable STAGE_RELEASE_AS_DRAFT=true, push the tag, then hit "Publish"
+          # when ready — assets are pre-built so it goes live instantly. The updater
+          # ignores drafts, so it stays invisible until published. Unset/false (the
+          # default) publishes immediately, exactly as before.
+          draft: ${{ vars.STAGE_RELEASE_AS_DRAFT == 'true' }}
           generate_release_notes: true
 
   release-prerelease:
     needs: build
-    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (needs.build.result == 'success' || needs.build.result == 'failure') }}
+    # PAUSED 2026-06-29: the rolling "latest main" prerelease is disabled until the
+    # v1.30 UI overhaul ships curated semver pre-releases (v1.30.0-alpha.N → -rc → final).
+    # The dev builds it produced were functionally identical to stable and only confused
+    # the updater's prerelease channel. Re-enable by restoring the commented condition
+    # below — and FIRST make the `release` job above mark pre-release tags correctly
+    # (e.g. `prerelease: ${{ contains(github.ref_name, '-') }}`), or an alpha tag will
+    # publish as stable. See pyrecon-notes/DECISIONS.md.
+    if: ${{ false }}
+    # if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (needs.build.result == 'success' || needs.build.result == 'failure') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
