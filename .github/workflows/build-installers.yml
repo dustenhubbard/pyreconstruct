@@ -21,9 +21,21 @@ jobs:
       matrix:
         include:
           - { os: windows-2022, plat: Windows, arch: x86_64 }
-          # native Apple Silicon (vtk 9.4.x ships macOS arm64 wheels); macos-14
-          # arm64 runners are plentiful, unlike the retiring/queued macos-13 x86_64.
-          - { os: macos-14,     plat: macOS,   arch: arm64 }
+          # Two native single-arch macOS builds rather than one universal2 build:
+          # the native dependency stack (vtk 9.4.2, scipy, scikit-image, opencv,
+          # the cloud-volume codecs) ships per-arch wheels, not universal2, so a
+          # universal2 freeze would force source builds and likely fail. Each arch
+          # is built on its own native runner, where PyInstaller freezes for the
+          # arch of the runner's Python.
+          #   macos-14 = Apple Silicon (arm64); macos-15-intel = Intel (x86_64).
+          # GitHub retired the macos-13 Intel image in Dec 2025; macos-15-intel is
+          # the current Intel label, available until macOS 15 retires (~Fall 2027),
+          # after which GitHub drops x86_64 macOS runners entirely. The Intel dmg is
+          # purely additive: if that leg is unavailable or fails, fail-fast:false
+          # plus the release jobs' failure-tolerant gate still ship the arm64 and
+          # Windows installers.
+          - { os: macos-14,       plat: macOS,   arch: arm64 }
+          - { os: macos-15-intel, plat: macOS,   arch: x86_64 }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

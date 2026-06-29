@@ -12,6 +12,11 @@ the next tagged release.
 ## [Unreleased]
 
 ### Added
+- **Intel macOS installer.** CI now builds a native x86_64 `.dmg`
+  (`PyReconstruct-<version>-macOS-x86_64.dmg`) on a `macos-15-intel` runner
+  alongside the Apple Silicon arm64 build, so Intel Macs get a native installer.
+  The arch-named assets are unambiguous and the in-app updater already serves
+  each Mac its matching arch.
 - A `pytest` test suite covering geometry/transform equivalence and the updater's
   selection, version-comparison, and checksum logic, plus a headless performance
   harness. (#2, #3)
