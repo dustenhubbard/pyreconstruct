@@ -70,6 +70,7 @@ class MainWindow(QMainWindow):
         self.mouse_palette          =  None
         self.zarr_palette           =  None
         self.viewer                 =  None
+        self.scene_peek             =  None
         self.shortcuts_widget       =  None
         self.is_zooming             =  False
         self.restart_mainwindow     =  False
@@ -259,6 +260,9 @@ class MainWindow(QMainWindow):
         ## Check for lists panel collapse (UI v1 Slice 3)
         self.togglelistspanel_act.setChecked(self.field.table_manager.listsPanelCollapsed())
 
+        ## Check for 3D scene peek (UI v1 — 3D peek)
+        self.threedscene_act.setChecked(self.scenePeekIsOpen())
+
         ## Group visibility
         for group, viz in self.series.groups_visibility.items():
             try:
@@ -320,6 +324,8 @@ class MainWindow(QMainWindow):
             ("Shift+F3", lambda : self.field.shearTform(sx=-0.005)),
             ("F4", lambda : self.field.shearTform(sy=0.005)),
             ("Shift+F4", lambda : self.field.shearTform(sy=-0.005)),
+
+            ("Ctrl+Shift+D", lambda : self.toggleScenePeek()),  # 3D scene peek (UI v1)
         ]
 
         for kbd, act in shortcuts:
@@ -1641,6 +1647,50 @@ class MainWindow(QMainWindow):
         collapsed = manager.listsPanelCollapsed()
         manager.setListsPanelCollapsed(collapsed)
         self.togglelistspanel_act.setChecked(collapsed)
+
+    def scenePeekIsOpen(self) -> bool:
+        """Whether the 3D peek exists and is open. Safe to call on any UI
+        refresh before the peek has been lazily built (checkActions uses it)."""
+        return bool(self.scene_peek) and self.scene_peek.is_open
+
+    def _ensureScenePeek(self):
+        """Lazily build the 3D-scene slide-over over the current field."""
+        if self.scene_peek is None:
+            from PyReconstruct.modules.gui.main.scene_peek import ScenePeek
+            self.scene_peek = ScenePeek(self)
+            self.scene_peek.toggled.connect(self._onScenePeekToggled)
+        return self.scene_peek
+
+    def _onScenePeekToggled(self, is_open : bool):
+        """Keep the View-menu checkbox in sync with the peek's open state."""
+        if hasattr(self, "threedscene_act"):
+            self.threedscene_act.setChecked(is_open)
+
+    def toggleScenePeek(self, show=None):
+        """Open/close the right-edge 3D-scene slide-over (UI v1 — 3D peek).
+
+        Both production callers — the 3D-menu checkbox action and the
+        Ctrl+Shift+D shortcut — invoke this with NO argument, so it pure-toggles
+        off the panel's authoritative ``is_open`` (the checkbox is then re-synced
+        by ``_onScenePeekToggled``). ``show`` is a programmatic/test affordance
+        to force a state.
+
+            Params:
+                show (bool | None): force open (True) / closed (False); None toggles.
+        """
+        peek = self._ensureScenePeek()
+        want_open = (not peek.is_open) if show is None else bool(show)
+        peek.open() if want_open else peek.close()
+
+    def openFullScene(self):
+        """Hand off from the peek to the full window-based 3D viewer: bring an
+        existing scene forward, else open one for the selected objects (the same
+        path as the object list's "Add to scene")."""
+        if self.viewer and not self.viewer.is_closed:
+            self.viewer.activateWindow()
+            self.viewer.setFocus()
+        else:
+            self.field.addTo3D()
 
     def setToObject(self, obj_name : str, section_num : int):
         """Focus the field on an object from a specified section.
@@ -3045,6 +3095,8 @@ class MainWindow(QMainWindow):
         self._apply_app_icon()
         if self.mouse_palette is not None:
             self.mouse_palette.refreshModeIcons()
+        if self.scene_peek is not None:
+            self.scene_peek.refreshTheme()
     
     def addToRecentSeries(self, series_fp : str = None):
         """Add a series to the recently opened series list."""

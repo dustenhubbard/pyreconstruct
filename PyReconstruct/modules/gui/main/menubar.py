@@ -158,6 +158,8 @@ def return_series_menu(self):
                 "text": "3D",
                 "opts":
                 [
+                    ("threedscene_act", "3D scene peek", "checkbox", self.toggleScenePeek),
+                    None,
                     ("load3Dscene_act", "Load 3D scene...", "", self.load3DScene),
                 ]
             },
