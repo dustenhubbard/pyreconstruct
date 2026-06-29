@@ -32,6 +32,44 @@ def human_size(n):
         n /= 1024
 
 
+def _space_after_headings(browser, extra=10):
+    """Add breathing room below markdown headings in a notes browser.
+
+    Qt's ``setMarkdown`` ignores the document default stylesheet, so we walk the
+    blocks and bump the bottom margin on heading blocks instead. Applies to
+    whatever headings the notes carry.
+    """
+    doc = browser.document()
+    cursor = QTextCursor(doc)
+    block = doc.begin()
+    while block.isValid():
+        fmt = block.blockFormat()
+        if fmt.headingLevel() > 0:
+            fmt.setBottomMargin(fmt.bottomMargin() + extra)
+            cursor.setPosition(block.position())
+            cursor.setBlockFormat(fmt)
+        block = block.next()
+
+
+def make_notes_browser(markdown_text, min_height=180):
+    """Build a read-only ``QTextBrowser`` that renders release-note markdown.
+
+    Shared by the updater dialog and the first-launch "What's new" dialog so both
+    render notes identically (markdown view, external links, heading spacing).
+    Falls back to plain text if the markdown can't be rendered.
+    """
+    text = markdown_text or "_No release notes were published._"
+    browser = QTextBrowser()
+    browser.setOpenExternalLinks(True)
+    try:
+        browser.setMarkdown(text)
+        _space_after_headings(browser)
+    except Exception:
+        browser.setPlainText(text)
+    browser.setMinimumHeight(min_height)
+    return browser
+
+
 class UpdateDialog(QDialog):
     """Presents an available update and performs the download/verify in place.
 
@@ -70,14 +108,7 @@ class UpdateDialog(QDialog):
         lay.addWidget(QLabel(sub))
 
         notes = (self._release or {}).get("body") or "_No release notes were published._"
-        self._notes = QTextBrowser()
-        self._notes.setOpenExternalLinks(True)
-        try:
-            self._notes.setMarkdown(notes)
-            self._space_after_headings()
-        except Exception:
-            self._notes.setPlainText(notes)
-        self._notes.setMinimumHeight(180)
+        self._notes = make_notes_browser(notes)
         lay.addWidget(QLabel("<b>What's new</b>"))
         lay.addWidget(self._notes)
 
@@ -101,24 +132,6 @@ class UpdateDialog(QDialog):
         row.addWidget(self._later_btn)
         row.addWidget(self._install_btn)
         lay.addLayout(row)
-
-    def _space_after_headings(self, extra=10):
-        """Add breathing room below markdown headings in the notes.
-
-        Qt's ``setMarkdown`` ignores the document default stylesheet, so we walk
-        the blocks and bump the bottom margin on heading blocks instead. Applies
-        to whatever headings the real release notes carry, not just the sample.
-        """
-        doc = self._notes.document()
-        cursor = QTextCursor(doc)
-        block = doc.begin()
-        while block.isValid():
-            fmt = block.blockFormat()
-            if fmt.headingLevel() > 0:
-                fmt.setBottomMargin(fmt.bottomMargin() + extra)
-                cursor.setPosition(block.position())
-                cursor.setBlockFormat(fmt)
-            block = block.next()
 
     # --- download / verify ---------------------------------------------------
     def _start_download(self):
