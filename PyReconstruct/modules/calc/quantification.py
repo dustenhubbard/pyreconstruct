@@ -371,6 +371,10 @@ def rolling_average(points, window=10, edge_mode="padded"):
 def interpolate_points(points: List[tuple], spacing=0.01):
     """Interpolate points around a path."""
 
+    # a path needs at least two points to interpolate; fewer is a no-op
+    if len(points) < 2:
+        return []
+
     x, y = zip(*points)
 
     ## Calculate cumulative arc lengths (distances between consecutive points)
