@@ -11,6 +11,13 @@ import os
 
 import pytest
 
+# Force Qt's headless platform plugin before any QApplication is built, so widget
+# tests run on a server / CI / SSH box with no display instead of aborting the
+# whole interpreter (SIGABRT). setdefault: an explicit QT_QPA_PLATFORM still wins.
+# Belongs here (not per-file) because the shared qapp fixture below is what
+# constructs QApplication, so a single test file run in isolation is safe too.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 # Project-wide QSettings identity (mirrors PyReconstruct.modules.gui.utils.theme).
 QSETTINGS_ORG = "KHLab"
 QSETTINGS_APP = "PyReconstruct"
