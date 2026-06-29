@@ -67,29 +67,63 @@ def fetch_releases(timeout=15):
 
 # --- Selection (pure) ---------------------------------------------------------
 
-def pick_release(releases, channel):
-    """Pick the release for a channel.
+def _release_version(release):
+    """The semver ``Version`` parsed from a release's tag (a leading 'v' is
+    tolerated), or ``None`` if the tag isn't a valid version -- e.g. the legacy
+    rolling 'prerelease' build, whose tag is literally ``prerelease``.
+    """
+    tag = (release.get("tag_name") or "").removeprefix("v")
+    try:
+        return Version(tag)
+    except InvalidVersion:
+        return None
 
-    release    -> newest non-prerelease, non-draft release.
-    prerelease -> the rolling 'prerelease' build (CI publishes it on every main
-                  push); falls back to the newest pre-release.
+
+def _is_stable(release):
+    """True if a release belongs on the stable ``release`` channel.
+
+    Requires BOTH that GitHub isn't flagging it as a pre-release AND that its tag
+    isn't a semver pre-release (e.g. ``v1.30.0-alpha.1``). The semver guard is
+    defense-in-depth: a pre-release tag stays off the stable channel even if the
+    maintainer forgets to tick GitHub's 'pre-release' box when publishing.
+    """
+    if release.get("prerelease"):
+        return False
+    v = _release_version(release)
+    return v is None or not v.is_prerelease
+
+
+def pick_release(releases, channel):
+    """Pick the newest release for a channel, ranked by semver version.
+
+    release    -> newest *stable* release: the highest semver tag that is not a
+                  pre-release, e.g. ``v1.20.0``.
+    prerelease -> newest release of *any* kind: the highest semver tag including
+                  pre-releases, e.g. ``v1.30.0-alpha.1`` while stable is still
+                  ``v1.20.0`` (since ``1.30.0a1 > 1.20.0``). Once ``v1.30.0``
+                  final ships it wins, because ``1.30.0 > 1.30.0rc1``.
+
+    Candidates are ranked by their parsed semver tag, so pre-releases order
+    alpha < beta < rc < final regardless of the order GitHub returns them in. A
+    release whose tag isn't a valid version (the legacy rolling 'prerelease'
+    build) is used only as a fallback when no semver-tagged release qualifies,
+    preserving the older edge-build behavior.
     """
     # accept legacy channel values ("stable"/"edge") from installs predating the rename
     channel = {"stable": "release", "edge": "prerelease"}.get(channel, channel)
     rels = [r for r in (releases or []) if not r.get("draft")]
-    if channel == "prerelease":
-        for r in rels:
-            if r.get("tag_name") == "prerelease":
-                return r
-        for r in rels:
-            if r.get("prerelease"):
-                return r
+    # prerelease users see everything; release users see only stable releases.
+    candidates = rels if channel == "prerelease" else [r for r in rels if _is_stable(r)]
+    if not candidates:
         return None
-    # release (stable)
-    for r in rels:
-        if not r.get("prerelease"):
-            return r
-    return None
+    versioned = [(v, i, r) for i, r in enumerate(candidates)
+                 if (v := _release_version(r)) is not None]
+    if versioned:
+        # highest semver wins; among equal versions, GitHub's newest-first
+        # ordering (smallest index) breaks the tie.
+        return max(versioned, key=lambda t: (t[0], -t[1]))[2]
+    # no semver-tagged candidate (e.g. only the rolling 'prerelease' build exists)
+    return candidates[0]
 
 
 def pick_asset(release, platform_tag):

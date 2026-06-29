@@ -451,7 +451,7 @@ class AllOptionsDialog(QDialog):
                 ["Update channel:"],
                 [("radio",
                   ("Release (recommended)", channel == "release"),
-                  ("Pre-release (experimental, latest main)", channel == "prerelease"))],
+                  ("Pre-release (experimental) — try upcoming features early", channel == "prerelease"))],
             ]
             def setOption(response):
                 self.series.setOption("update_channel", "release" if response[0][0][1] else "prerelease")
