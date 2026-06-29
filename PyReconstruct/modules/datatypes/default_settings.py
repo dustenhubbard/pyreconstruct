@@ -138,8 +138,9 @@ default_settings = {
     # series-related
     "series_code_pattern": "[0-9A-Za-z]+",  # MFO
 
-    # theme: "system" (follow OS light/dark), "light", or "dark".
-    # Legacy values "default"/"qdark" are migrated by gui.utils.theme.normalize_mode.
+    # theme: "system" (follow OS light/dark), "light", "dark", "studio"
+    # (cool dark + teal), or "atlas" (cool light + teal). Legacy values
+    # "default"/"qdark" are migrated by gui.utils.theme.normalize_mode.
     "theme": "system",  # MFO
 
     # updates

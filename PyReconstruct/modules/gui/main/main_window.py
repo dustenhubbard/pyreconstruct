@@ -3011,7 +3011,8 @@ class MainWindow(QMainWindow):
     def setTheme(self, new_theme=None):
         """Set the UI theme.
 
-        Modes: "system" (follow the OS light/dark scheme), "light", "dark".
+        Modes: "system" (follow the OS light/dark scheme), "light", "dark",
+        "studio" (cool dark, teal accent), "atlas" (cool light, teal accent).
         Persisted app-wide via QSettings; legacy "default"/"qdark" are accepted
         and migrated. Called with None from the menu to prompt; called with a
         stored value at startup / after the options dialog to (re)apply."""
@@ -3022,7 +3023,9 @@ class MainWindow(QMainWindow):
                 [("radio",
                   ("System", mode == "system"),
                   ("Light", mode == "light"),
-                  ("Dark", mode == "dark"))]
+                  ("Dark", mode == "dark"),
+                  ("Studio", mode == "studio"),
+                  ("Atlas", mode == "atlas"))]
             ]
             response, confirmed = QuickDialog.get(
                 self, structure, "Theme"
@@ -3030,12 +3033,17 @@ class MainWindow(QMainWindow):
             if not confirmed:
                 return
 
-            if response[0][0][1]:
+            flags = response[0]
+            if flags[0][1]:
                 new_theme = "system"
-            elif response[0][1][1]:
+            elif flags[1][1]:
                 new_theme = "light"
-            elif response[0][2][1]:
+            elif flags[2][1]:
                 new_theme = "dark"
+            elif flags[3][1]:
+                new_theme = "studio"
+            elif flags[4][1]:
+                new_theme = "atlas"
             else:
                 return
 

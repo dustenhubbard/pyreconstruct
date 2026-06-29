@@ -257,14 +257,19 @@ class AllOptionsDialog(QDialog):
               ("System", mode == "system"),
               ("Light", mode == "light"),
               ("Dark", mode == "dark"),
+              ("Studio", mode == "studio"),
+              ("Atlas", mode == "atlas"),
             )],
         ]
 
         def setOption(response):
 
-            if response[0][0][1]: m = "system"
-            elif response[0][1][1]: m = "light"
-            elif response[0][2][1]: m = "dark"
+            flags = response[0]
+            if flags[0][1]: m = "system"
+            elif flags[1][1]: m = "light"
+            elif flags[2][1]: m = "dark"
+            elif flags[3][1]: m = "studio"
+            elif flags[4][1]: m = "atlas"
             else: m = "system"
             self.series.setOption("theme", m)
 

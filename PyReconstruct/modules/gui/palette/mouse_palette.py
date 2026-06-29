@@ -139,7 +139,7 @@ class MousePalette():
             stripped = self._stripped(name)
             self._applyModeButtonStyle(b)
             if icon_utils.has_icon(stripped):
-                color = theme.ACCENT_TEXT if b.isChecked() else resting
+                color = theme.accent_text() if b.isChecked() else resting
                 b.setIcon(icon_utils.tool_icon(stripped, icon_px, color))
                 b.setIconSize(QSize(icon_px, icon_px))
 
@@ -150,9 +150,10 @@ class MousePalette():
         own styling. Re-applied on theme/active changes so it follows light/dark.
         """
         if button.isChecked():
+            accent = theme.accent_color()
             button.setStyleSheet(
                 "QPushButton { background-color: %s; border: 1px solid %s; "
-                "border-radius: 6px; }" % (theme.ACCENT, theme.ACCENT)
+                "border-radius: 6px; }" % (accent, accent)
             )
         else:
             button.setStyleSheet("")
