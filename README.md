@@ -43,7 +43,9 @@ Python required:
 
 - **Windows** — `PyReconstruct-<version>-Windows-x86_64-Setup.exe`. Builds are
   unsigned for now; if SmartScreen warns, choose **More info → Run anyway**.
-- **macOS (Apple Silicon)** — `PyReconstruct-<version>-macOS-arm64.dmg`, then drag
+- **macOS** — `PyReconstruct-<version>-macOS-arm64.dmg` on Apple Silicon, or
+  `PyReconstruct-<version>-macOS-x86_64.dmg` on an Intel Mac (the Intel build is
+  on the Pre-release channel now and lands in the next tagged release); then drag
   PyReconstruct to Applications. Builds are unsigned for now, so the first launch
   is blocked by Gatekeeper — clear the quarantine flag once in Terminal:
   ```
@@ -133,6 +135,9 @@ On the Pre-release (experimental) channel, ahead of the next tagged release:
 
 - **Faster large-series open & refresh** — the performance work above (3–4×, with
   verified geometry equivalence).
+- **Intel macOS installer** — a native x86_64 `.dmg` now builds alongside the
+  Apple Silicon (arm64) one, so older Intel Macs get a native build and the
+  in-app updater serves each Mac its matching arch.
 - **A correctness test suite** (geometry/transform equivalence, updater logic)
   and a headless performance harness.
 
