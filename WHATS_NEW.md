@@ -4,6 +4,15 @@ Short, plain-language highlights shown in PyReconstruct's "What's new" dialog
 after you install or update. For the complete, detailed list of changes, see the
 full release notes on GitHub (linked from the dialog).
 
+## [1.20.3]
+
+- **A calmer first launch.** PyReconstruct no longer pops up a box asking for your
+  name every time it starts — it just remembers you.
+- **The window opens at a comfortable size** and reopens wherever you left it.
+- **Your palette stays how you set it.** Hide the section-increment buttons, the
+  brightness/contrast sliders, or the scale bar, and they stay hidden next time.
+- **A quick summary after each update** (like this one), so you always know what's new.
+
 ## [1.20.2]
 
 - **A calmer first launch.** PyReconstruct no longer pops up a box asking for your
