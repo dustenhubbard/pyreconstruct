@@ -56,11 +56,17 @@ class MoveableButton(QPushButton):
     def mouseReleaseEvent(self, event):
         """Called when mouse is released."""
         super().mouseReleaseEvent(event)
+        was_dragging = self.manager.is_dragging
         self.manager.is_dragging = False
+
+        # persist the new spot once per drag (not on every mouse-move, and not on
+        # a plain click that never moved the group)
+        if was_dragging:
+            self.manager.savePositionState()
 
         if self.rc_act and self.right_clicked:
             self.rc_act.trigger()
-        
+
         self.left_clicked = False
         self.right_clicked = False
     

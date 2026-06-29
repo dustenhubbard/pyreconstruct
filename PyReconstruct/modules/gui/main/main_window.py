@@ -26,9 +26,9 @@ class MainWindow(QMainWindow):
         if geometry is not None:
             self.restoreGeometry(geometry)
         else:
-            # first launch: ~66% of the screen, centered (not near-maximized)
-            w = int(self.screen_info["width"] * 0.66)
-            h = int(self.screen_info["height"] * 0.66)
+            # first launch: ~50% of the screen, centered (not near-maximized)
+            w = int(self.screen_info["width"] * 0.5)
+            h = int(self.screen_info["height"] * 0.5)
             self.setGeometry(
                 (self.screen_info["width"] - w) // 2,   # x
                 (self.screen_info["height"] - h) // 2,  # y
