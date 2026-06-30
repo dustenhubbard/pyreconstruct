@@ -256,7 +256,9 @@ def whats_new_content(current, last_seen=None, cap=5, text=None):
 
     Sections shown: when ``last_seen`` is a valid version older than ``current``,
     every section with ``last_seen < version <= current`` (newest first, capped at
-    ``cap``); otherwise just the current version's section. ``text`` overrides the
+    ``cap``); on a fresh install (no/older/invalid ``last_seen``) the recent
+    release history -- the current version plus the few before it, newest first,
+    capped at ``cap``. ``text`` overrides the
     bundled notes (for testing); by default the bundled ``WHATS_NEW.md`` is read.
     """
     if text is None:
@@ -296,7 +298,18 @@ def whats_new_content(current, last_seen=None, cap=5, text=None):
         if len(shown) > cap:
             shown, truncated = shown[:cap], True
     else:
-        shown = [current_section]
+        # Fresh install: welcome the user with the recent release history (the
+        # current version plus the few before it), newest first and capped -- so a
+        # newcomer sees what recent releases brought, not just the version they
+        # happened to install.
+        shown = sorted(
+            (s for s in sections
+             if _safe_version(s["version"]) is not None
+             and (cur_v is None or _safe_version(s["version"]) <= cur_v)),
+            key=lambda s: _safe_version(s["version"]), reverse=True,
+        )
+        if len(shown) > cap:
+            shown, truncated = shown[:cap], True
 
     return {"version": current, "date": friendly, "orienter": orienter,
             "body": _render_sections(shown, truncated), "truncated": truncated}
