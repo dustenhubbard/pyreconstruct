@@ -168,15 +168,17 @@ def test_parse_changelog_section_tolerates_em_dash_dated_heading():
 
 
 # ---- whats_new_content (header / orienter / section selection) --------------
-def test_whats_new_fresh_install_shows_current_section_only():
+def test_whats_new_fresh_install_shows_recent_history():
     c = F.whats_new_content("1.20.3", last_seen=None, text=WN)
     assert c["version"] == "1.20.3"
     assert c["date"] == "June 29, 2026"
     assert c["orienter"] == "Welcome to PyReconstruct"
+    # a newcomer sees the recent releases (current + the ones before), newest first
     assert "### 1.20.3 — June 29, 2026" in c["body"]
-    assert "Bullet three-A." in c["body"]
-    assert "1.20.2" not in c["body"]            # only the current section
-    assert c["truncated"] is False
+    assert "### 1.20.2 — June 20, 2026" in c["body"]
+    assert "### 1.20.1 — June 10, 2026" in c["body"]
+    assert c["body"].index("1.20.3") < c["body"].index("1.20.2") < c["body"].index("1.20.1")
+    assert c["truncated"] is False             # 3 sections, under the cap
 
 
 def test_whats_new_skip_update_shows_missed_sections_newest_first():
@@ -221,16 +223,18 @@ def test_whats_new_missing_current_section_falls_back_to_generic():
 
 
 def test_whats_new_downgrade_and_garbage_last_seen_are_treated_as_fresh():
-    # downgrade: last_seen newer than current -> fresh (current section only)
+    # downgrade: last_seen newer than current -> fresh; recent history up to current,
+    # never anything newer than the running version
     c = F.whats_new_content("1.20.2", last_seen="1.99.0", text=WN)
     assert c["orienter"] == "Welcome to PyReconstruct"
     assert "### 1.20.2 — June 20, 2026" in c["body"]
-    assert "1.20.3" not in c["body"]
-    # unparseable last_seen -> fresh
+    assert "### 1.20.1 — June 10, 2026" in c["body"]   # older releases shown too
+    assert "1.20.3" not in c["body"]                   # never newer than current
+    # unparseable last_seen -> fresh (recent history)
     c2 = F.whats_new_content("1.20.3", last_seen="garbage", text=WN)
     assert c2["orienter"] == "Welcome to PyReconstruct"
     assert "### 1.20.3" in c2["body"]
-    assert "1.20.2" not in c2["body"]
+    assert "### 1.20.2" in c2["body"]
 
 
 def test_whats_new_reads_bundled_file_and_is_offline_safe(monkeypatch, tmp_path):

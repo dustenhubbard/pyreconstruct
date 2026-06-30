@@ -118,7 +118,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4          # needed for packaging/linux/ (no build leg)
+      - uses: actions/checkout@v4          # needed for packaging/linux/ + release notes
+        with:
+          fetch-depth: 0                   # full history + tags for the changelog link
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -138,6 +140,28 @@ jobs:
           tar -czf "dist/PyReconstruct-${VERSION}-Linux-installer.tar.gz" "$STAGE"
       - name: Generate checksums
         run: cd dist && for f in *; do [ -f "$f" ] && sha256sum "$f" > "$f.sha256"; done
+      - name: Build friendly release notes
+        # User-facing highlights from WHATS_NEW.md + a single link to the technical
+        # changelog -- deliberately NOT GitHub's auto-generated "What's Changed" list,
+        # which reads as developer jargon to general users.
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          {
+            echo "## What's new in ${VERSION}"
+            awk -v ver="$VERSION" '
+              /^##[ \t]+\[/ { t=$0; sub(/^##[ \t]+\[/,"",t); sub(/\].*/,"",t); sub(/^[vV]/,"",t); cap=(t==ver); next }
+              cap { print }
+            ' WHATS_NEW.md
+            echo ""
+            echo "---"
+            PREV=$(git tag --sort=-version:refname | awk -v c="$GITHUB_REF_NAME" 'found{print; exit} $0==c{found=1}')
+            if [ -n "$PREV" ]; then
+              echo "_For developers — the full technical changelog:_ **[compare ${PREV} → ${GITHUB_REF_NAME}](https://github.com/${GITHUB_REPOSITORY}/compare/${PREV}...${GITHUB_REF_NAME})**"
+            else
+              echo "_For developers — the full technical changelog:_ **[commit history](https://github.com/${GITHUB_REPOSITORY}/commits/${GITHUB_REF_NAME})**"
+            fi
+          } > release_body.md
+          echo "----- release_body.md -----"; cat release_body.md
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
@@ -148,7 +172,7 @@ jobs:
           # ignores drafts, so it stays invisible until published. Unset/false (the
           # default) publishes immediately, exactly as before.
           draft: ${{ vars.STAGE_RELEASE_AS_DRAFT == 'true' }}
-          generate_release_notes: true
+          body_path: release_body.md
 
   release-prerelease:
     needs: build
