@@ -261,6 +261,27 @@ def test_shell_theme_toggle_no_azure(qapp, theme_name):
         assert azure not in low, f"azure {azure} in shell chrome for {theme_name}"
 
 
+def test_title_strip_brand_uses_app_icon(qapp):
+    from PyReconstruct.modules.gui.studio._common import app_icon_path
+    from PyReconstruct.modules.gui.studio.title_strip import StudioTitleStrip
+    ts = StudioTitleStrip()
+    ts.apply_theme("studio")   # dark squircle
+    ts.apply_theme("atlas")    # light squircle — neither path errors
+    # the shipped fork icons resolve in this checkout
+    assert app_icon_path("dark") and app_icon_path("light")
+    assert app_icon_path("dark").endswith("PyReconstruct.png")
+    assert app_icon_path("light").endswith("PyReconstruct-light.png")
+
+
+def test_shell_sets_window_icon(qapp):
+    from PyReconstruct.modules.gui.studio._common import app_icon_path
+    shell = StudioShell.demo()
+    for th in ("studio", "atlas"):
+        shell.apply_theme(th, app_wide=False)
+        if app_icon_path("dark"):   # assets present -> window icon is set
+            assert not shell.windowIcon().isNull()
+
+
 def test_shell_renders_offscreen(qapp):
     shell = StudioShell.demo()
     shell.resize(1180, 560)

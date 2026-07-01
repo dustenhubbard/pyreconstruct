@@ -1,8 +1,24 @@
 """Small shared helpers for the Studio widgets."""
+import os
+
 from PySide6.QtCore import QSize
 from PySide6.QtWidgets import QToolButton
 
 from ..utils import icons
+
+# The shipped app icon (the fork's low-poly Python mark on a squircle), resolved
+# relative to the package so the view layer needs no new cross-module import and
+# still works headless / offscreen. Dark and light squircles match the two
+# shells (as gui.main uses for the OS window icon).
+_ASSET_IMG = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "assets", "img"))
+_APP_ICON = {"dark": "PyReconstruct.png", "light": "PyReconstruct-light.png"}
+
+
+def app_icon_path(family="dark"):
+    """Filesystem path to the app icon for a color family, or None if missing."""
+    path = os.path.join(_ASSET_IMG, _APP_ICON.get(family, _APP_ICON["dark"]))
+    return path if os.path.exists(path) else None
 
 
 def repolish(widget):

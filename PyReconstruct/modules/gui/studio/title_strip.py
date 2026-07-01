@@ -10,10 +10,11 @@ reads as a whole. The ⌘K field's *affordance* is in scope; its full
 command-palette behaviour is a follow-up.
 """
 from PySide6.QtCore import Qt, QRectF
-from PySide6.QtGui import QPainter, QConicalGradient, QColor
+from PySide6.QtGui import QPainter, QConicalGradient, QColor, QPixmap
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QFrame
 
 from ..utils import theme
+from ._common import app_icon_path
 
 _MENU = ["File", "Edit", "Series", "Section", "Lists",
          "Alignments", "Autosegment", "View", "Help"]
@@ -21,24 +22,41 @@ _DOTS = ("#f0655a", "#f4bd4f", "#3ecf8e")   # window controls (decorative)
 
 
 class _BrandMark(QWidget):
-    """The 18px conic-gradient app mark."""
+    """The app mark — the real fork icon (per shell family).
 
-    def __init__(self, parent=None):
+    Uses the shipped squircle icon (dark on the Studio shell, light on Atlas,
+    mirroring the OS window icon). Falls back to the conic-gradient placeholder
+    if the asset can't be loaded, so the strip never renders empty.
+    """
+
+    def __init__(self, size=18, parent=None):
         super().__init__(parent)
-        self.setFixedSize(18, 18)
+        self._size = size
+        self.setFixedSize(size, size)
+        self._pixmap = None
+        self.set_family("dark")
+
+    def set_family(self, family):
+        path = app_icon_path(family)
+        pm = QPixmap(path) if path else QPixmap()
+        self._pixmap = pm if not pm.isNull() else None
+        self.update()
 
     def paintEvent(self, _event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
-        g = QConicalGradient(9, 9, 200)
-        g.setColorAt(0.00, QColor("#37c0a6"))
-        g.setColorAt(0.25, QColor("#5ab0f0"))
-        g.setColorAt(0.50, QColor("#b06cf0"))
-        g.setColorAt(0.75, QColor("#f4bd4f"))
-        g.setColorAt(1.00, QColor("#37c0a6"))
-        p.setPen(Qt.NoPen)
-        p.setBrush(g)
-        p.drawRoundedRect(QRectF(0, 0, 18, 18), 5, 5)
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        r = self.rect()
+        if self._pixmap is not None:
+            p.drawPixmap(r, self._pixmap)
+        else:
+            g = QConicalGradient(r.center().x(), r.center().y(), 200)
+            for pos, col in ((0.0, "#37c0a6"), (0.25, "#5ab0f0"), (0.5, "#b06cf0"),
+                             (0.75, "#f4bd4f"), (1.0, "#37c0a6")):
+                g.setColorAt(pos, QColor(col))
+            p.setPen(Qt.NoPen)
+            p.setBrush(g)
+            p.drawRoundedRect(QRectF(r), 5, 5)
         p.end()
 
 
@@ -66,7 +84,8 @@ class StudioTitleStrip(QWidget):
             lay.addWidget(_Dot(c, self))
 
         lay.addSpacing(6)
-        lay.addWidget(_BrandMark(self))
+        self._brand = _BrandMark(18, self)
+        lay.addWidget(self._brand)
         brand = QLabel("Py", self)
         brand.setObjectName("studioBrand")
         brand_accent = QLabel("Reconstruct", self)
@@ -98,3 +117,7 @@ class StudioTitleStrip(QWidget):
         kbd.setObjectName("studioCmdkKbd")
         cl.addWidget(kbd)
         lay.addWidget(cmdk)
+
+    def apply_theme(self, theme_name=None):
+        """Match the brand mark to the shell family (dark/light squircle)."""
+        self._brand.set_family(theme.studio_tokens(theme_name)["family"])
