@@ -24,7 +24,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QApplication
 
 from ..utils import theme
 from . import qss
-from ._common import app_icon_path
+from ._common import logo_path
 from .title_strip import StudioTitleStrip
 from .rail import ActivityRail
 from .objects_panel import ObjectsPanel
@@ -42,6 +42,9 @@ class StudioShell(QWidget):
         self.setObjectName("studioShell")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setWindowTitle("PyReconstruct")
+        _logo = logo_path()
+        if _logo:
+            self.setWindowIcon(QIcon(_logo))
         self._theme = None
         self._section_idx, self._section_total = 148, 287
         self._datasets = {}
@@ -148,9 +151,6 @@ class StudioShell(QWidget):
         self.palette_strip.apply_theme(theme_name)
         self.status_bar.apply_theme(theme_name)
         self.title_strip.apply_theme(theme_name)
-        icon_path = app_icon_path(tok["family"])
-        if icon_path:
-            self.setWindowIcon(QIcon(icon_path))
 
     def current_theme(self):
         return self._theme

@@ -36,7 +36,6 @@ QLabel { background: transparent; padding: 0px; margin: 0px; }
     border-bottom: 1px solid ${line};
 }
 #studioBrand { color: ${ink}; font-weight: 800; font-size: 14px; }
-#studioBrandAccent { color: ${accent}; font-weight: 800; font-size: 14px; }
 QLabel#studioMenuItem { color: ${muted}; font-size: 12px; padding: 3px 7px; border-radius: 6px; }
 QLabel#studioMenuItem:hover { color: ${ink}; background: ${raised}; }
 #studioChip {

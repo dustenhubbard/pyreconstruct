@@ -16,8 +16,17 @@ _APP_ICON = {"dark": "PyReconstruct.png", "light": "PyReconstruct-light.png"}
 
 
 def app_icon_path(family="dark"):
-    """Filesystem path to the app icon for a color family, or None if missing."""
+    """Filesystem path to the squircle app icon for a color family, or None."""
     path = os.path.join(_ASSET_IMG, _APP_ICON.get(family, _APP_ICON["dark"]))
+    return path if os.path.exists(path) else None
+
+
+def logo_path():
+    """Filesystem path to the bare (transparent) fork logo, or None if missing.
+
+    The flat mark — no squircle — reads on both the dark and light title bars.
+    """
+    path = os.path.join(_ASSET_IMG, "logo.png")
     return path if os.path.exists(path) else None
 
 

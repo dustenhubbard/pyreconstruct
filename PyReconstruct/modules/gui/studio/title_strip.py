@@ -14,7 +14,7 @@ from PySide6.QtGui import QPainter, QConicalGradient, QColor, QPixmap
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QFrame
 
 from ..utils import theme
-from ._common import app_icon_path
+from ._common import logo_path
 
 _MENU = ["File", "Edit", "Series", "Section", "Lists",
          "Alignments", "Autosegment", "View", "Help"]
@@ -22,25 +22,20 @@ _DOTS = ("#f0655a", "#f4bd4f", "#3ecf8e")   # window controls (decorative)
 
 
 class _BrandMark(QWidget):
-    """The app mark — the real fork icon (per shell family).
+    """The app mark — the bare (transparent) fork logo.
 
-    Uses the shipped squircle icon (dark on the Studio shell, light on Atlas,
-    mirroring the OS window icon). Falls back to the conic-gradient placeholder
-    if the asset can't be loaded, so the strip never renders empty.
+    The flat mark reads on both the dark and light title bars, so it needs no
+    per-theme variant. Falls back to the conic-gradient placeholder if the asset
+    can't be loaded, so the strip never renders empty.
     """
 
-    def __init__(self, size=18, parent=None):
+    def __init__(self, size=22, parent=None):
         super().__init__(parent)
         self._size = size
         self.setFixedSize(size, size)
-        self._pixmap = None
-        self.set_family("dark")
-
-    def set_family(self, family):
-        path = app_icon_path(family)
+        path = logo_path()
         pm = QPixmap(path) if path else QPixmap()
         self._pixmap = pm if not pm.isNull() else None
-        self.update()
 
     def paintEvent(self, _event):
         p = QPainter(self)
@@ -83,18 +78,18 @@ class StudioTitleStrip(QWidget):
         for c in _DOTS:
             lay.addWidget(_Dot(c, self))
 
-        lay.addSpacing(6)
-        self._brand = _BrandMark(18, self)
+        lay.addSpacing(4)
+        self._brand = _BrandMark(22, self)
         lay.addWidget(self._brand)
-        brand = QLabel("Py", self)
-        brand.setObjectName("studioBrand")
-        brand_accent = QLabel("Reconstruct", self)
-        brand_accent.setObjectName("studioBrandAccent")
-        lay.addWidget(brand)
-        lay.addSpacing(0)
-        lay.addWidget(brand_accent)
+        # one label for the whole wordmark so "Py" and "Reconstruct" are a single
+        # word (no layout gap between them); "Reconstruct" takes the teal accent.
+        self._brand_label = QLabel(self)
+        self._brand_label.setObjectName("studioBrand")
+        self._brand_label.setTextFormat(Qt.RichText)
+        self._brand_label.setText('Py<span style="color:#37c0a6">Reconstruct</span>')
+        lay.addWidget(self._brand_label)
 
-        lay.addSpacing(10)
+        lay.addSpacing(12)
         for name in _MENU:
             item = QLabel(name, self)
             item.setObjectName("studioMenuItem")
@@ -119,5 +114,6 @@ class StudioTitleStrip(QWidget):
         lay.addWidget(cmdk)
 
     def apply_theme(self, theme_name=None):
-        """Match the brand mark to the shell family (dark/light squircle)."""
-        self._brand.set_family(theme.studio_tokens(theme_name)["family"])
+        """Re-tint the wordmark's accent to the active theme (mark is theme-free)."""
+        accent = theme.studio_tokens(theme_name)["accent"]
+        self._brand_label.setText(f'Py<span style="color:{accent}">Reconstruct</span>')
