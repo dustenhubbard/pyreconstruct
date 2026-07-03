@@ -71,16 +71,18 @@ def pick_release(releases, channel):
     """Pick the release for a channel.
 
     release    -> newest non-prerelease, non-draft release.
-    prerelease -> the rolling 'prerelease' build (CI publishes it on every main
-                  push); falls back to the newest pre-release.
+    prerelease -> newest release flagged ``prerelease`` (drafts excluded).
+                  The pipeline publishes curated semver pre-releases
+                  (v1.30.0-alpha.N -> -rc -> final), each flagged
+                  ``prerelease=true`` by CI, so the newest such release is the
+                  current pre-release. GitHub returns releases newest-first, so
+                  the first prerelease-flagged one wins -- and a stale rolling
+                  'prerelease' release can no longer shadow a newer semver one.
     """
     # accept legacy channel values ("stable"/"edge") from installs predating the rename
     channel = {"stable": "release", "edge": "prerelease"}.get(channel, channel)
     rels = [r for r in (releases or []) if not r.get("draft")]
     if channel == "prerelease":
-        for r in rels:
-            if r.get("tag_name") == "prerelease":
-                return r
         for r in rels:
             if r.get("prerelease"):
                 return r

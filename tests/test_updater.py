@@ -30,9 +30,16 @@ def test_pick_release_release_channel_skips_prerelease_and_draft():
     r = U.pick_release(RELEASES, "release")
     assert r["tag_name"] == "v1.20.0"
 
-def test_pick_release_prerelease_prefers_the_rolling_tag():
-    r = U.pick_release(RELEASES, "prerelease")
-    assert r["tag_name"] == "prerelease"
+def test_pick_release_prerelease_picks_newest_over_stale_rolling_tag():
+    # The pre-release channel selects the newest prerelease-flagged release
+    # (GitHub returns newest-first). A newer semver pre-release must win over a
+    # stale rolling 'prerelease' release rather than being shadowed by it.
+    rels = [
+        _rel("v1.20.4-rc.1", prerelease=True),
+        _rel("prerelease", prerelease=True),
+        _rel("v1.20.0"),
+    ]
+    assert U.pick_release(rels, "prerelease")["tag_name"] == "v1.20.4-rc.1"
 
 def test_pick_release_prerelease_falls_back_to_newest_prerelease():
     rels = [_rel("v1.20.0"), _rel("v1.21.0rc1", prerelease=True)]
