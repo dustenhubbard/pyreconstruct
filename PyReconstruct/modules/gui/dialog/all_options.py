@@ -259,7 +259,8 @@ class AllOptionsDialog(QDialog):
         ]
         
         def setOption(response):
-            
+
+            theme = self.series.getOption("theme")  # keep current if neither radio matched
             if response[0][0][1]: theme = "default"
             elif response[0][1][1]: theme = "qdark"
             self.series.setOption("theme", theme)
