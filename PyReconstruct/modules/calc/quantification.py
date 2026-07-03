@@ -123,6 +123,63 @@ def lineDistance(pts : list, closed=True) -> float:
     return round(dist, 7)
 
 
+def traceGeometry(points, closed=True):
+    """Per-trace geometry in a single vectorized NumPy pass.
+
+    Returns ``(length, area, (cx, cy), radius)`` -- the same quantities the hot
+    per-trace path used to compute by calling lineDistance(), area(),
+    centroid(), and a max-distance radius separately (each its own Python loop
+    over the points, all calling distance()). Results match those scalar
+    functions: ``area`` is unsigned, ``length`` is rounded to 7 and the centroid
+    to 6. The scalar functions above remain the reference implementations and are
+    unchanged; this is purely a faster equivalent for the 60k+/refresh hot path.
+    """
+    n = len(points)
+    if n == 0:
+        return 0.0, 0.0, (0.0, 0.0), 0.0
+
+    arr = np.asarray(points, dtype=float)
+    x = arr[:, 0]
+    y = arr[:, 1]
+
+    # length (matches lineDistance)
+    if n <= 1:
+        length = 0.0
+    else:
+        d = float(np.hypot(np.diff(x), np.diff(y)).sum())
+        if closed:
+            d += math.hypot(x[0] - x[-1], y[0] - y[-1])
+        length = round(d, 7)
+
+    # area + centroid (matches area() / centroid())
+    if n <= 2:
+        a = 0.0
+        cx = round(float(x.mean()), 6)
+        cy = round(float(y.mean()), 6)
+    else:
+        # close the ring only if not already closed (mirrors the scalar funcs)
+        if x[0] != x[-1] or y[0] != y[-1]:
+            xs = np.append(x, x[0])
+            ys = np.append(y, y[0])
+        else:
+            xs, ys = x, y
+        cross = xs[:-1] * ys[1:] - xs[1:] * ys[:-1]
+        signed2 = float(cross.sum())          # == 2 * signed area
+        a = abs(signed2) / 2.0
+        if a > 1e-6:
+            # centroid via the signed area (orientation-independent), so no
+            # explicit CCW reversal is needed; 6*signed_area == 3*signed2.
+            cx = round(float(((xs[:-1] + xs[1:]) * cross).sum()) / (3.0 * signed2), 6)
+            cy = round(float(((ys[:-1] + ys[1:]) * cross).sum()) / (3.0 * signed2), 6)
+        else:
+            cx = round(float(x.mean()), 6)
+            cy = round(float(y.mean()), 6)
+
+    # radius: max distance from centroid over the (unclosed) points
+    radius = float(np.hypot(x - cx, y - cy).max())
+    return length, a, (cx, cy), radius
+
+
 def sigfigRound(n : float, sf : int) -> float:
     """Round a float to a specified number of significant figures.
     
