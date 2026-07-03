@@ -717,11 +717,11 @@ class Section():
 
             return
 
-        for trace in self.tracesAsList():
+        # only visit contours that are actually hidden (avoids scanning every
+        # trace on the section and rebuilding a list per trace)
+        for name in (to_hide & self.contours.keys()):
 
-            if trace.name in list(to_hide):
-
-                self.traces_group_hide.append(trace)
+            self.traces_group_hide.extend(self.contours[name])
 
     def closeTraces(self, traces : list = None, closed=True, log_event=True):
         """Close or open traces.
