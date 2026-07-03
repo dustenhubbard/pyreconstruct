@@ -162,10 +162,22 @@ jobs:
             fi
           } > release_body.md
           echo "----- release_body.md -----"; cat release_body.md
+      - name: Classify release
+        # Only a clean vX.Y.Z tag is a stable release; anything else -- a
+        # PEP 440-normalized pre-release (v1.20.4rc1), a dashed one (v1.20.4-rc.1),
+        # or an alpha (v1.30.0a1) -- publishes as a GitHub pre-release. A plain
+        # contains('-') check misclassifies the dashless v1.20.4rc1 as stable.
+        id: rel
+        run: |
+          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          prerelease: false
+          prerelease: ${{ steps.rel.outputs.prerelease }}
           # Stage a release as a hidden DRAFT (e.g. for a live demo): set the repo
           # variable STAGE_RELEASE_AS_DRAFT=true, push the tag, then hit "Publish"
           # when ready — assets are pre-built so it goes live instantly. The updater
