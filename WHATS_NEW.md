@@ -4,6 +4,18 @@ Short, plain-language highlights shown in PyReconstruct's "What's new" dialog
 after you install or update. For the complete, detailed list of changes, see the
 full release notes on GitHub (linked from the dialog).
 
+## [1.20.4rc1] — 2026-07-03
+
+- **Faster first edits on large series.** The first time you recolor or rename an
+  object in a big dataset no longer stalls; that first change is now as quick as
+  the ones that follow.
+- **Clearer wording when smoothing skips a trace.** After you smooth objects, the
+  list of traces that couldn't be smoothed now calls them "skipped traces" and
+  shows the reason for each, instead of the confusing "malformed contours."
+- **"Go to trace" zooms right in.** Jumping to a trace from that list now centers
+  and zooms on the individual trace, the same as double-clicking it in the Trace
+  List, instead of leaving you zoomed out on the whole object.
+
 ## [1.20.3] — 2026-06-29
 
 - **Your palette layout sticks.** Drag the brightness/contrast sliders, increment
