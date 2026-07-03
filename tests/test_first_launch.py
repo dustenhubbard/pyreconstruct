@@ -222,6 +222,22 @@ def test_whats_new_missing_current_section_falls_back_to_generic():
     assert c["truncated"] is False
 
 
+def test_whats_new_matches_current_section_by_version_not_spelling():
+    # The running version's own section is found by parsed VERSION, so a header
+    # spelled any PEP 440-equivalent way matches. A dashed [1.20.4-rc.1] header
+    # matches a compact 1.20.4rc1 runtime, and vice versa -- both render the RC
+    # notes rather than falling back to the generic body.
+    dashed = "# What's New\n\n## [1.20.4-rc.1] — 2026-07-03\n\n- RC bullet.\n"
+    c = F.whats_new_content("1.20.4rc1", last_seen=None, text=dashed)
+    assert "RC bullet." in c["body"]
+    assert "Full release notes on GitHub" not in c["body"]   # matched, not generic
+
+    compact = "# What's New\n\n## [1.20.4rc1] — 2026-07-03\n\n- RC bullet.\n"
+    c2 = F.whats_new_content("1.20.4-rc.1", last_seen=None, text=compact)
+    assert "RC bullet." in c2["body"]
+    assert "Full release notes on GitHub" not in c2["body"]
+
+
 def test_whats_new_downgrade_and_garbage_last_seen_are_treated_as_fresh():
     # downgrade: last_seen newer than current -> fresh; recent history up to current,
     # never anything newer than the running version
