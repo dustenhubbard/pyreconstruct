@@ -265,16 +265,18 @@ def whats_new_content(current, last_seen=None, cap=5, text=None):
         text = _read_whats_new()
     sections = parse_all_sections(text)
 
-    cur_norm = _normalize_version(current)
     cur_v = _safe_version(current)
     prev_v = _safe_version(last_seen)
     updating = prev_v is not None and cur_v is not None and prev_v < cur_v
 
     orienter = f"What's new since {last_seen}" if updating else "Welcome to PyReconstruct"
 
+    # Match the running version's own section by parsed VERSION, not raw string,
+    # so a header spelled any PEP 440-equivalent way -- [1.20.4rc1] or
+    # [1.20.4-rc.1] -- matches a 1.20.4rc1 runtime (mirrors whats_new_due).
     current_section = next(
         (s for s in sections
-         if cur_norm and _normalize_version(s["version"]).lower() == cur_norm.lower()),
+         if cur_v is not None and _safe_version(s["version"]) == cur_v),
         None,
     )
     friendly = (
