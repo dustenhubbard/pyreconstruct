@@ -77,9 +77,44 @@ class TraceLayer():
         
         return new_pt
     
+    def traceToPixArray(self, trace : Trace, tform : Transform = None) -> np.ndarray:
+        """Return the pixel points corresponding to a trace as an integer array.
+
+        Vectorized equivalent of calling pointToPix on every point: the section
+        transform is applied with mapPointsArray and the window-to-pixmap
+        conversion as numpy affine ops, instead of per-point Python calls.
+
+            Params:
+                trace (Trace): the trace to convert
+                tform (Transform): the transform to apply (otherwise, uses series data)
+            Returns:
+                (np.ndarray): (N, 2) array of integer pixel points
+        """
+        if not trace.points:
+            return np.empty((0, 2), dtype=np.int64)
+
+        if tform is None:
+            tform = self.section.tform
+        pts = tform.mapPointsArray(trace.points)
+
+        # apply the field-window to pixmap conversion
+        # (same math as fieldPointToPixmap, incl. round-half-even)
+        window_x, window_y, window_w, window_h = tuple(self.series.window)
+        pixmap_w, pixmap_h = tuple(self.pixmap_dim)
+        mag = self.section.mag
+        x_scaling = pixmap_w / (window_w / mag)
+        y_scaling = pixmap_h / (window_h / mag)
+        px = (pts[:, 0] - window_x) / mag * x_scaling
+        py = pixmap_h - (pts[:, 1] - window_y) / mag * y_scaling
+
+        return np.column_stack((
+            np.rint(px).astype(np.int64),
+            np.rint(py).astype(np.int64)
+        ))
+
     def traceToPix(self, trace : Trace, tform : Transform = None, qpoints=False) -> list:
         """Return the set of pixel points corresponding to a trace.
-        
+
             Params:
                 trace (Trace): the trace to convert
                 tform (Transform): the transform to apply
@@ -87,10 +122,11 @@ class TraceLayer():
             Returns:
                 (list): list of pixel points
         """
-        new_pts = []
-        for point in trace.points:
-            new_pts.append(self.pointToPix(point, tform=tform, qpoint=qpoints))
-        return new_pts
+        pix_pts = self.traceToPixArray(trace, tform)
+        if qpoints:
+            return [QPoint(int(x), int(y)) for x, y in pix_pts]
+        else:
+            return [(int(x), int(y)) for x, y in pix_pts]
     
     def getTrace(self, pix_x : float, pix_y : float) -> Trace:
         """"Return the closest trace to the given field coordinates.
@@ -130,13 +166,14 @@ class TraceLayer():
         pix_poly = getExterior(pix_poly)
 
         traces_in_poly = []
+        # check if ANY point is inside the polygon for inc
+        # check if EVERY point is inside the polygon for exc
+        # (settings-backed option: read once, not per trace)
+        inc = self.series.getOption("pointer")[1] == "inc"
         # only check traces in the view
         for trace in self.traces_in_view:
             pix_points = self.traceToPix(trace)
             inside_poly = True
-            # check if ANY point is inside the polygon for inc
-            # check if EVERY point is inside the polygon for exc
-            inc = self.series.getOption("pointer")[1] == "inc"
             for point in pix_points:
                 if inc and pointInPoly(*point, pix_poly):
                     traces_in_poly.append(trace)
@@ -208,118 +245,99 @@ class TraceLayer():
         
         return copied_traces
     
-    def _drawTrace(self, trace_layer : QPixmap, trace : Trace, color=None) -> bool:
+    def _drawTrace(self, painter : QPainter, trace : Trace, tform : Transform, fill_opacity : float, color=None) -> bool:
         """Draw a trace on the current trace layer and return bool indicating if trace is in the current view.
-        
+
             Params:
-                trace_layer (QPixmap): the pixmap to draw the traces
+                painter (QPainter): the painter (shared across the per-trace loop)
                 trace (Trace): the trace to draw on the pixmap
+                tform (Transform): the section transform (hoisted out of the loop)
+                fill_opacity (float): the fill_opacity option (hoisted out of the loop)
                 color (bool): optionally force a color
             Returns:
                 (bool) if the trace is within the current field window view
-        """        
-        ## Convert to screen coordinates
-        qpoints = self.traceToPix(trace, qpoints=True)
+        """
+        ## Convert to screen coordinates (vectorized; no QPoints yet)
+        pix_pts = self.traceToPixArray(trace, tform)
 
-        if not qpoints:
+        if not len(pix_pts):
             print("EMPTY TRACE DETECTED")
             return
 
-        ## Get bounds
-        xmin = qpoints[0].x()
-        xmax = xmin
-        ymin = qpoints[0].y()
-        ymax = ymin
-        
-        for p in qpoints[1:]:
-            
-            x = p.x()
-            y = p.y()
-            
-            if x < xmin:
-                xmin = x
-                
-            elif x > xmax:
-                xmax = x
-                
-            if y < ymin:
-                ymin = y
-                
-            elif y > ymax:
-                ymax = y
-        
+        ## Get bounds and cull before allocating any QPoint/QPolygon
+        xmin, ymin = pix_pts.min(axis=0)
+        xmax, ymax = pix_pts.max(axis=0)
         trace_bounds = xmin, ymin, xmax, ymax
         screen_bounds = 0, 0, *self.pixmap_dim
 
+        if not boundsOverlap(trace_bounds, screen_bounds):
+            return False
+
+        qpoints = [QPoint(int(x), int(y)) for x, y in pix_pts]
+
         ## Get color
-        draw_color = color if color else trace.color 
+        draw_color = color if color else trace.color
 
-        ## Draw if in view
-        if boundsOverlap(trace_bounds, screen_bounds):
-            
-            ## Set up painter
-            painter = QPainter(trace_layer)
-            painter.setPen(QPen(QColor(*draw_color), 1))
+        ## Set up painter (shared: reset state left over from the previous trace)
+        painter.setOpacity(1)
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(QColor(*draw_color), 1))
 
-            ## Draw trace
+        ## Draw trace
+        if trace.closed:
+            painter.drawPolygon(qpoints)
+        else:
+            painter.drawPolyline(qpoints)
+
+        ## Draw highlight
+        if trace in self._selected_set:
+
+            painter.setPen(QPen(QColor(*draw_color), 8))
+            painter.setOpacity(0.4)
+
             if trace.closed:
                 painter.drawPolygon(qpoints)
             else:
                 painter.drawPolyline(qpoints)
-            
-            ## Draw highlight
-            if trace in self._selected_set:
 
-                painter.setPen(QPen(QColor(*draw_color), 8))
-                painter.setOpacity(0.4)
+        ## Determine if user requested fill
+        if (
+            (trace.closed) and
+            (trace.fill_mode[0] != "none") and (
+                (trace.fill_mode[1] == "always") or
+                ((trace.fill_mode[1] == "selected") == (trace in self._selected_set))
+            )
+        ):
 
-                if trace.closed:
-                    painter.drawPolygon(qpoints)
-                else:
-                    painter.drawPolyline(qpoints)
-            
-            ## Determine if user requested fill
-            if (
-                (trace.closed) and
-                (trace.fill_mode[0] != "none") and (
-                    (trace.fill_mode[1] == "always") or
-                    ((trace.fill_mode[1] == "selected") == (trace in self._selected_set))
-                )
-            ):
-                
-                fill = True
+            fill = True
 
-            elif trace.closed and color:  # in order words, color forced
+        elif trace.closed and color:  # in order words, color forced
 
-                fill = True
-                
-            else:
-                
-                fill = False
-
-            ## Fill in shape if requested
-            if fill:
-                
-                painter.setPen(QPen(QColor(*draw_color), 1))
-                painter.setBrush(QBrush(QColor(*draw_color)))
-                
-                ## determine fill type
-                if color:  # color forced:
-                    painter.setOpacity(0.25)
-                
-                elif trace.fill_mode[0] == "transparent":  # transparent fill
-                    painter.setOpacity(self.series.getOption("fill_opacity"))
-                    
-                elif trace.fill_mode[0] == "solid":  # solid
-                    painter.setOpacity(1)
-                    
-                painter.drawPolygon(qpoints)
-        
-            return True
+            fill = True
 
         else:
-            
-            return False
+
+            fill = False
+
+        ## Fill in shape if requested
+        if fill:
+
+            painter.setPen(QPen(QColor(*draw_color), 1))
+            painter.setBrush(QBrush(QColor(*draw_color)))
+
+            ## determine fill type
+            if color:  # color forced:
+                painter.setOpacity(0.25)
+
+            elif trace.fill_mode[0] == "transparent":  # transparent fill
+                painter.setOpacity(fill_opacity)
+
+            elif trace.fill_mode[0] == "solid":  # solid
+                painter.setOpacity(1)
+
+            painter.drawPolygon(qpoints)
+
+        return True
     
     def _drawZtrace(self, trace_layer : QPixmap, ztrace : Ztrace):
         """Draw points on the current trace layer.
@@ -380,12 +398,15 @@ class TraceLayer():
             )]
         painter.end()
 
-    def _drawZtraceHighlights(self, trace_layer : QPixmap):
+    def _drawZtraceHighlights(self, trace_layer : QPixmap, fill_opacity : float = None):
         """Draw highlighted points on the current trace layer.
-        
+
             Params:
                 trace_layer (QPixmap): the pixmap to draw the points
+                fill_opacity (float): the fill_opacity option (read here if not provided)
         """
+        if fill_opacity is None:
+            fill_opacity = self.series.getOption("fill_opacity")
         points = []
         colors = []
         for ztrace, i in self.section.selected_ztraces:
@@ -403,7 +424,7 @@ class TraceLayer():
         
         # set up painter
         painter = QPainter(trace_layer)
-        painter.setOpacity(self.series.getOption("fill_opacity"))
+        painter.setOpacity(fill_opacity)
 
         # draw points
         for qpoint, color in zip(qpoints, colors):
@@ -411,12 +432,16 @@ class TraceLayer():
             painter.drawPoint(qpoint)
         painter.end()
     
-    def _drawFlag(self, trace_layer : QPixmap, flag : Flag):
+    def _drawFlag(self, trace_layer : QPixmap, flag : Flag, flag_size : int = None):
         """Draw the flag on the field.
-        
+
             Params:
                 flag (Flag): the flag to draw on the field
+                flag_size (int): the flag_size option (read here if not provided)
         """
+        if flag_size is None:
+            flag_size = self.series.getOption("flag_size")
+
         x, y = self.pointToPix((flag.x, flag.y))
         c = flag.color
 
@@ -428,7 +453,7 @@ class TraceLayer():
             "⚑",
             c,
             None,
-            self.series.getOption("flag_size")
+            flag_size
         )
         # draw highlight if necessary
         if flag in self.section.selected_flags:
@@ -436,7 +461,7 @@ class TraceLayer():
             painter.setOpacity(1)
             painter.setBrush(Qt.transparent)
             lbl = QLabel(text="⚑")
-            lbl.setFont(QFont("Courier New", self.series.getOption("flag_size"), QFont.Bold))
+            lbl.setFont(QFont("Courier New", flag_size, QFont.Bold))
             lbl.adjustSize()
             w, h = lbl.width(), lbl.height() * 3/4
             x += -w/2 - (h - w)
@@ -504,6 +529,14 @@ class TraceLayer():
         self._temp_hide_set = set(self.section.temp_hide)
         self._group_hide_set = set(self.section.traces_group_hide)
 
+        # hoist settings-backed options out of the render loops: each getOption
+        # for a non-series option constructs a QSettings and re-reads the
+        # platform store (~60 us), and these values cannot change mid-render
+        fill_opacity = self.series.getOption("fill_opacity")
+        show_ztraces = self.series.getOption("show_ztraces")
+        show_flags = self.series.getOption("show_flags")
+        flag_size = self.series.getOption("flag_size")
+
         if window_moved:
             trace_list = self.section.tracesAsList()
             
@@ -521,6 +554,11 @@ class TraceLayer():
         
         self.traces_in_view = []
 
+        # hoist the transform lookup and a single painter out of the per-trace
+        # loop (previously one QPainter was constructed per visible trace)
+        tform = self.section.tform
+        painter = QPainter(trace_layer)
+
         for trace in trace_list:
 
             if self.trace_visibile_p(trace):
@@ -528,44 +566,48 @@ class TraceLayer():
                 color = None  # default to assigned color
 
                 if focus_on:
-                    
+
                     if trace.name == focus_on:
                         color = (246, 249, 72)
                     else:
                         color = (42, 255, 128)
 
                 trace_in_view = self._drawTrace(
-                    trace_layer,
+                    painter,
                     trace,
+                    tform,
+                    fill_opacity,
                     color
                 )
-                
+
                 if trace_in_view:
-                    
+
                     self.traces_in_view.append(trace)
-        
+
+        painter.end()
+
         ## Draw ztraces
         self.zsegments_in_view = []
-        
-        if self.series.getOption("show_ztraces") and not focus_on:
-            
+
+        if show_ztraces and not focus_on:
+
             for ztrace in self.series.ztraces.values():
-                
+
                 if ztrace not in self.section.temp_hide:
-                    
+
                     self._drawZtrace(trace_layer, ztrace)
-                    
-            self._drawZtraceHighlights(trace_layer)
-        
+
+            self._drawZtraceHighlights(trace_layer, fill_opacity)
+
         ## Draw flags
         self.flags_in_view = []
-        if self.series.getOption("show_flags") != "none" and not focus_on:
+        if show_flags != "none" and not focus_on:
             for flag in self.section.flags:
-                if self.series.getOption("show_flags") == "unresolved" and flag.resolved:
+                if show_flags == "unresolved" and flag.resolved:
                     continue
                 if flag not in self.section.temp_hide:
-                    self._drawFlag(trace_layer, flag)
-                
+                    self._drawFlag(trace_layer, flag, flag_size)
+
         return trace_layer
 
     def _drawTraceLabel(self, arr : np.ndarray, trace : Trace, label : int, tform : Transform = None):
@@ -660,26 +702,9 @@ def boundsOverlap(b1 : tuple, b2 : tuple):
     """
 
     return not (
-        b1[2] < b2[0] or 
-        b1[0] > b2[2] or 
-        b1[3] < b2[1] or 
-        b1[1] > b2[3]
-    )
-
-def boundsOverlap(b1 : tuple, b2 : tuple):
-    """Check if two bounding boxes intersect.
-    
-        Params:
-            b1 (tuple): xmin, ymin, xmax, ymax
-            b2 (tuple): xmin, ymin, xmax, ymax
-        Returns:
-            (bool): True if bounds have any overlap
-    """
-
-    return not (
-        b1[2] < b2[0] or 
-        b1[0] > b2[2] or 
-        b1[3] < b2[1] or 
+        b1[2] < b2[0] or
+        b1[0] > b2[2] or
+        b1[3] < b2[1] or
         b1[1] > b2[3]
     )
 
