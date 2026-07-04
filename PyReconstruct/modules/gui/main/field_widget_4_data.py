@@ -22,6 +22,7 @@ from PyReconstruct.modules.gui.utils import (
     notify, 
     notifyLocked, 
     notifyConfirm,
+    getProgbar,
 )
 
 from .field_widget_3_object import FieldWidgetObject
@@ -221,15 +222,30 @@ class FieldWidgetData(FieldWidgetObject):
                     return
                 break
         
-        for snum in included_sections:
-            section = self.series.loadSection(snum)
-            new_tform = self.stored_tform * section.tform
-            section.tform = new_tform
-            section.save()
-            self.propagated_sections.add(snum)
-            if log_event:
-                self.series.addLog(None, snum, "Modify transform")
-        
+        # create the progress bar
+        if included_sections:
+            progbar = getProgbar(
+                text="Propagating transform...",
+                cancel=False
+            )
+            progress = 0
+            final_value = len(included_sections)
+            progbar.setValue(0)
+
+            try:
+                for snum in included_sections:
+                    section = self.series.loadSection(snum)
+                    new_tform = self.stored_tform * section.tform
+                    section.tform = new_tform
+                    section.save()
+                    self.propagated_sections.add(snum)
+                    if log_event:
+                        self.series.addLog(None, snum, "Modify transform")
+                    progress += 1
+                    progbar.setValue(progress/final_value * 100)
+            finally:
+                progbar.close()
+
         self.reload()
     
     def changeAlignment(self, new_alignment : str, refresh_data=True):
