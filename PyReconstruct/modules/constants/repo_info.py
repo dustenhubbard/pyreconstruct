@@ -43,16 +43,15 @@ def returnRepoInfo():
     except Exception:
         pass  # not a git repo (e.g. installed) -- fall through
 
-    # pip install from a VCS: read direct_url.json from the dist-info.
+    # pip install from a VCS: read direct_url.json from the installed dist-info.
+    # importlib.metadata handles the normalized on-disk name — pip writes
+    # 'pyreconstruct-<ver>.dist-info', which a 'PyReconstruct-*' glob never
+    # matches on case-sensitive filesystems.
     try:
-        from packaging.version import parse as v_check
-        site_packages = Path(PyReconstruct.__file__).parents[1]
-        dist_dirs = list(site_packages.glob("PyReconstruct-*.dist-info"))
-        if dist_dirs:
-            dist_dirs.sort(key=lambda x: v_check(x.stem.split('-')[-1]))
-            direct_url = dist_dirs[-1] / "direct_url.json"
-            with direct_url.open("r") as fp:
-                data = json.load(fp)
+        from importlib.metadata import distribution
+        raw = distribution("pyreconstruct").read_text("direct_url.json")
+        if raw:
+            data = json.loads(raw)
             vcs_info = data.get("vcs_info", None)
             if vcs_info is not None:
                 commit = vcs_info.get("commit_id", "unknown")
