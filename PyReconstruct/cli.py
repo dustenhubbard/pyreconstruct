@@ -1,6 +1,7 @@
 import argparse
 import subprocess
 import sys
+from pathlib import Path
 
 
 def _version_string():
@@ -31,6 +32,13 @@ def _repo_info():
         return {"branch": "unknown", "commit": "unknown"}
 
 
+def _github_repo():
+    """The 'owner/name' GitHub repo updates come from — shared with the frozen updater."""
+    # stdlib-only module (no Qt), safe to import from the CLI
+    from PyReconstruct.modules.backend.updater.updater import GITHUB_REPO
+    return GITHUB_REPO
+
+
 def main():
 
     parser = argparse.ArgumentParser(description='Open a jser file in PyReconstruct')
@@ -50,7 +58,7 @@ def main():
 
     elif args.update:
 
-        update()
+        _run_update()
 
     elif args.branch:
 
@@ -62,7 +70,7 @@ def main():
 
     elif args.switch:
 
-        update(args.switch)
+        _run_update(args.switch)
 
     else:
 
@@ -75,42 +83,76 @@ def open_file(filename):
     except FileNotFoundError:
         print(f"File not found: {filename}")
 
+def _run_update(requested_branch=None):
+    """CLI wrapper around update(): print refusals cleanly instead of tracebacks."""
+    try:
+        update(requested_branch)
+    except RuntimeError as e:
+        print(e)
+        sys.exit(1)
+
 def validate_branch(requested_branch):
 
-    repo = "https://github.com/SynapseWeb/PyReconstruct"
-    cmd = f"git ls-remote --heads {repo} refs/heads/{requested_branch}"
-    output = subprocess.run(cmd.split(" "), capture_output=True, text=True)
+    repo_url = f"https://github.com/{_github_repo()}"
+    output = subprocess.run(
+        ["git", "ls-remote", "--heads", repo_url, f"refs/heads/{requested_branch}"],
+        capture_output=True, text=True,
+    )
 
     return bool(output.stdout.strip())
 
 def update(requested_branch=None):
+    """Reinstall PyReconstruct from GitHub via pip (source/pip installs only).
+
+    Raises RuntimeError — without having touched the existing install — when the
+    update can't or shouldn't proceed; both the CLI (_run_update) and the in-app
+    source-update path surface the message.
+    """
 
     if getattr(sys, "frozen", False):
         print("This is a packaged build; use Help > Check for updates in the app.")
         return
 
-    if requested_branch:
+    # The Linux .sh installer owns its venv (ownership marker at the app root);
+    # its update path is re-running the installer, not an in-place pip.
+    if (Path(sys.prefix).parent / ".pyreconstruct-install").exists():
+        raise RuntimeError(
+            "This install is managed by the PyReconstruct Linux installer.\n"
+            "To update, re-run the installer:\n"
+            f"  curl -fsSL https://raw.githubusercontent.com/{_github_repo()}"
+            "/main/packaging/linux/install.sh | bash"
+        )
 
-        if not validate_branch(requested_branch):
-            print(f"Branch {requested_branch} does not exist.")
-            return
+    if not requested_branch:
 
-    else:
-    
-        requested_branch = _repo_info().get("branch")  # get current branch
+        requested_branch = _repo_info().get("branch")  # current branch, if known
 
-        if requested_branch == "unknown":
+        # Non-branch fallbacks from repo_info: plain pip installs report the
+        # package name, detached checkouts report no branch — default to main.
+        if requested_branch in (None, "unknown", "PyReconstruct", "detached head"):
             requested_branch = "main"
-    
-    link = f"git+https://github.com/SynapseWeb/PyReconstruct@{requested_branch}"
 
-    ## Run two commands to easily install new dependencies
-    
-    cmd_uninstall = f"pip uninstall --yes PyReconstruct"
-    cmd_reinstall = f"pip install {link}"
-    
-    subprocess.run(cmd_uninstall.split(" "))
-    subprocess.run(cmd_reinstall.split(" "))
+    # Validate the ref BEFORE touching the install, whether it was requested
+    # explicitly or detected — a bad ref must leave the install untouched.
+    if not validate_branch(requested_branch):
+        raise RuntimeError(
+            f"Branch '{requested_branch}' was not found on {_github_repo()}; "
+            "nothing was changed."
+        )
+
+    link = f"git+https://github.com/{_github_repo()}@{requested_branch}"
+
+    # One idempotent pip call, with THIS interpreter's pip: --force-reinstall
+    # replaces the install (picking up new/changed dependencies) but never
+    # uninstalls first, so a failure (offline, bad ref) leaves the existing
+    # install intact.
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--upgrade", "--force-reinstall", link]
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "pip could not complete the update; the existing install was left in place."
+        )
 
 if __name__ == '__main__':
     main()
