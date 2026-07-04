@@ -31,10 +31,14 @@ datas = []
 binaries = []
 hiddenimports = []
 
-# --- App assets: welcome series, icons, the "checker" data, and the helper .py
-#     scripts that run.py relaunches via runpy. Bundle the full tree at
-#     <_MEIPASS>/PyReconstruct/assets so locations.py (frozen branch) finds it.
+# --- App assets: welcome series, icons, and the helper .py scripts that run.py
+#     relaunches via runpy. Bundle the tree at <_MEIPASS>/PyReconstruct/assets
+#     so locations.py (frozen branch) finds it. assets/checker (~1.8 MB) is
+#     dev-only test data (used as a fixture by the source test suite) with no
+#     runtime consumer — keep it out of the installers.
 for _p in ASSETS.rglob("*"):
+    if "checker" in _p.relative_to(ASSETS).parts:
+        continue
     if _p.is_file():
         _dest = Path("PyReconstruct/assets") / _p.relative_to(ASSETS).parent
         datas.append((str(_p), str(_dest)))

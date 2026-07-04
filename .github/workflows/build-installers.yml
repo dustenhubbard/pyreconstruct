@@ -137,6 +137,14 @@ jobs:
           # Standalone installs pin to this exact tag, so a vX.Y.Z asset installs
           # vX.Y.Z (not bleeding main).
           sed -i "s#DEFAULT_SOURCE=\"git+https://github.com/dustenhubbard/PyReconstruct.git\"#DEFAULT_SOURCE=\"git+https://github.com/dustenhubbard/PyReconstruct.git@${GITHUB_REF_NAME}\"#" "$STAGE/install.sh"
+          # sed exits 0 even when the pattern matched nothing; if the
+          # DEFAULT_SOURCE line in install.sh ever drifts, an unverified sed
+          # would silently ship an installer that installs bleeding main
+          # instead of this tag. Fail the release loudly instead.
+          grep -qF "PyReconstruct.git@${GITHUB_REF_NAME}\"" "$STAGE/install.sh" || {
+            echo "::error::Linux installer version pin did not apply — DEFAULT_SOURCE line in packaging/linux/install.sh no longer matches the sed pattern above"
+            exit 1
+          }
           tar -czf "dist/PyReconstruct-${VERSION}-Linux-installer.tar.gz" "$STAGE"
       - name: Generate checksums
         run: cd dist && for f in *; do [ -f "$f" ] && sha256sum "$f" > "$f.sha256"; done
