@@ -3,7 +3,6 @@
 from typing import List, Tuple
 
 import numpy as np
-from scipy.interpolate import splprep, splev
 
 from .mod_imports import modules_available
 
@@ -43,6 +42,7 @@ class Roi:
         y = np.array([img_height - p[1] for p in coords])
 
         # Create a periodic spline representation (k=3 for cubic, s=0 for exact interpolation)
+        from scipy.interpolate import splprep, splev  # deferred: scipy is slow to import
         tck, u = splprep([x, y], s=0, per=1, k=3)
 
         # Evaluate the spline at more points

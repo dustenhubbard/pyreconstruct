@@ -4,9 +4,6 @@ from tempfile import mkstemp
 from io import BytesIO
 import base64
 
-import zarr
-from PIL import Image
-
 from PyReconstruct.modules.calc import getImgDims
 
 
@@ -15,6 +12,8 @@ def export_svg(section_data, svg_fp) -> Union[str, Path]:
 
     import svgwrite
     from svgwrite.extensions import Inkscape
+    import zarr  # deferred: only needed for SVG/PNG export (pulls heavy I/O codecs)
+    from PIL import Image
 
     img_fp = section_data.src_fp
     mag = section_data.mag
