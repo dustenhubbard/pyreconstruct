@@ -1,6 +1,5 @@
 import math
 import numpy as np
-from skimage.draw import polygon
 
 from PySide6.QtWidgets import QLabel
 from PySide6.QtCore import Qt, QPoint, QLine
@@ -582,6 +581,7 @@ class TraceLayer():
         points = self.traceToPix(trace, tform=tform)
 
         # get polygon coords
+        from skimage.draw import polygon  # deferred: skimage is slow to import
         y_vals = [y for x, y in points]
         x_vals = [x for x, y in points]
         yy, xx = polygon(y_vals, x_vals, arr.shape)

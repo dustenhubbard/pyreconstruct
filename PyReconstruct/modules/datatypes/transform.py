@@ -1,5 +1,4 @@
 import numpy as np
-from skimage import transform as tf
 
 from PySide6.QtGui import QTransform
 
@@ -138,6 +137,7 @@ class Transform():
                 pts1 (list): the list of original points
                 pts2 (list): the list of points to transform into
         """
+        from skimage import transform as tf  # deferred: skimage is slow to import
         m = tf.estimate_transform("affine", np.array(pts1), np.array(pts2)).params
 
         tform = Transform([

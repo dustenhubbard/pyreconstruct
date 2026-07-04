@@ -63,9 +63,10 @@ from PyReconstruct.modules.gui.dialog import (
 
 from PyReconstruct.modules.gui.popup import (
     TextWidget,
-    CustomPlotter,
     AboutWidget
 )
+# CustomPlotter (3D viewer) is imported lazily where it's used in main_window;
+# it pulls vedo/vtk/matplotlib and is not needed at startup.
 
 from PyReconstruct.modules.gui.utils import (
     populateMenuBar,
@@ -122,10 +123,8 @@ from PyReconstruct.modules.backend.autoseg import (
     labelsToObjects
 )
 
-from PyReconstruct.modules.backend.volume import (
-    export3DObjects,
-    export3DData
-)
+# 3D mesh export (export3DObjects/export3DData) pulls trimesh + networkx; it is
+# imported lazily in the main_window methods that perform the export.
 
 from PyReconstruct.modules.backend.imports import (
     modules_available,

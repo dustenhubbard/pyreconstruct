@@ -1,5 +1,4 @@
 import numpy as np
-from scipy.fftpack import fft2, ifft2
 
 
 def correlate(image1: np.ndarray, image2: np.ndarray) -> tuple:
@@ -13,6 +12,8 @@ def correlate(image1: np.ndarray, image2: np.ndarray) -> tuple:
     Returns:
     x and y offsets of peak correlation
     """
+    # deferred: scipy is slow to import and only needed for alignment correlation
+    from scipy.fftpack import fft2, ifft2
 
     ## Convert to grayscale if RGB
     if len(image1.shape) == 3:

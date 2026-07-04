@@ -1,7 +1,6 @@
 import re
 from typing import Union
 
-from skimage.draw import polygon
 import numpy as np
 
 from .transform import Transform
@@ -541,6 +540,7 @@ class Trace():
         pts2[:,1] -= ymin
 
         # generate the polygons
+        from skimage.draw import polygon  # deferred: skimage is slow to import
         r1, c1 = polygon(pts1[:,1], pts1[:,0])
         r2, c2 = polygon(pts2[:,1], pts2[:,0])
         mask1 = np.zeros(shape=(ymax-ymin+1, xmax-xmin+1), dtype=bool)
