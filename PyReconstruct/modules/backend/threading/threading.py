@@ -9,7 +9,13 @@ https://www.pythonguis.com/tutorials/multithreading-pyside6-applications-qthread
 import sys
 import traceback
 
-from PySide6.QtWidgets import QProgressDialog, QProgressBar, QApplication, QLabel
+from PySide6.QtWidgets import (
+    QProgressDialog,
+    QProgressBar,
+    QApplication,
+    QLabel,
+    QMessageBox
+)
 
 from PyReconstruct.modules.gui.utils import getProgbar
 
@@ -19,6 +25,7 @@ from PySide6.QtCore import (
     Signal,
     QObject,
     QThreadPool,
+    QEventLoop,
     Qt
 )
 
@@ -125,10 +132,32 @@ class MemoryInt():
 class ThreadPoolProgBar(ThreadPool):
 
     def startAll(self, text="", status_bar=None):
+        """Start all queued workers and block until they finish.
+
+            Params:
+                text (str): the text to display next to the progress indicator
+                status_bar: if given, show progress in this status bar instead
+                    of a progress dialog
+            Returns:
+                (bool) True if every worker finished without error
+        """
         final_value = len(self.workers)
         maximum = final_value if final_value >= 4 else 0
+
+        lbl = None
         if status_bar is None:
             progbar = getProgbar(text, cancel=False, maximum=maximum)
+            if isinstance(progbar, QProgressDialog):
+                # show immediately and block interaction with the rest of
+                # the app so the series cannot be mutated mid-run
+                progbar.setWindowModality(Qt.ApplicationModal)
+                progbar.setMinimumDuration(0)
+                if maximum == 0:
+                    # indeterminate: setValue(0) would hit the maximum and
+                    # auto-reset the dialog, so show it directly
+                    progbar.show()
+                else:
+                    progbar.setValue(0)
         else:  # custom progbar for status bar
             lbl = QLabel()
             lbl.setText(text)
@@ -138,18 +167,58 @@ class ThreadPoolProgBar(ThreadPool):
             progbar.setMaximum(0)
             status_bar.addPermanentWidget(lbl)
             status_bar.addPermanentWidget(progbar)
-        
+
         counter = MemoryInt()
+        errors = []
+        loop = QEventLoop()
+        use_event_loop = QApplication.instance() is not None
+
+        def onWorkerFinished():
+            counter.inc()
+            progbar.setValue(counter.n)
+            if use_event_loop and counter.n >= final_value:
+                loop.quit()
+
+        # queued connections deliver the signals on the GUI thread while
+        # the local event loop below is running
+        conn_type = Qt.QueuedConnection if use_event_loop else Qt.AutoConnection
         for worker in self.workers:
-            QApplication.processEvents()
-            worker.signals.finished.connect(counter.inc)
-            worker.signals.finished.connect(lambda : progbar.setValue(counter.n))
+            worker.signals.error.connect(errors.append, conn_type)
+            worker.signals.finished.connect(onWorkerFinished, conn_type)
             self.start(worker)
-        
-        while counter.n < final_value:
-            QApplication.processEvents()
-        
-        if maximum == 0:
+
+        # wait for the workers without busy-spinning processEvents
+        if use_event_loop:
+            if counter.n < final_value:
+                if status_bar is None:
+                    loop.exec()
+                else:
+                    # no modal dialog in this mode: keep user input out
+                    # while the workers run
+                    loop.exec(QEventLoop.ExcludeUserInputEvents)
+        else:  # headless (no QApplication): just wait on the pool
+            self.waitForDone()
+
+        # tear down the progress indicators
+        if status_bar is None:
             progbar.close()
-        if status_bar:
-            lbl.close()
+        else:
+            status_bar.removeWidget(lbl)
+            status_bar.removeWidget(progbar)
+            lbl.deleteLater()
+            progbar.deleteLater()
+
+        # report any worker errors instead of silently succeeding
+        if errors:
+            exctype, value, tb_str = errors[0]
+            message = (
+                f"{len(errors)} of {final_value} task(s) failed.\n\n"
+                f"First error:\n\n{tb_str}"
+            )
+            if QApplication.instance() is not None:
+                QMessageBox.critical(None, "Task Error", message)
+            else:
+                print(message, file=sys.stderr)
+            return False
+
+        return True

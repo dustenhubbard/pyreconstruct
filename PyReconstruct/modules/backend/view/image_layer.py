@@ -124,9 +124,9 @@ class ImageLayer():
     
     def _drawBrightness(self, image_layer):
         """Draw the brightness on the image field.
-        
+
             Params:
-                image_layer (QPixmap): the pixmap to draw brightness on
+                image_layer (QImage): the image to draw brightness on
         """
         # paint to image
         painter = QPainter(image_layer)
@@ -139,9 +139,9 @@ class ImageLayer():
     
     def _drawContrast(self, image_layer):
         """Draw the contrast on the image field.
-        
+
             Params:
-                image_layer (QPixmap): the pixmap to draw contrast on
+                image_layer (QImage): the image to draw contrast on
         """
         painter = QPainter(image_layer)
 
@@ -151,12 +151,12 @@ class ImageLayer():
             painter.setCompositionMode(QPainter.CompositionMode_Overlay)
             # draw the images n (int) times on itself
             for _ in range(int(overlays)):
-                painter.drawPixmap(0, 0, image_layer)
+                painter.drawImage(0, 0, image_layer)
             # draw another transparent image
             opacity = overlays % 1
             if opacity > 0:
                 painter.setOpacity(opacity)
-                painter.drawPixmap(0, 0, image_layer)
+                painter.drawImage(0, 0, image_layer)
         else:
             # overlay gray on image for decreased contrast
             opacity = abs(self.section.contrast) / 100
@@ -168,14 +168,34 @@ class ImageLayer():
         painter.end()
 
     def generateImageLayer(self, pixmap_dim : tuple, window : list, get_crop_only=False, bc=True) -> QPixmap:
-        """Generate the image layer.
-        
+        """Generate the image layer as a pixmap.
+
+        QPixmap is GUI-thread-only: call this from the GUI thread.
+        Worker threads should use generateImageArray/_generateImage instead.
+
             Params:
                 pixmap_dim (tuple): the w and h of the main window
                 window (list): the x, y, w, and h of the field window
                 get_crop_only (bool): returns only the direct crop from the image (only for use with brightness/contrast functions)
             Returns:
-                image_layer (QPixmap): the image laye
+                image_layer (QPixmap): the image layer
+        """
+        return QPixmap.fromImage(
+            self._generateImage(pixmap_dim, window, get_crop_only, bc)
+        )
+
+    def _generateImage(self, pixmap_dim : tuple, window : list, get_crop_only=False, bc=True) -> QImage:
+        """Generate the image layer as a QImage.
+
+        Unlike QPixmap, QImage is safe to create and paint on outside
+        the GUI thread, so this can run on QThreadPool workers.
+
+            Params:
+                pixmap_dim (tuple): the w and h of the main window
+                window (list): the x, y, w, and h of the field window
+                get_crop_only (bool): returns only the direct crop from the image (only for use with brightness/contrast functions)
+            Returns:
+                image_layer (QImage): the image layer
         """
         # set attrs
         self.series.window = window
@@ -183,9 +203,9 @@ class ImageLayer():
 
         # return blank if image was not found
         if not self.image_found:
-            blank_pixmap = QPixmap(*pixmap_dim)
-            blank_pixmap.fill(Qt.black)
-            return blank_pixmap
+            blank_image = QImage(*pixmap_dim, QImage.Format.Format_ARGB32_Premultiplied)
+            blank_image.fill(Qt.black)
+            return blank_image
 
         # setup
         tform = self.section.tform
@@ -230,9 +250,9 @@ class ImageLayer():
         bounds, filling = adjustBounds(bounds, iw, ih)
         # check if completely out of bounds
         if bounds is None:
-            blank_pixmap = QPixmap(pmw, pmh)
-            blank_pixmap.fill(Qt.black)
-            return blank_pixmap
+            blank_image = QImage(pmw, pmh, QImage.Format.Format_ARGB32_Premultiplied)
+            blank_image.fill(Qt.black)
+            return blank_image
         # unpack values otherwise
         xmin, ymin, xmax, ymax = bounds
         xminp, yminp, xmaxp, ymaxp = filling
@@ -263,7 +283,9 @@ class ImageLayer():
             im_crop = self.image.copy(crop_rect)
         
         if get_crop_only:  # only for use with brightness/contrast functions
-            return QPixmap.fromImage(im_crop)
+            # copy so the returned image owns its data (the zarr crop wraps
+            # a local numpy buffer that dies with this scope)
+            return im_crop.copy() if self.is_zarr_file else im_crop
         
         # setp 7: scale the cropped image
         im_scaled = im_crop.scaled(
@@ -272,9 +294,10 @@ class ImageLayer():
         )
         
         # step 8: fill the image (continue to account for scaling)
-        im_filled = QPixmap(
+        im_filled = QImage(
             (xminp + (xmax - xmin) + xmaxp) * s,
-            (ymaxp + (ymax - ymin) + yminp) * s
+            (ymaxp + (ymax - ymin) + yminp) * s,
+            QImage.Format.Format_ARGB32_Premultiplied
         )
         im_filled.fill(Qt.black)
         painter = QPainter(im_filled)
@@ -290,7 +313,7 @@ class ImageLayer():
             tform.imageTransform().getQTransform()
         )
 
-        # step 10: rip the pixmap from the transformed image
+        # step 10: rip the visible region from the transformed image
         im_ripped = im_tformed.copy(
             (im_tformed.width() - pmw) / 2,
             (im_tformed.height() - pmh) / 2,
@@ -300,10 +323,10 @@ class ImageLayer():
         
         # step 11: add blank space to account for rounding errors
         if (im_ripped.width(), im_ripped.height()) != pixmap_dim:
-            image_layer = QPixmap(*pixmap_dim)
+            image_layer = QImage(*pixmap_dim, QImage.Format.Format_ARGB32_Premultiplied)
             image_layer.fill(Qt.black)
             painter = QPainter(image_layer)
-            painter.drawPixmap(0, 0, im_ripped)
+            painter.drawImage(0, 0, im_ripped)
             painter.end()
         else:
             image_layer = im_ripped
@@ -331,17 +354,16 @@ class ImageLayer():
             Returns:
                 (numpy.ndarray) the image as a numpy array
         """
-        # generate the qimage from pixmap
-        qimage = self.generateImageLayer(
+        # generate the qimage directly (no QPixmap: safe off the GUI thread)
+        qimage = self._generateImage(
             pixmap_dim,
             window,
             get_crop_only,
             bc
-        ).toImage()
+        )
         qimage = qimage.convertToFormat(QImage.Format.Format_RGBA8888)
 
-
-        # convert the pixmap to a numpy array
+        # convert the qimage to a numpy array
         width = qimage.width()
         height = qimage.height()
         raw = np.frombuffer(qimage.bits(), np.uint8)
