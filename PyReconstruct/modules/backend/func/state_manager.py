@@ -57,20 +57,38 @@ class FieldState():
         # store contours in json
         elif contours is None:  # assume stored in JSON already
             self.contours = None
-        elif src_fp is not None:  # copy the section's on-disk file as baseline
-            # The section is unmodified since it was loaded, so its on-disk
-            # file already equals this baseline. Copy the bytes rather than
-            # re-serializing every contour (the dominant cost of the first
-            # edit to an object's sections on large series). getContours reads
-            # this section-file layout back.
-            shutil.copyfile(src_fp, self.contours_fp)
-            self.contours = None
-        else:  # store contours if provided with both fp and contours
-            for contour_name in updated_contours:
-                self.contours[contour_name] = [trace.getList() for trace in contours[contour_name]]
-            with open(self.contours_fp, "w") as f:
-                json.dump(self.contours, f)
-            self.contours = None
+        else:
+            try:
+                if src_fp is not None:  # copy the section's on-disk file as baseline
+                    # The section is unmodified since it was loaded, so its on-disk
+                    # file already equals this baseline. Copy the bytes rather than
+                    # re-serializing every contour (the dominant cost of the first
+                    # edit to an object's sections on large series). getContours reads
+                    # this section-file layout back.
+                    shutil.copyfile(src_fp, self.contours_fp)
+                else:  # store contours if provided with both fp and contours
+                    json_contours = {}
+                    for contour_name in updated_contours:
+                        json_contours[contour_name] = [trace.getList() for trace in contours[contour_name]]
+                    with open(self.contours_fp, "w") as f:
+                        json.dump(json_contours, f)
+                self.contours = None
+            except OSError:
+                # the baseline could not be written (e.g. the bundled welcome
+                # series opened from a read-only install dir): clean up any
+                # partial file and keep the state in memory instead
+                try:
+                    if os.path.isfile(self.contours_fp):
+                        os.remove(self.contours_fp)
+                except OSError:
+                    pass
+                self.contours_fp = None
+                self.contours = {}
+                for contour_name in updated_contours:
+                    if contour_name in contours:
+                        self.contours[contour_name] = contours[contour_name].copy()
+                    else:  # empty Contour
+                        self.contours[contour_name] = Contour(contour_name)
         
         self.ztraces = {}
         # first state made for a section (or copy)
