@@ -4,6 +4,11 @@ Short, plain-language highlights shown in PyReconstruct's "What's new" dialog
 after you install or update. For the complete, detailed list of changes, see the
 full release notes on GitHub (linked from the dialog).
 
+## [1.20.4rc2] — 2026-07-04
+
+- **Propagating a transform shows progress.** When you propagate an alignment to the start or end of a series, a progress bar now tracks it instead of the window looking frozen.
+- **Locking and unlocking sections shows progress.** Locking or unlocking a large set of sections now shows a progress bar so you can see it working.
+
 ## [1.20.4rc1] — 2026-07-03
 
 - **Faster first edits on large series.** The first time you recolor or rename an
