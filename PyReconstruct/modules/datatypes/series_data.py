@@ -510,23 +510,25 @@ class SeriesData():
             Params:
                 out_fp (str): filepath of exported CSV (str returned if no filepath provided)
         """
-        out_str = "Name,Section,Index,Hidden,Closed,Tags,Length,Area,Radius,Centroid-x,Centroid-y,Feret-Max,Feret-Min\n"
+        out_rows = ["Name,Section,Index,Hidden,Closed,Tags,Length,Area,Radius,Centroid-x,Centroid-y,Feret-Max,Feret-Min"]
 
         ## Iterate through all traces
-        objs = self.data["objects"].keys()
-        
+        objs = self.data["objects"]
+
         for name in sorted(objs):
-            
-            sections = self.series.sections.keys()
-            
-            for snum in sorted(sections):
-                
-                trace_list = self.getTraceData(name, snum)
-                
+
+            ## Only the sections this object actually appears on (same
+            ## ascending order as scanning every section in the series)
+            obj_traces = objs[name].traces
+
+            for snum in sorted(obj_traces):
+
+                trace_list = obj_traces[snum]
+
                 if not trace_list:
-                    
+
                     continue
-                
+
                 for i, t in enumerate(trace_list):
 
                     hidden     = "yes" if t.hidden else "no"
@@ -561,10 +563,11 @@ class SeriesData():
                     ]
 
                     vals = list(map(str, vals))
-                    
-                    trace_line = ','.join(vals)
-                    out_str += trace_line + "\n"
-        
+
+                    out_rows.append(','.join(vals))
+
+        out_str = "\n".join(out_rows) + "\n"
+
         # export the csv file
         if out_fp:
             with open(out_fp, "w") as f:
