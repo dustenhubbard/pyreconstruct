@@ -31,6 +31,62 @@ from PyReconstruct.modules.constants import welcome_series_dir, default_traces
 from PyReconstruct.modules.gui.utils import getProgbar
 
 
+class SeriesOpenError(Exception):
+    """Raised when a file cannot be opened as a series (corrupt or not a jser)."""
+
+
+def _atomicWrite(fp : str, data : bytes):
+    """Write bytes to a file atomically.
+
+    Writes to a temp file in the same directory, flushes and fsyncs it, then
+    os.replace()s it over the destination so a crash, power loss, or full disk
+    mid-write can never leave a truncated file behind.
+
+        Params:
+            fp (str): the destination filepath
+            data (bytes): the bytes to write
+    """
+    tmp_fp = fp + ".tmp"
+    try:
+        with open(tmp_fp, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_fp, fp)
+    except OSError:
+        # best-effort cleanup of the temp file; the destination is untouched
+        try:
+            if os.path.isfile(tmp_fp):
+                os.remove(tmp_fp)
+        except OSError:
+            pass
+        raise
+
+
+def _surfaceSaveError(fp : str, err : Exception):
+    """Show a 'Save failed' message to the user (best-effort, headless-safe).
+
+        Params:
+            fp (str): the filepath that failed to save
+            err (Exception): the error that occurred
+    """
+    message = (
+        f"Save failed: {err}\n\n"
+        f"The existing file was left unchanged:\n{fp}"
+    )
+    try:
+        from PySide6.QtWidgets import QApplication
+        from PyReconstruct.modules.gui.utils import notify
+        from PyReconstruct.modules.gui.utils.utils import qt_offscreen
+        if QApplication.instance() is not None and not qt_offscreen:
+            notify(message)
+            return
+    except Exception:
+        pass  # never let the notification itself mask the real error
+    # headless: don't block on a dialog/input -- just report it
+    print(message)
+
+
 class Series():
     
     qsettings_defaults = default_settings.copy()
@@ -131,12 +187,11 @@ class Series():
         
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
-        
-        if exc_type is not None:
-            traceback.print_exception(exc_type, exc_value, traceback)
+    def __exit__(self, exc_type, exc_value, tb):
 
         self.close()
+
+        return False  # propagate any exception from the with-block
     
     ## OPENING, LOADING, AND MOVING THE JSER FILE
     @staticmethod
@@ -170,9 +225,21 @@ class Series():
             return series
 
         # load json
-        with open(fp, "rb") as f:
-            jser_data = fast_loads(f.read())
-        
+        try:
+            with open(fp, "rb") as f:
+                jser_data = fast_loads(f.read())
+        except ValueError as e:
+            raise SeriesOpenError(
+                f"{os.path.basename(fp)} is not a valid series file "
+                f"(the file is corrupt or is not JSON)."
+            ) from e
+
+        if not isinstance(jser_data, dict):
+            raise SeriesOpenError(
+                f"{os.path.basename(fp)} is not a valid series file "
+                f"(unexpected file structure)."
+            )
+
         # UPDATE FROM OLD JSER FORMATS
         updated_jser_data = {}
         sections_dict = {}
@@ -190,6 +257,11 @@ class Series():
                     sections_dict[snum] = jser_data[key]
                 else:
                     updated_jser_data["series"] = jser_data[key]
+            if not sections_dict or "series" not in updated_jser_data:
+                raise SeriesOpenError(
+                    f"{os.path.basename(fp)} is not a valid series file "
+                    f"(no series or section data found)."
+                )
             # organize the sections in a list
             sections_list = [None] * (max(sections_dict.keys())+1)
             for snum, sdata in sections_dict.items():
@@ -197,7 +269,18 @@ class Series():
             updated_jser_data["sections"] = sections_list
             # replace data
             jser_data = updated_jser_data
-        
+
+        # validate the overall structure before extracting anything
+        if (
+            not isinstance(jser_data.get("series"), dict) or
+            not isinstance(jser_data.get("sections"), list) or
+            not any(s is not None for s in jser_data["sections"])
+        ):
+            raise SeriesOpenError(
+                f"{os.path.basename(fp)} is not a valid series file "
+                f"(missing series or section data)."
+            )
+
         # UPDATE TO INCLUDE A LOG
         if "log" not in jser_data:
             jser_data["log"] = "Date, Time, User, Obj, Sections, Event"
@@ -215,67 +298,81 @@ class Series():
 
         # create the hidden directory
         hidden_dir = createHiddenDir(sdir, sname)
-        
-        # extract JSON series data
-        series_data = jser_data["series"]
-        # add empty log_set for opening/saving purposes
-        series_data["log_set"] = []
-        Series.updateJSON(series_data)
-        series_fp = os.path.join(hidden_dir, sname + ".ser")
-        with open(series_fp, "wb") as f:
-            f.write(fast_dumps(series_data))
-        if progbar.wasCanceled():
-            return None
-        progress += 1
-        progbar.setValue(progress/final_value * 100)
 
-        # extract JSON section data
-        sections = {}
-        for snum, section_data in enumerate(jser_data["sections"]):
-            # check for empty section, skip if so
-            if section_data is None:
-                continue
+        # The .ser file is written LAST as the completion sentinel: both
+        # recovery scans (the fast path above and the GUI's unsaved-work
+        # prompt) require it, so a cancelled or crashed open can never leave
+        # a partial hidden dir that is later mistaken for unsaved work.
+        # On any cancel or exception, remove the partial hidden dir entirely.
+        try:
+            # extract JSON section data
+            sections = {}
+            for snum, section_data in enumerate(jser_data["sections"]):
+                # check for empty section, skip if so
+                if section_data is None:
+                    continue
 
-            filename = sname + "." + str(snum)
-            section_fp = os.path.join(hidden_dir, filename)
+                filename = sname + "." + str(snum)
+                section_fp = os.path.join(hidden_dir, filename)
 
-            Section.updateJSON(section_data, snum)  # update any missing attributes
-            
-            section_data["align_locked"] = True  # lock the section
+                Section.updateJSON(section_data, snum)  # update any missing attributes
 
-            # gather the section numbers and section filenames
-            sections[snum] = filename
-                
-            with open(section_fp, "wb") as f:
-                f.write(fast_dumps(section_data))
-            
+                section_data["align_locked"] = True  # lock the section
+
+                # gather the section numbers and section filenames
+                sections[snum] = filename
+
+                with open(section_fp, "wb") as f:
+                    f.write(fast_dumps(section_data))
+
+                if progbar.wasCanceled():
+                    shutil.rmtree(hidden_dir, ignore_errors=True)
+                    return None
+                progress += 1
+                progbar.setValue(progress/final_value * 100)
+
+            # extract the existing log
+            log_str = jser_data["log"]
+            existing_log_fp = os.path.join(hidden_dir, "existing_log.csv")
+            with open(existing_log_fp, "w", encoding="utf-8") as f:
+                f.write(log_str)
             if progbar.wasCanceled():
+                shutil.rmtree(hidden_dir, ignore_errors=True)
                 return None
             progress += 1
             progbar.setValue(progress/final_value * 100)
-        
-        # extract the existing log
-        log_str = jser_data["log"]
-        existing_log_fp = os.path.join(hidden_dir, "existing_log.csv")
-        with open(existing_log_fp, "w") as f:
-            f.write(log_str)
-        if progbar.wasCanceled():
-            return None
-        progress += 1
-        progbar.setValue(progress/final_value * 100)
-        
-        # create the series
-        series = Series(series_fp, sections, get_series_data=False)
-        series.jser_fp = fp
 
-        # gather the series data
-        for snum, section in series.enumerateSections(show_progress=False):
-            series.data.updateSection(section, update_traces=True, log_events=False)
+            # extract JSON series data (LAST: the .ser is the completion sentinel)
+            series_data = jser_data["series"]
+            # add empty log_set for opening/saving purposes
+            series_data["log_set"] = []
+            Series.updateJSON(series_data)
+            series_fp = os.path.join(hidden_dir, sname + ".ser")
+            with open(series_fp, "wb") as f:
+                f.write(fast_dumps(series_data))
             if progbar.wasCanceled():
+                shutil.rmtree(hidden_dir, ignore_errors=True)
                 return None
             progress += 1
             progbar.setValue(progress/final_value * 100)
-        
+
+            # create the series
+            series = Series(series_fp, sections, get_series_data=False)
+            series.jser_fp = fp
+
+            # gather the series data
+            for snum, section in series.enumerateSections(show_progress=False):
+                series.data.updateSection(section, update_traces=True, log_events=False)
+                if progbar.wasCanceled():
+                    shutil.rmtree(hidden_dir, ignore_errors=True)
+                    return None
+                progress += 1
+                progbar.setValue(progress/final_value * 100)
+
+        except BaseException:
+            shutil.rmtree(hidden_dir, ignore_errors=True)
+            raise
+
         return series
 
     def saveJser(self, save_fp : str = None, close : bool = False):
@@ -326,7 +423,7 @@ class Series():
                 # save the series
                 jser_data["series"] = filedata
             elif filename == "existing_log.csv":
-                with open(fp, "r") as f:
+                with open(fp, "r", encoding="utf-8", errors="replace") as f:
                     existing_log = ""
                     for line in f.readlines():
                         if line.strip():
@@ -340,9 +437,13 @@ class Series():
         save_bytes = fast_dumps(jser_data)
 
         jser_fp = self.jser_fp if not save_fp else save_fp
-        with open(jser_fp, "wb") as f:
-            f.write(save_bytes)
-        
+        try:
+            # atomic: the previous .jser stays intact until the new one is complete
+            _atomicWrite(jser_fp, save_bytes)
+        except OSError as e:
+            _surfaceSaveError(jser_fp, e)
+            raise
+
         if close:
             self.close()
 
@@ -369,7 +470,19 @@ class Series():
             "." + new_name
         )
 
-        shutil.move(old_hidden_dir, new_hidden_dir)
+        # Save-As onto the current path: the hidden dir is already in place --
+        # moving it onto itself would fail (or nest it), so just refresh paths
+        same_dir = (
+            os.path.isdir(new_hidden_dir) and
+            os.path.samefile(old_hidden_dir, new_hidden_dir)
+        )
+
+        if not same_dir:
+            # clear any stale hidden dir at the destination: shutil.move would
+            # otherwise nest the old dir inside it, orphaning every filepath
+            if os.path.isdir(new_hidden_dir):
+                shutil.rmtree(new_hidden_dir)
+            shutil.move(old_hidden_dir, new_hidden_dir)
 
         ## Manually hide dir if Windows
         if os.name == "nt":
@@ -380,10 +493,11 @@ class Series():
         for f in os.listdir(new_hidden_dir):
             if old_name in f:
                 new_f = f.replace(old_name, new_name)
-                os.rename(
-                    os.path.join(new_hidden_dir, f),
-                    os.path.join(new_hidden_dir, new_f)
-                )
+                if new_f != f:
+                    os.rename(
+                        os.path.join(new_hidden_dir, f),
+                        os.path.join(new_hidden_dir, new_f)
+                    )
         
         ## Rename series
         self.rename(new_name)
@@ -751,7 +865,7 @@ class Series():
 
         ## Create empty existing_log.csv file
         existing_log_path = os.path.join(hidden_dir, "existing_log.csv")
-        with open(existing_log_path, "w") as f:
+        with open(existing_log_path, "w", encoding="utf-8") as f:
             f.write("Date, Time, User, Obj, Sections, Event")
 
         ## Create series object
@@ -790,9 +904,12 @@ class Series():
             return
 
         d = self.getDict()
-        with open(self.filepath, "wb") as f:
-            # internal hidden working file -- write compact bytes
-            f.write(fast_dumps(d))
+        try:
+            # internal hidden working file -- write compact bytes atomically
+            _atomicWrite(self.filepath, fast_dumps(d))
+        except OSError as e:
+            _surfaceSaveError(self.filepath, e)
+            raise
 
     def getwdir(self) -> str:
         """Get the working directory of the series.
@@ -966,7 +1083,11 @@ class Series():
         if z_points is None:
             z_points = []
 
-        if not z_points:  # append name with "_zlen" if creating from obj
+        # capture this BEFORE the from-object branch below fills z_points --
+        # the alignment decision at the end must not see the mutated list
+        from_object = not z_points
+
+        if from_object:  # append name with "_zlen" if creating from obj
             ztrace_name = f"{obj_name}_zlen"
         else:  # use tracing_trace name
             ztrace_name = obj_name
@@ -977,7 +1098,7 @@ class Series():
             del(self.ztraces[ztrace_name])
             if log_event: self.addLog(ztrace_name, None, "Updated ztrace")
 
-        if not z_points:  # generate points from already traced object if non provided
+        if from_object:  # generate points from already traced object if none provided
 
             ## If create on midpoints, make one point per section
 
@@ -1018,10 +1139,10 @@ class Series():
             z_points
         )
 
-        ## Assign alignement to ztrace 
-        if not z_points:  # use obj alignment
+        ## Assign alignement to ztrace
+        if from_object:  # use obj alignment
             alignment = self.getAttr(obj_name, "alignment")
-        else:  # use current alignment 
+        else:  # use current alignment
             alignment = self.alignment
 
         self.setAttr(ztrace_name, "alignment", alignment, ztrace=True)
@@ -2144,7 +2265,7 @@ class Series():
                 (LogSet): the object containing the full history
         """
         csv_fp = os.path.join(self.hidden_dir, "existing_log.csv")
-        with open(csv_fp, "r") as f:
+        with open(csv_fp, "r", encoding="utf-8", errors="replace") as f:
             log_list = f.readlines()[1:]
         full_hist = LogSet.fromList(log_list)
         for log in self.log_set.all_logs:
