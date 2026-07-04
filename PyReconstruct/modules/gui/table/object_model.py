@@ -14,12 +14,13 @@ check states, flags and colors are identical to the old population path -- the
 only thing that changes is *when* (and how few) items get built.
 """
 
+from bisect import bisect_left
 from collections import OrderedDict
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtWidgets import QTableView, QApplication, QHeaderView
 
-from PyReconstruct.modules.gui.utils import lessThan
+from PyReconstruct.modules.gui.utils.str_helper import SortStr
 from PyReconstruct.modules.backend.func import make_unique_id
 
 
@@ -43,9 +44,20 @@ class ObjectTableModel(QAbstractTableModel):
         self.container = container
         self.headers = container.getHeaders()
         self.names = container.getFiltered()
+        # ``names`` comes from getFiltered() -> sortList(), i.e. it is sorted
+        # by SortStr. Keep a parallel list of SortStr keys (for O(log n)
+        # insertion-point lookups via bisect) and an O(1) name -> row map (for
+        # existence lookups). Both are maintained alongside every mutation of
+        # ``names`` (insertName / removeRowAt).
+        self._rebuildNameIndex()
         # row -> list[QTableWidgetItem], kept in least-recently-used order so
         # the cache stays bounded (memory O(CACHE_LIMIT), not O(#objects)).
         self._cache = OrderedDict()
+
+    def _rebuildNameIndex(self):
+        """Rebuild the sort-key list and name -> row map from ``self.names``."""
+        self._sort_keys = [SortStr(n) for n in self.names]
+        self._row_by_name = {n: i for i, n in enumerate(self.names)}
 
     # -- row item production (mirrors DataTable.setRow's column iteration) --
 
@@ -137,16 +149,20 @@ class ObjectTableModel(QAbstractTableModel):
 
     def rowOf(self, name):
         """Row index of ``name`` (or where it should be inserted), and whether
-        it already exists. Mirrors CopyTableWidget.getRowIndex exactly: a linear
-        scan using ``lessThan`` against the sorted name list, so placement is
-        identical to the old table -- it just reads the lightweight name list
-        instead of QTableWidget items."""
-        for i, row_name in enumerate(self.names):
-            if lessThan(name, row_name):
-                return i, False
-            if name == row_name:
-                return i, True
-        return len(self.names), False
+        it already exists.
+
+        ``self.names`` is kept in SortStr order (getFiltered() -> sortList()),
+        so an existing name resolves through the O(1) name -> row map and a
+        missing name's insertion point comes from ``bisect_left`` over the
+        parallel SortStr keys -- the same total order the list was sorted with,
+        so placement matches what a full getFiltered() rebuild would produce.
+        This replaces the old linear ``lessThan`` scan, which made bulk
+        updateData calls (transform change, group/attribute edits) quadratic on
+        large series."""
+        row = self._row_by_name.get(name)
+        if row is not None:
+            return row, True
+        return bisect_left(self._sort_keys, SortStr(name)), False
 
     def refreshRow(self, row):
         """Re-read a single existing row's data and repaint it."""
@@ -160,6 +176,8 @@ class ObjectTableModel(QAbstractTableModel):
     def insertName(self, name, row):
         self.beginInsertRows(QModelIndex(), row, row)
         self.names.insert(row, name)
+        self._sort_keys.insert(row, SortStr(name))
+        self._row_by_name = {n: i for i, n in enumerate(self.names)}
         self._invalidate()  # row indices below the insert shift
         self.endInsertRows()
 
@@ -168,6 +186,8 @@ class ObjectTableModel(QAbstractTableModel):
             return
         self.beginRemoveRows(QModelIndex(), row, row)
         del self.names[row]
+        del self._sort_keys[row]
+        self._row_by_name = {n: i for i, n in enumerate(self.names)}
         self._invalidate()  # row indices below the removal shift
         self.endRemoveRows()
 
