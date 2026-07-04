@@ -241,7 +241,9 @@ class TraceLayer():
             copied_traces.append(trace)
         
         if cut:
-            self.section.deleteTraces()
+            # pass an explicit trace list so deleting the cut traces does not
+            # also remove the section's selected flags as a side effect
+            self.section.deleteTraces(self.section.selected_traces.copy())
         
         return copied_traces
     
