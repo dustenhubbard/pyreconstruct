@@ -127,7 +127,7 @@ class UpdateDialog(QDialog):
         self._later_btn = QPushButton("Later")
         self._install_btn = QPushButton("Download && Install")
         self._install_btn.setDefault(True)
-        self._later_btn.clicked.connect(self._on_later)
+        self._later_btn.clicked.connect(self.reject)
         self._install_btn.clicked.connect(self._start_download)
         row.addWidget(self._later_btn)
         row.addWidget(self._install_btn)
@@ -164,8 +164,18 @@ class UpdateDialog(QDialog):
 
     def _on_downloaded(self, result):
         from PyReconstruct.modules.gui.utils import notifyConfirm
+        self._pool = None
         self._parent._updater_pool = None
         sha, cs_status, expected, dest = result
+
+        # The user backed out (Esc/X/Cancel) while the last bytes were arriving,
+        # or the dialog is otherwise gone: discard the download and never arm
+        # the pending-installer hand-off.
+        if self._cancel.is_set() or not self.isVisible():
+            self._cleanup()
+            self.reject()
+            return
+
         self._status.setText("Verifying…")
         self._progress.setValue(100)
 
@@ -177,6 +187,13 @@ class UpdateDialog(QDialog):
             self._fail("Couldn't verify the download (checksum unreachable). Not installing — try again.")
             return
         else:  # missing
+            from PyReconstruct.modules.backend.updater.install_info import install_kind
+            if install_kind() == "frozen":
+                # A frozen build must never offer to run an unverifiable
+                # installer -- refuse outright and rely on the OS installer
+                # signature checks for what did verify.
+                self._fail("This download can't be verified (no checksum was published for it). Nothing was installed.")
+                return
             if not notifyConfirm("The download couldn't be checksum-verified (none was published).\n\nInstall anyway?", yn=True):
                 self._cleanup()
                 self.reject()
@@ -189,6 +206,7 @@ class UpdateDialog(QDialog):
         self.accept()
 
     def _on_error(self, err):
+        self._pool = None
         self._parent._updater_pool = None
         exc = err[1] if isinstance(err, (tuple, list)) and len(err) >= 2 else err
         if isinstance(exc, UpdateCancelled):
@@ -203,12 +221,21 @@ class UpdateDialog(QDialog):
         notify(msg)
         self.reject()
 
-    def _on_later(self):
-        if self._pool is not None:        # a download is running -> cancel it
+    def reject(self):
+        """Esc, the window X, and the Later/Cancel button all funnel here.
+
+        While a download is in flight, don't dismiss yet: flag the cancel and let
+        the worker unwind -- ``_on_error`` (UpdateCancelled) or ``_on_downloaded``
+        (if the download won the race) re-enters ``reject()`` with no pool and
+        closes for real. Dismissing immediately would leave the download running
+        and later arm the pending-installer hand-off from a dialog the user
+        already dismissed.
+        """
+        if self._pool is not None:
             self._cancel.set()
             self._status.setText("Cancelling…")
             return
-        self.reject()
+        super().reject()
 
     def _cleanup(self):
         if self._tmpdir:
