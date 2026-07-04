@@ -2460,9 +2460,10 @@ class MainWindow(QMainWindow):
                 obj_names (list): a list of object names
         """
         self.saveAllData()
-        
+
         if not self.viewer or self.viewer.is_closed:
-            
+
+            from PyReconstruct.modules.gui.popup import CustomPlotter
             self.viewer = CustomPlotter(self, names, ztraces)
             
         else:
@@ -2504,6 +2505,7 @@ class MainWindow(QMainWindow):
                 "Select folder to export objects to",
             )
         if not export_dir: return
+        from PyReconstruct.modules.backend.volume import export3DObjects
         export3DObjects(self.series, obj_names, export_dir, export_type)
 
     def export3DData(self, obj_names):
@@ -2523,6 +2525,7 @@ class MainWindow(QMainWindow):
         )
         if not output_fp: return
 
+        from PyReconstruct.modules.backend.volume import export3DData
         export3DData(self.series, obj_names, output_fp)
     
     def toggleCuration(self):
@@ -2954,6 +2957,7 @@ class MainWindow(QMainWindow):
             return
         
         if not self.viewer or self.viewer.is_closed:
+            from PyReconstruct.modules.gui.popup import CustomPlotter
             self.viewer = CustomPlotter(self, load_fp=load_fp)
         else:
             self.viewer.loadScene(load_fp)

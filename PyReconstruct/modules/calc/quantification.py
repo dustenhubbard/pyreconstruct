@@ -6,8 +6,6 @@ import cv2
 import numpy as np
 from typing import List
 
-from scipy.interpolate import interp1d
-
 
 def area(pts : list) -> float:
     """Find the area of a closed contour.
@@ -390,6 +388,7 @@ def interpolate_points(points: List[tuple], spacing=0.01):
     total_length = distances[-1]
 
     ## Interpolate curve using parametric functions
+    from scipy.interpolate import interp1d  # deferred: scipy is slow to import
     interp_x = interp1d(distances, x)
     interp_y = interp1d(distances, y)
 
