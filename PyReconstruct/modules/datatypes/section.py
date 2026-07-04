@@ -326,10 +326,27 @@ class Section():
             self.series.data.updateSection(self, update_traces=True)
     
         d = self.getDict()
-        with open(self.filepath, "wb") as f:
-            # internal hidden working file -- write compact bytes to cut
-            # serialization cost and the bytes re-read on every saveJser
-            f.write(fast_dumps(d))
+        # write atomically: a crash or ENOSPC mid-write must never leave the
+        # section file truncated, so write a sibling temp file and rename it
+        # over the original (os.replace is atomic on POSIX/Windows). We do NOT
+        # fsync here: this internal working file is re-saved on every section
+        # change (mouse-wheel scroll), so fsyncing each scroll would turn the
+        # gesture into a synchronous disk flush. The .jser master copy is the
+        # durable one; os.replace already prevents a truncated file on crash.
+        tmp_fp = self.filepath + ".tmp"
+        try:
+            with open(tmp_fp, "wb") as f:
+                # internal hidden working file -- write compact bytes to cut
+                # serialization cost and the bytes re-read on every saveJser
+                f.write(fast_dumps(d))
+            os.replace(tmp_fp, self.filepath)
+        except OSError:
+            # leave the original file untouched; clean up the partial temp
+            try:
+                os.remove(tmp_fp)
+            except OSError:
+                pass
+            raise
     
     def tracesAsList(self) -> list[Trace]:
         """Return the trace dictionary as a list. Does NOT copy traces.
@@ -585,17 +602,58 @@ class Section():
             traces = traces_in_view
         else:
             traces = self.tracesAsList()
-        
+
+        # Bbox rejection (hot path: this method runs on every buttonless
+        # mouse move for every trace in view). Build the search square in
+        # field space -- padded by the radius plus a couple of mag units,
+        # since getDistanceFromTrace quantizes coordinates to the mag grid --
+        # and inverse-map its corners into trace space. The axis-aligned bbox
+        # of those corners is a conservative search window: any trace whose
+        # own bbox misses it cannot pass the radius check or contain the
+        # point, so it is skipped before any numpy mapping or cv2 test.
+        margin = radius + 2 * self.mag
+        try:
+            search_corners = tform.map(
+                [
+                    (field_x - margin, field_y - margin),
+                    (field_x + margin, field_y - margin),
+                    (field_x + margin, field_y + margin),
+                    (field_x - margin, field_y + margin),
+                ],
+                inverted=True,
+            )
+            sxs = [p[0] for p in search_corners]
+            sys_ = [p[1] for p in search_corners]
+            s_xmin, s_xmax = min(sxs), max(sxs)
+            s_ymin, s_ymax = min(sys_), max(sys_)
+        except Exception:
+            # a degenerate/non-invertible section transform cannot be
+            # inverse-mapped. Fall back to an unbounded search window so no
+            # trace is bbox-rejected: every trace is still forward-mapped and
+            # distance-tested in the loop below, exactly as the old forward-map
+            # loop did. Hover (a buttonless mouse move) must never crash here.
+            s_xmin = s_ymin = float("-inf")
+            s_xmax = s_ymax = float("inf")
+
         # iterate through all traces to get closest
         for trace in traces:
             # skip hidden traces
             if not include_hidden and trace.hidden:
                 continue
-            points = []
-            for point in trace.points:
-                x, y = tform.map(*point)
-                points.append((x,y))
-            
+            if not trace.points:
+                continue
+
+            # bbox-reject in trace space (cheap C-level min/max)
+            xs, ys = zip(*trace.points)
+            if (
+                max(xs) < s_xmin or min(xs) > s_xmax or
+                max(ys) < s_ymin or min(ys) > s_ymax
+            ):
+                continue
+
+            # map every surviving trace's points in one vectorized call
+            points = tform.mapPointsArray(trace.points)
+
             # find the distance of the point from each trace
             dist = getDistanceFromTrace(
                 field_x,
@@ -800,12 +858,14 @@ class Section():
         
             Params:
                 traces (list): a list of traces to delete (default is selected traces)
-                flags (list): a list of flags to delete (default is selected flags)
+                flags (list): a list of flags to delete (defaults to selected
+                    flags only when traces is also defaulted)
                 log_event (bool): True if event should be logged
         """
         modified = False
 
-        if traces is None:
+        traces_defaulted = traces is None
+        if traces_defaulted:
             traces = self.selected_traces.copy()
 
         for trace in traces:
@@ -813,9 +873,13 @@ class Section():
             self.removeTrace(trace, log_event)
             if trace in self.selected_traces:
                 self.selected_traces.remove(trace)
-        
+
         if flags is None:
-            flags = self.selected_flags.copy()
+            # fall back to the selected flags only when the caller also
+            # defaulted traces (i.e. "delete the selection"); callers that
+            # pass an explicit trace list (cut/merge/scalpel/scissors) must
+            # not delete selected flags as a side effect
+            flags = self.selected_flags.copy() if traces_defaulted else []
         
         for flag in flags:
             modified = True
