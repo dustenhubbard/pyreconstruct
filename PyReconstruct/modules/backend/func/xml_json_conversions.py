@@ -95,7 +95,7 @@ def xmlToJSON(xml_dir : str) -> Series:
         progbar.setValue(progress/final_value * 100)
     
     # create an empty log file
-    with open(os.path.join(hidden_dir, "existing_log.csv"), "w") as f:
+    with open(os.path.join(hidden_dir, "existing_log.csv"), "w", encoding="utf-8") as f:
         f.write("Date, Time, User, Obj, Sections, Event")
     
     # open the series file, modify current section and ztraces

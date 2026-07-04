@@ -1756,7 +1756,9 @@ class Series():
         
         if log_event:
             self.addLog(None, None, f"{'Hide' if hidden else 'Unhide'} all traces in series")
-    
+
+        self.modified = True
+
     def importObjectGroups(self, other, regex_filters=[], group_filters=[]):
         """Import the object groups from another series.
         

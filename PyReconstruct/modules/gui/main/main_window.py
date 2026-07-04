@@ -5,6 +5,8 @@ import shutil
 
 from .main_imports import *
 
+from PyReconstruct.modules.datatypes.series import SeriesOpenError
+
 
 class MainWindow(QMainWindow):
 
@@ -624,7 +626,15 @@ class MainWindow(QMainWindow):
 
             # open the JSER file if no unsaved series was opened
             if not new_series:
-                new_series = Series.openJser(jser_fp)
+                try:
+                    new_series = Series.openJser(jser_fp)
+                except SeriesOpenError as e:
+                    notify(str(e))
+                    if self.series is None:
+                        # aborting the very first open (see sys.exit note above)
+                        sys.exit()
+                    else:
+                        return
                 # user pressed cancel
                 if new_series is None:
                     if self.series is None:

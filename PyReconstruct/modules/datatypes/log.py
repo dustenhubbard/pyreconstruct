@@ -343,9 +343,9 @@ class LogSet():
         
         older_than = remove_days_from_today(older_than)
 
-        with storage_log.open("a") as external_store, new_log.open("a") as new:
-            
-            with existing_log.open("r") as log:
+        with storage_log.open("a", encoding="utf-8") as external_store, new_log.open("a", encoding="utf-8") as new:
+
+            with existing_log.open("r", encoding="utf-8", errors="replace") as log:
                 
                 for line in log.readlines():
                     
