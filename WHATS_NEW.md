@@ -4,6 +4,13 @@ Short, plain-language highlights shown in PyReconstruct's "What's new" dialog
 after you install or update. For the complete, detailed list of changes, see the
 full release notes on GitHub (linked from the dialog).
 
+## [1.20.5rc1] — 2026-07-04
+
+- **Your work is better protected.** Fixed several cases where edits could be lost or a file corrupted, including edits made right before flicking to another section and saves interrupted by a crash or a full disk.
+- **Safer handling of shared files.** Hardened how PyReconstruct opens and converts series files received from others.
+- **Align by correlation fixed.** It now applies the correlation shift correctly even when the section is rotated or scaled.
+- **Smoother on large series.** Faster hovering and rendering, plus more reliable background exports and updates.
+
 ## [1.20.4] — 2026-07-04
 
 - **Faster first edits on large series.** The first time you recolor or rename an object in a big dataset no longer stalls.
