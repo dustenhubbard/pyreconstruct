@@ -30,6 +30,16 @@ PrivilegesRequiredOverridesAllowed=dialog commandline
 CloseApplications=yes
 RestartApplications=no
 
+[InstallDelete]
+; In-place upgrades (fixed AppId) copy the new onedir tree over the old one.
+; Without this, files present in the old tree but not the new (renamed or
+; dropped DLLs, removed modules in _internal, old Qt plugins) are left behind
+; and the frozen runtime can load stale code — a classic PyInstaller-onedir
+; upgrade failure that only reproduces on upgraded installs. Delete the
+; PyInstaller payload before copying; user data must never live in {app}.
+Type: filesandordirs; Name: "{app}\_internal"
+Type: files; Name: "{app}\*.dll"
+
 [Files]
 Source: "..\..\dist\PyReconstruct\*"; DestDir: "{app}"; \
     Flags: recursesubdirs createallsubdirs ignoreversion
