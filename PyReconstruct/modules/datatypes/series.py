@@ -7,8 +7,6 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Union
 
-from PySide6.QtCore import QSettings
-
 from .log import LogSet, LogSetPair
 from .ztrace import Ztrace
 from .section import Section
@@ -33,6 +31,22 @@ from PyReconstruct.modules.gui.utils import getProgbar
 
 class SeriesOpenError(Exception):
     """Raised when a file cannot be opened as a series (corrupt or not a jser)."""
+
+
+_SETTINGS_STORE = None
+
+
+def _default_settings_store():
+    """Lazily create and cache the default QSettings-backed settings store.
+
+    Imported lazily so that this module does not pull in Qt just to resolve
+    the default; behavior for GUI callers is identical to direct QSettings use.
+    """
+    global _SETTINGS_STORE
+    if _SETTINGS_STORE is None:
+        from PyReconstruct.modules.backend.settings_store import QSettingsStore
+        _SETTINGS_STORE = QSettingsStore()
+    return _SETTINGS_STORE
 
 
 def _atomicWrite(fp : str, data : bytes):
@@ -2520,9 +2534,28 @@ class Series():
                     self.obj_attrs[name]["curation"] = (False, "", log.date)
                 marked_objs.add(name)
     
+    def _settingsStore(self):
+        """Return the SettingsStore backing this series' settings.
+
+        Defaults to a lazily-created QSettings-backed store (behavior identical
+        to the previous direct QSettings use); a caller or test may inject a
+        different store via setSettingsStore().
+        """
+        store = getattr(self, "_settings_store", None)
+        if store is None:
+            store = _default_settings_store()
+        return store
+
+    def setSettingsStore(self, store):
+        """Inject a SettingsStore for this series (e.g. headless use or tests).
+
+        Pass None to fall back to the default QSettings-backed store.
+        """
+        self._settings_store = store
+
     def getOption(self, option_name : str, get_default=False):
         """Get an option from the series (or computer)
-        
+
             Params:
                 option_name (str): the name of the option
                 get_default (bool): True if only default should be returned
@@ -2539,30 +2572,33 @@ class Series():
         
         ## Get sane settings and defaults
         if option_name in Series.qsettings_series_defaults:
-            
+
             if self.isWelcomeSeries():  # return defaults if accessing series setting
                 return Series.qsettings_series_defaults[option_name]
-            
-            settings = QSettings("KHLab", f"PyReconstruct-{self.code}")
+
+            scope_code = self.code
             defaults = Series.qsettings_series_defaults
-            
+
         elif option_name in Series.qsettings_defaults:
-            
-            settings = QSettings("KHLab", "PyReconstruct")
+
+            scope_code = None
             defaults = Series.qsettings_defaults
-            
+
         else:
-            
+
             return None
-        
+
+        store = self._settingsStore()
+
         ## Get the option
         if get_default:
             return defaults[option_name]
-        elif settings.contains(option_name):
+        elif store.contains(scope_code, option_name):
             option_type = type(defaults[option_name])
-            option = settings.value(
+            option = store.value(
+                scope_code,
                 option_name,
-                type=(str if option_type in (dict, list, tuple) else option_type)
+                str if option_type in (dict, list, tuple) else option_type
             )
             if option_type in (dict, list, tuple):
                 option = json.loads(option)
@@ -2601,17 +2637,17 @@ class Series():
         if value_type in (dict, list, tuple):
             value = json.dumps(value)
         
-        # get the proper settings
+        # get the proper scope
         if option_name in Series.qsettings_series_defaults:
             if self.isWelcomeSeries():
                 return  # prevent setting for the welcome series
-            settings = QSettings("KHLab", f"PyReconstruct-{self.code}")
+            scope_code = self.code
         elif option_name in Series.qsettings_defaults:
-            settings = QSettings("KHLab", "PyReconstruct")
+            scope_code = None
         else:
             return
-        
-        settings.setValue(option_name, value)
+
+        self._settingsStore().set_value(scope_code, option_name, value)
     
     @property
     def user(self):
