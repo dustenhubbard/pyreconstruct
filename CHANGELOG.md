@@ -5,13 +5,37 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 the project uses [semantic versioning](https://semver.org/).
 
 Builds come on two channels: **Release** (stable, tagged `vX.Y.Z`) and
-**Pre-release (experimental)** (rolling, latest `main`). Entries under
-[Unreleased] have landed on `main` and ship on the Pre-release channel ahead of
-the next tagged release.
+**Pre-release (experimental)** (release candidates, tagged `vX.Y.ZrcN`). Entries
+under [Unreleased] have landed on `main` but are not yet tagged; they reach the
+Pre-release channel once cut as a release-candidate tag, ahead of the next
+stable release.
 
 ## [Unreleased]
 
+## [1.21.0rc1] — 2026-07-05
+
 ### Added
+- **Copy traces to multiple sections at once.** A new "Copy to sections..."
+  trace action places the selected trace(s) onto multiple chosen sections at the
+  same field (x, y) location in one step. A picker accepts section numbers and
+  ranges (e.g. `10-20` or `5, 8, 11`); each trace is re-projected through every
+  target section's own transform so it lands at the identical field position
+  regardless of that section's alignment, and attributes (name, color, closed,
+  tags) are preserved. Alignment-locked sections are skipped and reported; the
+  source section is never modified. Available from the Trace submenu (field
+  context menu and the trace list). (#91)
+- **Propagate an alignment by correlation across a range.** Align by correlation
+  (Ctrl+\) now records its shift through the same path a manual transform uses,
+  so with propagation active the correlation shift is replayed across a chosen
+  section range (or as you scroll), exactly like a manual translate. With no
+  propagation active, it still aligns only the current section. (#90)
+- **"What's new" on demand.** A new Help ▸ What's new action reopens the
+  release-notes dialog at any time, showing the recent release history (the
+  running version plus the few before it). The once-per-version startup popup
+  and its stored last-seen record are unchanged. (#36)
+- **User-guide wiki.** The full user guide is now a GitHub wiki with a page per
+  topic, surfaced from the README and reachable in-app from Help ▸ Online
+  resources ▸ PyReconstruct user guide. (#34)
 - **"What's new" on first launch.** On the first launch of a new version — a
   fresh install or after an update — PyReconstruct shows a dismissible "What's
   new" dialog with that version's release notes, read from the bundled
@@ -47,9 +71,57 @@ the next tagged release.
   downloads and checksum-verifies the installer inline with a progress bar. Added
   an opt-in background check on startup (frozen builds, gated to once per 24 h),
   off by default. (#3)
+- **Headless-capable data model (internal, behavior-preserving).** The internal
+  `Series` no longer imports anything from the Qt/GUI layer. Its option storage,
+  progress reporting, and user notifications now go through small injectable seams
+  (`SettingsStore`, `ProgressReporter`, `Notifier`), each with a Qt-backed default
+  adapter and a pure-Python one for headless use and tests. GUI callers get
+  identical settings, progress, and notification behavior. (#30, #31, #33, #35)
+- **In-app links point at this fork.** The Help ▸ Report issues links, the
+  "PyReconstruct source code" menu link, and the user-guide link now open this
+  fork's repository and wiki instead of the upstream SynapseWeb repo and the lab
+  wiki. Upstream provenance and credit in the README, About dialog, and
+  CONTRIBUTING are unchanged. (#34)
+- **README header.** The README now leads with the social-preview card. (#29)
+- **De-staled docs.** The README, user guide, and contributing guide were updated
+  to reflect current reality (the Linux installer, the shipped Intel build, the
+  Pre-release channel, and silent username resolution).
 - Renamed the updater channels to **Release** and **Pre-release (experimental)**.
 
 ### Fixed
+- **Shell-free converter launches.** The Zarr and Neuroglancer converters are now
+  launched with an argument list on every platform instead of a shell command
+  string. Paths read verbatim from the opened series file are passed as single
+  literal arguments, so shell metacharacters in them can no longer be executed on
+  a normal menu click (remote-code-execution hardening).
+- **Atomic saves.** The series (`.jser`) and per-section files are now written to
+  a same-directory temporary file and atomically replaced (`os.replace`), so a
+  crash or a full disk mid-write can no longer truncate the only complete copy. A
+  failed write surfaces an error and the series is never marked saved.
+- **Clean recovery from an interrupted open.** An open that is canceled or errors
+  part-way removes its partial hidden directory instead of leaving one that could
+  later be offered as unsaved work and saved over the intact `.jser`. Corrupt or
+  foreign files now raise a readable error rather than a raw exception.
+- **Align by correlation under rotation or scale.** The correlation shift is now
+  composed after the section transform, matching a manual translate, so it no
+  longer drifts when the current transform is not a pure translation.
+- **Edits on the flickered-away section are saved.** Saving now also writes the
+  b-section held by flicker, which was previously excluded from the save and then
+  discarded on close.
+- **Safer, more reliable batch exports.** The Zarr/labels export threading path
+  renders off-thread without touching GUI-only objects, reports worker errors
+  instead of reporting an incomplete export as success, and can no longer be
+  mutated from a reentered event loop mid-run.
+- **Hardened self-update.** The updater cancels cleanly mid-download, refuses (in
+  frozen builds) to install a download with no published checksum, targets this
+  fork, and requires https for the installer/checksum URLs and every redirect.
+- **Undo works on a read-only series.** The undo baseline falls back to memory
+  when the hidden directory is not writable (e.g. the bundled welcome series in a
+  read-only install location) instead of raising on startup.
+- **Lifecycle fixes.** Undo/redo now clears the stale selected-flags list, and a
+  per-series timer left over from a previously opened series is stopped, so
+  background bookkeeping runs once rather than once per series opened.
+- The crash-dialog bug-report link now points at this fork.
 - **No username prompt on launch.** Startup no longer opens a blocking "Enter
   your username" dialog that stole focus and ignored a previously saved name.
   The username is now resolved silently: a name saved on this machine is reused,
@@ -85,5 +157,6 @@ the next tagged release.
   hooks; a Mesa software-OpenGL fallback on Windows for RDP/VM sessions; and a
   frozen-Windows multiprocessing fix so the Zarr conversion runs.
 
-[Unreleased]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.20.0...HEAD
+[Unreleased]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.21.0rc1...HEAD
+[1.21.0rc1]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.20.0...v1.21.0rc1
 [1.20.0]: https://github.com/dustenhubbard/PyReconstruct/releases/tag/v1.20.0
