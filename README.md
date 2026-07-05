@@ -1,11 +1,5 @@
 <p align="center">
-  <img src="PyReconstruct/assets/img/logo.png" alt="PyReconstruct" width="120">
-</p>
-
-<h1 align="center">PyReconstruct</h1>
-
-<p align="center">
-  <em>Annotate and 3D-reconstruct serial-section and volume electron-microscopy data.</em>
+  <img src="PyReconstruct/assets/img/social-preview.png" alt="PyReconstruct: open-source annotation and 3D reconstruction for serial-section and volume electron microscopy" width="720">
 </p>
 
 <p align="center">
