@@ -1,9 +1,10 @@
 """First-launch "What's new" dialog.
 
 Shows what changed since the user's last-seen version -- on a fresh install or
-after an update that may span several versions. It reuses the updater dialog's
-markdown notes renderer. It is a normal, dismissible, *modeless* dialog: it never
-blocks startup or steals focus the way a prompt would.
+after an update that may span several versions -- and can be reopened on demand
+from Help -> What's new. It reuses the updater dialog's markdown notes renderer.
+It is a normal, dismissible, *modeless* dialog: it never blocks startup or
+steals focus the way a prompt would.
 """
 
 from PySide6.QtWidgets import (
@@ -31,19 +32,25 @@ class WhatsNewDialog(QDialog):
         if url is None:
             url = github_release_url(version)
 
-        self.setWindowTitle(f"What's new in PyReconstruct {version}")
+        self.setWindowTitle(
+            f"What's new in PyReconstruct {version}" if version
+            else "What's new in PyReconstruct"
+        )
         self.setMinimumWidth(540)
         self.setModal(False)  # modeless: does not block the app
 
         lay = QVBoxLayout(self)
 
-        # prominent version header, with the release date beneath it
-        title = QLabel(f"PyReconstruct {content['version']}")
-        tf = title.font()
-        tf.setBold(True)
-        tf.setPointSize(18 if tf.pointSize() <= 0 else tf.pointSize() + 6)
-        title.setFont(tf)
-        lay.addWidget(title)
+        # prominent version header, with the release date beneath it -- omitted
+        # when the running version is unknown (never render "None"; the
+        # orienter below then leads the dialog)
+        if content["version"]:
+            title = QLabel(f"PyReconstruct {content['version']}")
+            tf = title.font()
+            tf.setBold(True)
+            tf.setPointSize(18 if tf.pointSize() <= 0 else tf.pointSize() + 6)
+            title.setFont(tf)
+            lay.addWidget(title)
 
         if content.get("date"):
             released = QLabel(f"Released {content['date']}")
@@ -73,9 +80,9 @@ class WhatsNewDialog(QDialog):
         lay.addLayout(row)
 
 
-def _default_show(parent, version, last_seen=None):
+def _default_show(parent, version, last_seen=None, content=None):
     """Construct and show the dialog modelessly, transiently."""
-    dialog = WhatsNewDialog(parent, version, last_seen=last_seen)
+    dialog = WhatsNewDialog(parent, version, last_seen=last_seen, content=content)
     dialog.setAttribute(Qt.WA_DeleteOnClose)
     if parent is not None:
         # Hold a reference so the modeless dialog isn't garbage-collected before
@@ -105,3 +112,18 @@ def maybe_show_whats_new(parent, settings=None, current=None, show=None,
     (show or _default_show)(parent, current, stored)
     settings.setValue(key, current)
     return True
+
+
+def show_whats_new(parent, current=None, show=None):
+    """Show the What's-new dialog on demand (Help -> What's new).
+
+    Unlike ``maybe_show_whats_new`` there is no once-per-version gate and the
+    stored last-seen version is neither consulted nor updated: the dialog always
+    opens, framing the recent release history (the current version plus the few
+    before it, newest first) rather than a fresh-install welcome. ``current`` /
+    ``show`` are injectable for headless testing. Returns the dialog.
+    """
+    if current is None:
+        current = current_version_str()
+    content = whats_new_content(current, on_demand=True)
+    return (show or _default_show)(parent, current, content=content)
