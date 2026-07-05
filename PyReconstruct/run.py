@@ -80,9 +80,21 @@ if __name__ == "__main__":
 
     elif "--selftest" in sys.argv[1:]:
 
-        # Reaching here means the full GUI/vedo import chain (imported at module
-        # load, above) succeeded. CI runs the frozen exe with this flag to catch
-        # windowed-only import failures (e.g. None stdout) without launching the UI.
+        # The GUI import chain above no longer pulls the heavy 3D / scientific
+        # deps (vtk, vedo, trimesh, scipy, skimage) -- they're imported lazily
+        # when their features run, which is what keeps launch fast. Import them
+        # explicitly here so this frozen self-test still catches missing-module
+        # bundling regressions (e.g. a hiddenimport dropped from the spec) that
+        # would otherwise only surface when the user opens the 3D viewer.
+        import vtkmodules.vtkRenderingOpenGL2  # noqa: F401  (GL2 render factory)
+        import vtk  # noqa: F401
+        import PyReconstruct.modules.gui.popup.custom_plotter  # noqa: F401  (vedo + vtk.qt)
+        from PyReconstruct.modules.backend.volume import export3DObjects  # noqa: F401  (trimesh)
+        import scipy.interpolate  # noqa: F401
+        import skimage.draw  # noqa: F401
+        # Reaching here means the full GUI + 3D/scientific import chain succeeded.
+        # CI runs the frozen exe with this flag to catch windowed-only import
+        # failures (e.g. None stdout) without launching the UI.
         print("selftest ok")
         sys.exit(0)
 

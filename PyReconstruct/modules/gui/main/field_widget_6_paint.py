@@ -153,9 +153,12 @@ class FieldWidgetPaint(FieldWidgetMouse):
                 qpoint = QPoint(x+dx, y+dy)
                 field_painter.drawPoint(qpoint)
             # redraw flag with translation
+            # (settings-backed option: read once, not per flag)
+            if self.moving_flags:
+                flag_font = QFont("Courier New", self.series.getOption("flag_size"), QFont.Bold)
             for (x, y), color in self.moving_flags:
                 field_painter.setPen(QPen(QColor(*color), 6))
-                field_painter.setFont(QFont("Courier New", self.series.getOption("flag_size"), QFont.Bold))
+                field_painter.setFont(flag_font)
                 qpoint = QPoint(x+dx, y+dy)
                 field_painter.drawText(qpoint, "⚑")
 
@@ -181,6 +184,12 @@ class FieldWidgetPaint(FieldWidgetMouse):
             not (self.lclick or self.rclick or self.mclick) and
             not self.is_gesturing
         ):
+            # hoist settings-backed options out of this block: each getOption
+            # for a non-series option constructs a QSettings and re-reads the
+            # platform store, and paintText runs on every paint event
+            display_closest = self.series.getOption("display_closest")
+            left_handed = self.series.getOption("left_handed")
+
             # get closest trace
             closest, closest_type = self.section_layer.getTrace(self.mouse_x, self.mouse_y)
 
@@ -229,7 +238,7 @@ class FieldWidgetPaint(FieldWidgetMouse):
                         elif closest_type == "flag":
                             name = closest.name
                         
-                        if self.series.getOption("display_closest"):
+                        if display_closest:
                             # set up the corner display for the attributes
                             if closest_type in ("trace", "flag"):
                                 if closest != self.displayed_item:
@@ -240,7 +249,7 @@ class FieldWidgetPaint(FieldWidgetMouse):
 
                             # display the name of the item by the mouse
                             mouse_x, mouse_y = self.mouse_x, self.mouse_y
-                            if self.series.getOption("left_handed"): mouse_x += 10
+                            if left_handed: mouse_x += 10
                             c = closest.color
                             drawOutlinedText(
                                 field_painter,
@@ -249,12 +258,12 @@ class FieldWidgetPaint(FieldWidgetMouse):
                                 c,
                                 None,
                                 ct_size,
-                                not self.series.getOption("left_handed")
+                                not left_handed
                             )
             elif self.mouse_mode == HOST and self.hosted_trace:
                 # set up text position
                 mouse_x, mouse_y = self.mouse_x, self.mouse_y
-                if self.series.getOption("left_handed"): mouse_x += 10
+                if left_handed: mouse_x += 10
                 # display the proposed host relationship by the mouse
                 t = [
                     self.hosted_trace.name,
@@ -281,7 +290,7 @@ class FieldWidgetPaint(FieldWidgetMouse):
                         color,
                         None,
                         ct_size,
-                        not self.series.getOption("left_handed")
+                        not left_handed
                     )
             
             # get the names of the selected traces
@@ -414,9 +423,10 @@ class FieldWidgetPaint(FieldWidgetMouse):
     
     def closeHoverDisplay(self):
         """Close the hover information display."""
+        # hide (do not close/discard) the widget: it is reused across hovers so
+        # that hidden QTextEdits do not accumulate as children of the main window
         if self.hover_display:
-            self.hover_display.close()
-            self.hover_display = None
+            self.hover_display.hide()
         self.displayed_item = None
         if self.hover_display_timer.isActive():
             self.hover_display_timer.stop()
@@ -454,8 +464,10 @@ class FieldWidgetPaint(FieldWidgetMouse):
         if not text:
             return
         
-        # create the widget
-        self.hover_display = QTextEdit(self.mainwindow, text=text)
+        # create the widget once and reuse it across hovers
+        if self.hover_display is None:
+            self.hover_display = QTextEdit(self.mainwindow)
+        self.hover_display.setText(text)
         # show
         self.hover_display.show()
         # adjust the width and height

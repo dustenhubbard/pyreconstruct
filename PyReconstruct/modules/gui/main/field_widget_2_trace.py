@@ -22,8 +22,7 @@ from PyReconstruct.modules.calc import (
     cutTraces,
 )
 from PyReconstruct.modules.gui.table import (
-    CopyTableWidget, 
-    getCopyTableWidget, 
+    CopyTableWidget,
     TraceTableWidget,
     ZtraceTableWidget
 )
@@ -339,8 +338,9 @@ class FieldWidgetTrace(FieldWidgetBase):
         self.hide_trace_layer = not self.hide_trace_layer
         if self.hide_trace_layer:
             self.show_all_traces = False
-            # remove hidden traces that were selected
-            for trace in self.section.selected_traces:
+            # remove hidden traces that were selected (iterate a snapshot so
+            # removing one doesn't skip the next selected trace)
+            for trace in self.section.selected_traces.copy():
                 if trace.hidden:
                     self.section.selected_traces.remove(trace)
         self.generateView()
@@ -389,9 +389,10 @@ class FieldWidgetTrace(FieldWidgetBase):
         self.show_all_traces = not self.show_all_traces
         if self.show_all_traces:
             self.hide_trace_layer = False
-        # remove hidden traces that were selected
+        # remove hidden traces that were selected (iterate a snapshot so
+        # removing one doesn't skip the next selected trace)
         else:
-            for trace in self.section.selected_traces:
+            for trace in self.section.selected_traces.copy():
                 if trace.hidden:
                     self.section.selected_traces.remove(trace)
         self.generateView()
