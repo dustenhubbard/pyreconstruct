@@ -1,22 +1,33 @@
 name: publish-pypi
 
-# Publishes the sdist + wheel to the PyPI 'pyreconstruct' project on a vX.Y.Z
-# tag, via OIDC Trusted Publishing (no API token). Guarded to the canonical
-# repo, so it is a no-op on forks (a fork has no PyPI trusted publisher and must
-# not publish to the canonical project). One-time setup: configure the Trusted
-# Publisher on PyPI for SynapseWeb/PyReconstruct, workflow publish-pypi.yml,
-# environment 'pypi'.
+# DISABLED ON THIS FORK — releases are GitHub-installer-only for now.
+#
+# This workflow was inherited from upstream, where it published the sdist +
+# wheel to the PyPI 'pyreconstruct' project on a vX.Y.Z tag via OIDC Trusted
+# Publishing. The job was guarded to 'SynapseWeb/PyReconstruct', which made it
+# a permanent silent no-op on this fork: every tag "ran" the workflow, skipped
+# the only job, and shipped no wheel — while looking green.
+#
+# Until a fork-owned PyPI project + Trusted Publisher exists, tag releases on
+# this fork ship installers only (see build-installers.yml). To re-enable
+# automatic publishing:
+#   1. Register a PyPI project owned by this fork and configure a Trusted
+#      Publisher for it: repository dustenhubbard/PyReconstruct, workflow
+#      publish-pypi.yml, environment 'pypi'.
+#   2. Restore the tag trigger:  on: { push: { tags: ["v*.*.*"] } }
+# The repository guard below now matches THIS fork, so a manual dispatch can
+# be used to test the pipeline once step 1 is done; it still refuses to run
+# from anyone else's fork of this fork.
 
 on:
-  push:
-    tags: ["v*.*.*"]
+  workflow_dispatch:
 
 permissions:
   id-token: write   # OIDC trusted publishing
 
 jobs:
   pypi:
-    if: github.repository == 'SynapseWeb/PyReconstruct'
+    if: github.repository == 'dustenhubbard/PyReconstruct'
     runs-on: ubuntu-latest
     environment: pypi
     steps:

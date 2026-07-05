@@ -19,7 +19,7 @@ notarization is a post-POC milestone.
 
 ## Prerequisites
 
-- **Python 3.11** (vtk 9.3.1 / numpy 1.24 have no 3.12 wheels).
+- **Python 3.11** (the pinned `numpy==1.24.1` has no 3.12 wheels).
 - The project installed into that environment, which also generates
   `PyReconstruct/_version.py` (read by the frozen app for its version):
 
@@ -56,8 +56,15 @@ pyinstaller --noconfirm packaging/PyReconstruct.spec
 bash packaging/macos/make_dmg.sh
 ```
 
-Build x86_64 for the POC (runs on Apple Silicon via Rosetta). Native arm64 is
-deferred pending a vtk bump (9.3.1 ships no macOS arm64 wheel).
+`make_dmg.sh` names the dmg by arch via the `ARCH` env var (defaults to
+`x86_64`); set `ARCH=arm64` on Apple Silicon. PyInstaller freezes for the arch
+of the running Python, so CI builds both arches natively on their own runners —
+arm64 on `macos-14` and x86_64 on `macos-15-intel` (GitHub retired the Intel
+`macos-13` image in Dec 2025) — now that vtk 9.4.2 ships wheels for both. A
+single `universal2` build is intentionally avoided: not all of the
+native dependencies (vtk, scipy, scikit-image, opencv, the cloud-volume codecs)
+ship universal2 wheels, so a universal2 freeze would force source builds and
+likely fail.
 
 **Unsigned macOS first launch (Gatekeeper):** since the `.app` is unsigned and
 un-notarized, a copy downloaded from the Releases page is quarantined and macOS
@@ -88,6 +95,7 @@ the 3D viewport still renders **blank** in the frozen app:
 ```
 PyReconstruct-<version>-Windows-x86_64-Setup.exe
 PyReconstruct-<version>-macOS-arm64.dmg
+PyReconstruct-<version>-macOS-x86_64.dmg
 ```
 
 `<version>` is the setuptools-scm string: `1.20.0` on a tag, `1.20.1.devN+gHASH`

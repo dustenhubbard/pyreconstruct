@@ -4,9 +4,9 @@ from PyReconstruct.modules.datatypes_legacy import ZContour as XMLZContour
 
 class Ztrace():
 
-    def __init__(self, name : str, color : tuple, points : list = []):
+    def __init__(self, name : str, color : tuple, points : list = None):
         """Create a new ztrace.
-        
+
             Params:
                 name (str): the name of the ztrace
                 color (tuple): the display color of the ztrace
@@ -14,7 +14,9 @@ class Ztrace():
         """
         self.name = name
         self.color = color
-        self.points = points
+        # a fresh list per call: a shared mutable default would alias points
+        # across ztraces constructed without an explicit list
+        self.points = points if points is not None else []
     
     def copy(self):
         """Return a copy of the ztrace object."""

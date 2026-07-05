@@ -17,6 +17,7 @@ import hashlib
 import subprocess
 import urllib.request
 import urllib.error
+import urllib.parse
 from pathlib import Path
 
 from packaging.version import Version, InvalidVersion
@@ -71,16 +72,18 @@ def pick_release(releases, channel):
     """Pick the release for a channel.
 
     release    -> newest non-prerelease, non-draft release.
-    prerelease -> the rolling 'prerelease' build (CI publishes it on every main
-                  push); falls back to the newest pre-release.
+    prerelease -> newest release flagged ``prerelease`` (drafts excluded).
+                  The pipeline publishes curated semver pre-releases
+                  (v1.30.0-alpha.N -> -rc -> final), each flagged
+                  ``prerelease=true`` by CI, so the newest such release is the
+                  current pre-release. GitHub returns releases newest-first, so
+                  the first prerelease-flagged one wins -- and a stale rolling
+                  'prerelease' release can no longer shadow a newer semver one.
     """
     # accept legacy channel values ("stable"/"edge") from installs predating the rename
     channel = {"stable": "release", "edge": "prerelease"}.get(channel, channel)
     rels = [r for r in (releases or []) if not r.get("draft")]
     if channel == "prerelease":
-        for r in rels:
-            if r.get("tag_name") == "prerelease":
-                return r
         for r in rels:
             if r.get("prerelease"):
                 return r
@@ -93,7 +96,14 @@ def pick_release(releases, channel):
 
 
 def pick_asset(release, platform_tag):
-    """Pick the installer asset matching this platform tag (e.g. 'Windows-x86_64')."""
+    """Pick the installer asset matching this platform tag (e.g. 'Windows-x86_64').
+
+    The substring match is unambiguous because ``platform_asset_tag`` always
+    carries the OS label and the arch tokens are not substrings of each other:
+    'macOS-x86_64' and 'macOS-arm64' (and 'Windows-x86_64') each match exactly
+    one asset and never another arch's or OS's. If asset tags are ever shortened
+    to bare 'x86_64'/'arm64', that guarantee is lost -- keep the OS-label prefix.
+    """
     if not release:
         return None
     for a in release.get("assets", []):
@@ -158,6 +168,39 @@ def check_for_update(channel, releases=None):
 
 # --- Download / verify / launch ----------------------------------------------
 
+# Hosts installer/checksum bytes may come from. Release-asset URLs in the GitHub
+# API JSON resolve to github.com and its asset CDN (*.githubusercontent.com);
+# anything else -- an http:// downgrade or an off-host redirect -- is refused
+# loudly instead of followed.
+_ALLOWED_HOST_SUFFIXES = ("github.com", "githubusercontent.com")
+
+
+def _check_download_url(url):
+    """Raise RuntimeError unless ``url`` is https on an allowlisted GitHub host."""
+    parsed = urllib.parse.urlparse(url or "")
+    if parsed.scheme != "https":
+        raise RuntimeError(f"Refusing non-https download URL: {url}")
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if not any(host == s or host.endswith("." + s) for s in _ALLOWED_HOST_SUFFIXES):
+        raise RuntimeError(f"Refusing download from unexpected host: {host or url!r}")
+
+
+class _AllowlistedRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow redirects only to allowlisted https GitHub hosts; fail loudly otherwise."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _check_download_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _open_download(url, timeout):
+    """urlopen with the scheme/host allowlist enforced on the URL and every redirect."""
+    _check_download_url(url)
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    opener = urllib.request.build_opener(_AllowlistedRedirectHandler())
+    return opener.open(req, timeout=timeout)
+
+
 def download_asset(url, dest_path, progress_cb=None, cancel_cb=None, chunk=65536):
     """Stream ``url`` to ``dest_path``; return the sha256 hex of the bytes written.
 
@@ -166,10 +209,9 @@ def download_asset(url, dest_path, progress_cb=None, cancel_cb=None, chunk=65536
     ``cancel_cb()`` becomes truthy.
     """
     dest_path = Path(dest_path)
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     digest = hashlib.sha256()
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with _open_download(url, timeout=30) as resp:
             total = int(resp.headers.get("Content-Length", 0) or 0)
             done = 0
             with open(dest_path, "wb") as fh:
@@ -227,8 +269,7 @@ def fetch_checksum(release, asset_name):
 
 
 def _download_text(url, timeout=15):
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with _open_download(url, timeout=timeout) as resp:
         return resp.read().decode("utf-8", "replace")
 
 
