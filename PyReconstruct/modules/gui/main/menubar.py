@@ -2,9 +2,9 @@ from PyReconstruct.modules.gui.utils import getOpenRecentMenu, getGroupsMenu
 
 from PyReconstruct.modules.constants import (
     kh_web,
-    kh_wiki,
     kh_atlas,
     gh_repo,
+    gh_wiki,
     gh_issues,
     gh_submit,
     developers_mailto_str,
@@ -412,7 +412,7 @@ def return_help_menu(self):
                 "attr_name": "onlinemenu",
                 "text": "Online resources",
                 "opts": [
-                    ("openwiki_act", "PyReconstruct user guide", "", lambda : self.openWebsite(kh_wiki)),
+                    ("openwiki_act", "PyReconstruct user guide", "", lambda : self.openWebsite(gh_wiki)),
                     ("openrepo_act", "PyReconstruct source code", "", lambda : self.openWebsite(gh_repo)),
                     ("openkhlab_act", "KH lab website", "", lambda : self.openWebsite(kh_web)),
                     ("openkhatlast_act", "Atlas of Ultrastructural Neurocytology", "", lambda : self.openWebsite(kh_atlas)),
