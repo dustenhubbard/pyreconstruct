@@ -26,7 +26,6 @@ from PyReconstruct.modules.constants import (
     fast_dumps
 )
 from PyReconstruct.modules.constants import welcome_series_dir, default_traces
-from PyReconstruct.modules.gui.utils import getProgbar
 
 
 class SeriesOpenError(Exception):
@@ -47,6 +46,24 @@ def _default_settings_store():
         from PyReconstruct.modules.backend.settings_store import QSettingsStore
         _SETTINGS_STORE = QSettingsStore()
     return _SETTINGS_STORE
+
+
+_PROGRESS_REPORTER_FACTORY = None
+
+
+def _default_progress_reporter_factory():
+    """Lazily resolve and cache the default Qt-backed ProgressReporter factory.
+
+    Imported lazily so that this module does not pull in Qt just to resolve the
+    default; behavior for GUI callers is identical to direct getProgbar use. The
+    factory is a callable ``(text, cancel) -> ProgressReporter`` (the
+    QtProgressReporter class), invoked fresh per operation.
+    """
+    global _PROGRESS_REPORTER_FACTORY
+    if _PROGRESS_REPORTER_FACTORY is None:
+        from PyReconstruct.modules.backend.progress import QtProgressReporter
+        _PROGRESS_REPORTER_FACTORY = QtProgressReporter
+    return _PROGRESS_REPORTER_FACTORY
 
 
 def _atomicWrite(fp : str, data : bytes):
@@ -209,11 +226,15 @@ class Series():
     
     ## OPENING, LOADING, AND MOVING THE JSER FILE
     @staticmethod
-    def openJser(fp : str):
+    def openJser(fp : str, progress=None):
         """Process the file containing all section and series information.
-        
+
             Params:
                 fp (str): the filepath to the jser
+                progress: an optional ProgressReporter factory (callable
+                    (text, cancel) -> ProgressReporter); defaults to the
+                    Qt-backed reporter. Headless callers may pass
+                    NullProgressReporter.
             Returns:
                 (Series): the series object created from the jser
         """
@@ -300,9 +321,8 @@ class Series():
             jser_data["log"] = "Date, Time, User, Obj, Sections, Event"
         
         # creating loading bar
-        progbar = getProgbar(
-            text="Opening series..."
-        )
+        factory = progress if progress is not None else _default_progress_reporter_factory()
+        reporter = factory(text="Opening series...")
         progress = 0
         final_value = 0
         for sdata in jser_data["sections"]:
@@ -339,22 +359,22 @@ class Series():
                 with open(section_fp, "wb") as f:
                     f.write(fast_dumps(section_data))
 
-                if progbar.wasCanceled():
+                if reporter.was_canceled():
                     shutil.rmtree(hidden_dir, ignore_errors=True)
                     return None
                 progress += 1
-                progbar.setValue(progress/final_value * 100)
+                reporter.set_progress(progress/final_value * 100)
 
             # extract the existing log
             log_str = jser_data["log"]
             existing_log_fp = os.path.join(hidden_dir, "existing_log.csv")
             with open(existing_log_fp, "w", encoding="utf-8") as f:
                 f.write(log_str)
-            if progbar.wasCanceled():
+            if reporter.was_canceled():
                 shutil.rmtree(hidden_dir, ignore_errors=True)
                 return None
             progress += 1
-            progbar.setValue(progress/final_value * 100)
+            reporter.set_progress(progress/final_value * 100)
 
             # extract JSON series data (LAST: the .ser is the completion sentinel)
             series_data = jser_data["series"]
@@ -364,11 +384,11 @@ class Series():
             series_fp = os.path.join(hidden_dir, sname + ".ser")
             with open(series_fp, "wb") as f:
                 f.write(fast_dumps(series_data))
-            if progbar.wasCanceled():
+            if reporter.was_canceled():
                 shutil.rmtree(hidden_dir, ignore_errors=True)
                 return None
             progress += 1
-            progbar.setValue(progress/final_value * 100)
+            reporter.set_progress(progress/final_value * 100)
 
             # create the series
             series = Series(series_fp, sections, get_series_data=False)
@@ -377,11 +397,11 @@ class Series():
             # gather the series data
             for snum, section in series.enumerateSections(show_progress=False):
                 series.data.updateSection(section, update_traces=True, log_events=False)
-                if progbar.wasCanceled():
+                if reporter.was_canceled():
                     shutil.rmtree(hidden_dir, ignore_errors=True)
                     return None
                 progress += 1
-                progbar.setValue(progress/final_value * 100)
+                reporter.set_progress(progress/final_value * 100)
 
         except BaseException:
             shutil.rmtree(hidden_dir, ignore_errors=True)
@@ -402,7 +422,7 @@ class Series():
 
         filenames = os.listdir(self.hidden_dir)
 
-        progbar = getProgbar(
+        reporter = self._progressReporterFactory()(
             text="Saving series...",
             cancel=False
         )
@@ -445,7 +465,7 @@ class Series():
                 # continue saving the existing log file
                 jser_data["log"] = existing_log + jser_data["log"]
 
-            progbar.setValue(progress/final_value * 100)
+            reporter.set_progress(progress/final_value * 100)
             progress += 1
         
         save_bytes = fast_dumps(jser_data)
@@ -461,7 +481,7 @@ class Series():
         if close:
             self.close()
 
-        progbar.setValue(100)
+        reporter.finish()
     
     def move(self, new_jser_fp : str, section : Section = None, b_section : Section = None):
         """Move/rename the series to its jser filepath.
@@ -2553,6 +2573,27 @@ class Series():
         """
         self._settings_store = store
 
+    def _progressReporterFactory(self):
+        """Return the ProgressReporter factory backing this series' progress.
+
+        Defaults to the lazily-resolved Qt-backed factory (behavior identical
+        to the previous direct getProgbar use); a caller or test may inject a
+        different factory (e.g. NullProgressReporter) via setProgressReporter().
+        """
+        factory = getattr(self, "_progress_reporter_factory", None)
+        if factory is None:
+            factory = _default_progress_reporter_factory()
+        return factory
+
+    def setProgressReporter(self, factory):
+        """Inject a ProgressReporter factory for this series (headless/tests).
+
+        ``factory`` is a callable ``(text, cancel) -> ProgressReporter`` (e.g.
+        the NullProgressReporter class). Pass None to fall back to the default
+        Qt-backed reporter.
+        """
+        self._progress_reporter_factory = factory
+
     def getOption(self, option_name : str, get_default=False):
         """Get an option from the series (or computer)
 
@@ -3140,7 +3181,7 @@ class SeriesIterator():
             )
         self.sni = 0
         if self.show_progress:
-            self.progbar = getProgbar(
+            self.reporter = self.series._progressReporterFactory()(
                 text=self.message,
                 cancel=False
             )
@@ -3161,7 +3202,7 @@ class SeriesIterator():
 
         if self.sni < len(self.section_numbers):
             if self.show_progress:
-                    self.progbar.setValue(self.sni / len(self.section_numbers) * 100)
+                    self.reporter.set_progress(self.sni / len(self.section_numbers) * 100)
             snum = self.section_numbers[self.sni]
             self.section = self.series.loadSection(snum)
             self.sni += 1
@@ -3174,7 +3215,7 @@ class SeriesIterator():
         
         else:
             if self.show_progress:
-                self.progbar.setValue(self.sni / len(self.section_numbers) * 100)
+                self.reporter.set_progress(self.sni / len(self.section_numbers) * 100)
             raise StopIteration
 
 
