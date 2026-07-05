@@ -163,6 +163,7 @@ def get_context_menu_list_trace(self, is_in_field=True):
     
     context_menu = [
         ("edittrace_act", "Edit attributes...", sc, self.traceDialog),
+        ("copytosections_act", "Copy to sections...", "", self.copyTracesToSections),
         None,
         ("smoothtraces_act", "Smooth traces", "", self.smoothTraces),
         ("mergetraces_act", "Merge traces", sc, self.mergeTraces),

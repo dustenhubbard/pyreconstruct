@@ -1353,7 +1353,54 @@ class Series():
         self.modified = True
 
         return [f"{obj}_copy" for obj in obj_names]
-    
+
+    def copyTracesToSections(self, traces : list, section_numbers, series_states=None, log_event=True):
+        """Copy traces into multiple sections at the same field (x, y) location.
+
+        The traces' points must be given in FIELD coordinates (i.e. already
+        mapped through a section transform, the same form the clipboard/paste
+        path uses). Each target section stores the points through its own
+        inverse transform, so the traces land at the identical field x-y on
+        every section regardless of how each section is aligned.
+
+        Sections whose alignment is locked are left untouched and reported back
+        so the caller can inform the user.
+
+            Params:
+                traces (list): the traces to copy, points in field coordinates
+                section_numbers (iterable): the target section numbers
+                series_states (dict): section number : SectionStates (GUI undo)
+                log_event (bool): True if the trace creation should be logged
+            Returns:
+                (tuple): (copied_to, skipped_locked) lists of section numbers
+        """
+        copied_to = []
+        skipped_locked = []
+
+        for snum, section in self.enumerateSections(
+            message="Copying traces to sections...",
+            series_states=series_states,
+            section_numbers=section_numbers
+        ):
+            if section.align_locked:
+                skipped_locked.append(snum)
+                continue
+
+            tform = section.tform
+            for trace in traces:
+                new_trace = trace.copy()
+                # re-project the shared field coordinates through this section's
+                # own inverse transform so the trace occupies the same field x-y
+                new_trace.points = [tform.map(*p, inverted=True) for p in trace.points]
+                section.addTrace(new_trace, log_event=log_event)
+
+            section.save()
+            copied_to.append(snum)
+
+        self.modified = True
+
+        return copied_to, skipped_locked
+
     def deleteAllTraces(self, trace_name : str, tags : set = None, series_states=None):
         """Delete all traces with a certain name and tag set.
         
