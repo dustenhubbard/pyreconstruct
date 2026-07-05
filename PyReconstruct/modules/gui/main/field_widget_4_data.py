@@ -413,11 +413,15 @@ class FieldWidgetData(FieldWidgetObject):
 
         tform = self.section.tform
         # the shift is measured in field space (post-transform), so compose it
-        # after the existing tform: A * B maps p -> B(A(p)) in this codebase
-        self.section.tform = tform * shift_tform
-
-        self.generateView()
-        self.saveState()
+        # after the existing tform: A * B maps p -> B(A(p)) in this codebase.
+        # Route through changeTform (rather than assigning section.tform
+        # directly) so that when propagation recording is active the shift is
+        # captured in stored_tform and can be replayed across a section range,
+        # exactly like a manual transform. The composed new_tform has the same
+        # shape as a manual translate (existing tform post-multiplied by a
+        # field-space translation), so it propagates with identical semantics.
+        # changeTform also handles generateView + saveState.
+        self.changeTform(tform * shift_tform)
 
     def calibrateMag(self, trace_lengths : dict, log_event=True):
         """Calibrate the pixel mag based on the lengths of given traces.
