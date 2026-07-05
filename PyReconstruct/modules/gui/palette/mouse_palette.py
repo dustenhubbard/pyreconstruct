@@ -1,5 +1,6 @@
 import os
 import re
+import math
 
 from PySide6.QtWidgets import (
     QWidget, QStyle, QSlider, QFrame, QLabel, QVBoxLayout, QHBoxLayout,
@@ -7,7 +8,79 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import (
     QIcon, QPixmap, QColor, QFont, QPainter, QPen, QPainterPath,
 )
-from PySide6.QtCore import QSize, Qt, QRectF
+from PySide6.QtCore import QSize, Qt, QRectF, QSettings
+
+# Palette-visibility preferences are global (a UI choice, not per-series) and
+# persist across launches. Map each in-memory flag to its QSettings key.
+PALETTE_VIS_KEYS = {
+    "palette_hidden": "palette/trace_hidden",
+    "inc_hidden":     "palette/inc_hidden",
+    "bc_hidden":      "palette/bc_hidden",
+    "sb_hidden":      "palette/sb_hidden",
+}
+
+
+def load_palette_visibility(settings : QSettings) -> dict:
+    """Read the persisted palette-visibility flags (default: all shown)."""
+    return {
+        attr: settings.value(key, False, type=bool)
+        for attr, key in PALETTE_VIS_KEYS.items()
+    }
+
+
+def save_palette_visibility(settings : QSettings, state : dict) -> None:
+    """Persist the palette-visibility flags."""
+    for attr, key in PALETTE_VIS_KEYS.items():
+        settings.setValue(key, bool(state[attr]))
+
+
+# Each moveable palette group stores its position as a fraction (0..1) of the
+# field bounds. Like the visibility flags, positions are a global UI choice and
+# persist across launches -- one ``palette/<group>_<axis>`` key per group.
+PALETTE_POS_GROUPS = ("mode", "trace", "inc", "bc", "sb")
+
+
+def _palette_pos_key(group : str, axis : str) -> str:
+    return f"palette/{group}_{axis}"
+
+
+def load_palette_positions(settings : QSettings) -> dict:
+    """Read persisted palette positions as ``{"<group>_<axis>": float}``.
+
+    Absent (or unreadable) groups/axes are omitted so the caller keeps its code
+    defaults rather than being forced to a stored value.
+    """
+    positions = {}
+    for group in PALETTE_POS_GROUPS:
+        for axis in ("x", "y"):
+            raw = settings.value(_palette_pos_key(group, axis), None)
+            if raw is None:
+                continue
+            try:
+                val = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(val):
+                continue  # a corrupt nan/inf would break placement on the next resize
+            positions[f"{group}_{axis}"] = val
+    return positions
+
+
+def save_palette_positions(settings : QSettings, positions : dict) -> None:
+    """Persist palette positions (coerced to float) under ``palette/<group>_<axis>``."""
+    for group in PALETTE_POS_GROUPS:
+        for axis in ("x", "y"):
+            name = f"{group}_{axis}"
+            if name in positions:
+                settings.setValue(_palette_pos_key(group, axis), float(positions[name]))
+
+
+def clear_palette_positions(settings : QSettings) -> None:
+    """Forget any persisted palette positions, so a reset stays the default."""
+    for group in PALETTE_POS_GROUPS:
+        for axis in ("x", "y"):
+            settings.remove(_palette_pos_key(group, axis))
+
 
 from .buttons import PaletteButton, ModeButton, MoveableButton
 from .scale_bar import ScaleBar
@@ -159,18 +232,25 @@ class MousePalette():
         # active theme tokens for the floating tool-palette chrome
         self._tokens = theme.tokens()
 
-        # create the floating tool palette (mode buttons in a docked card).
-        # mode_x/mode_y record which field edge the card is docked to (right by
-        # default, left when left-handed); the field's corner-text painter reads
-        # mode_x to stay clear of the palette, so it is kept in sync here.
-        self.mode_x = 0.99
-        self.mode_y = 0.01
+        # Moveable palette-group positions (fractions 0..1 of the field bounds).
+        # Set every default first, then override with any persisted positions, so
+        # each group renders in its saved spot. Saved on drag end (MoveableButton)
+        # and cleared by resetPos(). mode_x/mode_y also record which field edge the
+        # tool card docks to (right by default, left when left-handed);
+        # placePaletteCard recomputes this and the corner-text painter reads mode_x
+        # to stay clear of the palette.
+        self.mode_x,  self.mode_y  = 0.99, 0.01
+        self.trace_x, self.trace_y = 0.51, 0.99
+        self.inc_x,   self.inc_y   = 0.99, 0.99
+        self.bc_x,    self.bc_y    = 0.99, 0.8
+        self.sb_x,    self.sb_y    = 0.01, 0.99
+        self.loadPositionState()
+
+        # create mode buttons
         self.mode_buttons = {}
         self.createPaletteCard()
 
         # create palette buttons
-        self.trace_x = 0.51
-        self.trace_y = 0.99
         traces = self.series.palette_traces[self.series.palette_index[0]]
         self.palette_buttons = [None] * len(traces)
         for i, trace in enumerate(traces):  # create all the palette buttons
@@ -193,26 +273,21 @@ class MousePalette():
         self.label.show()
 
         # create increment buttons
-        self.inc_x = 0.99
-        self.inc_y = 0.99
         self.createIncrementButtons()
 
         # create brightness/contrast buttons
-        self.bc_x = 0.99
-        self.bc_y = 0.8
         self.createBCButtons()
 
-        self.palette_hidden = False
-        self.inc_hidden = False
-        self.bc_hidden = False
-        self.sb_hidden = False
-        
+        # restore persisted palette-visibility preferences (global, across launches)
+        self.loadVisibilityState()
+
         self.help_widget = None
 
         # create scale palette
-        self.sb_x = 0.01
-        self.sb_y = 0.99
         self.createSB()
+
+        # apply the restored visibility now that every palette widget exists
+        self.applyVisibilityState()
     
     @staticmethod
     def _stripped(name : str) -> str:
@@ -943,46 +1018,79 @@ class MousePalette():
             "sb": (fx1, fx2 - 10, fy1, fy2 - 50)
         }
 
+    def loadVisibilityState(self):
+        """Restore palette-visibility flags from the persisted preferences."""
+        for attr, value in load_palette_visibility(QSettings("KHLab", "PyReconstruct")).items():
+            setattr(self, attr, value)
+
+    def saveVisibilityState(self):
+        """Persist the current palette-visibility flags so they survive a restart."""
+        state = {attr: getattr(self, attr) for attr in PALETTE_VIS_KEYS}
+        save_palette_visibility(QSettings("KHLab", "PyReconstruct"), state)
+
+    def loadPositionState(self):
+        """Restore persisted palette positions over the in-memory defaults."""
+        saved = load_palette_positions(QSettings("KHLab", "PyReconstruct"))
+        for attr, value in saved.items():
+            setattr(self, attr, value)
+
+    def savePositionState(self):
+        """Persist the current palette positions so they survive a restart."""
+        positions = {
+            f"{group}_{axis}": getattr(self, f"{group}_{axis}")
+            for group in PALETTE_POS_GROUPS for axis in ("x", "y")
+        }
+        save_palette_positions(QSettings("KHLab", "PyReconstruct"), positions)
+
+    def applyVisibilityState(self):
+        """Show/hide palette widgets to match the current visibility flags."""
+        for w in (self.palette_buttons + [self.label]):
+            w.hide() if self.palette_hidden else w.show()
+        for b in self.inc_buttons:
+            b.hide() if self.inc_hidden else b.show()
+        for b, slider in self.bc_widgets:
+            b.hide() if self.bc_hidden else b.show()
+            slider.hide() if self.bc_hidden else slider.show()
+        self.sb.hide() if self.sb_hidden else self.sb.show()
+
     def togglePalette(self):
         """Hide/Unhide the mouse palette."""
         self.palette_hidden = not self.palette_hidden
         for w in (self.palette_buttons + [self.label]):
             w.hide() if self.palette_hidden else w.show()
-    
+        self.saveVisibilityState()
+
     def toggleIncrement(self):
         """Hide/Unhide the increment buttons."""
         self.inc_hidden = not self.inc_hidden
         for b in self.inc_buttons:
             b.hide() if self.inc_hidden else b.show()
-    
+        self.saveVisibilityState()
+
     def toggleBC(self):
         """Hide/Unhide the brightness/contrast buttons."""
         self.bc_hidden = not self.bc_hidden
         for b, s in self.bc_widgets:
             b.hide() if self.bc_hidden else b.show()
             s.hide() if self.bc_hidden else s.show()
-    
+        self.saveVisibilityState()
+
     def toggleSB(self):
         """Hide/Unhide the scale bar."""
         self.sb_hidden = not self.sb_hidden
         self.sb.hide() if self.sb_hidden else self.sb.show()
+        self.saveVisibilityState()
     
     def resetPos(self):
-        """Reset the positions of the buttons."""
-        # the tool card docks by handedness (placePaletteCard recomputes this);
-        # kept here so mode_x reflects the docked side immediately.
-        self.mode_x = 0.01 if self.series.getOption("left_handed") else 0.99
-        self.mode_y = 0.01
-
-        self.trace_x = 0.51
-        self.trace_y = 0.99
-
-        self.inc_x = 0.99
-        self.inc_y = 0.99
-
-        self.bc_x = 0.99
-        self.bc_y = 0.8
-
+        """Reset every palette group to its default spot and forget saved positions."""
+        # mode_x/mode_y are the right-docked default; resize() -> placePaletteCard()
+        # below re-docks the tool card to the correct edge for the handedness.
+        self.mode_x,  self.mode_y  = 0.99, 0.01
+        self.trace_x, self.trace_y = 0.51, 0.99
+        self.inc_x,   self.inc_y   = 0.99, 0.99
+        self.bc_x,    self.bc_y    = 0.99, 0.8
+        self.sb_x,    self.sb_y    = 0.01, 0.99
+        clear_palette_positions(QSettings("KHLab", "PyReconstruct"))
         self.resize()
     
     def setPaletteIncMode(self, all : bool):

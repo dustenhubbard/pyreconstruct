@@ -166,7 +166,7 @@ class Log():
                 elif s1 in sections:
                     new_section_ranges.append((s1, srange[1]-1))
                 elif s2 in sections:
-                    new_section_ranges.append(srange[0], s2)
+                    new_section_ranges.append((srange[0], s2))
                 elif s1 < srange[0] and s2 >= srange[1]:
                     new_section_ranges.append((srange[0], srange[1]-1))
             if new_section_ranges:
@@ -343,9 +343,9 @@ class LogSet():
         
         older_than = remove_days_from_today(older_than)
 
-        with storage_log.open("a") as external_store, new_log.open("a") as new:
-            
-            with existing_log.open("r") as log:
+        with storage_log.open("a", encoding="utf-8") as external_store, new_log.open("a", encoding="utf-8") as new:
+
+            with existing_log.open("r", encoding="utf-8", errors="replace") as log:
                 
                 for line in log.readlines():
                     

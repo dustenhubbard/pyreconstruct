@@ -21,9 +21,21 @@ jobs:
       matrix:
         include:
           - { os: windows-2022, plat: Windows, arch: x86_64 }
-          # native Apple Silicon (vtk 9.4.x ships macOS arm64 wheels); macos-14
-          # arm64 runners are plentiful, unlike the retiring/queued macos-13 x86_64.
-          - { os: macos-14,     plat: macOS,   arch: arm64 }
+          # Two native single-arch macOS builds rather than one universal2 build:
+          # the native dependency stack (vtk 9.4.2, scipy, scikit-image, opencv,
+          # the cloud-volume codecs) ships per-arch wheels, not universal2, so a
+          # universal2 freeze would force source builds and likely fail. Each arch
+          # is built on its own native runner, where PyInstaller freezes for the
+          # arch of the runner's Python.
+          #   macos-14 = Apple Silicon (arm64); macos-15-intel = Intel (x86_64).
+          # GitHub retired the macos-13 Intel image in Dec 2025; macos-15-intel is
+          # the current Intel label, available until macOS 15 retires (~Fall 2027),
+          # after which GitHub drops x86_64 macOS runners entirely. The Intel dmg is
+          # purely additive: if that leg is unavailable or fails, fail-fast:false
+          # plus the release jobs' failure-tolerant gate still ship the arm64 and
+          # Windows installers.
+          - { os: macos-14,       plat: macOS,   arch: arm64 }
+          - { os: macos-15-intel, plat: macOS,   arch: x86_64 }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -106,21 +118,93 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4          # needed for packaging/linux/ + release notes
+        with:
+          fetch-depth: 0                   # full history + tags for the changelog link
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+      - name: Package the Linux .sh installer
+        # The Linux installer is a script bundle (no frozen binary), so it has no
+        # build-matrix leg — assemble it here and ship it as a release asset.
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          STAGE="PyReconstruct-linux-installer"
+          mkdir -p "$STAGE"
+          cp packaging/linux/install.sh packaging/linux/uninstall.sh \
+             packaging/linux/pyreconstruct.desktop.in packaging/linux/README.md "$STAGE"/
+          # Standalone installs pin to this exact tag, so a vX.Y.Z asset installs
+          # vX.Y.Z (not bleeding main).
+          sed -i "s#DEFAULT_SOURCE=\"git+https://github.com/dustenhubbard/PyReconstruct.git\"#DEFAULT_SOURCE=\"git+https://github.com/dustenhubbard/PyReconstruct.git@${GITHUB_REF_NAME}\"#" "$STAGE/install.sh"
+          # sed exits 0 even when the pattern matched nothing; if the
+          # DEFAULT_SOURCE line in install.sh ever drifts, an unverified sed
+          # would silently ship an installer that installs bleeding main
+          # instead of this tag. Fail the release loudly instead.
+          grep -qF "PyReconstruct.git@${GITHUB_REF_NAME}\"" "$STAGE/install.sh" || {
+            echo "::error::Linux installer version pin did not apply — DEFAULT_SOURCE line in packaging/linux/install.sh no longer matches the sed pattern above"
+            exit 1
+          }
+          tar -czf "dist/PyReconstruct-${VERSION}-Linux-installer.tar.gz" "$STAGE"
       - name: Generate checksums
         run: cd dist && for f in *; do [ -f "$f" ] && sha256sum "$f" > "$f.sha256"; done
+      - name: Build friendly release notes
+        # User-facing highlights from WHATS_NEW.md + a single link to the technical
+        # changelog -- deliberately NOT GitHub's auto-generated "What's Changed" list,
+        # which reads as developer jargon to general users.
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          {
+            echo "## What's new in ${VERSION}"
+            awk -v ver="$VERSION" '
+              /^##[ \t]+\[/ { t=$0; sub(/^##[ \t]+\[/,"",t); sub(/\].*/,"",t); sub(/^[vV]/,"",t); cap=(t==ver); next }
+              cap { print }
+            ' WHATS_NEW.md
+            echo ""
+            echo "---"
+            PREV=$(git tag --sort=-version:refname | awk -v c="$GITHUB_REF_NAME" 'found{print; exit} $0==c{found=1}')
+            if [ -n "$PREV" ]; then
+              echo "_For developers — the full technical changelog:_ **[compare ${PREV} → ${GITHUB_REF_NAME}](https://github.com/${GITHUB_REPOSITORY}/compare/${PREV}...${GITHUB_REF_NAME})**"
+            else
+              echo "_For developers — the full technical changelog:_ **[commit history](https://github.com/${GITHUB_REPOSITORY}/commits/${GITHUB_REF_NAME})**"
+            fi
+          } > release_body.md
+          echo "----- release_body.md -----"; cat release_body.md
+      - name: Classify release
+        # Only a clean vX.Y.Z tag is a stable release; anything else -- a
+        # PEP 440-normalized pre-release (v1.20.4rc1), a dashed one (v1.20.4-rc.1),
+        # or an alpha (v1.30.0a1) -- publishes as a GitHub pre-release. A plain
+        # contains('-') check misclassifies the dashless v1.20.4rc1 as stable.
+        id: rel
+        run: |
+          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          prerelease: false
-          generate_release_notes: true
+          prerelease: ${{ steps.rel.outputs.prerelease }}
+          # Stage a release as a hidden DRAFT (e.g. for a live demo): set the repo
+          # variable STAGE_RELEASE_AS_DRAFT=true, push the tag, then hit "Publish"
+          # when ready — assets are pre-built so it goes live instantly. The updater
+          # ignores drafts, so it stays invisible until published. Unset/false (the
+          # default) publishes immediately, exactly as before.
+          draft: ${{ vars.STAGE_RELEASE_AS_DRAFT == 'true' }}
+          body_path: release_body.md
 
   release-prerelease:
     needs: build
-    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (needs.build.result == 'success' || needs.build.result == 'failure') }}
+    # PAUSED 2026-06-29: the rolling "latest main" prerelease is disabled until the
+    # v1.30 UI overhaul ships curated semver pre-releases (v1.30.0-alpha.N → -rc → final).
+    # The dev builds it produced were functionally identical to stable and only confused
+    # the updater's prerelease channel. Re-enable by restoring the commented condition
+    # below — and FIRST make the `release` job above mark pre-release tags correctly
+    # (e.g. `prerelease: ${{ contains(github.ref_name, '-') }}`), or an alpha tag will
+    # publish as stable. See pyrecon-notes/DECISIONS.md.
+    if: ${{ false }}
+    # if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (needs.build.result == 'success' || needs.build.result == 'failure') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

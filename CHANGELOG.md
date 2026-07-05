@@ -1,39 +1,89 @@
 # Changelog
 
-All notable changes to PyReconstruct are documented here. The format follows
-[Keep a Changelog](https://keepachangelog.com/) and the project uses
-[semantic versioning](https://semver.org/). Builds come on two channels:
-**Release** (tagged `vX.Y.Z`) and **Pre-release (experimental)** (rolling, latest `main`).
+All notable changes to this distribution of PyReconstruct are documented here.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
+the project uses [semantic versioning](https://semver.org/).
+
+Builds come on two channels: **Release** (stable, tagged `vX.Y.Z`) and
+**Pre-release (experimental)** (rolling, latest `main`). Entries under
+[Unreleased] have landed on `main` and ship on the Pre-release channel ahead of
+the next tagged release.
 
 ## [Unreleased]
 
-### Changed
-- **Large-series performance.** Vectorized the per-trace geometry build and the
-  affine point mapping that dominate opening and refreshing a series. On a
-  287-section / 3,809-object / 61,121-trace autoseg series, first open and
-  `data.refresh` are ~3× faster than the pre-optimization baseline (and the
-  geometry is verified numerically identical to the previous code).
-
 ### Added
-- A `pytest` test suite (geometry/transform equivalence) and a headless
-  performance harness.
+- **"What's new" on first launch.** On the first launch of a new version — a
+  fresh install or after an update — PyReconstruct shows a dismissible "What's
+  new" dialog with that version's release notes, read from the bundled
+  `CHANGELOG.md` (offline-safe) with a link to the full notes on GitHub. It
+  appears once per version and is modeless, so it never blocks startup.
+- **Intel macOS installer.** CI now builds a native x86_64 `.dmg`
+  (`PyReconstruct-<version>-macOS-x86_64.dmg`) on a `macos-15-intel` runner
+  alongside the Apple Silicon arm64 build, so Intel Macs get a native installer.
+  The arch-named assets are unambiguous and the in-app updater already serves
+  each Mac its matching arch.
+- A `pytest` test suite covering geometry/transform equivalence and the updater's
+  selection, version-comparison, and checksum logic, plus a headless performance
+  harness. (#2, #3)
+- Reproducible fork-vs-upstream benchmarks under `benchmarks/`, with raw results,
+  aggregated medians, and an equivalence report. (#1)
 
-## [1.20.0] - 2026-06-27
+### Changed
+- **Large-series performance.** Rewrote the per-trace geometry build and the
+  affine point mapping that dominate opening and refreshing a series, with no
+  change to the `.jser` format or data model. Open and refresh are **3–4× faster**
+  across real autoseg series from 6 MB to 1.4 GB (up to ~4.2×); the geometry is
+  verified equivalent to the previous implementation — section/object/trace counts
+  match exactly and summed area/length/radius are identical on seven of the eight
+  benchmark series (the largest differs by ~1e-11 relative on summed radius, from
+  floating-point summation order). The work
+  vectorizes `traceGeometry` into a single NumPy pass, defers the Feret-diameter
+  convex hull until it is read, maps trace points straight to NumPy arrays, and
+  uses [orjson](https://github.com/ijl/orjson) on the JSON load/save paths (with a
+  stdlib fallback). Series-wide object operations are scoped to the sections that
+  actually contain the targeted objects. (#1)
+- **In-app updater polish.** The update check now runs off the GUI thread; a new
+  update dialog shows the version, channel, download size, and release notes, then
+  downloads and checksum-verifies the installer inline with a progress bar. Added
+  an opt-in background check on startup (frozen builds, gated to once per 24 h),
+  off by default. (#3)
+- Renamed the updater channels to **Release** and **Pre-release (experimental)**.
+
+### Fixed
+- **No username prompt on launch.** Startup no longer opens a blocking "Enter
+  your username" dialog that stole focus and ignored a previously saved name.
+  The username is now resolved silently: a name saved on this machine is reused,
+  otherwise the OS login is used and saved. "Change username..." in the menu
+  still sets it explicitly.
+- Declared the `orjson` dependency in `pyproject.toml`. It powers the jser
+  load/save speedups but was previously only in `requirements.txt`, so a
+  pyproject-based install silently dropped it and lost both the speedup and the
+  orjson code path. (#2)
+- Corrected user-facing typos, blank/placeholder dialog titles, and repository
+  URL casing.
+- Updated the macOS dmg first-launch (Gatekeeper) instructions to match current
+  macOS wording.
+
+## [1.20.0] - 2026-06-26
 
 ### Added
 - **One-click installers** built in CI: Windows (`.exe`, Inno Setup) and macOS
-  Apple Silicon (`.dmg`).
-- **In-app updater** with **Release** / **Pre-release (experimental)** channels,
-  pulling builds from GitHub Releases (checksum-verified).
+  Apple Silicon (`.dmg`), released from this repository via GitHub Actions
+  (unsigned for now).
+- **In-app updater** that downloads and installs releases from GitHub Releases,
+  with a channel toggle and bundled CA certificates for TLS verification in the
+  frozen app.
 
 ### Changed
 - Modernized the 3D stack to **vtk 9.4.2** + **vedo 2025.5.4**, enabling native
   Apple Silicon support.
-- Migrated packaging from `setup.py` to **`pyproject.toml` + setuptools-scm**.
+- Migrated packaging from `setup.py` to **`pyproject.toml` + setuptools-scm**
+  (tag-derived versioning); `requirements.txt` is retained as an export.
 
 ### Fixed
-- Corrected user-facing typos, blank/placeholder dialog titles, and repository
-  URL casing.
+- Frozen-build hardening: windowed-stdio, Qt, SSL, and software-OpenGL runtime
+  hooks; a Mesa software-OpenGL fallback on Windows for RDP/VM sessions; and a
+  frozen-Windows multiprocessing fix so the Zarr conversion runs.
 
 [Unreleased]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.20.0...HEAD
 [1.20.0]: https://github.com/dustenhubbard/PyReconstruct/releases/tag/v1.20.0
