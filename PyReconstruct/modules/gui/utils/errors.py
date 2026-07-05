@@ -2,6 +2,8 @@ import sys
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from PyReconstruct.modules.constants import gh_issues
+
 
 def customExcepthook(exctype, value, traceback):
     """Global exception hook: Show notification."""
@@ -12,7 +14,7 @@ def customExcepthook(exctype, value, traceback):
         "(See console for more info.)\n\n"
         "If you think this is a bug or need help, "
         "please issue a bug report at:\n\n"
-        "https://github.com/dustenhubbard/PyReconstruct/issues"
+        f"{gh_issues}"
     )
 
     active_window = QApplication.activeWindow()

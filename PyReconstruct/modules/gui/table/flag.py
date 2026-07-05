@@ -357,6 +357,8 @@ class FlagTableWidget(DataTable):
         """Delete a flag or flags."""
         self.mainwindow.saveAllData()
         flags = self.getSelected()
+        if not flags:
+            return
 
         # organize flags into dictionary
         flags_dict = {}

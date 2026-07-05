@@ -1,12 +1,13 @@
 import re
 
 from PySide6.QtWidgets import (
-    QTableWidgetItem,  
-    QWidget, 
-    QInputDialog, 
-    QMenu, 
+    QTableWidgetItem,
+    QWidget,
+    QInputDialog,
+    QMenu,
     QApplication,
     QMessageBox,
+    QAbstractItemView,
 )
 from PySide6.QtGui import (
     QPalette,
@@ -15,6 +16,7 @@ from PySide6.QtGui import (
 from PySide6.QtCore import Qt
 
 from .data_table import DataTable
+from .object_model import ObjectTableModel, ObjectTableView
 from .history import HistoryTableWidget
 from PyReconstruct.modules.gui.utils import sortList
 
@@ -487,39 +489,102 @@ class ObjectTableWidget(DataTable):
         return sortList(filtered_list)
 
     def createTable(self):
-        """Create the table widget."""
+        """Create the virtualized object list (model + view).
+
+        Only the visible rows are ever built into items -- the model produces a
+        row's items on demand via the same getItems() path the old QTableWidget
+        used, so the displayed data is identical while memory/build cost drops
+        from O(#objects) to O(visible rows).
+        """
         self.updateObjCols(recreate=False)
-        super().createTable()
-    
+
+        # close an existing table and save scroll position
+        if self.table is not None:
+            scroll_pos = self.table.verticalScrollBar().value()
+            self.table.close()
+        else:
+            scroll_pos = 0
+
+        # update the columns and headers (getHeaders sets self.curate_column)
+        self.columns = self.series.getOption(f"{self.name}_columns")
+        self.horizontal_headers = self.getHeaders()
+
+        # build the lazy model and view
+        self.model = ObjectTableModel(self)
+        self.table = ObjectTableView(self, self.main_widget)
+        self.table.setModel(self.model)
+
+        # connect table functions
+        self.table.mouseDoubleClickEvent = self.mouseDoubleClickEvent
+        self.table.backspace = self.backspace
+
+        # format table (matches the old QTableWidget configuration)
+        self.table.setShowGrid(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.verticalHeader().hide()
+
+        # bound how many rows resizeColumnsToContents() samples (see DataTable)
+        self.table.horizontalHeader().setResizeContentsPrecision(100)
+        self.table.resizeColumnsToContents()
+
+        # give rows a single compact, content-derived height. The old table
+        # called resizeRowsToContents() (O(#objects)); we measure one row and
+        # apply it uniformly so the list stays as dense as before without
+        # materializing every row (see ObjectTableView.setUniformRowHeight).
+        self.table.setUniformRowHeight()
+
+        # restore the saved scroll value
+        self.table.verticalScrollBar().setValue(scroll_pos)
+
+        # set table as central widget
+        self.main_widget.setCentralWidget(self.table)
+
+        # set the title and menus
+        self.updateTitle()
+        self.createMenus()
+
     def updateData(self, names : list):
         """Update the data for a set of objects.
-        
+
+        Incremental updates only insert / remove / refresh the affected rows --
+        they never call resizeColumnsToContents() (which samples up to 100 rows
+        and cost ~4-7 ms per edit, defeating virtualization). To keep the old
+        "a longer edited value widens its column" behavior without that cost,
+        each refreshed/inserted row is measured on its own (O(#columns) via
+        ObjectTableView.growColumnsToFitRow) and a column is grown only if that
+        one row's cell now needs more width than the current column -- never
+        shrunk, never a full re-sample. Per-edit cost stays O(1) in #objects.
+
             Params:
                 names (iterable): the names of the objects to update
         """
         for name in names:
 
-            row, exists_in_table = self.table.getRowIndex(name)
+            row, exists_in_table = self.model.rowOf(name)
             exists_in_series = name in self.series.data["objects"]
             pass_filters = self.passesFilters(name)
 
             remove = exists_in_table and (not exists_in_series or not pass_filters)
 
             ## Completely delete object
-            if remove:  
-                
-                self.table.removeRow(row)
+            if remove:
+
+                self.model.removeRowAt(row)
 
             ## Update existing row
             elif exists_in_table and exists_in_series:
-                
-                self.setRow(name, row)
+
+                self.model.refreshRow(row)
+                # only this row's cells can have grown wider -- measure just it
+                self.table.growColumnsToFitRow(row)
 
             ## Add new row
-            elif not exists_in_table and exists_in_series and pass_filters:  
-                
-                self.table.insertRow(row)
-                self.setRow(name, row)
+            elif not exists_in_table and exists_in_series and pass_filters:
+
+                self.model.insertName(name, row)
+                # the inserted value may be wider than any existing column
+                self.table.growColumnsToFitRow(row)
 
         self.mainwindow.checkActions()
     
@@ -560,12 +625,12 @@ class ObjectTableWidget(DataTable):
         selected_indexes = self.table.selectedIndexes()
         obj_names = []
         for i in selected_indexes:
-            r = i.row()
-            n = self.table.item(r, 0).text()
-            obj_names.append(n)
+            n = self.model.nameAt(i.row())
+            if n is not None:
+                obj_names.append(n)
 
         # self.checkLocked(obj_names)
-        
+
         if single:
             if len(obj_names) != 1:
                 notify("Please select only one object for this option.")
@@ -575,59 +640,68 @@ class ObjectTableWidget(DataTable):
         else:
             return obj_names
 
-    def itemChanged(self, item : QTableWidgetItem):
-        """User checked a checkbox."""
-        # check for curation
-        if not self.process_check_event:
-            return
-        
-        self.process_check_event = False
+    def onCheckStateChanged(self, row : int, col : int, state):
+        """User toggled a checkbox in the view.
 
-        r = item.row()
-        c = item.column()
-        name = self.table.item(r, 0).text()
-        state = item.checkState()
+        Routed here by ObjectTableModel.setData. Preserves the behavior of the
+        old QTableWidget itemChanged handler for the Locked and CR (curation)
+        columns.
 
-        # if locked box checked
-        if self.horizontal_headers[c] == "Locked":
+            Params:
+                row (int): the model row of the toggled cell
+                col (int): the model column of the toggled cell
+                state (Qt.CheckState): the new check state
+            Returns:
+                (bool): True if the edit was accepted (series changed)
+        """
+        name = self.model.nameAt(row)
+        if name is None:
+            return False
+
+        header = self.horizontal_headers[col]
+
+        # locked box checked
+        if header == "Locked":
             self.series_states.addState()
             locked = state == Qt.CheckState.Checked
             self.series.setAttr(name, "locked", locked)
-            self.setRow(name, r)
+            self.model.refreshRow(row)
             if locked:
                 self.mainwindow.field.deselectAllTraces()
             self.mainwindow.seriesModified(True)
-        
+            return True
+
         # curation box checked
-        elif self.horizontal_headers[c] == "CR":
+        elif header == "CR":
             if self.series.getAttr(name, "locked"):
                 notify("This object is locked.")
-                self.setRow(name, r)
+                self.model.refreshRow(row)
                 self.manager.updateObjects([name])
-            else:
-                self.series_states.addState()
-                if state == Qt.CheckState.Unchecked:
-                    self.series.setCuration([name], "")
-                elif state == Qt.CheckState.PartiallyChecked:
-                    assign_to, confirmed = QInputDialog.getText(
-                        self,
-                        "Assign to",
-                        "Assign curation to username:\n(press enter to leave blank)" 
-                    )
-                    if not confirmed:
-                        item.setCheckState(Qt.CheckState.Unchecked)
-                        self.process_check_event = True
-                        return
-                    self.series.setCuration([name], "Needs curation", assign_to)
-                elif state == Qt.CheckState.Checked:
-                    self.series.setCuration([name], "Curated")
+                return False
 
-                self.setRow(name, r)
-                self.manager.updateObjects([name])
-                self.mainwindow.seriesModified(True)
-        
-        self.process_check_event = True
-    
+            self.series_states.addState()
+            if state == Qt.CheckState.Unchecked:
+                self.series.setCuration([name], "")
+            elif state == Qt.CheckState.PartiallyChecked:
+                assign_to, confirmed = QInputDialog.getText(
+                    self,
+                    "Assign to",
+                    "Assign curation to username:\n(press enter to leave blank)"
+                )
+                if not confirmed:
+                    self.model.refreshRow(row)
+                    return False
+                self.series.setCuration([name], "Needs curation", assign_to)
+            elif state == Qt.CheckState.Checked:
+                self.series.setCuration([name], "Curated")
+
+            self.model.refreshRow(row)
+            self.manager.updateObjects([name])
+            self.mainwindow.seriesModified(True)
+            return True
+
+        return False
+
     def updateObjCols(self, recreate=True):
         """Update the object column options based on the series.user_columns.
         
@@ -661,6 +735,63 @@ class ObjectTableWidget(DataTable):
     def backspace(self):
         """Called when backspace is pressed."""
         self.mainwindow.field.deleteObjects()
+
+    def export(self):
+        """Export the object list as a csv file.
+
+        Model-backed equivalent of DataTable.export (which reads QTableWidget
+        items): same headers, same row order, same per-cell text and the same
+        checkable-column ("Hidden"/"Closed") handling.
+        """
+        file_path = FileDialog.get(
+            "save",
+            self,
+            "Save List",
+            file_name=f"{self.name}.csv",
+            filter="Comma Separated Values (*.csv)"
+        )
+        if not file_path:
+            return
+
+        model = self.model
+        n_cols = model.columnCount()
+
+        with open(file_path, "w") as csv_file:
+
+            ## Headers first
+            items = []
+            checkable = []
+            for c in range(n_cols):
+                header_title = model.headerData(c, Qt.Horizontal, Qt.DisplayRole)
+                if header_title in ("Hidden", "Closed"):
+                    checkable.append(c)
+                items.append(header_title)
+            csv_file.write(",".join(items) + "\n")
+
+            ## Then data
+            for r in range(model.rowCount()):
+                items = []
+                for c in range(n_cols):
+                    index = model.index(r, c)
+                    if c in checkable:  # hidden and closed cols
+                        # The model returns the int Qt stores for CheckStateRole,
+                        # so comparing to the Qt.Checked enum directly is always
+                        # False. Coerce to Qt.CheckState before comparing. (The
+                        # object list has no checkable export columns today --
+                        # "Hidden"/"Closed" are trace-only -- so this branch is
+                        # currently unreachable here, but the comparison must be
+                        # correct if those columns are ever added.)
+                        check_state = model.data(index, Qt.CheckStateRole)
+                        if Qt.CheckState(check_state) == Qt.CheckState.Checked:
+                            cell_text = "yes"
+                        else:
+                            cell_text = "no"
+                    else:
+                        cell_text = model.data(index, Qt.DisplayRole) or ""
+                        if "," in cell_text:  # e.g., multiple tags
+                            cell_text = cell_text.replace(",", "")
+                    items.append(cell_text)
+                csv_file.write(",".join(items) + "\n")
 
     ############################################################################
     ## Menu-related functions ##################################################

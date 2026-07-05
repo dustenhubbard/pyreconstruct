@@ -35,6 +35,7 @@ dependencies = [
     "tifffile==2024.9.20",
     "qdarkstyle==3.2.3",
     "gitpython==3.1.50",
+    "orjson==3.11.8",   # fast JSON on the hot jser load/save paths (stdlib fallback)
     "certifi",   # CA bundle for TLS verification in the frozen app (updater)
     "packaging",
 ]
@@ -44,6 +45,14 @@ Homepage = "https://github.com/SynapseWeb/PyReconstruct"
 
 [project.scripts]
 PyReconstruct = "PyReconstruct.cli:main"
+
+# Test-only deps, installable with `pip install -e ".[test]"`. Kept separate from
+# the uv-managed [dependency-groups].dev below so CI can install just the suite's
+# needs (pytest) on top of the runtime deps, without the heavy dev extras. pytest
+# is held to the 9.x line the suite is verified against (8.x is untested; 10 drops
+# a config shim deprecated in 9.1).
+[project.optional-dependencies]
+test = ["pytest>=9,<10"]
 
 # Developer-only tooling (PEP 735). Installed by `uv sync`, not shipped to
 # end users. Replaces the conda-only extras from dev/environment_dev.yaml.

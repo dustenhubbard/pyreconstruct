@@ -290,7 +290,7 @@ class VPlotter(vedo.Plotter):
                 side_len, color, alpha, lw = None, None, None, None
             
             structure = [
-                ["Edge length (μm):", ("float", round(side_len, 4))],
+                ["Edge length (μm):", ("float", round(side_len, 4) if side_len is not None else None)],
                 ["Color:", ("color", color)],
                 ["Opacity (0-1):", ("float", alpha)],
                 ["Outline width:", ("float", lw)]
@@ -746,6 +746,8 @@ class VPlotter(vedo.Plotter):
     
     def setFocalPointToSelected(self):
         """Set the focal point as the center of the selected items."""
+        if not self.selected:
+            return
         # get the total cetner
         centers = [np.array(obj.center) for obj in self.selected]
         avg_center = tuple(sum(centers) / len(centers))
