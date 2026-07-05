@@ -6,7 +6,7 @@ full release notes on GitHub (linked from the dialog).
 
 ## [1.20.5rc1] — 2026-07-04
 
-- **Your work is better protected.** Fixed several cases where edits could be lost or a file corrupted, including edits made just before flickering to another section, and saves interrupted by a crash or a full disk.
+- **Your work is better protected.** Fixed several cases where edits could be lost or a file corrupted, including edits made just before flickering between sections, and saves interrupted by a crash or a full disk.
 - **Safer handling of shared files.** Hardened how PyReconstruct opens and converts series files received from others.
 - **Align by correlation fixed.** It now applies the correlation shift correctly even when the section is rotated or scaled.
 - **Smoother on large, dense series.** The trace under your cursor highlights without lag, the field redraws faster as you pan and zoom, and background jobs like exports and update checks run more reliably.
