@@ -4,6 +4,13 @@ Short, plain-language highlights shown in PyReconstruct's "What's new" dialog
 after you install or update. For the complete, detailed list of changes, see the
 full release notes on GitHub (linked from the dialog).
 
+## [1.21.0rc1] — 2026-07-05
+
+- **Copy traces to multiple sections at once.** Select traces, right-click, choose "Copy to sections," and place them at the same spot across a range of sections in one step.
+- **Propagate an alignment by correlation across sections.** After aligning a section with Align by correlation (Ctrl+\), you can now propagate that shift across a range of sections, the way you already can with a manual transform.
+- **Re-read release notes anytime.** The Help menu now includes "What's new," which reopens this summary on demand so you can revisit what changed after the update popup is gone.
+- **A browsable user guide.** The full user guide is now a searchable wiki with a page for each topic, reachable from Help, Online resources.
+
 ## [1.20.5rc1] — 2026-07-04
 
 - **Your work is better protected.** Fixed several cases where edits could be lost or a file corrupted, including edits made just before flickering between sections, and saves interrupted by a crash or a full disk.
