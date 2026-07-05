@@ -29,6 +29,7 @@ from .websites import (
     kh_wiki,
     kh_atlas,
     gh_repo,
+    gh_wiki,
     gh_issues,
     gh_submit
 )

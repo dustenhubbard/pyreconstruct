@@ -84,11 +84,12 @@ distribution).
 A full installation guide, quickstart, and manuals live on the
 [lab wiki](https://wikis.utexas.edu/display/khlab/PyReconstruct+user+guide)
 (The University of Texas at Austin) and the
-[repo wiki](https://github.com/SynapseWeb/PyReconstruct/wiki),
+[repo wiki](https://github.com/dustenhubbard/PyReconstruct/wiki),
 and in-app under **Help ▸ Online resources**.
 
 ## Documentation
 
+- **[Wiki](https://github.com/dustenhubbard/PyReconstruct/wiki)** — the full user guide, browsable by topic.
 - **[User guide](docs/USER_GUIDE.md)** — installing and updating, opening and
   building a series, the tracing tools, the data lists, alignment, 3D
   reconstruction, and backups.
