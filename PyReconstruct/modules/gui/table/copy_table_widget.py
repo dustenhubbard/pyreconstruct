@@ -1,6 +1,4 @@
-from typing import Union
-
-from PySide6.QtWidgets import QTableWidget, QApplication, QMainWindow
+from PySide6.QtWidgets import QTableWidget, QApplication
 from PySide6.QtCore import Qt
 
 from PyReconstruct.modules.gui.utils import lessThan
@@ -79,28 +77,3 @@ class CopyTableWidget(QTableWidget):
             for c in range(self.columnCount()):
                 w = self.columnWidth(c)
                 self.setColumnWidth(c, w + 8)
-    
-
-def getCopyTableWidget(mainwindow: QMainWindow,  id: Union[None, int]=None) -> CopyTableWidget:
-    """Return the container for a CopyTableWidget
-
-    Useful if focusWidget() fails to return CopyTableWidget.
-    """
-
-    docked_tables = mainwindow.findChildren(QTableWidget)
-
-    docked = [
-        d for d in docked_tables if isinstance(d, CopyTableWidget)
-    ]
-
-    if not id:
-        
-        return docked[-1]
-    
-    else:
-
-        for d in docked:
-            
-            if d.id == id:
-
-                return d

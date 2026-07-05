@@ -264,14 +264,14 @@ class AllOptionsDialog(QDialog):
 
         def setOption(response):
 
+            theme = self.series.getOption("theme")  # keep current if neither radio matched
             flags = response[0]
-            if flags[0][1]: m = "system"
-            elif flags[1][1]: m = "light"
-            elif flags[2][1]: m = "dark"
-            elif flags[3][1]: m = "studio"
-            elif flags[4][1]: m = "atlas"
-            else: m = "system"
-            self.series.setOption("theme", m)
+            if flags[0][1]: theme = "system"
+            elif flags[1][1]: theme = "light"
+            elif flags[2][1]: theme = "dark"
+            elif len(flags) > 3 and flags[3][1]: theme = "studio"
+            elif len(flags) > 4 and flags[4][1]: theme = "atlas"
+            self.series.setOption("theme", theme)
 
         self.addOptionWidget("theme", structure, setOption)
 
@@ -457,9 +457,12 @@ class AllOptionsDialog(QDialog):
                 [("radio",
                   ("Release (recommended)", channel == "release"),
                   ("Pre-release (experimental, latest main)", channel == "prerelease"))],
+                [("check", ("Check for updates on startup",
+                            self.series.getOption("update_check_on_startup", use_defaults)))],
             ]
             def setOption(response):
                 self.series.setOption("update_channel", "release" if response[0][0][1] else "prerelease")
+                self.series.setOption("update_check_on_startup", response[1][0][1])
         else:  # source/pip install: choose the GitHub branch to reinstall from
             structure = [
                 ["Update reinstalls from a GitHub branch (source install):"],

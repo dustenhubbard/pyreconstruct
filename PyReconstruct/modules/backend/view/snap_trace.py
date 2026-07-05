@@ -1,6 +1,4 @@
 import numpy as np
-from skimage.segmentation import active_contour
-from skimage import filters
 
 from PyReconstruct.modules.datatypes import Series, Section, Trace
 from PyReconstruct.modules.backend.view import SectionLayer
@@ -29,6 +27,9 @@ def snapTrace(series : Series, section : Section, trace : Trace):
     # get the image
     slayer = SectionLayer(section, series)
     img = slayer.generateImageArray(pixmap_dim, window)
+    # deferred: skimage is slow to import and only needed when snapping a trace
+    from skimage.segmentation import active_contour
+    from skimage import filters
     gaussian = filters.gaussian(img, sigma=3, preserve_range=False)
     section.brightness, section.contrast = b, c  # reset the brightness and contrast
 

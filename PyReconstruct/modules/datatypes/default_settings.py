@@ -146,6 +146,7 @@ default_settings = {
     # updates
     "update_channel": "release",  # "release" | "prerelease"     # MFO
     "update_branch": "main",      # source/dev installs only     # MFO
+    "update_check_on_startup": False,  # frozen builds: opt-in background check  # MFO
 
     # 3D
     "translate_step_3D": 0.1,  # MFO
