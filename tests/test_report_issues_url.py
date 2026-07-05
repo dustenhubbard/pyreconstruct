@@ -1,21 +1,20 @@
-"""Regression test for the in-app 'Report issues' target.
+"""Regression test for the in-app menu navigation targets.
 
-This is a fork of PyReconstruct. Bug reports and feature requests belong on the
-fork's own issue tracker, not the upstream SynapseWeb project. The Help ▸ Report
-issues (GitHub) menu actions open ``gh_issues`` / ``gh_submit`` (constants in
-``PyReconstruct.modules.constants.websites``), so those must resolve to the fork.
-
-The source-code provenance link (Help ▸ Online resources ▸ "PyReconstruct source
-code") uses ``gh_repo`` and intentionally stays pointed at upstream. This test
-documents that split so neither side drifts back.
+This is a fork of PyReconstruct. All in-app menu links point at the fork, not the
+upstream SynapseWeb project (upstream is credited in the README and About dialog).
+The Help ▸ Report issues (GitHub) menu actions open ``gh_issues`` / ``gh_submit``
+and the Help ▸ Online resources ▸ "PyReconstruct source code" action opens
+``gh_repo`` (constants in ``PyReconstruct.modules.constants.websites``), so all
+three must resolve to the fork. This test documents that so none of them drift
+back to upstream.
 
 Importing the constants module is Qt-free, so the test runs headless.
 """
 from PyReconstruct.modules.constants import websites
 
 
-FORK_ISSUES = "https://github.com/dustenhubbard/PyReconstruct/issues"
-UPSTREAM_REPO = "https://github.com/SynapseWeb/PyReconstruct"
+FORK_REPO = "https://github.com/dustenhubbard/PyReconstruct"
+FORK_ISSUES = FORK_REPO + "/issues"
 
 
 def test_report_issues_points_at_fork():
@@ -25,6 +24,7 @@ def test_report_issues_points_at_fork():
     assert websites.gh_submit == FORK_ISSUES + "/new/choose"
 
 
-def test_source_code_link_stays_upstream():
-    # The provenance link is intentionally left on the upstream project.
-    assert websites.gh_repo == UPSTREAM_REPO
+def test_source_code_link_points_at_fork():
+    # The "PyReconstruct source code" menu link opens the fork, like every other
+    # in-app menu link; upstream provenance is credited in the README/About.
+    assert websites.gh_repo == FORK_REPO

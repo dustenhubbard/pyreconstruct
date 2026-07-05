@@ -879,7 +879,7 @@ In the app, **Help ▸ Online resources** links to:
 
 - the [PyReconstruct user guide](https://wikis.utexas.edu/display/khlab/PyReconstruct+user+guide)
   on the UT Austin lab wiki,
-- the upstream [source code](https://github.com/SynapseWeb/PyReconstruct),
+- this distribution's [source code](https://github.com/dustenhubbard/PyReconstruct),
 - the [Kristen Harris Lab website](https://synapseweb.clm.utexas.edu/harrislab) and
   the [Atlas of Ultrastructural Neurocytology](https://synapseweb.clm.utexas.edu/atlas).
 
