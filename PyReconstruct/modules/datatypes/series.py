@@ -66,6 +66,23 @@ def _default_progress_reporter_factory():
     return _PROGRESS_REPORTER_FACTORY
 
 
+_NOTIFIER = None
+
+
+def _default_notifier():
+    """Lazily create and cache the default Qt-backed notifier.
+
+    Imported lazily so that this module does not pull in Qt/GUI just to resolve
+    the default; behavior for GUI callers is identical to the previous inline
+    notify()/QApplication guard.
+    """
+    global _NOTIFIER
+    if _NOTIFIER is None:
+        from PyReconstruct.modules.backend.notifier import QtNotifier
+        _NOTIFIER = QtNotifier()
+    return _NOTIFIER
+
+
 def _atomicWrite(fp : str, data : bytes):
     """Write bytes to a file atomically.
 
@@ -92,30 +109,6 @@ def _atomicWrite(fp : str, data : bytes):
         except OSError:
             pass
         raise
-
-
-def _surfaceSaveError(fp : str, err : Exception):
-    """Show a 'Save failed' message to the user (best-effort, headless-safe).
-
-        Params:
-            fp (str): the filepath that failed to save
-            err (Exception): the error that occurred
-    """
-    message = (
-        f"Save failed: {err}\n\n"
-        f"The existing file was left unchanged:\n{fp}"
-    )
-    try:
-        from PySide6.QtWidgets import QApplication
-        from PyReconstruct.modules.gui.utils import notify
-        from PyReconstruct.modules.gui.utils.utils import qt_offscreen
-        if QApplication.instance() is not None and not qt_offscreen:
-            notify(message)
-            return
-    except Exception:
-        pass  # never let the notification itself mask the real error
-    # headless: don't block on a dialog/input -- just report it
-    print(message)
 
 
 class Series():
@@ -475,7 +468,7 @@ class Series():
             # atomic: the previous .jser stays intact until the new one is complete
             _atomicWrite(jser_fp, save_bytes)
         except OSError as e:
-            _surfaceSaveError(jser_fp, e)
+            self._surfaceSaveError(jser_fp, e)
             raise
 
         if close:
@@ -942,7 +935,7 @@ class Series():
             # internal hidden working file -- write compact bytes atomically
             _atomicWrite(self.filepath, fast_dumps(d))
         except OSError as e:
-            _surfaceSaveError(self.filepath, e)
+            self._surfaceSaveError(self.filepath, e)
             raise
 
     def getwdir(self) -> str:
@@ -2593,6 +2586,44 @@ class Series():
         Qt-backed reporter.
         """
         self._progress_reporter_factory = factory
+
+    def _notifier(self):
+        """Return the Notifier backing this series' user notifications.
+
+        Defaults to a lazily-created Qt-backed notifier (behavior identical to
+        the previous inline notify()/QApplication guard); a caller or test may
+        inject a different notifier (e.g. NullNotifier) via setNotifier().
+        """
+        notifier = getattr(self, "_notifier_impl", None)
+        if notifier is None:
+            notifier = _default_notifier()
+        return notifier
+
+    def setNotifier(self, notifier):
+        """Inject a Notifier for this series (e.g. headless use or tests).
+
+        Pass None to fall back to the default Qt-backed notifier.
+        """
+        self._notifier_impl = notifier
+
+    def _surfaceSaveError(self, fp : str, err : Exception):
+        """Show a 'Save failed' message to the user (best-effort, headless-safe).
+
+            Params:
+                fp (str): the filepath that failed to save
+                err (Exception): the error that occurred
+        """
+        message = (
+            f"Save failed: {err}\n\n"
+            f"The existing file was left unchanged:\n{fp}"
+        )
+        try:
+            if self._notifier().notify(message):
+                return
+        except Exception:
+            pass  # never let the notification itself mask the real error
+        # headless: don't block on a dialog/input -- just report it
+        print(message)
 
     def getOption(self, option_name : str, get_default=False):
         """Get an option from the series (or computer)
