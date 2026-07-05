@@ -57,6 +57,12 @@ def test_settings_store_needs_no_qt():
     script = r"""
 import sys
 
+# drop any pre-loaded PySide6 (e.g. a dev-env sitecustomize) so the block
+# governs the (re)import and this is a genuine proof in any environment
+for _m in list(sys.modules):
+    if _m == "PySide6" or _m.startswith("PySide6."):
+        del sys.modules[_m]
+
 class _BlockPySide6:
     def find_spec(self, name, path=None, target=None):
         if name == "PySide6" or name.startswith("PySide6."):
