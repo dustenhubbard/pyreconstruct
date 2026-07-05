@@ -48,10 +48,10 @@ The University of Texas at Austin) and the in-app **Help ▸ Shortcuts list**.
 ## 1. Installing PyReconstruct
 
 There are two ways to install PyReconstruct: a one-click installer (recommended
-for most users) or a from-source install with `pip` (for developers, Linux, and
-other platforms).
+for most users) or a from-source install with `pip` (for developers and other
+platforms).
 
-### One-click installers (Windows and macOS)
+### One-click installers (Windows, macOS, and Linux)
 
 Download the latest build from
 **[Releases](https://github.com/dustenhubbard/PyReconstruct/releases)** — no
@@ -62,8 +62,9 @@ Python required.
   now, so Windows SmartScreen may warn that the publisher is unknown; choose
   **More info ▸ Run anyway**. Re-running a newer installer upgrades the existing
   installation in place.
-- **macOS (Apple Silicon)** — `PyReconstruct-<version>-macOS-arm64.dmg`. Open the
-  `.dmg` and drag **PyReconstruct** onto the **Applications** shortcut. Builds are
+- **macOS (Apple Silicon or Intel)** — `PyReconstruct-<version>-macOS-arm64.dmg` on
+  Apple Silicon, or `PyReconstruct-<version>-macOS-x86_64.dmg` on an Intel Mac. Open
+  the `.dmg` and drag **PyReconstruct** onto the **Applications** shortcut. Builds are
   unsigned for now, so the first launch of a browser-downloaded copy is blocked by
   Gatekeeper. Clear the quarantine flag once in Terminal:
 
@@ -76,8 +77,15 @@ Python required.
 
 > 📸 *Screenshot: the macOS `.dmg` window showing the app and the Applications drop target.*
 
-The macOS build is a native Apple Silicon (arm64) binary. There is currently **no
-prebuilt Linux installer** — on Linux, install from source (below).
+Both macOS builds are native (arm64 and x86_64), and the in-app updater serves each
+Mac its matching architecture.
+
+- **Linux** — `PyReconstruct-<version>-Linux-installer.tar.gz`. Extract it and run
+  `bash install.sh` — a no-root `.sh` installer that builds an isolated virtual
+  environment, puts a `pyreconstruct` launcher on your PATH, and adds an
+  application-menu entry. It needs a system **Python 3.11** (`python3.11` + `venv`;
+  on Debian/Ubuntu, `sudo apt install python3.11 python3.11-venv`) and targets
+  x86_64. To update, re-run `install.sh`.
 
 ### From source (Linux, other platforms, and developers)
 
@@ -106,10 +114,11 @@ list.)
 
 ## 2. Keeping PyReconstruct up to date
 
-Installed (one-click) builds can update themselves from within the app. The
-updater downloads the new build from GitHub Releases and **verifies it against a
-published SHA-256 checksum before installing** — if the checksum can't be reached
-or doesn't match, nothing is installed.
+The frozen Windows and macOS one-click builds can update themselves from within the
+app. The updater downloads the new build from GitHub Releases and **verifies it
+against a published SHA-256 checksum before installing** — if the checksum can't be
+reached or doesn't match, nothing is installed. (The Linux `.sh` installer updates
+by re-running `install.sh` — see [Installing PyReconstruct](#1-installing-pyreconstruct).)
 
 ### Update channels
 
@@ -117,8 +126,8 @@ PyReconstruct offers two update channels, selected under **Series ▸ Options…
 (`Shift+O`) in the **Updates** section:
 
 - **Release (recommended)** — stable builds, tagged `vX.Y.Z`.
-- **Pre-release (experimental, latest main)** — a rolling build rebuilt from the
-  latest `main`; newer features, less testing.
+- **Pre-release (experimental)** — the latest pre-release build (release candidates,
+  tagged like `vX.Y.ZrcN`); newer features, less testing.
 
 The default channel is **Release**.
 
@@ -216,9 +225,10 @@ Zarr from **Series ▸ Images ▸ Convert to scaled images** (see
 
 With no file specified, PyReconstruct opens a **welcome series** — a small,
 read-only demo you can use to explore the interface. The welcome series cannot be
-saved or backed up; create or open a real series to begin work. On launch you are
-also prompted for a **username**, which is recorded against the edits you make
-(you can change it later under **File ▸ Change username…**).
+saved or backed up; create or open a real series to begin work. A **username** is
+resolved automatically and recorded against the edits you make — PyReconstruct no
+longer prompts for it on launch; change it anytime under **File ▸ Change
+username…**.
 
 ### Opening an existing series
 
