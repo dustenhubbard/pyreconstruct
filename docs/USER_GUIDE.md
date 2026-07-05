@@ -885,11 +885,10 @@ In the app, **Help ▸ Online resources** links to:
 
 Found a bug, have a feature idea, or want to improve the docs? Please open an issue
 on this distribution's
-**[GitHub Issues](https://github.com/dustenhubbard/PyReconstruct/issues)**. When
-reporting a bug, include the version/commit shown at the top of the **Help** menu
-(clicking it copies the commit to your clipboard). Note that the in-app **Help ▸
-Report issues (GitHub)** menu currently opens the upstream project's tracker, so use
-the link above to reach this distribution's issues.
+**[GitHub Issues](https://github.com/dustenhubbard/PyReconstruct/issues)**, which you
+can also reach from the in-app **Help ▸ Report issues (GitHub)** menu. When reporting
+a bug, include the version/commit shown at the top of the **Help** menu (clicking it
+copies the commit to your clipboard).
 
 ---
 

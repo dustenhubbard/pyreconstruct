@@ -19,9 +19,8 @@ By contributing, you agree that your contributions are licensed under the projec
 ## Filing issues
 
 Open issues on this distribution's
-**[GitHub Issues](https://github.com/dustenhubbard/PyReconstruct/issues)**. (The
-in-app **Help ▸ Report issues (GitHub)** submenu currently opens the upstream
-project's tracker, so use the link here for this distribution.) Three issue
+**[GitHub Issues](https://github.com/dustenhubbard/PyReconstruct/issues)**, which the
+in-app **Help ▸ Report issues (GitHub)** submenu also links to. Three issue
 templates are available from the "New issue" chooser:
 
 - **Bug report** — please include the **version or commit** you're running. Find it
