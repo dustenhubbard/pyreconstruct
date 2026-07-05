@@ -405,6 +405,7 @@ def return_help_menu(self):
         [
             ("repobranch_act", repo_string, "", self.copyCommit),
             ("checkupdates_act", "Check for updates…", "", self.checkForUpdates),
+            ("whatsnew_act", "What's new", "", self.showWhatsNew),
             None,
             ("shortcutshelp_act", "Shortcuts list", "?", self.displayShortcuts),
             None,

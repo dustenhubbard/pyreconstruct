@@ -321,6 +321,64 @@ def test_maybe_show_resolves_current_version_by_default(monkeypatch):
     assert calls == ["2.0.0"]
 
 
+# ---- on-demand re-open (Help -> What's new) ----------------------------------
+def test_whats_new_on_demand_shows_recent_history_not_welcome():
+    """The Help-menu re-open: a returning user (no version change) gets the
+    recent release history, framed as such -- never the fresh-install welcome."""
+    c = F.whats_new_content("1.20.3", on_demand=True, text=WN)
+    assert c["orienter"] == "Recent releases"
+    assert "### 1.20.3 — June 29, 2026" in c["body"]
+    assert "### 1.20.2 — June 20, 2026" in c["body"]
+    assert "### 1.20.1 — June 10, 2026" in c["body"]
+    assert c["body"].index("1.20.3") < c["body"].index("1.20.2")   # newest first
+
+
+def test_whats_new_on_demand_ignores_last_seen():
+    # even if a caller threads the stored last-seen through, on-demand means the
+    # full recent history -- not the since-<last_seen> catch-up slice
+    c = F.whats_new_content("1.20.3", last_seen="1.20.2", on_demand=True, text=WN)
+    assert c["orienter"] == "Recent releases"
+    assert "### 1.20.2" in c["body"]   # last_seen itself shown again
+    assert "### 1.20.1" in c["body"]   # and everything before it
+
+
+def test_show_whats_new_is_ungated_and_reopens_every_time(monkeypatch, tmp_path):
+    """Unlike maybe_show_whats_new there is no once-per-version gate: every
+    invocation shows, with the on-demand (recent-releases) content."""
+    from PyReconstruct.modules.gui.dialog import whats_new as W
+    wn = tmp_path / "WHATS_NEW.md"
+    wn.write_text(WN, encoding="utf-8")
+    monkeypatch.setattr(F, "find_whats_new_path", lambda: wn)
+    monkeypatch.setattr(W, "current_version_str", lambda: "1.20.3")
+
+    shown = []
+    show = lambda parent, version, last_seen=None, content=None: shown.append((version, content))
+    W.show_whats_new(None, show=show)
+    W.show_whats_new(None, show=show)          # no gate: shows again
+    assert [v for v, _ in shown] == ["1.20.3", "1.20.3"]
+    content = shown[0][1]
+    assert content["orienter"] == "Recent releases"
+    assert "### 1.20.3" in content["body"] and "### 1.20.2" in content["body"]
+
+
+def test_help_menu_offers_whats_new_reopen():
+    """The Help menu carries a 'What's new' action wired to the on-demand
+    handler, alongside the existing update check."""
+    from types import SimpleNamespace
+    from PyReconstruct.modules.gui.main.menubar import return_help_menu
+
+    sentinel = lambda: None
+    stub = SimpleNamespace(
+        copyCommit=lambda: None, checkForUpdates=lambda: None,
+        showWhatsNew=sentinel, displayShortcuts=lambda: None,
+        openWebsite=lambda *_: None, downloadExample=lambda: None,
+    )
+    opts = return_help_menu(stub)["opts"]
+    entries = [o for o in opts if isinstance(o, tuple)]
+    whatsnew = [o for o in entries if o[0] == "whatsnew_act"]
+    assert whatsnew == [("whatsnew_act", "What's new", "", sentinel)]
+
+
 # ---- startup-flow guard (first-run friction audit) --------------------------
 def test_startup_username_resolver_has_no_path_to_a_prompt():
     """Guard the first-run flow against a reintroduced startup prompt.
@@ -374,4 +432,30 @@ def test_whats_new_dialog_is_modeless_and_renders_its_content(qapp):
         assert "A shiny new thing." in dlg._notes.toPlainText()  # body rendered
         assert "Got it" in [b.text() for b in dlg.findChildren(QPushButton)]
     finally:
+        dlg.deleteLater()
+
+
+def test_whats_new_on_demand_with_unknown_version_omits_it_and_still_opens(
+        qapp, monkeypatch, tmp_path):
+    """When the running version can't be determined, the on-demand dialog must
+    never render "None" -- a version-free title, the orienter leading the
+    dialog -- and it still opens showing the recent release notes."""
+    from PyReconstruct.modules.gui.dialog import whats_new as W
+    from PySide6.QtWidgets import QLabel
+
+    wn = tmp_path / "WHATS_NEW.md"
+    wn.write_text(WN, encoding="utf-8")
+    monkeypatch.setattr(F, "find_whats_new_path", lambda: wn)
+    monkeypatch.setattr(W, "current_version_str", lambda: None)
+
+    dlg = W.show_whats_new(None)
+    try:
+        assert dlg.isVisible()                        # still opens
+        assert dlg.windowTitle() == "What's new in PyReconstruct"
+        labels = [lab.text() for lab in dlg.findChildren(QLabel)]
+        assert not any("None" in t for t in labels)   # no "PyReconstruct None"
+        assert "Recent releases" in labels            # orienter as the header
+        assert "Bullet three-A." in dlg._notes.toPlainText()  # recent notes shown
+    finally:
+        dlg.close()
         dlg.deleteLater()
