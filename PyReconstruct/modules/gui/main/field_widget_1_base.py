@@ -43,7 +43,6 @@ class FieldWidgetBase:
         self.section_layer : SectionLayer   = None
 
         self.table_manager : TableManager   = None
-        self.focus_table_id : int           = None
 
         self.propagate_tform : bool         = False
 
@@ -189,7 +188,11 @@ class FieldWidgetBase:
         self.selected_trace_names = {}
         self.selected_ztrace_names = {}
 
-        ## Set up timer
+        ## Set up timer (stop any timer from a previously opened series first)
+        if self.timer is not None:
+            self.timer.stop()
+            self.timer.deleteLater()
+            self.timer = None
         if not self.series.isWelcomeSeries():
             self.time = str(round(time.time()))
             open(os.path.join(self.series.getwdir(), self.time), "w").close()
@@ -353,6 +356,7 @@ class FieldWidgetBase:
         # clear selected straces
         self.section.selected_traces = []
         self.section.selected_ztraces = []
+        self.section.selected_flags = []
 
         # get the last undo state
         self.series_states.undoSection(self.section, redo)

@@ -66,6 +66,8 @@ class FieldWidgetView(FieldWidgetPaint):
                 new_mag = float(new_mag)
             except ValueError:
                 return
+            if new_mag <= 0:  # magnification must be positive
+                return
         else:
             new_mag = 1 / new_mag
         

@@ -95,7 +95,7 @@ def xmlToJSON(xml_dir : str) -> Series:
         progbar.setValue(progress/final_value * 100)
     
     # create an empty log file
-    with open(os.path.join(hidden_dir, "existing_log.csv"), "w") as f:
+    with open(os.path.join(hidden_dir, "existing_log.csv"), "w", encoding="utf-8") as f:
         f.write("Date, Time, User, Obj, Sections, Event")
     
     # open the series file, modify current section and ztraces
@@ -142,6 +142,10 @@ def seriesXMLToJSON(series_fp, section_fps, hidden_dir):
             xml_contour,
         )
         series_dict["palette_traces"].append(trace.getList())
+    if not series_dict["palette_traces"]:  # legacy series with no palette contours
+        series_dict["palette_traces"] = [
+            t.getList() for t in Series.getDefaultPaletteTraces()
+        ]
     series_dict["current_trace"] = series_dict["palette_traces"][0]
     
     # import ztraces
@@ -224,7 +228,7 @@ def sectionXMLtoJSON(section_fp, alignment_dict, hidden_dir):
 
     # get transform data
     section_dict["tforms"] = {}
-    if alignment_dict:
+    if alignment_dict and fname in alignment_dict:
         section_dict["tforms"] = alignment_dict[fname]
     else:
         section_dict["tforms"] = {}

@@ -31,10 +31,14 @@ datas = []
 binaries = []
 hiddenimports = []
 
-# --- App assets: welcome series, icons, the "checker" data, and the helper .py
-#     scripts that run.py relaunches via runpy. Bundle the full tree at
-#     <_MEIPASS>/PyReconstruct/assets so locations.py (frozen branch) finds it.
+# --- App assets: welcome series, icons, and the helper .py scripts that run.py
+#     relaunches via runpy. Bundle the tree at <_MEIPASS>/PyReconstruct/assets
+#     so locations.py (frozen branch) finds it. assets/checker (~1.8 MB) is
+#     dev-only test data (used as a fixture by the source test suite) with no
+#     runtime consumer — keep it out of the installers.
 for _p in ASSETS.rglob("*"):
+    if "checker" in _p.relative_to(ASSETS).parts:
+        continue
     if _p.is_file():
         _dest = Path("PyReconstruct/assets") / _p.relative_to(ASSETS).parent
         datas.append((str(_p), str(_dest)))
@@ -43,6 +47,14 @@ for _p in ASSETS.rglob("*"):
 _version_file = PKG_DIR / "_version.py"
 if _version_file.exists():
     datas.append((str(_version_file), "PyReconstruct"))
+
+# --- WHATS_NEW.md: the friendly highlights the first-launch "What's new" dialog
+#     shows offline (no network). CHANGELOG.md (technical) is bundled too for
+#     reference; the dialog links to the full notes on GitHub.
+for _doc in ("WHATS_NEW.md", "CHANGELOG.md"):
+    _p = REPO_ROOT / _doc
+    if _p.exists():
+        datas.append((str(_p), "PyReconstruct/assets"))
 
 # --- VTK 9.4.2: hooks-contrib covers it; we still collect everything and force
 #     the render/interaction modules as belt-and-suspenders vs a blank viewport.

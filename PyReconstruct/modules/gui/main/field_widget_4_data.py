@@ -22,6 +22,7 @@ from PyReconstruct.modules.gui.utils import (
     notify, 
     notifyLocked, 
     notifyConfirm,
+    getProgbar,
 )
 
 from .field_widget_3_object import FieldWidgetObject
@@ -221,15 +222,30 @@ class FieldWidgetData(FieldWidgetObject):
                     return
                 break
         
-        for snum in included_sections:
-            section = self.series.loadSection(snum)
-            new_tform = self.stored_tform * section.tform
-            section.tform = new_tform
-            section.save()
-            self.propagated_sections.add(snum)
-            if log_event:
-                self.series.addLog(None, snum, "Modify transform")
-        
+        # create the progress bar
+        if included_sections:
+            progbar = getProgbar(
+                text="Propagating transform...",
+                cancel=False
+            )
+            progress = 0
+            final_value = len(included_sections)
+            progbar.setValue(0)
+
+            try:
+                for snum in included_sections:
+                    section = self.series.loadSection(snum)
+                    new_tform = self.stored_tform * section.tform
+                    section.tform = new_tform
+                    section.save()
+                    self.propagated_sections.add(snum)
+                    if log_event:
+                        self.series.addLog(None, snum, "Modify transform")
+                    progress += 1
+                    progbar.setValue(progress/final_value * 100)
+            finally:
+                progbar.close()
+
         self.reload()
     
     def changeAlignment(self, new_alignment : str, refresh_data=True):
@@ -340,6 +356,7 @@ class FieldWidgetData(FieldWidgetObject):
         blen = len(b_traces)
         if alen < 3:
             notify("Please select 3 or more traces for aligning.")
+            return
         if alen != blen:
             notify("Please select the same number of traces on each section.")
             return
@@ -395,7 +412,9 @@ class FieldWidgetData(FieldWidgetObject):
         shift_tform = Transform([1, 0, shift_x, 0, 1, shift_y])
 
         tform = self.section.tform
-        self.section.tform = shift_tform * tform
+        # the shift is measured in field space (post-transform), so compose it
+        # after the existing tform: A * B maps p -> B(A(p)) in this codebase
+        self.section.tform = tform * shift_tform
 
         self.generateView()
         self.saveState()
@@ -462,18 +481,21 @@ class FieldWidgetData(FieldWidgetObject):
         model = registration.phase_cross_correlation(arr1, arr2)
         error = model[1]
         shift_x = model[0][1] / self.scaling * self.section.mag
-        shift_y = model[0][0] / self.scaling * self.section.mag
+        # array rows grow downward but field y grows upward, so negate
+        shift_y = (model[0][0] / self.scaling * self.section.mag) * -1
 
         current_tform = self.section.tform
         shift_tform = Transform([
             1,
             0,
-            shift_x, 
+            shift_x,
             0,
             1,
             shift_y
         ])
-        self.section.tform = shift_tform * current_tform
+        # the shift is measured in field space (post-transform), so compose it
+        # after the existing tform: A * B maps p -> B(A(p)) in this codebase
+        self.section.tform = current_tform * shift_tform
 
         self.generateView()
         self.saveState()
