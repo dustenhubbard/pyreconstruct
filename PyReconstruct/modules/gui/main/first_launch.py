@@ -240,14 +240,15 @@ def _render_sections(sections, truncated):
     return body
 
 
-def whats_new_content(current, last_seen=None, cap=5, text=None):
+def whats_new_content(current, last_seen=None, cap=5, text=None, on_demand=False):
     """Build what the What's-new dialog renders (offline-safe, never raises).
 
     Returns a dict:
       * ``version``   -- the current version string, as given.
       * ``date``      -- friendly release date of the current version, or None.
-      * ``orienter``  -- "What's new since <last_seen>" across an update, else
-                         "Welcome to PyReconstruct" on a fresh install.
+      * ``orienter``  -- "What's new since <last_seen>" across an update,
+                         "Welcome to PyReconstruct" on a fresh install, or
+                         "Recent releases" for an on-demand re-open.
       * ``body``      -- markdown: each shown section as ``### <version> —
                          <friendly date>`` plus its bullets, newest first. Falls
                          back to a friendly generic note when the running version
@@ -258,7 +259,9 @@ def whats_new_content(current, last_seen=None, cap=5, text=None):
     every section with ``last_seen < version <= current`` (newest first, capped at
     ``cap``); on a fresh install (no/older/invalid ``last_seen``) the recent
     release history -- the current version plus the few before it, newest first,
-    capped at ``cap``. ``text`` overrides the
+    capped at ``cap``. ``on_demand`` (the Help-menu re-open) always shows that
+    recent release history regardless of ``last_seen``, since a returning user is
+    browsing rather than catching up across an update. ``text`` overrides the
     bundled notes (for testing); by default the bundled ``WHATS_NEW.md`` is read.
     """
     if text is None:
@@ -267,9 +270,17 @@ def whats_new_content(current, last_seen=None, cap=5, text=None):
 
     cur_v = _safe_version(current)
     prev_v = _safe_version(last_seen)
-    updating = prev_v is not None and cur_v is not None and prev_v < cur_v
+    updating = (
+        not on_demand
+        and prev_v is not None and cur_v is not None and prev_v < cur_v
+    )
 
-    orienter = f"What's new since {last_seen}" if updating else "Welcome to PyReconstruct"
+    if on_demand:
+        orienter = "Recent releases"
+    elif updating:
+        orienter = f"What's new since {last_seen}"
+    else:
+        orienter = "Welcome to PyReconstruct"
 
     # Match the running version's own section by parsed VERSION, not raw string,
     # so a header spelled any PEP 440-equivalent way -- [1.20.4rc1] or
@@ -284,8 +295,11 @@ def whats_new_content(current, last_seen=None, cap=5, text=None):
         if current_section and current_section["date"] else None
     )
 
-    # No notes for the running version at all -> friendly generic body.
-    if current_section is None:
+    # No notes for the running version at all -> friendly generic body. An
+    # indeterminate running version (an on-demand open where the version can't
+    # be determined) instead falls through to the recent-history view below,
+    # so the dialog still shows the notes it has.
+    if current_section is None and not (cur_v is None and sections):
         return {"version": current, "date": friendly, "orienter": orienter,
                 "body": GENERIC_NOTES, "truncated": False}
 
@@ -300,10 +314,10 @@ def whats_new_content(current, last_seen=None, cap=5, text=None):
         if len(shown) > cap:
             shown, truncated = shown[:cap], True
     else:
-        # Fresh install: welcome the user with the recent release history (the
-        # current version plus the few before it), newest first and capped -- so a
-        # newcomer sees what recent releases brought, not just the version they
-        # happened to install.
+        # Fresh install or on-demand re-open: the recent release history (the
+        # current version plus the few before it), newest first and capped -- so
+        # the reader sees what recent releases brought, not just the version
+        # they happen to be running.
         shown = sorted(
             (s for s in sections
              if _safe_version(s["version"]) is not None
