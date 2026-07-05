@@ -44,20 +44,26 @@ Python required:
 - **Windows** — `PyReconstruct-<version>-Windows-x86_64-Setup.exe`. Builds are
   unsigned for now; if SmartScreen warns, choose **More info → Run anyway**.
 - **macOS** — `PyReconstruct-<version>-macOS-arm64.dmg` on Apple Silicon, or
-  `PyReconstruct-<version>-macOS-x86_64.dmg` on an Intel Mac (the Intel build is
-  on the Pre-release channel now and lands in the next tagged release); then drag
+  `PyReconstruct-<version>-macOS-x86_64.dmg` on an Intel Mac; then drag
   PyReconstruct to Applications. Builds are unsigned for now, so the first launch
   is blocked by Gatekeeper — clear the quarantine flag once in Terminal:
   ```
   xattr -dr com.apple.quarantine /Applications/PyReconstruct.app
   ```
+- **Linux** — `PyReconstruct-<version>-Linux-installer.tar.gz`. Extract it and run
+  `bash install.sh`; it builds an isolated virtual environment, drops a
+  `pyreconstruct` launcher on your PATH, and adds an application-menu entry. It
+  needs a system **Python 3.11** (`python3.11` + `venv`) and targets x86_64. To
+  update, re-run `install.sh` (the in-app updater below is for the frozen
+  Windows/macOS builds).
 
-Installed builds can update themselves from within the app via **Help ▸ Check for
-updates**, on either the **Release** channel (stable, tagged `vX.Y.Z`) or the
-**Pre-release** channel (experimental; rolling, latest `main`). Updates are
-downloaded from GitHub Releases and verified against a published SHA-256 checksum
-before they are applied. An optional once-per-day check on startup is available
-too, off by default.
+The frozen Windows and macOS builds can update themselves from within the app via
+**Help ▸ Check for updates**, on either the **Release** channel (stable, tagged
+`vX.Y.Z`) or the **Pre-release** channel (experimental; the latest pre-release
+build, e.g. release candidates like `vX.Y.ZrcN`). Updates are downloaded from
+GitHub Releases and verified against a published SHA-256 checksum before they are
+applied. An optional once-per-day check on startup is available too, off by
+default.
 
 ### From source (developers)
 
@@ -124,20 +130,16 @@ upstream they were forked from.
 
 ## Highlights
 
-In the latest tagged release (v1.20.0):
+What this distribution adds over upstream, all in the current stable release:
 
-- **One-click installers** for Windows and macOS, built in CI; the macOS build is
-  a native Apple Silicon binary on an updated 3D stack (vtk 9.4.2 + vedo 2025.5.4).
-- **In-app updater** that updates installed builds from GitHub Releases (see
-  [Install](#install) for channels and verification).
-
-On the Pre-release (experimental) channel, ahead of the next tagged release:
-
-- **Faster large-series open & refresh** — the performance work above (3–4×, with
-  verified geometry equivalence).
-- **Intel macOS installer** — a native x86_64 `.dmg` now builds alongside the
-  Apple Silicon (arm64) one, so older Intel Macs get a native build and the
-  in-app updater serves each Mac its matching arch.
+- **One-click installers for every platform** — Windows, macOS (native Apple
+  Silicon *and* Intel builds, on an updated 3D stack: vtk 9.4.2 + vedo 2025.5.4),
+  and Linux, built in CI.
+- **In-app updater** that updates the frozen Windows/macOS builds from GitHub
+  Releases, on a stable or pre-release channel and verified by checksum (see
+  [Install](#install)).
+- **3–4× faster large-series open & refresh** — the performance work above, with
+  verified geometry equivalence.
 - **A correctness test suite** (geometry/transform equivalence, updater logic)
   and a headless performance harness.
 
@@ -145,9 +147,8 @@ Inherited from PyReconstruct: serial-section tracing and annotation, section
 alignment, 3D reconstruction and mesh export, Zarr image conversion, quantitative
 morphology export, and collaborative, version-controlled series.
 
-> **User interface:** a UI modernization — system light/dark theme following and
-> refreshed tool icons — is **in progress** on the `feat/ui-v1` branch and is not
-> yet part of a release.
+> **User interface:** a broader UI modernization is in progress and not yet part
+> of a release.
 
 ## Bug reports & feature requests
 
