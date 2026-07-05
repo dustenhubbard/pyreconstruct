@@ -102,7 +102,8 @@ collection to `tests/` and runs quietly (`-q`). (In an environment created by
 `make env`, the repo root is already on the import path, so `PYTHONPATH` is
 redundant there — but it's needed for a bare checkout.)
 
-What the tests cover:
+What the tests cover (a representative selection — the suite has grown well beyond
+these):
 
 | Test file | Focus |
 |---|---|
@@ -160,8 +161,8 @@ Top-level directories outside the package:
 - `tests/` — the pytest suite (see above).
 - `dev/` — developer tooling (`Makefile`, `environment_dev.yaml`, `link_shell.sh`,
   helper `scripts/`).
-- `packaging/` — PyInstaller spec, runtime hooks, and the macOS/Windows installer
-  build files.
+- `packaging/` — PyInstaller spec, runtime hooks, and the macOS, Windows, and Linux
+  installer build files.
 - `launch/` — clone-and-run scripts for end users.
 - `benchmarks/` — the performance harness, results, and report.
 - `manual/` — the older upstream user manual (kept for reference; superseded by
