@@ -6,5 +6,7 @@ kh_atlas = "https://synapseweb.clm.utexas.edu/atlas"
 fork_repo = "https://github.com/dustenhubbard/PyReconstruct"
 # Source-code menu link (Help > Online resources > "PyReconstruct source code").
 gh_repo = fork_repo
+# User-guide menu link (Help > Online resources > "PyReconstruct user guide").
+gh_wiki = fork_repo + "/wiki"
 gh_issues = fork_repo + "/issues"
 gh_submit = gh_issues + "/new/choose"
