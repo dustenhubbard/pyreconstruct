@@ -148,15 +148,52 @@ def test_capture_equivalent_to_manual_translate():
 
 # --- replay: propagateTo across a range ------------------------------------
 
-def _prop_stub(monkeypatch, base_tforms, current_section):
+class _FakeSectionStates:
+    """Records addState calls the way SectionStates would receive them."""
+
+    def __init__(self):
+        self.recorded = []
+
+    def addState(self, section, series):
+        self.recorded.append(section.tform)
+
+
+class _FakeSeriesStates:
+    """Duck-types the SeriesStates surface propagateTo uses."""
+
+    def __init__(self, snums):
+        self.section_states = {n: _FakeSectionStates() for n in snums}
+        self.series_state_count = 0
+        self.section_undos = []
+
+    def addState(self, breakable=True):
+        self.series_state_count += 1
+
+    def addSectionUndo(self, snum):
+        self.section_undos.append(snum)
+
+    def __getitem__(self, index):
+        if isinstance(index, int):
+            return self.section_states[index]
+        return self.section_states[index.n]
+
+
+def _prop_stub(monkeypatch, base_tforms, current_section, locked=()):
     """Build a stub with an in-memory set of sections and the real
     changeTform/propagateTo wired up."""
     sections = {
         n: types.SimpleNamespace(
-            n=n, align_locked=False, tform=Transform(list(t)), save=lambda: None
+            n=n,
+            align_locked=(n in locked),
+            tform=Transform(list(t)),
+            save_count=0,
         )
         for n, t in base_tforms.items()
     }
+    for sec in sections.values():
+        def _save(sec=sec):
+            sec.save_count += 1
+        sec.save = _save
     cur = sections[current_section]
     stub = types.SimpleNamespace(
         section=cur,
@@ -167,6 +204,7 @@ def _prop_stub(monkeypatch, base_tforms, current_section):
             loadSection=lambda snum: sections[snum],
             addLog=lambda *a, **k: None,
         ),
+        series_states=_FakeSeriesStates(sections.keys()),
         propagate_tform=True,
         stored_tform=Transform.identity(),
         propagated_sections={current_section},
