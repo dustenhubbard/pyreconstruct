@@ -151,6 +151,9 @@ Found a problem, have a feature idea, or want to improve the docs? Please
 **[open an issue](https://github.com/dustenhubbard/PyReconstruct/issues)**.
 Thanks for the help!
 
+Found a **security vulnerability**? Please report it privately instead of opening a
+public issue — see [`SECURITY.md`](SECURITY.md).
+
 ## Credits
 
 PyReconstruct was created by Michael A. Chirillo, Julian N. Falco,
