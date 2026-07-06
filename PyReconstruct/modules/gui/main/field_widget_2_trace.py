@@ -912,7 +912,7 @@ class FieldWidgetTrace(FieldWidgetBase):
 
         names = list(set(t.name for t in field_traces))
 
-        copied_to = self.series.copyTracesToSections(
+        copied_to, skipped = self.series.copyTracesToSections(
             field_traces, chosen, self.series_states
         )
 
@@ -926,6 +926,11 @@ class FieldWidgetTrace(FieldWidgetBase):
         msgs = []
         if copied_to:
             msgs.append(f"Copied trace(s) to {len(copied_to)} section(s).")
+        if skipped:
+            msgs.append(
+                "Skipped section(s) with a non-invertible transform: "
+                + ", ".join(str(n) for n in sorted(skipped))
+            )
         if excluded_current:
             msgs.append(f"The current section ({current}) was left unchanged.")
         if msgs:
