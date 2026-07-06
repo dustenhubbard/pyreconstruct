@@ -82,29 +82,86 @@ def test_parse_section_spec():
     from PyReconstruct.modules.gui.dialog.copy_to_sections import parse_section_spec
     valid = {0, 1, 2, 3, 4}
 
-    assert parse_section_spec("1-3, 4", valid) == ({1, 2, 3, 4}, [])
-    assert parse_section_spec("2", valid) == ({2}, [])
-    assert parse_section_spec("0 2 4", valid) == ({0, 2, 4}, [])
+    assert parse_section_spec("1-3, 4", valid) == ({1, 2, 3, 4}, [], [])
+    assert parse_section_spec("2", valid) == ({2}, [], [])
+    assert parse_section_spec("0 2 4", valid) == ({0, 2, 4}, [], [])
     # reversed range is normalised
-    assert parse_section_spec("3-1", valid) == ({1, 2, 3}, [])
-    # a range that overhangs the valid set clamps to what exists
-    assert parse_section_spec("3-7", valid) == ({3, 4}, [])
+    assert parse_section_spec("3-1", valid) == ({1, 2, 3}, [], [])
 
     # bad / out-of-range tokens are reported and excluded
-    chosen, bad = parse_section_spec("7", valid)
-    assert chosen == set() and bad == ["7"]
-    chosen, bad = parse_section_spec("abc", valid)
-    assert chosen == set() and bad == ["abc"]
-    chosen, bad = parse_section_spec("1-", valid)
-    assert chosen == set() and bad == ["1-"]
-    chosen, bad = parse_section_spec("1-2-3", valid)
-    assert chosen == set() and bad == ["1-2-3"]
+    chosen, bad, missing = parse_section_spec("7", valid)
+    assert chosen == set() and bad == ["7"] and missing == []
+    chosen, bad, missing = parse_section_spec("abc", valid)
+    assert chosen == set() and bad == ["abc"] and missing == []
+    chosen, bad, missing = parse_section_spec("1-", valid)
+    assert chosen == set() and bad == ["1-"] and missing == []
+    chosen, bad, missing = parse_section_spec("1-2-3", valid)
+    assert chosen == set() and bad == ["1-2-3"] and missing == []
     # a whole range out of range is bad
-    chosen, bad = parse_section_spec("10-20", valid)
-    assert chosen == set() and bad == ["10-20"]
+    chosen, bad, missing = parse_section_spec("10-20", valid)
+    assert chosen == set() and bad == ["10-20"] and missing == []
     # good and bad mixed
-    chosen, bad = parse_section_spec("2, nope, 4", valid)
-    assert chosen == {2, 4} and bad == ["nope"]
+    chosen, bad, missing = parse_section_spec("2, nope, 4", valid)
+    assert chosen == {2, 4} and bad == ["nope"] and missing == []
+
+
+def test_parse_section_spec_overhanging_range_is_surfaced():
+    """A range that overhangs the valid set still yields the sections that
+    exist, but the nonexistent remainder is reported, not silently dropped."""
+    from PyReconstruct.modules.gui.dialog.copy_to_sections import parse_section_spec
+    valid = {0, 1, 2, 3, 4}
+
+    chosen, bad, missing = parse_section_spec("3-7", valid)
+    assert chosen == {3, 4}
+    assert bad == []
+    assert len(missing) == 1
+    # 5, 6, 7 do not exist
+    assert "3" in missing[0] and "7" in missing[0] and "3 " in missing[0]
+
+    # a range interrupted by a gap in the section numbering is surfaced too
+    chosen, bad, missing = parse_section_spec("0-4", {0, 1, 3, 4})
+    assert chosen == {0, 1, 3, 4}
+    assert bad == []
+    assert len(missing) == 1 and "1 " in missing[0]
+
+
+def test_parse_section_spec_huge_range_returns_fast():
+    """A huge typed upper bound must not materialize the range (UI hang)."""
+    import time
+    from PyReconstruct.modules.gui.dialog.copy_to_sections import parse_section_spec
+    valid = set(range(100))
+
+    start = time.monotonic()
+    chosen, bad, missing = parse_section_spec("1-999999999", valid)
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 1.0, f"huge range took {elapsed:.2f}s (range materialized?)"
+    assert chosen == set(range(1, 100))
+    assert bad == []
+    assert len(missing) == 1  # the nonexistent 100..999999999 remainder
+
+
+def test_parse_section_spec_exotic_unicode_digits_do_not_crash():
+    """Characters where str.isdigit() is True but int() raises (superscripts,
+    circled digits) must be reported as bad tokens, not crash the parser."""
+    from PyReconstruct.modules.gui.dialog.copy_to_sections import parse_section_spec
+    valid = {0, 1, 2, 3, 4}
+
+    # single-number path
+    chosen, bad, missing = parse_section_spec("5²", valid)  # "5²"
+    assert chosen == set() and bad == ["5²"]
+    chosen, bad, missing = parse_section_spec("①", valid)  # "①"
+    assert chosen == set() and bad == ["①"]
+
+    # range-endpoint path
+    chosen, bad, missing = parse_section_spec("1-5²", valid)
+    assert chosen == set() and bad == ["1-5²"]
+    chosen, bad, missing = parse_section_spec("³-4", valid)  # "³-4"
+    assert chosen == set() and bad == ["³-4"]
+
+    # good tokens alongside exotic ones still parse
+    chosen, bad, missing = parse_section_spec("2, 5²", valid)
+    assert chosen == {2} and bad == ["5²"]
 
 
 # ---------------------------------------------------------------------------
@@ -124,11 +181,12 @@ def test_copy_preserves_field_xy_and_attributes(tmp_path):
     for snum in (2, 4):
         before[snum] = len(series.loadSection(snum).contours["star"].getTraces())
 
-    copied_to = series.copyTracesToSections(
+    copied_to, skipped = series.copyTracesToSections(
         [ft], {2, 4}, log_event=False
     )
 
     assert sorted(copied_to) == [2, 4]
+    assert skipped == []
 
     for snum in (2, 4):
         section = series.loadSection(snum)
@@ -160,11 +218,12 @@ def test_copies_onto_locked_sections(tmp_path):
 
     ft = _field_trace(series, 0, "star")
 
-    copied_to = series.copyTracesToSections(
+    copied_to, skipped = series.copyTracesToSections(
         [ft], {1, 2}, log_event=False
     )
 
     assert sorted(copied_to) == [1, 2]
+    assert skipped == []
 
     # locked section received the trace at the shared field x-y, lock intact
     locked_section = series.loadSection(1)
@@ -192,10 +251,11 @@ def test_identity_transform_copies_points_verbatim(tmp_path):
 
     ft = _field_trace(series, 0, "star")  # points already == FIELD_PTS
 
-    copied_to = series.copyTracesToSections(
+    copied_to, skipped = series.copyTracesToSections(
         [ft], {3}, log_event=False
     )
     assert copied_to == [3]
+    assert skipped == []
 
     section = series.loadSection(3)
     match = [
@@ -205,3 +265,107 @@ def test_identity_transform_copies_points_verbatim(tmp_path):
                 for a, b in zip(t.points, FIELD_PTS))
     ]
     assert len(match) == 1
+
+
+def test_copy_lands_at_same_field_xy_under_rotation_and_scale(tmp_path):
+    """Targets with rotation and scale in their transforms still receive the
+    trace at the identical field x-y (re-projected through each section's own
+    inverse transform)."""
+    import math
+    from PyReconstruct.modules.datatypes.transform import Transform
+
+    series = _load_series(tmp_path)
+
+    # section 2: rotation by 30 degrees plus a translation
+    c, s = math.cos(math.radians(30)), math.sin(math.radians(30))
+    rot = Transform([c, -s, 1.25, s, c, -0.75])
+    # section 4: anisotropic scale plus rotation by -45 degrees
+    c2, s2 = math.cos(math.radians(-45)), math.sin(math.radians(-45))
+    scl = Transform([1.5 * c2, -1.5 * s2, -2.0, 0.8 * s2, 0.8 * c2, 3.0])
+
+    for snum, tform in ((2, rot), (4, scl)):
+        section = series.loadSection(snum)
+        section.tform = tform
+        section.align_locked = False
+        section.save()
+
+    ft = _field_trace(series, 0, "star")
+
+    copied_to, skipped = series.copyTracesToSections(
+        [ft], {2, 4}, log_event=False
+    )
+    assert sorted(copied_to) == [2, 4]
+    assert skipped == []
+
+    for snum in (2, 4):
+        section = series.loadSection(snum)
+        match = [
+            t for t in section.contours["star"].getTraces()
+            if _mapped_matches(section, t, FIELD_PTS)
+        ]
+        assert len(match) == 1, (
+            f"trace on section {snum} did not land at the shared field x-y"
+        )
+        # the stored points differ from the field points (the transform is
+        # non-identity), proving a real re-projection happened
+        stored = match[0].points
+        assert any(
+            abs(a[0] - b[0]) > 1e-6 or abs(a[1] - b[1]) > 1e-6
+            for a, b in zip(stored, FIELD_PTS)
+        )
+
+
+def test_non_invertible_target_transform_is_skipped(tmp_path):
+    """A singular (non-invertible) target transform cannot place the trace:
+    the section is skipped and reported, never crashed on or written to."""
+    from PyReconstruct.modules.datatypes.transform import Transform
+
+    series = _load_series(tmp_path)
+
+    for snum in (2, 3):
+        _unlock(series, snum)
+
+    # det = 1*1 - 1*1 = 0: singular
+    singular = Transform([1, 1, 0, 1, 1, 0])
+    section = series.loadSection(3)
+    section.tform = singular
+    section.save()
+
+    before = len(series.loadSection(3).contours["star"].getTraces())
+
+    ft = _field_trace(series, 0, "star")
+
+    copied_to, skipped = series.copyTracesToSections(
+        [ft], {2, 3}, log_event=False
+    )
+
+    assert copied_to == [2]
+    assert skipped == [3]
+    # the singular section was not written to
+    assert len(series.loadSection(3).contours["star"].getTraces()) == before
+
+
+def test_all_invalid_targets_noop(tmp_path):
+    """Requesting only nonexistent sections must no-op gracefully (this
+    exercises the empty-subset SeriesIterator, which used to divide by zero)."""
+    series = _load_series(tmp_path)
+
+    ft = _field_trace(series, 0, "star")
+
+    copied_to, skipped = series.copyTracesToSections(
+        [ft], {9998, 9999}, log_event=False
+    )
+
+    assert copied_to == []
+    assert skipped == []
+
+
+def test_series_iterator_empty_subset_completes(tmp_path):
+    """enumerateSections over an empty subset iterates zero times instead of
+    raising ZeroDivisionError in the progress computation."""
+    series = _load_series(tmp_path)
+
+    visited = [
+        snum for snum, _ in series.enumerateSections(section_numbers=set())
+    ]
+    assert visited == []
