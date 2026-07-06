@@ -651,6 +651,26 @@ active — switch to a real alignment first.
   a new unlocked section applies the recorded change). A red dot is shown on the
   field while recording. Locked sections are skipped.
 
+### Align by correlation, then propagate across a range
+
+The `Ctrl+\` correlation shift can be recorded and propagated across a range of
+sections, exactly like a manual transform — but **you must start recording before
+you correlate**:
+
+1. Navigate to the section you want to align.
+2. **Alignments ▸ Propagate transform ▸ Start propagation recording**.
+3. Press `Ctrl+\` (**Align by correlation**). This aligns the current section and
+   records the shift.
+4. Either navigate through the sections (each unlocked section you visit receives
+   the recorded shift) or use **Propagate to start** / **Propagate to end** to apply
+   it across a bulk range at once.
+5. **Alignments ▸ Propagate transform ▸ End propagation recording**.
+
+Order matters: starting recording resets the accumulator, so pressing `Ctrl+\`
+*before* you start recording will not capture that alignment — always start
+recording first. As with manual transforms, locked sections are skipped during
+propagation.
+
 ### Importing transforms
 
 **Alignments ▸ Import alignments**:
