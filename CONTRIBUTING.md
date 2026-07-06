@@ -31,6 +31,9 @@ templates are available from the "New issue" chooser:
   proposed solution.
 - **Documentation request** — tell us what's missing or unclear.
 
+For a **security vulnerability**, please don't open a public issue — report it
+privately as described in [`SECURITY.md`](SECURITY.md).
+
 ---
 
 ## Development setup
