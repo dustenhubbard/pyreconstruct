@@ -912,13 +912,12 @@ class FieldWidgetTrace(FieldWidgetBase):
 
         names = list(set(t.name for t in field_traces))
 
-        copied_to, skipped_locked = self.series.copyTracesToSections(
+        copied_to = self.series.copyTracesToSections(
             field_traces, chosen, self.series_states
         )
 
         # refresh the object/trace lists and the field view (only if anything
-        # actually changed, so a fully-locked target set leaves the selection
-        # untouched)
+        # actually changed)
         if copied_to:
             self.table_manager.updateObjects(names)
             self.reload()
@@ -927,11 +926,6 @@ class FieldWidgetTrace(FieldWidgetBase):
         msgs = []
         if copied_to:
             msgs.append(f"Copied trace(s) to {len(copied_to)} section(s).")
-        if skipped_locked:
-            msgs.append(
-                "Skipped locked section(s): "
-                + ", ".join(str(s) for s in sorted(skipped_locked)) + "."
-            )
         if excluded_current:
             msgs.append(f"The current section ({current}) was left unchanged.")
         if msgs:
