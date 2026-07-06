@@ -1373,29 +1373,41 @@ class Series():
                 series_states (dict): section number : SectionStates (GUI undo)
                 log_event (bool): True if the trace creation should be logged
             Returns:
-                (list): the section numbers that received the copied traces
+                (tuple): (list of section numbers that received the traces,
+                          list of section numbers skipped because their
+                          transform is not invertible)
         """
         copied_to = []
+        skipped = []
 
         for snum, section in self.enumerateSections(
             message="Copying traces to sections...",
             series_states=series_states,
             section_numbers=section_numbers
         ):
-            tform = section.tform
+            # obtain this section's inverse transform ONCE; a singular
+            # (non-invertible) transform cannot place the trace, so skip the
+            # section rather than crash or store garbage points
+            try:
+                inv_tform = section.tform.inverted()
+            except Exception:
+                skipped.append(snum)
+                continue
+
             for trace in traces:
                 new_trace = trace.copy()
                 # re-project the shared field coordinates through this section's
                 # own inverse transform so the trace occupies the same field x-y
-                new_trace.points = [tform.map(*p, inverted=True) for p in trace.points]
+                new_trace.points = [inv_tform.map(*p) for p in trace.points]
                 section.addTrace(new_trace, log_event=log_event)
 
             section.save()
             copied_to.append(snum)
 
-        self.modified = True
+        if copied_to:
+            self.modified = True
 
-        return copied_to
+        return copied_to, skipped
 
     def deleteAllTraces(self, trace_name : str, tags : set = None, series_states=None):
         """Delete all traces with a certain name and tag set.
@@ -3289,7 +3301,10 @@ class SeriesIterator():
         
         else:
             if self.show_progress:
-                self.reporter.set_progress(self.sni / len(self.section_numbers) * 100)
+                # self.sni == len(self.section_numbers) here, so the fraction
+                # is always 1 -- except for an empty subset (e.g. every
+                # requested section was invalid), where it would be 0/0
+                self.reporter.set_progress(100)
             raise StopIteration
 
 
