@@ -12,20 +12,22 @@ stable release.
 
 ## [Unreleased]
 
-## [1.21.0rc1] — 2026-07-05
+## [1.21.0rc2] — 2026-07-05
 
 ### Added
 - **Copy traces to multiple sections at once.** A new "Copy to sections..."
-  trace action places the selected trace(s) onto multiple chosen sections at the
-  same field (x, y) location in one step. A picker accepts section numbers and
-  ranges (e.g. `10-20` or `5, 8, 11`); each trace is re-projected through every
-  target section's own transform so it lands at the identical field position
-  regardless of that section's alignment, and attributes (name, color, closed,
-  tags) are preserved. Alignment-locked sections are skipped and reported; the
-  source section is never modified. Available from the Trace submenu (field
-  context menu and the trace list). (#91)
+  action places the selected trace(s) onto multiple chosen sections at the same
+  field (x, y) location in one step. It sits at the top level of the field
+  context menu, next to Copy (not in the Trace submenu), and is also available in
+  the trace list. A picker accepts section numbers and ranges (e.g. `10-20` or
+  `5, 8, 11`); each trace is re-projected through every target section's own
+  transform so it lands at the identical field position regardless of that
+  section's alignment, and attributes (name, color, closed, tags) are preserved.
+  Traces are copied onto every chosen section, including alignment-locked ones —
+  a section lock guards its transform/alignment, not its trace content. The
+  source section is never modified. (#91)
 - **Propagate an alignment by correlation across a range.** Align by correlation
-  (Ctrl+\) now records its shift through the same path a manual transform uses,
+  (`Ctrl+\`) now records its shift through the same path a manual transform uses,
   so with propagation active the correlation shift is replayed across a chosen
   section range (or as you scroll), exactly like a manual translate. With no
   propagation active, it still aligns only the current section. (#90)
@@ -86,6 +88,8 @@ stable release.
 - **De-staled docs.** The README, user guide, and contributing guide were updated
   to reflect current reality (the Linux installer, the shipped Intel build, the
   Pre-release channel, and silent username resolution).
+- Documented the Align-by-correlation propagation workflow in the user guide and
+  wiki. (#39)
 - Renamed the updater channels to **Release** and **Pre-release (experimental)**.
 
 ### Fixed
@@ -157,6 +161,6 @@ stable release.
   hooks; a Mesa software-OpenGL fallback on Windows for RDP/VM sessions; and a
   frozen-Windows multiprocessing fix so the Zarr conversion runs.
 
-[Unreleased]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.21.0rc1...HEAD
-[1.21.0rc1]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.20.0...v1.21.0rc1
+[Unreleased]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.21.0rc2...HEAD
+[1.21.0rc2]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.20.0...v1.21.0rc2
 [1.20.0]: https://github.com/dustenhubbard/PyReconstruct/releases/tag/v1.20.0
