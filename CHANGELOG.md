@@ -25,12 +25,12 @@ stable release.
   section's alignment, and attributes (name, color, closed, tags) are preserved.
   Traces are copied onto every chosen section, including alignment-locked ones —
   a section lock guards its transform/alignment, not its trace content. The
-  source section is never modified. (#91)
+  source section is never modified.
 - **Propagate an alignment by correlation across a range.** Align by correlation
   (`Ctrl+\`) now records its shift through the same path a manual transform uses,
   so with propagation active the correlation shift is replayed across a chosen
   section range (or as you scroll), exactly like a manual translate. With no
-  propagation active, it still aligns only the current section. (#90)
+  propagation active, it still aligns only the current section.
 - **"What's new" on demand.** A new Help ▸ What's new action reopens the
   release-notes dialog at any time, showing the recent release history (the
   running version plus the few before it). The once-per-version startup popup
