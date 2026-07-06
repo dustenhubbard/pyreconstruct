@@ -193,6 +193,26 @@ jobs:
           # default) publishes immediately, exactly as before.
           draft: ${{ vars.STAGE_RELEASE_AS_DRAFT == 'true' }}
           body_path: release_body.md
+      - name: Prune superseded pre-releases
+        # A published stable vX.Y.Z supersedes its own pre-releases (v1.21.0rc1,
+        # v1.21.0-rc.1, v1.21.0a1, ...): delete their GitHub Releases and git
+        # tags so the Releases page and the in-app updater only offer the
+        # stable. scripts/prune_prereleases.py scopes the selection to the
+        # exact X.Y.Z line -- the stable itself and every other version line
+        # are never touched. Skipped when staging as a draft: the stable is
+        # still hidden then, and pruning would leave the line with no visible
+        # release (clean up by hand after publishing a staged draft).
+        if: steps.rel.outputs.prerelease == 'false' && vars.STAGE_RELEASE_AS_DRAFT != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail   # a helper/list failure should flag loudly, not silently skip the prune
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[].tagName' \
+            | python3 scripts/prune_prereleases.py "$GITHUB_REF_NAME" \
+            | while read -r t; do
+                echo "pruning superseded pre-release: $t"
+                gh release delete "$t" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+              done
 
   release-prerelease:
     needs: build
