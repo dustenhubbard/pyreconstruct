@@ -59,9 +59,29 @@ class TableManager():
 
         self.mainwindow.addDockWidget(Qt.LeftDockWidgetArea, new_table)
     
+    def _markViewerStale(self, obj_names=None, ztrace_names=None, all_objects=False):
+        """Mark meshes in the open 3D scene whose 2D data was just edited.
+
+        The scene regenerates stale meshes the next time its window is
+        focused (or through its Scene > Refresh edited objects action).
+
+            Params:
+                obj_names (iterable): the names of the modified objects
+                ztrace_names (iterable): the names of the modified ztraces
+                all_objects (bool): True if every scene object from the series
+                    should be marked (series-wide operations)
+        """
+        viewer = getattr(self.mainwindow, "viewer", None)
+        if viewer is None or viewer.is_closed:
+            return
+        if all_objects:
+            viewer.markAllStale()
+        else:
+            viewer.markStale(obj_names, ztrace_names)
+
     def updateObjects(self, obj_names : list = None, clear_tracking=True):
         """Update the object info for the OBJECT AND TRACE LISTS ONLY.
-        
+
             Params:
                 obj_names (list): the list objects to update
         """
@@ -72,10 +92,12 @@ class TableManager():
             else:
                 obj_names = self.section.getAllModifiedNames()
 
+        self._markViewerStale(obj_names=obj_names)
+
         for table in self.tables["object"] + self.tables["trace"]:
-            
+
             table.updateData(obj_names)
-        
+
         if clear_tracking:
             self.section.clearTracking()
     
@@ -99,10 +121,12 @@ class TableManager():
         """
         if ztrace_names is None:
             ztrace_names = self.series.modified_ztraces
-        
+
+        self._markViewerStale(ztrace_names=ztrace_names)
+
         for table in self.tables["ztrace"]:
             table.updateData(ztrace_names)
-        
+
         if clear_tracking:
             self.series.clearTracking()
     
@@ -158,7 +182,12 @@ class TableManager():
         self.mainwindow.saveAllData()
         if refresh_data:
             self.series.data.refresh()
-        
+
+        # recreateTables is used by series-wide operations (alignment changes,
+        # imports, series undo) whose modified names are unknown -- flag every
+        # scene mesh for regeneration
+        self._markViewerStale(all_objects=True)
+
         for n, l in self.tables.items():
             for t in l:
                 self.recreateTable(t)
