@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QMainWindow
 from PySide6.QtGui import QKeyEvent
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QEvent
 
 from PyReconstruct.modules.gui.dialog import QuickDialog, FileDialog
 from PyReconstruct.modules.backend.threading import ThreadPoolProgBar
@@ -757,6 +757,17 @@ class VPlotter(vedo.Plotter):
 
 class Container(QMainWindow):
 
+    def event(self, event):
+        # when the 3D window regains focus, regenerate any meshes whose 2D
+        # data was edited while the user was working in the field
+        if event.type() == QEvent.Type.WindowActivate:
+            plotter = self.centralWidget()
+            # hasattr check: the central widget is set before the plotter
+            # finishes constructing
+            if plotter is not None and hasattr(plotter, "plt"):
+                plotter.refreshStale()
+        return super().event(event)
+
     def closeEvent(self, event):
         self.centralWidget().close()
         super().closeEvent(event)
@@ -860,6 +871,7 @@ class CustomPlotter(QVTKRenderWindowInteractor):
                     },
                     ("settrinc_act", "Set translate/rotate step...", "", self.setStep),
                     ("organize_act", "Organize scene...", "Ctrl+Shift+H", self.organizeScene),
+                    ("refreshstale_act", "Refresh edited objects", "Ctrl+R", self.refreshStale),
                     ("reload_act", "Reload selected", "Ctrl+Shift+R", self.reload),
                     ("backgroud_act", "Change background", "", self.plt.changeBackground),
                     None,
@@ -1238,7 +1250,61 @@ class CustomPlotter(QVTKRenderWindowInteractor):
         self.mainwindow.saveAllData()
         scene_state = self.plt.objs.getExportDict()
         self.loadState(scene_state, reload=True)
-        
+
+    def markStale(self, obj_names=None, ztrace_names=None):
+        """Mark scene objects as stale after their 2D data was edited.
+
+        Called by the table manager whenever objects/ztraces are modified in
+        the field or through the lists. Marking is cheap; the meshes are only
+        regenerated when the 3D window is next focused (or through
+        Scene > Refresh edited objects).
+
+            Params:
+                obj_names (iterable): the names of the modified objects
+                ztrace_names (iterable): the names of the modified ztraces
+        """
+        if self.is_closed:
+            return
+        self.plt.objs.markStale(obj_names, ztrace_names, self.series.jser_fp)
+
+    def markAllStale(self):
+        """Mark every scene object from the current series as stale.
+
+        Used for series-wide operations where the affected names are unknown.
+        """
+        if self.is_closed:
+            return
+        self.plt.objs.markAllStale(self.series.jser_fp)
+
+    def refreshStale(self):
+        """Regenerate the meshes of stale scene objects from the series data.
+
+        No-op if nothing in the scene was edited. Regeneration keeps each
+        scene object's color, opacity, and 3D transform; objects that no
+        longer exist in the series (deleted or renamed) are removed from the
+        scene.
+        """
+        if self.is_closed:
+            return
+        obj_names, ztrace_names = self.plt.objs.popStale()
+        if not (obj_names or ztrace_names):
+            return
+
+        # write in-memory field edits to the hidden series files: mesh
+        # generation reads section data from disk
+        self.mainwindow.saveAllData()
+
+        obj_names, ztrace_names, gone_objs, gone_ztraces = partitionExisting(
+            obj_names, ztrace_names, self.series
+        )
+        if gone_objs or gone_ztraces:
+            self.plt.removeFromScene(gone_objs, gone_ztraces, save_state=False)
+
+        if obj_names or ztrace_names:
+            self.plt.addToScene(
+                obj_names, ztrace_names, remove_first=True, save_state=False
+            )
+
     def closeEvent(self, event):
         self.plt.close()
         self.is_closed = True
@@ -1382,6 +1448,9 @@ class SceneObjectList():
         """Create the scene object list."""
         self.scene_objects = {}
         self.host_trees = {}
+        # IDs of scene objects whose 2D source data changed after their mesh
+        # was generated (see markStale/popStale)
+        self.stale_ids = set()
         self.keys = self.scene_objects.keys
         self.values = self.scene_objects.values
         self.items = self.scene_objects.items
@@ -1440,7 +1509,57 @@ class SceneObjectList():
         
         if remove_id in self.scene_objects:
             del(self.scene_objects[remove_id])
-    
+        self.stale_ids.discard(remove_id)
+
+    def markStale(self, obj_names=None, ztrace_names=None, series_fp=None):
+        """Mark scene objects as stale: their 2D data changed after their mesh
+        was generated, so the mesh no longer reflects the series.
+
+            Params:
+                obj_names (iterable): the names of the modified objects
+                ztrace_names (iterable): the names of the modified ztraces
+                series_fp (str): the filepath of the series the names belong to
+        """
+        for type_str, names in (("object", obj_names), ("ztrace", ztrace_names)):
+            if not names:
+                continue
+            for name in names:
+                scene_obj = self.search(name, type_str, series_fp)
+                if scene_obj:
+                    self.stale_ids.add(scene_obj.id)
+
+    def markAllStale(self, series_fp=None):
+        """Mark every object and ztrace from a series as stale.
+
+        Used for series-wide operations (alignment changes, imports, series
+        undo) where the affected object names are not known individually.
+
+            Params:
+                series_fp (str): the filepath of the modified series
+        """
+        for scene_obj in self.values():
+            if scene_obj.type in ("object", "ztrace") and scene_obj.series_fp == series_fp:
+                self.stale_ids.add(scene_obj.id)
+
+    def popStale(self):
+        """Return the names of the stale scene objects and clear the stale set.
+
+            Returns:
+                obj_names (list): the names of the stale objects
+                ztrace_names (list): the names of the stale ztraces
+        """
+        obj_names, ztrace_names = [], []
+        for obj_id in self.stale_ids:
+            scene_obj = self[obj_id]
+            if scene_obj is None:  # no longer in the scene
+                continue
+            if scene_obj.type == "object":
+                obj_names.append(scene_obj.name)
+            elif scene_obj.type == "ztrace":
+                ztrace_names.append(scene_obj.name)
+        self.stale_ids.clear()
+        return obj_names, ztrace_names
+
     def getExportDict(self):
         """Get the export dictionary describing the scene."""
         export_dict = {"scale_cubes": [], "series_fps": {}}
@@ -1590,6 +1709,23 @@ def generateID(existing_pool=None):
         return generateID(existing_pool)
     else:
         return id
+
+
+def partitionExisting(obj_names, ztrace_names, series):
+    """Split scene object names into those still in the series and those gone.
+
+        Params:
+            obj_names (list): the object names to check
+            ztrace_names (list): the ztrace names to check
+            series (Series): the series to check against
+        Returns:
+            kept_objs, kept_ztraces, gone_objs, gone_ztraces (lists)
+    """
+    kept_objs = [n for n in obj_names if n in series.data["objects"]]
+    gone_objs = [n for n in obj_names if n not in series.data["objects"]]
+    kept_ztraces = [n for n in ztrace_names if n in series.ztraces]
+    gone_ztraces = [n for n in ztrace_names if n not in series.ztraces]
+    return kept_objs, kept_ztraces, gone_objs, gone_ztraces
 
 
 def combineBounds(bounds, new_bounds):
