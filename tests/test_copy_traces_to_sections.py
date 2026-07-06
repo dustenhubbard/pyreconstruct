@@ -7,7 +7,8 @@ sections at the same field (x, y) location:
     target section's own transform, so a trace lands at the identical field
     x-y on every section regardless of that section's alignment.
   * Trace attributes (name, color, closed, tags) are preserved verbatim.
-  * Sections whose alignment is locked are skipped and reported.
+  * Alignment-locked target sections still receive the copied trace (a lock
+    protects the transform, not trace content).
 
 Also unit-tests the pure section-spec parser used by the picker dialog.
 """
@@ -123,12 +124,11 @@ def test_copy_preserves_field_xy_and_attributes(tmp_path):
     for snum in (2, 4):
         before[snum] = len(series.loadSection(snum).contours["star"].getTraces())
 
-    copied_to, skipped = series.copyTracesToSections(
+    copied_to = series.copyTracesToSections(
         [ft], {2, 4}, log_event=False
     )
 
     assert sorted(copied_to) == [2, 4]
-    assert skipped == []
 
     for snum in (2, 4):
         section = series.loadSection(snum)
@@ -146,27 +146,35 @@ def test_copy_preserves_field_xy_and_attributes(tmp_path):
         assert "copytest" in copied.tags
 
 
-def test_skips_locked_sections(tmp_path):
+def test_copies_onto_locked_sections(tmp_path):
+    """A lock protects a section's transform, not its trace content, so a
+    locked target section still receives the copied trace."""
     series = _load_series(tmp_path)
 
     # section 1 stays locked (fixture default); section 2 is unlocked
     _unlock(series, 2)
+    assert series.loadSection(1).align_locked is True
 
     locked_before = len(series.loadSection(1).contours["star"].getTraces())
     unlocked_before = len(series.loadSection(2).contours["star"].getTraces())
 
     ft = _field_trace(series, 0, "star")
 
-    copied_to, skipped = series.copyTracesToSections(
+    copied_to = series.copyTracesToSections(
         [ft], {1, 2}, log_event=False
     )
 
-    assert copied_to == [2]
-    assert skipped == [1]
+    assert sorted(copied_to) == [1, 2]
 
-    # locked section untouched
-    assert len(series.loadSection(1).contours["star"].getTraces()) == locked_before
-    # unlocked section received the trace
+    # locked section received the trace at the shared field x-y, lock intact
+    locked_section = series.loadSection(1)
+    assert locked_section.align_locked is True
+    assert len(locked_section.contours["star"].getTraces()) == locked_before + 1
+    assert any(
+        _mapped_matches(locked_section, t, FIELD_PTS)
+        for t in locked_section.contours["star"].getTraces()
+    )
+    # unlocked section received the trace too
     assert len(series.loadSection(2).contours["star"].getTraces()) == unlocked_before + 1
 
 
@@ -184,10 +192,10 @@ def test_identity_transform_copies_points_verbatim(tmp_path):
 
     ft = _field_trace(series, 0, "star")  # points already == FIELD_PTS
 
-    copied_to, skipped = series.copyTracesToSections(
+    copied_to = series.copyTracesToSections(
         [ft], {3}, log_event=False
     )
-    assert copied_to == [3] and skipped == []
+    assert copied_to == [3]
 
     section = series.loadSection(3)
     match = [
