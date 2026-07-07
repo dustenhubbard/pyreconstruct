@@ -13,7 +13,7 @@ from PySide6.QtGui import (
     QPalette,
     QColor
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QItemSelection, QItemSelectionModel
 
 from .data_table import DataTable
 from .object_model import ObjectTableModel, ObjectTableView
@@ -37,6 +37,23 @@ from PyReconstruct.modules.gui.dialog import (
 from PyReconstruct.modules.gui.popup import (
     TextWidget,
 )
+
+
+def invert_object_rows(row_names : list, selected : set):
+    """Return the row indices to select when inverting an object selection.
+
+    Every row that is not currently selected becomes selected. Object rows are
+    freely selectable in the list (no lock restriction), so nothing is excluded
+    here -- this matches the object list's existing selection behavior.
+
+        Params:
+            row_names (list): object name at each row, in row order
+            selected (set): names of the currently selected objects
+        Returns:
+            (list): the row indices that should end up selected
+    """
+    return [r for r, name in enumerate(row_names) if name not in selected]
+
 
 class ObjectTableWidget(DataTable):
     
@@ -133,6 +150,18 @@ class ObjectTableWidget(DataTable):
                 ]
             },
             {
+                "attr_name": "selectionmenu",
+                "text": "Selection",
+                "opts":
+                [
+                    ("invertobjselection_act", "Invert selection", "", self.invertSelection),
+                    None,
+                    ("hideotherobj_act1", "Hide Other Objects", "", self.mainwindow.field.hideOtherObjects),
+                    ("hideallobj_act1", "Hide all objects", "", self.mainwindow.field.hideAllObjects),
+                    ("showallobj_act1", "Show all objects", "", self.mainwindow.field.unhideAllObjects),
+                ]
+            },
+            {
                 "attr_name": "filtermenu",
                 "text": "Filter",
                 "opts":
@@ -196,8 +225,14 @@ class ObjectTableWidget(DataTable):
         # fill in the menu bar object
         populateMenuBar(self, self.menubar, menubar_list)
 
-        # create the right-click menu
-        context_menu_list = self.mainwindow.field.getObjMenu()
+        # create the right-click menu -- prepend the object-list-only "Invert
+        # selection" (a table selection op, so it can't live in the shared field
+        # object menu). "Hide Other Objects" / "Show all objects" come from the
+        # shared menu below.
+        context_menu_list = [
+            ("invertobjselection_act1", "Invert selection", "", self.invertSelection),
+            None,
+        ] + self.mainwindow.field.getObjMenu()
         self.context_menu = QMenu(self)
         populateMenu(self, self.context_menu, context_menu_list)
 
@@ -639,6 +674,34 @@ class ObjectTableWidget(DataTable):
                 return obj_names[0]
         else:
             return obj_names
+
+    def invertSelection(self):
+        """Invert which objects are selected in the list.
+
+        Every object shown in the list that is not currently selected becomes
+        selected, and vice versa. Operates on the rows currently displayed, so
+        with no active filter this inverts against every object in the series.
+        """
+        row_count = self.model.rowCount()
+        if not row_count:
+            return
+
+        row_names = [self.model.nameAt(r) for r in range(row_count)]
+        selected = set(self.getSelected())
+        to_select = invert_object_rows(row_names, selected)
+
+        last_col = self.model.columnCount() - 1
+        new_selection = QItemSelection()
+        for r in to_select:
+            new_selection.select(
+                self.model.index(r, 0),
+                self.model.index(r, last_col),
+            )
+
+        self.table.selectionModel().select(
+            new_selection,
+            QItemSelectionModel.ClearAndSelect,
+        )
 
     def onCheckStateChanged(self, row : int, col : int, state):
         """User toggled a checkbox in the view.
