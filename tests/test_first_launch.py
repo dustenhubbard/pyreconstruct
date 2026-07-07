@@ -117,6 +117,16 @@ def test_parse_changelog_section_missing_returns_none():
     assert F.parse_changelog_section(SAMPLE, "") is None
 
 
+def test_parse_changelog_section_matches_beta_by_version():
+    # setuptools-scm bakes a v1.21.0-beta-1 tag into the app as 1.21.0b1, so the
+    # [1.21.0-beta-1] header must match a 1.21.0b1 runtime by PARSED version, not
+    # raw string; the reverse spelling matches too.
+    dashed = "## [1.21.0-beta-1] — 2026-07-07\n\n- Beta bullet.\n"
+    assert "Beta bullet." in F.parse_changelog_section(dashed, "1.21.0b1")
+    compact = "## [1.21.0b1] — 2026-07-07\n\n- Beta bullet.\n"
+    assert "Beta bullet." in F.parse_changelog_section(compact, "1.21.0-beta-1")
+
+
 # ---- friendly dates ---------------------------------------------------------
 def test_friendly_date_formats_iso_without_leading_zero():
     assert F.friendly_date("2026-06-29") == "June 29, 2026"
