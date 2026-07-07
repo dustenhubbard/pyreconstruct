@@ -9,7 +9,7 @@ full release notes on GitHub (linked from the dialog).
 - **Isolate the objects you're working on.** "Hide Other Objects" hides everything except your selection across the whole series, so your object stays isolated as you page through sections. "Show all objects" brings them back, and "Hide all objects" clears the view so you can reveal objects a few at a time. Look in the object list's new Selection menu or the right-click menu.
 - **Invert a selection in one step.** Flip which objects are selected in the object list, or which traces are selected on the current section, so you can pick a few and instantly switch to all the rest.
 - **Clearer colors for imported traces.** Traces brought in from automatic segmentation now get distinct, easy-to-tell-apart colors that also work well for colorblind viewers and stand out against the grayscale image. The colors you see while importing match the final result, and you can shuffle them if you'd like a different set.
-- **The 3D scene keeps up with your edits.** Changes to your 2D traces now show up right away in an open 3D view, instead of it showing an old shape until you remove and add the object back.
+- **The 3D scene keeps up with your edits.** Changes to your 2D traces now show up right away in an open 3D view, instead of it showing a stale 3D object until you remove and add back/reload the object in the 3D scene.
 - **Smoother copying and alignment.** Copying traces to many sections at once no longer freezes on unusual input, and propagating an alignment by correlation now leaves locked sections untouched and can be undone in a single step.
 
 ## [1.21.0rc2] — 2026-07-05
