@@ -12,6 +12,37 @@ stable release.
 
 ## [Unreleased]
 
+## [1.21.0rc3] — 2026-07-06
+
+### Added
+- **Isolate objects and traces.** New actions to focus on a subset while
+  proofreading. "Hide Other Objects" hides every non-selected object across the
+  whole series so the isolation persists as you change sections (locked objects
+  are hidden too, since a lock guards edits and quantification, not visibility);
+  "Show all objects" restores them; and "Hide all objects" hides everything so
+  objects can be revealed a few at a time. All are undoable series-wide. "Invert
+  selection" flips the object-list selection, and a matching field action flips
+  the trace selection on the current section. Object actions live in the object
+  list's new Selection menu, its right-click menu, and the field Object submenu;
+  the trace actions live in the field Traces menu. Menu-only for now. (#51)
+- **Colorblind-safe colors for imported auto-segmentations.** Traces imported
+  from automatic segmentation are colored from a curated, grayscale-visible,
+  colorblind-distinguishable palette, deterministically mapped from each label
+  id. The live label overlay uses the same mapping, so the preview matches the
+  imported traces, and the color seed is exposed as an option. (#50)
+
+### Fixed
+- **3D scene now tracks 2D edits.** An already-open 3D scene updates when the
+  underlying 2D traces change, instead of showing a stale mesh until the object
+  is removed and re-added. (#49)
+- **Copy to sections hardening.** Copying to a large or partial section range, or
+  with non-decimal input, no longer hangs, and invert/empty-set edge cases are
+  guarded, so copies land correctly regardless of input. (#46)
+- **Correlation-alignment propagation respects locks and undo.** Propagating an
+  alignment by correlation across a range now skips alignment-locked sections and
+  records a single undo state, and composes the corrAlign transform in the
+  correct order. (#47)
+
 ## [1.21.0rc2] — 2026-07-05
 
 ### Added
