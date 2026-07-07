@@ -49,6 +49,7 @@ def get_field_menu_list(self):
         None,
         ("selectall_act", "Select all traces", self.series, self.field.selectAllTraces),
         ("deselect_act", "Deselect traces", self.series, self.field.deselectAllTraces),
+        ("invertselection_act", "Invert selection", "", self.field.invertTraceSelection),
         None,
         ("delete_act", "Delete", "Del", self.backspace),
     ]
@@ -95,6 +96,9 @@ def get_context_menu_list_obj(self):
                 None,
                 ("hideobj_act", "Hide", "", self.hideObj),
                 ("unhideobj_act", "Unhide", "", lambda : self.hideObj(False)),
+                ("hideotherobj_act", "Hide Other Objects", "", self.hideOtherObjects),
+                ("hideallobj_act", "Hide all objects", "", self.hideAllObjects),
+                ("showallobj_act", "Show all objects", "", self.unhideAllObjects),
                 None,
                 ("removealltags_act", "Remove all tags", "", self.removeAllTags),
                 None,
@@ -184,9 +188,16 @@ def get_context_menu_list_trace(self, is_in_field=True):
         None,
         ("hidetraces_act", "Hide", sc, self.hideTraces),
     ]
-    
+
+    # field only: current-section "hide the rest" (distinct from the volume-wide
+    # object action). Menu-only, so no shortcut is bound.
+    if is_in_field:
+        context_menu += [
+            ("hideothertraces_act", "Hide Other Traces on this Section", "", self.hideOtherTraces),
+        ]
+
     if not is_in_field:
-        
+
         context_menu += [
             ("unhidetraces_act", "Unhide", "", lambda : self.hideTraces(hide=False))
         ]

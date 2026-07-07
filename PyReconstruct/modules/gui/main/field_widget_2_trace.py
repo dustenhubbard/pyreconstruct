@@ -419,6 +419,14 @@ class FieldWidgetTrace(FieldWidgetBase):
         self.section.selectAllTraces()
         self.generateView(generate_image=False)
 
+    def invertTraceSelection(self):
+        """Invert which traces are selected on the current section."""
+        # disable if trace layer is hidden
+        if self.hide_trace_layer:
+            return
+        self.section.invertTraceSelection(include_hidden=self.show_all_traces)
+        self.generateView(generate_image=False)
+
     ############################################################################
     ## Interactions only accessible through the field ##########################
     ############################################################################
@@ -988,13 +996,22 @@ class FieldWidgetTrace(FieldWidgetBase):
     @field_interaction
     def hideTraces(self, traces : list, hide=True):
         """Hide/Unhide the requested traces (selected traces by default)
-        
+
             Params:
                 traces (list): the traces to hide/unhide
                 hide (bool): True if hiding traces, False if unhiding
         """
         return self.section.hideTraces(traces, hide)
-    
+
+    # field_interaction only (NOT trace_function): "Hide Other" KEEPS the
+    # selected traces and hides the rest on this section, so a locked selected
+    # trace must not block it, and locked traces in the complement are hidden on
+    # purpose. Undo is the ordinary single-section state from field_interaction.
+    @field_interaction
+    def hideOtherTraces(self):
+        """Hide every trace on the current section except the selected one(s)."""
+        return self.section.hideOtherTraces()
+
     @trace_function
     @field_interaction
     def makeNegative(self, traces : list, negative=True):
