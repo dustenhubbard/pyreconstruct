@@ -17,7 +17,7 @@ from PyReconstruct.modules.datatypes import (
     Section
 )
 
-from PyReconstruct.modules.calc import colorize, pixmapPointToField
+from PyReconstruct.modules.calc import pixmapPointToField
 
 class ZarrLayer():
 
@@ -222,12 +222,21 @@ class ZarrLayer():
 
         if self.is_labels:
             zarr_crop = self.zarr[z, ymin:ymax, xmin:xmax]
-            # generate all labels
+            # color each label the way autoseg import colors its trace, so the
+            # overlay preview matches the imported objects exactly. id 0 is
+            # background (not a segment); keep it the neutral gray the previous
+            # colorize(0) produced so the overlay background is unchanged.
+            # Imported locally: the autoseg package imports conversions, which
+            # imports backend.view -- a module-level import here would form a
+            # circular import while backend.view is still initializing.
+            from PyReconstruct.modules.backend.autoseg.palette import (
+                palette_color_array,
+            )
+            palette = self.series.getOption("autoseg_color_palette") or None
+            seed = self.series.getOption("autoseg_color_seed") or 0
             zarr_crop_colors = np.ascontiguousarray(
-                np.moveaxis(
-                    np.array(
-                        colorize(zarr_crop), dtype=np.uint8
-                    ), 0, -1
+                palette_color_array(
+                    zarr_crop, palette, seed, background=(100, 100, 100)
                 )
             )
             im_crop = QImage(
