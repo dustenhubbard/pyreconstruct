@@ -27,8 +27,9 @@ STABLE_RE = re.compile(r"^v(\d+\.\d+\.\d+)$")
 
 # Pre-release suffixes appended to the exact X.Y.Z:
 #   PEP 440 compact: a<N> / b<N> / rc<N>
-#   dashed semver:   -alpha[.N] / -beta[.N] / -rc[.N]
-PRERELEASE_SUFFIX = r"(?:(?:a|b|rc)\d+|-(?:alpha|beta|rc)(?:\.\d+)?)"
+#   dashed semver:   -alpha / -beta / -rc, optionally followed by a number with
+#                    either a '.' or '-' separator (-beta.2 or -beta-2).
+PRERELEASE_SUFFIX = r"(?:(?:a|b|rc)\d+|-(?:alpha|beta|rc)(?:[-.]\d+)?)"
 
 
 def select_superseded(stable_tag: str, tags: list[str]) -> list[str]:

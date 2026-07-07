@@ -21,13 +21,16 @@ prune = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(prune)
 
 # Every same-line pre-release form the repo has used or planned:
-# PEP 440 compact (rcN / aN / bN) and dashed semver (-rc.N / -alpha.N / -beta.N).
+# PEP 440 compact (rcN / aN / bN) and dashed semver (-rc.N / -alpha.N / -beta.N),
+# including the hyphen-number spelling -beta-N (the fork's chosen beta scheme).
 SUPERSEDED = [
     "v1.21.0rc1",
     "v1.21.0rc2",
     "v1.21.0-rc.1",
     "v1.21.0-alpha.1",
     "v1.21.0-beta.2",
+    "v1.21.0-beta-1",
+    "v1.21.0-beta-3",
     "v1.21.0a1",
     "v1.21.0b2",
 ]
@@ -40,6 +43,7 @@ SURVIVORS = [
     "v1.20.4",
     "v1.20.4rc2",
     "v1.22.0rc1",
+    "v1.22.0-beta-1",
     "v1.21.10rc1",
 ]
 
