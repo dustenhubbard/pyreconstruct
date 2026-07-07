@@ -129,7 +129,12 @@ jobs:
         # The Linux installer is a script bundle (no frozen binary), so it has no
         # build-matrix leg — assemble it here and ship it as a release asset.
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          # Name the asset with the PEP 440 public version (what setuptools-scm
+          # bakes in, and what the frozen mac/Windows assets use) rather than the
+          # raw tag, so a v1.21.0-beta-1 tag yields 1.21.0b1 like the others. The
+          # install-source pin below still uses the exact tag ref.
+          python3 -m pip install --quiet --disable-pip-version-check packaging
+          VERSION="$(python3 -c "from packaging.version import Version; print(Version('${GITHUB_REF_NAME#v}'))")"
           STAGE="PyReconstruct-linux-installer"
           mkdir -p "$STAGE"
           cp packaging/linux/install.sh packaging/linux/uninstall.sh \
