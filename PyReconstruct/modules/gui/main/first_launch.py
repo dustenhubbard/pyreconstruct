@@ -194,8 +194,17 @@ def parse_changelog_section(text, version):
     target = _normalize_version(version)
     if not text or not target:
         return None
+    # Match by parsed PEP 440 version so any equivalent spelling of the header
+    # lines up with the runtime version -- e.g. a [1.21.0-beta-1] header (which
+    # setuptools-scm bakes into the app as 1.21.0b1) matches a 1.21.0b1 runtime;
+    # fall back to a normalized string compare for non-version headers
+    # ([Unreleased]). Mirrors whats_new_content's matching.
+    target_v = _safe_version(target)
     for section in parse_all_sections(text):
-        if _normalize_version(section["version"]).lower() == target.lower():
+        sv = section["version"]
+        if target_v is not None and _safe_version(sv) == target_v:
+            return section["body"] or None
+        if _normalize_version(sv).lower() == target.lower():
             return section["body"] or None
     return None
 
