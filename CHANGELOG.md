@@ -12,7 +12,7 @@ stable release.
 
 ## [Unreleased]
 
-## [1.21.0rc3] — 2026-07-06
+## [1.21.0-beta-1] — 2026-07-07
 
 ### Added
 - **Isolate objects and traces.** New actions to focus on a subset while
@@ -30,22 +30,6 @@ stable release.
   colorblind-distinguishable palette, deterministically mapped from each label
   id. The live label overlay uses the same mapping, so the preview matches the
   imported traces, and the color seed is exposed as an option. (#50)
-
-### Fixed
-- **3D scene now tracks 2D edits.** An already-open 3D scene updates when the
-  underlying 2D traces change, instead of showing a stale mesh until the object
-  is removed and re-added. (#49)
-- **Copy to sections hardening.** Copying to a large or partial section range, or
-  with non-decimal input, no longer hangs, and invert/empty-set edge cases are
-  guarded, so copies land correctly regardless of input. (#46)
-- **Correlation-alignment propagation respects locks and undo.** Propagating an
-  alignment by correlation across a range now skips alignment-locked sections and
-  records a single undo state, and composes the corrAlign transform in the
-  correct order. (#47)
-
-## [1.21.0rc2] — 2026-07-05
-
-### Added
 - **Copy traces to multiple sections at once.** A new "Copy to sections..."
   action places the selected trace(s) onto multiple chosen sections at the same
   field (x, y) location in one step. It sits at the top level of the field
@@ -124,6 +108,16 @@ stable release.
 - Renamed the updater channels to **Release** and **Pre-release (experimental)**.
 
 ### Fixed
+- **3D scene now tracks 2D edits.** An already-open 3D scene updates when the
+  underlying 2D traces change, instead of showing a stale mesh until the object
+  is removed and re-added. (#49)
+- **Copy to sections hardening.** Copying to a large or partial section range, or
+  with non-decimal input, no longer hangs, and invert/empty-set edge cases are
+  guarded, so copies land correctly regardless of input. (#46)
+- **Correlation-alignment propagation respects locks and undo.** Propagating an
+  alignment by correlation across a range now skips alignment-locked sections and
+  records a single undo state, and composes the corrAlign transform in the
+  correct order. (#47)
 - **Shell-free converter launches.** The Zarr and Neuroglancer converters are now
   launched with an argument list on every platform instead of a shell command
   string. Paths read verbatim from the opened series file are passed as single
@@ -192,6 +186,6 @@ stable release.
   hooks; a Mesa software-OpenGL fallback on Windows for RDP/VM sessions; and a
   frozen-Windows multiprocessing fix so the Zarr conversion runs.
 
-[Unreleased]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.21.0rc2...HEAD
-[1.21.0rc2]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.20.0...v1.21.0rc2
+[Unreleased]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.21.0-beta-1...HEAD
+[1.21.0-beta-1]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.20.0...v1.21.0-beta-1
 [1.20.0]: https://github.com/dustenhubbard/PyReconstruct/releases/tag/v1.20.0
