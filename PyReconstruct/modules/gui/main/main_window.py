@@ -413,14 +413,20 @@ class MainWindow(QMainWindow):
             return
         
         if create_new:
+            from PyReconstruct.modules.backend.func.zarr_naming import (
+                default_scaled_zarr_fp, ensure_zarr_suffix,
+            )
             zarr_fp = FileDialog.get(
                 "save",
                 self,
                 "Convert Images to scaled zarr",
-                file_name=f"{self.series.name}_images.zarr",
-                filter="Zarr Directory (*.zarr)"
+                file_name=default_scaled_zarr_fp(self.series.src_dir, self.series.name),
+                filter="Zarr Directory (*zarr)"
             )
             if not zarr_fp: return
+            # is_zarr_file needs the store name to end in "zarr"; enforce it here
+            # rather than rely on the save dialog's platform-dependent suffixing.
+            zarr_fp = ensure_zarr_suffix(zarr_fp)
 
         zarr_converter = Path(assets_dir) / "scripts/start_process.py"
         launch_prefix = script_launch_prefix()
