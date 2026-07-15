@@ -12,6 +12,44 @@ stable release.
 
 ## [Unreleased]
 
+## [1.21.0-beta-2] — 2026-07-15
+
+### Added
+- **Copyable error reports.** The uncaught-error dialog now shows a full report
+  (version, OS, Python, traceback) with a "Copy report to clipboard" button. The
+  packaged app has no console, so lay users could not otherwise retrieve the
+  traceback. (#58)
+- **Handled errors are copyable too.** Handled failures (e.g. a save error via
+  `_surfaceSaveError`) now route through the same copyable dialog via a
+  `Notifier.notify_error` seam, instead of a plain message with no detail. Adds
+  Help ▸ Report issues ▸ Copy diagnostic report for an on-demand version/OS
+  report. (#60)
+- **Log file and viewer.** stdout/stderr and the exception-hook report are teed
+  to a per-user log file (size-bounded, one rotated backup). Help ▸ View log file
+  (copyable, with Open log folder) and Help ▸ Open log folder surface it,
+  restoring the console visibility lost when moving from the CLI launcher to the
+  packaged app. (#61)
+
+### Fixed
+- **Window no longer restores tiny or off-screen across DPI changes.** After the
+  display setup changes (e.g. a 1x external monitor and a 2x Retina panel), a
+  restored window that is too small or off every screen now falls back to a
+  sensible centered default. (#59)
+- **Retry transiently-locked saves on Windows.** `os.replace` during a save could
+  fail intermittently with `WinError 5`/`32`/`33` when the file was briefly
+  locked by another process (seen during background saves on scroll or section
+  change). The atomic replace now retries with backoff for those transient-lock
+  classes only; genuine errors such as a missing directory still fail
+  immediately. (#62)
+
+### Changed
+- **Default scaled-Zarr name and location.** "Convert to scaled Zarr" now
+  defaults to `<series>.zarr` beside the source image directory (was
+  `_images.zarr`); the file filter is loosened so a user-chosen name still works.
+  (#57)
+- **Linux release asset** is named with the normalized PEP 440 version, matching
+  the macOS and Windows assets. (#56)
+
 ## [1.21.0-beta-1] — 2026-07-07
 
 ### Added
