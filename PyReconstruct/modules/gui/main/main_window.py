@@ -6,6 +6,7 @@ import shutil
 from .main_imports import *
 
 from PyReconstruct.modules.datatypes.series import SeriesOpenError
+from PyReconstruct.modules.backend.func.window_geometry import window_geometry_is_usable
 
 
 class MainWindow(QMainWindow):
@@ -25,10 +26,16 @@ class MainWindow(QMainWindow):
         self.screen_info = get_screen_info(screen)
 
         geometry = QSettings("KHLab", "PyReconstruct").value("window/geometry")
+        restored = False
         if geometry is not None:
-            self.restoreGeometry(geometry)
-        else:
-            # first launch: ~50% of the screen, centered (not near-maximized)
+            restored = self.restoreGeometry(geometry)
+
+        if not (restored and self._restoredGeometryIsUsable()):
+            # First launch, OR a restored geometry that no longer fits the
+            # current displays -- classically after moving between a 1x external
+            # monitor and a 2x (Retina) internal panel, which can restore a
+            # tiny or off-screen window. Fall back to ~50% of the primary
+            # screen, centered (not near-maximized).
             w = int(self.screen_info["width"] * 0.5)
             h = int(self.screen_info["height"] * 0.5)
             self.setGeometry(
@@ -87,6 +94,24 @@ class MainWindow(QMainWindow):
 
         ## First-launch / post-update "What's new" (once per version, dismissible)
         QTimer.singleShot(750, self.showWhatsNewStartup)
+
+    def _restoredGeometryIsUsable(self) -> bool:
+        """Whether the just-restored geometry is usable on the current screens.
+
+        Guards against Qt restoring a tiny or off-screen window when the display
+        setup changed since it was saved (classically, moving between a 1x
+        external monitor and a 2x Retina panel). A window restored maximized or
+        fullscreen is always usable regardless of its stored normal geometry.
+        """
+        if self.isMaximized() or self.isFullScreen():
+            return True
+        g = self.geometry()
+        window_rect = (g.x(), g.y(), g.width(), g.height())
+        screen_rects = [
+            (a.x(), a.y(), a.width(), a.height())
+            for a in (screen.availableGeometry() for screen in QApplication.screens())
+        ]
+        return window_geometry_is_usable(window_rect, screen_rects)
 
     def openWelcomeSeries(self):
         """Open a welcome series."""
