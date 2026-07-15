@@ -339,7 +339,10 @@ class Section():
                 # internal hidden working file -- write compact bytes to cut
                 # serialization cost and the bytes re-read on every saveJser
                 f.write(fast_dumps(d))
-            os.replace(tmp_fp, self.filepath)
+            # a save fires on scroll / section switch; retry a transiently-locked
+            # replace (Windows AV/indexer/sync) so it doesn't fail spuriously
+            from PyReconstruct.modules.backend.func.atomic_io import replace_with_retry
+            replace_with_retry(tmp_fp, self.filepath)
         except OSError:
             # leave the original file untouched; clean up the partial temp
             try:
