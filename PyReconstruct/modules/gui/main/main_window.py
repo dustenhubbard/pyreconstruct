@@ -2936,6 +2936,16 @@ class MainWindow(QMainWindow):
         """Show a copyable report of the version/OS for pasting into a bug report."""
         from PyReconstruct.modules.gui.utils.errors import show_diagnostic_report
         show_diagnostic_report(self)
+
+    def viewLogFile(self):
+        """Show the recent log output (stdout/stderr + tracebacks) in a dialog."""
+        from PyReconstruct.modules.gui.utils.errors import show_log_file
+        show_log_file(self)
+
+    def openLogFolder(self):
+        """Open the folder containing the log file in the OS file manager."""
+        from PyReconstruct.modules.gui.utils.errors import open_log_folder
+        open_log_folder(self)
     
     def exportTracePaletteCSV(self):
         """Export the current trace palette as CSV file."""

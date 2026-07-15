@@ -29,6 +29,17 @@ import PyReconstruct.modules.gui.main as main
 
 def runPyReconstruct(filename=None):
 
+    # Tee stdout/stderr to a per-user log file so the packaged (windowed) app,
+    # which has no console, still records tracebacks and diagnostic output the
+    # CLI launcher used to show. Done here (not at module import) so the frozen
+    # multiprocessing worker re-execs -- which exit via freeze_support() before
+    # reaching this -- never install it and can't clash over the log file.
+    try:
+        from PyReconstruct.modules.backend.func.logging_setup import install_file_logging
+        install_file_logging()
+    except Exception:
+        pass  # logging is best-effort; never block launch on it
+
     # Stopgap for Wayland Qt issue (only needed from source; in a frozen bundle
     # PyInstaller's PySide6 hook wires the plugin path, and this PySide6.__file__
     # location would be wrong).

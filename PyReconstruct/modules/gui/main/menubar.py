@@ -426,6 +426,8 @@ def return_help_menu(self):
                 "opts":
                 [
                     ("copydiag_act", "Copy diagnostic report…", "", self.copyDiagnosticReport),
+                    ("viewlog_act", "View log file…", "", self.viewLogFile),
+                    ("openlogdir_act", "Open log folder", "", self.openLogFolder),
                     ("submitissue_act", "Report bug / Request feature", "", lambda : self.openWebsite(gh_submit)),
                     ("seeissues_act", "See unresolved issues", "", lambda : self.openWebsite(gh_issues))
                 ]
