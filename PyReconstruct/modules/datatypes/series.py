@@ -100,7 +100,10 @@ def _atomicWrite(fp : str, data : bytes):
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp_fp, fp)
+        # retry a transiently-locked replace (Windows AV/indexer/sync) so a
+        # background save doesn't fail spuriously; real errors still propagate
+        from PyReconstruct.modules.backend.func.atomic_io import replace_with_retry
+        replace_with_retry(tmp_fp, fp)
     except OSError:
         # best-effort cleanup of the temp file; the destination is untouched
         try:
