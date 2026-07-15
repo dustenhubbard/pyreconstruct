@@ -378,15 +378,22 @@ def test_help_menu_offers_whats_new_reopen():
     from PyReconstruct.modules.gui.main.menubar import return_help_menu
 
     sentinel = lambda: None
+    diag_sentinel = lambda: None
     stub = SimpleNamespace(
         copyCommit=lambda: None, checkForUpdates=lambda: None,
         showWhatsNew=sentinel, displayShortcuts=lambda: None,
         openWebsite=lambda *_: None, downloadExample=lambda: None,
+        copyDiagnosticReport=diag_sentinel,
     )
     opts = return_help_menu(stub)["opts"]
     entries = [o for o in opts if isinstance(o, tuple)]
     whatsnew = [o for o in entries if o[0] == "whatsnew_act"]
     assert whatsnew == [("whatsnew_act", "What's new", "", sentinel)]
+
+    # the copyable diagnostic report lives in the "Report issues" submenu
+    issuemenu = [o for o in opts if isinstance(o, dict) and o["attr_name"] == "issuemenu"][0]
+    copydiag = [o for o in issuemenu["opts"] if o[0] == "copydiag_act"]
+    assert copydiag == [("copydiag_act", "Copy diagnostic report…", "", diag_sentinel)]
 
 
 # ---- startup-flow guard (first-run friction audit) --------------------------

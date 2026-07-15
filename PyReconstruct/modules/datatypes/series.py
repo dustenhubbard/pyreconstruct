@@ -2673,7 +2673,14 @@ class Series():
             f"The existing file was left unchanged:\n{fp}"
         )
         try:
-            if self._notifier().notify(message):
+            from PyReconstruct.modules.backend.func.error_report import (
+                build_error_report_from_exception,
+            )
+            report = build_error_report_from_exception(err)
+        except Exception:
+            report = message  # report builder must never mask the real error
+        try:
+            if self._notifier().notify_error(message, report):
                 return
         except Exception:
             pass  # never let the notification itself mask the real error

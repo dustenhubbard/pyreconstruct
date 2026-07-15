@@ -425,6 +425,7 @@ def return_help_menu(self):
                 "text": "Report issues (GitHub)",
                 "opts":
                 [
+                    ("copydiag_act", "Copy diagnostic report…", "", self.copyDiagnosticReport),
                     ("submitissue_act", "Report bug / Request feature", "", lambda : self.openWebsite(gh_submit)),
                     ("seeissues_act", "See unresolved issues", "", lambda : self.openWebsite(gh_issues))
                 ]
