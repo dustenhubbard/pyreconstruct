@@ -1,8 +1,9 @@
+import os
 import sys
 import html
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFontDatabase
+from PySide6.QtGui import QFontDatabase, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QMessageBox,
@@ -115,6 +116,85 @@ def show_save_error(message: str, report: str, parent=None):
     show_error_report(_standard_summary(lead), report, parent, title="Save failed")
 
 
+class LogViewerDialog(QDialog):
+    """Read-only viewer for the app log file, with copy + open-folder buttons."""
+
+    def __init__(self, log_text: str, log_path, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Log file")
+        self._text = log_text
+        self._log_path = log_path
+
+        layout = QVBoxLayout(self)
+
+        heading = QLabel(f"Log file:<br><code>{html.escape(str(log_path))}</code>")
+        heading.setTextFormat(Qt.RichText)
+        heading.setWordWrap(True)
+        layout.addWidget(heading)
+
+        view = QPlainTextEdit(log_text)
+        view.setReadOnly(True)
+        view.setLineWrapMode(QPlainTextEdit.NoWrap)
+        view.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))
+        view.moveCursor(QTextCursor.End)   # show the most recent output
+        layout.addWidget(view)
+
+        buttons = QHBoxLayout()
+        self._copy_btn = QPushButton("Copy to clipboard")
+        self._copy_btn.clicked.connect(self._copy)
+        open_btn = QPushButton("Open log folder")
+        open_btn.clicked.connect(self._openFolder)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        close_btn.setDefault(True)
+        buttons.addWidget(self._copy_btn)
+        buttons.addWidget(open_btn)
+        buttons.addStretch()
+        buttons.addWidget(close_btn)
+        layout.addLayout(buttons)
+
+        self.resize(820, 560)
+
+    def _copy(self):
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(self._text)
+        self._copy_btn.setText("Copied ✓")
+
+    def _openFolder(self):
+        _open_log_folder(self._log_path)
+
+
+def _open_log_folder(log_path):
+    """Reveal the log's containing folder in the OS file manager (best-effort)."""
+    from PySide6.QtGui import QDesktopServices
+    from PySide6.QtCore import QUrl
+    folder = os.path.dirname(str(log_path))
+    QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+
+
+def show_log_file(parent=None):
+    """Help-menu action: view the log file's recent output in a copyable dialog."""
+    from PyReconstruct.modules.backend.func.logging_setup import (
+        read_log_tail,
+        log_file_path,
+    )
+    text = read_log_tail()
+    path = log_file_path()
+    if parent is None:
+        parent = QApplication.activeWindow()
+    try:
+        LogViewerDialog(text, path, parent).exec()
+    except Exception:
+        QMessageBox.information(parent, "Log file", f"Log file:\n{path}", QMessageBox.Ok)
+
+
+def open_log_folder(parent=None):
+    """Help-menu action: open the folder containing the log file."""
+    from PyReconstruct.modules.backend.func.logging_setup import log_file_path
+    _open_log_folder(log_file_path())
+
+
 def show_diagnostic_report(parent=None):
     """Help-menu action: show a copyable version/OS report (no error required)."""
     report = build_diagnostic_report()
@@ -131,5 +211,15 @@ def customExcepthook(exctype, value, tb):
     sys.__excepthook__(exctype, value, tb)  # keep console output for terminal users
 
     report = build_error_report(exctype, value, tb)
+
+    # Also record it in the log file, so it survives after the dialog is closed
+    # and can be pulled up via Help > View log file (best-effort).
+    try:
+        from PyReconstruct.modules.backend.func.logging_setup import log_file_path
+        with open(log_file_path(), "a", encoding="utf-8", errors="replace") as f:
+            f.write("\n" + report + "\n")
+    except Exception:
+        pass
+
     lead = f"<b>An error occurred:</b><br><br>{html.escape(str(value))}"
     show_error_report(_standard_summary(lead), report)
