@@ -29,6 +29,16 @@ class Notifier(ABC):
         caller can fall back to its own (e.g. headless) reporting.
         """
 
+    def notify_error(self, message, report) -> bool:
+        """Surface an error ``message`` alongside a copyable ``report``.
+
+        The default degrades to a plain ``notify(message)`` (dropping the
+        report), so non-GUI notifiers need no change. GUI notifiers override
+        this to show the report in a copyable dialog. Returns True if a
+        notification was actually shown.
+        """
+        return self.notify(message)
+
 
 class QtNotifier(Notifier):
     """Default notifier backed by the GUI ``notify`` helper (prior behavior).
@@ -49,6 +59,15 @@ class QtNotifier(Notifier):
         from PyReconstruct.modules.gui.utils.utils import qt_offscreen
         if QApplication.instance() is not None and not qt_offscreen:
             notify(message)
+            return True
+        return False
+
+    def notify_error(self, message, report):
+        from PySide6.QtWidgets import QApplication
+        from PyReconstruct.modules.gui.utils.utils import qt_offscreen
+        if QApplication.instance() is not None and not qt_offscreen:
+            from PyReconstruct.modules.gui.utils.errors import show_save_error
+            show_save_error(message, report)
             return True
         return False
 

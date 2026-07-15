@@ -1,7 +1,5 @@
 import sys
 import html
-import platform
-import traceback as _traceback
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFontDatabase
@@ -18,38 +16,30 @@ from PySide6.QtWidgets import (
 
 from PyReconstruct.modules.constants import gh_issues
 
+# Qt-free report builders (usable from the headless data model too).
+from PyReconstruct.modules.backend.func.error_report import (
+    build_error_report,
+    build_diagnostic_report,
+)
 
-def build_error_report(exctype, value, tb) -> str:
-    """Assemble a paste-ready crash report: version / OS / Python context plus the
-    full traceback. Never raises -- the global exception hook must not itself fail.
-    """
-    lines = ["PyReconstruct error report"]
-    try:
-        from PyReconstruct.modules.backend.updater.install_info import current_version_str
-        lines.append(f"Version:  {current_version_str()}")
-    except Exception:
-        pass
-    try:
-        lines.append(f"Platform: {platform.platform()}")
-        lines.append(f"Python:   {platform.python_version()}")
-    except Exception:
-        pass
-    lines.append("")
-    try:
-        tb_text = "".join(_traceback.format_exception(exctype, value, tb)).rstrip()
-    except Exception:
-        tb_text = f"{getattr(exctype, '__name__', exctype)}: {value}"
-    lines.append(tb_text or "(no traceback available)")
-    return "\n".join(lines)
+
+def _standard_summary(lead_html: str) -> str:
+    """Wrap a lead line with the standard copy-and-report instructions + link."""
+    return (
+        f"{lead_html}<br><br>"
+        "Click <b>Copy report to clipboard</b> below, then paste it into a bug "
+        "report or email so we can help.<br><br>"
+        f'Report bugs at <a href="{gh_issues}">{gh_issues}</a>'
+    )
 
 
 class ErrorReportDialog(QDialog):
-    """Modal error window that shows a copyable report.
+    """Modal window that shows a copyable report.
 
     The frozen app has no console, so lay users cannot read the traceback that
-    ``sys.__excepthook__`` prints to stderr. This shows the full report inline and
-    a one-click "Copy report to clipboard" button so it can be pasted into a bug
-    report or email.
+    ``sys.__excepthook__`` prints to stderr. This shows the full report inline
+    and a one-click "Copy report to clipboard" button so it can be pasted into a
+    bug report or email.
     """
 
     def __init__(self, summary_html: str, report: str, parent=None):
@@ -92,29 +82,54 @@ class ErrorReportDialog(QDialog):
         self._copy_btn.setText("Copied ✓")
 
 
+def show_error_report(summary_html: str, report: str, parent=None, title="Error"):
+    """Show ``report`` in a copyable dialog, never letting the display itself fail.
+
+    Shared by the global exception hook, the handled save-error path, and the
+    Help-menu diagnostics action. Falls back to a plain message box if the rich
+    dialog cannot be constructed.
+    """
+    active_window = QApplication.activeWindow()
+    if parent is None:
+        parent = active_window
+
+    try:
+        dialog = ErrorReportDialog(summary_html, report, parent)
+        dialog.setWindowTitle(title)
+        dialog.exec()
+    except Exception:
+        # the error handler itself must never fail -- fall back to a plain box
+        QMessageBox.critical(parent, title, f"{report}\n\n{gh_issues}", QMessageBox.Ok)
+
+    if active_window:
+        active_window.activateWindow()
+
+
+def show_save_error(message: str, report: str, parent=None):
+    """Copyable dialog for a handled save failure (used by the Notifier seam).
+
+    ``message`` is the plain-text explanation already shown to the user; the
+    ``report`` carries the traceback + environment for pasting into a bug report.
+    """
+    lead = html.escape(message).replace("\n", "<br>")
+    show_error_report(_standard_summary(lead), report, parent, title="Save failed")
+
+
+def show_diagnostic_report(parent=None):
+    """Help-menu action: show a copyable version/OS report (no error required)."""
+    report = build_diagnostic_report()
+    lead = (
+        "<b>Diagnostic report</b><br><br>"
+        "These details (your PyReconstruct version and operating system) help us "
+        "diagnose problems."
+    )
+    show_error_report(_standard_summary(lead), report, parent, title="Diagnostic report")
+
+
 def customExcepthook(exctype, value, tb):
     """Global exception hook: show an error window with a copyable report."""
     sys.__excepthook__(exctype, value, tb)  # keep console output for terminal users
 
     report = build_error_report(exctype, value, tb)
-
-    summary = (
-        f"<b>An error occurred:</b><br><br>{html.escape(str(value))}<br><br>"
-        "Click <b>Copy report to clipboard</b> below, then paste it into a bug "
-        "report or email so we can help.<br><br>"
-        f'Report bugs at <a href="{gh_issues}">{gh_issues}</a>'
-    )
-
-    active_window = QApplication.activeWindow()
-    parent = active_window if active_window else None
-
-    try:
-        ErrorReportDialog(summary, report, parent).exec()
-    except Exception:
-        # the error handler itself must never fail -- fall back to a plain box
-        QMessageBox.critical(
-            parent, "Error", f"{str(value)}\n\n{gh_issues}", QMessageBox.Ok
-        )
-
-    if active_window:
-        active_window.activateWindow()
+    lead = f"<b>An error occurred:</b><br><br>{html.escape(str(value))}"
+    show_error_report(_standard_summary(lead), report)

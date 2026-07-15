@@ -2931,6 +2931,11 @@ class MainWindow(QMainWindow):
         self.series.editors = self.series.editors.union(editors)
 
         AboutWidget(self, self.series)
+
+    def copyDiagnosticReport(self):
+        """Show a copyable report of the version/OS for pasting into a bug report."""
+        from PyReconstruct.modules.gui.utils.errors import show_diagnostic_report
+        show_diagnostic_report(self)
     
     def exportTracePaletteCSV(self):
         """Export the current trace palette as CSV file."""
