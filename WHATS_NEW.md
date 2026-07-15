@@ -4,6 +4,14 @@ Short, plain-language highlights shown in PyReconstruct's "What's new" dialog
 after you install or update. For the complete, detailed list of changes, see the
 full release notes on GitHub (linked from the dialog).
 
+## [1.21.0-beta-2] — 2026-07-15
+
+- **Fewer save interruptions on Windows.** An occasional "Save failed" message could pop up while you were just scrolling between sections. PyReconstruct now waits a moment and retries, so these hiccups no longer interrupt you. (Your work was always safe; the message appeared even though the file was left untouched.)
+- **The window won't open tiny anymore.** Fixed the main window sometimes opening very small, or off-screen, after moving between monitors with different scaling, like an external display and a laptop's high-resolution screen. It now opens at a sensible size and position.
+- **Easier to report a problem.** When something goes wrong, the error window now has a "Copy report to clipboard" button that gathers everything we need (what happened, your version, and your operating system) so you can paste it straight into a bug report or email. You can also grab this anytime from Help, Report issues, Copy diagnostic report.
+- **See PyReconstruct's log.** New Help, View log file (and Open log folder) let you look at the behind-the-scenes messages that used to appear only in a console window. This is handy when something misbehaves or you're sending us a report.
+- **A clearer default when converting images to Zarr.** Converting images to a scaled Zarr now suggests a clearer name and place: a `<series>.zarr` folder right next to your images. You can still choose your own name and location.
+
 ## [1.21.0-beta-1] — 2026-07-07
 
 - **Copy traces to multiple sections at once.** Select traces, right-click, choose "Copy to sections," and place them at the same spot across a range of sections in one step.
