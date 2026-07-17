@@ -221,15 +221,13 @@ jobs:
 
   release-prerelease:
     needs: build
-    # PAUSED 2026-06-29: the rolling "latest main" prerelease is disabled until the
-    # v1.30 UI overhaul ships curated semver pre-releases (v1.30.0-alpha.N → -rc → final).
-    # The dev builds it produced were functionally identical to stable and only confused
-    # the updater's prerelease channel. Re-enable by restoring the commented condition
-    # below — and FIRST make the `release` job above mark pre-release tags correctly
-    # (e.g. `prerelease: ${{ contains(github.ref_name, '-') }}`), or an alpha tag will
-    # publish as stable. See pyrecon-notes/DECISIONS.md.
-    if: ${{ false }}
-    # if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (needs.build.result == 'success' || needs.build.result == 'failure') }}
+    # RE-ENABLED 2026-07-17: this rolling "latest main" build now feeds the in-app
+    # **Developer** update channel (updater selects it by the fixed `prerelease` tag;
+    # the Beta channel explicitly excludes that tag, so it can no longer confuse the
+    # curated pre-release stream — the 2026-06-29 pause reason). The `release` job's
+    # "Classify release" step already marks pre-release tags correctly, satisfying the
+    # pause note's precondition. See pyrecon-notes/DECISIONS.md.
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (needs.build.result == 'success' || needs.build.result == 'failure') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
