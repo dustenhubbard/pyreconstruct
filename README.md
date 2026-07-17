@@ -52,9 +52,11 @@ Python required:
   Windows/macOS builds).
 
 The frozen Windows and macOS builds can update themselves from within the app via
-**Help ▸ Check for updates**, on either the **Stable** channel (stable, tagged
-`vX.Y.Z`) or the **Beta** channel (experimental; the latest pre-release
-build, e.g. release candidates like `vX.Y.ZrcN`). Updates are downloaded from
+**Help ▸ Check for updates**, on the **Stable** channel (stable, tagged
+`vX.Y.Z`), the **Beta** channel (experimental; the latest pre-release build, e.g.
+release candidates like `vX.Y.ZrcN`), or the **Developer** channel (the rolling
+build from the latest `main`, for developers and testers — expect breakage).
+Updates are downloaded from
 GitHub Releases and verified against a published SHA-256 checksum before they are
 applied. An optional once-per-day check on startup is available too, off by
 default.
