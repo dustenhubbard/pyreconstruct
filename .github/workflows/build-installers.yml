@@ -253,7 +253,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: prerelease
-          name: "Pre-release (experimental, latest main)"
+          name: "Beta (experimental, latest main)"
           prerelease: true
           target_commitish: main
           files: dist/*
