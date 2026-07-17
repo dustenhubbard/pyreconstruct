@@ -37,6 +37,9 @@ SUPERSEDED = [
 
 # Must survive: the stable itself, other version lines (stable or pre-release),
 # and v1.21.10rc1 -- a prefix-matching bug would lump it into the v1.21.0 line.
+# "prerelease" is the rolling latest-main build's REUSED tag, which now backs the
+# updater's Developer channel: it is not a vX.Y.Z line and must never be pruned,
+# or that channel would lose its only release when a stable ships.
 SURVIVORS = [
     "v1.21.0",
     "v1.20.5rc1",
@@ -45,6 +48,7 @@ SURVIVORS = [
     "v1.22.0rc1",
     "v1.22.0-beta-1",
     "v1.21.10rc1",
+    "prerelease",
 ]
 
 

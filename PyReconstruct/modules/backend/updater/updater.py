@@ -33,6 +33,52 @@ USER_AGENT = "PyReconstruct-updater"
 # 'PyReconstruct-<version>-<Platform>-<arch>...' -> capture <version>.
 _ASSET_VERSION_RE = re.compile(r"PyReconstruct-(?P<ver>.+?)-(?:Windows|macOS|Linux)\b")
 
+# The rolling "latest main" build is republished under this fixed GitHub tag on
+# every push to main (see .github/workflows/build-installers.yml). Unlike a cut
+# release, this tag is REUSED build-to-build. The Developer channel selects it by
+# this tag; the Beta (prerelease) channel explicitly excludes it so the rolling
+# build can never shadow a curated semver pre-release.
+ROLLING_TAG = "prerelease"
+
+# Channel values in the order their radios appear in Series > Options > Updates.
+# Position is the contract between the dialog's radios and the stored value; keep
+# this tuple and the radio order in all_options.py in lockstep.
+UPDATE_CHANNELS = ("release", "prerelease", "developer")
+
+# Legacy channel values from installs predating the rename (stable->release,
+# edge->prerelease). No legacy value maps to the newer 'developer' channel.
+_LEGACY_CHANNELS = {"stable": "release", "edge": "prerelease"}
+
+
+def normalize_channel(channel):
+    """Map a legacy channel value to its current equivalent (else pass through)."""
+    return _LEGACY_CHANNELS.get(channel, channel)
+
+
+def channel_radio_index(channel):
+    """Index of the Updates radio for ``channel`` (legacy values normalized).
+
+    Unknown/missing channels fall back to 0 (Stable), matching the default.
+    """
+    channel = normalize_channel(channel)
+    try:
+        return UPDATE_CHANNELS.index(channel)
+    except ValueError:
+        return 0
+
+
+def radio_response_channel(radio_response):
+    """Map a QuickDialog radio response to a channel value (positional).
+
+    ``radio_response`` is the list of ``(label, checked)`` tuples QuickDialog
+    returns for a radio group, one per button in UI order. Returns the channel
+    for the checked button; falls back to 'release' if somehow none is checked.
+    """
+    for i, item in enumerate(radio_response):
+        if item[1] and i < len(UPDATE_CHANNELS):
+            return UPDATE_CHANNELS[i]
+    return "release"
+
 
 class UpdateCancelled(Exception):
     """Raised when the user cancels a download mid-stream."""
@@ -72,20 +118,29 @@ def pick_release(releases, channel):
     """Pick the release for a channel.
 
     release    -> newest non-prerelease, non-draft release.
-    prerelease -> newest release flagged ``prerelease`` (drafts excluded).
-                  The pipeline publishes curated semver pre-releases
-                  (v1.30.0-alpha.N -> -rc -> final), each flagged
-                  ``prerelease=true`` by CI, so the newest such release is the
-                  current pre-release. GitHub returns releases newest-first, so
-                  the first prerelease-flagged one wins -- and a stale rolling
-                  'prerelease' release can no longer shadow a newer semver one.
+    prerelease -> newest release flagged ``prerelease`` (drafts excluded),
+                  EXCLUDING the rolling ``ROLLING_TAG`` build. The pipeline
+                  publishes curated semver pre-releases (v1.30.0-alpha.N -> -rc
+                  -> final), each flagged ``prerelease=true`` by CI, so the
+                  newest such release is the current pre-release. Excluding the
+                  rolling tag explicitly (rather than relying on newest-first
+                  ordering) guarantees the rolling build can never shadow a
+                  curated semver pre-release, even if GitHub's ordering shifts.
+    developer  -> the rolling "latest main" build, selected by ``ROLLING_TAG``.
+                  Its tag is reused build-to-build, so it is identified by tag,
+                  not by version; freshness is decided later from the asset's
+                  version (the CI-baked ``.devN`` commit distance).
     """
-    # accept legacy channel values ("stable"/"edge") from installs predating the rename
-    channel = {"stable": "release", "edge": "prerelease"}.get(channel, channel)
+    channel = normalize_channel(channel)
     rels = [r for r in (releases or []) if not r.get("draft")]
+    if channel == "developer":
+        for r in rels:
+            if r.get("tag_name") == ROLLING_TAG:
+                return r
+        return None
     if channel == "prerelease":
         for r in rels:
-            if r.get("prerelease"):
+            if r.get("prerelease") and r.get("tag_name") != ROLLING_TAG:
                 return r
         return None
     # release (stable)

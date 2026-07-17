@@ -122,16 +122,19 @@ by re-running `install.sh` — see [Installing PyReconstruct](#1-installing-pyre
 
 ### Update channels
 
-PyReconstruct offers two update channels, selected under **Series ▸ Options…**
+PyReconstruct offers three update channels, selected under **Series ▸ Options…**
 (`Shift+O`) in the **Updates** section:
 
 - **Stable (recommended)** — stable builds, tagged `vX.Y.Z`.
 - **Beta (early features, may be unstable)** — the latest pre-release build (release
   candidates, tagged like `vX.Y.ZrcN`); newer features, less testing.
+- **Developer (every change, expect breakage)** — the rolling build rebuilt from the
+  latest `main` after every change; the newest code, untested and often broken. For
+  developers and testers only.
 
 The default channel is **Stable**.
 
-> 📸 *Screenshot: Series ▸ Options ▸ Updates, showing the Stable / Beta radio buttons and the "Check for updates on startup" checkbox.*
+> 📸 *Screenshot: Series ▸ Options ▸ Updates, showing the Stable / Beta / Developer radio buttons and the "Check for updates on startup" checkbox.*
 
 ### Checking for updates
 
