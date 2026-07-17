@@ -229,7 +229,8 @@ class AllOptionsDialog(QDialog):
                 ("Taubin", opt == "taubin"),
                 ("None (least smooth)", opt == "none"))],
             ["Smoothing iterations:", ("int", self.series.getOption("smoothing_iterations"))],
-            ["Screenshot resolution (dpi):", ("int", self.series.getOption("screenshot_res"))]
+            ["Screenshot resolution (dpi):", ("int", self.series.getOption("screenshot_res"))],
+            [("check", ("Auto-refresh edited objects", self.series.getOption("3D_auto_refresh", use_defaults)))]
         ]
 
         def setOption(response):
@@ -244,7 +245,8 @@ class AllOptionsDialog(QDialog):
             self.series.setOption("3D_smoothing", smoothing_alg)
             self.series.setOption("smoothing_iterations", response[2])
             self.series.setOption("screenshot_res", response[3])
-            
+            self.series.setOption("3D_auto_refresh", response[4][0][1])
+
         self.addOptionWidget("smoothing_3D", structure, setOption)
 
         ## Theme opts
