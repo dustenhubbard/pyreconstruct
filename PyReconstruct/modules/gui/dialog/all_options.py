@@ -457,8 +457,8 @@ class AllOptionsDialog(QDialog):
             structure = [
                 ["Update channel:"],
                 [("radio",
-                  ("Release (recommended)", channel == "release"),
-                  ("Pre-release (experimental, latest main)", channel == "prerelease"))],
+                  ("Stable (recommended)", channel == "release"),
+                  ("Beta (early features, may be unstable)", channel == "prerelease"))],
                 [("check", ("Check for updates on startup",
                             self.series.getOption("update_check_on_startup", use_defaults)))],
             ]

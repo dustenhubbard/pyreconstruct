@@ -125,13 +125,13 @@ by re-running `install.sh` — see [Installing PyReconstruct](#1-installing-pyre
 PyReconstruct offers two update channels, selected under **Series ▸ Options…**
 (`Shift+O`) in the **Updates** section:
 
-- **Release (recommended)** — stable builds, tagged `vX.Y.Z`.
-- **Pre-release (experimental)** — the latest pre-release build (release candidates,
-  tagged like `vX.Y.ZrcN`); newer features, less testing.
+- **Stable (recommended)** — stable builds, tagged `vX.Y.Z`.
+- **Beta (early features, may be unstable)** — the latest pre-release build (release
+  candidates, tagged like `vX.Y.ZrcN`); newer features, less testing.
 
-The default channel is **Release**.
+The default channel is **Stable**.
 
-> 📸 *Screenshot: Series ▸ Options ▸ Updates, showing the Release / Pre-release radio buttons and the "Check for updates on startup" checkbox.*
+> 📸 *Screenshot: Series ▸ Options ▸ Updates, showing the Stable / Beta radio buttons and the "Check for updates on startup" checkbox.*
 
 ### Checking for updates
 
