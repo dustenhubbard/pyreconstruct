@@ -266,12 +266,9 @@ def _qapp():
     return QApplication.instance() or QApplication(["test"])
 
 
-def test_window_activate_calls_refresh_stale():
-    from PySide6.QtWidgets import QApplication, QWidget
-    from PySide6.QtCore import QEvent
-    from PyReconstruct.modules.gui.popup.custom_plotter import Container
-
-    _qapp()
+def _make_fake_plotter(auto_refresh=True):
+    """A stand-in plotter whose auto-refresh option can be toggled."""
+    from PySide6.QtWidgets import QWidget
 
     class FakePlotter(QWidget):
         plt = object()  # marks construction as finished
@@ -279,12 +276,25 @@ def test_window_activate_calls_refresh_stale():
         def __init__(self):
             super().__init__()
             self.refresh_calls = 0
+            self.series = SimpleNamespace(
+                getOption=lambda name: auto_refresh
+            )
 
         def refreshStale(self):
             self.refresh_calls += 1
 
+    return FakePlotter()
+
+
+def test_window_activate_calls_refresh_stale():
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import QEvent
+    from PyReconstruct.modules.gui.popup.custom_plotter import Container
+
+    _qapp()
+
     container = Container()
-    plotter = FakePlotter()
+    plotter = _make_fake_plotter(auto_refresh=True)
     container.setCentralWidget(plotter)
 
     QApplication.sendEvent(container, QEvent(QEvent.Type.WindowActivate))
@@ -293,6 +303,23 @@ def test_window_activate_calls_refresh_stale():
     # unrelated events do not trigger a refresh
     QApplication.sendEvent(container, QEvent(QEvent.Type.WindowDeactivate))
     assert plotter.refresh_calls == 1
+
+
+def test_window_activate_skips_refresh_when_auto_refresh_off():
+    """With auto-refresh disabled, focusing the window must NOT regenerate;
+    the user drives the refresh manually instead."""
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import QEvent
+    from PyReconstruct.modules.gui.popup.custom_plotter import Container
+
+    _qapp()
+
+    container = Container()
+    plotter = _make_fake_plotter(auto_refresh=False)
+    container.setCentralWidget(plotter)
+
+    QApplication.sendEvent(container, QEvent(QEvent.Type.WindowActivate))
+    assert plotter.refresh_calls == 0
 
 
 def test_window_activate_ignores_half_constructed_plotter():

@@ -765,7 +765,11 @@ class Container(QMainWindow):
             # hasattr check: the central widget is set before the plotter
             # finishes constructing
             if plotter is not None and hasattr(plotter, "plt"):
-                plotter.refreshStale()
+                # only auto-regenerate if the user has left auto-refresh on;
+                # stale objects still accrue and can be refreshed manually
+                # (Scene > Refresh edited objects) when this is off
+                if plotter.series.getOption("3D_auto_refresh"):
+                    plotter.refreshStale()
         return super().event(event)
 
     def closeEvent(self, event):
@@ -872,6 +876,7 @@ class CustomPlotter(QVTKRenderWindowInteractor):
                     ("settrinc_act", "Set translate/rotate step...", "", self.setStep),
                     ("organize_act", "Organize scene...", "Ctrl+Shift+H", self.organizeScene),
                     ("refreshstale_act", "Refresh edited objects", "Ctrl+R", self.refreshStale),
+                    ("autorefresh_act", "Auto-refresh edited objects", "checkbox", self.toggleAutoRefresh),
                     ("reload_act", "Reload selected", "Ctrl+Shift+R", self.reload),
                     ("backgroud_act", "Change background", "", self.plt.changeBackground),
                     None,
@@ -899,6 +904,9 @@ class CustomPlotter(QVTKRenderWindowInteractor):
         self.menubar_widget = self.container.menuBar()
         self.menubar_widget.setNativeMenuBar(False)
         populateMenuBar(self, self.menubar_widget, menubar_list)
+
+        ## Reflect the persisted auto-refresh preference in the menu checkbox
+        self.autorefresh_act.setChecked(self.series.getOption("3D_auto_refresh"))
 
         self.addToScene = self.plt.addToScene
         self.removeObjects = self.plt.removeFromScene
@@ -948,6 +956,15 @@ class CustomPlotter(QVTKRenderWindowInteractor):
         self.plt.toggleScaleCube(
             self.togglesc_act.isChecked()
         )
+
+    def toggleAutoRefresh(self):
+        """Toggle auto-refreshing of edited objects when the window is focused."""
+        auto_refresh = self.autorefresh_act.isChecked()
+        self.series.setOption("3D_auto_refresh", auto_refresh)
+        # turning it back on catches up any edits made while it was off
+        # (no-op if nothing is stale)
+        if auto_refresh:
+            self.refreshStale()
         
     def moveScaleCubeHelp(self):
         """Inform the user of how to move the scale cube."""
