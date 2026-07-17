@@ -52,8 +52,8 @@ Python required:
   Windows/macOS builds).
 
 The frozen Windows and macOS builds can update themselves from within the app via
-**Help ▸ Check for updates**, on either the **Release** channel (stable, tagged
-`vX.Y.Z`) or the **Pre-release** channel (experimental; the latest pre-release
+**Help ▸ Check for updates**, on either the **Stable** channel (stable, tagged
+`vX.Y.Z`) or the **Beta** channel (experimental; the latest pre-release
 build, e.g. release candidates like `vX.Y.ZrcN`). Updates are downloaded from
 GitHub Releases and verified against a published SHA-256 checksum before they are
 applied. An optional once-per-day check on startup is available too, off by
@@ -131,7 +131,7 @@ What this distribution adds over upstream, all in the current stable release:
   Silicon *and* Intel builds, on an updated 3D stack: vtk 9.4.2 + vedo 2025.5.4),
   and Linux, built in CI.
 - **In-app updater** that updates the frozen Windows/macOS builds from GitHub
-  Releases, on a stable or pre-release channel and verified by checksum (see
+  Releases, on a stable or beta channel and verified by checksum (see
   [Install](#install)).
 - **3–4× faster large-series open & refresh** — the performance work above, with
   verified geometry equivalence.
