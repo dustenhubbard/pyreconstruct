@@ -49,6 +49,7 @@ default_settings = {
     # view
     "3D_xy_res": 0,  # 0-100  # MFO
     "3D_smoothing": "humphrey",  # MFO
+    "3D_auto_refresh": True,  # auto-regenerate edited meshes when the 3D window is focused  # MFO
     "smoothing_iterations": 10,  # MFO
     "screenshot_res": 300,
     "show_ztraces": True,  # MFO
