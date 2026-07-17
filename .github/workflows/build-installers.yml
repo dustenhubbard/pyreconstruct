@@ -252,8 +252,15 @@ jobs:
           fi
       - uses: softprops/action-gh-release@v2
         with:
+          # The reused 'prerelease' tag backs the in-app updater's DEVELOPER
+          # channel (the rolling latest-main build), NOT the Beta channel: Beta
+          # (updater channel 'prerelease') serves curated semver pre-releases and
+          # explicitly excludes this tag. Keep the tag name 'prerelease' -- the
+          # updater's pick_release selects the rolling build by that exact tag
+          # (updater.ROLLING_TAG). Only the human-facing release title says
+          # "Developer".
           tag_name: prerelease
-          name: "Beta (experimental, latest main)"
+          name: "Developer (latest main, expect breakage)"
           prerelease: true
           target_commitish: main
           files: dist/*

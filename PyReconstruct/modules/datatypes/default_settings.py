@@ -151,7 +151,7 @@ default_settings = {
     "theme": "default",  # MFO
 
     # updates
-    "update_channel": "release",  # "release" | "prerelease"     # MFO
+    "update_channel": "release",  # "release" | "prerelease" | "developer"  # MFO
     "update_branch": "main",      # source/dev installs only     # MFO
     "update_check_on_startup": False,  # frozen builds: opt-in background check  # MFO
 
