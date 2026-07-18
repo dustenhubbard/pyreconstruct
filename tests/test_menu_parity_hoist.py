@@ -2,7 +2,7 @@
 
 Covers:
 
-  * Q1 parity -- "Invert selection" and per-list "Copy <entity> text" added across the
+  * Q1 parity -- "Invert selection" and per-list "Copy <entity> values" added across the
     lists (object already had invert; section/flag already had copy row).
       - the shared QTableWidget-backed ``DataTable.invertSelection`` inverts
         only the DISPLAYED (filtered) rows, never filtered-out data;
@@ -241,31 +241,31 @@ def _src(relpath):
 def test_object_list_has_invert_and_copy_row():
     src = _src("table/object.py")
     assert '"Invert selection", "", self.invertSelection' in src
-    assert '"Copy object text", "", self.table.copy' in src
+    assert '"Copy object values", "", self.table.copy' in src
 
 
 def test_trace_list_has_invert_and_copy_row():
     src = _src("table/trace.py")
     assert '"Invert selection", "", self.invertSelection' in src
-    assert '"Copy trace text", "", self.table.copy' in src
+    assert '"Copy trace values", "", self.table.copy' in src
 
 
 def test_ztrace_list_has_invert_and_copy_row():
     src = _src("table/ztrace.py")
     assert '"Invert selection", "", self.invertSelection' in src
-    assert '"Copy z-trace text", "", self.table.copy' in src
+    assert '"Copy z-trace values", "", self.table.copy' in src
 
 
 def test_section_list_has_invert_and_keeps_copy_row():
     src = _src("table/section.py")
     assert '"Invert selection", "", self.invertSelection' in src
-    assert '"Copy section text", "", self.table.copy' in src
+    assert '"Copy section values", "", self.table.copy' in src
 
 
 def test_flag_list_has_invert_and_keeps_copy_row():
     src = _src("table/flag.py")
     assert '"Invert selection", "", self.invertSelection' in src
-    assert '"Copy flag text", "", self.table.copy' in src
+    assert '"Copy flag values", "", self.table.copy' in src
 
 
 # --------------------------------------------------------------------------- #
