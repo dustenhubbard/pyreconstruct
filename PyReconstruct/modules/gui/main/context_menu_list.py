@@ -19,7 +19,7 @@ def get_field_menu_list(self):
         },
         {
             "attr_name": "ztracemenu",
-            "text": "Ztrace",
+            "text": "Z-trace",
             "opts": self.field.getZtraceMenu()
         },
         None,
@@ -30,7 +30,7 @@ def get_field_menu_list(self):
             [
                 ("focus_act", "Toggle focus mode", self.series, self.field.toggleFocusMode),
                 None,
-                ("unhideall_act", "Unhide all traces", self.series, self.field.unhideAllTraces),
+                ("unhideall_act", "Unhide all traces (this section)", self.series, self.field.unhideAllTraces),
                 None,
                 ("hideall_act", "Toggle hide all", self.series, self.field.toggleHideAllTraces),
                 ("showall_act", "Toggle show all", self.series, self.field.toggleShowAllTraces),
@@ -48,17 +48,17 @@ def get_field_menu_list(self):
         self.pasteattributes_act,
         None,
         ("selectall_act", "Select all traces", self.series, self.field.selectAllTraces),
-        ("deselect_act", "Deselect traces", self.series, self.field.deselectAllTraces),
+        ("deselect_act", "Deselect all traces", self.series, self.field.deselectAllTraces),
         ("invertselection_act", "Invert selection", "", self.field.invertTraceSelection),
         None,
-        ("delete_act", "Delete", "Del", self.backspace),
+        ("delete_act", "Delete selected", "Del", self.backspace),
     ]
 
 
 def get_context_menu_list_obj(self):
 
     return [
-        ("editobjattribtues_act", "Edit attributes of traces...", "", self.editAttributes),
+        ("editobjattribtues_act", "Edit object attributes...", "", self.editAttributes),
         None,
         {
             "attr_name" : "objattrsmenu",
@@ -67,16 +67,16 @@ def get_context_menu_list_obj(self):
             [
                 ("editobjcomment_act", "Comment...", "", self.editComment),
                 None,
-                ("sethosts_act", "Set host(s)...", "", self.setHosts),
-                ("clearhosts_act", "Clear host(s)...", "", self.clearHosts),
-                ("displayinhabitants_act", "Display tree of inhabitants", "", lambda : self.displayHostTree(False)),
-                ("displayhosts_act", "Display tree of hosts", "", self.displayHostTree),
+                ("sethosts_act", "Set hosts...", "", self.setHosts),
+                ("clearhosts_act", "Clear hosts", "", self.clearHosts),
+                ("displayinhabitants_act", "Show inhabitant tree", "", lambda : self.displayHostTree(False)),
+                ("displayhosts_act", "Show host tree", "", self.displayHostTree),
                 None,
                 ("addobjgroup_act", "Add to group...", "", self.addToGroup),
                 ("removeobjgroup_act", "Remove from group...", "", self.removeFromGroup),
                 ("removeobjallgroups_act", "Remove from all groups", "", self.removeFromAllGroups),
                 None,
-                ("setobjalignment_act", "Change object alignment...", "", self.editAlignment),
+                ("setobjalignment_act", "Edit alignment...", "", self.editAlignment),
                 None,
                 ("lockobj_act", "Lock", "", self.lockObjects),
                 ("unlockobj_act", "Unlock", "", lambda : self.lockObjects(False))
@@ -87,16 +87,16 @@ def get_context_menu_list_obj(self):
             "text": "Operations",
             "opts":
             [
-                ("copyobj_act", "Create copy of object(s)", "", self.copyObjects),
+                ("copyobj_act", "Duplicate object", "", self.copyObjects),
                 ("editobjradius_act", "Edit radius...", "", self.editRadius),
                 ("editobjshape_act", "Edit shape...", "", self.editShape),
                 None,
-                ("smoothtraces_act", "Smooth object traces", "", self.smoothObject),
-                ("splitobj_act", "Split traces into individual objects", "", self.splitObject),
+                ("smoothtraces_act", "Smooth traces", "", self.smoothObject),
+                ("splitobj_act", "Split into separate objects", "", self.splitObject),
                 None,
                 ("hideobj_act", "Hide", "", self.hideObj),
                 ("unhideobj_act", "Unhide", "", lambda : self.hideObj(False)),
-                ("hideotherobj_act", "Hide Other Objects", "", self.hideOtherObjects),
+                ("hideotherobj_act", "Hide other objects", "", self.hideOtherObjects),
                 ("hideallobj_act", "Hide all objects", "", self.hideAllObjects),
                 ("showallobj_act", "Show all objects", "", self.unhideAllObjects),
                 None,
@@ -112,7 +112,7 @@ def get_context_menu_list_obj(self):
             "text": "Set curation",
             "opts":
             [
-                ("blankcurate_act", "Blank", "", lambda : self.bulkCurate("")),
+                ("blankcurate_act", "Clear status", "", lambda : self.bulkCurate("")),
                 ("needscuration_act", "Needs curation", "", lambda : self.bulkCurate("Needs curation")),
                 ("curated_act", "Curated", "", lambda : self.bulkCurate("Curated"))
             ]
@@ -132,19 +132,19 @@ def get_context_menu_list_obj(self):
                         ("export3D_act", "Wavefront (.obj)", "", lambda : self.exportAs3D("obj")),
                         ("export3D_act", "Object File Format (.off)", "", lambda : self.exportAs3D("off")),
                         ("export3D_act", "Stanford PLY (.ply)", "", lambda : self.exportAs3D("ply")),
-                        ("export3D_act", "Stl (.stl)", "", lambda : self.exportAs3D("stl")),
+                        ("export3D_act", "STL (.stl)", "", lambda : self.exportAs3D("stl")),
                         ("export3D_act", "Collada (.dae) - requires collada", "", lambda : self.exportAs3D("dae")),
                     ]
                     
                     },
-                ("exportmeshdata", "Export quantitative data", "", self.export3DData),
+                ("exportmeshdata", "Export quantitative data...", "", self.export3DData),
                 None,
                 ("editobj3D_act", "Edit 3D settings...", "", self.edit3D)
             ]
         },
         {
             "attr_name": "objztracemenu",
-            "text": "Create ztrace",
+            "text": "Create Z-trace",
             "opts":
             [
                 ("csztrace_act", "On contour midpoints", "", self.createZtrace),
@@ -156,7 +156,7 @@ def get_context_menu_list_obj(self):
         None,
         ("setpaletteobj_act", "Copy attributes to palette", "", self.setPaletteButtonFromObj),
         None,
-        ("deleteobj_act", "Delete", "", self.deleteObjects)
+        ("deleteobj_act", "Delete objects", "", self.deleteObjects)
     ]
 
 
@@ -167,7 +167,7 @@ def get_context_menu_list_trace(self, is_in_field=True):
     sc = self.series if is_in_field else ""
     
     context_menu = [
-        ("edittrace_act", "Edit attributes...", sc, self.traceDialog),
+        ("edittrace_act", "Edit trace attributes...", sc, self.traceDialog),
     ]
 
     # "Copy to sections..." lives at the field context-menu top level (next to
@@ -181,19 +181,19 @@ def get_context_menu_list_trace(self, is_in_field=True):
         None,
         ("smoothtraces_act", "Smooth traces", "", self.smoothTraces),
         ("mergetraces_act", "Merge traces", sc, self.mergeTraces),
-        ("mergeobjects_act", "Merge attributes", sc, lambda : self.mergeTraces(merge_attrs=True)),
+        ("mergeobjects_act", "Merge attributes only", sc, lambda : self.mergeTraces(merge_attrs=True)),
         None,
         ("makenegative_act", "Make negative", "", self.makeNegative),
         ("makepositive_act", "Make positive", "", lambda : self.makeNegative(False)),
         None,
-        ("hidetraces_act", "Hide", sc, self.hideTraces),
+        ("hidetraces_act", "Hide traces", sc, self.hideTraces),
     ]
 
     # field only: current-section "hide the rest" (distinct from the volume-wide
     # object action). Menu-only, so no shortcut is bound.
     if is_in_field:
         context_menu += [
-            ("hideothertraces_act", "Hide Other Traces on this Section", "", self.hideOtherTraces),
+            ("hideothertraces_act", "Hide other traces (this section)", "", self.hideOtherTraces),
         ]
 
     if not is_in_field:
@@ -217,7 +217,7 @@ def get_context_menu_list_trace(self, is_in_field=True):
             
             context_menu += [
                 None,
-                ("deletetrace_act", "Delete", "", self.deleteTraces)  # accessible elswhere in the field context menu
+                ("deletetrace_act", "Delete traces", "", self.deleteTraces)  # accessible elswhere in the field context menu
             ]
         
     return context_menu

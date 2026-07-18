@@ -1188,7 +1188,7 @@ class FieldWidgetTrace(FieldWidgetBase):
     def getZtraceMenu(self):
         """Get the context menu list for interacting with ztraces."""
         context_menu_list = [
-            ("editztracce_act", "Edit attributes...", "", self.editZtraceAttributes),
+            ("editztracce_act", "Edit Z-trace attributes...", "", self.editZtraceAttributes),
             ("smoothztrace_act", "Smooth", "", self.smoothZtrace),
             None,
             {
@@ -1210,9 +1210,9 @@ class FieldWidgetTrace(FieldWidgetBase):
                     ("removeztraceallgroups_act", "Remove from all groups", "", self.removeZtraceFromAllGroups)
                 ]
             },
-            ("setztracealignment_act", "Change ztrace alignment...", "", self.editZtraceAlignment),
+            ("setztracealignment_act", "Edit alignment...", "", self.editZtraceAlignment),
             None,
-            ("deleteztrace_act", "Delete", "", self.deleteZtrace)
+            ("deleteztrace_act", "Delete Z-traces", "", self.deleteZtrace)
         ]
         return context_menu_list
 

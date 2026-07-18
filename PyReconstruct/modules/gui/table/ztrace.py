@@ -160,7 +160,7 @@ class ZtraceTableWidget(DataTable):
         is_regex = tuple(self.re_filters) != (".*",)
         is_group = bool(self.group_filters)
 
-        title = "Ztrace List "
+        title = "Z-trace List "
         if any((is_regex, is_group)):
             strs = []
             if is_regex: strs.append("regex")

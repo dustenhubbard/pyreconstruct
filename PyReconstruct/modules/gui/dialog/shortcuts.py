@@ -196,7 +196,7 @@ help_shortcuts = [
     ("objectlist_act", "Open Object List"),
     ("togglecuration_act", "Toggle curation columns in object list"),
     ("tracelist_act", "Open Trace List"),
-    ("ztracelist_act", "Open Ztrace List"),
+    ("ztracelist_act", "Open Z-trace List"),
     ("sectionlist_act", "Open Section List"),
     ("flaglist_act", "Open Flag List"),
     ("changealignment_act", "Switch/modify alignments"),

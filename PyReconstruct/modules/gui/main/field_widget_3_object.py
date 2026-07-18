@@ -411,7 +411,7 @@ class FieldWidgetObject(FieldWidgetTrace):
     def unhideAllObjects(self):
         """Show all objects: unhide every object throughout the whole series.
 
-        The clear restore for "Hide Other Objects"; undoable series-wide, like
+        The clear restore for "Hide other objects"; undoable series-wide, like
         the object hide itself.
         """
         all_names = list(self.series.data["objects"].keys())
