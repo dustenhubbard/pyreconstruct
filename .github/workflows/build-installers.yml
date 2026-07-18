@@ -14,8 +14,47 @@ on:
 permissions:
   contents: write   # create / update GitHub Releases
 
+# --- Concurrency design (rolling-release race) -------------------------------
+# Two rapid pushes to main used to run fully concurrent workflows that each
+# delete+recreate the rolling 'prerelease' release. If the OLDER commit's job
+# finished last, the Developer channel served the older build (and the .devN
+# freshness number then read as a downgrade, stranding users until the next
+# push). The fix is split deliberately across two phases, NOT a single
+# workflow-level `cancel-in-progress`:
+#
+#   * BUILD phase (jobs.build): ref-scoped group + cancel-in-progress:true.
+#     A newer push to main cancels the older main BUILD before it can publish,
+#     so the superseded run's release-prerelease is skipped (its `needs: build`
+#     result becomes `cancelled`, failing the success/failure gate below) and
+#     never touches the release -> the newest main build wins, and CI isn't
+#     wasted. Because the group keys on ${{ github.ref }}, every tag is its own
+#     lane: tag builds never cancel each other and are never cancelled by a
+#     main push (requirement: tag releases must never be cancelled).
+#
+#   * PUBLISH phase (jobs.release-prerelease): a NON-ref-scoped group with
+#     cancel-in-progress:FALSE. The delete+recreate of the 'prerelease' release
+#     is two steps, NOT atomic; a cancellation landing between them would leave
+#     the channel deleted-but-not-recreated (no release at all -- the one state
+#     we must never reach). cancel-in-progress:false ensures a publish that has
+#     started is never CANCELLED between the two steps, so concurrency can no
+#     longer strand the channel (delete is always followed by its recreate).
+#     (A hard FAILURE of the recreate step could still strand it -- a
+#     pre-existing property of delete-then-recreate, out of scope here and not
+#     something concurrency can fix.) Newest-wins still holds: a
+#     running publish finishes, and among *pending* publishes GitHub keeps only
+#     the newest (older pending ones are dropped), so the last write is the
+#     newest build. softprops/action-gh-release@v2 updates the existing
+#     'prerelease' release (creating it if absent), so each recreate yields a
+#     complete release. Only main pushes enter this job (see its `if:`), so
+#     tag publishes never queue behind it.
+# -----------------------------------------------------------------------------
+
 jobs:
   build:
+    concurrency:
+      # cancel a superseded in-flight build; ref-scoped so tags keep separate lanes
+      group: build-installers-build-${{ github.ref }}
+      cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix:
@@ -221,6 +260,14 @@ jobs:
 
   release-prerelease:
     needs: build
+    concurrency:
+      # Serialize rolling-release publishes and NEVER cancel one mid-flight: the
+      # delete+recreate below is not atomic, so cancellation between the steps
+      # would strand the Developer channel with no release. See the design note
+      # above the jobs block. Group is intentionally NOT ref-scoped (all main
+      # publishes share one lane) and cancel-in-progress is false.
+      group: build-installers-rolling-release
+      cancel-in-progress: false
     # RE-ENABLED 2026-07-17: this rolling "latest main" build now feeds the in-app
     # **Developer** update channel (updater selects it by the fixed `prerelease` tag;
     # the Beta channel explicitly excludes that tag, so it can no longer confuse the

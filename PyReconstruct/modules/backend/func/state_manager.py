@@ -70,7 +70,7 @@ class FieldState():
                     json_contours = {}
                     for contour_name in updated_contours:
                         json_contours[contour_name] = [trace.getList() for trace in contours[contour_name]]
-                    with open(self.contours_fp, "w") as f:
+                    with open(self.contours_fp, "w", encoding="utf-8") as f:
                         json.dump(json_contours, f)
                 self.contours = None
             except OSError:
@@ -116,7 +116,7 @@ class FieldState():
     def getContours(self):
         contours = {}
         if self.contours_fp:
-            with open(self.contours_fp, "r") as f:
+            with open(self.contours_fp, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data.get("contours"), dict):
                 # baseline copied from the on-disk section file: parse its
@@ -151,7 +151,7 @@ class FieldState():
     
     def getModifiedContours(self):
         if self.contours_fp:
-            with open(self.contours_fp, "r") as f:
+            with open(self.contours_fp, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data.get("contours"), dict):
                 return set(data["contours"].keys())

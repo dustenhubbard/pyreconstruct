@@ -765,10 +765,22 @@ class Container(QMainWindow):
             # hasattr check: the central widget is set before the plotter
             # finishes constructing
             if plotter is not None and hasattr(plotter, "plt"):
+                auto_refresh = plotter.series.getOption("3D_auto_refresh")
+                # Resync the Scene-menu checkbox with the stored option, which
+                # may have been flipped via Series > Options while this window
+                # was open (the checkbox is otherwise only set once, at
+                # construction, so it would go stale and the user's next menu
+                # toggle would be a visual no-op). setChecked on a QAction emits
+                # `toggled`, never `triggered` -- and toggleAutoRefresh is wired
+                # to `triggered` (QMenu.addAction(text, fn)) -- so this updates
+                # the display only and cannot re-fire the toggle handler.
+                act = getattr(plotter, "autorefresh_act", None)
+                if act is not None and act.isChecked() != auto_refresh:
+                    act.setChecked(auto_refresh)
                 # only auto-regenerate if the user has left auto-refresh on;
                 # stale objects still accrue and can be refreshed manually
                 # (Scene > Refresh edited objects) when this is off
-                if plotter.series.getOption("3D_auto_refresh"):
+                if auto_refresh:
                     plotter.refreshStale()
         return super().event(event)
 
