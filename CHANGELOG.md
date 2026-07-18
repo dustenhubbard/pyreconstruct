@@ -4,13 +4,40 @@ All notable changes to this distribution of PyReconstruct are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 the project uses [semantic versioning](https://semver.org/).
 
-Builds come on two channels: **Release** (stable, tagged `vX.Y.Z`) and
-**Pre-release (experimental)** (release candidates, tagged `vX.Y.ZrcN`). Entries
-under [Unreleased] have landed on `main` but are not yet tagged; they reach the
-Pre-release channel once cut as a release-candidate tag, ahead of the next
-stable release.
+Builds come on three channels: **Stable** (final releases, tagged `vX.Y.Z`),
+**Beta** (curated pre-releases, tagged e.g. `vX.Y.Z-beta-N` / `vX.Y.ZrcN`), and
+**Developer** (the rolling build republished on every push to `main`). Entries
+under [Unreleased] have landed on `main` (and are therefore already on the
+Developer channel) but are not yet tagged; they reach the Beta channel once cut
+as a pre-release tag, ahead of the next stable release.
 
 ## [Unreleased]
+
+## [1.21.0-beta-3] — 2026-07-17
+
+### Added
+- **3D scene auto-refresh toggle.** The `WindowActivate`-triggered stale-mesh
+  regeneration is now gated behind a per-computer `3D_auto_refresh` option
+  (default on), exposed both as a Scene-menu checkbox in the 3D window and in
+  Series ▸ Options ▸ 3D. Manual refresh (Ctrl+R) is unchanged; re-enabling
+  immediately refreshes accrued edits. (#64)
+- **Developer update channel.** Third channel tracking the rolling build
+  republished on every push to `main` (fixed tag `prerelease`). `pick_release`
+  selects it by tag; freshness rides the monotonic setuptools-scm `.devN` in
+  asset versions, so the reused tag can neither miss updates nor re-offer the
+  installed build. (#66)
+
+### Changed
+- **Update-channel labels renamed for clarity**: "Release" → "Stable
+  (recommended)", "Pre-release" → "Beta (early features, may be unstable)";
+  docs and the rolling-release title synced. Underlying channel values are
+  unchanged. (#65)
+- **Beta channel now explicitly excludes the rolling build** by tag
+  (previously excluded only by ordering), so it can never shadow a curated
+  pre-release. Legacy channel values (`stable`/`edge`) still map correctly. (#66)
+- **Rolling main builds re-enabled** in CI to supply the Developer channel;
+  paused since 2026-06-29, the original conflict with the pre-release channel
+  no longer applies. (#67)
 
 ## [1.21.0-beta-2] — 2026-07-15
 
