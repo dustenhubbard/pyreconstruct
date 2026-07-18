@@ -279,7 +279,7 @@ class TraceTableWidget(DataTable):
         # table, then the shared trace menu built by the field.
         context_menu_list = [
             ("inverttraceselection_act", "Invert selection", "", self.invertSelection),
-            ("copytracerow_act", "Copy row text", "", self.table.copy),
+            ("copytracerow_act", "Copy trace text", "", self.table.copy),
             None,
         ] + self.mainwindow.field.getTraceMenu(is_in_field=False)
         self.context_menu = QMenu(self)

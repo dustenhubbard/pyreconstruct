@@ -98,7 +98,7 @@ def get_context_menu_list_obj(self):
         None,
         {
             "attr_name" : "objattrsmenu",
-            "text": "Attributes",
+            "text": "Object attributes",
             "opts":
             [
                 ("editobjcomment_act", "Comment...", "", self.editComment),
