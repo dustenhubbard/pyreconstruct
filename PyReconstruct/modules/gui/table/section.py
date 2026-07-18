@@ -98,7 +98,7 @@ class SectionTableWidget(DataTable):
                 ]
             },
             None,
-            ("copy_act", "Copy section text", "", self.table.copy),
+            ("copy_act", "Copy section values", "", self.table.copy),
             None,
             ("delete_act", "Delete sections", "", self.deleteSections)
         ]
