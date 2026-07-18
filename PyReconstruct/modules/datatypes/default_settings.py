@@ -44,7 +44,7 @@ default_settings = {
     # misc preferences
     "left_handed": False,  # MFO
     "utc": False,  # MFO
-    "cpu_max": 100, 
+    "cpu_max": 50,  # % of cores -> parallel zarr-conversion workers; ~half leaves headroom
 
     # view
     "3D_xy_res": 0,  # 0-100  # MFO

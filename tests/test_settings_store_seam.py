@@ -122,7 +122,8 @@ def test_series_options_route_through_injected_store():
     assert series._settingsStore() is store
 
     # unset global option returns its default AND persists it via the store
-    assert series.getOption("cpu_max") == 100
+    from PyReconstruct.modules.datatypes.default_settings import default_settings
+    assert series.getOption("cpu_max") == default_settings["cpu_max"]
     assert store.contains(None, "cpu_max")
 
     # global scalar round-trip (code=None)

@@ -9,6 +9,7 @@ full release notes on GitHub (linked from the dialog).
 - **You choose whether the 3D scene updates itself.** The 3D view normally refreshes your edited objects the moment you return to it. If you'd rather it wait — say, while making many edits on a large series — you can now turn auto-refresh off, from the 3D window's Scene menu or in Series ▸ Options. "Refresh edited objects" (Ctrl+R) still works anytime, and turning auto-refresh back on catches the scene up right away.
 - **Clearer names for update channels.** In Series ▸ Options ▸ Updates, "Release" is now **Stable (recommended)** and "Pre-release" is now **Beta (early features, may be unstable)** — same channels, clearer names. You're reading these notes because you're on Beta — thank you!
 - **A new Developer channel for the adventurous.** A third update channel installs the very latest build after every single change we merge — no waiting for a beta. Expect rough edges; Beta remains the right home for most testers.
+- **Smoother image-to-Zarr conversion on modest computers.** Converting images to a scaled Zarr no longer overwhelms every CPU core, so your laptop stays usable while it runs. The "CPU usage" slider in Series ▸ Options now genuinely controls how much of your processor the conversion uses (with tick marks and a short explanation), and it defaults to about half your cores. Turn it up for maximum speed on a powerful machine, or down if things feel sluggish.
 
 ## [1.21.0-beta-2] — 2026-07-15
 

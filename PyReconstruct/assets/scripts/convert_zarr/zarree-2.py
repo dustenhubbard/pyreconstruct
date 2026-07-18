@@ -17,11 +17,61 @@ from multiprocessing import Pool, freeze_support
 # exactly as already happens off Windows.
 multiprocessing.spawn.WINEXE = False
 
+# Cap the native (C-level) thread pools of the imaging/compression libraries to
+# one thread PER PROCESS *before* importing them. OpenCV and numpy/BLAS read
+# these on import; a fresh value here would otherwise be too late. This process
+# is the dedicated conversion subprocess (spawned by the GUI just for this job),
+# so limiting threads here never touches the main application (3D meshing,
+# imports, etc.). Parallelism comes from the worker Pool below -- see
+# _limit_worker_threads for the full rationale. setdefault() respects a value a
+# user deliberately exported.
+for _thread_var in (
+    "OMP_NUM_THREADS",        # OpenMP (OpenCV/numpy backends)
+    "OPENBLAS_NUM_THREADS",   # OpenBLAS
+    "MKL_NUM_THREADS",        # Intel MKL
+    "NUMEXPR_NUM_THREADS",    # numexpr
+    "VECLIB_MAXIMUM_THREADS", # Apple Accelerate / vecLib
+):
+    os.environ.setdefault(_thread_var, "1")
+
 import cv2
 import zarr
 
 os.environ["OPENCV_LOG_LEVEL"] = "FATAL"
 os.environ["OPENCV_IO_MAX_IMAGE_PIXELS"] = "18500000000"  # Go big or go home?
+
+
+def _limit_worker_threads():
+    """Pin this process's runtime thread pools to a single thread.
+
+    Each conversion worker runs OpenCV (``cv2.imread``/``cv2.resize``) and the
+    main process compresses with blosc when it writes each array to the zarr.
+    By default BOTH libraries spawn one thread per CPU core, so a Pool of N
+    workers would fan out to roughly N x (all cores) threads and peg every CPU
+    no matter how few workers the user selected in Settings -- the historical
+    cause of a 4-worker job saturating an 8-thread laptop. Capping each process
+    to one native thread makes N workers cost ~N CPU threads, so the Settings
+    slider actually bounds CPU use.
+
+    This runs at import time -- which covers the ``fork`` start method
+    (Linux default), where workers inherit this already-applied state -- and is
+    also passed as the Pool ``initializer`` so it re-runs inside each worker
+    under the ``spawn`` start method (Windows/macOS default), where every
+    worker re-imports this module in a fresh interpreter.
+    """
+    try:
+        cv2.setNumThreads(1)
+    except Exception:
+        pass
+    try:
+        from numcodecs import blosc
+        blosc.set_nthreads(1)
+    except Exception:
+        pass
+
+
+# apply to this (main / writer) process, and -- under fork -- to inherited workers
+_limit_worker_threads()
 
 IMAGE_EXTENSIONS = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
 MIN_DOWNSAMPLED_PIXELS = 1024**2
@@ -294,6 +344,19 @@ if __name__ == "__main__":
     processes = max(1, min(cores, MAX_WORKERS))
     print(f"Converting with {processes} worker process(es)...", flush=True)
 
+    # This process is the sole zarr writer: it blosc-compresses every array as
+    # the workers hand it back. That compression is serial with respect to the
+    # imap loop, so pinning it to one thread (the import-time default) would make
+    # it the bottleneck on capable hardware. Give the writer up to `processes`
+    # blosc threads so it keeps pace with the workers. Workers stay single
+    # threaded -- the Pool initializer re-pins them -- so total CPU still tracks
+    # the chosen worker count rather than exploding to (workers x all cores).
+    try:
+        from numcodecs import blosc
+        blosc.set_nthreads(processes)
+    except Exception:
+        pass
+
     total = len(images)
     # machine-readable progress markers consumed by the converter window
     # (start_process.py) to drive the progress bar / ETA.
@@ -308,7 +371,9 @@ if __name__ == "__main__":
     ]
 
     done = 0
-    with Pool(processes) as p:
+    # initializer re-applies the per-process thread cap in every worker so the
+    # spawn start method (Windows/macOS) is covered as well as fork.
+    with Pool(processes, initializer=_limit_worker_threads) as p:
 
         # imap (ordered) + main-as-sole-writer => deterministic, race-free writes
         for filename, scales, duration in p.imap(create2D, args):
