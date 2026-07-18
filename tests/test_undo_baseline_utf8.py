@@ -1,10 +1,11 @@
 """Regression tests for the undo-baseline encoding bug (Finding 1).
 
-The fork writes section files as RAW UTF-8 bytes (orjson ``fast_dumps``, binary
-mode). When a section is clean, ``SectionStates.initialize`` copies those bytes
-verbatim into the ``.s0`` undo baseline (``shutil.copyfile``), so the baseline
-also holds raw UTF-8. ``FieldState.getContours`` / ``getModifiedContours`` then
-read that baseline back in TEXT mode.
+The fork writes section files via orjson ``fast_dumps`` in binary mode. As of
+the ASCII-interop fix ``fast_dumps`` escapes non-ASCII to ``\\uXXXX``, so section
+files -- and the ``.s0`` baselines ``SectionStates.initialize`` copies from them
+verbatim (``shutil.copyfile``) -- are now pure ASCII; earlier fork builds wrote
+raw UTF-8 there. ``FieldState.getContours`` / ``getModifiedContours`` read that
+baseline back in TEXT mode.
 
 Before the fix those reads passed no ``encoding=``, so they used the platform
 locale codec. On a non-UTF-8 locale (Windows cp1252 is the default) a non-ASCII
@@ -14,18 +15,22 @@ object name made the read either:
     name -- and in the multi-undo path the real contour was then overwritten
     with an EMPTY ``Contour`` and persisted on the next save (silent data loss).
 
-These tests exercise the REAL save path (``section.save`` -> raw UTF-8 on disk),
-build the real ``.s0`` baseline via ``SectionStates``, and force the readers
-through a cp1252-defaulting scenario by patching ``builtins.open`` so any
-text-mode open WITHOUT an explicit ``encoding=`` falls back to cp1252 (exactly
-what a Windows locale does). The patched readers pass ``encoding="utf-8"``
-explicitly, so they are immune; the unpatched readers were not -- these tests
-FAIL on the pre-fix code (crash or empty contour) and PASS after.
+These tests exercise the REAL save path (``section.save`` -> disk), build the
+real ``.s0`` baseline via ``SectionStates``, and force the readers through a
+cp1252-defaulting scenario by patching ``builtins.open`` so any text-mode open
+WITHOUT an explicit ``encoding=`` falls back to cp1252 (exactly what a Windows
+locale does). Two independent protections now keep undo intact under that
+locale: the readers pass ``encoding="utf-8"`` explicitly (Finding 1), and the
+writer emits ASCII so the baseline bytes are all < 0x80 and no locale codec can
+corrupt them (the ASCII-interop fix). These tests FAIL on the pre-fix reader
+code (crash or empty contour) and PASS after.
 
 The object name mixes characters that are NOT representable in cp1252 ("č", the
-CJK "李") so the raw UTF-8 bytes genuinely cannot round-trip through cp1252 --
-0x9D inside the UTF-8 encoding of "李" is undefined in cp1252 and raises on
-decode, matching the field report.
+CJK "李"). Before the interop fix those were raw UTF-8 bytes that could not
+round-trip through cp1252 (0x9D inside the UTF-8 encoding of "李" is undefined in
+cp1252 and raised on decode, matching the field report); now they are written as
+``\\uXXXX`` escapes, so the baseline is ASCII and reconstructs the exact name
+under any of utf-8, cp1252, or latin-1.
 """
 import os
 import shutil
@@ -95,16 +100,14 @@ def _clean_section_with_obj(series, snum):
     section.addTrace(_make_trace(OBJ, [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]))
     section.save()
     section.clearTracking()
-    # The bug only exists when section files hold RAW (non-\u-escaped) UTF-8 --
-    # i.e. the orjson backend. Without orjson, fast_dumps falls back to
-    # json.dumps(...).encode() (ensure_ascii=True), so the file is pure ASCII,
-    # the .s0 baseline is ASCII, and no locale can corrupt it. Skip rather than
-    # emit a misleading failure in that (non-production) configuration.
-    import PyReconstruct.modules.constants.fast_json as fj
-    if not (fj._HAVE_ORJSON and fj.orjson is not None):
-        pytest.skip("raw-UTF-8 section bytes require the orjson backend")
+    # As of the ASCII-interop fix fast_dumps escapes non-ASCII to \uXXXX on BOTH
+    # backends, so the section file (and the .s0 baseline copied from it) is pure
+    # ASCII -- which is what makes the undo baseline locale-proof. Sanity-check
+    # that the file is ASCII yet still carries the non-ASCII key as an escape.
     with open(section.filepath, "rb") as f:
-        assert "李".encode("utf-8") in f.read()   # sanity: really raw UTF-8
+        raw = f.read()
+    assert raw.isascii(), "section file must be ASCII after the interop fix"
+    assert b"\\u674e" in raw, "CJK '李' must be present as a \\uXXXX escape"
     return section
 
 
