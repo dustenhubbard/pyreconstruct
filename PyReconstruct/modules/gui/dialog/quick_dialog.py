@@ -371,7 +371,7 @@ def getLayout(parent, structure : list, grid : bool = False, spacing=1):
                         resizeLineEdit(w, "0.000000000")
                     inputs.append(InputField(widget_type, w, options, required=required))
                 elif widget_type == "slider":
-                    # Params: int (opt)
+                    # Params: value (int, opt), tick_interval (int, opt)
                     w = QSlider(Qt.Horizontal, parent)
                     w.setMinimum(0)
                     w.setMaximum(100)
@@ -379,6 +379,10 @@ def getLayout(parent, structure : list, grid : bool = False, spacing=1):
                         w.setValue(params[0])
                     else:
                         w.setValue(0)
+                    # optional evenly spaced tick marks below the groove
+                    if len(params) > 1 and params[1]:
+                        w.setTickPosition(QSlider.TicksBelow)
+                        w.setTickInterval(params[1])
                     inputs.append(InputField(widget_type, w, required=required))
                 elif widget_type == "combo":
                     # Params structure: list[str], optional: str
