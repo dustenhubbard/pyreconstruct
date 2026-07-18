@@ -15,6 +15,7 @@ from PySide6.QtGui import (
 )
 from .quick_dialog import QuickDialog
 from .backup import BackupDialog
+from .autoseg_palette import AutosegColorsWidget
 
 from PyReconstruct.modules.datatypes import Series
 from PyReconstruct.modules.constants import is_frozen
@@ -340,17 +341,9 @@ class AllOptionsDialog(QDialog):
             self.series.setOption("find_zoom", response[0])
         self.addOptionWidget("find_zoom", structure, setOption)
 
-        # autoseg import colors
-        structure = [
-            ["Color seed (same seed gives the same colors):",
-             ("int", self.series.getOption("autoseg_color_seed", use_defaults))],
-            ["Records which color arrangement autoseg import uses. To try new"],
-            ["colors, use the \"Shuffle colors\" button on the zarr import overlay;"],
-            ["it updates this seed. Set a specific number to reproduce a past run."],
-        ]
-        def setOption(response):
-            self.series.setOption("autoseg_color_seed", response[0])
-        self.addOptionWidget("autoseg_colors", structure, setOption)
+        # autoseg import colors (seed + editable palette)
+        autoseg_widget = AutosegColorsWidget(self, self.series, use_defaults)
+        self.addOptionWidget("autoseg_colors", autoseg_widget)
 
         # user
         structure = [
