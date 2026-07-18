@@ -342,8 +342,11 @@ class AllOptionsDialog(QDialog):
 
         # autoseg import colors
         structure = [
-            ["Autoseg color seed (change to reshuffle imported trace colors):",
-             ("int", self.series.getOption("autoseg_color_seed", use_defaults))]
+            ["Color seed (same seed gives the same colors):",
+             ("int", self.series.getOption("autoseg_color_seed", use_defaults))],
+            ["Records which color arrangement autoseg import uses. To try new"],
+            ["colors, use the \"Shuffle colors\" button on the zarr import overlay;"],
+            ["it updates this seed. Set a specific number to reproduce a past run."],
         ]
         def setOption(response):
             self.series.setOption("autoseg_color_seed", response[0])
