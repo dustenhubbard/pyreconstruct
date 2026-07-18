@@ -72,10 +72,10 @@ class FlagTableWidget(DataTable):
                         "opts":
                         [
                             ("colorfilter_act", "Set filter...", "", lambda : self.setColorFilter(False)),
-                            ("removecolor_act", "Remove filter...", "", self.removeColorFilter)
+                            ("removecolor_act", "Remove filter", "", self.removeColorFilter)
                         ]
                     },
-                    ("commentfilter_act", "Comment text...", "", self.setCommentFilter)
+                    ("commentfilter_act", "Comment filter...", "", self.setCommentFilter)
                 ]
             }
         ]
@@ -88,7 +88,7 @@ class FlagTableWidget(DataTable):
 
         # create the right-click menu
         context_menu_list = [
-            ("editattribtues_act", "View / Edit...", "", self.editFlag),
+            ("editattribtues_act", "Edit flag...", "", self.editFlag),
             ("flagcolorfilter_act", "Use as color filter", "", self.setColorFilter),
             None,
             {
@@ -101,10 +101,10 @@ class FlagTableWidget(DataTable):
                 ]
             },
             None,
-            ("copy_act", "Copy", "", self.table.copy),
+            ("copy_act", "Copy row text", "", self.table.copy),
             None,
-            ("delete_act", "Delete", "", self.deleteFlags),
-            ("deletematchname_act", "Delete all flags with this name", "", self.deleteFlagName)
+            ("delete_act", "Delete flags", "", self.deleteFlags),
+            ("deletematchname_act", "Delete all flags with this name (entire series)", "", self.deleteFlagName)
         ]
         self.context_menu = QMenu(self)
         populateMenu(self, self.context_menu, context_menu_list)

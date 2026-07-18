@@ -394,7 +394,7 @@ def test_help_menu_offers_whats_new_reopen():
     # the copyable diagnostic report lives in the "Report issues" submenu
     issuemenu = [o for o in opts if isinstance(o, dict) and o["attr_name"] == "issuemenu"][0]
     copydiag = [o for o in issuemenu["opts"] if o[0] == "copydiag_act"]
-    assert copydiag == [("copydiag_act", "Copy diagnostic report…", "", diag_sentinel)]
+    assert copydiag == [("copydiag_act", "Copy diagnostic report...", "", diag_sentinel)]
 
 
 # ---- startup-flow guard (first-run friction audit) --------------------------
