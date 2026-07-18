@@ -163,10 +163,15 @@ class MainWindow(QMainWindow):
             self.ztracemenu
         ]
 
-        ## Create label menu
+        ## Create label menu (shown when right-clicking a zarr overlay label).
+        ## Both actions operate on the interactive zarr overlay's currently
+        ## selected label ids (self.field.zarr_layer.selected_ids); their
+        ## handlers and dependencies are all live (see importLabels /
+        ## mergeLabels). "Import labels" imports the selected labels straight
+        ## away (no dialog -> no ellipsis); "Merge labels" merges them in place.
         label_menu_list = [
-            # ("importlabels_act", "Import label(s)", "", self.importLabels),
-            # ("mergelabels_act", "Merge labels", "", self.mergeLabels)
+            ("importlabels_act", "Import labels", "", self.importLabels),
+            ("mergelabels_act", "Merge labels", "", self.mergeLabels)
         ]
         self.label_menu = QMenu(self)
         populateMenu(self, self.label_menu, label_menu_list)
@@ -193,47 +198,61 @@ class MainWindow(QMainWindow):
         ##   1. both traces and z traces highlighted or
         ##   2. nothing highlighted
         
+        # which entity the top-level Q8 edit shortcut acts on this pass
+        active = None
+
         if not (bool(selected_traces) ^ bool(selected_ztraces)):
-            
+
             for a in self.trace_actions:
                 a.setEnabled(False)
 
             for a in self.ztrace_actions:
                 a.setEnabled(False)
-                
+
         ## If selected trace in highlighted traces
-        
+
         elif (
                 (not context_menu and selected_traces) or
                 (context_menu and clicked_trace in selected_traces)
         ):
-            
+
             for a in self.ztrace_actions:
                 a.setEnabled(False)
-                
+
             for a in self.trace_actions:
                 a.setEnabled(True)
-                
+
+            active = "trace"
+
         ## If selected ztrace in highlighted ztraces
-        
+
         elif (
                 (not context_menu and field_section.selected_ztraces) or
                 (context_menu and clicked_trace in field_section.selected_ztraces)
         ):
-            
+
             for a in self.trace_actions:
                 a.setEnabled(False)
-                
+
             for a in self.ztrace_actions:
                 a.setEnabled(True)
-            
+
+            active = "ztrace"
+
         else:
-            
+
             for a in self.trace_actions:
                 a.setEnabled(False)
-                
+
             for a in self.ztrace_actions:
                 a.setEnabled(False)
+
+        # Q8 top-level "Edit ... attributes..." shortcut: label + enabled state
+        # follow whichever entity submenu is active (disabled/neutral when the
+        # selection is empty or an ambiguous trace+z-trace mix).
+        edit_text, edit_enabled = edit_selected_label(active)
+        self.editselected_act.setText(edit_text)
+        self.editselected_act.setEnabled(edit_enabled)
 
         # check labels
         if clicked_label:
@@ -243,12 +262,12 @@ class MainWindow(QMainWindow):
             if clicked_label in zarr_layer.selected_ids:
 
                 self.importlabels_act.setEnabled(True)
+                # merge needs at least two selected labels; disable otherwise
+                # (do not leave a stale enabled state from a prior >1 selection)
+                self.mergelabels_act.setEnabled(len(zarr_layer.selected_ids) > 1)
 
-                if len(zarr_layer.selected_ids) > 1:
-                    self.mergelabels_act.setEnabled(True)
-                    
             else:
-                
+
                 self.importlabels_act.setEnabled(False)
                 self.mergelabels_act.setEnabled(False)
         
@@ -2404,37 +2423,61 @@ class MainWindow(QMainWindow):
     #             self.setLayerGroup(zg)
     #             break
     
-    # def importLabels(self, all=False):
-    #     """Import labels from a zarr."""
-    #     if not self.field.zarr_layer or not self.field.zarr_layer.is_labels:
-    #         return
-        
-    #     # get necessary data
-    #     data_fp = self.series.zarr_overlay_fp
-    #     group_name = self.series.zarr_overlay_group
+    def importLabels(self, all=False):
+        """Import labels from the interactive zarr overlay into the series.
 
-    #     labels = None if all else self.field.zarr_layer.selected_ids
-        
-    #     labelsToObjects(
-    #         self.series,
-    #         data_fp,
-    #         group_name,
-    #         labels
-    #     )
-    #     self.field.reload()
-    #     self.removeZarrLayer()
-    #     self.field.table_manager.refresh()
+            Params:
+                all (bool): True to import every label in the overlay group
+                    (the "Import Contours" palette button); False (the
+                    right-click "Import labels") to import only the currently
+                    selected label ids.
+        """
+        if not self.field.zarr_layer or not self.field.zarr_layer.is_labels:
+            return
 
-    #     notify("Labels imported successfully.")
-    
-    # def mergeLabels(self):
-    #     """Merge selected labels in a zarr."""
-    #     if not self.field.zarr_layer:
-    #         return
-        
-    #     self.field.zarr_layer.mergeLabels()
-    #     self.field.generateView()
-    
+        # get necessary data
+        data_fp = self.series.zarr_overlay_fp
+        group_name = self.series.zarr_overlay_group
+
+        labels = None if all else self.field.zarr_layer.selected_ids
+
+        labelsToObjects(
+            self.series,
+            data_fp,
+            group_name,
+            labels
+        )
+        self.field.reload()
+        self.removeZarrLayer()
+        self.field.table_manager.refresh()
+
+        notify("Labels imported successfully.")
+
+    def mergeLabels(self):
+        """Merge the selected labels in the interactive zarr overlay."""
+        if not self.field.zarr_layer:
+            return
+
+        self.field.zarr_layer.mergeLabels()
+        self.field.generateView()
+
+    def editSelectedAttributes(self):
+        """Q8 top-level field-menu shortcut: open the primary "Edit ...
+        attributes..." dialog for the current selection.
+
+        Routes to the trace dialog when traces are selected and to the z-trace
+        dialog when z-traces are selected -- the same handlers the entity
+        submenus use. checkActions only enables the triggering action when
+        exactly one of those is selected, so no mixed/empty case reaches here;
+        the guards below are belt-and-suspenders.
+        """
+        field_section = self.field.section
+        if field_section.selected_traces:
+            self.field.traceDialog()
+        elif field_section.selected_ztraces:
+            self.field.editZtraceAttributes()
+
+
     def hideSeriesTraces(self, hidden=True):
         """Hide or unhide all traces in the entire series.
         

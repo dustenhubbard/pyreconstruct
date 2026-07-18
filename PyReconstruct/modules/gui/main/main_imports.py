@@ -171,4 +171,4 @@ from PyReconstruct.assets.scripts.projects import (
 
 from .menubar import return_menubar
 
-from .context_menu_list import get_field_menu_list
+from .context_menu_list import get_field_menu_list, edit_selected_label

@@ -483,7 +483,10 @@ preset from a copied trace.
 
 Most trace editing is on the **field context menu** (right-click selected traces),
 with keyboard shortcuts for the common actions. Selected-trace actions affect *all*
-selected traces.
+selected traces. The top of that menu carries a single **Edit ... attributes...**
+shortcut that follows your selection — it reads **Edit trace attributes...** when
+traces are selected and **Edit z-trace attributes...** when z-traces are, so the
+most-used edit is one click away above the per-entity submenus.
 
 - **Edit attributes** (`Ctrl+E`) — change name, color, tags, and fill mode.
 - **Merge traces** (`Ctrl+M`) — merge the exteriors of selected traces (they must
@@ -544,6 +547,9 @@ allowed), and several can be open at once.
   shorthand for a digit), and by **group** and/or **tag** where applicable.
 - **Ctrl+C** copies selected cells. **Delete/Backspace** deletes the selected rows'
   underlying data. Right-click a selection for that list's context menu.
+- Every list's context menu offers **Invert selection** (select the displayed rows
+  that aren't selected, and vice versa — it only ever acts on rows currently shown,
+  so an active filter is respected) and **Copy row text** (the same as `Ctrl+C`).
 
 > 📸 *Screenshot: the Object list docked on the left, with the column/filter menus visible.*
 
