@@ -69,6 +69,9 @@ class SectionTableWidget(DataTable):
 
         # create the right-click menu
         context_menu_list = [
+            # table-level selection op (parity with the other lists)
+            ("invertsectionselection_act", "Invert selection", "", self.invertSelection),
+            None,
             ("lock_act", "Lock sections", "", self.lockSections),
             ("unlock_act", "Unlock sections", "", lambda : self.lockSections(False)),
             None,

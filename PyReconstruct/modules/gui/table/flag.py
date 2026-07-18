@@ -88,18 +88,16 @@ class FlagTableWidget(DataTable):
 
         # create the right-click menu
         context_menu_list = [
+            # table-level selection op (parity with the other lists)
+            ("invertflagselection_act", "Invert selection", "", self.invertSelection),
+            None,
             ("editattribtues_act", "Edit flag...", "", self.editFlag),
             ("flagcolorfilter_act", "Use as color filter", "", self.setColorFilter),
             None,
-            {
-                "attr_name": "resolvemenu",
-                "text": "Resolve",
-                "opts":
-                [
-                    ("resolve_act", "Mark as resolved", "", self.markResolved),
-                    ("unresolved_act", "Mark as unresolved", "", lambda : self.markResolved(False))
-                ]
-            },
+            # two top-level items (formerly a "Resolve" submenu); handlers and
+            # attr_names unchanged.
+            ("resolve_act", "Mark resolved", "", self.markResolved),
+            ("unresolved_act", "Mark unresolved", "", lambda : self.markResolved(False)),
             None,
             ("copy_act", "Copy row text", "", self.table.copy),
             None,

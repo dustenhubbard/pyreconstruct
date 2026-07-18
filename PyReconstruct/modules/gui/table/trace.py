@@ -274,8 +274,14 @@ class TraceTableWidget(DataTable):
         # fill in the menu bar object
         populateMenuBar(self, self.menubar, menubar_list)
 
-        # create the right-click menu
-        context_menu_list = self.mainwindow.field.getTraceMenu(is_in_field=False)
+        # create the right-click menu -- prepend the list-only table ops
+        # (invert selection + copy row text) whose handlers belong to THIS
+        # table, then the shared trace menu built by the field.
+        context_menu_list = [
+            ("inverttraceselection_act", "Invert selection", "", self.invertSelection),
+            ("copytracerow_act", "Copy row text", "", self.table.copy),
+            None,
+        ] + self.mainwindow.field.getTraceMenu(is_in_field=False)
         self.context_menu = QMenu(self)
         populateMenu(self, self.context_menu, context_menu_list)
 
