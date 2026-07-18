@@ -55,7 +55,7 @@ class SectionTableWidget(DataTable):
                 "text": "Modify",
                 "opts":
                 [
-                    ("modifyallsrc_act", "Section image sources...", "", self.modifyAllSrc),
+                    ("modifyallsrc_act", "Edit all image sources...", "", self.modifyAllSrc),
                     ("reordersections_act", "Reorder sections", "", self.reorderSections)
                 ]
             }
@@ -77,9 +77,9 @@ class SectionTableWidget(DataTable):
                 "text": "Brightness/contrast",
                 "opts":
                 [
-                    ("setbc_act", "Set...", "", self.setBC),
-                    ("incbc_acrt", "Increment...", "", lambda : self.setBC(inc=True)),
-                    ("matchbc_act", "Match values to section in view", "", self.matchBC),
+                    ("setbc_act", "Set values...", "", self.setBC),
+                    ("incbc_acrt", "Increment values...", "", lambda : self.setBC(inc=True)),
+                    ("matchbc_act", "Match section in view", "", self.matchBC),
                     ("optimizebc_act", "Optimize...", "", self.optimizeBC),
                 ]
             },
@@ -87,7 +87,7 @@ class SectionTableWidget(DataTable):
             ("editsrc_act", "Edit image source...", "", self.editSrc),
             {
                 "attr_name": "insertmenu",
-                "text": "Insert",
+                "text": "Insert section",
                 "opts":
                 [
                     ("insertabove_act", "Above", "", self.insertSection),
@@ -95,9 +95,9 @@ class SectionTableWidget(DataTable):
                 ]
             },
             None,
-            ("copy_act", "Copy", "", self.table.copy),
+            ("copy_act", "Copy row text", "", self.table.copy),
             None,
-            ("delete_act", "Delete", "", self.deleteSections)
+            ("delete_act", "Delete sections", "", self.deleteSections)
         ]
         self.context_menu = QMenu(self)
         populateMenu(self, self.context_menu, context_menu_list)

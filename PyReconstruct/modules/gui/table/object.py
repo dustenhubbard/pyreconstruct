@@ -156,7 +156,7 @@ class ObjectTableWidget(DataTable):
                 [
                     ("invertobjselection_act", "Invert selection", "", self.invertSelection),
                     None,
-                    ("hideotherobj_act1", "Hide Other Objects", "", self.mainwindow.field.hideOtherObjects),
+                    ("hideotherobj_act1", "Hide other objects", "", self.mainwindow.field.hideOtherObjects),
                     ("hideallobj_act1", "Hide all objects", "", self.mainwindow.field.hideAllObjects),
                     ("showallobj_act1", "Show all objects", "", self.mainwindow.field.unhideAllObjects),
                 ]
@@ -184,8 +184,8 @@ class ObjectTableWidget(DataTable):
                 "text": "Find",
                 "opts":
                 [
-                    ("findfirst_act", "First", "", self.findFirst),
-                    ("findlast_act", "Last", "", self.findLast)
+                    ("findfirst_act", "Go to first contour", "", self.findFirst),
+                    ("findlast_act", "Go to last contour", "", self.findLast)
                 ]
             },
             {

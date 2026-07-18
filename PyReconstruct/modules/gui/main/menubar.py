@@ -60,8 +60,8 @@ def return_file_menu(self):
                 "text": "Export",
                 "opts":
                 [
-                    ("exportxml_act", "to legacy Reconstruct (XML)...", "", self.exportToXML),
-                    ("exportngzarr_act", "to Neuroglancer (Zarr)...", "", self.exportToZarr)
+                    ("exportxml_act", "To legacy Reconstruct (XML)...", "", self.exportToXML),
+                    ("exportngzarr_act", "To Neuroglancer (Zarr)...", "", self.exportToZarr)
                 ]
             },
             None,
@@ -122,8 +122,8 @@ def return_series_menu(self):
                 "text": "Import",
                 "opts":
                 [
-                    ("importfromseries_act", "from series...", "", self.importFromSeries),
-                    ("importfromzarrlabels_act", "from neuroglancer zarr labels...", "", self.importFromZarrLabels),
+                    ("importfromseries_act", "From series...", "", self.importFromSeries),
+                    ("importfromzarrlabels_act", "From neuroglancer zarr labels...", "", self.importFromZarrLabels),
                 ]
             },
             {
@@ -141,8 +141,8 @@ def return_series_menu(self):
                 "text": "Hide",
                 "opts":
                 [
-                    ("hidealltraces_act", "Hide all traces", "", self.hideSeriesTraces),
-                    ("unhidealltraces_act", "Unhide all traces", "", lambda : self.hideSeriesTraces(hidden=False))
+                    ("hidealltraces_act", "Hide all traces (entire series)", "", self.hideSeriesTraces),
+                    ("unhidealltraces_act", "Unhide all traces (entire series)", "", lambda : self.hideSeriesTraces(hidden=False))
                 ]
             },
             {
@@ -163,7 +163,7 @@ def return_series_menu(self):
             },
             {
                 "attr_name": "tracepalette_menu",
-                "text": "Trace Palette",
+                "text": "Trace palette",
                 "opts":
                 [
                     ("modifytracepalette_act", "Edit all palettes...", self.series, self.mouse_palette.modifyAllPaletteButtons),
@@ -184,11 +184,11 @@ def return_series_menu(self):
             },
             {
                 "attr_name": "seriescodemenu",
-                "text": "Series Code",
+                "text": "Series code",
                 "opts":
                 [
-                    ("setseriescode_act", "Set series code", "", self.setSeriesCode),
-                    ("seriescodepattern_act", "Modify regex pattern", "", self.editSeriesCodePattern),
+                    ("setseriescode_act", "Set series code...", "", self.setSeriesCode),
+                    ("seriescodepattern_act", "Edit regex pattern...", "", self.editSeriesCodePattern),
                 ]
             },
             None,
@@ -214,7 +214,7 @@ def return_section_menu(self):
             ("nextsection_act", "Next section", "PgUp", self.incrementSection),
             ("prevsection_act", "Previous section", "PgDown", lambda : self.incrementSection(down=True)),
             None,
-            ("goto_act", "Go to section", self.series, self.changeSection),
+            ("goto_act", "Go to section...", self.series, self.changeSection),
             None,
             ("flicker_act", "Flicker section", self.series, self.flickerSections),
             None,
@@ -225,7 +225,7 @@ def return_section_menu(self):
                 "text": "Import",
                 "opts":
                 [
-                    ("importroi_act", "ImageJ .roi file(s)...", "", self.importROIFiles)
+                    ("importroi_act", "From ImageJ .roi files...", "", self.importROIFiles)
                 ]
             },
             {
@@ -268,15 +268,15 @@ def return_alignments_menu(self):
         "text": "Alignments",
         "opts":
         [
-            ("changealignment_act", "Modify alignments", self.series, self.modifyAlignments),
+            ("changealignment_act", "Edit alignments...", self.series, self.modifyAlignments),
             None,
             {
                 "attr_name": "importmenu",
                 "text": "Import alignments",
                 "opts":
                 [
-                    ("importtransforms_act", ".txt file", "", self.importTransforms),
-                    ("import_swift_transforms_act", "SWiFT project", "", self.importSwiftTransforms),
+                    ("importtransforms_act", "From .txt file...", "", self.importTransforms),
+                    ("import_swift_transforms_act", "From SWiFT project...", "", self.importSwiftTransforms),
                 ]
             },
             None,
@@ -294,7 +294,7 @@ def return_alignments_menu(self):
             },
             None,
             ("unlocksection_act", "Unlock current section", self.series, self.field.unlockSection),
-            ("changetform_act", "Edit transformation", self.series, self.changeTform),
+            ("changetform_act", "Edit transformation...", self.series, self.changeTform),
             ("linearalign_act", "Estimate affine transform", "", self.field.affineAlign),
             ("aligncorrelation_act", "Align by correlation", "Ctrl+\\", self.field.corrAlign),
             # ("quickalign_act", "Auto-align", "Ctrl+\\", self.field.quickAlign)
@@ -339,7 +339,7 @@ def return_view_menu(self):
             ("copyscreen_act", "Copy view to clipboard", "", lambda : self.saveFieldView(False)),
             ("copyscreen_act", "Save view to file", "", lambda : self.saveFieldView(True)),
             None,
-            ("changetheme_act", "Change theme", "", self.setTheme),
+            ("changetheme_act", "Change theme...", "", self.setTheme),
             None,
             ("fillopacity_act", "Edit fill opacity...", "", self.setFillOpacity),
             None,
@@ -404,7 +404,7 @@ def return_help_menu(self):
         "opts":
         [
             ("repobranch_act", repo_string, "", self.copyCommit),
-            ("checkupdates_act", "Check for updates…", "", self.checkForUpdates),
+            ("checkupdates_act", "Check for updates...", "", self.checkForUpdates),
             ("whatsnew_act", "What's new", "", self.showWhatsNew),
             None,
             ("shortcutshelp_act", "Shortcuts list", "?", self.displayShortcuts),
@@ -425,8 +425,8 @@ def return_help_menu(self):
                 "text": "Report issues (GitHub)",
                 "opts":
                 [
-                    ("copydiag_act", "Copy diagnostic report…", "", self.copyDiagnosticReport),
-                    ("viewlog_act", "View log file…", "", self.viewLogFile),
+                    ("copydiag_act", "Copy diagnostic report...", "", self.copyDiagnosticReport),
+                    ("viewlog_act", "View log file...", "", self.viewLogFile),
                     ("openlogdir_act", "Open log folder", "", self.openLogFolder),
                     ("submitissue_act", "Report bug / Request feature", "", lambda : self.openWebsite(gh_submit)),
                     ("seeissues_act", "See unresolved issues", "", lambda : self.openWebsite(gh_issues))

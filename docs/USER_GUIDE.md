@@ -470,8 +470,8 @@ palettes**, and show help. Preset names containing a number pattern can also
 auto-increment as you place traces, which is handy for numbering a sequence of
 objects.
 
-You can reset the palette (**Series ▸ Trace Palette ▸ Reset current palette**) and
-export/import palettes as CSV (**Series ▸ Trace Palette ▸ Export as CSV… / Import
+You can reset the palette (**Series ▸ Trace palette ▸ Reset current palette**) and
+export/import palettes as CSV (**Series ▸ Trace palette ▸ Export as CSV… / Import
 from CSV…**). **Edit ▸ Paste attributes to palette** (`Shift+G`) sets the current
 preset from a copied trace.
 
@@ -624,10 +624,10 @@ active — switch to a real alignment first.
 
 - **Switch** the current alignment from the field's right-click menu (**Series
   alignment** submenu), which lists every alignment as a checkable item.
-- **Alignments ▸ Modify alignments** (`Ctrl+Shift+A`) opens the alignment dialog,
+- **Alignments ▸ Edit alignments…** (`Ctrl+Shift+A`) opens the alignment dialog,
   where you can create a **New** alignment (created as a copy of the current one),
   **Rename**, or **Remove** alignments. Objects can also carry a per-object
-  alignment override (**Change object alignment…** in the object list).
+  alignment override (**Edit alignment…** in the object list).
 
 ### Adjusting a section's transform
 
