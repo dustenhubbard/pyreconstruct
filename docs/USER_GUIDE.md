@@ -499,12 +499,15 @@ selected traces.
 On the field (right-click empty space, or use the shortcuts):
 
 - **Select all** (`Ctrl+A`) / **Deselect** (`Ctrl+D`).
-- **Toggle hide all** (`H`) and **Toggle show all** (`A`) — temporarily hide or
-  show every trace regardless of individual hidden state (the field border turns
-  red when all are force-hidden, green when all are force-shown). These differ from
-  per-trace Hide/Unhide.
-- **Blend** (`Space`) — blend the current and last-viewed section, to compare them.
-- **Toggle hide images** (`I`), **Focus mode** (`X`).
+- The **View** submenu items are checkboxes that show their current on/off state;
+  each also has a keyboard shortcut that toggles it:
+  - **Hide trace layer** (`H`) and **Show all traces (ignore hidden)** (`A`) —
+    temporarily hide or show every trace regardless of individual hidden state
+    (the field border turns red when all are force-hidden, green when all are
+    force-shown). These differ from per-trace Hide/Unhide.
+  - **Section blend** (`Space`) — blend the current and last-viewed section, to
+    compare them.
+  - **Hide image** (`I`), **Focus mode** (`X`).
 
 **Undo** (`Ctrl+Z`) / **Redo** (`Ctrl+Y`) cover actions on the field. (Some edits
 made through the lists are noted there as not undoable.)
@@ -766,10 +769,11 @@ The 3D window has its own menu bar:
   at the configured DPI.
 - **Scene ▸ Export scene…** — export the whole scene as a single Wavefront `.obj`
   (with a `.mtl` material file).
-- From the **Object list ▸ 3D ▸ Export meshes** — export individual objects as
+- From the **Object list ▸ 3D ▸ Export mesh as** — export individual objects as
   **Wavefront (.obj)**, **OFF (.off)**, **Stanford PLY (.ply)**, **STL (.stl)**, or
   **Collada (.dae)**. (Surface and Spheres objects export; contour and tube types do
-  not.)
+  not. Collada export additionally requires the optional `pycollada` package; if it
+  is missing you'll be told, rather than seeing an error.)
 - **Object list ▸ 3D ▸ Export quantitative data** — write per-object surface area
   and volume to CSV. (Note these depend on the meshing settings; verify mesh quality
   before relying on the numbers.)
@@ -872,8 +876,9 @@ These are the defaults; rebind them under **Help ▸ Shortcuts list** (`?`).
 | `Ctrl+M` | Merge traces |
 | `Ctrl+H` / `Ctrl+U` | Hide selected / Unhide all |
 | `Ctrl+A` / `Ctrl+D` | Select all / Deselect |
-| `H` / `A` | Toggle hide-all / show-all |
-| `I` | Toggle hide images |
+| `H` / `A` | Hide trace layer / Show all traces (ignore hidden) |
+| `I` | Hide image |
+| `Space` | Section blend |
 | `X` | Focus mode |
 | `Delete` / `Backspace` | Delete selected (or remove last point while tracing) |
 

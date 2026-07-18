@@ -145,7 +145,8 @@ class ObjectTableWidget(DataTable):
                 "opts":
                 [
                     ("refresh_act", "Refresh", "", self.refresh),
-                    ("columns_act", "Set columns...", "", self.setColumns),
+                    # set-columns lives once now, in the Columns menu below
+                    # (it previously appeared here too, sharing columns_act).
                     ("export_act", "Export...", "", self.export),
                 ]
             },

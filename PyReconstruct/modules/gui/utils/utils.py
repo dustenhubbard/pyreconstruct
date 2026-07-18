@@ -129,7 +129,7 @@ def newAction(widget : QWidget, container : QMenu, action_tuple : tuple):
     act_name, text, kbd, f = action_tuple
     # create the action attribute
     action : QAction = container.addAction(text, f, "")
-    
+
     # create the shorcut or checkbox
     if type(kbd) is str:
         if "checkbox" in kbd:
@@ -138,6 +138,16 @@ def newAction(widget : QWidget, container : QMenu, action_tuple : tuple):
                 action.setChecked(True)
         else:
             action.setShortcut(kbd)
+    elif type(kbd) is tuple:
+        # (series, "checkbox"): a checkable action whose shortcut is a
+        # user-configurable series option (looked up by act_name). Lets a
+        # toggle be a checkbox AND keep its keyboard shortcut -- the plain
+        # "checkbox" string form cannot carry a shortcut. Initial checked
+        # state is synced from live state on menu build (see checkActions).
+        series, flag = kbd
+        if "checkbox" in flag:
+            action.setCheckable(True)
+        action.setShortcut(series.getOption(act_name))
     else:  # assume series was passed in
         action.setShortcut(kbd.getOption(act_name))
 
