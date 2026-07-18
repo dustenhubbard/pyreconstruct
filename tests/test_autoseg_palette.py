@@ -10,6 +10,7 @@ from PyReconstruct.modules.backend.autoseg.palette import (
     DEFAULT_AUTOSEG_PALETTE,
     palette_color,
     palette_color_array,
+    next_shuffle_seed,
 )
 
 # Thresholds separating a usable overlay color from the grayscale background.
@@ -122,6 +123,51 @@ def test_seed_reshuffles_assignment():
 def test_seed_is_still_deterministic():
     for label_id in SAMPLE_IDS:
         assert palette_color(label_id, seed=99) == palette_color(label_id, seed=99)
+
+
+# --- shuffle ("Shuffle colors" button) -------------------------------------
+#
+# The button calls next_shuffle_seed to pick a new seed. Each click must
+# visibly change the id -> color arrangement, and the result must stay a plain
+# deterministic seed so preview==import still holds.
+
+
+def _arrangement(seed, palette=None):
+    return [palette_color(i, palette, seed) for i in range(1, 64)]
+
+
+def test_shuffle_changes_the_arrangement():
+    """A shuffle must produce a genuinely different id -> color mapping."""
+    import random
+    seed = 0
+    for _ in range(25):  # simulate repeated clicks
+        new_seed = next_shuffle_seed(seed, rng=random.Random(_))
+        assert _arrangement(new_seed) != _arrangement(seed)
+        seed = new_seed
+
+
+def test_shuffle_returns_plain_int_seed():
+    """Result is a concrete non-negative int -> stays deterministic/persistable."""
+    import random
+    new_seed = next_shuffle_seed(0, rng=random.Random(1))
+    assert isinstance(new_seed, int)
+    assert new_seed >= 0
+    # and it drives the same deterministic mapping every time it is reused
+    assert _arrangement(new_seed) == _arrangement(new_seed)
+
+
+def test_shuffle_is_reproducible_with_seeded_rng():
+    """Injecting the same rng yields the same choice (testability/determinism)."""
+    import random
+    a = next_shuffle_seed(0, rng=random.Random(1234))
+    b = next_shuffle_seed(0, rng=random.Random(1234))
+    assert a == b
+
+
+def test_shuffle_noop_on_single_color_palette():
+    """No reshuffle exists for a <2 color palette; the seed is left unchanged."""
+    import random
+    assert next_shuffle_seed(5, palette=[(1, 2, 3)], rng=random.Random(0)) == 5
 
 
 # --- override / fallback ---------------------------------------------------
