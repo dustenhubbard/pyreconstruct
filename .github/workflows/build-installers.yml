@@ -52,8 +52,14 @@ permissions:
 jobs:
   build:
     concurrency:
-      # cancel a superseded in-flight build; ref-scoped so tags keep separate lanes
-      group: build-installers-build-${{ github.ref }}
+      # Cancel a superseded in-flight build; ref-scoped so tags keep separate
+      # lanes. The group MUST also include the matrix leg: job-level concurrency
+      # applies per job instance, so without the matrix key all three legs of
+      # ONE run share a group and cancel each other (this broke every build
+      # after it was first introduced ref-only -- two legs cancelled, release
+      # skipped). Per-leg groups keep the intended behavior: a newer main push
+      # cancels the older run's same-platform leg only.
+      group: build-installers-build-${{ github.ref }}-${{ matrix.plat }}-${{ matrix.arch }}
       cancel-in-progress: true
     strategy:
       fail-fast: false
