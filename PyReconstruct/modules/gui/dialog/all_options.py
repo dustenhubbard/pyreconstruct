@@ -387,8 +387,12 @@ class AllOptionsDialog(QDialog):
         cpu_max = self.series.getOption("cpu_max")
 
         structure = [
-            ["CPU usage:"],
-            ["min", ("slider", cpu_max), "max"]
+            ["CPU usage (image-to-zarr conversion):"],
+            ["min", ("slider", cpu_max, 25), "max"],
+            ["Sets how many parallel workers convert images to zarr -- a share"],
+            ["of your CPU, not a fixed number of cores. Recommended: about half"],
+            ["(the default). Lower it if the program or computer feels sluggish"],
+            ["during conversion."],
         ]
         
         def setOption(response):
