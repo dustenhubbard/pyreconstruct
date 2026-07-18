@@ -114,6 +114,88 @@ def test_options_dialog_setter_roundtrips_to_same_key(qapp, tmp_path):
         dlg.deleteLater()
 
 
+def _set_option_via_dialog(series, value):
+    """Flip 3D_auto_refresh through the real Series > Options widget (the path
+    that leaves the Scene-menu checkbox untouched -- the stale-checkbox bug)."""
+    dlg = AllOptionsDialog(None, series)
+    try:
+        w = dlg.all_widgets["smoothing_3D"]
+        assert w.accept(close=False)
+        responses = list(w.responses)
+        responses[4] = [("Auto-refresh edited objects", value)]
+        w.responses = tuple(responses)
+        w.set()
+    finally:
+        dlg.deleteLater()
+
+
+def test_scene_menu_checkbox_resyncs_on_window_activate(qapp, tmp_path):
+    """Finding 3: flipping the option via Series > Options while the 3D window
+    is open leaves the Scene-menu checkbox stale. Focusing the window
+    (WindowActivate) must resync the checkbox to the stored option -- WITHOUT
+    firing the toggle handler / writing the option again."""
+    from types import SimpleNamespace
+    from PySide6.QtWidgets import QApplication, QWidget, QMenu
+    from PySide6.QtCore import QEvent
+    from PyReconstruct.modules.gui.popup.custom_plotter import Container
+    from PyReconstruct.modules.gui.utils.utils import newAction
+
+    series = _series(tmp_path)
+
+    # count real option writes so a spurious resync write is caught
+    writes = []
+    real_set = series.setOption
+    series.setOption = lambda name, val, *a, **k: (
+        writes.append(name), real_set(name, val, *a, **k)
+    )[1]
+
+    # a stand-in plotter carrying a genuinely menu-constructed checkbox action,
+    # wired to a toggle handler exactly as the app wires toggleAutoRefresh
+    class FakePlotter(QWidget):
+        plt = object()  # marks construction finished
+
+        def __init__(self):
+            super().__init__()
+            self.refresh_calls = 0
+            self.series = series
+
+        def refreshStale(self):
+            self.refresh_calls += 1
+
+    plotter = FakePlotter()
+    menu = QMenu()
+
+    def toggle_handler():
+        # the real toggleAutoRefresh's core: push checkbox state to the option
+        plotter.series.setOption(OPTION, plotter.autorefresh_act.isChecked())
+
+    newAction(
+        plotter, menu,
+        ("autorefresh_act", "Auto-refresh edited objects", "checkbox", toggle_handler),
+    )
+    # construction sets it once from the stored value (defaults ON)
+    plotter.autorefresh_act.setChecked(series.getOption(OPTION))
+    assert plotter.autorefresh_act.isChecked() is True
+
+    # user flips it OFF via Series > Options -> option is False but the
+    # Scene-menu checkbox is now STALE (still checked)
+    _set_option_via_dialog(series, False)
+    assert series.getOption(OPTION) is False
+    assert plotter.autorefresh_act.isChecked() is True, "precondition: checkbox is stale"
+
+    writes_before = len(writes)
+
+    container = Container()
+    container.setCentralWidget(plotter)
+    QApplication.sendEvent(container, QEvent(QEvent.Type.WindowActivate))
+
+    # resync happened: checkbox now matches the stored option
+    assert plotter.autorefresh_act.isChecked() is False
+    # ...and the resync did NOT re-fire the toggle handler (no extra setOption)
+    assert len(writes) == writes_before, "resync must not write the option"
+    assert series.getOption(OPTION) is False
+
+
 def test_both_surfaces_resolve_to_same_stored_value(qapp, tmp_path):
     """End-to-end sync: Scene-menu write -> Options read, and Options write ->
     Scene-menu read, on the identical key."""

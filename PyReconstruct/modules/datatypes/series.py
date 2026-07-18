@@ -2825,7 +2825,7 @@ class Series():
             y = " ".join(str(y) for x, y in trace.points)
             csv_str += ",".join([name, color, fill, tags, x, y]) + "\n"
         
-        with open(fp, "w") as f:
+        with open(fp, "w", encoding="utf-8") as f:
             f.write(csv_str)
     
     def importTracePaletteCSV(self, fp : str, palette_name : str = None):
@@ -2838,7 +2838,10 @@ class Series():
         if palette_name is None:
             palette_name = self.palette_index[0]
         
-        with open(fp, "r") as f:
+        # errors="replace": a palette CSV exported by an older build on a
+        # non-UTF-8 locale is decoded leniently rather than crashing the import
+        # (mirrors getFullHistory's log reader); new exports are always UTF-8.
+        with open(fp, "r", encoding="utf-8", errors="replace") as f:
             lines = f.readlines()[1:]
         
         trace_list = []
@@ -3075,7 +3078,7 @@ class Series():
         s = ""
         for col_name, opts in self.user_columns.items():
             s += f"{col_name}: {', '.join(opts)}\n"
-        with open(out_fp, "w") as f:
+        with open(out_fp, "w", encoding="utf-8") as f:
             f.write(s)
     
     def importUserColsText(self, fp : str):
@@ -3084,7 +3087,9 @@ class Series():
         # name: option, option, option
         # name: option, option, option
         new_columns = {}
-        with open(fp, "r") as f:
+        # errors="replace": tolerate a user-columns file exported by an older
+        # build under a non-UTF-8 locale instead of failing the import.
+        with open(fp, "r", encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
         for line in lines:
             line = line.strip()
