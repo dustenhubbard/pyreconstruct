@@ -167,7 +167,7 @@ def return_series_menu(self):
                 "opts":
                 [
                     ("modifytracepalette_act", "Edit all palettes...", self.series, self.mouse_palette.modifyAllPaletteButtons),
-                    ("resetpalette_act", "Reset current palette", "", self.resetTracePalette),
+                    ("resettracepalette_act", "Reset current palette", "", self.resetTracePalette),
                     None,
                     ("exporttracepalette_act", "Export as CSV...", "", self.exportTracePaletteCSV),
                     ("importtracepalettecsv_act", "Import from CSV...", "", self.importTracePaletteCSV),
@@ -337,7 +337,7 @@ def return_view_menu(self):
         "opts":
         [
             ("copyscreen_act", "Copy view to clipboard", "", lambda : self.saveFieldView(False)),
-            ("copyscreen_act", "Save view to file", "", lambda : self.saveFieldView(True)),
+            ("savescreen_act", "Save view to file", "", lambda : self.saveFieldView(True)),
             None,
             ("changetheme_act", "Change theme...", "", self.setTheme),
             None,

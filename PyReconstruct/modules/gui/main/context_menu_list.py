@@ -4,9 +4,39 @@
 from PyReconstruct.modules.gui.utils import getUserColsMenu, getAlignmentsMenu
 
 
+def edit_selected_label(active):
+    """Resolve the Q8 top-level edit action's (label, enabled) for a selection.
+
+    Pure decision function shared by MainWindow.checkActions so the menu's
+    "appears/disappears with selection" behavior is testable without a Qt loop.
+
+        Params:
+            active (str | None): "trace" when only traces are selected,
+                "ztrace" when only z-traces are selected, None when nothing
+                applicable is selected (including a mixed trace+z-trace
+                selection, which the field menu treats as ambiguous).
+        Returns:
+            (tuple): (label text, enabled bool)
+    """
+    if active == "trace":
+        return ("Edit trace attributes...", True)
+    if active == "ztrace":
+        return ("Edit z-trace attributes...", True)
+    return ("Edit attributes...", False)
+
+
 def get_field_menu_list(self):
 
     return [
+        # Q8 hoist: a single top-level shortcut to the primary "Edit ...
+        # attributes..." dialog for whatever is selected. Its label and enabled
+        # state are driven by MainWindow.checkActions (trace selection ->
+        # "Edit trace attributes...", z-trace selection -> "Edit z-trace
+        # attributes...", nothing/mixed -> disabled). The entity submenus below
+        # still carry the full per-entity actions; this only surfaces the
+        # most-used one at the top.
+        ("editselected_act", "Edit attributes...", "", self.editSelectedAttributes),
+        None,
         {
             "attr_name": "tracemenu",
             "text": "Trace",

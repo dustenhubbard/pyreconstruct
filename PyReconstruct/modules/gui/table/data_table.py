@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QMenu,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QItemSelection, QItemSelectionModel
 
 from .copy_table_widget import CopyTableWidget
 
@@ -223,13 +223,47 @@ class DataTable(QDockWidget):
 
     def getSelected(self, single=False):
         """Get the selected data item(s).
-        
+
         Must be overwritten in child classes.
 
             Params:
                 single (bool): True if only accept single selection
         """
         pass
+
+    def invertSelection(self):
+        """Invert the table's row selection.
+
+        Every displayed row that is not currently selected becomes selected,
+        and vice versa. The table only ever holds the rows that pass the list's
+        active filters (see createTable/getFiltered), so this inverts against
+        the VISIBLE/FILTERED set -- filtered-out rows are not in the table and
+        can never be selected here. Whole rows are (de)selected, matching how a
+        user rubber-band selects in these lists.
+
+        Shared by the QTableWidget-backed lists (trace, z-trace, section,
+        flag). The object list is model-backed and overrides this with its own
+        selection-model implementation.
+        """
+        table = self.table
+        if table is None:
+            return
+
+        model = table.model()
+        last_col = table.columnCount() - 1
+        if model is None or last_col < 0:
+            return
+
+        selected_rows = {i.row() for i in table.selectedIndexes()}
+
+        selection = QItemSelection()
+        for r in range(table.rowCount()):
+            if r not in selected_rows:
+                selection.select(model.index(r, 0), model.index(r, last_col))
+
+        table.selectionModel().select(
+            selection, QItemSelectionModel.ClearAndSelect
+        )
     
     def contextMenuEvent(self, event=None):
         """Executed when button is right-clicked: pulls up menu for user."""
