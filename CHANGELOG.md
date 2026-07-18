@@ -13,6 +13,34 @@ as a pre-release tag, ahead of the next stable release.
 
 ## [Unreleased]
 
+## [1.21.0-beta-4] — 2026-07-18
+
+### Fixed
+- **Stale trace color in the incremental field render.** `editTraceAttributes`
+  copy-replaces traces; a table-refresh `clearTracking()` could leave the
+  incremental render's cached trace list holding the replaced object, drawing
+  the old color/name/tags/fill while the selection highlight tracked the new
+  copy. The cache now self-heals by validating cached on-screen traces against
+  their contours (selection-only refreshes keep the fast path). Inherited from
+  upstream. (#69)
+- **Undo could corrupt or drop traces on Windows with non-ASCII names.** The
+  undo-baseline readers (and fallback writer) used the locale codec while
+  section files are UTF-8; explicit `encoding="utf-8"` throughout, plus
+  same-class fixes for palette CSV and user-columns import/export. (#70)
+- **3D Scene-menu auto-refresh checkbox** now resyncs on window activation
+  after the option is changed in Series ▸ Options. (#70)
+- **Rolling-release CI race:** ref-scoped build cancellation + non-cancellable
+  publish phase so rapid merges cannot leave the Developer channel serving an
+  older build. (#70)
+- **Interop with upstream PyReconstruct restored:** the fast JSON writer now
+  escapes non-ASCII (`\uXXXX`) so fork-saved series read correctly in stock
+  PyReconstruct's locale-mode readers on Windows; ASCII payloads keep the
+  orjson fast path. (#71)
+- **Image→zarr conversion CPU bound:** conversion workers no longer inherit
+  all-core OpenCV/blosc threading (regression from the 2024 multi-core change),
+  so the CPU-usage slider genuinely limits load; default lowered 100%→50%,
+  slider gains tick marks and guidance. (#72)
+
 ## [1.21.0-beta-3] — 2026-07-17
 
 ### Added

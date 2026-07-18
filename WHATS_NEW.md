@@ -4,12 +4,18 @@ Short, plain-language highlights shown in PyReconstruct's "What's new" dialog
 after you install or update. For the complete, detailed list of changes, see the
 full release notes on GitHub (linked from the dialog).
 
+## [1.21.0-beta-4] — 2026-07-18
+
+- **A trace's new color now shows immediately, everywhere.** Changing a trace's color could leave the trace drawn in its old color (while its selection highlight already showed the new one) until the view was fully redrawn. Thanks to Lyndsey for spotting and reporting this one!
+- **Undo now works correctly for objects with accented or non-English names.** On some Windows systems, undoing right after editing an object whose name contained special characters (accents, non-Latin scripts) could fail or even wipe the object's traces. Your traces are now always restored intact.
+- **Series files play nicely with the standard PyReconstruct again.** Files saved by this version now open correctly in the regular (SynapseWeb) PyReconstruct on any computer — non-English object names and comments no longer risk turning into garbled text for collaborators.
+- **Smoother image-to-Zarr conversion on modest computers.** Converting images to a scaled Zarr no longer overwhelms every CPU core, so your laptop stays usable while it runs. The "CPU usage" slider in Series ▸ Options now genuinely controls how much of your processor the conversion uses (with tick marks and a short explanation), and it defaults to about half your cores. Turn it up for maximum speed on a powerful machine, or down if things feel sluggish.
+
 ## [1.21.0-beta-3] — 2026-07-17
 
 - **You choose whether the 3D scene updates itself.** The 3D view normally refreshes your edited objects the moment you return to it. If you'd rather it wait — say, while making many edits on a large series — you can now turn auto-refresh off, from the 3D window's Scene menu or in Series ▸ Options. "Refresh edited objects" (Ctrl+R) still works anytime, and turning auto-refresh back on catches the scene up right away.
 - **Clearer names for update channels.** In Series ▸ Options ▸ Updates, "Release" is now **Stable (recommended)** and "Pre-release" is now **Beta (early features, may be unstable)** — same channels, clearer names. You're reading these notes because you're on Beta — thank you!
 - **A new Developer channel for the adventurous.** A third update channel installs the very latest build after every single change we merge — no waiting for a beta. Expect rough edges; Beta remains the right home for most testers.
-- **Smoother image-to-Zarr conversion on modest computers.** Converting images to a scaled Zarr no longer overwhelms every CPU core, so your laptop stays usable while it runs. The "CPU usage" slider in Series ▸ Options now genuinely controls how much of your processor the conversion uses (with tick marks and a short explanation), and it defaults to about half your cores. Turn it up for maximum speed on a powerful machine, or down if things feel sluggish.
 
 ## [1.21.0-beta-2] — 2026-07-15
 
