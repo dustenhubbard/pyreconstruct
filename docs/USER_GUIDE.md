@@ -549,7 +549,8 @@ allowed), and several can be open at once.
   underlying data. Right-click a selection for that list's context menu.
 - Every list's context menu offers **Invert selection** (select the displayed rows
   that aren't selected, and vice versa — it only ever acts on rows currently shown,
-  so an active filter is respected) and **Copy row text** (the same as `Ctrl+C`).
+  so an active filter is respected) and **Copy _entity_ text** (named for the list —
+  **Copy object text**, **Copy trace text**, etc.; the same as `Ctrl+C`).
 
 > 📸 *Screenshot: the Object list docked on the left, with the column/filter menus visible.*
 

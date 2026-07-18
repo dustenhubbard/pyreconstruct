@@ -99,7 +99,7 @@ class FlagTableWidget(DataTable):
             ("resolve_act", "Mark resolved", "", self.markResolved),
             ("unresolved_act", "Mark unresolved", "", lambda : self.markResolved(False)),
             None,
-            ("copy_act", "Copy row text", "", self.table.copy),
+            ("copy_act", "Copy flag text", "", self.table.copy),
             None,
             ("delete_act", "Delete flags", "", self.deleteFlags),
             ("deletematchname_act", "Delete all flags with this name (entire series)", "", self.deleteFlagName)

@@ -119,7 +119,7 @@ class ZtraceTableWidget(DataTable):
         # table, then the shared z-trace menu (also used in the field).
         context_menu_list = [
             ("invertztraceselection_act", "Invert selection", "", self.invertSelection),
-            ("copyztracerow_act", "Copy row text", "", self.table.copy),
+            ("copyztracerow_act", "Copy z-trace text", "", self.table.copy),
             None,
         ] + self.mainwindow.field.getZtraceMenu()
         self.context_menu = QMenu(self)

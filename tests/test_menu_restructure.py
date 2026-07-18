@@ -2,7 +2,7 @@
 
 PR3 -- object-menu restructure:
   * the old "Operations" grab-bag is dissolved into "Visibility" and
-    "Geometry" submenus; "Object attributes" is retitled "Attributes";
+    "Geometry" submenus; the attributes submenu is titled "Object attributes";
   * Lock/Unlock has a SINGLE home (the Attributes submenu) -- the duplicate
     pair (lockobj_act1 / unlockobj_act1) is gone;
   * the five 3D-export formats carry UNIQUE attr_names (they previously all
@@ -109,8 +109,8 @@ def test_duplicate_lock_pair_is_gone():
 
 def test_lock_unlock_live_in_attributes_submenu():
     menu = get_context_menu_list_obj(_ObjMenuStub())
-    attrs = _submenu(menu, "Attributes")
-    assert attrs is not None, "Attributes submenu missing"
+    attrs = _submenu(menu, "Object attributes")
+    assert attrs is not None, "Object attributes submenu missing"
     attr_names = _names(list(_walk(attrs)))
     assert "lockobj_act" in attr_names and "unlockobj_act" in attr_names
 
@@ -121,8 +121,8 @@ def test_lock_unlock_live_in_attributes_submenu():
 def test_operations_grabbag_is_dissolved():
     menu = get_context_menu_list_obj(_ObjMenuStub())
     assert _submenu(menu, "Operations") is None
-    assert _submenu(menu, "Object attributes") is None  # retitled
-    assert _submenu(menu, "Attributes") is not None
+    assert _submenu(menu, "Attributes") is None  # reverted from phase-2a retitle
+    assert _submenu(menu, "Object attributes") is not None
     assert _submenu(menu, "Visibility") is not None
     assert _submenu(menu, "Geometry") is not None
 
