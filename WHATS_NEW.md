@@ -4,6 +4,12 @@ Short, plain-language highlights shown in PyReconstruct's "What's new" dialog
 after you install or update. For the complete, detailed list of changes, see the
 full release notes on GitHub (linked from the dialog).
 
+## [1.21.0-beta-3] — 2026-07-17
+
+- **You choose whether the 3D scene updates itself.** The 3D view normally refreshes your edited objects the moment you return to it. If you'd rather it wait — say, while making many edits on a large series — you can now turn auto-refresh off, from the 3D window's Scene menu or in Series ▸ Options. "Refresh edited objects" (Ctrl+R) still works anytime, and turning auto-refresh back on catches the scene up right away.
+- **Clearer names for update channels.** In Series ▸ Options ▸ Updates, "Release" is now **Stable (recommended)** and "Pre-release" is now **Beta (early features, may be unstable)** — same channels, clearer names. You're reading these notes because you're on Beta — thank you!
+- **A new Developer channel for the adventurous.** A third update channel installs the very latest build after every single change we merge — no waiting for a beta. Expect rough edges; Beta remains the right home for most testers.
+
 ## [1.21.0-beta-2] — 2026-07-15
 
 - **Fewer save interruptions on Windows.** An occasional "Save failed" message could pop up while you were just scrolling between sections. PyReconstruct now waits a moment and retries, so these hiccups no longer interrupt you. (Your work was always safe; the message appeared even though the file was left untouched.)
