@@ -24,6 +24,23 @@ def export3DObjects(series: Series, obj_names : list, output_dir : str, export_t
             void
     """
 
+    ## Collada (.dae) export needs the optional 'pycollada' package (trimesh's
+    ## Collada writer imports it lazily and otherwise raises a bare
+    ## ModuleNotFoundError). Surface the requirement here, before any work, so
+    ## the user gets a clear message instead of an unhandled traceback.
+    if export_type == "dae":
+        try:
+            import collada  # noqa: F401  (provided by the 'pycollada' package)
+        except ImportError:
+            if notify_user:
+                notify(
+                    "Collada (.dae) export requires the 'pycollada' package, "
+                    "which is not installed.\n\n"
+                    "Install it (e.g. 'pip install pycollada') and try again, "
+                    "or choose another export format."
+                )
+            return
+
     ## Collect 3D objects (single pass over the sections)
 
     obj_data = get_3D_meshes(series, obj_names)

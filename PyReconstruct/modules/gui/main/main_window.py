@@ -266,6 +266,17 @@ class MainWindow(QMainWindow):
         self.togglebc_act.setChecked(not self.mouse_palette.bc_hidden)
         self.togglesb_act.setChecked(not self.mouse_palette.sb_hidden)
 
+        ## Sync the View-submenu checkboxes to the live field state so they are
+        ## accurate every time the menu opens (state can change via shortcut,
+        ## other menus, or programmatically). setChecked emits `toggled`, not
+        ## `triggered`, and the handlers are connected to `triggered`, so this
+        ## resync never re-fires a toggle handler.
+        self.focus_act.setChecked(bool(self.field.focus_mode))
+        self.hideall_act.setChecked(self.field.hide_trace_layer)
+        self.showall_act.setChecked(self.field.show_all_traces)
+        self.hideimage_act.setChecked(self.field.hide_image)
+        self.blend_act.setChecked(self.field.blend_sections)
+
         ## Group visibility
         for group, viz in self.series.groups_visibility.items():
             try:
