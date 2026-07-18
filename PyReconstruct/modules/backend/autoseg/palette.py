@@ -103,6 +103,57 @@ def palette_color(label_id, palette=None, seed: int = 0) -> tuple:
     return tuple(int(c) for c in palette[index])
 
 
+def next_shuffle_seed(current_seed: int, palette=None, rng=None) -> int:
+    """Pick a new seed whose color arrangement differs from the current one.
+
+    This backs the "Shuffle colors" button: each click must visibly change the
+    id -> color assignment. A fresh random seed almost always does, but two
+    seeds *can* land on the same arrangement, so we draw candidates until one
+    actually differs -- that makes "a click always reshuffles" a guarantee, not
+    a near-certainty. The result is a concrete integer stored in the series
+    option, so determinism and preview==import are preserved exactly as with a
+    hand-entered seed.
+
+        Params:
+            current_seed (int): the seed currently in effect
+            palette: list of (R, G, B) entries; falls back to the shipped
+                default when None or empty
+            rng: an optional random.Random (injectable for deterministic tests);
+                a fresh default source is used when None
+        Returns:
+            (int): a new non-negative seed that produces a different arrangement,
+                or ``current_seed`` unchanged if the palette has fewer than two
+                colors (no reshuffle is possible)
+    """
+    import random
+
+    if rng is None:
+        rng = random.Random()
+    if not palette:
+        palette = DEFAULT_AUTOSEG_PALETTE
+
+    # With <2 colors every id maps to the same entry: no reshuffle exists.
+    if len(palette) < 2:
+        return int(current_seed)
+
+    # A small id sample fingerprints the arrangement. Reaching every entry over
+    # ~64 ids is near-certain, so two seeds agreeing across all of them means
+    # the visible mapping is identical.
+    sample = range(1, 64)
+
+    def arrangement(seed):
+        return tuple(palette_color(i, palette, seed) for i in sample)
+
+    current = arrangement(int(current_seed))
+    for _ in range(1000):
+        candidate = rng.randrange(1, 2 ** 31)
+        if candidate == int(current_seed):
+            continue
+        if arrangement(candidate) != current:
+            return candidate
+    return int(current_seed)
+
+
 def palette_color_array(label_array, palette=None, seed: int = 0,
                         background=(0, 0, 0)):
     """Vectorized palette_color for a 2-D array of label ids.
