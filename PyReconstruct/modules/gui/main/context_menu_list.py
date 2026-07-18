@@ -28,15 +28,21 @@ def get_field_menu_list(self):
             "text": "View",
             "opts":
             [
-                ("focus_act", "Toggle focus mode", self.series, self.field.toggleFocusMode),
+                # These five are checkable: they mirror a live on/off field
+                # state and keep their user-configurable shortcuts via the
+                # (series, "checkbox") kbd form. Checked state is (re)synced
+                # from the actual state whenever the menu opens -- see
+                # MainWindow.checkActions. "Unhide all traces" stays a plain
+                # action (it is a one-shot, not a persistent state).
+                ("focus_act", "Focus mode", (self.series, "checkbox"), self.field.toggleFocusMode),
                 None,
                 ("unhideall_act", "Unhide all traces (this section)", self.series, self.field.unhideAllTraces),
                 None,
-                ("hideall_act", "Toggle hide all", self.series, self.field.toggleHideAllTraces),
-                ("showall_act", "Toggle show all", self.series, self.field.toggleShowAllTraces),
+                ("hideall_act", "Hide trace layer", (self.series, "checkbox"), self.field.toggleHideAllTraces),
+                ("showall_act", "Show all traces (ignore hidden)", (self.series, "checkbox"), self.field.toggleShowAllTraces),
                 None,
-                ("hideimage_act", "Toggle hide image", self.series, self.field.toggleHideImage),
-                ("blend_act", "Toggle section blend", self.series, self.field.toggleBlend),
+                ("hideimage_act", "Hide image", (self.series, "checkbox"), self.field.toggleHideImage),
+                ("blend_act", "Section blend", (self.series, "checkbox"), self.field.toggleBlend),
             ]
         },
         getAlignmentsMenu(self.series, self.changeAlignment),
@@ -62,7 +68,7 @@ def get_context_menu_list_obj(self):
         None,
         {
             "attr_name" : "objattrsmenu",
-            "text": "Object attributes",
+            "text": "Attributes",
             "opts":
             [
                 ("editobjcomment_act", "Comment...", "", self.editComment),
@@ -78,13 +84,27 @@ def get_context_menu_list_obj(self):
                 None,
                 ("setobjalignment_act", "Edit alignment...", "", self.editAlignment),
                 None,
+                # Lock/Unlock lives here as its single home (it is a stored
+                # object attribute); do NOT re-add it to another submenu.
                 ("lockobj_act", "Lock", "", self.lockObjects),
                 ("unlockobj_act", "Unlock", "", lambda : self.lockObjects(False))
             ]
         },
         {
-            "attr_name": "objoperationsmenu",
-            "text": "Operations",
+            "attr_name": "objvisibilitymenu",
+            "text": "Visibility",
+            "opts":
+            [
+                ("hideobj_act", "Hide", "", self.hideObj),
+                ("unhideobj_act", "Unhide", "", lambda : self.hideObj(False)),
+                ("hideotherobj_act", "Hide other objects", "", self.hideOtherObjects),
+                ("hideallobj_act", "Hide all objects", "", self.hideAllObjects),
+                ("showallobj_act", "Show all objects", "", self.unhideAllObjects),
+            ]
+        },
+        {
+            "attr_name": "objgeometrymenu",
+            "text": "Geometry",
             "opts":
             [
                 ("copyobj_act", "Duplicate object", "", self.copyObjects),
@@ -94,16 +114,7 @@ def get_context_menu_list_obj(self):
                 ("smoothtraces_act", "Smooth traces", "", self.smoothObject),
                 ("splitobj_act", "Split into separate objects", "", self.splitObject),
                 None,
-                ("hideobj_act", "Hide", "", self.hideObj),
-                ("unhideobj_act", "Unhide", "", lambda : self.hideObj(False)),
-                ("hideotherobj_act", "Hide other objects", "", self.hideOtherObjects),
-                ("hideallobj_act", "Hide all objects", "", self.hideAllObjects),
-                ("showallobj_act", "Show all objects", "", self.unhideAllObjects),
-                None,
                 ("removealltags_act", "Remove all tags", "", self.removeAllTags),
-                None,
-                ("lockobj_act1", "Lock", "", self.lockObjects),
-                ("unlockobj_act1", "Unlock", "", lambda : self.lockObjects(False))
             ]
         },
         getUserColsMenu(self.series, self.addUserCol, self.setUserCol, self.editUserCol),
@@ -126,16 +137,22 @@ def get_context_menu_list_obj(self):
                 ("removeobj3D_act", "Remove from scene", "", self.remove3D),
                 {
                     "attr_name": "exportobj3D",
-                    "text": "Export meshes",
+                    "text": "Export mesh as",
                     "opts":
                     [
-                        ("export3D_act", "Wavefront (.obj)", "", lambda : self.exportAs3D("obj")),
-                        ("export3D_act", "Object File Format (.off)", "", lambda : self.exportAs3D("off")),
-                        ("export3D_act", "Stanford PLY (.ply)", "", lambda : self.exportAs3D("ply")),
-                        ("export3D_act", "STL (.stl)", "", lambda : self.exportAs3D("stl")),
-                        ("export3D_act", "Collada (.dae) - requires collada", "", lambda : self.exportAs3D("dae")),
+                        # unique attr_names per format (previously all "export3D_act",
+                        # so four of five silently shadowed the last on the widget).
+                        # Collada requires the optional 'pycollada' package; the
+                        # export handler surfaces that requirement gracefully
+                        # (export_volumes.export3DObjects), so the dependency note
+                        # is no longer crammed into the label.
+                        ("export3D_obj_act", "Wavefront (.obj)", "", lambda : self.exportAs3D("obj")),
+                        ("export3D_off_act", "Object File Format (.off)", "", lambda : self.exportAs3D("off")),
+                        ("export3D_ply_act", "Stanford PLY (.ply)", "", lambda : self.exportAs3D("ply")),
+                        ("export3D_stl_act", "STL (.stl)", "", lambda : self.exportAs3D("stl")),
+                        ("export3D_dae_act", "Collada (.dae)", "", lambda : self.exportAs3D("dae")),
                     ]
-                    
+
                     },
                 ("exportmeshdata", "Export quantitative data...", "", self.export3DData),
                 None,
