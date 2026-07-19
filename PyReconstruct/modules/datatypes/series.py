@@ -1788,7 +1788,70 @@ class Series():
                 self.addLog(name, None, "Remove all trace tags")
 
         self.modified = True
-    
+
+    def reapplyAutosegColors(self, obj_names : list, series_states=None, log_event=True):
+        """Recolor objects using the CURRENT autoseg palette and seed.
+
+        Lets a user reapply today's palette (colorblind-safe default or a custom
+        one) to objects imported before the palette existed -- their old colors
+        were baked in at import time and never update on their own.
+
+        Each object's color is resolved from its name: an unmodified autoseg
+        name ("autoseg_<id>") recovers its label id and gets exactly the color a
+        fresh import would assign; any other name falls back to a stable hash of
+        the name (see ``palette_color_for_name``). The color is written through
+        the same per-section ``editTraceAttributes`` path every other bulk
+        attribute edit uses, so it is one undoable operation and the field/lists
+        refresh correctly.
+
+            Params:
+                obj_names (list): the names of objects to recolor
+                series_states (dict): optional dict for GUI undo states
+                log_event (bool): True if the event should be logged
+        """
+        from PyReconstruct.modules.backend.autoseg.palette import (
+            DEFAULT_AUTOSEG_PALETTE,
+            palette_color_for_name,
+        )
+
+        ## Resolve the palette + seed once (empty override -> curated default),
+        ## then the per-object color once -- these do not vary by section.
+        palette = self.getOption("autoseg_color_palette") or DEFAULT_AUTOSEG_PALETTE
+        color_seed = self.getOption("autoseg_color_seed") or 0
+        color_map = {
+            name: palette_color_for_name(name, palette, color_seed)
+            for name in obj_names
+        }
+
+        ## Touch only the sections the selected objects appear on.
+        for snum, section in self.enumerateSections(
+            message="Reapplying autoseg colors...",
+            series_states=series_states,
+            section_numbers=self.getObjectSections(obj_names)
+        ):
+            modified = False
+            for obj_name in obj_names:
+                if obj_name in section.contours:
+                    traces = section.contours[obj_name].getTraces()
+                    if traces:
+                        section.editTraceAttributes(
+                            traces,
+                            name=None,
+                            color=color_map[obj_name],
+                            tags=None,
+                            mode=None,
+                            log_event=False
+                        )
+                        modified = True
+            if modified:
+                section.save()
+
+        if log_event:
+            for name in obj_names:
+                self.addLog(name, None, "Reapply autoseg colors")
+
+        self.modified = True
+
     def hideObjects(self, obj_names : list, hide=True, series_states=None, log_event=True):
         """Hide all traces of a set of objects throughout the series.
         

@@ -70,6 +70,66 @@ DEFAULT_AUTOSEG_PALETTE = [
 ]
 
 
+# Prefix autoseg import gives every trace/object it creates. The object name is
+# this prefix followed by the (decimal) segmentation label id, e.g. "autoseg_42".
+# Kept here as the single source of truth so both the import (which builds the
+# name) and the recolor (which recovers the id from the name) stay in sync.
+AUTOSEG_TRACE_PREFIX = "autoseg_"
+
+
+def label_id_from_name(name: str):
+    """Recover the segmentation label id baked into an autoseg object name.
+
+    Import names each object ``f"{AUTOSEG_TRACE_PREFIX}{id}"`` (e.g.
+    "autoseg_42"), so the original label id is the trailing decimal integer.
+    Returns that int when the name matches exactly, else None (the caller then
+    falls back to a stable name hash).
+
+        Params:
+            name (str): the object name
+        Returns:
+            (int | None): the label id, or None when the name is not an
+                unmodified autoseg import name
+    """
+    if not isinstance(name, str) or not name.startswith(AUTOSEG_TRACE_PREFIX):
+        return None
+    suffix = name[len(AUTOSEG_TRACE_PREFIX):]
+    # Only a bare run of digits is a genuine label id. This deliberately
+    # rejects renamed/derived names ("autoseg_42_dendrite", "autoseg_") so they
+    # take the stable-hash fallback instead of silently colliding on int(42).
+    if not suffix.isdigit():
+        return None
+    return int(suffix)
+
+
+def palette_color_for_name(name: str, palette=None, seed: int = 0) -> tuple:
+    """Return the palette color an object *named* ``name`` should get.
+
+    Used to (re)apply the current palette to already-imported objects. When the
+    name still encodes its autoseg label id (see ``label_id_from_name``) the
+    result is byte-identical to what import would have assigned for that id --
+    so re-running with the same palette/seed is a no-op. When the name does not
+    parse (renamed, or never an autoseg object), the color is derived from a
+    stable hash of the name string: ``zlib.crc32`` is used deliberately because
+    it is deterministic across processes and Python runs (unlike the builtin
+    ``hash``, which is salted by PYTHONHASHSEED), so the same name always yields
+    the same color everywhere.
+
+        Params:
+            name (str): the object name
+            palette: list of (R, G, B) entries; falls back to the shipped
+                default when None or empty
+            seed (int): re-roll seed (same meaning as palette_color)
+        Returns:
+            (tuple): an (R, G, B) integer triple from the palette
+    """
+    label_id = label_id_from_name(name)
+    if label_id is None:
+        import zlib
+        label_id = zlib.crc32(str(name).encode("utf-8"))
+    return palette_color(label_id, palette, seed)
+
+
 def _mix(value: int, seed: int) -> int:
     """Deterministically scramble an integer (splitmix64/Murmur3 finalizer).
 

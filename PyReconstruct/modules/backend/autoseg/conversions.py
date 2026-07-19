@@ -13,7 +13,7 @@ from PyReconstruct.modules.backend.view import SectionLayer
 from PyReconstruct.modules.backend.threading import ThreadPoolProgBar
 from PyReconstruct.modules.calc import reducePoints
 
-from .palette import DEFAULT_AUTOSEG_PALETTE, palette_color
+from .palette import AUTOSEG_TRACE_PREFIX, DEFAULT_AUTOSEG_PALETTE, palette_color
 
 
 dt = None
@@ -761,7 +761,7 @@ def importSection(data_zg, group, snum, series, ids=None):
         ## Add exteriors as traces
         for ext in exteriors:
 
-            trace_name = f"autoseg_{id}"
+            trace_name = f"{AUTOSEG_TRACE_PREFIX}{id}"
             trace_color = palette_color(id, palette, color_seed)
 
             trace = Trace(name=trace_name, color=trace_color)
@@ -771,8 +771,8 @@ def importSection(data_zg, group, snum, series, ids=None):
             section.addTrace(trace)
 
         ## Add trace to group
-        series.object_groups.add(f"seg_{dt}", f"autoseg_{id}")
-        series.object_groups.add(f"seg_{group}", f"autoseg_{id}")
+        series.object_groups.add(f"seg_{dt}", f"{AUTOSEG_TRACE_PREFIX}{id}")
+        series.object_groups.add(f"seg_{group}", f"{AUTOSEG_TRACE_PREFIX}{id}")
 
     section.save()
 
