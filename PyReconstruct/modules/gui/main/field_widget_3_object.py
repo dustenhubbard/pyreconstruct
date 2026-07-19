@@ -17,7 +17,8 @@ from PyReconstruct.modules.gui.popup import (
     TextWidget,
 )
 from PyReconstruct.modules.gui.utils import (
-    notify
+    notify,
+    notifyConfirm,
 )
 from PyReconstruct.modules.gui.table import (
     HistoryTableWidget,
@@ -164,6 +165,32 @@ class FieldWidgetObject(FieldWidgetTrace):
                 self.series.host_tree.getObjToUpdate([name] + obj_names)
             )
                 
+        return True
+
+    @object_function(update_objects=True, reload_field=True)
+    def reapplyAutosegColors(self, obj_names : list):
+        """Recolor selected objects with the current autoseg palette + seed.
+
+        Confirms first because it discards the objects' existing colors. Locked
+        objects are blocked by the object_function wrapper (update_objects=True),
+        exactly as any other bulk attribute edit; a single series undo restores
+        every prior color.
+        """
+        n = len(obj_names)
+        s = "s" if n != 1 else ""
+        confirmed = notifyConfirm(
+            f"Recolor {n} selected object{s} using the current autoseg palette "
+            "and seed?\n\n"
+            "This replaces the objects' existing colors. You can undo it.",
+            yn=True,
+        )
+        if not confirmed:
+            return False
+
+        self.series.reapplyAutosegColors(
+            obj_names,
+            series_states=self.series_states,
+        )
         return True
 
     @object_function(update_objects=True, reload_field=True)
