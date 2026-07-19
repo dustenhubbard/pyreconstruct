@@ -114,6 +114,11 @@ def get_context_menu_list_obj(self):
                 None,
                 ("setobjalignment_act", "Edit alignment...", "", self.editAlignment),
                 None,
+                # Reapply the current autoseg palette (colorblind-safe default
+                # or a custom one) to objects imported before the palette
+                # existed, whose old colors were baked in at import time.
+                ("reapplyautosegcolors_act", "Reapply autoseg colors...", "", self.reapplyAutosegColors),
+                None,
                 # Lock/Unlock lives here as its single home (it is a stored
                 # object attribute); do NOT re-add it to another submenu.
                 ("lockobj_act", "Lock", "", self.lockObjects),
