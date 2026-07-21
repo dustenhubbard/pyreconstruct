@@ -464,8 +464,7 @@ class AllOptionsDialog(QDialog):
                 ["Update channel:"],
                 [("radio",
                   ("Stable (recommended)", channel_idx == 0),
-                  ("Beta (early features, may be unstable)", channel_idx == 1),
-                  ("Developer (every change, expect breakage)", channel_idx == 2))],
+                  ("Beta (early features, may be unstable)", channel_idx == 1))],
                 [("check", ("Check for updates on startup",
                             self.series.getOption("update_check_on_startup", use_defaults)))],
             ]
