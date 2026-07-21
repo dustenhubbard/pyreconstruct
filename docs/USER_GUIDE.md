@@ -97,9 +97,21 @@ PyReconstruct
 ```
 
 `pip` pulls in the runtime dependencies (PySide6, VTK, vedo, NumPy, SciPy,
-scikit-image, shapely, trimesh, zarr, and others). For a full development setup
-(conda environment, tests, code layout), see
-[CONTRIBUTING.md](../CONTRIBUTING.md).
+scikit-image, shapely, trimesh, zarr, and others).
+
+To **track the latest unreleased code on `main`** (what the retired in-app
+"Developer" channel used to offer), clone the repository and install it editable,
+then `git pull` whenever you want the newest commits:
+
+```
+git clone https://github.com/dustenhubbard/PyReconstruct
+cd PyReconstruct
+pip install -e .          # editable: the checkout IS the running code
+git pull                  # later, to move to the newest main; no reinstall needed
+```
+
+For a full development setup (the conda `pyrecon_dev` environment, tests, code
+layout), see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ### Launching the app
 
@@ -122,19 +134,18 @@ by re-running `install.sh` — see [Installing PyReconstruct](#1-installing-pyre
 
 ### Update channels
 
-PyReconstruct offers three update channels, selected under **Series ▸ Options…**
+PyReconstruct offers two update channels, selected under **Series ▸ Options…**
 (`Shift+O`) in the **Updates** section:
 
 - **Stable (recommended)** — stable builds, tagged `vX.Y.Z`.
 - **Beta (early features, may be unstable)** — the latest pre-release build (release
   candidates, tagged like `vX.Y.ZrcN`); newer features, less testing.
-- **Developer (every change, expect breakage)** — the rolling build rebuilt from the
-  latest `main` after every change; the newest code, untested and often broken. For
-  developers and testers only.
 
-The default channel is **Stable**.
+The default channel is **Stable**. (Developers who want the newest unreleased code
+run a source install instead of a frozen build — see
+[Source / `pip` installs](#source--pip-installs) below.)
 
-> 📸 *Screenshot: Series ▸ Options ▸ Updates, showing the Stable / Beta / Developer radio buttons and the "Check for updates on startup" checkbox.*
+> 📸 *Screenshot: Series ▸ Options ▸ Updates, showing the Stable / Beta radio buttons and the "Check for updates on startup" checkbox.*
 
 ### Checking for updates
 
@@ -163,6 +174,13 @@ For a from-source install, **Help ▸ Check for updates…** instead reinstalls
 PyReconstruct from a chosen Git branch with `pip` and then restarts. The branch is
 configured under **Series ▸ Options ▸ Updates** (the **Branch:** field, default
 `main`). The channel/installer machinery above applies only to packaged builds.
+
+The same reinstall is available from the command line: `PyReconstruct --update`
+(reinstall the current branch) or `PyReconstruct --switch <branch>` (change branch,
+then reinstall). If you installed editable (`pip install -e .`), a plain `git pull`
+is usually all you need — the working tree is what runs. A source install on `main`
+is the supported way to follow every commit now that the in-app Developer channel
+has been removed.
 
 ---
 

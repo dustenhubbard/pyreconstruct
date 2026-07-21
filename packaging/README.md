@@ -98,5 +98,7 @@ PyReconstruct-<version>-macOS-arm64.dmg
 PyReconstruct-<version>-macOS-x86_64.dmg
 ```
 
-`<version>` is the setuptools-scm string: `1.20.0` on a tag, `1.20.1.devN+gHASH`
-for the rolling `prerelease` (main) build.
+`<version>` is the setuptools-scm string: `1.20.0` on a clean `vX.Y.Z` tag, or a
+normalized pre-release like `1.21.0rc1` on a pre-release tag. (Installers are
+built only for tags now; the former rolling `prerelease` main build was retired
+along with the in-app Developer channel.)

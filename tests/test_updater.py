@@ -45,7 +45,11 @@ def test_pick_release_prerelease_falls_back_to_newest_prerelease():
     rels = [_rel("v1.20.0"), _rel("v1.21.0rc1", prerelease=True)]
     assert U.pick_release(rels, "prerelease")["tag_name"] == "v1.21.0rc1"
 
-@pytest.mark.parametrize("legacy,canonical", [("stable", "release"), ("edge", "prerelease")])
+@pytest.mark.parametrize("legacy,canonical", [
+    ("stable", "release"),
+    ("edge", "prerelease"),
+    ("developer", "prerelease"),   # removed channel remaps to Beta (graceful degradation)
+])
 def test_pick_release_maps_legacy_channels(legacy, canonical):
     assert U.pick_release(RELEASES, legacy) == U.pick_release(RELEASES, canonical)
 
@@ -58,19 +62,24 @@ def test_pick_release_empty():
     assert U.pick_release(None, "prerelease") is None
 
 
-# ---- pick_release: Developer channel + Beta/rolling separation --------------
-def test_pick_release_developer_picks_rolling_tag():
-    # The Developer channel selects the rolling build by its reused tag, not by
-    # version (the tag is identical build-to-build).
-    assert U.pick_release(RELEASES, "developer")["tag_name"] == U.ROLLING_TAG
+# ---- pick_release: removed Developer channel remaps; Beta/rolling separation -
+def test_pick_release_stored_developer_channel_behaves_like_prerelease():
+    # The Developer channel was removed. A config still storing "developer" (the
+    # maintainer's, at minimum) must degrade to Beta: normalize_channel remaps it
+    # to "prerelease", so it takes the prerelease branch -- picking the curated
+    # semver pre-release and NOT the excluded rolling tag, never erroring.
+    rels = [
+        _rel("prerelease", prerelease=True),
+        _rel("v1.20.4-rc.1", prerelease=True),
+        _rel("v1.20.0"),
+    ]
+    assert U.pick_release(rels, "developer")["tag_name"] == "v1.20.4-rc.1"
 
-def test_pick_release_developer_none_when_no_rolling_release():
-    rels = [_rel("v1.20.0"), _rel("v1.21.0rc1", prerelease=True)]
-    assert U.pick_release(rels, "developer") is None
-
-def test_pick_release_developer_ignores_draft_rolling():
-    # a draft rolling release (e.g. mid-publish) must not be offered
-    rels = [_rel("prerelease", prerelease=True, draft=True), _rel("v1.20.0")]
+def test_pick_release_stored_developer_never_returns_rolling_tag():
+    # Belt-and-suspenders: even when the ONLY prerelease-flagged release is the
+    # rolling tag, a stored "developer" must offer nothing (like Beta), never the
+    # rolling build that the removed channel used to serve.
+    rels = [_rel("prerelease", prerelease=True), _rel("v1.20.0")]
     assert U.pick_release(rels, "developer") is None
 
 def test_pick_release_prerelease_excludes_rolling_when_rolling_is_newest():
@@ -100,21 +109,22 @@ def test_pick_release_prerelease_none_when_only_rolling_prerelease():
 
 # ---- channel value <-> radio helpers ----------------------------------------
 @pytest.mark.parametrize("channel,idx", [
-    ("release", 0), ("prerelease", 1), ("developer", 2),
+    ("release", 0), ("prerelease", 1),
     ("stable", 0), ("edge", 1),          # legacy values normalize
+    ("developer", 1),                    # removed channel -> Beta radio, not index 0
     (None, 0), ("bogus", 0), ("", 0),    # unknown/missing -> Stable (the default)
 ])
 def test_channel_radio_index(channel, idx):
     assert U.channel_radio_index(channel) == idx
 
-@pytest.mark.parametrize("checked_idx,channel", [(0, "release"), (1, "prerelease"), (2, "developer")])
+@pytest.mark.parametrize("checked_idx,channel", [(0, "release"), (1, "prerelease")])
 def test_radio_response_channel(checked_idx, channel):
-    resp = [["Stable", False], ["Beta", False], ["Developer", False]]
+    resp = [["Stable", False], ["Beta", False]]
     resp[checked_idx][1] = True
     assert U.radio_response_channel(resp) == channel
 
 def test_radio_response_channel_defaults_release_when_none_checked():
-    resp = [("Stable", False), ("Beta", False), ("Developer", False)]
+    resp = [("Stable", False), ("Beta", False)]
     assert U.radio_response_channel(resp) == "release"
 
 def test_channel_index_and_response_roundtrip():
@@ -129,41 +139,35 @@ def test_normalize_channel():
     assert U.normalize_channel("edge") == "prerelease"
     assert U.normalize_channel("release") == "release"
     assert U.normalize_channel("prerelease") == "prerelease"
-    assert U.normalize_channel("developer") == "developer"
+    # The removed Developer channel remaps to Beta so a stored "developer" option
+    # never lands on a nonexistent channel (graceful degradation).
+    assert U.normalize_channel("developer") == "prerelease"
 
 
-# ---- check_for_update: Developer freshness on the reused rolling tag ---------
-def _dev_releases(dev_asset_name):
-    """A release set whose rolling 'prerelease' build ships the given asset."""
-    return [
-        _rel(U.ROLLING_TAG, prerelease=True, assets=[dev_asset_name]),
+# ---- check_for_update: end-to-end resolution on the Beta channel -------------
+def test_check_for_update_prerelease_offers_curated_prerelease(monkeypatch):
+    # Beta resolves the newest curated semver pre-release (excluding the rolling
+    # tag) and reads it as an available update against an older local build.
+    monkeypatch.setattr(II, "platform_asset_tag", lambda: "Windows-x86_64")
+    monkeypatch.setattr(II, "current_version", lambda: Version("1.20.0"))
+    rels = [
+        _rel("prerelease", prerelease=True, assets=["PyReconstruct-9.9.9-Windows-x86_64.exe"]),
+        _rel("v1.21.0rc1", prerelease=True, assets=["PyReconstruct-1.21.0rc1-Windows-x86_64.exe"]),
         _rel("v1.20.0", assets=["PyReconstruct-1.20.0-Windows-x86_64.exe"]),
     ]
-
-def test_check_for_update_developer_offers_when_main_moved(monkeypatch):
-    # local build is a dev build; main has advanced (higher .devN) -> offer it.
-    monkeypatch.setattr(II, "platform_asset_tag", lambda: "Windows-x86_64")
-    monkeypatch.setattr(II, "current_version", lambda: Version("1.21.0.dev12+g1111111.d20260101"))
-    rels = _dev_releases("PyReconstruct-1.21.0.dev13-Windows-x86_64.exe")
-    info = U.check_for_update("developer", releases=rels)
-    assert info["release"]["tag_name"] == U.ROLLING_TAG
+    info = U.check_for_update("prerelease", releases=rels)
+    assert info["release"]["tag_name"] == "v1.21.0rc1"   # NOT the rolling tag
     assert info["status"] == "newer"
 
-def test_check_for_update_developer_no_reoffer_when_already_up_to_date(monkeypatch):
-    # After updating, the local build carries the SAME public .devN as the rolling
-    # asset (only the +local dirty suffix differs). The reused tag must NOT loop:
-    # compare_versions strips +local, so remote reads 'same', not 'newer'.
+def test_check_for_update_no_asset_when_no_curated_prerelease(monkeypatch):
+    # Only the rolling tag is prerelease-flagged -> Beta offers nothing.
     monkeypatch.setattr(II, "platform_asset_tag", lambda: "Windows-x86_64")
-    monkeypatch.setattr(II, "current_version", lambda: Version("1.21.0.dev13+gABCDEF0.d20260102"))
-    rels = _dev_releases("PyReconstruct-1.21.0.dev13-Windows-x86_64.exe")
-    info = U.check_for_update("developer", releases=rels)
-    assert info["status"] == "same"
-
-def test_check_for_update_developer_no_asset_when_no_rolling(monkeypatch):
-    monkeypatch.setattr(II, "platform_asset_tag", lambda: "Windows-x86_64")
-    monkeypatch.setattr(II, "current_version", lambda: Version("1.21.0.dev13"))
-    rels = [_rel("v1.20.0", assets=["PyReconstruct-1.20.0-Windows-x86_64.exe"])]
-    info = U.check_for_update("developer", releases=rels)
+    monkeypatch.setattr(II, "current_version", lambda: Version("1.20.0"))
+    rels = [
+        _rel("prerelease", prerelease=True, assets=["PyReconstruct-9.9.9-Windows-x86_64.exe"]),
+        _rel("v1.20.0", assets=["PyReconstruct-1.20.0-Windows-x86_64.exe"]),
+    ]
+    info = U.check_for_update("prerelease", releases=rels)
     assert info["release"] is None and info["asset"] is None
 
 
