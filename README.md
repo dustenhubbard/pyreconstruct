@@ -65,36 +65,42 @@ To track the latest commits on `main` (this replaces the old in-app "Developer"
 update channel), run a source install rather than a frozen build.
 
 PyReconstruct requires **Python 3.11** — the pinned version the app and its
-native dependencies are validated on (the project pins `>=3.11,<3.12`). Your
-system `python3` is likely newer, and `pip install -e .` will fail against it; the
-steps below get you 3.11 without changing your system Python.
+native dependencies are validated on (the project pins `>=3.11,<3.12`). The
+canonical setup uses [uv](https://docs.astral.sh/uv/): it reads that pin, fetches
+Python 3.11 for you, and installs the exact dependency set recorded in the
+committed `uv.lock` — no system Python changes, no version guessing.
 
 ```
+curl -LsSf https://astral.sh/uv/install.sh | sh   # once; or: brew install uv
 git clone https://github.com/dustenhubbard/PyReconstruct
 cd PyReconstruct
-
-# recommended: uv (installs Python 3.11 for you)
-curl -LsSf https://astral.sh/uv/install.sh | sh   # or: brew install uv
-uv venv --python 3.11
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-uv pip install -e .                # editable: your working tree IS the running code
-
-# alternative: plain venv (requires python3.11 already on PATH)
-python3.11 -m venv .venv && source .venv/bin/activate
-pip install -e .
-
-PyReconstruct                      # launch
+uv sync                            # creates .venv from uv.lock (exact pinned deps)
+uv run PyReconstruct               # launch
 ```
 
-Pull to move to the newest code (`git pull`); because the install is editable,
-the pulled source runs immediately with no reinstall — rerun the editable install
-only when `pyproject.toml` changes. You can also update from
-inside the app — **Help ▸ Check for updates** on a source install reinstalls the
-branch set under **Series ▸ Options ▸ Updates** (default `main`) with `pip` — or
-from the command line with `PyReconstruct --update` (`PyReconstruct --switch
-<branch>` to change branch first). See [CONTRIBUTING.md](CONTRIBUTING.md) for the
-full development setup (the conda `pyrecon_dev` environment, tests, and code
-layout).
+Update loop: `git pull`, then `uv run PyReconstruct` — `uv run` re-syncs `.venv`
+to the lockfile automatically, so pulled code runs immediately with no manual
+reinstall. You can also update from inside the app — **Help ▸ Check for updates**
+on a source install reinstalls the branch set under **Series ▸ Options ▸ Updates**
+(default `main`) — or from the command line with `PyReconstruct --update`
+(`PyReconstruct --switch <branch>` to change branch first).
+
+<details>
+<summary>Alternative: a plain <code>venv</code> without uv</summary>
+
+If you already have `python3.11` on PATH, an editable install works too, though it
+resolves dependencies fresh rather than from `uv.lock`:
+
+```
+python3.11 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -e .
+PyReconstruct
+```
+
+</details>
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/DEV_UV.md](docs/DEV_UV.md) for the
+full development setup (test suite, dev tooling, and code layout).
 
 ## Quickstart
 
