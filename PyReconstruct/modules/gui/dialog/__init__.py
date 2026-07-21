@@ -10,7 +10,7 @@ from .predict import PredictDialog
 from .shapes import ShapesDialog
 from .trace_palette import TracePaletteDialog
 from .quick_dialog import QuickDialog, QuickTabDialog
-from .copy_to_sections import CopyToSectionsDialog
+from .copy_to_sections import CopyToSectionsDialog, format_copy_result
 from .flag import FlagDialog
 from .file_dialog import FileDialog
 from .all_options import AllOptionsDialog
