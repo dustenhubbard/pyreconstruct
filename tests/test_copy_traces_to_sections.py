@@ -165,6 +165,74 @@ def test_parse_section_spec_exotic_unicode_digits_do_not_crash():
 
 
 # ---------------------------------------------------------------------------
+# result message formatting
+# ---------------------------------------------------------------------------
+
+def test_format_section_run_collapses_only_long_runs():
+    from PyReconstruct.modules.gui.dialog.copy_to_sections import format_section_run
+
+    assert format_section_run([]) == ""
+    assert format_section_run([5]) == "5"
+    # a pair stays a plain list (not obscured as a range)
+    assert format_section_run([2, 3]) == "2, 3"
+    # 3+ consecutive collapse to lo-hi
+    assert format_section_run([2, 3, 4, 5, 10, 17]) == "2-5, 10, 17"
+    # unsorted / duplicate input is normalised
+    assert format_section_run([17, 2, 10, 3, 3, 5, 4]) == "2-5, 10, 17"
+    # multiple long runs
+    assert format_section_run([1, 2, 3, 7, 8, 9]) == "1-3, 7-9"
+
+
+def test_message_lists_actual_sections_not_a_count():
+    """The success line must name the sections that were written, not just how
+    many (the whole point of the feedback change)."""
+    from PyReconstruct.modules.gui.dialog.copy_to_sections import format_copy_result
+
+    msg = format_copy_result([2, 3, 10, 17], [])
+    assert "Copied trace(s) to sections 2, 3, 10, 17." in msg
+    # no bare count phrasing survives
+    assert "4 section" not in msg
+
+
+def test_message_singular_vs_plural_grammar():
+    from PyReconstruct.modules.gui.dialog.copy_to_sections import format_copy_result
+
+    single = format_copy_result([5], [])
+    assert single == "Copied trace(s) to section 5."
+    plural = format_copy_result([5, 6], [])
+    assert plural == "Copied trace(s) to sections 5, 6."
+
+
+def test_message_reports_only_sections_actually_written():
+    """When some targets are skipped (non-invertible), the success line lists
+    only the sections that ACTUALLY received the trace, and the skipped ones are
+    reported separately."""
+    from PyReconstruct.modules.gui.dialog.copy_to_sections import format_copy_result
+
+    # requested {2, 3, 4}; section 3 was skipped -> only 2 and 4 written
+    msg = format_copy_result([2, 4], [3])
+    assert "Copied trace(s) to sections 2, 4." in msg
+    assert "3" not in msg.split("\n")[0]  # 3 is NOT in the success line
+    assert "Skipped section(s) with a non-invertible transform: 3" in msg
+
+
+def test_message_empty_result_is_blank():
+    from PyReconstruct.modules.gui.dialog.copy_to_sections import format_copy_result
+
+    assert format_copy_result([], []) == ""
+
+
+def test_message_includes_excluded_current_and_collapses_large_lists():
+    from PyReconstruct.modules.gui.dialog.copy_to_sections import format_copy_result
+
+    written = list(range(10, 26))  # 10..25 contiguous
+    msg = format_copy_result(written, [], excluded_current=7)
+    lines = msg.split("\n")
+    assert lines[0] == "Copied trace(s) to sections 10-25."
+    assert lines[-1] == "The current section (7) was left unchanged."
+
+
+# ---------------------------------------------------------------------------
 # data-model copy
 # ---------------------------------------------------------------------------
 
