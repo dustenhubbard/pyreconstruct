@@ -1,53 +1,28 @@
 name: build-installers
 
 # Builds unsigned one-click installers and publishes them to THIS repo's GitHub
-# Releases: a tag vX.Y.Z -> Release; a push to main -> rolling 'prerelease'
-# build. The in-app updater (updater.GITHUB_REPO) reads these. Runs on the
+# Releases for a cut release: a tag vX.Y.Z -> stable Release; a pre-release tag
+# (vX.Y.Z-beta-N / vX.Y.ZrcN / vX.Y.ZaN) -> GitHub pre-release (the Beta
+# channel). The in-app updater (updater.GITHUB_REPO) reads these. Runs on the
 # fork as-is (no hardcoded owner). Signing is deferred (proof of concept).
+#
+# Installers are built ONLY for a tag (or a manual workflow_dispatch), NOT on
+# every push to main. The former rolling "latest main" build that republished a
+# 'prerelease' release on each push -- and the in-app Developer channel it fed --
+# has been removed: it caused a field regression (old clients predating the Beta
+# channel's ROLLING_TAG exclusion were offered dev builds when the rolling build
+# recreated its release out of order). Developers now track main via a source
+# install instead of a per-commit installer rebuild (see the README's
+# developer-install section). The pytest suite still runs on every main push via
+# the separate `tests` workflow (.github/workflows/test.yml).
 
 on:
   push:
-    branches: [main]
     tags: ["v*.*.*"]
   workflow_dispatch:
 
 permissions:
   contents: write   # create / update GitHub Releases
-
-# --- Concurrency design (rolling-release race) -------------------------------
-# Two rapid pushes to main used to run fully concurrent workflows that each
-# delete+recreate the rolling 'prerelease' release. If the OLDER commit's job
-# finished last, the Developer channel served the older build (and the .devN
-# freshness number then read as a downgrade, stranding users until the next
-# push). The fix is split deliberately across two phases, NOT a single
-# workflow-level `cancel-in-progress`:
-#
-#   * BUILD phase (jobs.build): ref-scoped group + cancel-in-progress:true.
-#     A newer push to main cancels the older main BUILD before it can publish,
-#     so the superseded run's release-prerelease is skipped (its `needs: build`
-#     result becomes `cancelled`, failing the success/failure gate below) and
-#     never touches the release -> the newest main build wins, and CI isn't
-#     wasted. Because the group keys on ${{ github.ref }}, every tag is its own
-#     lane: tag builds never cancel each other and are never cancelled by a
-#     main push (requirement: tag releases must never be cancelled).
-#
-#   * PUBLISH phase (jobs.release-prerelease): a NON-ref-scoped group with
-#     cancel-in-progress:FALSE. The delete+recreate of the 'prerelease' release
-#     is two steps, NOT atomic; a cancellation landing between them would leave
-#     the channel deleted-but-not-recreated (no release at all -- the one state
-#     we must never reach). cancel-in-progress:false ensures a publish that has
-#     started is never CANCELLED between the two steps, so concurrency can no
-#     longer strand the channel (delete is always followed by its recreate).
-#     (A hard FAILURE of the recreate step could still strand it -- a
-#     pre-existing property of delete-then-recreate, out of scope here and not
-#     something concurrency can fix.) Newest-wins still holds: a
-#     running publish finishes, and among *pending* publishes GitHub keeps only
-#     the newest (older pending ones are dropped), so the last write is the
-#     newest build. softprops/action-gh-release@v2 updates the existing
-#     'prerelease' release (creating it if absent), so each recreate yields a
-#     complete release. Only main pushes enter this job (see its `if:`), so
-#     tag publishes never queue behind it.
-# -----------------------------------------------------------------------------
 
 jobs:
   build:
@@ -57,7 +32,7 @@ jobs:
       # applies per job instance, so without the matrix key all three legs of
       # ONE run share a group and cancel each other (this broke every build
       # after it was first introduced ref-only -- two legs cancelled, release
-      # skipped). Per-leg groups keep the intended behavior: a newer main push
+      # skipped). Per-leg groups keep the intended behavior: a re-pushed tag
       # cancels the older run's same-platform leg only.
       group: build-installers-build-${{ github.ref }}-${{ matrix.plat }}-${{ matrix.arch }}
       cancel-in-progress: true
@@ -263,55 +238,3 @@ jobs:
                 echo "pruning superseded pre-release: $t"
                 gh release delete "$t" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
               done
-
-  release-prerelease:
-    needs: build
-    concurrency:
-      # Serialize rolling-release publishes and NEVER cancel one mid-flight: the
-      # delete+recreate below is not atomic, so cancellation between the steps
-      # would strand the Developer channel with no release. See the design note
-      # above the jobs block. Group is intentionally NOT ref-scoped (all main
-      # publishes share one lane) and cancel-in-progress is false.
-      group: build-installers-rolling-release
-      cancel-in-progress: false
-    # RE-ENABLED 2026-07-17: this rolling "latest main" build now feeds the in-app
-    # **Developer** update channel (updater selects it by the fixed `prerelease` tag;
-    # the Beta channel explicitly excludes that tag, so it can no longer confuse the
-    # curated pre-release stream — the 2026-06-29 pause reason). The `release` job's
-    # "Classify release" step already marks pre-release tags correctly, satisfying the
-    # pause note's precondition. See pyrecon-notes/DECISIONS.md.
-    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (needs.build.result == 'success' || needs.build.result == 'failure') }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-      - name: Generate checksums
-        run: cd dist && for f in *; do [ -f "$f" ] && sha256sum "$f" > "$f.sha256"; done
-      - name: Reset the rolling 'prerelease' build (drop stale assets)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release delete prerelease --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
-          # belt-and-suspenders: if the release survived a failed delete, purge its assets
-          if gh release view prerelease --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release view prerelease --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' \
-              | xargs -r -I{} gh release delete-asset prerelease {} --yes --repo "$GITHUB_REPOSITORY"
-          fi
-      - uses: softprops/action-gh-release@v2
-        with:
-          # The reused 'prerelease' tag backs the in-app updater's DEVELOPER
-          # channel (the rolling latest-main build), NOT the Beta channel: Beta
-          # (updater channel 'prerelease') serves curated semver pre-releases and
-          # explicitly excludes this tag. Keep the tag name 'prerelease' -- the
-          # updater's pick_release selects the rolling build by that exact tag
-          # (updater.ROLLING_TAG). Only the human-facing release title says
-          # "Developer".
-          tag_name: prerelease
-          name: "Developer (latest main, expect breakage)"
-          prerelease: true
-          target_commitish: main
-          files: dist/*

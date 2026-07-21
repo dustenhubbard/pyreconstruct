@@ -33,21 +33,32 @@ USER_AGENT = "PyReconstruct-updater"
 # 'PyReconstruct-<version>-<Platform>-<arch>...' -> capture <version>.
 _ASSET_VERSION_RE = re.compile(r"PyReconstruct-(?P<ver>.+?)-(?:Windows|macOS|Linux)\b")
 
-# The rolling "latest main" build is republished under this fixed GitHub tag on
-# every push to main (see .github/workflows/build-installers.yml). Unlike a cut
-# release, this tag is REUSED build-to-build. The Developer channel selects it by
-# this tag; the Beta (prerelease) channel explicitly excludes it so the rolling
-# build can never shadow a curated semver pre-release.
+# A rolling "latest main" build was once republished under this fixed GitHub tag
+# on every push to main. That build (and the "Developer" update channel that
+# selected it) has been retired -- developers now run source installs to track
+# main (see the developer-install docs in the README). The constant is KEPT
+# deliberately: the Beta (prerelease) channel still excludes this tag as defense
+# in depth. Old clients (v1.21.0-beta-2 and earlier) predate this exclusion and
+# relied on release ordering, which a recreate-on-every-push rolling build
+# defeated -- that was the field regression that prompted the removal. If a
+# rolling-style release under this tag ever reappears, the exclusion guarantees a
+# current client's Beta channel can never be shadowed by it.
 ROLLING_TAG = "prerelease"
 
 # Channel values in the order their radios appear in Series > Options > Updates.
 # Position is the contract between the dialog's radios and the stored value; keep
 # this tuple and the radio order in all_options.py in lockstep.
-UPDATE_CHANNELS = ("release", "prerelease", "developer")
+UPDATE_CHANNELS = ("release", "prerelease")
 
-# Legacy channel values from installs predating the rename (stable->release,
-# edge->prerelease). No legacy value maps to the newer 'developer' channel.
-_LEGACY_CHANNELS = {"stable": "release", "edge": "prerelease"}
+# Channel values that no longer exist as radios but may still be stored in an
+# install's options -- remapped to a current channel so an old config opens the
+# dialog on a valid radio and picks a valid release (never crashes or silently
+# lands on index 0). Sources:
+#   stable/edge -> the pre-rename names (stable->release, edge->prerelease).
+#   developer   -> the removed Developer channel; the maintainer (at minimum) has
+#                  it stored, so it must remap to Beta (prerelease), the closest
+#                  surviving channel, rather than falling back to Stable.
+_LEGACY_CHANNELS = {"stable": "release", "edge": "prerelease", "developer": "prerelease"}
 
 
 def normalize_channel(channel):
@@ -119,25 +130,23 @@ def pick_release(releases, channel):
 
     release    -> newest non-prerelease, non-draft release.
     prerelease -> newest release flagged ``prerelease`` (drafts excluded),
-                  EXCLUDING the rolling ``ROLLING_TAG`` build. The pipeline
+                  EXCLUDING any release under ``ROLLING_TAG``. The pipeline
                   publishes curated semver pre-releases (v1.30.0-alpha.N -> -rc
                   -> final), each flagged ``prerelease=true`` by CI, so the
-                  newest such release is the current pre-release. Excluding the
-                  rolling tag explicitly (rather than relying on newest-first
-                  ordering) guarantees the rolling build can never shadow a
-                  curated semver pre-release, even if GitHub's ordering shifts.
-    developer  -> the rolling "latest main" build, selected by ``ROLLING_TAG``.
-                  Its tag is reused build-to-build, so it is identified by tag,
-                  not by version; freshness is decided later from the asset's
-                  version (the CI-baked ``.devN`` commit distance).
+                  newest such release is the current pre-release. The rolling
+                  Developer build that once used ``ROLLING_TAG`` is gone, but the
+                  exclusion stays as defense in depth: excluding that tag
+                  explicitly (rather than relying on newest-first ordering)
+                  guarantees a rolling-style release can never shadow a curated
+                  semver pre-release, even if GitHub's ordering shifts or such a
+                  release reappears.
+
+    The removed ``developer`` channel (and legacy ``stable``/``edge`` values)
+    are remapped by :func:`normalize_channel` before this dispatch, so a stored
+    ``developer`` option resolves to the ``prerelease`` branch here.
     """
     channel = normalize_channel(channel)
     rels = [r for r in (releases or []) if not r.get("draft")]
-    if channel == "developer":
-        for r in rels:
-            if r.get("tag_name") == ROLLING_TAG:
-                return r
-        return None
     if channel == "prerelease":
         for r in rels:
             if r.get("prerelease") and r.get("tag_name") != ROLLING_TAG:

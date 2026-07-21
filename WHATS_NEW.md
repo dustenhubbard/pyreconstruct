@@ -4,6 +4,10 @@ Short, plain-language highlights shown in PyReconstruct's "What's new" dialog
 after you install or update. For the complete, detailed list of changes, see the
 full release notes on GitHub (linked from the dialog).
 
+## [Unreleased]
+
+- **The "Developer" update channel has been removed.** Updates now come on two channels, Stable and Beta, and Beta remains the right home for testers. If you were on Developer, PyReconstruct now keeps you on Beta automatically, so you do not need to change anything. To follow the very latest code between betas, install from source and run "git pull" (see the README).
+
 ## [1.21.0-beta-4] — 2026-07-18
 
 - **A trace's new color now shows immediately, everywhere.** Changing a trace's color could leave the trace drawn in its old color (while its selection highlight already showed the new one) until the view was fully redrawn. Thanks to Lyndsey for spotting and reporting this one!

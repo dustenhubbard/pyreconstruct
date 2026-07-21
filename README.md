@@ -53,27 +53,33 @@ Python required:
 
 The frozen Windows and macOS builds can update themselves from within the app via
 **Help ▸ Check for updates**, on the **Stable** channel (stable, tagged
-`vX.Y.Z`), the **Beta** channel (experimental; the latest pre-release build, e.g.
-release candidates like `vX.Y.ZrcN`), or the **Developer** channel (the rolling
-build from the latest `main`, for developers and testers — expect breakage).
-Updates are downloaded from
+`vX.Y.Z`) or the **Beta** channel (experimental; the latest pre-release build,
+e.g. release candidates like `vX.Y.ZrcN`). Updates are downloaded from
 GitHub Releases and verified against a published SHA-256 checksum before they are
 applied. An optional once-per-day check on startup is available too, off by
 default.
 
 ### From source (developers)
 
-In a Python 3.11 environment (the project pins `>=3.11,<3.12`):
+To track the latest commits on `main` (this replaces the old in-app "Developer"
+update channel), run a source install rather than a frozen build. In a Python
+3.11 environment — a `venv` or a conda env (the project pins `>=3.11,<3.12`):
 
 ```
-pip install git+https://github.com/dustenhubbard/PyReconstruct
+git clone https://github.com/dustenhubbard/PyReconstruct
+cd PyReconstruct
+pip install -e .          # editable: your working tree IS the running code
 PyReconstruct
 ```
 
-For a full development setup, see the upstream
-[Developers guide](https://github.com/SynapseWeb/PyReconstruct/wiki/Developers)
-(it lives on the upstream wiki; clone the fork if you are developing against this
-distribution).
+Pull to move to the newest code (`git pull`); because the install is editable,
+the pulled source runs immediately with no reinstall. You can also update from
+inside the app — **Help ▸ Check for updates** on a source install reinstalls the
+branch set under **Series ▸ Options ▸ Updates** (default `main`) with `pip` — or
+from the command line with `PyReconstruct --update` (`PyReconstruct --switch
+<branch>` to change branch first). See [CONTRIBUTING.md](CONTRIBUTING.md) for the
+full development setup (the conda `pyrecon_dev` environment, tests, and code
+layout).
 
 ## Quickstart
 

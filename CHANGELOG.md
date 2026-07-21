@@ -4,14 +4,25 @@ All notable changes to this distribution of PyReconstruct are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 the project uses [semantic versioning](https://semver.org/).
 
-Builds come on three channels: **Stable** (final releases, tagged `vX.Y.Z`),
-**Beta** (curated pre-releases, tagged e.g. `vX.Y.Z-beta-N` / `vX.Y.ZrcN`), and
-**Developer** (the rolling build republished on every push to `main`). Entries
-under [Unreleased] have landed on `main` (and are therefore already on the
-Developer channel) but are not yet tagged; they reach the Beta channel once cut
-as a pre-release tag, ahead of the next stable release.
+Builds come on two channels: **Stable** (final releases, tagged `vX.Y.Z`) and
+**Beta** (curated pre-releases, tagged e.g. `vX.Y.Z-beta-N` / `vX.Y.ZrcN`).
+Entries under [Unreleased] have landed on `main` but are not yet tagged; they
+reach the Beta channel once cut as a pre-release tag, ahead of the next stable
+release. To run unreleased `main` before it is tagged, use a source install (see
+the README's *From source (developers)* section).
 
 ## [Unreleased]
+
+### Removed
+- **Developer update channel.** The in-app "Developer" channel and the rolling
+  latest-`main` build that fed it (republished on every push to `main` under the
+  fixed `prerelease` tag) are removed. The rolling build's recreate-on-every-push
+  defeated GitHub's release ordering, so beta testers on builds predating the Beta
+  channel's rolling-tag exclusion (v1.21.0-beta-2 and earlier) could be offered
+  dev builds. Developers now track `main` with a source install instead
+  (README ▸ *From source (developers)*). A stored `developer` channel option
+  degrades gracefully to Beta, and the updater keeps its rolling-tag exclusion as
+  defense in depth. Reverts the channel added in #66.
 
 ## [1.21.0-beta-4] — 2026-07-18
 
