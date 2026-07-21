@@ -31,6 +31,22 @@ class MalformedContoursDialog(QDialog):
     """
 
     COLUMNS = ["Object", "Section", "Point count", "Location (x, y)", "Reason"]
+    WINDOW_TITLE = "Traces skipped during smoothing"
+
+    def _columnSpecs(self):
+        """Return (record-key, kind) pairs, one per column in COLUMNS.
+
+        kind is one of "str", "int", "float", "loc" and controls how the cell
+        value is stored (numeric kinds sort numerically). Subclasses override
+        this together with COLUMNS to show different fields.
+        """
+        return [
+            ("name", "str"),
+            ("section", "int"),
+            ("points", "int"),
+            ("location", "loc"),
+            ("reason", "str"),
+        ]
 
     def __init__(self, mainwindow: QWidget, records: list, navigate=None,
                  delete=None):
@@ -58,7 +74,7 @@ class MalformedContoursDialog(QDialog):
         self.navigate = navigate
         self.delete = delete
 
-        self.setWindowTitle("Traces skipped during smoothing")
+        self.setWindowTitle(self.WINDOW_TITLE)
         self.resize(660, 420)
 
         self.heading = QLabel(self._headingText(), self)
@@ -179,27 +195,26 @@ class MalformedContoursDialog(QDialog):
         # resolve it back to the real record via this map; the key travels with
         # the row through re-sorting.
         self._records_by_key = {}
+        specs = self._columnSpecs()
         for row, r in enumerate(self.records):
 
             self._records_by_key[row] = r
 
-            name_item = QTableWidgetItem(str(r["name"]))
-            name_item.setData(Qt.UserRole, row)
-
-            section_item = QTableWidgetItem()
-            section_item.setData(Qt.DisplayRole, int(r["section"]))
-
-            points_item = QTableWidgetItem()
-            points_item.setData(Qt.DisplayRole, int(r["points"]))
-
-            loc = r.get("location")
-            loc_item = QTableWidgetItem(self._format_location(loc))
-
-            reason_item = QTableWidgetItem(str(r["reason"]))
-
-            for col, item in enumerate(
-                (name_item, section_item, points_item, loc_item, reason_item)
-            ):
+            for col, (key, kind) in enumerate(specs):
+                item = QTableWidgetItem()
+                if kind == "int":
+                    item.setData(Qt.DisplayRole, int(r[key]))
+                elif kind == "float":
+                    # store as a float so the column sorts numerically
+                    item.setData(Qt.DisplayRole, round(float(r[key]), 8))
+                elif kind == "loc":
+                    item = QTableWidgetItem(self._format_location(r.get(key)))
+                else:  # "str"
+                    item = QTableWidgetItem(str(r[key]))
+                # a stable per-row key on the first column, resolved back to the
+                # real record by _recordAtRow; it travels with the row on sort
+                if col == 0:
+                    item.setData(Qt.UserRole, row)
                 item.setTextAlignment(Qt.AlignCenter)
                 # show the full cell value on hover; columns are stretched to
                 # fit the window, so wider values (e.g. the Reason) truncate
@@ -334,3 +349,52 @@ class MalformedContoursDialog(QDialog):
             return
         with open(fp, "w", newline="") as f:
             csv.writer(f).writerows(self._rows_for_export())
+
+
+class PixelDustDialog(MalformedContoursDialog):
+    """Review tiny "pixel-dust" traces before removing them.
+
+    A data clean-up review list: every row is a small closed trace at or below
+    the area threshold the user chose. The user inspects the candidates (and can
+    "Go to trace" to confirm), then deselects any legitimate small trace before
+    "Delete selected" / "Delete all". Reuses all of the selection, navigation,
+    deletion (undoable), and export behaviour of MalformedContoursDialog; only
+    the columns (an Area column) and the explanatory heading differ.
+    """
+
+    COLUMNS = ["Object", "Section", "Area (um^2)", "Point count",
+               "Location (x, y)", "Reason"]
+    WINDOW_TITLE = "Remove pixel-dust traces"
+
+    def _columnSpecs(self):
+        return [
+            ("name", "str"),
+            ("section", "int"),
+            ("area", "float"),
+            ("points", "int"),
+            ("location", "loc"),
+            ("reason", "str"),
+        ]
+
+    def _headingText(self):
+        """Explain the pixel-dust review and how to act on it."""
+        num_traces = len(self.records)
+        if not num_traces:
+            return (
+                "All listed traces have been deleted.\n\n"
+                "You can close this window."
+            )
+
+        num_objs = len({r["name"] for r in self.records})
+        trace_word = "trace" if num_traces == 1 else "traces"
+        obj_word = "object" if num_objs == 1 else "objects"
+
+        return (
+            f"{num_traces} small (pixel-dust) {trace_word} across "
+            f"{num_objs} {obj_word} at or below the area threshold.\n\n"
+            "These are typically stray specks left by segmentation. Review the "
+            "candidates below — select a row and click “Go to trace” to inspect "
+            "one — and deselect any legitimate trace you want to keep. Then use "
+            "“Delete selected” or “Delete all” to remove them (can be undone).\n\n"
+            "Nothing is removed until you choose to delete."
+        )
