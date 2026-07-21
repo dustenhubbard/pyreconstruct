@@ -110,28 +110,31 @@ scikit-image, shapely, trimesh, zarr, and others). If you already have
 .venv && source .venv/bin/activate`, then `pip install git+…`.
 
 To **track the latest unreleased code on `main`** (what the retired in-app
-"Developer" channel used to offer), clone the repository and install it editable,
-then `git pull` whenever you want the newest commits:
+"Developer" channel used to offer), clone the repository and let uv build the
+environment from the committed `uv.lock`. This is the canonical developer setup:
+`uv sync` reads the Python 3.11 pin, provisions the interpreter, and installs the
+exact pinned dependency set.
 
 ```
 git clone https://github.com/dustenhubbard/PyReconstruct
 cd PyReconstruct
-
-# recommended: uv (installs Python 3.11 for you)
-uv venv --python 3.11
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-uv pip install -e .                # editable: the checkout IS the running code
-
-# alternative: plain venv (requires python3.11 already on PATH)
-python3.11 -m venv .venv && source .venv/bin/activate
-pip install -e .
-
-git pull                           # later, to move to the newest main; rerun the
-                                   # editable install only when pyproject.toml changes
+uv sync                            # creates .venv from uv.lock (exact pinned deps)
+uv run PyReconstruct               # launch
 ```
 
-For a full development setup (the conda `pyrecon_dev` environment, tests, code
-layout), see [CONTRIBUTING.md](../CONTRIBUTING.md).
+To move to the newest `main` later: `git pull`, then `uv run PyReconstruct` —
+`uv run` re-syncs `.venv` to the lockfile automatically, so there is no manual
+reinstall step.
+
+If you prefer a plain `venv` and already have `python3.11` on PATH, an editable
+install works too, though it resolves dependencies fresh rather than from
+`uv.lock`: `python3.11 -m venv .venv && source .venv/bin/activate`, then
+`pip install -e .` (rerun only when `pyproject.toml` changes; a bare `git pull`
+otherwise suffices).
+
+For a full development setup (test suite, dev tooling, the parallel conda
+`pyrecon_dev` environment, code layout), see
+[CONTRIBUTING.md](../CONTRIBUTING.md) and [DEV_UV.md](DEV_UV.md).
 
 ### Launching the app
 

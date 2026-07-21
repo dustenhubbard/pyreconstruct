@@ -1,17 +1,19 @@
 # Developing PyReconstruct with uv
 
 [uv](https://docs.astral.sh/uv/) is a fast, lockfile-based Python project manager.
-This document describes the **uv-based development workflow**, which sits
-*alongside* the conda workflow (`dev/environment_dev.yaml`) — both are supported,
-pick whichever you prefer. uv has two advantages for contributors:
+This document describes the **uv-based development workflow, which is the
+canonical developer setup.** The conda workflow (`dev/environment_dev.yaml`)
+remains supported as a parallel option, but `git clone` + `uv sync` + `uv run` is
+the flow this project develops and releases against. uv has two advantages for
+contributors:
 
 - It provisions the correct interpreter itself (the project pins
   `requires-python = ">=3.11,<3.12"`), so you don't need a separate conda env
   just to get Python 3.11.
 - `uv sync` installs PyReconstruct into a project-local `.venv` and resolves
-  against a committed `uv.lock`, so everyone gets the same dependency set — and,
-  because the package is installed, `import PyReconstruct` works with no
-  `PYTHONPATH` fiddling.
+  against the committed `uv.lock`, so everyone gets the same pinned dependency
+  set — and, because the package is installed, `import PyReconstruct` works with
+  no `PYTHONPATH` fiddling.
 
 > `pyproject.toml` is the source of truth for the uv workflow. uv reads
 > `[project.dependencies]` (runtime), `[project.optional-dependencies].test`
@@ -45,7 +47,8 @@ A machine that already runs the conda env (`pyrecon_dev`) has these already.
 ## 2. Create the environment — `uv sync`
 
 `uv sync` creates `.venv/` in the repo (git-ignored), installs PyReconstruct in
-editable mode, and writes/refreshes `uv.lock`. What *else* it installs depends on
+editable mode, and applies the committed `uv.lock` (re-resolving only if
+`pyproject.toml` has drifted from the lock). What *else* it installs depends on
 which groups/extras you select:
 
 | Want | Command |
@@ -127,15 +130,23 @@ display** — run it on macOS/Windows or a Linux box with a desktop, not offscre
 
 ## 6. The lockfile
 
-`uv.lock` is generated on the first `uv sync` (or `uv lock`) and **should be
-committed** — PyReconstruct ships as an application, so a pinned, reproducible
-dependency set is what we want. To refresh it after changing pins in
-`pyproject.toml`:
+`uv.lock` **is committed** — PyReconstruct ships as an application, so a pinned,
+reproducible dependency set is what we want. `uv sync` (and `uv run`) apply it as
+is, and `uv sync --frozen` errors out rather than silently re-resolving if the
+lock and `pyproject.toml` have diverged — that is what CI and reproducible setups
+should use.
+
+Bumping dependencies is a **maintainer** action: edit the pin in `pyproject.toml`
+(or not, for a plain refresh), then re-resolve and commit the new lock:
 
 ```bash
-uv lock            # re-resolve and rewrite uv.lock
-uv sync            # apply it to .venv
+uv lock --upgrade                  # re-resolve everything to newest allowed, rewrite uv.lock
+uv lock --upgrade-package <name>   # bump just one dependency
+uv lock                            # re-resolve after editing a pin in pyproject.toml
+uv sync                            # apply the new lock to .venv
 ```
+
+Commit the resulting `uv.lock` alongside the `pyproject.toml` change.
 
 ## uv ↔ conda quick reference
 
