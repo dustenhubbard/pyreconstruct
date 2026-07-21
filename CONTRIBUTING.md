@@ -83,8 +83,9 @@ In the activated environment, run the app from the repository root:
 python PyReconstruct/run.py
 ```
 
-Alternatively, `pip install -e .` installs the package in editable mode and
-provides the `PyReconstruct` console command (the entry point declared in
+Alternatively, `pip install -e .` (or `uv pip install -e .` in a Python 3.11
+`uv venv` — see [docs/DEV_UV.md](docs/DEV_UV.md)) installs the package in editable
+mode and provides the `PyReconstruct` console command (the entry point declared in
 `pyproject.toml`, `PyReconstruct.cli:main`).
 
 ---

@@ -62,18 +62,33 @@ default.
 ### From source (developers)
 
 To track the latest commits on `main` (this replaces the old in-app "Developer"
-update channel), run a source install rather than a frozen build. In a Python
-3.11 environment — a `venv` or a conda env (the project pins `>=3.11,<3.12`):
+update channel), run a source install rather than a frozen build.
+
+PyReconstruct requires **Python 3.11** — the pinned version the app and its
+native dependencies are validated on (the project pins `>=3.11,<3.12`). Your
+system `python3` is likely newer, and `pip install -e .` will fail against it; the
+steps below get you 3.11 without changing your system Python.
 
 ```
 git clone https://github.com/dustenhubbard/PyReconstruct
 cd PyReconstruct
-pip install -e .          # editable: your working tree IS the running code
-PyReconstruct
+
+# recommended: uv (installs Python 3.11 for you)
+curl -LsSf https://astral.sh/uv/install.sh | sh   # or: brew install uv
+uv venv --python 3.11
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+uv pip install -e .                # editable: your working tree IS the running code
+
+# alternative: plain venv (requires python3.11 already on PATH)
+python3.11 -m venv .venv && source .venv/bin/activate
+pip install -e .
+
+PyReconstruct                      # launch
 ```
 
 Pull to move to the newest code (`git pull`); because the install is editable,
-the pulled source runs immediately with no reinstall. You can also update from
+the pulled source runs immediately with no reinstall — rerun the editable install
+only when `pyproject.toml` changes. You can also update from
 inside the app — **Help ▸ Check for updates** on a source install reinstalls the
 branch set under **Series ▸ Options ▸ Updates** (default `main`) with `pip` — or
 from the command line with `PyReconstruct --update` (`PyReconstruct --switch

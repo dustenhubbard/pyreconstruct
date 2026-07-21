@@ -89,15 +89,25 @@ Mac its matching architecture.
 
 ### From source (Linux, other platforms, and developers)
 
-In a Python 3.11 environment (the project pins `>=3.11,<3.12`):
+PyReconstruct requires **Python 3.11** — the pinned version the app and its
+native dependencies are validated on (the project pins `>=3.11,<3.12`). Your
+system `python3` is likely newer, and installing against it will fail; the steps
+below get you 3.11 without changing your system Python. The recommended tool is
+[uv](https://docs.astral.sh/uv/), which downloads Python 3.11 for you — install
+it with `curl -LsSf https://astral.sh/uv/install.sh | sh` (or `brew install uv`).
+
+For a quick, non-editable install into a fresh 3.11 environment:
 
 ```
-pip install git+https://github.com/dustenhubbard/PyReconstruct
+uv venv --python 3.11 && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+uv pip install git+https://github.com/dustenhubbard/PyReconstruct
 PyReconstruct
 ```
 
 `pip` pulls in the runtime dependencies (PySide6, VTK, vedo, NumPy, SciPy,
-scikit-image, shapely, trimesh, zarr, and others).
+scikit-image, shapely, trimesh, zarr, and others). If you already have
+`python3.11` on PATH, plain `venv` works instead of `uv`: `python3.11 -m venv
+.venv && source .venv/bin/activate`, then `pip install git+…`.
 
 To **track the latest unreleased code on `main`** (what the retired in-app
 "Developer" channel used to offer), clone the repository and install it editable,
@@ -106,8 +116,18 @@ then `git pull` whenever you want the newest commits:
 ```
 git clone https://github.com/dustenhubbard/PyReconstruct
 cd PyReconstruct
-pip install -e .          # editable: the checkout IS the running code
-git pull                  # later, to move to the newest main; no reinstall needed
+
+# recommended: uv (installs Python 3.11 for you)
+uv venv --python 3.11
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+uv pip install -e .                # editable: the checkout IS the running code
+
+# alternative: plain venv (requires python3.11 already on PATH)
+python3.11 -m venv .venv && source .venv/bin/activate
+pip install -e .
+
+git pull                           # later, to move to the newest main; rerun the
+                                   # editable install only when pyproject.toml changes
 ```
 
 For a full development setup (the conda `pyrecon_dev` environment, tests, code
