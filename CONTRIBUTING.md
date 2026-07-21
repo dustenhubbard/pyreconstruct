@@ -41,10 +41,32 @@ privately as described in [`SECURITY.md`](SECURITY.md).
 PyReconstruct targets **Python 3.11** (`requires-python = ">=3.11,<3.12"`) and
 **PySide6 6.5.2**.
 
-### Conda environment (current)
+### uv (canonical)
 
-The current developer workflow uses a conda environment named **`pyrecon_dev`**,
-created by the `Makefile` in `dev/`:
+The canonical developer setup uses [uv](https://docs.astral.sh/uv/). It reads the
+Python 3.11 pin from `pyproject.toml`, provisions the interpreter, and installs
+the exact dependency set recorded in the committed `uv.lock`:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh   # once; or: brew install uv
+git clone https://github.com/dustenhubbard/PyReconstruct
+cd PyReconstruct
+uv sync                            # creates .venv from uv.lock (exact pinned deps)
+uv run PyReconstruct               # launch (installs PyReconstruct editable)
+```
+
+`uv sync` installs PyReconstruct in editable mode into `.venv/` (git-ignored), so
+`import PyReconstruct` works with no `PYTHONPATH` fiddling. The update loop is
+`git pull` then `uv run PyReconstruct` — `uv run` re-syncs `.venv` to the lockfile
+automatically. To bump a dependency, edit its pin in `pyproject.toml` and run
+`uv lock --upgrade` (or `uv lock --upgrade-package <name>`), then commit the
+refreshed `uv.lock`. See [docs/DEV_UV.md](docs/DEV_UV.md) for the group/extra
+matrix (runtime vs. `test` extra vs. `dev` group) and the full uv reference.
+
+### Conda environment (alternative)
+
+A conda environment named **`pyrecon_dev`** remains supported as a parallel
+workflow, created by the `Makefile` in `dev/`:
 
 ```bash
 cd dev
@@ -69,23 +91,17 @@ Other `Makefile` targets (run from `dev/`):
 
 You can change the environment name by editing `ENV_NAME` in `dev/Makefile`.
 
-> **uv migration (in progress).** A migration to [uv](https://docs.astral.sh/uv/)
-> is underway: `pyproject.toml` already declares a PEP 735 `[dependency-groups]` dev
-> group and a `[tool.uv.sources]` entry, intended to replace the conda-only dev
-> extras. Until that lands, **the conda `make env` flow above is the canonical
-> development setup.**
-
 ### Running the app from a checkout
 
-In the activated environment, run the app from the repository root:
+With uv, `uv run PyReconstruct` (above) launches the app. In an activated conda
+environment, run it from the repository root instead:
 
 ```bash
 python PyReconstruct/run.py
 ```
 
-Alternatively, `pip install -e .` (or `uv pip install -e .` in a Python 3.11
-`uv venv` — see [docs/DEV_UV.md](docs/DEV_UV.md)) installs the package in editable
-mode and provides the `PyReconstruct` console command (the entry point declared in
+Either way, an editable install (`uv sync`, or a plain `pip install -e .`)
+provides the `PyReconstruct` console command (the entry point declared in
 `pyproject.toml`, `PyReconstruct.cli:main`).
 
 ---
@@ -94,15 +110,21 @@ mode and provides the `PyReconstruct` console command (the entry point declared 
 
 The test suite lives in `tests/` and runs headless. It needs a Qt platform plugin
 because a couple of tests construct a `QApplication`, so set the **offscreen**
-platform. From the repository root:
+platform. With uv (installs exactly what CI installs — runtime + the `test` extra):
+
+```bash
+QT_QPA_PLATFORM=offscreen uv run --no-default-groups --extra test python -m pytest
+```
+
+Or, in an activated conda environment, from the repository root:
 
 ```bash
 QT_QPA_PLATFORM=offscreen PYTHONPATH="$PWD" python -m pytest
 ```
 
 The suite is fast and requires no display or network. `pytest.ini` restricts
-collection to `tests/` and runs quietly (`-q`). (In an environment created by
-`make env`, the repo root is already on the import path, so `PYTHONPATH` is
+collection to `tests/` and runs quietly (`-q`). (Under `uv sync` and in an
+environment created by `make env`, the package is importable, so `PYTHONPATH` is
 redundant there — but it's needed for a bare checkout.)
 
 What the tests cover (a representative selection — the suite has grown well beyond
