@@ -6,6 +6,7 @@ full release notes on GitHub (linked from the dialog).
 
 ## [Unreleased]
 
+- **New "Clean up" tools tidy stray traces in your series.** Under the Series menu, a new "Clean up" submenu can remove duplicate traces, find tiny "pixel-dust" specks below an area you choose (shown in a list you review and trim before anything is deleted), and remove empty traces that hold no real shape. Every clean-up is a single step you can undo (Ctrl+Z), and locked objects are left untouched.
 - **The "Developer" update channel has been removed.** Updates now come on two channels, Stable and Beta, and Beta remains the right home for testers. If you were on Developer, PyReconstruct now keeps you on Beta automatically, so you do not need to change anything. To follow the very latest code between betas, install from source and run "git pull" (see the README).
 
 ## [1.21.0-beta-4] — 2026-07-18

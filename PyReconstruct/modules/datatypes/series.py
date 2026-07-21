@@ -18,6 +18,8 @@ from .objects import Objects, SeriesObject
 from .default_settings import default_settings, default_series_settings
 from .host_tree import HostTree
 
+from PyReconstruct.modules.calc import traceGeometry
+
 from PyReconstruct.modules.constants import (
     createHiddenDir,
     welcome_series_dir,
@@ -1633,8 +1635,12 @@ class Series():
 
         return malformed
 
-    def deleteMalformedTraces(self, records : list, series_states=None) -> list:
+    def deleteMalformedTraces(self, records : list, series_states=None, message="Deleting malformed contours...") -> list:
         """Delete specific malformed traces reported by smoothObject.
+
+        Also used by the data clean-up operations (pixel-dust / empty traces),
+        which produce records with the same schema (name, section, match); pass
+        a different ``message`` so the progress bar reads sensibly.
 
         Each record must carry the keys produced by smoothObject — in
         particular "name", "section" and "match" (a {"color", "points"}
@@ -1661,7 +1667,7 @@ class Series():
 
         deleted = []
         for snum, section in self.enumerateSections(
-            message="Deleting malformed contours...",
+            message=message,
             series_states=series_states
         ):
             removed_any = False
@@ -1699,6 +1705,135 @@ class Series():
             if round(x, 7) != sx or round(y, 7) != sy:
                 return False
         return True
+
+    @staticmethod
+    def _cleanupRecord(obj_name, snum, index, trace, reason, area=None) -> dict:
+        """Build a clean-up candidate record.
+
+        Uses the same schema smoothObject produces (so the records can be
+        deleted with deleteMalformedTraces and shown in the review dialog): a
+        "match" signature of color + 7-decimal-rounded points re-finds the exact
+        trace after the section is reloaded from disk. An optional physical
+        area (um^2) is carried for display in the pixel-dust review list.
+        """
+        num_points = len(trace.points)
+        record = {
+            "name": obj_name,
+            "section": snum,
+            "index": index,
+            "points": num_points,
+            "location": (
+                tuple(round(c, 4) for c in trace.points[0])
+                if num_points else None
+            ),
+            "reason": reason,
+            "match": {
+                "color": trace.color,
+                "points": [
+                    (round(x, 7), round(y, 7)) for x, y in trace.points
+                ],
+            },
+        }
+        if area is not None:
+            record["area"] = area
+        return record
+
+    @staticmethod
+    def _traceArea(trace, tform) -> float:
+        """Physical area (um^2) of a trace, matching the object/trace tables.
+
+        Mirrors TraceData: map the points through the section transform, then
+        run the shared traceGeometry math. Open traces have no enclosed area.
+        """
+        if not trace.closed or len(trace.points) < 3:
+            return 0.0
+        pts = tform.mapPointsArray(trace.points)
+        if not len(pts):
+            return 0.0
+        _, area, _, _ = traceGeometry(pts, True)
+        return abs(area)
+
+    def findPixelDustTraces(self, threshold_area : float, include_locked=False) -> list:
+        """Find tiny "pixel-dust" traces at or below an area threshold.
+
+        A candidate is a CLOSED trace whose physical area (um^2, computed the
+        same way the object/trace tables report it) is greater than zero and at
+        or below ``threshold_area``. Zero-area / degenerate traces are left to
+        findEmptyTraces so the two operations stay disjoint. Open traces (lines)
+        have no enclosed area and are never pixel dust. Locked objects are
+        skipped unless ``include_locked`` is True. This only scans; nothing is
+        modified. Use deleteMalformedTraces to remove the chosen records.
+
+            Params:
+                threshold_area (float): the maximum area (um^2), inclusive
+                include_locked (bool): True to also consider locked objects
+            Returns:
+                (list): candidate records (see _cleanupRecord)
+        """
+        candidates = []
+        for snum, section in self.enumerateSections(
+            message="Scanning for pixel-dust traces...",
+        ):
+            tform = section.tform
+            for cname in section.contours:
+                if not include_locked and self.getAttr(cname, "locked"):
+                    continue
+                for index, trace in enumerate(section.contours[cname]):
+                    if not trace.closed or len(trace.points) < 3:
+                        continue
+                    area = self._traceArea(trace, tform)
+                    if 0 < area <= threshold_area:
+                        candidates.append(self._cleanupRecord(
+                            cname, snum, index, trace,
+                            reason=f"Area {area:.6g} um^2 (<= {threshold_area:.6g})",
+                            area=area,
+                        ))
+        return candidates
+
+    def findEmptyTraces(self, include_locked=False) -> list:
+        """Find empty / degenerate traces (no meaningful geometry).
+
+        A trace is empty when it encloses/spans nothing: no points, a closed
+        trace with zero area (fewer than 3 points or fully collinear/coincident
+        points), or an open trace with zero length (all points coincident).
+        These are unambiguous to remove. Locked objects are skipped unless
+        ``include_locked`` is True. Scans only; use deleteMalformedTraces to
+        remove the chosen records.
+
+            Params:
+                include_locked (bool): True to also consider locked objects
+            Returns:
+                (list): candidate records (see _cleanupRecord)
+        """
+        candidates = []
+        for snum, section in self.enumerateSections(
+            message="Scanning for empty traces...",
+        ):
+            tform = section.tform
+            for cname in section.contours:
+                if not include_locked and self.getAttr(cname, "locked"):
+                    continue
+                for index, trace in enumerate(section.contours[cname]):
+                    npts = len(trace.points)
+                    if npts == 0:
+                        reason = "No points"
+                    elif trace.closed:
+                        if self._traceArea(trace, tform) == 0:
+                            reason = "Closed trace enclosing zero area"
+                        else:
+                            continue
+                    else:
+                        length, _, _, _ = traceGeometry(
+                            tform.mapPointsArray(trace.points), False
+                        )
+                        if length == 0:
+                            reason = "Open trace of zero length"
+                        else:
+                            continue
+                    candidates.append(self._cleanupRecord(
+                        cname, snum, index, trace, reason=reason,
+                    ))
+        return candidates
 
     def editObjectRadius(self, obj_names : list, new_rad : float, series_states=None):
         """Change the radii of all traces of an object.
