@@ -1707,14 +1707,16 @@ class Series():
         return True
 
     @staticmethod
-    def _cleanupRecord(obj_name, snum, index, trace, reason, area=None) -> dict:
+    def _cleanupRecord(obj_name, snum, index, trace, reason, area=None,
+                       area_px=None) -> dict:
         """Build a clean-up candidate record.
 
         Uses the same schema smoothObject produces (so the records can be
         deleted with deleteMalformedTraces and shown in the review dialog): a
         "match" signature of color + 7-decimal-rounded points re-finds the exact
-        trace after the section is reloaded from disk. An optional physical
-        area (um^2) is carried for display in the pixel-dust review list.
+        trace after the section is reloaded from disk. An optional pixel area
+        (px^2) and physical area (um^2) are carried for display in the
+        pixel-dust review list.
         """
         num_points = len(trace.points)
         record = {
@@ -1736,6 +1738,8 @@ class Series():
         }
         if area is not None:
             record["area"] = area
+        if area_px is not None:
+            record["area_px"] = area_px
         return record
 
     @staticmethod
@@ -1753,28 +1757,39 @@ class Series():
         _, area, _, _ = traceGeometry(pts, True)
         return abs(area)
 
-    def findPixelDustTraces(self, threshold_area : float, include_locked=False) -> list:
-        """Find tiny "pixel-dust" traces at or below an area threshold.
+    def findPixelDustTraces(self, threshold_px : float, include_locked=False) -> list:
+        """Find tiny "pixel-dust" traces at or below an area threshold in PIXELS.
 
-        A candidate is a CLOSED trace whose physical area (um^2, computed the
-        same way the object/trace tables report it) is greater than zero and at
-        or below ``threshold_area``. Zero-area / degenerate traces are left to
-        findEmptyTraces so the two operations stay disjoint. Open traces (lines)
-        have no enclosed area and are never pixel dust. Locked objects are
-        skipped unless ``include_locked`` is True. This only scans; nothing is
-        modified. Use deleteMalformedTraces to remove the chosen records.
+        The threshold is expressed in pixels (px^2) so "pixel dust" means
+        literally "smaller than N pixels on its own image". Because a section's
+        magnification (``section.mag``, um/px) sets how big a pixel is, the
+        physical cutoff is derived PER SECTION: a pixel-area threshold of
+        ``threshold_px`` becomes ``threshold_px * section.mag ** 2`` um^2 on that
+        section. A trace's physical area (um^2, computed the same way the
+        object/trace tables report it) is compared against that per-section
+        cutoff, so the same px threshold adapts to each section's scale.
+
+        A candidate is a CLOSED trace whose physical area is greater than zero
+        and at or below the per-section cutoff. Zero-area / degenerate traces are
+        left to findEmptyTraces so the two operations stay disjoint. Open traces
+        (lines) have no enclosed area and are never pixel dust. Locked objects
+        are skipped unless ``include_locked`` is True. This only scans; nothing
+        is modified. Use deleteMalformedTraces to remove the chosen records.
 
             Params:
-                threshold_area (float): the maximum area (um^2), inclusive
+                threshold_px (float): the maximum area in pixels (px^2), inclusive
                 include_locked (bool): True to also consider locked objects
             Returns:
-                (list): candidate records (see _cleanupRecord)
+                (list): candidate records (see _cleanupRecord); each carries both
+                    the pixel area ("area_px") and its physical area ("area", um^2)
         """
         candidates = []
         for snum, section in self.enumerateSections(
             message="Scanning for pixel-dust traces...",
         ):
             tform = section.tform
+            mag2 = section.mag ** 2  # (um/px)^2, this section's pixel scale
+            threshold_um2 = threshold_px * mag2  # px^2 cutoff -> this section's um^2
             for cname in section.contours:
                 if not include_locked and self.getAttr(cname, "locked"):
                     continue
@@ -1782,11 +1797,16 @@ class Series():
                     if not trace.closed or len(trace.points) < 3:
                         continue
                     area = self._traceArea(trace, tform)
-                    if 0 < area <= threshold_area:
+                    if 0 < area <= threshold_um2:
+                        area_px = area / mag2 if mag2 else 0.0
                         candidates.append(self._cleanupRecord(
                             cname, snum, index, trace,
-                            reason=f"Area {area:.6g} um^2 (<= {threshold_area:.6g})",
+                            reason=(
+                                f"Area {area_px:.6g} px^2 (<= {threshold_px:.6g}); "
+                                f"{area:.6g} um^2"
+                            ),
                             area=area,
+                            area_px=area_px,
                         ))
         return candidates
 

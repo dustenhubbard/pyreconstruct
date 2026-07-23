@@ -2621,14 +2621,20 @@ class MainWindow(QMainWindow):
         """Find tiny "pixel-dust" traces and remove them through a review list.
 
         Scans the series for small closed traces at or below a user-chosen area
-        threshold (um^2), then opens a reviewable list: nothing is removed until
-        the user inspects the candidates, deselects any to keep, and deletes.
+        threshold in PIXELS (px^2), then opens a reviewable list: nothing is
+        removed until the user inspects the candidates, deselects any to keep,
+        and deletes. The pixel threshold is turned into a physical (um^2) cutoff
+        per section using that section's magnification, so "pixel dust" means
+        "smaller than N pixels on its own image" regardless of section scale.
         Deletion is a single undoable operation (see deleteMalformedContours).
         """
         self.saveAllData()
 
+        # Default 10 px^2: a stray speck of a few pixels (up to roughly a 3x3
+        # blob) is the target, small enough to leave genuine fine structures
+        # alone. Adjustable below.
         structure = [
-            ["Maximum trace area (um^2):", ("float", 0.01)],
+            ["Maximum trace area (pixels, px^2):", ("float", 10.0)],
         ]
         response, confirmed = QuickDialog.get(
             self, structure, "Remove pixel-dust traces"
@@ -2637,7 +2643,7 @@ class MainWindow(QMainWindow):
             return
         threshold = response[0]
         if threshold is None or threshold <= 0:
-            notify("Please enter an area threshold greater than zero.")
+            notify("Please enter a pixel area threshold greater than zero.")
             return
 
         # locked objects are always left alone: the review-list delete path
@@ -2645,7 +2651,7 @@ class MainWindow(QMainWindow):
         # here would be a dead end. Empty-trace removal skips locked the same way.
         candidates = self.series.findPixelDustTraces(threshold)
         if not candidates:
-            notify("No pixel-dust traces found at or below that area.")
+            notify("No pixel-dust traces found at or below that pixel area.")
             return
 
         # reviewable list: the user confirms/deselects before anything is deleted
