@@ -8,8 +8,10 @@ is a single undoable action with a progress bar:
     false positive of merging two *distinct* objects that happen to coincide.
   * Remove pixel-dust traces -> Series.findPixelDustTraces (scan) + a review
     list that deletes via Series.deleteMalformedTraces. Small closed traces at
-    or below an area threshold (um^2); large traces and zero-area/degenerate
-    traces are NOT flagged.
+    or below a pixel-area threshold (px^2); the physical (um^2) cutoff is
+    derived per section from that section's magnification, so the same px
+    threshold adapts to sections of different scale. Large traces and
+    zero-area/degenerate traces are NOT flagged.
   * Remove empty traces      -> Series.findEmptyTraces (scan) + the same
     signature-based delete. Zero-area closed / zero-length open / no-point
     traces only; real traces (including small pixel-dust) are NOT flagged.
@@ -87,6 +89,19 @@ def _count(series, snum, name):
     return len(series.loadSection(snum).contours.get(name, []))
 
 
+def _um2(series, snum, name):
+    """Physical area (um^2) of the first trace of an object on a section."""
+    from PyReconstruct.modules.datatypes.series import Series
+    section = series.loadSection(snum)
+    return Series._traceArea(section.contours[name][0], section.tform)
+
+
+def _px2(series, snum, name):
+    """Pixel area (px^2) = physical area / mag^2, for that section's mag."""
+    section = series.loadSection(snum)
+    return _um2(series, snum, name) / (section.mag ** 2)
+
+
 # ---------------------------------------------------------------------------
 # pixel-dust
 # ---------------------------------------------------------------------------
@@ -102,21 +117,20 @@ def test_pixel_dust_flags_only_small_closed_traces(tmp_path):
     _make(section, "LINE", [(0, 0), (0.1, 0), (0.2, 0)], closed=False)
     section.save()
 
-    from PyReconstruct.modules.datatypes.series import Series
-    reloaded = series.loadSection(snum)
-    dust_area = Series._traceArea(reloaded.contours["DUST"][0], reloaded.tform)
-    big_area = Series._traceArea(reloaded.contours["BIG"][0], reloaded.tform)
-    assert 0 < dust_area < big_area
+    dust_px = _px2(series, snum, "DUST")
+    big_px = _px2(series, snum, "BIG")
+    assert 0 < dust_px < big_px
 
-    threshold = (dust_area + big_area) / 2
+    threshold = (dust_px + big_px) / 2  # pixel-area threshold
     records = series.findPixelDustTraces(threshold)
     names = {r["name"] for r in records}
     assert "DUST" in names
     assert "BIG" not in names        # above threshold
     assert "LINE" not in names       # open trace, no area
-    # every record carries the area used for display + a delete signature
+    # every record carries both the pixel area and physical area + a signature
     dust_rec = next(r for r in records if r["name"] == "DUST")
-    assert dust_rec["area"] == pytest.approx(dust_area)
+    assert dust_rec["area_px"] == pytest.approx(dust_px)
+    assert dust_rec["area"] == pytest.approx(_um2(series, snum, "DUST"))
     assert "match" in dust_rec and dust_rec["points"] == 4
 
 
@@ -128,15 +142,13 @@ def test_pixel_dust_threshold_is_inclusive_edge(tmp_path):
     _make(section, "DUST", [(0, 0), (0.1, 0), (0.1, 0.1), (0, 0.1)])
     section.save()
 
-    from PyReconstruct.modules.datatypes.series import Series
-    area = Series._traceArea(
-        series.loadSection(snum).contours["DUST"][0],
-        series.loadSection(snum).tform,
-    )
-    # exactly at area -> inclusive hit
-    assert {r["name"] for r in series.findPixelDustTraces(area)} >= {"DUST"}
+    area_px = _px2(series, snum, "DUST")
+    # exactly at the pixel area -> inclusive hit
+    assert {r["name"] for r in series.findPixelDustTraces(area_px)} >= {"DUST"}
     # strictly below -> miss
-    assert "DUST" not in {r["name"] for r in series.findPixelDustTraces(area * 0.99)}
+    assert "DUST" not in {
+        r["name"] for r in series.findPixelDustTraces(area_px * 0.99)
+    }
 
 
 def test_pixel_dust_scan_does_not_modify(tmp_path):
@@ -174,12 +186,7 @@ def test_pixel_dust_delete_is_single_undo(tmp_path):
     _make(section, "DUST", [(0, 0), (0.1, 0), (0.1, 0.1), (0, 0.1)])
     section.save()
 
-    from PyReconstruct.modules.datatypes.series import Series
-    area = Series._traceArea(
-        series.loadSection(snum).contours["DUST"][0],
-        series.loadSection(snum).tform,
-    )
-    records = series.findPixelDustTraces(area * 1.5)
+    records = series.findPixelDustTraces(_px2(series, snum, "DUST") * 1.5)
     assert records
 
     states = _new_states(series)
@@ -218,6 +225,62 @@ def test_pixel_dust_delete_across_sections_single_undo(tmp_path):
     for snum in snums:
         assert _count(series, snum, "DUST") == 1, \
             f"one undo must restore dust on section {snum}"
+
+
+def test_pixel_dust_threshold_adapts_per_section_mag(tmp_path):
+    """One px threshold adapts to each section's magnification.
+
+    The SAME physical speck is placed on two sections whose magnifications
+    differ (coarse section has 2x the um/px of the fine one). Because pixel
+    area = physical area / mag^2, that identical speck is 4x more pixels on the
+    fine section than on the coarse one. A single pixel-area threshold chosen
+    between the two must therefore flag the speck on the fine section (it is
+    "many pixels" there) but not on the coarse section (it is "few pixels"
+    there) — proving the physical cutoff is derived per section, not globally.
+    """
+    series = _load_series(tmp_path)
+    snums = sorted(series.sections)
+    fine_snum, coarse_snum = snums[0], snums[1]
+
+    dust_pts = [(0, 0), (0.1, 0), (0.1, 0.1), (0, 0.1)]
+    fine = series.loadSection(fine_snum)
+    base_mag = fine.mag
+    _make(fine, "DUST", dust_pts)
+    fine.mag = base_mag            # fine scale: more pixels per micron
+    fine.save()
+
+    coarse = series.loadSection(coarse_snum)
+    _make(coarse, "DUST", list(dust_pts))
+    coarse.mag = base_mag * 2      # coarse scale: fewer pixels per micron
+    coarse.save()
+
+    # essentially the same physical speck on both sections (the fixture's two
+    # sections carry slightly different transforms, hence the loose tolerance)
+    assert _um2(series, fine_snum, "DUST") == pytest.approx(
+        _um2(series, coarse_snum, "DUST"), rel=1e-2
+    )
+    fine_px = _px2(series, fine_snum, "DUST")
+    coarse_px = _px2(series, coarse_snum, "DUST")
+    # the fine section renders that speck as ~4x more pixels (mag differs 2x)
+    assert fine_px == pytest.approx(coarse_px * 4, rel=1e-2)
+
+    # threshold between the two pixel areas: flags the fine section only
+    threshold = (fine_px + coarse_px) / 2
+    hits = {
+        (r["section"], r["name"])
+        for r in series.findPixelDustTraces(threshold)
+        if r["name"] == "DUST"
+    }
+    assert (coarse_snum, "DUST") in hits    # few pixels on the coarse section
+    assert (fine_snum, "DUST") not in hits   # many pixels on the fine section
+
+    # each record reports the pixel area on its OWN section's scale
+    rec = next(
+        r for r in series.findPixelDustTraces(threshold)
+        if r["section"] == coarse_snum and r["name"] == "DUST"
+    )
+    assert rec["area_px"] == pytest.approx(coarse_px)
+    assert rec["area"] == pytest.approx(_um2(series, coarse_snum, "DUST"))
 
 
 # ---------------------------------------------------------------------------

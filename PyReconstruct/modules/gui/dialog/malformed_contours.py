@@ -355,14 +355,21 @@ class PixelDustDialog(MalformedContoursDialog):
     """Review tiny "pixel-dust" traces before removing them.
 
     A data clean-up review list: every row is a small closed trace at or below
-    the area threshold the user chose. The user inspects the candidates (and can
-    "Go to trace" to confirm), then deselects any legitimate small trace before
-    "Delete selected" / "Delete all". Reuses all of the selection, navigation,
-    deletion (undoable), and export behaviour of MalformedContoursDialog; only
-    the columns (an Area column) and the explanatory heading differ.
+    the pixel-area threshold the user chose. The user inspects the candidates
+    (and can "Go to trace" to confirm), then deselects any legitimate small
+    trace before "Delete selected" / "Delete all". Reuses all of the selection,
+    navigation, deletion (undoable), and export behaviour of
+    MalformedContoursDialog; only the columns (a pixel-area column, plus its
+    physical-area equivalent) and the explanatory heading differ.
+
+    The primary Area column is in pixels (px^2) so it reads in the same units as
+    the threshold the user set; the "Area (um^2)" column shows the physical
+    equivalent for that trace on its own section (each section's magnification
+    can differ), so both the "how many pixels" and "how big physically" views are
+    available at a glance.
     """
 
-    COLUMNS = ["Object", "Section", "Area (um^2)", "Point count",
+    COLUMNS = ["Object", "Section", "Area (px^2)", "Area (um^2)", "Point count",
                "Location (x, y)", "Reason"]
     WINDOW_TITLE = "Remove pixel-dust traces"
 
@@ -370,6 +377,7 @@ class PixelDustDialog(MalformedContoursDialog):
         return [
             ("name", "str"),
             ("section", "int"),
+            ("area_px", "float"),
             ("area", "float"),
             ("points", "int"),
             ("location", "loc"),
@@ -391,7 +399,11 @@ class PixelDustDialog(MalformedContoursDialog):
 
         return (
             f"{num_traces} small (pixel-dust) {trace_word} across "
-            f"{num_objs} {obj_word} at or below the area threshold.\n\n"
+            f"{num_objs} {obj_word} at or below the pixel-area threshold.\n\n"
+            "The Area is shown in pixels (px^2) — the same units as the "
+            "threshold — with the physical area (um^2) alongside; because each "
+            "section's magnification can differ, the same pixel size is a "
+            "different physical size on different sections.\n\n"
             "These are typically stray specks left by segmentation. Review the "
             "candidates below — select a row and click “Go to trace” to inspect "
             "one — and deselect any legitimate trace you want to keep. Then use "
