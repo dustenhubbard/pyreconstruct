@@ -163,7 +163,7 @@ def palette_color(label_id, palette=None, seed: int = 0) -> tuple:
     return tuple(int(c) for c in palette[index])
 
 
-def next_shuffle_seed(current_seed: int, palette=None, rng=None) -> int:
+def next_shuffle_seed(current_seed: int, palette=None, ids=None, rng=None) -> int:
     """Pick a new seed whose color arrangement differs from the current one.
 
     This backs the "Shuffle colors" button: each click must visibly change the
@@ -174,10 +174,20 @@ def next_shuffle_seed(current_seed: int, palette=None, rng=None) -> int:
     option, so determinism and preview==import are preserved exactly as with a
     hand-entered seed.
 
+    The guarantee is enforced over ``ids``: the label ids the caller can
+    actually see. With only a few labels on screen, a generic 1..63 fingerprint
+    can "change" while none of the *visible* labels move color -- a no-op click
+    for the user. Passing the overlay's present ids ties the guarantee to what
+    is on screen. When ``ids`` is None (or has no usable entries) it falls back
+    to the 1..63 range, which reaches every palette entry.
+
         Params:
             current_seed (int): the seed currently in effect
             palette: list of (R, G, B) entries; falls back to the shipped
                 default when None or empty
+            ids: optional iterable of label ids to fingerprint the arrangement
+                over (the visible/present ids); None uses the default 1..63
+                range
             rng: an optional random.Random (injectable for deterministic tests);
                 a fresh default source is used when None
         Returns:
@@ -196,10 +206,16 @@ def next_shuffle_seed(current_seed: int, palette=None, rng=None) -> int:
     if len(palette) < 2:
         return int(current_seed)
 
-    # A small id sample fingerprints the arrangement. Reaching every entry over
-    # ~64 ids is near-certain, so two seeds agreeing across all of them means
-    # the visible mapping is identical.
-    sample = range(1, 64)
+    # Fingerprint the arrangement over the visible ids when supplied (id 0 is
+    # background, not a segment, so it is dropped); otherwise a 1..63 sample,
+    # which reaches every entry so two seeds agreeing across all of them means
+    # the mapping is identical.
+    if ids is None:
+        sample = range(1, 64)
+    else:
+        sample = [int(i) for i in ids if i]
+        if not sample:
+            sample = range(1, 64)
 
     def arrangement(seed):
         return tuple(palette_color(i, palette, seed) for i in sample)

@@ -141,7 +141,7 @@ def test_geometry_submenu_holds_the_geometry_actions():
     geo = _names(list(_walk(_submenu(menu, "Geometry"))))
     assert geo == [
         "copyobj_act", "editobjradius_act", "editobjshape_act",
-        "smoothtraces_act", "splitobj_act", "removealltags_act",
+        "smoothobj_act", "splitobj_act", "removealltags_act",
     ]
 
 
@@ -159,7 +159,7 @@ def test_no_object_capability_was_lost_in_restructure():
         "addobjgroup_act", "removeobjgroup_act", "removeobjallgroups_act",
         "setobjalignment_act", "lockobj_act", "unlockobj_act",
         "copyobj_act", "editobjradius_act", "editobjshape_act",
-        "smoothtraces_act", "splitobj_act", "hideobj_act", "unhideobj_act",
+        "smoothobj_act", "splitobj_act", "hideobj_act", "unhideobj_act",
         "hideotherobj_act", "hideallobj_act", "showallobj_act",
         "removealltags_act", "blankcurate_act", "needscuration_act",
         "curated_act", "addobjto3D_act", "removeobj3D_act", "exportmeshdata",
@@ -185,11 +185,67 @@ def test_export_formats_have_unique_attr_names():
     assert "export3D_act" not in _names(walked)  # the old shared name is gone
 
 
-def test_collada_label_has_no_dependency_note():
-    walked = _obj_menu()
-    dae = [t for n, t, _k in walked if n == "export3D_dae_act"]
+def test_collada_label_helper_is_pure():
+    """The label flags a missing dependency but never crams the old note in."""
+    from PyReconstruct.modules.gui.main.context_menu_list import collada_menu_label
+    assert collada_menu_label(True) == "Collada (.dae)"
+    assert collada_menu_label(False) == "Collada (.dae) (not installed)"
+    # the pre-fix dependency note is gone from both branches
+    assert "requires" not in collada_menu_label(True).lower()
+    assert "requires" not in collada_menu_label(False).lower()
+
+
+def test_collada_label_reflects_availability(monkeypatch):
+    """The built menu label tracks live pycollada availability."""
+    import PyReconstruct.modules.backend.volume.export_volumes as ev
+
+    monkeypatch.setattr(ev, "collada_available", lambda: True)
+    dae = [t for n, t, _k in _obj_menu() if n == "export3D_dae_act"]
     assert dae == ["Collada (.dae)"]
-    assert all("requires collada" not in t for _n, t, _k in walked)
+
+    monkeypatch.setattr(ev, "collada_available", lambda: False)
+    dae = [t for n, t, _k in _obj_menu() if n == "export3D_dae_act"]
+    assert dae == ["Collada (.dae) (not installed)"]
+
+
+def test_collada_menu_item_disabled_only_when_absent(qapp, monkeypatch):
+    """disable_unavailable_export_formats greys out .dae iff pycollada is
+    missing, and never touches the item when it IS present."""
+    from PySide6.QtGui import QAction
+    import PyReconstruct.modules.backend.volume.export_volumes as ev
+    from PyReconstruct.modules.gui.main.context_menu_list import (
+        disable_unavailable_export_formats,
+    )
+
+    # absent -> disabled
+    monkeypatch.setattr(ev, "collada_available", lambda: False)
+    w = types.SimpleNamespace(export3D_dae_act=QAction("Collada (.dae) (not installed)"))
+    disable_unavailable_export_formats(w)
+    assert w.export3D_dae_act.isEnabled() is False
+
+    # present -> left enabled (must not break when Collada IS available)
+    monkeypatch.setattr(ev, "collada_available", lambda: True)
+    w = types.SimpleNamespace(export3D_dae_act=QAction("Collada (.dae)"))
+    disable_unavailable_export_formats(w)
+    assert w.export3D_dae_act.isEnabled() is True
+
+    # no export action on the widget -> harmless no-op
+    disable_unavailable_export_formats(types.SimpleNamespace())
+
+
+def test_smooth_action_names_do_not_shadow_across_menus():
+    """The object 'Smooth traces' and the field-trace 'Smooth traces' are
+    populated onto the same widget, so they must carry DISTINCT attr_names
+    (else one silently shadows the other, as export3D_act once did)."""
+    from PyReconstruct.modules.gui.main.context_menu_list import (
+        get_context_menu_list_trace,
+    )
+    obj_names = _names(_obj_menu())
+    trace_names = _names(list(_walk(get_context_menu_list_trace(_Anything()))))
+    assert "smoothobj_act" in obj_names
+    assert "smoothtraces_act" in trace_names
+    assert "smoothobj_act" not in trace_names
+    assert "smoothtraces_act" not in obj_names
 
 
 def test_export_submenu_retitled():

@@ -4,6 +4,49 @@
 from PyReconstruct.modules.gui.utils import getUserColsMenu, getAlignmentsMenu
 
 
+def collada_menu_label(available=None):
+    """Label for the Collada (.dae) export item, flagged when unavailable.
+
+    Collada export needs the optional 'pycollada' package, which frozen
+    (PyInstaller) builds never bundle. When it is unavailable the label gains a
+    "(not installed)" suffix so the (disabled) item explains itself. Pass
+    ``available`` explicitly to keep the string logic pure/testable; when None
+    the live availability is queried (import kept local so this menu module
+    doesn't pull in the heavy export backend at import time).
+
+        Params:
+            available (bool | None): whether pycollada is importable; None to
+                query it live
+        Returns:
+            (str): the menu label
+    """
+    if available is None:
+        from PyReconstruct.modules.backend.volume.export_volumes import (
+            collada_available,
+        )
+        available = collada_available()
+    return "Collada (.dae)" if available else "Collada (.dae) (not installed)"
+
+
+def disable_unavailable_export_formats(widget):
+    """Grey out 3D-export formats whose optional dependency is missing.
+
+    Currently only Collada (.dae), which needs 'pycollada' (absent from frozen
+    builds). Disabling the menu item up front means a packaged user is never
+    offered an export that can only fail; the runtime guard in
+    ``export3DObjects`` remains a backstop. Call once, right after the object
+    menu is populated onto ``widget`` (both the field context menu and the
+    object-list table build it). No-op when the action isn't on this widget or
+    Collada IS available.
+    """
+    from PyReconstruct.modules.backend.volume.export_volumes import (
+        collada_available,
+    )
+    act = getattr(widget, "export3D_dae_act", None)
+    if act is not None and not collada_available():
+        act.setEnabled(False)
+
+
 def edit_selected_label(active):
     """Resolve the Q8 top-level edit action's (label, enabled) for a selection.
 
@@ -146,7 +189,11 @@ def get_context_menu_list_obj(self):
                 ("editobjradius_act", "Edit radius...", "", self.editRadius),
                 ("editobjshape_act", "Edit shape...", "", self.editShape),
                 None,
-                ("smoothtraces_act", "Smooth traces", "", self.smoothObject),
+                # Distinct attr_name from the field Trace submenu's
+                # "smoothtraces_act": both menus are populated onto the same
+                # widget, so a shared name meant one silently shadowed the
+                # other (same class of bug as the old export3D_act).
+                ("smoothobj_act", "Smooth traces", "", self.smoothObject),
                 ("splitobj_act", "Split into separate objects", "", self.splitObject),
                 None,
                 ("removealltags_act", "Remove all tags", "", self.removeAllTags),
@@ -177,15 +224,16 @@ def get_context_menu_list_obj(self):
                     [
                         # unique attr_names per format (previously all "export3D_act",
                         # so four of five silently shadowed the last on the widget).
-                        # Collada requires the optional 'pycollada' package; the
-                        # export handler surfaces that requirement gracefully
-                        # (export_volumes.export3DObjects), so the dependency note
-                        # is no longer crammed into the label.
+                        # Collada needs the optional 'pycollada' package (never
+                        # bundled in frozen builds): its label is flagged when
+                        # unavailable and the item is disabled after build (see
+                        # disable_unavailable_export_formats); export3DObjects
+                        # keeps a runtime guard as a backstop.
                         ("export3D_obj_act", "Wavefront (.obj)", "", lambda : self.exportAs3D("obj")),
                         ("export3D_off_act", "Object File Format (.off)", "", lambda : self.exportAs3D("off")),
                         ("export3D_ply_act", "Stanford PLY (.ply)", "", lambda : self.exportAs3D("ply")),
                         ("export3D_stl_act", "STL (.stl)", "", lambda : self.exportAs3D("stl")),
-                        ("export3D_dae_act", "Collada (.dae)", "", lambda : self.exportAs3D("dae")),
+                        ("export3D_dae_act", collada_menu_label(), "", lambda : self.exportAs3D("dae")),
                     ]
 
                     },

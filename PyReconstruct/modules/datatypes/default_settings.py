@@ -94,6 +94,7 @@ default_settings = {
     "deccon_act": "[",
     "inccon_act": "]",
     "blend_act": "Space",
+    "toggleztraces_act": "",  # checkable "Show z-traces"; no default key
     "homeview_act": "Home",
     "selectall_act": "Ctrl+A",
     "deselect_act": "Ctrl+D",

@@ -143,12 +143,25 @@ class MainWindow(QMainWindow):
         ## Populate menu bar with menus and options
         populateMenuBar(self, self.menubar, menu)
 
+        ## Seed menubar checkables that have no aboutToShow resync hook from the
+        ## live option, so they are correct on first show. checkActions keeps
+        ## them synced thereafter (see its View-toggle block). NOTE: the menubar
+        ## has no per-open resync, so an external change to show_ztraces (e.g.
+        ## the all-options dialog) is only reflected on the next checkActions
+        ## pass (field interactions) or menubar rebuild -- an accepted
+        ## limitation for a rarely-out-of-band toggle.
+        self.toggleztraces_act.setChecked(bool(self.series.getOption("show_ztraces")))
+
     def createContextMenus(self):
         """Create right-click menus used in the field."""
         ## Create user columns options
         field_menu_list = get_field_menu_list(self)
         self.field_menu = QMenu(self)
         populateMenu(self, self.field_menu, field_menu_list)
+
+        ## Grey out export formats whose optional dependency is missing
+        ## (e.g. Collada/.dae without 'pycollada', as in frozen builds).
+        disable_unavailable_export_formats(self)
 
         ## Organize actions
         self.trace_actions = [
@@ -295,6 +308,17 @@ class MainWindow(QMainWindow):
         self.showall_act.setChecked(self.field.show_all_traces)
         self.hideimage_act.setChecked(self.field.hide_image)
         self.blend_act.setChecked(self.field.blend_sections)
+
+        ## Focus mode needs a selection to turn ON (it focuses the selected
+        ## object); disabling the checkbox when nothing is selected avoids the
+        ## "Please select at least one trace" error from a menu click. Stays
+        ## enabled while already in focus mode so it can always be turned off.
+        self.focus_act.setEnabled(bool(self.field.focus_mode) or bool(selected_traces))
+
+        ## Menubar "Show z-traces" checkbox: same live-state resync as the
+        ## field View toggles above (setChecked emits `toggled`, not
+        ## `triggered`, so it never re-fires the handler).
+        self.toggleztraces_act.setChecked(bool(self.series.getOption("show_ztraces")))
 
         ## Group visibility
         for group, viz in self.series.groups_visibility.items():
@@ -2468,8 +2492,16 @@ class MainWindow(QMainWindow):
 
         current = self.series.getOption("autoseg_color_seed") or 0
         palette = self.series.getOption("autoseg_color_palette") or None
+        # Enforce the "always reshuffles" guarantee over the labels actually
+        # visible on this section, not a fixed 1..63 range: with only a few
+        # labels on screen a new seed could recolor ids the user can't see and
+        # leave the visible ones unchanged (a no-op click). Fall back to the
+        # default range when the overlay can't supply present ids.
+        zarr_layer = self.field.zarr_layer
+        present_ids = zarr_layer.getPresentIds() if zarr_layer else None
         self.series.setOption(
-            "autoseg_color_seed", next_shuffle_seed(current, palette)
+            "autoseg_color_seed",
+            next_shuffle_seed(current, palette, ids=present_ids)
         )
         self.field.generateView()
 

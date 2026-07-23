@@ -239,6 +239,13 @@ class ObjectTableWidget(DataTable):
         self.context_menu = QMenu(self)
         populateMenu(self, self.context_menu, context_menu_list)
 
+        # Grey out export formats whose optional dependency is missing
+        # (e.g. Collada/.dae without 'pycollada', as in frozen builds).
+        from PyReconstruct.modules.gui.main.context_menu_list import (
+            disable_unavailable_export_formats,
+        )
+        disable_unavailable_export_formats(self)
+
     def updateTitle(self):
         """Update the title of the table."""
         is_regex = tuple(self.re_filters) != (".*",)
