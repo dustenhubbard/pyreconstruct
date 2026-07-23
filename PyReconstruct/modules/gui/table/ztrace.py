@@ -115,7 +115,7 @@ class ZtraceTableWidget(DataTable):
         populateMenuBar(self, self.menubar, menubar_list)
 
         # create the right-click menu -- prepend the list-only table ops
-        # (invert selection + copy row text) whose handlers belong to THIS
+        # (invert selection + copy z-trace values) whose handlers belong to THIS
         # table, then the shared z-trace menu (also used in the field).
         context_menu_list = [
             ("invertztraceselection_act", "Invert selection", "", self.invertSelection),

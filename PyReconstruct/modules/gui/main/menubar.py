@@ -356,7 +356,11 @@ def return_view_menu(self):
             ("viewmag_act", "View magnification...", "", self.field.setViewMagnification),
             ("findview_act", "Set zoom when finding contours...", "", self.setFindZoom),
             None,
-            ("toggleztraces_act", "Toggle show Z-traces", "", self.toggleZtraces),
+            # Checkable, mirroring the live show_ztraces option (see
+            # MainWindow.checkActions / createMenuBar for the resync). The
+            # (series, "checkbox") form keeps it configurable-shortcut-capable
+            # like the field View toggles; its option default is "" (no key).
+            ("toggleztraces_act", "Show z-traces", (self.series, "checkbox"), self.toggleZtraces),
             None,
             {
                 "attr_name": "palettemenu",
