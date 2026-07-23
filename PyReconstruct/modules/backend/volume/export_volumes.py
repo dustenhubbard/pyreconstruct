@@ -1,5 +1,6 @@
 """Export 3D objects."""
 
+import importlib.util
 from pathlib import Path
 from typing import List, Union
 
@@ -10,6 +11,18 @@ from .objects_3D import Surface, Spheres, Contours
 
 from PyReconstruct.modules.datatypes import Series
 from PyReconstruct.modules.gui.utils import notify
+
+
+def collada_available() -> bool:
+    """Return True when the optional 'pycollada' package is importable.
+
+    Collada (.dae) export goes through trimesh's Collada writer, which imports
+    'pycollada' lazily. That package is NOT bundled by PyInstaller, so a frozen
+    ("packaged") build never has it available. Callers use this to grey out the
+    .dae menu item up front instead of offering an export that can only fail.
+    Uses ``find_spec`` so it merely checks importability without importing.
+    """
+    return importlib.util.find_spec("collada") is not None
 
 
 def export3DObjects(series: Series, obj_names : list, output_dir : str, export_type: str, notify_user: bool = True) -> None:
@@ -26,18 +39,22 @@ def export3DObjects(series: Series, obj_names : list, output_dir : str, export_t
 
     ## Collada (.dae) export needs the optional 'pycollada' package (trimesh's
     ## Collada writer imports it lazily and otherwise raises a bare
-    ## ModuleNotFoundError). Surface the requirement here, before any work, so
-    ## the user gets a clear message instead of an unhandled traceback.
+    ## ModuleNotFoundError). The menu normally disables .dae when it is absent
+    ## (see collada_available), but keep this as a backstop -- surface the
+    ## requirement here, before any work, so the user gets a clear message
+    ## instead of an unhandled traceback.
     if export_type == "dae":
         try:
             import collada  # noqa: F401  (provided by the 'pycollada' package)
         except ImportError:
             if notify_user:
                 notify(
-                    "Collada (.dae) export requires the 'pycollada' package, "
-                    "which is not installed.\n\n"
-                    "Install it (e.g. 'pip install pycollada') and try again, "
-                    "or choose another export format."
+                    "Collada (.dae) export needs the optional 'pycollada' "
+                    "package, which is not available in this installation.\n\n"
+                    "In a pip/uv environment you can install it (e.g. "
+                    "'pip install pycollada'); packaged (frozen) builds do not "
+                    "include Collada support. Otherwise choose another export "
+                    "format."
                 )
             return
 

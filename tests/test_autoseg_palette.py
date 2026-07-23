@@ -170,6 +170,42 @@ def test_shuffle_noop_on_single_color_palette():
     assert next_shuffle_seed(5, palette=[(1, 2, 3)], rng=random.Random(0)) == 5
 
 
+def test_shuffle_changes_the_visible_ids_when_supplied():
+    """When present ids are supplied, the guarantee applies to THEM: the
+    visible ids' colors must change on every click, not just some fixed 1..63
+    fingerprint (which could move while the on-screen labels do not)."""
+    import random
+    visible = [3, 17, 42]
+
+    def vis_arr(seed):
+        return [palette_color(i, DEFAULT_AUTOSEG_PALETTE, seed) for i in visible]
+
+    seed = 0
+    for _ in range(25):  # simulate repeated clicks
+        new_seed = next_shuffle_seed(seed, ids=visible, rng=random.Random(_))
+        assert vis_arr(new_seed) != vis_arr(seed)
+        seed = new_seed
+
+
+def test_shuffle_empty_or_none_ids_fall_back_to_default_range():
+    """Empty/None ids -> the default 1..63 fingerprint (still reshuffles)."""
+    import random
+    a = next_shuffle_seed(0, ids=[], rng=random.Random(1))
+    b = next_shuffle_seed(0, ids=None, rng=random.Random(1))
+    c = next_shuffle_seed(0, rng=random.Random(1))
+    assert a == b == c
+    assert _arrangement(a) != _arrangement(0)
+
+
+def test_shuffle_ids_drop_background_zero():
+    """id 0 (background) is dropped from the fingerprint; [0] behaves as empty
+    and falls back to the default range."""
+    import random
+    a = next_shuffle_seed(0, ids=[0], rng=random.Random(7))
+    b = next_shuffle_seed(0, rng=random.Random(7))
+    assert a == b
+
+
 # --- override / fallback ---------------------------------------------------
 
 

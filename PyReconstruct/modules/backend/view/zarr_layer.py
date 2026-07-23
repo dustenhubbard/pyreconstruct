@@ -118,6 +118,25 @@ class ZarrLayer():
             return True
         return False
 
+    def getPresentIds(self):
+        """Return the label ids visible on the current section.
+
+        These are the unique non-zero ids in the current section's slice of the
+        label overlay -- i.e. the labels the user actually sees colored (the
+        whole crop is colored, not just ``selected_ids``). Used to tie the
+        shuffle-colors guarantee to what is on screen. Returns an empty list
+        when this is not a label overlay or the current section falls outside
+        the overlay's z-range.
+        """
+        if not self.is_labels:
+            return []
+        bz = self.zarr.shape[0]
+        z = round(self.section.n - self.zarr_s)
+        if not 0 <= z < bz:
+            return []
+        present = np.unique(self.zarr[z])
+        return [int(v) for v in present.tolist() if v != 0]
+
     def deselectAll(self):
         """Deselect all the IDs."""
         self.selected_ids = []
