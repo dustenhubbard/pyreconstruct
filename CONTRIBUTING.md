@@ -134,6 +134,8 @@ these):
 |---|---|
 | `test_geometry.py` | Pins the combined NumPy `traceGeometry()` pass to the scalar reference geometry functions (length/area/centroid/radius) over fixed and random polygons. |
 | `test_transform.py` | The vectorized affine point map (`Transform.map` / `mapPointsArray`) against per-point `QTransform.map`, including inverted round-trips. |
+| `test_transform_qt_equivalence.py` | The Qt-free affine against the `QTransform` it replaced, bit-for-bit (map / mapPointsArray / inverted / compose / determinant) over fixtures, 550 random transforms and 400k coordinates, plus the one characterized divergence (Qt's 1e-12 fuzzy type classification). |
+| `test_qt_free_core.py` | The guarantee that `modules/constants` and `modules/datatypes` import and run — including opening a jser — with any `PySide6` import blocked and no Qt platform set. |
 | `test_perf_equivalence.py` | Broad equivalence/property suite for the performance rewrite — geometry, transforms, the `orjson` JSON wrapper (with documented `xfail` divergences), lazy Feret caching, and section lookups. |
 | `test_updater.py` | The in-app updater's pure functions (release/asset selection, version comparison, checksum parsing) with the network monkeypatched. |
 | `test_affine_align_guard.py` | Regression test: "estimate affine transform" must warn and do nothing with fewer than three matched traces. |

@@ -88,3 +88,30 @@ class DictSettingsStore(SettingsStore):
 
     def set_value(self, code, key, value):
         self._scope(code)[key] = value
+
+
+_DEFAULT_STORE = None
+
+
+def default_settings_store() -> SettingsStore:
+    """Return the process-wide default store, created lazily.
+
+    For callers with no `Series` in hand (e.g. `constants.getdatetime`, which
+    needs the global "utc" preference) this is the seam's entry point. The
+    default is `QSettingsStore`, whose behavior is identical to direct
+    `QSettings` use; constructing it imports no Qt (the import is deferred to
+    the first read/write), so resolving the default stays Qt-free.
+    """
+    global _DEFAULT_STORE
+    if _DEFAULT_STORE is None:
+        _DEFAULT_STORE = QSettingsStore()
+    return _DEFAULT_STORE
+
+
+def set_default_settings_store(store: Optional[SettingsStore]) -> None:
+    """Override the process-wide default store (headless callers and tests).
+
+    Pass ``None`` to restore the lazily-created `QSettingsStore` default.
+    """
+    global _DEFAULT_STORE
+    _DEFAULT_STORE = store

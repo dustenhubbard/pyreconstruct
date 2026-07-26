@@ -12,17 +12,17 @@ imports nothing from `PyReconstruct.modules.gui`. These tests prove it:
     the only piece that requires Qt/GUI;
   - `Series._surfaceSaveError` routes through the injected notifier, printing
     its fallback message only when the notifier reports it did not surface one;
-  - the capstone: with `PyReconstruct.modules.gui` import forbidden, `Series`
-    still imports and its notify path runs through a `NullNotifier` without ever
+  - the capstone: with **all** of `PySide6` import forbidden, `Series` still
+    imports and its notify path runs through a `NullNotifier` without ever
     pulling in the GUI layer, while `QtNotifier` is confirmed to be the sole
     piece that needs it -- proving `Series` no longer depends on `gui/`;
   - a source-level (AST) check asserts `series.py` has no
     `PyReconstruct.modules.gui` import.
 
-Note: importing `Series` still pulls in Qt via `transform.py`'s `QTransform`
-(deferred, out of M11 scope), so a full `Series` import cannot yet run under a
-total `PySide6` block; the block here is on `PyReconstruct.modules.gui`, not all
-of `PySide6`, which is the achievable headless proof and the payoff of M11.
+Note: the capstone used to block only `PyReconstruct.modules.gui`, because
+importing `Series` still pulled in Qt via `constants/getdatetime.py`'s
+`QSettings` and `transform.py`'s `QTransform`. Both cords are now cut (see
+`tests/test_qt_free_core.py`), so the block here is the total one.
 """
 import os
 import sys
@@ -151,27 +151,28 @@ def test_notifier_exception_never_masks_the_error(capsys):
 
 
 def test_series_notify_path_needs_no_gui_layer():
-    """Capstone: Series' notify path runs with `modules.gui` import forbidden.
+    """Capstone: Series' notify path runs with Qt and `modules.gui` forbidden.
 
-    Importing `Series` still needs PySide6 (via transform.py's QTransform, out of
-    M11 scope), so this blocks `PyReconstruct.modules.gui` -- the `notify`
-    helper's home -- rather than PySide6 entirely. It proves `Series` no longer
-    reaches into the GUI layer: the notify path runs through an injected
-    NullNotifier without importing `gui/`, while QtNotifier is confirmed to be
-    the only piece that needs it. This is the payoff of M11 PR 3.
+    Blocks all of `PySide6` (and hence `PyReconstruct.modules.gui`, the `notify`
+    helper's home): `Series` imports and its notify path runs through an
+    injected NullNotifier with no Qt anywhere, while QtNotifier is confirmed to
+    be the only piece that needs it. This is the payoff of M11 PR 3, tightened
+    once the last two Qt cords in the core were cut.
     """
     script = r"""
 import sys
 
-# drop any pre-imported PyReconstruct modules (e.g. a dev-env sitecustomize
-# that imports Series at startup) so Series is re-imported fresh under the
-# block -- otherwise a cached import would bypass the proof
+# drop any pre-imported PyReconstruct/PySide6 modules (e.g. a dev-env
+# sitecustomize that imports Series at startup) so Series is re-imported fresh
+# under the block -- otherwise a cached import would bypass the proof
 for _m in list(sys.modules):
-    if _m.startswith("PyReconstruct"):
+    if _m.startswith("PyReconstruct") or _m == "PySide6" or _m.startswith("PySide6."):
         del sys.modules[_m]
 
 class _BlockGui:
     def find_spec(self, name, path=None, target=None):
+        if name == "PySide6" or name.startswith("PySide6."):
+            raise ImportError("Qt blocked for headless notify proof")
         if name == "PyReconstruct.modules.gui" or name.startswith(
             "PyReconstruct.modules.gui."
         ):
@@ -183,7 +184,10 @@ sys.meta_path.insert(0, _BlockGui())
 from PyReconstruct.modules.backend.notifier import NullNotifier, QtNotifier
 from PyReconstruct.modules.datatypes.series import Series
 
-# importing Series must not have pulled in the GUI layer
+# importing Series must not have pulled in Qt or the GUI layer
+assert not [m for m in sys.modules if m.startswith("PySide6")], (
+    "importing Series pulled in Qt"
+)
 assert not any(
     m == "PyReconstruct.modules.gui" or m.startswith("PyReconstruct.modules.gui.")
     for m in sys.modules
@@ -213,7 +217,7 @@ print("GUI_FREE_OK")
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env = dict(os.environ)
     env["PYTHONPATH"] = repo_root + os.pathsep + env.get("PYTHONPATH", "")
-    env["QT_QPA_PLATFORM"] = "offscreen"
+    env.pop("QT_QPA_PLATFORM", None)  # no Qt platform is needed at all now
     result = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True, text=True, env=env,

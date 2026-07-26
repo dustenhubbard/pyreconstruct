@@ -13,14 +13,14 @@ directly. These tests prove the seam:
   - `Series` operations route through an injected reporter factory: a canceling
     reporter aborts `openJser` mid-loop (returning None and cleaning up), and
     `enumerateSections` drives an injected reporter over every section;
-  - opening/cancellation drives through the seam without importing the GUI layer
-    (verified in a subprocess where `PyReconstruct.modules.gui` is blocked) --
-    the payoff of moving `getProgbar` out of `series.py`.
+  - opening/cancellation drives through the seam with Qt and the GUI layer both
+    blocked (verified in a subprocess) -- the payoff of moving `getProgbar` out
+    of `series.py`.
 
-Note: importing `Series` still pulls in Qt via `transform.py`'s `QTransform`
-(out of scope for M11, deferred), so a full Series operation cannot yet run
-under a total `PySide6` block; the GUI-layer block is the achievable headless
-proof for progress and previews the PR 3 "cut the cord" headless test.
+Note: this last proof used to block only `PyReconstruct.modules.gui`, because
+importing `Series` still pulled in Qt via `constants/getdatetime.py` and
+`transform.py`. Both cords are now cut (`tests/test_qt_free_core.py`), so a
+Series operation runs under a total `PySide6` block.
 """
 import os
 import sys
@@ -186,12 +186,11 @@ def test_enumerateSections_routes_through_injected_reporter(tmp_path):
 
 
 def test_progress_path_needs_no_gui_layer(tmp_path):
-    """openJser + cancellation drive through the seam without the GUI layer.
+    """openJser + cancellation drive through the seam with no Qt at all.
 
-    Importing `Series` still needs PySide6 (via transform.py's QTransform, out
-    of M11 scope), so this blocks `PyReconstruct.modules.gui` -- the getProgbar
-    home -- rather than PySide6 entirely. It proves the progress path no longer
-    reaches into the GUI layer, the point of this seam, and previews PR 3.
+    Blocks all of `PySide6` plus `PyReconstruct.modules.gui` (getProgbar's
+    home), proving the progress path neither reaches into the GUI layer nor
+    needs Qt: the point of this seam, now that the core data model is Qt-free.
     """
     if not os.path.exists(FIXTURE):
         pytest.skip("fixture shapes1.jser not found")
@@ -202,8 +201,14 @@ def test_progress_path_needs_no_gui_layer(tmp_path):
     script = r"""
 import sys, os
 
+for _m in list(sys.modules):
+    if _m == "PySide6" or _m.startswith("PySide6."):
+        del sys.modules[_m]
+
 class _BlockGui:
     def find_spec(self, name, path=None, target=None):
+        if name == "PySide6" or name.startswith("PySide6."):
+            raise ImportError("Qt blocked for headless progress proof")
         if name == "PyReconstruct.modules.gui" or name.startswith(
             "PyReconstruct.modules.gui."
         ):
@@ -228,7 +233,10 @@ result = Series.openJser(fp, progress=_Cancel)
 assert result is None, "cancellation did not abort the load"
 assert not os.path.isdir(hidden_dir), "partial hidden dir left after cancel"
 
-# the GUI layer (getProgbar's home) was never imported to open/cancel
+# no Qt, and no GUI layer (getProgbar's home), was imported to open/cancel
+assert not [m for m in sys.modules if m.startswith("PySide6")], (
+    "opening/cancelling pulled in Qt"
+)
 assert not any(
     m == "PyReconstruct.modules.gui" or m.startswith("PyReconstruct.modules.gui.")
     for m in sys.modules
@@ -239,7 +247,7 @@ print("GUI_FREE_OK")
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env = dict(os.environ)
     env["PYTHONPATH"] = repo_root + os.pathsep + env.get("PYTHONPATH", "")
-    env["QT_QPA_PLATFORM"] = "offscreen"
+    env.pop("QT_QPA_PLATFORM", None)  # no Qt platform is needed at all now
     result = subprocess.run(
         [sys.executable, "-c", script, fp],
         capture_output=True, text=True, env=env,

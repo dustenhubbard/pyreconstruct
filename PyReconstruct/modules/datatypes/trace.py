@@ -144,11 +144,11 @@ class Trace():
         """
         self.tags.add(tag)
 
-    def getList(self, include_name=True) -> dict:
-        """Return the trace data as a dictionary.
-        
+    def getList(self, include_name=True) -> list:
+        """Return the trace data as a list.
+
             Params:
-                include_name (bool): True if name should be included in dict
+                include_name (bool): True if name should be included in the list
             Returns:
                 (list) list containing the trace data
         """
@@ -372,13 +372,13 @@ class Trace():
         r = max([distance(cx, cy, x, y) for x, y in points])
         return r
 
-    def getFeret(self, tform : Transform = None) -> float:
+    def getFeret(self, tform : Transform = None) -> tuple:
         """Get min and max Feret diameters.
-        
+
             Params:
                 tform (Transform): the transform to apply to the points
             Returns:
-                (float): the radius of the trace
+                (tuple): the min and max Feret diameters (0, 0 if not closed)
         """
 
         if not self.closed:  # no feret diameter for open traces
