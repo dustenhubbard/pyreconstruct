@@ -30,10 +30,11 @@ functions under test:
 
 trimSectionRange is covered elsewhere and is intentionally not retested here.
 
-Headless: Transform is a real dependency (QTransform under the hood) and works
-under QT_QPA_PLATFORM=offscreen; Log uses getDateTime (QSettings), also headless
-safe. No network or file I/O (LogSet.exportLogHistory, which needs real CSV
-files, is not exercised).
+Headless: Transform is a real dependency and is now Qt-free (a plain NumPy
+affine), as is Log's getDateTime (it reads the "utc" preference through the
+settings seam), so neither needs a Qt platform -- see tests/test_qt_free_core.py.
+No network or file I/O (LogSet.exportLogHistory, which needs real CSV files, is
+not exercised).
 """
 import math
 import types
