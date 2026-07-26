@@ -37,6 +37,29 @@ def exportMesh(tm, output_file, export_type):
                 fp.write(trimesh.exchange.dae.export_collada(tm))
                     
 
+def mapTracePoints(points : list, tform : Transform = None) -> list:
+    """Apply a transform to a trace's points, returning a list of (x, y) tuples.
+
+    Batched through Transform.mapPointsArray: one numpy affine over the whole
+    trace instead of a QTransform.map() call per point. mapPointsArray is
+    bit-for-bit identical to map() for the affine transforms used here, so the
+    resulting mesh is unchanged.
+
+    With no transform the coordinates are passed through untouched -- integer
+    trace coordinates must stay integers, since the callers round them.
+
+        Params:
+            points (list): the trace points
+            tform (Transform): the transform to apply, or None
+        Returns:
+            (list) the mapped points as (x, y) tuples
+    """
+    if tform:
+        return [(x, y) for x, y in tform.mapPointsArray(points).tolist()]
+    else:
+        return [(x, y) for x, y in points]
+
+
 class Object3D():
 
     def __init__(self, name, series : Series, color=None, alpha=None, tform=None):
@@ -59,6 +82,26 @@ class Object3D():
             if s < self.extremes[4]: self.extremes[4] = s
             if s > self.extremes[5]: self.extremes[5] = s
 
+    def addPointsToExtremes(self, pts : list, s : int):
+        """Fold a whole trace's points into the extreme values.
+
+        Equivalent to calling addToExtremes() once per point: the extremes are
+        six independent running min/max values, so feeding the trace's
+        (min x, min y) and then its (max x, max y) yields the same six numbers.
+        An empty trace is a no-op -- the per-point loop never ran for one, and
+        seeding the extremes off it would be wrong.
+
+            Params:
+                pts (list): the trace's (x, y) points
+                s (int): the section number
+        """
+        if not pts:
+            return
+        xs = [pt[0] for pt in pts]
+        ys = [pt[1] for pt in pts]
+        self.addToExtremes(min(xs), min(ys), s)
+        self.addToExtremes(max(xs), max(ys), s)
+
 
 class Surface(Object3D):
 
@@ -78,15 +121,9 @@ class Surface(Object3D):
             self.traces[snum]["pos"] = []
             self.traces[snum]["neg"] = []
         
-        pts = []
-        for pt in trace.points:
-            if tform:
-                x, y = tform.map(*pt)
-            else:
-                x, y = pt
-            self.addToExtremes(x, y, snum)
-            pts.append((x, y))
-        
+        pts = mapTracePoints(trace.points, tform)
+        self.addPointsToExtremes(pts, snum)
+
         if trace.negative:
             self.traces[snum]["neg"].append(pts)
         else:
@@ -275,15 +312,9 @@ class Contours(Object3D):
         if snum not in self.traces:
             self.traces[snum] = []
         
-        pts = []
-        for pt in trace.points:
-            if tform:
-                x, y = tform.map(*pt)
-            else:
-                x, y = pt
-            self.addToExtremes(x, y, snum)
-            pts.append((x, y))
-        
+        pts = mapTracePoints(trace.points, tform)
+        self.addPointsToExtremes(pts, snum)
+
         if trace.closed:
             pts.append(pts[0])
         
@@ -336,18 +367,23 @@ class Ztrace3D(Object3D):
         thickness = self.series.avg_thickness
 
         ztrace = self.series.ztraces[self.name]
+
+        # get appropriate alignment (the same for every point of the ztrace)
+        alignment = self.series.getAttr(self.name, "alignment", ztrace=True)
+        if not alignment: alignment = self.series.alignment
+        section_data = self.series.data["sections"]
+
+        # NOTE: not batched through mapPointsArray -- every ztrace point carries
+        # its own section, so the tform varies point to point and the batches
+        # would be one point each (slower than a scalar map).
         pts = []
         for pt in ztrace.points:
             # get coords
             x, y, s = pt
             self.addToExtremes(x, y, s)
 
-            # get appropriate tform
-            alignment = self.series.getAttr(self.name, "alignment", ztrace=True)
-            if not alignment: alignment = self.series.alignment
-            tform = self.series.data["sections"][s]["tforms"][alignment]
-
             # get real field coord point
+            tform = section_data[s]["tforms"][alignment]
             x, y = tform.map(x, y)
             z = s * thickness
             pts.append((x, y, z))

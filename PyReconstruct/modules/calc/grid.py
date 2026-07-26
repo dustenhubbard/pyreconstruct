@@ -6,15 +6,13 @@ from .polygon import cut_closed_traces, cut_open_traces
 
 class Grid():
 
-    def __init__(self, traces, cutline=None):
+    def __init__(self, traces):
         """Create a grid object.
-        
+
             Params:
                 traces (list): a list of traces, each one being a list of points
-                cutline (list): a list of points created by the knife tool
         """
         self.traces = [np.array(trace) for trace in traces]
-        self.cutline = cutline  # knife line
         self._generateGrid()
     
     def _generateGrid(self):
@@ -33,17 +31,6 @@ class Grid():
             dtype="int"
         )
 
-        # draw knife line on grid if applicable
-        if self.cutline is not None:
-            for i in range(1, len(self.cutline)):
-                x1, y1 = self.cutline[i-1]
-                x2, y2 = self.cutline[i]
-                x1 -= xmin
-                y1 -= ymin
-                x2 -= xmin
-                y2 -= ymin
-                self._drawGridLine(x1, y1, x2, y2, knife=True)
-        
         # draw the trace(s) on the grid (ASSUMES CLOSED)
         for trace in self.traces:
             for i in range(len(trace)):
@@ -60,15 +47,18 @@ class Grid():
     
     # DDA algorithm
     # Source: https://www.tutorialspoint.com/computer_graphics/line_generation_algorithm.htm
-    def _drawGridLine(self, x0 : int, y0 : int, x1 : int, y1 : int, knife=False):
+    def _drawGridLine(self, x0 : int, y0 : int, x1 : int, y1 : int):
         """Draw a line on self.grid.
-        
+
+        Every drawn cell is incremented, so a cell's value is the number of
+        trace segments crossing it (1 for a plain edge, >1 where traces touch
+        or overlap) -- which is what isAnchorPoint() keys off of.
+
             Params:
                 x0 (int): x value of start point
                 y0 (int): y value of start point
                 x1 (int): x value of end point
                 y1 (int): y value of end point
-                knife (bool): True if the trace is a knife trace
         """
         if (x0 == x1 and y0 == y1):
             return
@@ -83,10 +73,7 @@ class Grid():
         x, y = x0, y0
         h, w = self.grid.shape
         if 0 <= x < w and 0 <= y < h:
-            if knife:
-                self.grid[y, x] -= 1  # knife traces are negative
-            else:
-                self.grid[y, x] = abs(self.grid[y, x]) + 1  # traces are positive
+            self.grid[y, x] += 1
         last_x, last_y = x, y
         for _ in range(steps):
             x += x_increment
@@ -95,31 +82,8 @@ class Grid():
             ry = round(y)
             if (rx != last_x or ry != last_y):
                 if 0 <= rx < w and 0 <= ry < h:
-                    if knife:
-                        self.grid[ry, rx] -= 1
-                    else:
-                        self.grid[ry, rx] = abs(self.grid[ry, rx]) + 1
+                    self.grid[ry, rx] += 1
                 last_x, last_y = rx, ry
-
-    def removeCuts(self):
-        """Turn grid cuts into normal lines.
-        
-        Negative values within the shape are made positive.
-        """
-        y_vals, x_vals = np.where(self.grid < 0) # get positions of negative numbers (cut line)
-        for x, y in zip(x_vals, y_vals):
-            inside = False
-            # check if the point is inside any of the traces
-            for trace in self.traces:
-                ptest = cv2.pointPolygonTest(trace,
-                                        (int(x + self.grid_shift[0]), int(y + self.grid_shift[1])),
-                                        measureDist=False)
-                if ptest >= 0:
-                    inside = True
-            if not inside: # if cut is not within any trace, remove it
-                self.grid[y, x] = 0
-            else: # otherwise, make it part of the trace
-                self.grid[y, x] *= -1
 
     def printGrid(self):
         """Print the grid to the console.
@@ -192,21 +156,6 @@ class Grid():
             
         return traces
 
-    def getInteriors(self) -> list:
-        """Get the interiors of the traces on the grid.
-        
-            Returns:
-                (list) the interiors of the traces (also represented as lists)
-        """
-        self.removeCuts()
-        cv_traces, hierarchy = cv2.findContours(self.grid.astype(np.uint8), cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
-        traces = []
-        for trace in cv_traces[:-1]:
-            new_trace = self.getAnchorTrace(trace[:,0,:])
-            new_trace += self.grid_shift
-            traces.append(new_trace.tolist())
-        return traces
-
 
 # METHODS (used to access the class functions)
 
@@ -271,45 +220,6 @@ def mergeTraces(trace_list : list) -> list:
     for i in range(len(new_traces)):
         new_traces[i] = reducePoints(new_traces[i])
     return new_traces
-
-# def cutTraces(trace_list, cut_trace : list, del_threshold : float, closed=True) -> list:
-#     """Cut a set of traces.
-    
-#         Params:
-#             trace_list (list): set of traces
-#             cut_line (list): a single curve
-#         Returns:
-#             (list) the newly cut traces
-#     """
-#     if closed:
-        
-#         new_traces = []
-        
-#         threshold = sum(area(t) for t in trace_list) * (del_threshold / 100)
-#         grid = Grid(trace_list, cut_trace)
-#         interiors = grid.getInteriors()
-
-#         # print(f"{interiors = }")
-#         # print(f"{reducePoints(interiors[0]) = }")
-
-#         ## Only include traces that pass threshold check
-#         for i in range(len(interiors)):
-#             if area(interiors[i]) >= threshold: 
-#                 new_traces.append(reducePoints(interiors[i]))
-#     else:
-        
-#         new_traces = []
-        
-#         for trace in trace_list:
-#             threshold = lineDistance(trace, closed=False) * (del_threshold / 100)
-#             new_traces += cutOpenTrace(trace, cut_trace)
-            
-#         for t in new_traces.copy():
-#             if lineDistance(t, closed=False) < threshold:
-#                 new_traces.remove(t)
-    
-#     return new_traces
-
 
 def cutTraces(trace_list, cut_trace, del_threshold=0.0, closed=True):
     """Cut a set of traces using polygon operations.
