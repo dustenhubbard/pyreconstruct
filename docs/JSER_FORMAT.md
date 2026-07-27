@@ -16,6 +16,11 @@ Two things to know before reading further:
   file from its in-memory model. The known divergences are collected in
   [Reader and writer divergences](#9-reader-and-writer-divergences); they are the parts
   most likely to change in a future canonical version.
+- **The writer is canonical and line-structured.** Identical content always produces
+  identical bytes, and the file is laid out one trace per line so that `diff`, `grep` and
+  `sed` work on it — including on a damaged file that no JSON parser will accept. See
+  [Canonical ordering](#canonical-ordering) and [Line structure](#line-structure). Older
+  files do not have either property; the reader accepts them regardless.
 
 Every factual claim below is anchored to a source location in the
 [References](#10-references) appendix. Anchors were verified against commit `5f16443`.
@@ -46,6 +51,133 @@ concatenation, and no trailing newline. The file is written in one shot as bytes
 replaced over the previous file atomically, so a crash mid-save cannot truncate an
 existing series.
 
+It is **structurally pretty-printed with compact leaves**: the document's structure is
+expanded onto lines, one section block / trace / flag / transform per line, while every
+leaf value — coordinate arrays included — stays compact on the line it belongs to. See
+[Line structure](#line-structure).
+
+### Canonical ordering
+
+**Identical content always produces identical bytes.** Two saves of the same series, in
+different processes, byte-compare equal. This holds for anything the writer derives from
+its in-memory model, and it is a guarantee a generator may rely on and a consumer may
+test against.
+
+Making it true required sorting the five structures that are Python `set` objects in
+memory and JSON arrays on disk. Each is written in **sorted order**:
+
+| Where | Field |
+| --- | --- |
+| trace row | `tags` (see [4.1](#41-trace-rows)) |
+| series | `editors` |
+| series | `object_groups` — group names, and each group's member list |
+| series | `ztrace_groups` — group names, and each group's member list |
+| series | `host_tree` — object names, and each object's host list |
+
+Object key order is fixed as well, because a dict that a migration back-filled used to
+carry its missing keys appended at the tail, so byte layout leaked a file's provenance:
+
+- **Top level:** `sections`, `series`, `log`.
+- **Section:** the nine keys in the order given in [section 3](#3-the-section-object).
+  Keys this build has no concept of are **preserved**, sorted, after the nine — most
+  commonly the legacy scalar `brightness`/`contrast` pair, which is why a real section
+  object often has 11 keys where the documented shape has 9 (divergence 2).
+- **Series:** the order given in [section 5](#5-the-series-object).
+- **Options bag:** the order of the writer's own template
+  ([section 6](#6-the-options-bag)).
+- **Contour names** within a section's `contours`: sorted.
+
+Sorting is by Python's `sorted()` on the strings, i.e. by ASCII code point, so it is
+case-sensitive and uppercase sorts before lowercase.
+
+Because sorting reorders bytes without adding or removing any, canonical ordering is
+**size-neutral**: measured at 0 bytes of difference on a 391 MB series.
+
+### Line structure
+
+The writer's layout is chosen so that a `.jser` can be worked with by line-oriented
+tools, including on a file no JSON parser will accept.
+
+```
+{
+"sections": [
+null,
+{
+  "src": "Cropped Images/d03/001ZGBJY.tif",
+  "brightness_contrast_profiles": {"default":[0,0]},
+  "mag": 0.00204844,
+  "align_locked": true,
+  "tforms": {
+    "default": [1.0,0.0,5.5738052,0.0,1.0,18.2905208]
+  },
+  "thickness": 0.05,
+  "contours": {
+    "d03": [
+      [[5.000242,5.018678, ... ],[9.0165505,9.0319021, ... ],[255,0,0],true,false,false,["none","none"],["axon"]]
+    ]
+  },
+  "flags": [],
+  "calgrid": false
+},
+...
+],
+"series": {
+  "current_section": 0,
+  ...
+},
+"log": "Date, Time, User, Obj, Sections, Event\n..."
+}
+```
+
+The layout rules, stated as guarantees:
+
+| Structure | Line |
+| --- | --- |
+| a section object | opens with `{` alone in column 0, closes with `}` in column 0 |
+| a `null` section | `null` alone on its line |
+| a section key | one per line, indented 2 |
+| a contour name | one per line, indented 4, as `    "<name>": [` |
+| a trace row | one per line, indented 6, complete and self-contained |
+| a flag row | one per line, indented 4 |
+| a transform | one per line, indented 4 |
+| the series object | one key per line, indented 2; the large maps expand one entry per line |
+| `log` | one line, however long |
+| coordinates | **never** get a line of their own |
+
+What that buys, in the two cases it was chosen for:
+
+**A one-trace edit is a small diff.** `diff -U2` of a 4.3 MB series before and after one
+trace moved: **8,694,122 bytes of output before, 544 bytes after**. The enclosing object
+name appears as diff context, so a reviewer sees which object on which section changed
+with no tooling at all. On the single-line form `diff` can only say "line 1 changed" and
+reprint the whole file twice.
+
+**A damaged file stays partially salvageable.** Recovery by reading a `.jser` directly is
+a real workflow, and `jq` refuses to parse truncated or corrupt JSON — so line structure
+is the only thing that makes `grep`/`sed` salvage possible. From a file cut in half:
+
+```sh
+grep -c '^  "src":'     series.jser   # sections, one match per live section
+grep -c '^      \['     series.jser   # trace rows
+grep -n '"d01": \['     series.jser   # every section carrying object d01, with line numbers
+sed -n '8068p'          series.jser   # exactly one trace row, valid JSON on its own
+```
+
+Every trace row recovered this way parses independently as JSON, because the whole row is
+on one line. None of it works on a single-line file.
+
+Measured on a real 393 MB series (318 sections, 161,787 traces) truncated to exactly half
+its length: `jq` refuses the file, while `grep` still finds **161 sections and 80,111
+trace rows**, locates all 159 surviving sections carrying a named object, and `sed -n Np`
+on any of those lines yields a row that parses on its own. The same cut on the minified
+form yields nothing at all.
+
+One caveat on `^{$`: the document's own opening brace is also alone in column 0, so it
+matches too. `grep -c '^  "src":'` is the exact section count.
+
+Set `PYRECON_JSER_MINIFY=1` to write the old compact single line instead. The reader
+accepts either — this is whitespace, so it is backward-compatible in both directions.
+
 ### Encoding and byte-level invariants
 
 The file is **pure ASCII**. Every byte is below `0x80`. Characters outside the ASCII
@@ -65,7 +197,8 @@ Consequences for anyone generating a `.jser`:
 | --- | --- |
 | ASCII only | Non-ASCII must be `\uXXXX`-escaped. Raw UTF-8 is readable by PyReconstruct but is not what it writes, and may corrupt on a locale-mode reader. |
 | Object keys are strings | The writer is configured to accept non-string mapping keys and coerce them, so an integer key becomes the decimal string. A generator should just write strings. |
-| Compact separators | The writer emits `{"a":1}`, with no space after `:` or `,`. |
+| Compact leaves | Inside a leaf value the writer emits `{"a":1}`, with no space after `:` or `,`. Only the document's *structure* carries whitespace; see [Line structure](#line-structure). |
+| Canonical order | Set-derived arrays are sorted and object keys are in a fixed order, so identical content is identical bytes. See [Canonical ordering](#canonical-ordering). |
 | No `NaN` or `Infinity` | Every serialized number is finite. The fast writer would silently turn a non-finite float into `null`; nothing PyReconstruct serializes can reach that path. |
 | 64-bit integer range | Integers outside the signed/unsigned 64-bit range are not produced. Reading such a value coerces it to a float. |
 
@@ -75,7 +208,8 @@ same document: `orjson` is compact, the standard library inserts a space after `
 `,`. Both are valid JSON and both parse identically, but a `.jser` saved on a machine
 without `orjson` installed will differ from one saved with it, byte for byte, on every
 line. `orjson` is a declared dependency, so this is an install-integrity concern rather
-than a routine one.
+than a routine one. It is also the one exception to the byte-reproducibility guarantee
+above: reproducibility holds between saves that used the same JSON backend.
 
 ### The hidden unpack directory
 
@@ -204,8 +338,16 @@ join. Readers tolerate it.
 
 ## 3. The section object
 
-Nine keys. All are required by the writer; a reader back-fills any that are missing from
-an empty-section template before use.
+Nine keys, **emitted in the order of the table below**. All are required by the writer; a
+reader back-fills any that are missing from an empty-section template before use, and then
+reorders the object canonically, so a back-filled section is byte-identical to one derived
+straight from the model.
+
+A section may legitimately carry *more* than these nine. Keys this build has no concept of
+are preserved, sorted, after the nine — most often the legacy scalar `brightness` and
+`contrast` pair (divergence 2), which is why a real section object frequently has 11 keys.
+A generator may add its own keys and they will survive, as long as the section is never
+re-derived from the model.
 
 | Key | JSON type | Units / legal values | Meaning |
 | --- | --- | --- | --- |
@@ -235,6 +377,9 @@ active alignment is applied when the trace is drawn or measured, not when it is 
 Changing an alignment therefore rewrites `tforms` and leaves every trace row untouched.
 
 ### Contour names
+
+Contour names are written **sorted**, so an object added late in a session lands in the
+same place as one that was there from the start.
 
 A contour name is the shared name of every trace inside it, and it is also the object
 name used across the whole series. Names are normalized on read: leading and trailing
@@ -280,7 +425,7 @@ contour key.
 | 4 | `negative` | boolean | `true` if the trace subtracts area (a hole). |
 | 5 | `hidden` | boolean | `true` if the trace is not drawn. |
 | 6 | `fill_mode` | array of 2 strings | `[style, condition]`. See below. |
-| 7 | `tags` | array of strings | Free-form tags. Order is not meaningful. |
+| 7 | `tags` | array of strings | Free-form tags. Held as a set in memory, so order is not meaningful — the writer emits them **sorted**. |
 
 **Inside `series.palette_traces`: 9 elements, name first.** Index 0 is the trace name as
 a string; indices 1 through 8 are the eight fields above, shifted by one.
@@ -416,17 +561,17 @@ key does not survive a save.
 | `palette_index` | array `[string, integer]` | Selected palette group and slot. |
 | `ztraces` | object | Ztrace name -> `{"color": [R,G,B], "points": [[x, y, section], ...]}`. See [5.2](#52-ztraces). |
 | `alignment` | string | Name of the active alignment. Must be a key of every section's `tforms`, or the reserved `"no-alignment"`. Default `"default"`. |
-| `object_groups` | object | Group name -> array of object names. See [5.3](#53-groups-hosts-and-attributes). |
-| `ztrace_groups` | object | Group name -> array of ztrace names. Same shape. |
+| `object_groups` | object | Group name -> array of object names. Group names and members are both written **sorted**. See [5.3](#53-groups-hosts-and-attributes). |
+| `ztrace_groups` | object | Group name -> array of ztrace names. Same shape, also sorted. |
 | `obj_attrs` | object | Object name -> attribute object. See [5.3](#53-groups-hosts-and-attributes). |
 | `ztrace_attrs` | object | Ztrace name -> attribute object. In practice only `alignment` is ever written. |
 | `current_brightness_contrast_profile` | string | Name of the active image adjustment profile. Must be a key of every section's `brightness_contrast_profiles`. Default `"default"`. |
 | `options` | object | Series-scoped settings. See [section 6](#6-the-options-bag). |
 | `log_set` | array of strings | Optional. Pending log rows, each a complete CSV line in the format of [the log string](#the-log-string). See divergence 5 in [section 9](#9-reader-and-writer-divergences). |
-| `editors` | array of strings | Usernames that have edited the series. A set in memory, so the order is not meaningful and not stable. If the stored array is empty, it is recomputed from the log history on load. |
+| `editors` | array of strings | Usernames that have edited the series. A set in memory, so the order is not meaningful; the writer emits it **sorted**. If the stored array is empty, it is recomputed from the log history on load. |
 | `code` | string | Series code: a short identifier independent of the filename. Used as the leading field of exported object tables and as the namespace for per-series computer settings. `""` means unset, and it is the only value the UI rejects. Any other string is accepted, including one containing the delimiters used by the exporters. A configurable regex (default `[0-9A-Za-z]+`) is a *detection* pattern applied to the file name to pre-fill a suggestion; it does not validate what the user enters. |
 | `user_columns` | object | Column name -> array of permitted option strings. See [5.4](#54-user_columns). |
-| `host_tree` | object | Object name -> array of its host names. See [5.3](#53-groups-hosts-and-attributes). |
+| `host_tree` | object | Object name -> array of its host names. Object names and host lists are both written **sorted**. See [5.3](#53-groups-hosts-and-attributes). |
 
 ### 5.1 `src_dir`
 
@@ -588,6 +733,10 @@ The prune inspects **top-level `options` keys only**. Nested content is never ex
 which is why stale `autoseg` job parameters and unrecognized column entries survive
 indefinitely.
 
+After the two reconciliation passes the bag is reordered into the template's own key
+order, so a bag whose missing keys were back-filled at the tail is byte-identical to one
+that arrived complete.
+
 The set of top-level `options` keys also cannot grow at runtime. The setter writes into
 `options` only when the key is already present; an unknown option name is dropped
 silently. So the nine keys above are the complete on-disk set, not merely the ones
@@ -715,9 +864,10 @@ Until that lands, this page is the specification.
 
 ## 8. A minimal valid file
 
-The following is a complete, openable two-section series. It is shown indented for
-readability; PyReconstruct writes the same document with no whitespace between tokens.
-Saving this file back out produces the identical document.
+The following is a complete, openable two-section series, shown fully indented for
+readability. PyReconstruct writes the same document in its own layout — structure on
+lines, leaves compact; see [Line structure](#line-structure) — so saving this file back
+out produces the same document with different whitespace.
 
 Section 0 is deliberately absent, to show a hole. The image filenames are placeholders:
 substitute real files in `src_dir` to see an image behind the traces.
@@ -822,8 +972,8 @@ Notes on why this particular document round-trips unchanged:
   `options`.
 - `align_locked` is `true`, because the reader would force it to `true` anyway.
 - `log_set` is present and empty, because the writer emits it in exactly that case.
-- `tags` and `editors` are empty, avoiding the unordered-set problem described in
-  [section 9](#9-reader-and-writer-divergences).
+- `tags` and `editors` are empty. Non-empty values are fine and are written sorted; see
+  [Canonical ordering](#canonical-ordering).
 - Coordinates use at most 7 decimal places, matching the writer's rounding.
 - The `log` string contains no blank lines, which the log round-trip would remove. A
   trailing newline is preserved rather than stripped, so it would also be fine here; the
@@ -855,6 +1005,11 @@ These are places where what PyReconstruct writes and what PyReconstruct would de
 from its own model differ. Each is confirmed by round-tripping a file through open and
 save. They matter most for a canonical v1, because each one is a decision that has to be
 made explicitly rather than inherited.
+
+**Two of them are now fixed** and are kept here, marked, because files written by earlier
+builds still exhibit them and a reader must still cope: divergence 6 (unordered sets) and
+divergence 8 (provenance-dependent key order). See
+[Canonical ordering](#canonical-ordering).
 
 **1. Sections pass through opaquely; the series object does not.**
 A section that is not loaded and re-saved during a session travels from input to output
@@ -897,26 +1052,40 @@ The result is inverted from what you would expect: a saved `.jser` contains
 `"log_set": []` when there is no pending log, and omits the key entirely when there was
 one. Both are accepted on read, where the key is optional.
 
-**6. Sets are serialized in unordered form.**
+**6. Sets are serialized in unordered form. — FIXED.**
 Five structures are Python sets in memory and arrays on disk: trace `tags`, series
 `editors`, the member lists of `object_groups` and `ztrace_groups`, and the host lists of
-`host_tree`. Writing them produces set-iteration order, which is not the input order and
-is not stable across processes. Two saves of identical data can therefore produce
-different bytes. This defeats byte-level diffing of `.jser` files in version control for
-any series that uses tags, groups or hosts.
+`host_tree`. Writing them used to produce set-iteration order, which is not the input
+order and is not stable across processes, so two saves of identical data produced
+different bytes and byte-level diffing in version control was defeated for any series
+using tags, groups or hosts. All five are now written **sorted**; see
+[Canonical ordering](#canonical-ordering). Measured: a 391 MB series re-serialized in two
+separate processes differed by 9,268 bytes before, and is byte-identical now, at a cost of
+0 bytes of file size.
+
+Files written by older builds still carry the unordered form. A reader must not depend on
+the order either way — the ordering is a *writer* guarantee, and the arrays remain
+semantically unordered.
 
 **7. Coordinate rounding is applied on write, not on read.**
 Points are rounded to 7 decimal places when a trace is serialized from the model. A
 hand-written or third-party file with more precision keeps it until that section is
 re-saved, at which point precision silently drops.
 
-**8. Section key order depends on which path the section took.**
+**8. Section key order depends on which path the section took. — FIXED.**
 A section re-derived from the model emits the nine keys in the order given in
-[section 3](#3-the-section-object). A section that arrived missing keys gets them
+[section 3](#3-the-section-object). A section that arrived missing keys used to get them
 **appended at the tail** by the migration, in template order, so a section missing
-`thickness` and `tforms` comes out with those two after `calgrid`. Both are valid JSON
-with identical content, but the bytes differ. Any tooling that compares `.jser` files
-textually has to normalize key order first.
+`thickness` and `tforms` came out with those two after `calgrid` — valid JSON with
+identical content, but different bytes. The migration now reorders the object canonically
+as its last step, and the same is done for the series object and the `options` bag. Keys
+the build does not recognize are preserved, sorted, after the known ones, so the legacy
+`brightness`/`contrast` pair of divergence 2 is not lost. See
+[Canonical ordering](#canonical-ordering).
+
+Older files still carry the old orders, so tooling that compares two arbitrary `.jser`
+files still has to be order-insensitive; tooling that compares two files written by this
+build does not.
 
 **9. `window` height of zero is not repaired.**
 The migration repairs a zero width and intends to repair a zero height, but the height
@@ -969,7 +1138,16 @@ symbol, treat the corresponding claim in this page as unverified until re-checke
 | Non-string mapping keys coerced | `PyReconstruct/modules/constants/fast_json.py:99` (`OPT_NON_STR_KEYS`) |
 | Non-finite and out-of-range integer caveats | `PyReconstruct/modules/constants/fast_json.py:9-17` |
 | `orjson` is a pinned dependency | `pyproject.toml:38`, `requirements.txt:9` |
-| Atomic replace of the `.jser` | `PyReconstruct/modules/datatypes/series.py:88-115`, called at `:474` |
+| Atomic replace of the `.jser` | `PyReconstruct/modules/datatypes/series.py:88-115` |
+| Structural pretty printer; `PYRECON_JSER_MINIFY` | `PyReconstruct/modules/constants/jser_format.py` (`dumps_jser`, `PRETTY_DEFAULT`) |
+| Canonical key order and unknown-key preservation | `PyReconstruct/modules/constants/jser_format.py` (`canon_keys`, `SECTION_KEYS`, `SERIES_KEYS`) |
+| Section key order and contour sort applied | `PyReconstruct/modules/datatypes/section.py` (end of `Section.updateJSON`, `Section.getDict`) |
+| Series key order and options-bag order applied | `PyReconstruct/modules/datatypes/series.py` (end of `Series.updateJSON`) |
+| Trace `tags` sorted | `PyReconstruct/modules/datatypes/trace.py` (`Trace.getList`) |
+| `editors` sorted | `PyReconstruct/modules/datatypes/series.py` (`Series.getDict`) |
+| Group names and members sorted | `PyReconstruct/modules/datatypes/obj_group_dict.py` (`ObjGroupDict.getGroupDict`) |
+| `host_tree` names and hosts sorted | `PyReconstruct/modules/datatypes/host_tree.py` (`HostTree.getDict`) |
+| Canonical-ordering, reproducibility and salvage tests | `tests/test_jser_canonical_format.py` |
 
 ### Open and save
 

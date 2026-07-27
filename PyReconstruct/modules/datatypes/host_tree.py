@@ -132,13 +132,18 @@ class HostTree():
         return modified_objs
     
     def getDict(self):
-        """Return the tree in dict format."""
+        """Return the tree in dict format.
+
+        Object names and their host lists are both sorted: the hosts are a set in
+        memory, so unsorted output made identical content serialize to different
+        bytes across processes (canonical ordering).
+        """
         d = {}
-        for obj_name, hosts_travelers in self.objects.items():
-            hosts = hosts_travelers["hosts"]
+        for obj_name in sorted(self.objects, key=str):
+            hosts = self.objects[obj_name]["hosts"]
             if not hosts:
                 continue
-            d[obj_name] = list(hosts.copy())
+            d[obj_name] = sorted(hosts, key=str)
         return d
 
     def copy(self):
