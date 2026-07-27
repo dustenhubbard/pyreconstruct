@@ -3542,11 +3542,18 @@ class SeriesIterator():
 
 
 def updateDictLists(d1 : dict, d2 : dict):
-    """In the cases where two dictionaries have values as lists, combine the two lists for each value."""
+    """In the cases where two dictionaries have values as lists, combine the two lists for each value.
+
+    Deduplication preserves first-seen order (d1's values, then d2's additions):
+    these lists are the option sets shown for user-defined columns, so a stable
+    order matters, and set() iteration order is not stable across processes.
+    """
     d = deepcopy(d1)
     for k, l in d2.items():
         if k not in d:
             d[k] = []
-        d[k] += l
-        d[k] = list(set(l))  # remove redundant values
+        # d[k] + l, minus duplicates -- NOT set(l), which would discard d1's
+        # values entirely for any key present in both dicts
+        seen = set()
+        d[k] = [v for v in d[k] + l if not (v in seen or seen.add(v))]
     return d
