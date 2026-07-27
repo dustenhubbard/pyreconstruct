@@ -22,9 +22,10 @@ Notes for the reader:
     are only valid via the ``mag`` path (which casts to int32 and back). Plain
     float64 with no ``mag`` raises cv2.error and is therefore not a supported
     input, so it is not tested here.
-  * feret() sorts its argument in place (Points.sort()), so it is NOT pure --
-    see test_feret_mutates_input_documented and the flag in the report. Every
-    other feret test passes a throwaway copy.
+  * feret() used to sort its argument in place (Points.sort()); it no longer
+    does, and test_feret_leaves_input_unordered pins that. The feret tests here
+    still pass throwaway copies, which is harmless either way. The min/max
+    diameter definitions themselves are covered in tests/test_feret.py.
 """
 
 import math
@@ -412,7 +413,7 @@ def test_feret_square_min_is_side_max_is_diagonal():
     """For an axis-aligned 10x10 square the min Feret (narrowest caliper
     width) is the side length 10 and the max Feret is the diagonal sqrt(200)."""
     square = [[0, 0], [10, 0], [10, 10], [0, 10]]
-    mn, mx = feret([list(p) for p in square])  # pass a copy: feret sorts in place
+    mn, mx = feret([list(p) for p in square])
     assert mn == pytest.approx(10.0)
     assert mx == pytest.approx(math.hypot(10, 10))
 
@@ -460,11 +461,11 @@ def test_feret_degenerate_is_zero(pts):
     assert feret([list(p) for p in pts]) == (0.0, 0.0)
 
 
-def test_feret_mutates_input_documented():
-    """Documenting a real wart: feret() calls Points.sort(), reordering the
-    caller's list in place. This is not desired behavior, just pinned so a
-    future fix is a visible, intentional change rather than a silent one.
+def test_feret_leaves_input_unordered():
+    """feret() used to call Points.sort(), reordering the caller's list in
+    place. It now sorts a copy, so the caller's list survives untouched.
     """
     pts = [[10, 10], [0, 0], [10, 0], [0, 10]]
     feret(pts)
-    assert pts == sorted(pts)  # input was sorted in place by feret
+    assert pts == [[10, 10], [0, 0], [10, 0], [0, 10]]
+    assert pts != sorted(pts)  # the old in-place sort would have reordered it
