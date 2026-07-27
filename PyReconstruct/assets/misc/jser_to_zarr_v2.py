@@ -11,7 +11,7 @@ from PyReconstruct.modules.datatypes import Series
 from PyReconstruct.modules.backend.view import SectionLayer
 
 # user-entered info
-jser_fp = r"C:\Users\jfalco\Documents\Series\DSNYJ_JSER\DSNYJ.jser"
+jser_fp = r"C:\path\to\Series\DSNYJ_JSER\DSNYJ.jser"
 contour_names = ["d001"]  # use drop-down method with object groups
 srange = (100, 151)  # enter manually
 window = [16, 15, 10, 10]  # use a stamp (make one of the palette traces a freaking square)
