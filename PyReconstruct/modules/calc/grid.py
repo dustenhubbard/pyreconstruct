@@ -44,7 +44,10 @@ class Grid():
         
         # save grid information
         self.grid_shift = xmin, ymin
-    
+
+        # invalidate the cached anchor mask (see _anchorMask)
+        self._anchor_mask = None
+
     # DDA algorithm
     # Source: https://www.tutorialspoint.com/computer_graphics/line_generation_algorithm.htm
     def _drawGridLine(self, x0 : int, y0 : int, x1 : int, y1 : int):
@@ -118,22 +121,57 @@ class Grid():
             else:
                 return False
 
+    def _anchorMask(self) -> np.ndarray:
+        """Return a boolean mask of the anchor points of the whole grid.
+
+        This is the batched form of isAnchorPoint(): a cell is an anchor if its
+        value is > 1, or if at least 3 of its 8 neighbours are nonzero.  The
+        neighbour count is a 3x3 correlation with a hollow kernel.
+
+        isAnchorPoint() indexes self.grid[y + dy, x + dx] with no bounds check,
+        so a neighbour at index -1 wraps around to the opposite edge.  Contours
+        found on the grid really do include points on row 0 / column 0, so the
+        grid is padded with mode="wrap" to reproduce that wrap-around exactly
+        rather than treating out-of-bounds as zero.
+
+        The result is computed once and cached: the grid is only written by
+        _generateGrid/_drawGridLine during construction, and getExterior() asks
+        for the mask once per contour.
+        """
+        if getattr(self, "_anchor_mask", None) is None:
+            nonzero = np.pad((self.grid > 0).astype(np.uint8), 1, mode="wrap")
+            kernel = np.ones((3, 3), np.uint8)
+            kernel[1, 1] = 0
+            neighbors = cv2.filter2D(
+                nonzero,
+                cv2.CV_16S,
+                kernel,
+                borderType=cv2.BORDER_CONSTANT
+            )[1:-1, 1:-1]
+            self._anchor_mask = (self.grid > 1) | (neighbors >= 3)
+        return self._anchor_mask
+
     def getAnchorTrace(self, trace : np.ndarray) -> np.ndarray:
         """Get the "anchor" trace from a numpy cv2 trace.
-        
+
         Often run after cv2.findContours is run on the grid.
-        
+
             Params:
                 trace (np.ndarray): the trace returned by cv2.findContours
             Returns:
                 (np.ndarray) the anchor points of the trace
         """
-        new_trace = []
-        for point in trace:
-            if self.isAnchorPoint(*point):
-                new_trace.append(point)
-        return np.array(new_trace)
-    
+        trace = np.asarray(trace)
+        if trace.size:
+            keep = self._anchorMask()[trace[:, 1], trace[:, 0]]
+        else:
+            keep = np.zeros(0, dtype=bool)
+        if not keep.any():
+            # preserve the historical empty result: np.array([]) of an empty
+            # list, i.e. shape (0,) rather than shape (0, 2)
+            return np.array([])
+        return trace[keep]
+
     def getExterior(self) -> list:
         """Get the exterior of the trace(s) on the grid.
         
