@@ -4,7 +4,7 @@ from typing import Union
 
 import numpy as np
 
-from PyReconstruct.modules.calc import traceGeometry, feret
+from PyReconstruct.modules.calc import traceGeometry
 
 from .section import Section
 from .transform import Transform
@@ -53,14 +53,22 @@ class TraceData():
         # Defer the expensive convex-hull Feret diameter. It is only read by the
         # per-section trace table and CSV export, never by the object table, so
         # computing it for every trace up front (a third of the geometry cost)
-        # is wasted on most series. Reuse the mapped-point array (exact float64)
-        # and compute the Feret lazily on first request, then drop the points.
-        if self.closed:
-            self._feret = None
-            self._feret_points = pts
-        else:
-            self._feret = (0, 0)
-            self._feret_points = None
+        # is wasted on most series.
+        #
+        # Nothing is kept for it. Holding the mapped points until the Feret is
+        # first read (which on most series is never) made this object the
+        # largest per-trace allocation in a loaded series: 16 bytes per point
+        # plus array overhead, retained for the lifetime of the series data,
+        # ~1.3 KB per trace on autoseg contours. Both readers already hold the
+        # section the trace is on, so getFeret() recomputes from the live trace
+        # instead, then caches the two numbers.
+        #
+        # The transform is kept because it must be the one this data was built
+        # with -- the object may pin a fixed alignment -- and it is a per-section
+        # shared object already retained by the series data, so this costs one
+        # pointer per trace.
+        self._tform = tform
+        self._feret = None if self.closed else (0, 0)
 
     def getTags(self):
         return self.tags
@@ -77,11 +85,39 @@ class TraceData():
     def getCentroid(self):
         return self.centroid
 
-    def getFeret(self):
+    def getFeret(self, section : Section, name : str):
+        """Get the min and max Feret diameters of the trace.
+
+        Computed from the live trace on the given section, and cached. The
+        section must be the one this data was built from: the trace is found by
+        the index this data was built with, the same way the trace table already
+        resolves a table row back to its trace.
+
+            Params:
+                section (Section): the section the trace is on
+                name (str): the name of the object the trace belongs to
+            Returns:
+                (tuple): the min and max Feret diameters (0, 0 if not closed),
+                    or None if the trace is not on the given section
+        """
         if self._feret is None:
-            pts = self._feret_points
-            self._feret = feret([(float(x), float(y)) for x, y in pts]) if len(pts) else (0, 0)
-            self._feret_points = None  # free once computed
+
+            contour = section.contours.get(name)
+
+            if contour is None or self.index >= len(contour):
+
+                ## A series-wide operation writes its sections and updates this
+                ## data before the field reloads the section it is displaying,
+                ## so a table row can briefly exist for a trace the displayed
+                ## section does not have. Nothing to measure until the reload
+                ## rebuilds the row against the section that does have it.
+                return None
+
+            trace = contour[self.index]
+
+            ## a closed trace with no points has no hull and no extent
+            self._feret = trace.getFeret(self._tform) if trace.points else (0, 0)
+
         return self._feret
 
     def __lt__(self, other):
@@ -515,19 +551,31 @@ class SeriesData():
         ## Iterate through all traces
         objs = self.data["objects"]
 
-        for name in sorted(objs):
+        ## The Feret diameters are computed from the trace points, which live on
+        ## the sections rather than in this data, so the rows are built section
+        ## by section -- one load per section for the whole export -- and then
+        ## emitted per object. Walking objects first would reload every section
+        ## once per object that appears on it.
+        traces_by_section = {}
 
-            ## Only the sections this object actually appears on (same
-            ## ascending order as scanning every section in the series)
-            obj_traces = objs[name].traces
+        for name, obj_data in objs.items():
 
-            for snum in sorted(obj_traces):
-
-                trace_list = obj_traces[snum]
+            for snum, trace_list in obj_data.traces.items():
 
                 if not trace_list:
 
                     continue
+
+                traces_by_section.setdefault(snum, []).append((name, trace_list))
+
+        rows_by_name = dict((name, []) for name in objs)
+
+        for snum, section in self.series.enumerateSections(
+            message="Exporting trace data...",
+            section_numbers=sorted(traces_by_section)
+        ):
+
+            for name, trace_list in traces_by_section[snum]:
 
                 for i, t in enumerate(trace_list):
 
@@ -542,9 +590,12 @@ class SeriesData():
                     centroid_x = round(centroid[0], 7)
                     centroid_y = round(centroid[1], 7)
 
-                    feret      = t.getFeret()
-                    feret_max  = round(feret[1], 7)
-                    feret_min  = round(feret[0], 7)
+                    ## left blank rather than reported as zero if the section on
+                    ## file somehow does not have the trace this data was built
+                    ## from (the caller writes the sections out first)
+                    diameters  = t.getFeret(section, name)
+                    feret_max  = round(diameters[1], 7) if diameters else ""
+                    feret_min  = round(diameters[0], 7) if diameters else ""
 
                     vals = [
                         name,
@@ -564,7 +615,13 @@ class SeriesData():
 
                     vals = list(map(str, vals))
 
-                    out_rows.append(','.join(vals))
+                    rows_by_name[name].append(','.join(vals))
+
+        ## Objects in name order; within an object the rows are already in
+        ## ascending section then ascending index order
+        for name in sorted(objs):
+
+            out_rows += rows_by_name[name]
 
         out_str = "\n".join(out_rows) + "\n"
 
