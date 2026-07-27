@@ -25,7 +25,10 @@ from PyReconstruct.modules.constants import (
     welcome_series_dir,
     getDateTime,
     fast_loads,
-    fast_dumps
+    fast_dumps,
+    dumps_jser,
+    canon_keys_inplace,
+    SERIES_KEYS
 )
 from PyReconstruct.modules.constants import welcome_series_dir, default_traces
 
@@ -466,7 +469,16 @@ class Series():
             reporter.set_progress(progress/final_value * 100)
             progress += 1
         
-        save_bytes = fast_dumps(jser_data)
+        # Canonical series key order. The .ser in the hidden dir is written from
+        # Series.getDict (already canonical), so this only matters for a series
+        # object that reached this point by some other route.
+        canon_keys_inplace(jser_data["series"], SERIES_KEYS)
+
+        # Structurally pretty-printed with compact leaves: one section block, one
+        # trace, one flag per line, coordinates staying on the trace's own line.
+        # Costs ~0.65% of bytes on a real series and is what makes a one-trace
+        # diff readable and a damaged file partially salvageable with grep/sed.
+        save_bytes = dumps_jser(jser_data)
 
         jser_fp = self.jser_fp if not save_fp else save_fp
         try:
@@ -679,6 +691,15 @@ class Series():
         if "editors" not in series_data:
             series_data["editors"] = []
 
+        # Canonical key order, last, once every migration above has finished
+        # adding and deleting keys. Both this dict and its options bag back-fill
+        # missing keys at the tail, so provenance leaked into the byte layout.
+        # The options bag has no independent writer order -- it is passed through
+        # by reference from here to Series.getDict -- so the empty-dict template
+        # defines its canonical order. Rebuilt in place: callers keep references.
+        canon_keys_inplace(series_data["options"], tuple(empty_series["options"]))
+        canon_keys_inplace(series_data, SERIES_KEYS)
+
     def getDict(self) -> dict:
         """Convert series object into a dictionary.
         
@@ -715,7 +736,9 @@ class Series():
 
         d["log_set"] = self.log_set.getList()
 
-        d["editors"] = list(self.editors)
+        # editors is a set in memory: sort it so identical content serializes to
+        # identical bytes across processes (canonical ordering)
+        d["editors"] = sorted(self.editors, key=str)
         d["code"] = self.code
         d["user_columns"] = self.user_columns
         d["host_tree"] = self.host_tree.getDict()

@@ -117,11 +117,16 @@ class ObjGroupDict():
             return set()
 
     def getGroupDict(self) -> dict:
-        """Get a JSON serializable dictionary."""
-        groups = self.groups.copy()
-        for g in groups:
-            if groups[g]:
-                groups[g] = list(groups[g])
+        """Get a JSON serializable dictionary.
+
+        Group names and their member lists are both sorted: the members are a set
+        in memory, so unsorted output made identical content serialize to
+        different bytes across processes (canonical ordering).
+        """
+        groups = {}
+        for g in sorted(self.groups, key=str):
+            members = self.groups[g]
+            groups[g] = sorted(members, key=str) if members else members
         return groups
     
     def getGroupList(self) -> list:

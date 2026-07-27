@@ -59,3 +59,12 @@ from .fast_json import (
     fast_loads,
     fast_dumps
 )
+
+from .jser_format import (
+    dumps_jser,
+    canon_keys,
+    canon_keys_inplace,
+    SECTION_KEYS,
+    SERIES_KEYS,
+    TOP_LEVEL_KEYS
+)

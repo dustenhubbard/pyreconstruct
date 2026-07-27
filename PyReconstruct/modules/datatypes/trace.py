@@ -169,7 +169,9 @@ class Trace():
             self.negative,
             self.hidden,
             self.fill_mode,
-            list(self.tags)
+            # tags is a set in memory: sort it so identical content serializes
+            # to identical bytes across processes (canonical ordering)
+            sorted(self.tags, key=str)
         ]
 
         return l

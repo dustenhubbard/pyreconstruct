@@ -15,7 +15,12 @@ from PyReconstruct.modules.calc import (
     getImgDims
 )
 
-from PyReconstruct.modules.constants import fast_loads, fast_dumps
+from PyReconstruct.modules.constants import (
+    fast_loads,
+    fast_dumps,
+    canon_keys_inplace,
+    SECTION_KEYS
+)
 
 from PyReconstruct.modules.backend.exports import export_svg, export_png
 
@@ -264,6 +269,22 @@ class Section():
                 
                 del(section_data["contours"][cname])
 
+        # Canonical key order. The back-fill loop at the top of this function
+        # appends any missing key at the tail, so two sections with identical
+        # content but different provenance differed byte-wise. Rebuild in the
+        # writer's order; keys this build has no concept of (e.g. the legacy
+        # scalar brightness/contrast pair) are preserved, sorted, after the
+        # documented nine. Rebuilt in place: the caller holds this dict.
+        canon_keys_inplace(section_data, SECTION_KEYS)
+
+        # Canonical contour order, so an object added later in a session lands in
+        # the same place as one that was there from the start.
+        contours = section_data["contours"]
+        if isinstance(contours, dict) and list(contours) != sorted(contours, key=str):
+            ordered = {name: contours[name] for name in sorted(contours, key=str)}
+            contours.clear()
+            contours.update(ordered)
+
     def getDict(self) -> dict:
         """Convert section object into a dictionary.
         
@@ -284,9 +305,9 @@ class Section():
 
         d["thickness"] = self.thickness
 
-        # save contours
+        # save contours (sorted: canonical ordering)
         d["contours"] = {}
-        for contour_name in self.contours:
+        for contour_name in sorted(self.contours, key=str):
             if not self.contours[contour_name].isEmpty():
                 d["contours"][contour_name] = [
                     trace.getList(include_name=False) for trace in self.contours[contour_name]
