@@ -9,6 +9,8 @@ last rounded digit.
 import json
 import math
 import os
+import struct
+import sys
 import numpy as np
 import pytest
 
@@ -186,16 +188,224 @@ def test_tracedata_area_sign_and_open():
     assert neg.area == pytest.approx(-pos.area)
     assert opn.area == 0           # open contour -> area 0
 
+def _real_trace(points, closed=True, negative=False):
+    """A real Trace, needed wherever the code under test calls Trace methods."""
+    from PyReconstruct.modules.datatypes.trace import Trace
+    t = Trace("obj", (0, 0, 0), closed=closed)
+    t.points = list(points)
+    t.negative = negative
+    return t
+
+class _StubSection:
+    """Stands in for the section a Feret read goes through: TraceData.getFeret
+    only ever indexes contours[name] by the trace index it was built with."""
+    def __init__(self, traces, name="obj"):
+        self.contours = {name: traces}
+
+def _feret_from_retained_points(trace, tform):
+    """The value the previous implementation produced: map the points to an
+    exact float64 array, keep it until the read, then hull the array. Open
+    traces have no Feret diameter and never reached the hull."""
+    from PyReconstruct.modules.calc import feret
+    if not trace.closed:
+        return (0, 0)
+    pts = tform.mapPointsArray(trace.points)
+    return feret([(float(x), float(y)) for x, y in pts]) if len(pts) else (0, 0)
+
 def test_tracedata_lazy_feret():
     TraceData = _tracedata()
     ident = Transform(TFORMS["identity"])
-    td = TraceData(_StubTrace(ALL_POLYS["square"], closed=True), 0, ident)
-    f1 = td.getFeret()
-    f2 = td.getFeret()             # cached, must be identical + not recompute
+    trace = _real_trace(ALL_POLYS["square"], closed=True)
+    section = _StubSection([trace])
+    td = TraceData(trace, 0, ident)
+    f1 = td.getFeret(section, "obj")
+    f2 = td.getFeret(section, "obj")   # cached, must be identical + not recompute
     assert f1 == f2
-    assert td._feret_points is None   # freed after first computation
-    opn = TraceData(_StubTrace(ALL_POLYS["square"], closed=False), 0, ident)
-    assert opn.getFeret() == (0, 0)   # open -> no feret
+    opn = TraceData(_real_trace(ALL_POLYS["square"], closed=False), 0, ident)
+    assert opn.getFeret(section, "obj") == (0, 0)   # open -> no feret
+
+def test_tracedata_feret_is_lazy_and_retains_nothing():
+    """The Feret diameters stay deferred through a bulk build -- they are a
+    third of the geometry cost and most series never read them -- but nothing
+    is held waiting for the read. Keeping the mapped points until first read
+    made this object the largest per-trace allocation in a loaded series, so
+    the retained size must not scale with the point count."""
+    TraceData = _tracedata()
+    ident = Transform(TFORMS["identity"])
+    small = TraceData(_real_trace(_rand_poly(4)), 0, ident)
+    big = TraceData(_real_trace(_rand_poly(500)), 0, ident)
+
+    assert small._feret is None and big._feret is None   # not computed yet
+
+    def retained(td):
+        return sys.getsizeof(td) + sys.getsizeof(td.__dict__) + sum(
+            sys.getsizeof(v) for v in td.__dict__.values()
+        )
+
+    for td in (small, big):
+        for v in td.__dict__.values():
+            assert not isinstance(v, np.ndarray), "no point array may be retained"
+            assert not isinstance(v, list), "no point list may be retained"
+    assert retained(small) == retained(big)
+
+@pytest.mark.parametrize("pname", list(ALL_POLYS))
+@pytest.mark.parametrize("tname", list(TFORMS))
+def test_tracedata_feret_bit_exact_vs_retained_points(tname, pname):
+    """Bit-exact, not approximate. The Feret diameters are a displayed and
+    exported scientific measurement, so recomputing them from the live trace at
+    read time instead of from a retained copy of the mapped points may not move
+    a single bit -- struct.pack, so one ULP or a signed zero fails."""
+    TraceData = _tracedata()
+    tform = Transform(TFORMS[tname])
+    trace = _real_trace(ALL_POLYS[pname])
+    td = TraceData(trace, 0, tform)
+    got = td.getFeret(_StubSection([trace]), "obj")
+    ref = _feret_from_retained_points(trace, tform)
+    assert struct.pack("<dd", *got) == struct.pack("<dd", *ref), f"{tname}/{pname}"
+    assert type(got[0]) is type(ref[0]) and type(got[1]) is type(ref[1])
+
+def test_tracedata_feret_unavailable_off_section():
+    """A series-wide operation updates this data from the sections it writes,
+    before the field reloads the section it is showing, so a row can exist for a
+    trace the displayed section does not have. That must read as unavailable,
+    not raise and not report a zero measurement."""
+    TraceData = _tracedata()
+    ident = Transform(TFORMS["identity"])
+    trace = _real_trace(ALL_POLYS["square"])
+    td = TraceData(trace, 0, ident)
+
+    assert td.getFeret(_StubSection([], name="other"), "obj") is None  # no contour
+    assert td.getFeret(_StubSection([]), "obj") is None                # contour empty
+    assert td.getFeret(_StubSection([trace]), "obj") is not None       # now present
+
+    off_end = TraceData(trace, 3, ident)
+    assert off_end.getFeret(_StubSection([trace]), "obj") is None      # index past end
+
+def test_trace_table_feret_cells_blank_when_off_section():
+    """The trace list must render such a row instead of raising: blank Feret
+    cells, refilled when the field reload rebuilds the table."""
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication(["test"])
+    from PyReconstruct.modules.gui.table.trace import TraceTableWidget
+    import types
+
+    TraceData = _tracedata()
+    ident = Transform(TFORMS["identity"])
+    trace = _real_trace(ALL_POLYS["square"])
+    td = TraceData(trace, 0, ident)
+
+    ## getItems only reaches for the section when it needs the Feret columns
+    off = types.SimpleNamespace(section=_StubSection([], name="other"))
+    items = TraceTableWidget.getItems(off, ("obj", td), "Feret")
+    assert [i.text() for i in items] == ["", ""]
+
+    on = types.SimpleNamespace(section=_StubSection([trace]))
+    items = TraceTableWidget.getItems(on, ("obj", td), "Feret")
+    ## the 10x10 square: max Feret is its diagonal, min Feret its side
+    assert [i.text() for i in items] == [str(round(math.hypot(10, 10), 5)), "10.0"]
+
+def test_export_traces_csv_blank_feret_when_section_lacks_trace(tmp_path):
+    """The export reads the points off the sections on file. If this data is
+    ahead of them, the row is still written with its other measurements and the
+    Feret fields left empty -- never filled in with a zero."""
+    import shutil
+    src = os.path.join(os.path.dirname(__file__), "..", "PyReconstruct",
+                       "assets", "checker", "files", "shapes1.jser")
+    if not os.path.exists(src):
+        pytest.skip("fixture shapes1.jser not found")
+    fp = str(tmp_path / "shapes1.jser")
+    shutil.copyfile(src, fp)
+
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication(["test"])
+    from PyReconstruct.modules.datatypes.series import Series
+    from PyReconstruct.modules.datatypes.series_data import SeriesData
+    from PyReconstruct.modules.backend.progress import NullProgressReporter
+
+    series = Series.openJser(fp)
+    series.setProgressReporter(NullProgressReporter)
+    sd = SeriesData(series)
+    sd.refresh()
+    series.data = sd
+
+    try:
+        snum = sorted(series.sections)[0]
+        live = series.loadSection(snum)          # never saved back to file
+        ghost = _real_trace(ALL_POLYS["square"])
+        ghost.name = "zzz_unsaved"
+        live.addTrace(ghost, log_event=False)
+        sd.updateSection(live, update_traces=True, log_events=False)
+
+        rows = [l.split(",") for l in sd.exportTracesCSV().splitlines()[1:]]
+        ghost_rows = [r for r in rows if r[0] == "zzz_unsaved"]
+        assert len(ghost_rows) == 1
+        assert ghost_rows[0][-2:] == ["", ""]            # Feret-Max, Feret-Min
+        assert float(ghost_rows[0][7]) == pytest.approx(100.0)  # Area still written
+    finally:
+        series.close()
+
+def test_export_traces_csv_order_and_feret(tmp_path):
+    """The CSV export walks the sections (it needs the trace points for the
+    Feret diameters) but must still emit object-name-major, section-ascending,
+    index-ascending rows, with the same Feret values a retained-points read
+    would have produced."""
+    import shutil
+    src = os.path.join(os.path.dirname(__file__), "..", "PyReconstruct",
+                       "assets", "checker", "files", "shapes1.jser")
+    if not os.path.exists(src):
+        pytest.skip("fixture shapes1.jser not found")
+    fp = str(tmp_path / "shapes1.jser")
+    shutil.copyfile(src, fp)
+
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication(["test"])
+    from PyReconstruct.modules.datatypes.series import Series
+    from PyReconstruct.modules.datatypes.series_data import SeriesData
+    from PyReconstruct.modules.backend.progress import NullProgressReporter
+
+    series = Series.openJser(fp)
+    series.setProgressReporter(NullProgressReporter)
+    sd = SeriesData(series)
+    sd.refresh()
+    series.data = sd
+
+    try:
+        lines = sd.exportTracesCSV().splitlines()
+        header = lines[0].split(",")
+        assert header[:3] == ["Name", "Section", "Index"]
+        assert header[-2:] == ["Feret-Max", "Feret-Min"]
+
+        rows = [l.split(",") for l in lines[1:]]
+        assert rows, "fixture produced no rows"
+
+        ## one row per trace, in name / section / index order
+        expected_keys = []
+        for name in sorted(sd.objects):
+            for snum in sorted(sd.objects[name].traces):
+                for i, _ in enumerate(sd.objects[name].traces[snum]):
+                    expected_keys.append((name, snum, i))
+        assert [(r[0], int(r[1]), int(r[2])) for r in rows] == expected_keys
+
+        ## the Feret columns match the retained-points reference
+        for r in rows:
+            name, snum, i = r[0], int(r[1]), int(r[2])
+            td = sd.objects[name].traces[snum][i]
+            section = series.loadSection(snum)
+            trace = section.contours[name][i]
+            ref_min, ref_max = _feret_from_retained_points(trace, td._tform)
+            assert r[-2] == str(round(ref_max, 7)), (name, snum, i)
+            assert r[-1] == str(round(ref_min, 7)), (name, snum, i)
+    finally:
+        series.close()
+
+def test_tracedata_feret_of_empty_closed_trace():
+    """A closed trace with no points has no hull and no extent. It reported
+    integer zeros, and callers round() and str() the result, so keep them."""
+    TraceData = _tracedata()
+    ident = Transform(TFORMS["identity"])
+    trace = _real_trace([], closed=True)
+    td = TraceData(trace, 0, ident)
+    assert td.getFeret(_StubSection([trace]), "obj") == (0, 0)
 
 # ---------------------------------------------------------------- scoped object ops
 def test_getObjectSections_matches_disk_truth(tmp_path):

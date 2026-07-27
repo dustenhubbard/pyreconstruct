@@ -115,12 +115,24 @@ class TraceTableWidget(DataTable):
             
         elif item_type == "Feret":
             
-            feret_min, feret_max = trace_data.getFeret()
+            ## measured from the trace itself, so it is only available while the
+            ## trace is on the section being displayed: a series-wide operation
+            ## can add rows for traces this section does not have until the
+            ## field reloads it, and the reload refills these cells
+            diameters = trace_data.getFeret(self.section, name)
 
-            items.extend(
-                (QTableWidgetItem(str(round(feret_max, 5))),
-                 QTableWidgetItem(str(round(feret_min, 5))))
-            )
+            if diameters is None:
+
+                items.extend(
+                    (QTableWidgetItem(""), QTableWidgetItem(""))
+                )
+
+            else:
+
+                items.extend(
+                    (QTableWidgetItem(str(round(diameters[1], 5))),
+                     QTableWidgetItem(str(round(diameters[0], 5))))
+                )
 
         return items
     
@@ -441,7 +453,12 @@ class TraceTableWidget(DataTable):
         )
         if not file_path: return
 
-        self.series.data.exportTracesCSV(file_path)     
+        ## the export reads the trace points off the sections on file, so write
+        ## any unsaved section edits out first -- otherwise the Feret columns
+        ## would describe older geometry than the rest of the row
+        self.mainwindow.saveAllData()
+
+        self.series.data.exportTracesCSV(file_path)
     
     def setREFilter(self):
         """Set a new regex filter for the list."""
