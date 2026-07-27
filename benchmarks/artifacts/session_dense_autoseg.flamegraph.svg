@@ -1,0 +1,491 @@
+<?xml version="1.0" standalone="no"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg version="1.1" width="1200" height="650" onload="init(evt)" viewBox="0 0 1200 650" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:fg="http://github.com/jonhoo/inferno"><!--Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples.--><!--NOTES: --><defs><linearGradient id="background" y1="0" y2="1" x1="0" x2="0"><stop stop-color="#eeeeee" offset="5%"/><stop stop-color="#eeeeb0" offset="95%"/></linearGradient></defs><style type="text/css">
+text { font-family:monospace; font-size:12px }
+#title { text-anchor:middle; font-size:17px; }
+#matched { text-anchor:end; }
+#search { text-anchor:end; opacity:0.1; cursor:pointer; }
+#search:hover, #search.show { opacity:1; }
+#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+#unzoom { cursor:pointer; }
+#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+.hide { display:none; }
+.parent { opacity:0.5; }
+</style><script type="text/ecmascript"><![CDATA[
+        var nametype = 'Function:';
+        var fontsize = 12;
+        var fontwidth = 0.59;
+        var xpad = 10;
+        var inverted = true;
+        var searchcolor = 'rgb(230,0,230)';
+        var fluiddrawing = true;
+        var truncate_text_right = false;
+    ]]><![CDATA["use strict";
+var details, searchbtn, unzoombtn, matchedtxt, svg, searching, frames, known_font_width;
+function init(evt) {
+    details = document.getElementById("details").firstChild;
+    searchbtn = document.getElementById("search");
+    unzoombtn = document.getElementById("unzoom");
+    matchedtxt = document.getElementById("matched");
+    svg = document.getElementsByTagName("svg")[0];
+    frames = document.getElementById("frames");
+    known_font_width = get_monospace_width(frames);
+    total_samples = parseInt(frames.attributes.total_samples.value);
+    searching = 0;
+
+    // Use GET parameters to restore a flamegraph's state.
+    var restore_state = function() {
+        var params = get_params();
+        if (params.x && params.y)
+            zoom(find_group(document.querySelector('[*|x="' + params.x + '"][y="' + params.y + '"]')));
+        if (params.s)
+            search(params.s);
+    };
+
+    if (fluiddrawing) {
+        // Make width dynamic so the SVG fits its parent's width.
+        svg.removeAttribute("width");
+        // Edge requires us to have a viewBox that gets updated with size changes.
+        var isEdge = /Edge\/\d./i.test(navigator.userAgent);
+        if (!isEdge) {
+            svg.removeAttribute("viewBox");
+        }
+        var update_for_width_change = function() {
+            if (isEdge) {
+                svg.attributes.viewBox.value = "0 0 " + svg.width.baseVal.value + " " + svg.height.baseVal.value;
+            }
+
+            // Keep consistent padding on left and right of frames container.
+            frames.attributes.width.value = svg.width.baseVal.value - xpad * 2;
+
+            // Text truncation needs to be adjusted for the current width.
+            update_text_for_elements(frames.children);
+
+            // Keep search elements at a fixed distance from right edge.
+            var svgWidth = svg.width.baseVal.value;
+            searchbtn.attributes.x.value = svgWidth - xpad;
+            matchedtxt.attributes.x.value = svgWidth - xpad;
+        };
+        window.addEventListener('resize', function() {
+            update_for_width_change();
+        });
+        // This needs to be done asynchronously for Safari to work.
+        setTimeout(function() {
+            unzoom();
+            update_for_width_change();
+            restore_state();
+        }, 0);
+    } else {
+        restore_state();
+    }
+}
+// event listeners
+window.addEventListener("click", function(e) {
+    var target = find_group(e.target);
+    if (target) {
+        if (target.nodeName == "a") {
+            if (e.ctrlKey === false) return;
+            e.preventDefault();
+        }
+        if (target.classList.contains("parent")) unzoom();
+        zoom(target);
+
+        // set parameters for zoom state
+        var el = target.querySelector("rect");
+        if (el && el.attributes && el.attributes.y && el.attributes["fg:x"]) {
+            var params = get_params()
+            params.x = el.attributes["fg:x"].value;
+            params.y = el.attributes.y.value;
+            history.replaceState(null, null, parse_params(params));
+        }
+    }
+    else if (e.target.id == "unzoom") {
+        unzoom();
+
+        // remove zoom state
+        var params = get_params();
+        if (params.x) delete params.x;
+        if (params.y) delete params.y;
+        history.replaceState(null, null, parse_params(params));
+    }
+    else if (e.target.id == "search") search_prompt();
+}, false)
+// mouse-over for info
+// show
+window.addEventListener("mouseover", function(e) {
+    var target = find_group(e.target);
+    if (target) details.nodeValue = nametype + " " + g_to_text(target);
+}, false)
+// clear
+window.addEventListener("mouseout", function(e) {
+    var target = find_group(e.target);
+    if (target) details.nodeValue = ' ';
+}, false)
+// ctrl-F for search
+window.addEventListener("keydown",function (e) {
+    if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+        e.preventDefault();
+        search_prompt();
+    }
+}, false)
+// functions
+function get_params() {
+    var params = {};
+    var paramsarr = window.location.search.substr(1).split('&');
+    for (var i = 0; i < paramsarr.length; ++i) {
+        var tmp = paramsarr[i].split("=");
+        if (!tmp[0] || !tmp[1]) continue;
+        params[tmp[0]]  = decodeURIComponent(tmp[1]);
+    }
+    return params;
+}
+function parse_params(params) {
+    var uri = "?";
+    for (var key in params) {
+        uri += key + '=' + encodeURIComponent(params[key]) + '&';
+    }
+    if (uri.slice(-1) == "&")
+        uri = uri.substring(0, uri.length - 1);
+    if (uri == '?')
+        uri = window.location.href.split('?')[0];
+    return uri;
+}
+function find_child(node, selector) {
+    var children = node.querySelectorAll(selector);
+    if (children.length) return children[0];
+    return;
+}
+function find_group(node) {
+    var parent = node.parentElement;
+    if (!parent) return;
+    if (parent.id == "frames") return node;
+    return find_group(parent);
+}
+function orig_save(e, attr, val) {
+    if (e.attributes["fg:orig_" + attr] != undefined) return;
+    if (e.attributes[attr] == undefined) return;
+    if (val == undefined) val = e.attributes[attr].value;
+    e.setAttribute("fg:orig_" + attr, val);
+}
+function orig_load(e, attr) {
+    if (e.attributes["fg:orig_"+attr] == undefined) return;
+    e.attributes[attr].value = e.attributes["fg:orig_" + attr].value;
+    e.removeAttribute("fg:orig_" + attr);
+}
+function g_to_text(e) {
+    var text = find_child(e, "title").firstChild.nodeValue;
+    return (text)
+}
+function g_to_func(e) {
+    var func = g_to_text(e);
+    // if there's any manipulation we want to do to the function
+    // name before it's searched, do it here before returning.
+    return (func);
+}
+function get_monospace_width(frames) {
+    // Given the id="frames" element, return the width of text characters if
+    // this is a monospace font, otherwise return 0.
+    text = find_child(frames.children[0], "text");
+    originalContent = text.textContent;
+    text.textContent = "!";
+    bangWidth = text.getComputedTextLength();
+    text.textContent = "W";
+    wWidth = text.getComputedTextLength();
+    text.textContent = originalContent;
+    if (bangWidth === wWidth) {
+        return bangWidth;
+    } else {
+        return 0;
+    }
+}
+function update_text_for_elements(elements) {
+    // In order to render quickly in the browser, you want to do one pass of
+    // reading attributes, and one pass of mutating attributes. See
+    // https://web.dev/avoid-large-complex-layouts-and-layout-thrashing/ for details.
+
+    // Fall back to inefficient calculation, if we're variable-width font.
+    // TODO This should be optimized somehow too.
+    if (known_font_width === 0) {
+        for (var i = 0; i < elements.length; i++) {
+            update_text(elements[i]);
+        }
+        return;
+    }
+
+    var textElemNewAttributes = [];
+    for (var i = 0; i < elements.length; i++) {
+        var e = elements[i];
+        var r = find_child(e, "rect");
+        var t = find_child(e, "text");
+        var w = parseFloat(r.attributes.width.value) * frames.attributes.width.value / 100 - 3;
+        var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+        var newX = format_percent((parseFloat(r.attributes.x.value) + (100 * 3 / frames.attributes.width.value)));
+
+        // Smaller than this size won't fit anything
+        if (w < 2 * known_font_width) {
+            textElemNewAttributes.push([newX, ""]);
+            continue;
+        }
+
+        // Fit in full text width
+        if (txt.length * known_font_width < w) {
+            textElemNewAttributes.push([newX, txt]);
+            continue;
+        }
+
+        var substringLength = Math.floor(w / known_font_width) - 2;
+        if (truncate_text_right) {
+            // Truncate the right side of the text.
+            textElemNewAttributes.push([newX, txt.substring(0, substringLength) + ".."]);
+            continue;
+        } else {
+            // Truncate the left side of the text.
+            textElemNewAttributes.push([newX, ".." + txt.substring(txt.length - substringLength, txt.length)]);
+            continue;
+        }
+    }
+
+    console.assert(textElemNewAttributes.length === elements.length, "Resize failed, please file a bug at https://github.com/jonhoo/inferno/");
+
+    // Now that we know new textContent, set it all in one go so we don't refresh a bazillion times.
+    for (var i = 0; i < elements.length; i++) {
+        var e = elements[i];
+        var values = textElemNewAttributes[i];
+        var t = find_child(e, "text");
+        t.attributes.x.value = values[0];
+        t.textContent = values[1];
+    }
+}
+
+function update_text(e) {
+    var r = find_child(e, "rect");
+    var t = find_child(e, "text");
+    var w = parseFloat(r.attributes.width.value) * frames.attributes.width.value / 100 - 3;
+    var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+    t.attributes.x.value = format_percent((parseFloat(r.attributes.x.value) + (100 * 3 / frames.attributes.width.value)));
+
+    // Smaller than this size won't fit anything
+    if (w < 2 * fontsize * fontwidth) {
+        t.textContent = "";
+        return;
+    }
+    t.textContent = txt;
+    // Fit in full text width
+    if (t.getComputedTextLength() < w)
+        return;
+    if (truncate_text_right) {
+        // Truncate the right side of the text.
+        for (var x = txt.length - 2; x > 0; x--) {
+            if (t.getSubStringLength(0, x + 2) <= w) {
+                t.textContent = txt.substring(0, x) + "..";
+                return;
+            }
+        }
+    } else {
+        // Truncate the left side of the text.
+        for (var x = 2; x < txt.length; x++) {
+            if (t.getSubStringLength(x - 2, txt.length) <= w) {
+                t.textContent = ".." + txt.substring(x, txt.length);
+                return;
+            }
+        }
+    }
+    t.textContent = "";
+}
+// zoom
+function zoom_reset(e) {
+    if (e.tagName == "rect") {
+        e.attributes.x.value = format_percent(100 * parseInt(e.attributes["fg:x"].value) / total_samples);
+        e.attributes.width.value = format_percent(100 * parseInt(e.attributes["fg:w"].value) / total_samples);
+    }
+    if (e.childNodes == undefined) return;
+    for(var i = 0, c = e.childNodes; i < c.length; i++) {
+        zoom_reset(c[i]);
+    }
+}
+function zoom_child(e, x, zoomed_width_samples) {
+    if (e.tagName == "text") {
+        var parent_x = parseFloat(find_child(e.parentNode, "rect[x]").attributes.x.value);
+        e.attributes.x.value = format_percent(parent_x + (100 * 3 / frames.attributes.width.value));
+    } else if (e.tagName == "rect") {
+        e.attributes.x.value = format_percent(100 * (parseInt(e.attributes["fg:x"].value) - x) / zoomed_width_samples);
+        e.attributes.width.value = format_percent(100 * parseInt(e.attributes["fg:w"].value) / zoomed_width_samples);
+    }
+    if (e.childNodes == undefined) return;
+    for(var i = 0, c = e.childNodes; i < c.length; i++) {
+        zoom_child(c[i], x, zoomed_width_samples);
+    }
+}
+function zoom_parent(e) {
+    if (e.attributes) {
+        if (e.attributes.x != undefined) {
+            e.attributes.x.value = "0.0%";
+        }
+        if (e.attributes.width != undefined) {
+            e.attributes.width.value = "100.0%";
+        }
+    }
+    if (e.childNodes == undefined) return;
+    for(var i = 0, c = e.childNodes; i < c.length; i++) {
+        zoom_parent(c[i]);
+    }
+}
+function zoom(node) {
+    var attr = find_child(node, "rect").attributes;
+    var width = parseInt(attr["fg:w"].value);
+    var xmin = parseInt(attr["fg:x"].value);
+    var xmax = xmin + width;
+    var ymin = parseFloat(attr.y.value);
+    unzoombtn.classList.remove("hide");
+    var el = frames.children;
+    var to_update_text = [];
+    for (var i = 0; i < el.length; i++) {
+        var e = el[i];
+        var a = find_child(e, "rect").attributes;
+        var ex = parseInt(a["fg:x"].value);
+        var ew = parseInt(a["fg:w"].value);
+        // Is it an ancestor
+        if (!inverted) {
+            var upstack = parseFloat(a.y.value) > ymin;
+        } else {
+            var upstack = parseFloat(a.y.value) < ymin;
+        }
+        if (upstack) {
+            // Direct ancestor
+            if (ex <= xmin && (ex+ew) >= xmax) {
+                e.classList.add("parent");
+                zoom_parent(e);
+                to_update_text.push(e);
+            }
+            // not in current path
+            else
+                e.classList.add("hide");
+        }
+        // Children maybe
+        else {
+            // no common path
+            if (ex < xmin || ex >= xmax) {
+                e.classList.add("hide");
+            }
+            else {
+                zoom_child(e, xmin, width);
+                to_update_text.push(e);
+            }
+        }
+    }
+    update_text_for_elements(to_update_text);
+}
+function unzoom() {
+    unzoombtn.classList.add("hide");
+    var el = frames.children;
+    for(var i = 0; i < el.length; i++) {
+        el[i].classList.remove("parent");
+        el[i].classList.remove("hide");
+        zoom_reset(el[i]);
+    }
+    update_text_for_elements(el);
+}
+// search
+function reset_search() {
+    var el = document.querySelectorAll("#frames rect");
+    for (var i = 0; i < el.length; i++) {
+        orig_load(el[i], "fill")
+    }
+    var params = get_params();
+    delete params.s;
+    history.replaceState(null, null, parse_params(params));
+}
+function search_prompt() {
+    if (!searching) {
+        var term = prompt("Enter a search term (regexp " +
+            "allowed, eg: ^ext4_)", "");
+        if (term != null) {
+            search(term)
+        }
+    } else {
+        reset_search();
+        searching = 0;
+        searchbtn.classList.remove("show");
+        searchbtn.firstChild.nodeValue = "Search"
+        matchedtxt.classList.add("hide");
+        matchedtxt.firstChild.nodeValue = ""
+    }
+}
+function search(term) {
+    var re = new RegExp(term);
+    var el = frames.children;
+    var matches = new Object();
+    var maxwidth = 0;
+    for (var i = 0; i < el.length; i++) {
+        var e = el[i];
+        // Skip over frames which are either not visible, or below the zoomed-to frame
+        if (e.classList.contains("hide") || e.classList.contains("parent")) {
+            continue;
+        }
+        var func = g_to_func(e);
+        var rect = find_child(e, "rect");
+        if (func == null || rect == null)
+            continue;
+        // Save max width. Only works as we have a root frame
+        var w = parseInt(rect.attributes["fg:w"].value);
+        if (w > maxwidth)
+            maxwidth = w;
+        if (func.match(re)) {
+            // highlight
+            var x = parseInt(rect.attributes["fg:x"].value);
+            orig_save(rect, "fill");
+            rect.attributes.fill.value = searchcolor;
+            // remember matches
+            if (matches[x] == undefined) {
+                matches[x] = w;
+            } else {
+                if (w > matches[x]) {
+                    // overwrite with parent
+                    matches[x] = w;
+                }
+            }
+            searching = 1;
+        }
+    }
+    if (!searching)
+        return;
+    var params = get_params();
+    params.s = term;
+    history.replaceState(null, null, parse_params(params));
+
+    searchbtn.classList.add("show");
+    searchbtn.firstChild.nodeValue = "Reset Search";
+    // calculate percent matched, excluding vertical overlap
+    var count = 0;
+    var lastx = -1;
+    var lastw = 0;
+    var keys = Array();
+    for (k in matches) {
+        if (matches.hasOwnProperty(k))
+            keys.push(k);
+    }
+    // sort the matched frames by their x location
+    // ascending, then width descending
+    keys.sort(function(a, b){
+        return a - b;
+    });
+    // Step through frames saving only the biggest bottom-up frames
+    // thanks to the sort order. This relies on the tree property
+    // where children are always smaller than their parents.
+    for (var k in keys) {
+        var x = parseInt(keys[k]);
+        var w = matches[keys[k]];
+        if (x >= lastx + lastw) {
+            count += w;
+            lastx = x;
+            lastw = w;
+        }
+    }
+    // display matched percent
+    matchedtxt.classList.remove("hide");
+    var pct = 100 * count / maxwidth;
+    if (pct != 100) pct = pct.toFixed(1);
+    matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+}
+function format_percent(n) {
+    return n.toFixed(4) + "%";
+}
+]]></script><rect x="0" y="0" width="100%" height="650" fill="url(#background)"/><text id="title" fill="rgb(0,0,0)" x="50.0000%" y="24.00">py-spy record --rate 99 --format flamegraph -o /work/pyreconstruct/benchmarks/artifacts/session_dense_autoseg.flamegraph.svg -- /work/pyreconstruct/.venv/bin/python3 benchmarks/profile_interactive.py --jser /home/dusten/projects/testing/bench_phase0/WVHJM_407.jser --mode run --phase session --iters 3 --fit</text><text id="details" fill="rgb(0,0,0)" x="10" y="40.00"> </text><text id="unzoom" class="hide" fill="rgb(0,0,0)" x="10" y="24.00">Reset Zoom</text><text id="search" fill="rgb(0,0,0)" x="1190" y="24.00">Search</text><text id="matched" fill="rgb(0,0,0)" x="1190" y="639.00"> </text><svg id="frames" x="10" width="1180" total_samples="21893"><g><title>main (profile_interactive.py:422) (42 samples, 0.19%)</title><rect x="0.0183%" y="84" width="0.1918%" height="15" fill="rgb(227,0,7)" fg:x="4" fg:w="42"/><text x="0.2683%" y="94.50"></text></g><g><title>_find_and_load (&lt;frozen importlib._bootstrap&gt;:1178) (42 samples, 0.19%)</title><rect x="0.0183%" y="100" width="0.1918%" height="15" fill="rgb(217,0,24)" fg:x="4" fg:w="42"/><text x="0.2683%" y="110.50"></text></g><g><title>_find_and_load_unlocked (&lt;frozen importlib._bootstrap&gt;:1149) (23 samples, 0.11%)</title><rect x="0.1051%" y="116" width="0.1051%" height="15" fill="rgb(221,193,54)" fg:x="23" fg:w="23"/><text x="0.3551%" y="126.50"></text></g><g><title>_load_unlocked (&lt;frozen importlib._bootstrap&gt;:676) (23 samples, 0.11%)</title><rect x="0.1051%" y="132" width="0.1051%" height="15" fill="rgb(248,212,6)" fg:x="23" fg:w="23"/><text x="0.3551%" y="142.50"></text></g><g><title>module_from_spec (&lt;frozen importlib._bootstrap&gt;:573) (23 samples, 0.11%)</title><rect x="0.1051%" y="148" width="0.1051%" height="15" fill="rgb(208,68,35)" fg:x="23" fg:w="23"/><text x="0.3551%" y="158.50"></text></g><g><title>create_module (&lt;frozen importlib._bootstrap_external&gt;:1233) (23 samples, 0.11%)</title><rect x="0.1051%" y="164" width="0.1051%" height="15" fill="rgb(232,128,0)" fg:x="23" fg:w="23"/><text x="0.3551%" y="174.50"></text></g><g><title>_call_with_frames_removed (&lt;frozen importlib._bootstrap&gt;:241) (23 samples, 0.11%)</title><rect x="0.1051%" y="180" width="0.1051%" height="15" fill="rgb(207,160,47)" fg:x="23" fg:w="23"/><text x="0.3551%" y="190.50"></text></g><g><title>setup (profile_interactive.py:203) (146 samples, 0.67%)</title><rect x="0.2878%" y="100" width="0.6669%" height="15" fill="rgb(228,23,34)" fg:x="63" fg:w="146"/><text x="0.5378%" y="110.50"></text></g><g><title>copyfile (shutil.py:269) (146 samples, 0.67%)</title><rect x="0.2878%" y="116" width="0.6669%" height="15" fill="rgb(218,30,26)" fg:x="63" fg:w="146"/><text x="0.5378%" y="126.50"></text></g><g><title>_fastcopy_sendfile (shutil.py:144) (146 samples, 0.67%)</title><rect x="0.2878%" y="132" width="0.6669%" height="15" fill="rgb(220,122,19)" fg:x="63" fg:w="146"/><text x="0.5378%" y="142.50"></text></g><g><title>&lt;module&gt; (PyReconstruct/modules/constants/__init__.py:43) (25 samples, 0.11%)</title><rect x="0.9592%" y="532" width="0.1142%" height="15" fill="rgb(250,228,42)" fg:x="210" fg:w="25"/><text x="1.2092%" y="542.50"></text></g><g><title>_find_and_load (&lt;frozen importlib._bootstrap&gt;:1178) (25 samples, 0.11%)</title><rect x="0.9592%" y="548" width="0.1142%" height="15" fill="rgb(240,193,28)" fg:x="210" fg:w="25"/><text x="1.2092%" y="558.50"></text></g><g><title>_find_and_load_unlocked (&lt;frozen importlib._bootstrap&gt;:1149) (25 samples, 0.11%)</title><rect x="0.9592%" y="564" width="0.1142%" height="15" fill="rgb(216,20,37)" fg:x="210" fg:w="25"/><text x="1.2092%" y="574.50"></text></g><g><title>_load_unlocked (&lt;frozen importlib._bootstrap&gt;:690) (25 samples, 0.11%)</title><rect x="0.9592%" y="580" width="0.1142%" height="15" fill="rgb(206,188,39)" fg:x="210" fg:w="25"/><text x="1.2092%" y="590.50"></text></g><g><title>exec_module (&lt;frozen importlib._bootstrap_external&gt;:940) (25 samples, 0.11%)</title><rect x="0.9592%" y="596" width="0.1142%" height="15" fill="rgb(217,207,13)" fg:x="210" fg:w="25"/><text x="1.2092%" y="606.50"></text></g><g><title>_call_with_frames_removed (&lt;frozen importlib._bootstrap&gt;:241) (25 samples, 0.11%)</title><rect x="0.9592%" y="612" width="0.1142%" height="15" fill="rgb(231,73,38)" fg:x="210" fg:w="25"/><text x="1.2092%" y="622.50"></text></g><g><title>&lt;module&gt; (PyReconstruct/modules/datatypes/series.py:10) (27 samples, 0.12%)</title><rect x="0.9546%" y="340" width="0.1233%" height="15" fill="rgb(225,20,46)" fg:x="209" fg:w="27"/><text x="1.2046%" y="350.50"></text></g><g><title>_find_and_load (&lt;frozen importlib._bootstrap&gt;:1178) (27 samples, 0.12%)</title><rect x="0.9546%" y="356" width="0.1233%" height="15" fill="rgb(210,31,41)" fg:x="209" fg:w="27"/><text x="1.2046%" y="366.50"></text></g><g><title>_find_and_load_unlocked (&lt;frozen importlib._bootstrap&gt;:1149) (27 samples, 0.12%)</title><rect x="0.9546%" y="372" width="0.1233%" height="15" fill="rgb(221,200,47)" fg:x="209" fg:w="27"/><text x="1.2046%" y="382.50"></text></g><g><title>_load_unlocked (&lt;frozen importlib._bootstrap&gt;:690) (27 samples, 0.12%)</title><rect x="0.9546%" y="388" width="0.1233%" height="15" fill="rgb(226,26,5)" fg:x="209" fg:w="27"/><text x="1.2046%" y="398.50"></text></g><g><title>exec_module (&lt;frozen importlib._bootstrap_external&gt;:940) (27 samples, 0.12%)</title><rect x="0.9546%" y="404" width="0.1233%" height="15" fill="rgb(249,33,26)" fg:x="209" fg:w="27"/><text x="1.2046%" y="414.50"></text></g><g><title>_call_with_frames_removed (&lt;frozen importlib._bootstrap&gt;:241) (27 samples, 0.12%)</title><rect x="0.9546%" y="420" width="0.1233%" height="15" fill="rgb(235,183,28)" fg:x="209" fg:w="27"/><text x="1.2046%" y="430.50"></text></g><g><title>&lt;module&gt; (PyReconstruct/modules/datatypes/log.py:5) (27 samples, 0.12%)</title><rect x="0.9546%" y="436" width="0.1233%" height="15" fill="rgb(221,5,38)" fg:x="209" fg:w="27"/><text x="1.2046%" y="446.50"></text></g><g><title>_find_and_load (&lt;frozen importlib._bootstrap&gt;:1178) (27 samples, 0.12%)</title><rect x="0.9546%" y="452" width="0.1233%" height="15" fill="rgb(247,18,42)" fg:x="209" fg:w="27"/><text x="1.2046%" y="462.50"></text></g><g><title>_find_and_load_unlocked (&lt;frozen importlib._bootstrap&gt;:1149) (27 samples, 0.12%)</title><rect x="0.9546%" y="468" width="0.1233%" height="15" fill="rgb(241,131,45)" fg:x="209" fg:w="27"/><text x="1.2046%" y="478.50"></text></g><g><title>_load_unlocked (&lt;frozen importlib._bootstrap&gt;:690) (27 samples, 0.12%)</title><rect x="0.9546%" y="484" width="0.1233%" height="15" fill="rgb(249,31,29)" fg:x="209" fg:w="27"/><text x="1.2046%" y="494.50"></text></g><g><title>exec_module (&lt;frozen importlib._bootstrap_external&gt;:940) (27 samples, 0.12%)</title><rect x="0.9546%" y="500" width="0.1233%" height="15" fill="rgb(225,111,53)" fg:x="209" fg:w="27"/><text x="1.2046%" y="510.50"></text></g><g><title>_call_with_frames_removed (&lt;frozen importlib._bootstrap&gt;:241) (27 samples, 0.12%)</title><rect x="0.9546%" y="516" width="0.1233%" height="15" fill="rgb(238,160,17)" fg:x="209" fg:w="27"/><text x="1.2046%" y="526.50"></text></g><g><title>&lt;module&gt; (PyReconstruct/modules/datatypes/ztrace.py:1) (22 samples, 0.10%)</title><rect x="1.0825%" y="436" width="0.1005%" height="15" fill="rgb(214,148,48)" fg:x="237" fg:w="22"/><text x="1.3325%" y="446.50"></text></g><g><title>_find_and_load (&lt;frozen importlib._bootstrap&gt;:1178) (22 samples, 0.10%)</title><rect x="1.0825%" y="452" width="0.1005%" height="15" fill="rgb(232,36,49)" fg:x="237" fg:w="22"/><text x="1.3325%" y="462.50"></text></g><g><title>_find_and_load_unlocked (&lt;frozen importlib._bootstrap&gt;:1149) (22 samples, 0.10%)</title><rect x="1.0825%" y="468" width="0.1005%" height="15" fill="rgb(209,103,24)" fg:x="237" fg:w="22"/><text x="1.3325%" y="478.50"></text></g><g><title>_load_unlocked (&lt;frozen importlib._bootstrap&gt;:690) (22 samples, 0.10%)</title><rect x="1.0825%" y="484" width="0.1005%" height="15" fill="rgb(229,88,8)" fg:x="237" fg:w="22"/><text x="1.3325%" y="494.50"></text></g><g><title>exec_module (&lt;frozen importlib._bootstrap_external&gt;:940) (22 samples, 0.10%)</title><rect x="1.0825%" y="500" width="0.1005%" height="15" fill="rgb(213,181,19)" fg:x="237" fg:w="22"/><text x="1.3325%" y="510.50"></text></g><g><title>_call_with_frames_removed (&lt;frozen importlib._bootstrap&gt;:241) (22 samples, 0.10%)</title><rect x="1.0825%" y="516" width="0.1005%" height="15" fill="rgb(254,191,54)" fg:x="237" fg:w="22"/><text x="1.3325%" y="526.50"></text></g><g><title>&lt;module&gt; (PyReconstruct/modules/datatypes/series.py:11) (25 samples, 0.11%)</title><rect x="1.0780%" y="340" width="0.1142%" height="15" fill="rgb(241,83,37)" fg:x="236" fg:w="25"/><text x="1.3280%" y="350.50"></text></g><g><title>_find_and_load (&lt;frozen importlib._bootstrap&gt;:1178) (25 samples, 0.11%)</title><rect x="1.0780%" y="356" width="0.1142%" height="15" fill="rgb(233,36,39)" fg:x="236" fg:w="25"/><text x="1.3280%" y="366.50"></text></g><g><title>_find_and_load_unlocked (&lt;frozen importlib._bootstrap&gt;:1149) (25 samples, 0.11%)</title><rect x="1.0780%" y="372" width="0.1142%" height="15" fill="rgb(226,3,54)" fg:x="236" fg:w="25"/><text x="1.3280%" y="382.50"></text></g><g><title>_load_unlocked (&lt;frozen importlib._bootstrap&gt;:690) (25 samples, 0.11%)</title><rect x="1.0780%" y="388" width="0.1142%" height="15" fill="rgb(245,192,40)" fg:x="236" fg:w="25"/><text x="1.3280%" y="398.50"></text></g><g><title>exec_module (&lt;frozen importlib._bootstrap_external&gt;:940) (24 samples, 0.11%)</title><rect x="1.0825%" y="404" width="0.1096%" height="15" fill="rgb(238,167,29)" fg:x="237" fg:w="24"/><text x="1.3325%" y="414.50"></text></g><g><title>_call_with_frames_removed (&lt;frozen importlib._bootstrap&gt;:241) (24 samples, 0.11%)</title><rect x="1.0825%" y="420" width="0.1096%" height="15" fill="rgb(232,182,51)" fg:x="237" fg:w="24"/><text x="1.3325%" y="430.50"></text></g><g><title>setup (profile_interactive.py:213) (53 samples, 0.24%)</title><rect x="0.9546%" y="100" width="0.2421%" height="15" fill="rgb(231,60,39)" fg:x="209" fg:w="53"/><text x="1.2046%" y="110.50"></text></g><g><title>_find_and_load (&lt;frozen importlib._bootstrap&gt;:1178) (53 samples, 0.24%)</title><rect x="0.9546%" y="116" width="0.2421%" height="15" fill="rgb(208,69,12)" fg:x="209" fg:w="53"/><text x="1.2046%" y="126.50"></text></g><g><title>_find_and_load_unlocked (&lt;frozen importlib._bootstrap&gt;:1128) (53 samples, 0.24%)</title><rect x="0.9546%" y="132" width="0.2421%" height="15" fill="rgb(235,93,37)" fg:x="209" fg:w="53"/><text x="1.2046%" y="142.50"></text></g><g><title>_call_with_frames_removed (&lt;frozen importlib._bootstrap&gt;:241) (53 samples, 0.24%)</title><rect x="0.9546%" y="148" width="0.2421%" height="15" fill="rgb(213,116,39)" fg:x="209" fg:w="53"/><text x="1.2046%" y="158.50"></text></g><g><title>_find_and_load (&lt;frozen importlib._bootstrap&gt;:1178) (53 samples, 0.24%)</title><rect x="0.9546%" y="164" width="0.2421%" height="15" fill="rgb(222,207,29)" fg:x="209" fg:w="53"/><text x="1.2046%" y="174.50"></text></g><g><title>_find_and_load_unlocked (&lt;frozen importlib._bootstrap&gt;:1149) (53 samples, 0.24%)</title><rect x="0.9546%" y="180" width="0.2421%" height="15" fill="rgb(206,96,30)" fg:x="209" fg:w="53"/><text x="1.2046%" y="190.50"></text></g><g><title>_load_unlocked (&lt;frozen importlib._bootstrap&gt;:690) (53 samples, 0.24%)</title><rect x="0.9546%" y="196" width="0.2421%" height="15" fill="rgb(218,138,4)" fg:x="209" fg:w="53"/><text x="1.2046%" y="206.50"></text></g><g><title>exec_module (&lt;frozen importlib._bootstrap_external&gt;:940) (53 samples, 0.24%)</title><rect x="0.9546%" y="212" width="0.2421%" height="15" fill="rgb(250,191,14)" fg:x="209" fg:w="53"/><text x="1.2046%" y="222.50"></text></g><g><title>_call_with_frames_removed (&lt;frozen importlib._bootstrap&gt;:241) (53 samples, 0.24%)</title><rect x="0.9546%" y="228" width="0.2421%" height="15" fill="rgb(239,60,40)" fg:x="209" fg:w="53"/><text x="1.2046%" y="238.50"></text></g><g><title>&lt;module&gt; (PyReconstruct/modules/datatypes/__init__.py:1) (53 samples, 0.24%)</title><rect x="0.9546%" y="244" width="0.2421%" height="15" fill="rgb(206,27,48)" fg:x="209" fg:w="53"/><text x="1.2046%" y="254.50"></text></g><g><title>_find_and_load (&lt;frozen importlib._bootstrap&gt;:1178) (53 samples, 0.24%)</title><rect x="0.9546%" y="260" width="0.2421%" height="15" fill="rgb(225,35,8)" fg:x="209" fg:w="53"/><text x="1.2046%" y="270.50"></text></g><g><title>_find_and_load_unlocked (&lt;frozen importlib._bootstrap&gt;:1149) (53 samples, 0.24%)</title><rect x="0.9546%" y="276" width="0.2421%" height="15" fill="rgb(250,213,24)" fg:x="209" fg:w="53"/><text x="1.2046%" y="286.50"></text></g><g><title>_load_unlocked (&lt;frozen importlib._bootstrap&gt;:690) (53 samples, 0.24%)</title><rect x="0.9546%" y="292" width="0.2421%" height="15" fill="rgb(247,123,22)" fg:x="209" fg:w="53"/><text x="1.2046%" y="302.50"></text></g><g><title>exec_module (&lt;frozen importlib._bootstrap_external&gt;:940) (53 samples, 0.24%)</title><rect x="0.9546%" y="308" width="0.2421%" height="15" fill="rgb(231,138,38)" fg:x="209" fg:w="53"/><text x="1.2046%" y="318.50"></text></g><g><title>_call_with_frames_removed (&lt;frozen importlib._bootstrap&gt;:241) (53 samples, 0.24%)</title><rect x="0.9546%" y="324" width="0.2421%" height="15" fill="rgb(231,145,46)" fg:x="209" fg:w="53"/><text x="1.2046%" y="334.50"></text></g><g><title>openJser (PyReconstruct/modules/datatypes/series.py:263) (1,142 samples, 5.22%)</title><rect x="1.1967%" y="116" width="5.2163%" height="15" fill="rgb(251,118,11)" fg:x="262" fg:w="1142"/><text x="1.4467%" y="126.50">openJs..</text></g><g><title>fast_loads (PyReconstruct/modules/constants/fast_json.py:87) (1,141 samples, 5.21%)</title><rect x="1.2013%" y="132" width="5.2117%" height="15" fill="rgb(217,147,25)" fg:x="263" fg:w="1141"/><text x="1.4513%" y="142.50">fast_l..</text></g><g><title>openJser (PyReconstruct/modules/datatypes/series.py:358) (299 samples, 1.37%)</title><rect x="6.5181%" y="116" width="1.3657%" height="15" fill="rgb(247,81,37)" fg:x="1427" fg:w="299"/><text x="6.7681%" y="126.50"></text></g><g><title>fast_dumps (PyReconstruct/modules/constants/fast_json.py:99) (239 samples, 1.09%)</title><rect x="6.7921%" y="132" width="1.0917%" height="15" fill="rgb(209,12,38)" fg:x="1487" fg:w="239"/><text x="7.0421%" y="142.50"></text></g><g><title>__init__ (PyReconstruct/modules/datatypes/section.py:48) (726 samples, 3.32%)</title><rect x="8.9937%" y="164" width="3.3161%" height="15" fill="rgb(227,1,9)" fg:x="1969" fg:w="726"/><text x="9.2437%" y="174.50">__i..</text></g><g><title>fast_loads (PyReconstruct/modules/constants/fast_json.py:87) (696 samples, 3.18%)</title><rect x="9.1308%" y="180" width="3.1791%" height="15" fill="rgb(248,47,43)" fg:x="1999" fg:w="696"/><text x="9.3808%" y="190.50">fas..</text></g><g><title>fromList (PyReconstruct/modules/datatypes/trace.py:268) (27 samples, 0.12%)</title><rect x="12.4606%" y="180" width="0.1233%" height="15" fill="rgb(221,10,30)" fg:x="2728" fg:w="27"/><text x="12.7106%" y="190.50"></text></g><g><title>fromList (PyReconstruct/modules/datatypes/trace.py:270) (1,126 samples, 5.14%)</title><rect x="12.5839%" y="180" width="5.1432%" height="15" fill="rgb(210,229,1)" fg:x="2755" fg:w="1126"/><text x="12.8339%" y="190.50">fromLi..</text></g><g><title>__init__ (PyReconstruct/modules/datatypes/section.py:70) (1,166 samples, 5.33%)</title><rect x="12.4378%" y="164" width="5.3259%" height="15" fill="rgb(222,148,37)" fg:x="2723" fg:w="1166"/><text x="12.6878%" y="174.50">__init_..</text></g><g><title>openJser (PyReconstruct/modules/datatypes/series.py:396) (2,180 samples, 9.96%)</title><rect x="7.8884%" y="116" width="9.9575%" height="15" fill="rgb(234,67,33)" fg:x="1727" fg:w="2180"/><text x="8.1384%" y="126.50">openJser (PyRe..</text></g><g><title>__next__ (PyReconstruct/modules/datatypes/series.py:3526) (1,970 samples, 9.00%)</title><rect x="8.8476%" y="132" width="8.9983%" height="15" fill="rgb(247,98,35)" fg:x="1937" fg:w="1970"/><text x="9.0976%" y="142.50">__next__ (PyR..</text></g><g><title>loadSection (PyReconstruct/modules/datatypes/series.py:962) (1,970 samples, 9.00%)</title><rect x="8.8476%" y="148" width="8.9983%" height="15" fill="rgb(247,138,52)" fg:x="1937" fg:w="1970"/><text x="9.0976%" y="158.50">loadSection (..</text></g><g><title>mapPointsArray (PyReconstruct/modules/datatypes/transform.py:194) (1,125 samples, 5.14%)</title><rect x="18.4945%" y="196" width="5.1386%" height="15" fill="rgb(213,79,30)" fg:x="4049" fg:w="1125"/><text x="18.7445%" y="206.50">mapPoi..</text></g><g><title>mapPointsArray (PyReconstruct/modules/datatypes/transform.py:199) (32 samples, 0.15%)</title><rect x="23.7702%" y="196" width="0.1462%" height="15" fill="rgb(246,177,23)" fg:x="5204" fg:w="32"/><text x="24.0202%" y="206.50"></text></g><g><title>mapPointsArray (PyReconstruct/modules/datatypes/transform.py:200) (222 samples, 1.01%)</title><rect x="23.9163%" y="196" width="1.0140%" height="15" fill="rgb(230,62,27)" fg:x="5236" fg:w="222"/><text x="24.1663%" y="206.50"></text></g><g><title>mapPointsArray (PyReconstruct/modules/datatypes/transform.py:201) (193 samples, 0.88%)</title><rect x="24.9303%" y="196" width="0.8816%" height="15" fill="rgb(216,154,8)" fg:x="5458" fg:w="193"/><text x="25.1803%" y="206.50"></text></g><g><title>__init__ (PyReconstruct/modules/datatypes/series_data.py:39) (1,619 samples, 7.40%)</title><rect x="18.4443%" y="180" width="7.3951%" height="15" fill="rgb(244,35,45)" fg:x="4038" fg:w="1619"/><text x="18.6943%" y="190.50">__init__ (..</text></g><g><title>_sum (numpy/core/_methods.py:49) (78 samples, 0.36%)</title><rect x="26.4559%" y="212" width="0.3563%" height="15" fill="rgb(251,115,12)" fg:x="5792" fg:w="78"/><text x="26.7059%" y="222.50"></text></g><g><title>diff (numpy/lib/function_base.py:1439) (22 samples, 0.10%)</title><rect x="27.2324%" y="228" width="0.1005%" height="15" fill="rgb(240,54,50)" fg:x="5962" fg:w="22"/><text x="27.4824%" y="238.50"></text></g><g><title>diff (numpy/lib/function_base.py:1440) (22 samples, 0.10%)</title><rect x="27.3329%" y="228" width="0.1005%" height="15" fill="rgb(233,84,52)" fg:x="5984" fg:w="22"/><text x="27.5829%" y="238.50"></text></g><g><title>diff (numpy/lib/function_base.py:1446) (25 samples, 0.11%)</title><rect x="27.5613%" y="228" width="0.1142%" height="15" fill="rgb(207,117,47)" fg:x="6034" fg:w="25"/><text x="27.8113%" y="238.50"></text></g><g><title>diff (numpy/lib/function_base.py:1447) (24 samples, 0.11%)</title><rect x="27.6755%" y="228" width="0.1096%" height="15" fill="rgb(249,43,39)" fg:x="6059" fg:w="24"/><text x="27.9255%" y="238.50"></text></g><g><title>diff (numpy/lib/function_base.py:1448) (105 samples, 0.48%)</title><rect x="27.7851%" y="228" width="0.4796%" height="15" fill="rgb(209,38,44)" fg:x="6083" fg:w="105"/><text x="28.0351%" y="238.50"></text></g><g><title>diff (&lt;__array_function__ internals&gt;:200) (294 samples, 1.34%)</title><rect x="26.9264%" y="212" width="1.3429%" height="15" fill="rgb(236,212,23)" fg:x="5895" fg:w="294"/><text x="27.1764%" y="222.50"></text></g><g><title>traceGeometry (PyReconstruct/modules/calc/quantification.py:147) (490 samples, 2.24%)</title><rect x="26.0357%" y="196" width="2.2382%" height="15" fill="rgb(242,79,21)" fg:x="5700" fg:w="490"/><text x="26.2857%" y="206.50">t..</text></g><g><title>traceGeometry (PyReconstruct/modules/calc/quantification.py:149) (32 samples, 0.15%)</title><rect x="28.2784%" y="196" width="0.1462%" height="15" fill="rgb(211,96,35)" fg:x="6191" fg:w="32"/><text x="28.5284%" y="206.50"></text></g><g><title>traceGeometry (PyReconstruct/modules/calc/quantification.py:150) (35 samples, 0.16%)</title><rect x="28.4246%" y="196" width="0.1599%" height="15" fill="rgb(253,215,40)" fg:x="6223" fg:w="35"/><text x="28.6746%" y="206.50"></text></g><g><title>append (numpy/lib/function_base.py:5497) (56 samples, 0.26%)</title><rect x="29.0275%" y="228" width="0.2558%" height="15" fill="rgb(211,81,21)" fg:x="6355" fg:w="56"/><text x="29.2775%" y="238.50"></text></g><g><title>ravel (&lt;__array_function__ internals&gt;:200) (46 samples, 0.21%)</title><rect x="29.0732%" y="244" width="0.2101%" height="15" fill="rgb(208,190,38)" fg:x="6365" fg:w="46"/><text x="29.3232%" y="254.50"></text></g><g><title>traceGeometry (PyReconstruct/modules/calc/quantification.py:160) (200 samples, 0.91%)</title><rect x="28.7078%" y="196" width="0.9135%" height="15" fill="rgb(235,213,38)" fg:x="6285" fg:w="200"/><text x="28.9578%" y="206.50"></text></g><g><title>append (&lt;__array_function__ internals&gt;:200) (184 samples, 0.84%)</title><rect x="28.7809%" y="212" width="0.8405%" height="15" fill="rgb(237,122,38)" fg:x="6301" fg:w="184"/><text x="29.0309%" y="222.50"></text></g><g><title>append (numpy/lib/function_base.py:5499) (69 samples, 0.32%)</title><rect x="29.3062%" y="228" width="0.3152%" height="15" fill="rgb(244,218,35)" fg:x="6416" fg:w="69"/><text x="29.5562%" y="238.50"></text></g><g><title>concatenate (&lt;__array_function__ internals&gt;:200) (53 samples, 0.24%)</title><rect x="29.3793%" y="244" width="0.2421%" height="15" fill="rgb(240,68,47)" fg:x="6432" fg:w="53"/><text x="29.6293%" y="254.50"></text></g><g><title>append (numpy/lib/function_base.py:5497) (41 samples, 0.19%)</title><rect x="29.8817%" y="228" width="0.1873%" height="15" fill="rgb(210,16,53)" fg:x="6542" fg:w="41"/><text x="30.1317%" y="238.50"></text></g><g><title>ravel (&lt;__array_function__ internals&gt;:200) (36 samples, 0.16%)</title><rect x="29.9045%" y="244" width="0.1644%" height="15" fill="rgb(235,124,12)" fg:x="6547" fg:w="36"/><text x="30.1545%" y="254.50"></text></g><g><title>concatenate (&lt;__array_function__ internals&gt;:200) (37 samples, 0.17%)</title><rect x="30.1192%" y="244" width="0.1690%" height="15" fill="rgb(224,169,11)" fg:x="6594" fg:w="37"/><text x="30.3692%" y="254.50"></text></g><g><title>append (&lt;__array_function__ internals&gt;:200) (128 samples, 0.58%)</title><rect x="29.7081%" y="212" width="0.5847%" height="15" fill="rgb(250,166,2)" fg:x="6504" fg:w="128"/><text x="29.9581%" y="222.50"></text></g><g><title>append (numpy/lib/function_base.py:5499) (47 samples, 0.21%)</title><rect x="30.0781%" y="228" width="0.2147%" height="15" fill="rgb(242,216,29)" fg:x="6585" fg:w="47"/><text x="30.3281%" y="238.50"></text></g><g><title>traceGeometry (PyReconstruct/modules/calc/quantification.py:161) (148 samples, 0.68%)</title><rect x="29.6213%" y="196" width="0.6760%" height="15" fill="rgb(230,116,27)" fg:x="6485" fg:w="148"/><text x="29.8713%" y="206.50"></text></g><g><title>traceGeometry (PyReconstruct/modules/calc/quantification.py:164) (119 samples, 0.54%)</title><rect x="30.3019%" y="196" width="0.5436%" height="15" fill="rgb(228,99,48)" fg:x="6634" fg:w="119"/><text x="30.5519%" y="206.50"></text></g><g><title>traceGeometry (PyReconstruct/modules/calc/quantification.py:165) (84 samples, 0.38%)</title><rect x="30.8455%" y="196" width="0.3837%" height="15" fill="rgb(253,11,6)" fg:x="6753" fg:w="84"/><text x="31.0955%" y="206.50"></text></g><g><title>_sum (numpy/core/_methods.py:49) (71 samples, 0.32%)</title><rect x="30.9049%" y="212" width="0.3243%" height="15" fill="rgb(247,143,39)" fg:x="6766" fg:w="71"/><text x="31.1549%" y="222.50"></text></g><g><title>traceGeometry (PyReconstruct/modules/calc/quantification.py:170) (171 samples, 0.78%)</title><rect x="31.2383%" y="196" width="0.7811%" height="15" fill="rgb(236,97,10)" fg:x="6839" fg:w="171"/><text x="31.4883%" y="206.50"></text></g><g><title>_sum (numpy/core/_methods.py:49) (53 samples, 0.24%)</title><rect x="31.7773%" y="212" width="0.2421%" height="15" fill="rgb(233,208,19)" fg:x="6957" fg:w="53"/><text x="32.0273%" y="222.50"></text></g><g><title>traceGeometry (PyReconstruct/modules/calc/quantification.py:171) (153 samples, 0.70%)</title><rect x="32.0194%" y="196" width="0.6989%" height="15" fill="rgb(216,164,2)" fg:x="7010" fg:w="153"/><text x="32.2694%" y="206.50"></text></g><g><title>_sum (numpy/core/_methods.py:49) (66 samples, 0.30%)</title><rect x="32.4168%" y="212" width="0.3015%" height="15" fill="rgb(220,129,5)" fg:x="7097" fg:w="66"/><text x="32.6668%" y="222.50"></text></g><g><title>traceGeometry (PyReconstruct/modules/calc/quantification.py:177) (260 samples, 1.19%)</title><rect x="32.7182%" y="196" width="1.1876%" height="15" fill="rgb(242,17,10)" fg:x="7163" fg:w="260"/><text x="32.9682%" y="206.50"></text></g><g><title>_amax (numpy/core/_methods.py:41) (82 samples, 0.37%)</title><rect x="33.5313%" y="212" width="0.3745%" height="15" fill="rgb(242,107,0)" fg:x="7341" fg:w="82"/><text x="33.7813%" y="222.50"></text></g><g><title>__init__ (PyReconstruct/modules/datatypes/series_data.py:41) (1,772 samples, 8.09%)</title><rect x="25.8484%" y="180" width="8.0939%" height="15" fill="rgb(251,28,31)" fg:x="5659" fg:w="1772"/><text x="26.0984%" y="190.50">__init__ (P..</text></g><g><title>addTrace (PyReconstruct/modules/datatypes/series_data.py:302) (3,463 samples, 15.82%)</title><rect x="18.1519%" y="148" width="15.8178%" height="15" fill="rgb(233,223,10)" fg:x="3974" fg:w="3463"/><text x="18.4019%" y="158.50">addTrace (PyReconstruct/..</text></g><g><title>addTrace (PyReconstruct/modules/datatypes/series_data.py:128) (3,415 samples, 15.60%)</title><rect x="18.3712%" y="164" width="15.5986%" height="15" fill="rgb(215,21,27)" fg:x="4022" fg:w="3415"/><text x="18.6212%" y="174.50">addTrace (PyReconstruct/..</text></g><g><title>updateSection (PyReconstruct/modules/datatypes/series_data.py:248) (3,482 samples, 15.90%)</title><rect x="18.0697%" y="132" width="15.9046%" height="15" fill="rgb(232,23,21)" fg:x="3956" fg:w="3482"/><text x="18.3197%" y="142.50">updateSection (PyReconst..</text></g><g><title>openJser (PyReconstruct/modules/datatypes/series.py:397) (3,545 samples, 16.19%)</title><rect x="17.8459%" y="116" width="16.1924%" height="15" fill="rgb(244,5,23)" fg:x="3907" fg:w="3545"/><text x="18.0959%" y="126.50">openJser (PyReconstruct/m..</text></g><g><title>setup (profile_interactive.py:219) (7,325 samples, 33.46%)</title><rect x="1.1967%" y="100" width="33.4582%" height="15" fill="rgb(226,81,46)" fg:x="262" fg:w="7325"/><text x="1.4467%" y="110.50">setup (profile_interactive.py:219)</text></g><g><title>openJser (PyReconstruct/modules/datatypes/series.py:408) (135 samples, 0.62%)</title><rect x="34.0383%" y="116" width="0.6166%" height="15" fill="rgb(247,70,30)" fg:x="7452" fg:w="135"/><text x="34.2883%" y="126.50"></text></g><g><title>__init__ (PyReconstruct/modules/datatypes/section.py:48) (375 samples, 1.71%)</title><rect x="35.8425%" y="164" width="1.7129%" height="15" fill="rgb(212,68,19)" fg:x="7847" fg:w="375"/><text x="36.0925%" y="174.50"></text></g><g><title>fast_loads (PyReconstruct/modules/constants/fast_json.py:87) (350 samples, 1.60%)</title><rect x="35.9567%" y="180" width="1.5987%" height="15" fill="rgb(240,187,13)" fg:x="7872" fg:w="350"/><text x="36.2067%" y="190.50"></text></g><g><title>__init__ (PyReconstruct/modules/datatypes/section.py:50) (24 samples, 0.11%)</title><rect x="37.5554%" y="164" width="0.1096%" height="15" fill="rgb(223,113,26)" fg:x="8222" fg:w="24"/><text x="37.8054%" y="174.50"></text></g><g><title>fromList (PyReconstruct/modules/datatypes/trace.py:270) (835 samples, 3.81%)</title><rect x="37.7883%" y="180" width="3.8140%" height="15" fill="rgb(206,192,2)" fg:x="8273" fg:w="835"/><text x="38.0383%" y="190.50">from..</text></g><g><title>__init__ (PyReconstruct/modules/datatypes/section.py:70) (862 samples, 3.94%)</title><rect x="37.7015%" y="164" width="3.9373%" height="15" fill="rgb(241,108,4)" fg:x="8254" fg:w="862"/><text x="37.9515%" y="174.50">__in..</text></g><g><title>refresh (PyReconstruct/modules/datatypes/series_data.py:186) (1,541 samples, 7.04%)</title><rect x="34.6549%" y="116" width="7.0388%" height="15" fill="rgb(247,173,49)" fg:x="7587" fg:w="1541"/><text x="34.9049%" y="126.50">refresh (..</text></g><g><title>__next__ (PyReconstruct/modules/datatypes/series.py:3526) (1,312 samples, 5.99%)</title><rect x="35.7009%" y="132" width="5.9928%" height="15" fill="rgb(224,114,35)" fg:x="7816" fg:w="1312"/><text x="35.9509%" y="142.50">__next__..</text></g><g><title>loadSection (PyReconstruct/modules/datatypes/series.py:962) (1,312 samples, 5.99%)</title><rect x="35.7009%" y="148" width="5.9928%" height="15" fill="rgb(245,159,27)" fg:x="7816" fg:w="1312"/><text x="35.9509%" y="158.50">loadSect..</text></g><g><title>mapPointsArray (PyReconstruct/modules/datatypes/transform.py:194) (1,066 samples, 4.87%)</title><rect x="42.3103%" y="196" width="4.8691%" height="15" fill="rgb(245,172,44)" fg:x="9263" fg:w="1066"/><text x="42.5603%" y="206.50">mapPoi..</text></g><g><title>mapPointsArray (PyReconstruct/modules/datatypes/transform.py:199) (31 samples, 0.14%)</title><rect x="47.2754%" y="196" width="0.1416%" height="15" fill="rgb(236,23,11)" fg:x="10350" fg:w="31"/><text x="47.5254%" y="206.50"></text></g><g><title>mapPointsArray (PyReconstruct/modules/datatypes/transform.py:200) (214 samples, 0.98%)</title><rect x="47.4170%" y="196" width="0.9775%" height="15" fill="rgb(205,117,38)" fg:x="10381" fg:w="214"/><text x="47.6670%" y="206.50"></text></g><g><title>mapPointsArray (PyReconstruct/modules/datatypes/transform.py:201) (186 samples, 0.85%)</title><rect x="48.3945%" y="196" width="0.8496%" height="15" fill="rgb(237,72,25)" fg:x="10595" fg:w="186"/><text x="48.6445%" y="206.50"></text></g><g><title>__init__ (PyReconstruct/modules/datatypes/series_data.py:39) (1,537 samples, 7.02%)</title><rect x="42.2601%" y="180" width="7.0205%" height="15" fill="rgb(244,70,9)" fg:x="9252" fg:w="1537"/><text x="42.5101%" y="190.50">__init__ ..</text></g><g><title>_sum (numpy/core/_methods.py:49) (81 samples, 0.37%)</title><rect x="49.7876%" y="212" width="0.3700%" height="15" fill="rgb(217,125,39)" fg:x="10900" fg:w="81"/><text x="50.0376%" y="222.50"></text></g><g><title>diff (numpy/lib/function_base.py:1439) (25 samples, 0.11%)</title><rect x="50.4910%" y="228" width="0.1142%" height="15" fill="rgb(235,36,10)" fg:x="11054" fg:w="25"/><text x="50.7410%" y="238.50"></text></g><g><title>diff (numpy/lib/function_base.py:1446) (27 samples, 0.12%)</title><rect x="50.7651%" y="228" width="0.1233%" height="15" fill="rgb(251,123,47)" fg:x="11114" fg:w="27"/><text x="51.0151%" y="238.50"></text></g><g><title>traceGeometry (PyReconstruct/modules/calc/quantification.py:147) (413 samples, 1.89%)</title><rect x="49.4039%" y="196" width="1.8864%" height="15" fill="rgb(221,13,13)" fg:x="10816" fg:w="413"/><text x="49.6539%" y="206.50">t..</text></g><g><title>diff (&lt;__array_function__ internals&gt;:200) (235 samples, 1.07%)</title><rect x="50.2170%" y="212" width="1.0734%" height="15" fill="rgb(238,131,9)" fg:x="10994" fg:w="235"/><text x="50.4670%" y="222.50"></text></g><g><title>diff (numpy/lib/function_base.py:1448) (70 samples, 0.32%)</title><rect x="50.9706%" y="228" width="0.3197%" height="15" fill="rgb(211,50,8)" fg:x="11159" fg:w="70"/><text x="51.2206%" y="238.50"></text></g><g><title>traceGeometry (PyReconstruct/modules/calc/quantification.py:149) (27 samples, 0.12%)</title><rect x="51.2949%" y="196" width="0.1233%" height="15" fill="rgb(245,182,24)" fg:x="11230" fg:w="27"/><text x="51.5449%" y="206.50"></text></g><g><title>traceGeometry (PyReconstruct/modules/calc/quantification.py:150) (22 samples, 0.10%)</title><rect x="51.4183%" y="196" width="0.1005%" height="15" fill="rgb(242,14,37)" fg:x="11257" fg:w="22"/><text x="51.6683%" y="206.50"></text></g><g><title>append (numpy/lib/function_base.py:5497) (66 samples, 0.30%)</title><rect x="51.9664%" y="228" width="0.3015%" height="15" fill="rgb(246,228,12)" fg:x="11377" fg:w="66"/><text x="52.2164%" y="238.50"></text></g><g><title>ravel (&lt;__array_function__ internals&gt;:200) (56 samples, 0.26%)</title><rect x="52.0121%" y="244" width="0.2558%" height="15" fill="rgb(213,55,15)" fg:x="11387" fg:w="56"/><text x="52.2621%" y="254.50"></text></g><g><title>concatenate (&lt;__array_function__ internals&gt;:200) (53 samples, 0.24%)</title><rect x="52.3775%" y="244" width="0.2421%" height="15" fill="rgb(209,9,3)" fg:x="11467" fg:w="53"/><text x="52.6275%" y="254.50"></text></g><g><title>append (&lt;__array_function__ internals&gt;:200) (192 samples, 0.88%)</title><rect x="51.7471%" y="212" width="0.8770%" height="15" fill="rgb(230,59,30)" fg:x="11329" fg:w="192"/><text x="51.9971%" y="222.50"></text></g><g><title>append (numpy/lib/function_base.py:5499) (76 samples, 0.35%)</title><rect x="52.2770%" y="228" width="0.3471%" height="15" fill="rgb(209,121,21)" fg:x="11445" fg:w="76"/><text x="52.5270%" y="238.50"></text></g><g><title>traceGeometry (PyReconstruct/modules/calc/quantification.py:160) (213 samples, 0.97%)</title><rect x="51.6558%" y="196" width="0.9729%" height="15" fill="rgb(220,109,13)" fg:x="11309" fg:w="213"/><text x="51.9058%" y="206.50"></text></g><g><title>ravel (&lt;__array_function__ internals&gt;:200) (39 samples, 0.18%)</title><rect x="52.8342%" y="244" width="0.1781%" height="15" fill="rgb(232,18,1)" fg:x="11567" fg:w="39"/><text x="53.0842%" y="254.50"></text></g><g><title>append (numpy/lib/function_base.py:5497) (46 samples, 0.21%)</title><rect x="52.8068%" y="228" width="0.2101%" height="15" fill="rgb(215,41,42)" fg:x="11561" fg:w="46"/><text x="53.0568%" y="238.50"></text></g><g><title>concatenate (&lt;__array_function__ internals&gt;:200) (42 samples, 0.19%)</title><rect x="53.0900%" y="244" width="0.1918%" height="15" fill="rgb(224,123,36)" fg:x="11623" fg:w="42"/><text x="53.3400%" y="254.50"></text></g><g><title>append (&lt;__array_function__ internals&gt;:200) (134 samples, 0.61%)</title><rect x="52.6744%" y="212" width="0.6121%" height="15" fill="rgb(240,125,3)" fg:x="11532" fg:w="134"/><text x="52.9244%" y="222.50"></text></g><g><title>append (numpy/lib/function_base.py:5499) (55 samples, 0.25%)</title><rect x="53.0352%" y="228" width="0.2512%" height="15" fill="rgb(205,98,50)" fg:x="11611" fg:w="55"/><text x="53.2852%" y="238.50"></text></g><g><title>traceGeometry (PyReconstruct/modules/calc/quantification.py:161) (145 samples, 0.66%)</title><rect x="52.6287%" y="196" width="0.6623%" height="15" fill="rgb(205,185,37)" fg:x="11522" fg:w="145"/><text x="52.8787%" y="206.50"></text></g><g><title>traceGeometry (PyReconstruct/modules/calc/quantification.py:164) (107 samples, 0.49%)</title><rect x="53.2956%" y="196" width="0.4887%" height="15" fill="rgb(238,207,15)" fg:x="11668" fg:w="107"/><text x="53.5456%" y="206.50"></text></g><g><title>traceGeometry (PyReconstruct/modules/calc/quantification.py:165) (69 samples, 0.32%)</title><rect x="53.7843%" y="196" width="0.3152%" height="15" fill="rgb(213,199,42)" fg:x="11775" fg:w="69"/><text x="54.0343%" y="206.50"></text></g><g><title>_sum (numpy/core/_methods.py:49) (56 samples, 0.26%)</title><rect x="53.8437%" y="212" width="0.2558%" height="15" fill="rgb(235,201,11)" fg:x="11788" fg:w="56"/><text x="54.0937%" y="222.50"></text></g><g><title>traceGeometry (PyReconstruct/modules/calc/quantification.py:170) (142 samples, 0.65%)</title><rect x="54.1269%" y="196" width="0.6486%" height="15" fill="rgb(207,46,11)" fg:x="11850" fg:w="142"/><text x="54.3769%" y="206.50"></text></g><g><title>_sum (numpy/core/_methods.py:49) (40 samples, 0.18%)</title><rect x="54.5928%" y="212" width="0.1827%" height="15" fill="rgb(241,35,35)" fg:x="11952" fg:w="40"/><text x="54.8428%" y="222.50"></text></g><g><title>traceGeometry (PyReconstruct/modules/calc/quantification.py:171) (148 samples, 0.68%)</title><rect x="54.7755%" y="196" width="0.6760%" height="15" fill="rgb(243,32,47)" fg:x="11992" fg:w="148"/><text x="55.0255%" y="206.50"></text></g><g><title>_sum (numpy/core/_methods.py:49) (52 samples, 0.24%)</title><rect x="55.2140%" y="212" width="0.2375%" height="15" fill="rgb(247,202,23)" fg:x="12088" fg:w="52"/><text x="55.4640%" y="222.50"></text></g><g><title>traceGeometry (PyReconstruct/modules/calc/quantification.py:177) (255 samples, 1.16%)</title><rect x="55.4515%" y="196" width="1.1648%" height="15" fill="rgb(219,102,11)" fg:x="12140" fg:w="255"/><text x="55.7015%" y="206.50"></text></g><g><title>_amax (numpy/core/_methods.py:41) (69 samples, 0.32%)</title><rect x="56.3011%" y="212" width="0.3152%" height="15" fill="rgb(243,110,44)" fg:x="12326" fg:w="69"/><text x="56.5511%" y="222.50"></text></g><g><title>__init__ (PyReconstruct/modules/datatypes/series_data.py:41) (1,616 samples, 7.38%)</title><rect x="49.2852%" y="180" width="7.3814%" height="15" fill="rgb(222,74,54)" fg:x="10790" fg:w="1616"/><text x="49.5352%" y="190.50">__init__ (..</text></g><g><title>addTrace (PyReconstruct/modules/datatypes/series_data.py:128) (3,183 samples, 14.54%)</title><rect x="42.1642%" y="164" width="14.5389%" height="15" fill="rgb(216,99,12)" fg:x="9231" fg:w="3183"/><text x="42.4142%" y="174.50">addTrace (PyReconstruc..</text></g><g><title>updateSection (PyReconstruct/modules/datatypes/series_data.py:248) (3,241 samples, 14.80%)</title><rect x="41.9084%" y="132" width="14.8038%" height="15" fill="rgb(226,22,26)" fg:x="9175" fg:w="3241"/><text x="42.1584%" y="142.50">updateSection (PyRecons..</text></g><g><title>addTrace (PyReconstruct/modules/datatypes/series_data.py:302) (3,224 samples, 14.73%)</title><rect x="41.9860%" y="148" width="14.7262%" height="15" fill="rgb(217,163,10)" fg:x="9192" fg:w="3224"/><text x="42.2360%" y="158.50">addTrace (PyReconstruc..</text></g><g><title>setup (profile_interactive.py:245) (4,838 samples, 22.10%)</title><rect x="34.6549%" y="100" width="22.0984%" height="15" fill="rgb(213,25,53)" fg:x="7587" fg:w="4838"/><text x="34.9049%" y="110.50">setup (profile_interactive.py:245)</text></g><g><title>refresh (PyReconstruct/modules/datatypes/series_data.py:188) (3,297 samples, 15.06%)</title><rect x="41.6937%" y="116" width="15.0596%" height="15" fill="rgb(252,105,26)" fg:x="9128" fg:w="3297"/><text x="41.9437%" y="126.50">refresh (PyReconstruct/..</text></g><g><title>setup (profile_interactive.py:246) (39 samples, 0.18%)</title><rect x="56.7533%" y="100" width="0.1781%" height="15" fill="rgb(220,39,43)" fg:x="12425" fg:w="39"/><text x="57.0033%" y="110.50"></text></g><g><title>main (profile_interactive.py:423) (12,506 samples, 57.12%)</title><rect x="0.2101%" y="84" width="57.1233%" height="15" fill="rgb(229,68,48)" fg:x="46" fg:w="12506"/><text x="0.4601%" y="94.50">main (profile_interactive.py:423)</text></g><g><title>setup (profile_interactive.py:263) (31 samples, 0.14%)</title><rect x="57.1918%" y="100" width="0.1416%" height="15" fill="rgb(252,8,32)" fg:x="12521" fg:w="31"/><text x="57.4418%" y="110.50"></text></g><g><title>fit_window_to_section (profile_interactive.py:192) (27 samples, 0.12%)</title><rect x="57.2101%" y="116" width="0.1233%" height="15" fill="rgb(223,20,43)" fg:x="12525" fg:w="27"/><text x="57.4601%" y="126.50"></text></g><g><title>generateView (PyReconstruct/modules/gui/main/field_widget_1_base.py:270) (27 samples, 0.12%)</title><rect x="57.2101%" y="132" width="0.1233%" height="15" fill="rgb(229,81,49)" fg:x="12525" fg:w="27"/><text x="57.4601%" y="142.50"></text></g><g><title>generateView (PyReconstruct/modules/backend/view/section_layer.py:67) (26 samples, 0.12%)</title><rect x="57.2146%" y="148" width="0.1188%" height="15" fill="rgb(236,28,36)" fg:x="12526" fg:w="26"/><text x="57.4646%" y="158.50"></text></g><g><title>generateTraceLayer (PyReconstruct/modules/backend/view/trace_layer.py:595) (26 samples, 0.12%)</title><rect x="57.2146%" y="164" width="0.1188%" height="15" fill="rgb(249,185,26)" fg:x="12526" fg:w="26"/><text x="57.4646%" y="174.50"></text></g><g><title>traceToPixArray (PyReconstruct/modules/backend/view/trace_layer.py:108) (25 samples, 0.11%)</title><rect x="57.4247%" y="196" width="0.1142%" height="15" fill="rgb(249,174,33)" fg:x="12572" fg:w="25"/><text x="57.6747%" y="206.50"></text></g><g><title>mapPointsArray (PyReconstruct/modules/datatypes/transform.py:194) (127 samples, 0.58%)</title><rect x="57.6623%" y="212" width="0.5801%" height="15" fill="rgb(233,201,37)" fg:x="12624" fg:w="127"/><text x="57.9123%" y="222.50"></text></g><g><title>mapPointsArray (PyReconstruct/modules/datatypes/transform.py:200) (23 samples, 0.11%)</title><rect x="58.2743%" y="212" width="0.1051%" height="15" fill="rgb(221,78,26)" fg:x="12758" fg:w="23"/><text x="58.5243%" y="222.50"></text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:263) (229 samples, 1.05%)</title><rect x="57.3791%" y="180" width="1.0460%" height="15" fill="rgb(250,127,30)" fg:x="12562" fg:w="229"/><text x="57.6291%" y="190.50"></text></g><g><title>traceToPixArray (PyReconstruct/modules/backend/view/trace_layer.py:98) (168 samples, 0.77%)</title><rect x="57.6577%" y="196" width="0.7674%" height="15" fill="rgb(230,49,44)" fg:x="12623" fg:w="168"/><text x="57.9077%" y="206.50"></text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:270) (24 samples, 0.11%)</title><rect x="58.4251%" y="180" width="0.1096%" height="15" fill="rgb(229,67,23)" fg:x="12791" fg:w="24"/><text x="58.6751%" y="190.50"></text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:278) (624 samples, 2.85%)</title><rect x="58.6352%" y="180" width="2.8502%" height="15" fill="rgb(249,83,47)" fg:x="12837" fg:w="624"/><text x="58.8852%" y="190.50">_d..</text></g><g><title>&lt;listcomp&gt; (PyReconstruct/modules/backend/view/trace_layer.py:278) (623 samples, 2.85%)</title><rect x="58.6397%" y="196" width="2.8457%" height="15" fill="rgb(215,43,3)" fg:x="12838" fg:w="623"/><text x="58.8897%" y="206.50">&lt;l..</text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:290) (90 samples, 0.41%)</title><rect x="61.6133%" y="180" width="0.4111%" height="15" fill="rgb(238,154,13)" fg:x="13489" fg:w="90"/><text x="61.8633%" y="190.50"></text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:340) (78 samples, 0.36%)</title><rect x="62.1477%" y="180" width="0.3563%" height="15" fill="rgb(219,56,2)" fg:x="13606" fg:w="78"/><text x="62.3977%" y="190.50"></text></g><g><title>generateTraceLayer (PyReconstruct/modules/backend/view/trace_layer.py:595) (1,209 samples, 5.52%)</title><rect x="57.3791%" y="164" width="5.5223%" height="15" fill="rgb(233,0,4)" fg:x="12562" fg:w="1209"/><text x="57.6291%" y="174.50">generat..</text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:342) (87 samples, 0.40%)</title><rect x="62.5040%" y="180" width="0.3974%" height="15" fill="rgb(235,30,7)" fg:x="13684" fg:w="87"/><text x="62.7540%" y="190.50"></text></g><g><title>generateView (PyReconstruct/modules/backend/view/section_layer.py:67) (1,216 samples, 5.55%)</title><rect x="57.3517%" y="148" width="5.5543%" height="15" fill="rgb(250,79,13)" fg:x="12556" fg:w="1216"/><text x="57.6017%" y="158.50">generat..</text></g><g><title>session (profile_interactive.py:367) (1,228 samples, 5.61%)</title><rect x="57.3334%" y="100" width="5.6091%" height="15" fill="rgb(211,146,34)" fg:x="12552" fg:w="1228"/><text x="57.5834%" y="110.50">session..</text></g><g><title>frames_full (profile_interactive.py:286) (1,228 samples, 5.61%)</title><rect x="57.3334%" y="116" width="5.6091%" height="15" fill="rgb(228,22,38)" fg:x="12552" fg:w="1228"/><text x="57.5834%" y="126.50">frames_..</text></g><g><title>generateView (PyReconstruct/modules/gui/main/field_widget_1_base.py:270) (1,228 samples, 5.61%)</title><rect x="57.3334%" y="132" width="5.6091%" height="15" fill="rgb(235,168,5)" fg:x="12552" fg:w="1228"/><text x="57.5834%" y="142.50">generat..</text></g><g><title>traceToPixArray (PyReconstruct/modules/backend/view/trace_layer.py:110) (28 samples, 0.13%)</title><rect x="63.1617%" y="212" width="0.1279%" height="15" fill="rgb(221,155,16)" fg:x="13828" fg:w="28"/><text x="63.4117%" y="222.50"></text></g><g><title>mapPointsArray (PyReconstruct/modules/datatypes/transform.py:194) (125 samples, 0.57%)</title><rect x="63.3673%" y="228" width="0.5710%" height="15" fill="rgb(215,215,53)" fg:x="13873" fg:w="125"/><text x="63.6173%" y="238.50"></text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:263) (240 samples, 1.10%)</title><rect x="63.0338%" y="196" width="1.0962%" height="15" fill="rgb(223,4,10)" fg:x="13800" fg:w="240"/><text x="63.2838%" y="206.50"></text></g><g><title>traceToPixArray (PyReconstruct/modules/backend/view/trace_layer.py:98) (172 samples, 0.79%)</title><rect x="63.3444%" y="212" width="0.7856%" height="15" fill="rgb(234,103,6)" fg:x="13868" fg:w="172"/><text x="63.5944%" y="222.50"></text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:278) (554 samples, 2.53%)</title><rect x="64.2945%" y="196" width="2.5305%" height="15" fill="rgb(227,97,0)" fg:x="14076" fg:w="554"/><text x="64.5445%" y="206.50">_d..</text></g><g><title>&lt;listcomp&gt; (PyReconstruct/modules/backend/view/trace_layer.py:278) (554 samples, 2.53%)</title><rect x="64.2945%" y="212" width="2.5305%" height="15" fill="rgb(234,150,53)" fg:x="14076" fg:w="554"/><text x="64.5445%" y="222.50">&lt;l..</text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:290) (81 samples, 0.37%)</title><rect x="66.9620%" y="196" width="0.3700%" height="15" fill="rgb(228,201,54)" fg:x="14660" fg:w="81"/><text x="67.2120%" y="206.50"></text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:340) (71 samples, 0.32%)</title><rect x="67.4051%" y="196" width="0.3243%" height="15" fill="rgb(222,22,37)" fg:x="14757" fg:w="71"/><text x="67.6551%" y="206.50"></text></g><g><title>generateTraceLayer (PyReconstruct/modules/backend/view/trace_layer.py:595) (1,123 samples, 5.13%)</title><rect x="63.0338%" y="180" width="5.1295%" height="15" fill="rgb(237,53,32)" fg:x="13800" fg:w="1123"/><text x="63.2838%" y="190.50">genera..</text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:342) (95 samples, 0.43%)</title><rect x="67.7294%" y="196" width="0.4339%" height="15" fill="rgb(233,25,53)" fg:x="14828" fg:w="95"/><text x="67.9794%" y="206.50"></text></g><g><title>generateView (PyReconstruct/modules/backend/view/section_layer.py:67) (1,133 samples, 5.18%)</title><rect x="62.9927%" y="164" width="5.1752%" height="15" fill="rgb(210,40,34)" fg:x="13791" fg:w="1133"/><text x="63.2427%" y="174.50">genera..</text></g><g><title>session (profile_interactive.py:368) (1,148 samples, 5.24%)</title><rect x="62.9425%" y="100" width="5.2437%" height="15" fill="rgb(241,220,44)" fg:x="13780" fg:w="1148"/><text x="63.1925%" y="110.50">sessio..</text></g><g><title>pan_sweep (profile_interactive.py:302) (1,142 samples, 5.22%)</title><rect x="62.9699%" y="116" width="5.2163%" height="15" fill="rgb(235,28,35)" fg:x="13786" fg:w="1142"/><text x="63.2199%" y="126.50">pan_sw..</text></g><g><title>panzoomRelease (PyReconstruct/modules/gui/main/field_widget_5_mouse.py:427) (1,142 samples, 5.22%)</title><rect x="62.9699%" y="132" width="5.2163%" height="15" fill="rgb(210,56,17)" fg:x="13786" fg:w="1142"/><text x="63.2199%" y="142.50">panzoo..</text></g><g><title>generateView (PyReconstruct/modules/gui/main/field_widget_1_base.py:270) (1,141 samples, 5.21%)</title><rect x="62.9745%" y="148" width="5.2117%" height="15" fill="rgb(224,130,29)" fg:x="13787" fg:w="1141"/><text x="63.2245%" y="158.50">genera..</text></g><g><title>mapPointsArray (PyReconstruct/modules/datatypes/transform.py:194) (119 samples, 0.54%)</title><rect x="68.4739%" y="228" width="0.5436%" height="15" fill="rgb(235,212,8)" fg:x="14991" fg:w="119"/><text x="68.7239%" y="238.50"></text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:263) (196 samples, 0.90%)</title><rect x="68.2638%" y="196" width="0.8953%" height="15" fill="rgb(223,33,50)" fg:x="14945" fg:w="196"/><text x="68.5138%" y="206.50"></text></g><g><title>traceToPixArray (PyReconstruct/modules/backend/view/trace_layer.py:98) (150 samples, 0.69%)</title><rect x="68.4739%" y="212" width="0.6852%" height="15" fill="rgb(219,149,13)" fg:x="14991" fg:w="150"/><text x="68.7239%" y="222.50"></text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:278) (425 samples, 1.94%)</title><rect x="69.2596%" y="196" width="1.9413%" height="15" fill="rgb(250,156,29)" fg:x="15163" fg:w="425"/><text x="69.5096%" y="206.50">_..</text></g><g><title>&lt;listcomp&gt; (PyReconstruct/modules/backend/view/trace_layer.py:278) (423 samples, 1.93%)</title><rect x="69.2687%" y="212" width="1.9321%" height="15" fill="rgb(216,193,19)" fg:x="15165" fg:w="423"/><text x="69.5187%" y="222.50">&lt;..</text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:290) (58 samples, 0.26%)</title><rect x="71.2465%" y="196" width="0.2649%" height="15" fill="rgb(216,135,14)" fg:x="15598" fg:w="58"/><text x="71.4965%" y="206.50"></text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:340) (51 samples, 0.23%)</title><rect x="71.5480%" y="196" width="0.2330%" height="15" fill="rgb(241,47,5)" fg:x="15664" fg:w="51"/><text x="71.7980%" y="206.50"></text></g><g><title>generateTraceLayer (PyReconstruct/modules/backend/view/trace_layer.py:595) (832 samples, 3.80%)</title><rect x="68.2638%" y="180" width="3.8003%" height="15" fill="rgb(233,42,35)" fg:x="14945" fg:w="832"/><text x="68.5138%" y="190.50">gene..</text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:342) (62 samples, 0.28%)</title><rect x="71.7809%" y="196" width="0.2832%" height="15" fill="rgb(231,13,6)" fg:x="15715" fg:w="62"/><text x="72.0309%" y="206.50"></text></g><g><title>generateView (PyReconstruct/modules/backend/view/section_layer.py:67) (839 samples, 3.83%)</title><rect x="68.2364%" y="164" width="3.8323%" height="15" fill="rgb(207,181,40)" fg:x="14939" fg:w="839"/><text x="68.4864%" y="174.50">gene..</text></g><g><title>session (profile_interactive.py:369) (851 samples, 3.89%)</title><rect x="68.1862%" y="100" width="3.8871%" height="15" fill="rgb(254,173,49)" fg:x="14928" fg:w="851"/><text x="68.4362%" y="110.50">sess..</text></g><g><title>zoom_sweep (profile_interactive.py:309) (841 samples, 3.84%)</title><rect x="68.2319%" y="116" width="3.8414%" height="15" fill="rgb(221,1,38)" fg:x="14938" fg:w="841"/><text x="68.4819%" y="126.50">zoom..</text></g><g><title>panzoomRelease (PyReconstruct/modules/gui/main/field_widget_5_mouse.py:427) (841 samples, 3.84%)</title><rect x="68.2319%" y="132" width="3.8414%" height="15" fill="rgb(206,124,46)" fg:x="14938" fg:w="841"/><text x="68.4819%" y="142.50">panz..</text></g><g><title>generateView (PyReconstruct/modules/gui/main/field_widget_1_base.py:270) (841 samples, 3.84%)</title><rect x="68.2319%" y="148" width="3.8414%" height="15" fill="rgb(249,21,11)" fg:x="14938" fg:w="841"/><text x="68.4819%" y="158.50">gene..</text></g><g><title>traceToPixArray (PyReconstruct/modules/backend/view/trace_layer.py:107) (33 samples, 0.15%)</title><rect x="72.1966%" y="196" width="0.1507%" height="15" fill="rgb(222,201,40)" fg:x="15806" fg:w="33"/><text x="72.4466%" y="206.50"></text></g><g><title>traceToPixArray (PyReconstruct/modules/backend/view/trace_layer.py:108) (27 samples, 0.12%)</title><rect x="72.3473%" y="196" width="0.1233%" height="15" fill="rgb(235,61,29)" fg:x="15839" fg:w="27"/><text x="72.5973%" y="206.50"></text></g><g><title>traceToPixArray (PyReconstruct/modules/backend/view/trace_layer.py:110) (32 samples, 0.15%)</title><rect x="72.4707%" y="196" width="0.1462%" height="15" fill="rgb(219,207,3)" fg:x="15866" fg:w="32"/><text x="72.7207%" y="206.50"></text></g><g><title>column_stack (&lt;__array_function__ internals&gt;:200) (30 samples, 0.14%)</title><rect x="72.4798%" y="212" width="0.1370%" height="15" fill="rgb(222,56,46)" fg:x="15868" fg:w="30"/><text x="72.7298%" y="222.50"></text></g><g><title>mapPointsArray (PyReconstruct/modules/datatypes/transform.py:194) (231 samples, 1.06%)</title><rect x="72.7127%" y="212" width="1.0551%" height="15" fill="rgb(239,76,54)" fg:x="15919" fg:w="231"/><text x="72.9627%" y="222.50"></text></g><g><title>mapPointsArray (PyReconstruct/modules/datatypes/transform.py:200) (44 samples, 0.20%)</title><rect x="73.8273%" y="212" width="0.2010%" height="15" fill="rgb(231,124,27)" fg:x="16163" fg:w="44"/><text x="74.0773%" y="222.50"></text></g><g><title>mapPointsArray (PyReconstruct/modules/datatypes/transform.py:201) (27 samples, 0.12%)</title><rect x="74.0282%" y="212" width="0.1233%" height="15" fill="rgb(249,195,6)" fg:x="16207" fg:w="27"/><text x="74.2782%" y="222.50"></text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:263) (435 samples, 1.99%)</title><rect x="72.1692%" y="180" width="1.9869%" height="15" fill="rgb(237,174,47)" fg:x="15800" fg:w="435"/><text x="72.4192%" y="190.50">_..</text></g><g><title>traceToPixArray (PyReconstruct/modules/backend/view/trace_layer.py:98) (320 samples, 1.46%)</title><rect x="72.6945%" y="196" width="1.4617%" height="15" fill="rgb(206,201,31)" fg:x="15915" fg:w="320"/><text x="72.9445%" y="206.50"></text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:270) (37 samples, 0.17%)</title><rect x="74.1561%" y="180" width="0.1690%" height="15" fill="rgb(231,57,52)" fg:x="16235" fg:w="37"/><text x="74.4061%" y="190.50"></text></g><g><title>_amin (numpy/core/_methods.py:45) (24 samples, 0.11%)</title><rect x="74.2155%" y="196" width="0.1096%" height="15" fill="rgb(248,177,22)" fg:x="16248" fg:w="24"/><text x="74.4655%" y="206.50"></text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:278) (1,117 samples, 5.10%)</title><rect x="74.4210%" y="180" width="5.1021%" height="15" fill="rgb(215,211,37)" fg:x="16293" fg:w="1117"/><text x="74.6710%" y="190.50">_drawT..</text></g><g><title>&lt;listcomp&gt; (PyReconstruct/modules/backend/view/trace_layer.py:278) (1,117 samples, 5.10%)</title><rect x="74.4210%" y="196" width="5.1021%" height="15" fill="rgb(241,128,51)" fg:x="16293" fg:w="1117"/><text x="74.6710%" y="206.50">&lt;listc..</text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:290) (165 samples, 0.75%)</title><rect x="79.7470%" y="180" width="0.7537%" height="15" fill="rgb(227,165,31)" fg:x="17459" fg:w="165"/><text x="79.9970%" y="190.50"></text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:340) (153 samples, 0.70%)</title><rect x="80.7016%" y="180" width="0.6989%" height="15" fill="rgb(228,167,24)" fg:x="17668" fg:w="153"/><text x="80.9516%" y="190.50"></text></g><g><title>generateTraceLayer (PyReconstruct/modules/backend/view/trace_layer.py:595) (2,174 samples, 9.93%)</title><rect x="72.1692%" y="164" width="9.9301%" height="15" fill="rgb(228,143,12)" fg:x="15800" fg:w="2174"/><text x="72.4192%" y="174.50">generateTraceL..</text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:342) (153 samples, 0.70%)</title><rect x="81.4004%" y="180" width="0.6989%" height="15" fill="rgb(249,149,8)" fg:x="17821" fg:w="153"/><text x="81.6504%" y="190.50"></text></g><g><title>generateView (PyReconstruct/modules/backend/view/section_layer.py:67) (2,198 samples, 10.04%)</title><rect x="72.0778%" y="148" width="10.0397%" height="15" fill="rgb(243,35,44)" fg:x="15780" fg:w="2198"/><text x="72.3278%" y="158.50">generateView (P..</text></g><g><title>session (profile_interactive.py:370) (2,212 samples, 10.10%)</title><rect x="72.0733%" y="100" width="10.1037%" height="15" fill="rgb(246,89,9)" fg:x="15779" fg:w="2212"/><text x="72.3233%" y="110.50">session (profil..</text></g><g><title>frames_incremental (profile_interactive.py:290) (2,212 samples, 10.10%)</title><rect x="72.0733%" y="116" width="10.1037%" height="15" fill="rgb(233,213,13)" fg:x="15779" fg:w="2212"/><text x="72.3233%" y="126.50">frames_incremen..</text></g><g><title>generateView (PyReconstruct/modules/gui/main/field_widget_1_base.py:270) (2,211 samples, 10.10%)</title><rect x="72.0778%" y="132" width="10.0991%" height="15" fill="rgb(233,141,41)" fg:x="15780" fg:w="2211"/><text x="72.3278%" y="142.50">generateView (P..</text></g><g><title>findClosest (PyReconstruct/modules/datatypes/section.py:650) (276 samples, 1.26%)</title><rect x="82.1998%" y="148" width="1.2607%" height="15" fill="rgb(239,167,4)" fg:x="17996" fg:w="276"/><text x="82.4498%" y="158.50"></text></g><g><title>findClosest (PyReconstruct/modules/datatypes/section.py:652) (85 samples, 0.39%)</title><rect x="83.4605%" y="148" width="0.3883%" height="15" fill="rgb(209,217,16)" fg:x="18272" fg:w="85"/><text x="83.7105%" y="158.50"></text></g><g><title>mapPointsArray (PyReconstruct/modules/datatypes/transform.py:194) (46 samples, 0.21%)</title><rect x="83.9446%" y="164" width="0.2101%" height="15" fill="rgb(219,88,35)" fg:x="18378" fg:w="46"/><text x="84.1946%" y="174.50"></text></g><g><title>findClosest (PyReconstruct/modules/datatypes/section.py:658) (65 samples, 0.30%)</title><rect x="83.9401%" y="148" width="0.2969%" height="15" fill="rgb(220,193,23)" fg:x="18377" fg:w="65"/><text x="84.1901%" y="158.50"></text></g><g><title>session (profile_interactive.py:371) (488 samples, 2.23%)</title><rect x="82.1770%" y="100" width="2.2290%" height="15" fill="rgb(230,90,52)" fg:x="17991" fg:w="488"/><text x="82.4270%" y="110.50">s..</text></g><g><title>hover_sweep (profile_interactive.py:317) (488 samples, 2.23%)</title><rect x="82.1770%" y="116" width="2.2290%" height="15" fill="rgb(252,106,19)" fg:x="17991" fg:w="488"/><text x="82.4270%" y="126.50">h..</text></g><g><title>getTrace (PyReconstruct/modules/backend/view/trace_layer.py:146) (488 samples, 2.23%)</title><rect x="82.1770%" y="132" width="2.2290%" height="15" fill="rgb(206,74,20)" fg:x="17991" fg:w="488"/><text x="82.4270%" y="142.50">g..</text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:278) (25 samples, 0.11%)</title><rect x="84.5156%" y="212" width="0.1142%" height="15" fill="rgb(230,138,44)" fg:x="18503" fg:w="25"/><text x="84.7656%" y="222.50"></text></g><g><title>&lt;listcomp&gt; (PyReconstruct/modules/backend/view/trace_layer.py:278) (25 samples, 0.11%)</title><rect x="84.5156%" y="228" width="0.1142%" height="15" fill="rgb(235,182,43)" fg:x="18503" fg:w="25"/><text x="84.7656%" y="238.50"></text></g><g><title>session (profile_interactive.py:372) (55 samples, 0.25%)</title><rect x="84.4060%" y="100" width="0.2512%" height="15" fill="rgb(242,16,51)" fg:x="18479" fg:w="55"/><text x="84.6560%" y="110.50"></text></g><g><title>hover_sweep_full (profile_interactive.py:324) (55 samples, 0.25%)</title><rect x="84.4060%" y="116" width="0.2512%" height="15" fill="rgb(248,9,4)" fg:x="18479" fg:w="55"/><text x="84.6560%" y="126.50"></text></g><g><title>event (PyReconstruct/modules/gui/main/field_widget.py:154) (53 samples, 0.24%)</title><rect x="84.4151%" y="132" width="0.2421%" height="15" fill="rgb(210,31,22)" fg:x="18481" fg:w="53"/><text x="84.6651%" y="142.50"></text></g><g><title>resizeEvent (PyReconstruct/modules/gui/main/field_widget.py:124) (36 samples, 0.16%)</title><rect x="84.4928%" y="148" width="0.1644%" height="15" fill="rgb(239,54,39)" fg:x="18498" fg:w="36"/><text x="84.7428%" y="158.50"></text></g><g><title>generateView (PyReconstruct/modules/gui/main/field_widget_1_base.py:270) (36 samples, 0.16%)</title><rect x="84.4928%" y="164" width="0.1644%" height="15" fill="rgb(230,99,41)" fg:x="18498" fg:w="36"/><text x="84.7428%" y="174.50"></text></g><g><title>generateView (PyReconstruct/modules/backend/view/section_layer.py:67) (36 samples, 0.16%)</title><rect x="84.4928%" y="180" width="0.1644%" height="15" fill="rgb(253,106,12)" fg:x="18498" fg:w="36"/><text x="84.7428%" y="190.50"></text></g><g><title>generateTraceLayer (PyReconstruct/modules/backend/view/trace_layer.py:595) (36 samples, 0.16%)</title><rect x="84.4928%" y="196" width="0.1644%" height="15" fill="rgb(213,46,41)" fg:x="18498" fg:w="36"/><text x="84.7428%" y="206.50"></text></g><g><title>getExterior (PyReconstruct/modules/calc/grid.py:201) (22 samples, 0.10%)</title><rect x="84.6618%" y="148" width="0.1005%" height="15" fill="rgb(215,133,35)" fg:x="18535" fg:w="22"/><text x="84.9118%" y="158.50"></text></g><g><title>__init__ (PyReconstruct/modules/calc/grid.py:16) (22 samples, 0.10%)</title><rect x="84.6618%" y="164" width="0.1005%" height="15" fill="rgb(213,28,5)" fg:x="18535" fg:w="22"/><text x="84.9118%" y="174.50"></text></g><g><title>isAnchorPoint (PyReconstruct/modules/calc/grid.py:114) (150 samples, 0.69%)</title><rect x="84.8216%" y="196" width="0.6852%" height="15" fill="rgb(215,77,49)" fg:x="18570" fg:w="150"/><text x="85.0716%" y="206.50"></text></g><g><title>getExterior (PyReconstruct/modules/calc/grid.py:202) (164 samples, 0.75%)</title><rect x="84.7623%" y="148" width="0.7491%" height="15" fill="rgb(248,100,22)" fg:x="18557" fg:w="164"/><text x="85.0123%" y="158.50"></text></g><g><title>getExterior (PyReconstruct/modules/calc/grid.py:153) (161 samples, 0.74%)</title><rect x="84.7760%" y="164" width="0.7354%" height="15" fill="rgb(208,67,9)" fg:x="18560" fg:w="161"/><text x="85.0260%" y="174.50"></text></g><g><title>getAnchorTrace (PyReconstruct/modules/calc/grid.py:133) (161 samples, 0.74%)</title><rect x="84.7760%" y="180" width="0.7354%" height="15" fill="rgb(219,133,21)" fg:x="18560" fg:w="161"/><text x="85.0260%" y="190.50"></text></g><g><title>getExterior (PyReconstruct/modules/calc/grid.py:204) (158 samples, 0.72%)</title><rect x="85.5114%" y="148" width="0.7217%" height="15" fill="rgb(246,46,29)" fg:x="18721" fg:w="158"/><text x="85.7614%" y="158.50"></text></g><g><title>getExterior (PyReconstruct/modules/calc/grid.py:153) (155 samples, 0.71%)</title><rect x="85.5251%" y="164" width="0.7080%" height="15" fill="rgb(246,185,52)" fg:x="18724" fg:w="155"/><text x="85.7751%" y="174.50"></text></g><g><title>getAnchorTrace (PyReconstruct/modules/calc/grid.py:133) (155 samples, 0.71%)</title><rect x="85.5251%" y="180" width="0.7080%" height="15" fill="rgb(252,136,11)" fg:x="18724" fg:w="155"/><text x="85.7751%" y="190.50"></text></g><g><title>isAnchorPoint (PyReconstruct/modules/calc/grid.py:114) (141 samples, 0.64%)</title><rect x="85.5890%" y="196" width="0.6440%" height="15" fill="rgb(219,138,53)" fg:x="18738" fg:w="141"/><text x="85.8390%" y="206.50"></text></g><g><title>getTraces (PyReconstruct/modules/backend/view/trace_layer.py:166) (345 samples, 1.58%)</title><rect x="84.6618%" y="132" width="1.5758%" height="15" fill="rgb(211,51,23)" fg:x="18535" fg:w="345"/><text x="84.9118%" y="142.50"></text></g><g><title>mapPointsArray (PyReconstruct/modules/datatypes/transform.py:194) (49 samples, 0.22%)</title><rect x="86.3838%" y="180" width="0.2238%" height="15" fill="rgb(247,221,28)" fg:x="18912" fg:w="49"/><text x="86.6338%" y="190.50"></text></g><g><title>traceToPix (PyReconstruct/modules/backend/view/trace_layer.py:125) (93 samples, 0.42%)</title><rect x="86.2604%" y="148" width="0.4248%" height="15" fill="rgb(251,222,45)" fg:x="18885" fg:w="93"/><text x="86.5104%" y="158.50"></text></g><g><title>traceToPixArray (PyReconstruct/modules/backend/view/trace_layer.py:98) (66 samples, 0.30%)</title><rect x="86.3838%" y="164" width="0.3015%" height="15" fill="rgb(217,162,53)" fg:x="18912" fg:w="66"/><text x="86.6338%" y="174.50"></text></g><g><title>getTraces (PyReconstruct/modules/backend/view/trace_layer.py:175) (234 samples, 1.07%)</title><rect x="86.2467%" y="132" width="1.0688%" height="15" fill="rgb(229,93,14)" fg:x="18882" fg:w="234"/><text x="86.4967%" y="142.50"></text></g><g><title>traceToPix (PyReconstruct/modules/backend/view/trace_layer.py:129) (138 samples, 0.63%)</title><rect x="86.6852%" y="148" width="0.6303%" height="15" fill="rgb(209,67,49)" fg:x="18978" fg:w="138"/><text x="86.9352%" y="158.50"></text></g><g><title>&lt;listcomp&gt; (PyReconstruct/modules/backend/view/trace_layer.py:129) (137 samples, 0.63%)</title><rect x="86.6898%" y="164" width="0.6258%" height="15" fill="rgb(213,87,29)" fg:x="18979" fg:w="137"/><text x="86.9398%" y="174.50"></text></g><g><title>pointInPoly (PyReconstruct/modules/calc/quantification.py:220) (1,107 samples, 5.06%)</title><rect x="87.4115%" y="148" width="5.0564%" height="15" fill="rgb(205,151,52)" fg:x="19137" fg:w="1107"/><text x="87.6615%" y="158.50">pointI..</text></g><g><title>session (profile_interactive.py:373) (1,712 samples, 7.82%)</title><rect x="84.6572%" y="100" width="7.8199%" height="15" fill="rgb(253,215,39)" fg:x="18534" fg:w="1712"/><text x="84.9072%" y="110.50">session (pr..</text></g><g><title>lasso_sweep (profile_interactive.py:329) (1,711 samples, 7.82%)</title><rect x="84.6618%" y="116" width="7.8153%" height="15" fill="rgb(221,220,41)" fg:x="18535" fg:w="1711"/><text x="84.9118%" y="126.50">lasso_sweep..</text></g><g><title>getTraces (PyReconstruct/modules/backend/view/trace_layer.py:181) (1,128 samples, 5.15%)</title><rect x="87.3247%" y="132" width="5.1523%" height="15" fill="rgb(218,133,21)" fg:x="19118" fg:w="1128"/><text x="87.5747%" y="142.50">getTra..</text></g><g><title>mapPointsArray (PyReconstruct/modules/datatypes/transform.py:194) (28 samples, 0.13%)</title><rect x="92.5410%" y="228" width="0.1279%" height="15" fill="rgb(221,193,43)" fg:x="20260" fg:w="28"/><text x="92.7910%" y="238.50"></text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:263) (40 samples, 0.18%)</title><rect x="92.5136%" y="196" width="0.1827%" height="15" fill="rgb(240,128,52)" fg:x="20254" fg:w="40"/><text x="92.7636%" y="206.50"></text></g><g><title>traceToPixArray (PyReconstruct/modules/backend/view/trace_layer.py:98) (34 samples, 0.16%)</title><rect x="92.5410%" y="212" width="0.1553%" height="15" fill="rgb(253,114,12)" fg:x="20260" fg:w="34"/><text x="92.7910%" y="222.50"></text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:278) (100 samples, 0.46%)</title><rect x="92.7191%" y="196" width="0.4568%" height="15" fill="rgb(215,223,47)" fg:x="20299" fg:w="100"/><text x="92.9691%" y="206.50"></text></g><g><title>&lt;listcomp&gt; (PyReconstruct/modules/backend/view/trace_layer.py:278) (100 samples, 0.46%)</title><rect x="92.7191%" y="212" width="0.4568%" height="15" fill="rgb(248,225,23)" fg:x="20299" fg:w="100"/><text x="92.9691%" y="222.50"></text></g><g><title>generateView (PyReconstruct/modules/backend/view/section_layer.py:67) (196 samples, 0.90%)</title><rect x="92.5045%" y="164" width="0.8953%" height="15" fill="rgb(250,108,0)" fg:x="20252" fg:w="196"/><text x="92.7545%" y="174.50"></text></g><g><title>generateTraceLayer (PyReconstruct/modules/backend/view/trace_layer.py:595) (194 samples, 0.89%)</title><rect x="92.5136%" y="180" width="0.8861%" height="15" fill="rgb(228,208,7)" fg:x="20254" fg:w="194"/><text x="92.7636%" y="190.50"></text></g><g><title>session (profile_interactive.py:374) (204 samples, 0.93%)</title><rect x="92.4770%" y="100" width="0.9318%" height="15" fill="rgb(244,45,10)" fg:x="20246" fg:w="204"/><text x="92.7270%" y="110.50"></text></g><g><title>knife_gesture (profile_interactive.py:339) (203 samples, 0.93%)</title><rect x="92.4816%" y="116" width="0.9272%" height="15" fill="rgb(207,125,25)" fg:x="20247" fg:w="203"/><text x="92.7316%" y="126.50"></text></g><g><title>wrapper (PyReconstruct/modules/gui/main/field_widget_2_trace.py:455) (202 samples, 0.92%)</title><rect x="92.4862%" y="132" width="0.9227%" height="15" fill="rgb(210,195,18)" fg:x="20248" fg:w="202"/><text x="92.7362%" y="142.50"></text></g><g><title>generateView (PyReconstruct/modules/gui/main/field_widget_1_base.py:270) (202 samples, 0.92%)</title><rect x="92.4862%" y="148" width="0.9227%" height="15" fill="rgb(249,80,12)" fg:x="20248" fg:w="202"/><text x="92.7362%" y="158.50"></text></g><g><title>mergeTraces (PyReconstruct/modules/gui/main/field_widget_2_trace.py:1070) (40 samples, 0.18%)</title><rect x="93.4637%" y="164" width="0.1827%" height="15" fill="rgb(221,65,9)" fg:x="20462" fg:w="40"/><text x="93.7137%" y="174.50"></text></g><g><title>wrapper (PyReconstruct/modules/gui/main/field_widget_2_trace.py:450) (40 samples, 0.18%)</title><rect x="93.4637%" y="180" width="0.1827%" height="15" fill="rgb(235,49,36)" fg:x="20462" fg:w="40"/><text x="93.7137%" y="190.50"></text></g><g><title>newTrace (PyReconstruct/modules/gui/main/field_widget_2_trace.py:491) (40 samples, 0.18%)</title><rect x="93.4637%" y="196" width="0.1827%" height="15" fill="rgb(225,32,20)" fg:x="20462" fg:w="40"/><text x="93.7137%" y="206.50"></text></g><g><title>getExterior (PyReconstruct/modules/calc/grid.py:204) (22 samples, 0.10%)</title><rect x="93.5459%" y="212" width="0.1005%" height="15" fill="rgb(215,141,46)" fg:x="20480" fg:w="22"/><text x="93.7959%" y="222.50"></text></g><g><title>getExterior (PyReconstruct/modules/calc/grid.py:153) (22 samples, 0.10%)</title><rect x="93.5459%" y="228" width="0.1005%" height="15" fill="rgb(250,160,47)" fg:x="20480" fg:w="22"/><text x="93.7959%" y="238.50"></text></g><g><title>getAnchorTrace (PyReconstruct/modules/calc/grid.py:133) (22 samples, 0.10%)</title><rect x="93.5459%" y="244" width="0.1005%" height="15" fill="rgb(216,222,40)" fg:x="20480" fg:w="22"/><text x="93.7959%" y="254.50"></text></g><g><title>isAnchorPoint (PyReconstruct/modules/calc/grid.py:114) (22 samples, 0.10%)</title><rect x="93.5459%" y="260" width="0.1005%" height="15" fill="rgb(234,217,39)" fg:x="20480" fg:w="22"/><text x="93.7959%" y="270.50"></text></g><g><title>wrapper (PyReconstruct/modules/gui/main/field_widget_2_trace.py:450) (53 samples, 0.24%)</title><rect x="93.4089%" y="148" width="0.2421%" height="15" fill="rgb(207,178,40)" fg:x="20450" fg:w="53"/><text x="93.6589%" y="158.50"></text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:263) (35 samples, 0.16%)</title><rect x="93.6783%" y="212" width="0.1599%" height="15" fill="rgb(221,136,13)" fg:x="20509" fg:w="35"/><text x="93.9283%" y="222.50"></text></g><g><title>traceToPixArray (PyReconstruct/modules/backend/view/trace_layer.py:98) (26 samples, 0.12%)</title><rect x="93.7195%" y="228" width="0.1188%" height="15" fill="rgb(249,199,10)" fg:x="20518" fg:w="26"/><text x="93.9695%" y="238.50"></text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:278) (89 samples, 0.41%)</title><rect x="93.8565%" y="212" width="0.4065%" height="15" fill="rgb(249,222,13)" fg:x="20548" fg:w="89"/><text x="94.1065%" y="222.50"></text></g><g><title>&lt;listcomp&gt; (PyReconstruct/modules/backend/view/trace_layer.py:278) (89 samples, 0.41%)</title><rect x="93.8565%" y="228" width="0.4065%" height="15" fill="rgb(244,185,38)" fg:x="20548" fg:w="89"/><text x="94.1065%" y="238.50"></text></g><g><title>session (profile_interactive.py:375) (233 samples, 1.06%)</title><rect x="93.4089%" y="100" width="1.0643%" height="15" fill="rgb(236,202,9)" fg:x="20450" fg:w="233"/><text x="93.6589%" y="110.50"></text></g><g><title>merge_gesture (profile_interactive.py:352) (233 samples, 1.06%)</title><rect x="93.4089%" y="116" width="1.0643%" height="15" fill="rgb(250,229,37)" fg:x="20450" fg:w="233"/><text x="93.6589%" y="126.50"></text></g><g><title>wrapper (PyReconstruct/modules/gui/main/field_widget_2_trace.py:880) (233 samples, 1.06%)</title><rect x="93.4089%" y="132" width="1.0643%" height="15" fill="rgb(206,174,23)" fg:x="20450" fg:w="233"/><text x="93.6589%" y="142.50"></text></g><g><title>wrapper (PyReconstruct/modules/gui/main/field_widget_2_trace.py:455) (179 samples, 0.82%)</title><rect x="93.6555%" y="148" width="0.8176%" height="15" fill="rgb(211,33,43)" fg:x="20504" fg:w="179"/><text x="93.9055%" y="158.50"></text></g><g><title>generateView (PyReconstruct/modules/gui/main/field_widget_1_base.py:270) (178 samples, 0.81%)</title><rect x="93.6601%" y="164" width="0.8130%" height="15" fill="rgb(245,58,50)" fg:x="20505" fg:w="178"/><text x="93.9101%" y="174.50"></text></g><g><title>generateView (PyReconstruct/modules/backend/view/section_layer.py:67) (177 samples, 0.81%)</title><rect x="93.6646%" y="180" width="0.8085%" height="15" fill="rgb(244,68,36)" fg:x="20506" fg:w="177"/><text x="93.9146%" y="190.50"></text></g><g><title>generateTraceLayer (PyReconstruct/modules/backend/view/trace_layer.py:595) (175 samples, 0.80%)</title><rect x="93.6738%" y="196" width="0.7993%" height="15" fill="rgb(232,229,15)" fg:x="20508" fg:w="175"/><text x="93.9238%" y="206.50"></text></g><g><title>__init__ (PyReconstruct/modules/datatypes/section.py:48) (28 samples, 0.13%)</title><rect x="94.4914%" y="164" width="0.1279%" height="15" fill="rgb(254,30,23)" fg:x="20687" fg:w="28"/><text x="94.7414%" y="174.50"></text></g><g><title>fast_loads (PyReconstruct/modules/constants/fast_json.py:87) (27 samples, 0.12%)</title><rect x="94.4960%" y="180" width="0.1233%" height="15" fill="rgb(235,160,14)" fg:x="20688" fg:w="27"/><text x="94.7460%" y="190.50"></text></g><g><title>__init__ (PyReconstruct/modules/datatypes/section.py:70) (27 samples, 0.12%)</title><rect x="94.6239%" y="164" width="0.1233%" height="15" fill="rgb(212,155,44)" fg:x="20716" fg:w="27"/><text x="94.8739%" y="174.50"></text></g><g><title>fromList (PyReconstruct/modules/datatypes/trace.py:270) (26 samples, 0.12%)</title><rect x="94.6284%" y="180" width="0.1188%" height="15" fill="rgb(226,2,50)" fg:x="20717" fg:w="26"/><text x="94.8784%" y="190.50"></text></g><g><title>changeSection (PyReconstruct/modules/gui/main/field_widget_1_base.py:409) (62 samples, 0.28%)</title><rect x="94.4731%" y="132" width="0.2832%" height="15" fill="rgb(234,177,6)" fg:x="20683" fg:w="62"/><text x="94.7231%" y="142.50"></text></g><g><title>loadSection (PyReconstruct/modules/datatypes/series.py:962) (62 samples, 0.28%)</title><rect x="94.4731%" y="148" width="0.2832%" height="15" fill="rgb(217,24,9)" fg:x="20683" fg:w="62"/><text x="94.7231%" y="158.50"></text></g><g><title>mapPointsArray (PyReconstruct/modules/datatypes/transform.py:194) (111 samples, 0.51%)</title><rect x="95.1537%" y="228" width="0.5070%" height="15" fill="rgb(220,13,46)" fg:x="20832" fg:w="111"/><text x="95.4037%" y="238.50"></text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:263) (208 samples, 0.95%)</title><rect x="94.8933%" y="196" width="0.9501%" height="15" fill="rgb(239,221,27)" fg:x="20775" fg:w="208"/><text x="95.1433%" y="206.50"></text></g><g><title>traceToPixArray (PyReconstruct/modules/backend/view/trace_layer.py:98) (152 samples, 0.69%)</title><rect x="95.1491%" y="212" width="0.6943%" height="15" fill="rgb(222,198,25)" fg:x="20831" fg:w="152"/><text x="95.3991%" y="222.50"></text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:270) (30 samples, 0.14%)</title><rect x="95.8434%" y="196" width="0.1370%" height="15" fill="rgb(211,99,13)" fg:x="20983" fg:w="30"/><text x="96.0934%" y="206.50"></text></g><g><title>_amin (numpy/core/_methods.py:45) (22 samples, 0.10%)</title><rect x="95.8800%" y="212" width="0.1005%" height="15" fill="rgb(232,111,31)" fg:x="20991" fg:w="22"/><text x="96.1300%" y="222.50"></text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:278) (559 samples, 2.55%)</title><rect x="96.0718%" y="196" width="2.5533%" height="15" fill="rgb(245,82,37)" fg:x="21033" fg:w="559"/><text x="96.3218%" y="206.50">_d..</text></g><g><title>&lt;listcomp&gt; (PyReconstruct/modules/backend/view/trace_layer.py:278) (559 samples, 2.55%)</title><rect x="96.0718%" y="212" width="2.5533%" height="15" fill="rgb(227,149,46)" fg:x="21033" fg:w="559"/><text x="96.3218%" y="222.50">&lt;l..</text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:290) (83 samples, 0.38%)</title><rect x="98.7348%" y="196" width="0.3791%" height="15" fill="rgb(218,36,50)" fg:x="21616" fg:w="83"/><text x="98.9848%" y="206.50"></text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:340) (73 samples, 0.33%)</title><rect x="99.1687%" y="196" width="0.3334%" height="15" fill="rgb(226,80,48)" fg:x="21711" fg:w="73"/><text x="99.4187%" y="206.50"></text></g><g><title>generateTraceLayer (PyReconstruct/modules/backend/view/trace_layer.py:595) (1,086 samples, 4.96%)</title><rect x="94.8933%" y="180" width="4.9605%" height="15" fill="rgb(238,224,15)" fg:x="20775" fg:w="1086"/><text x="95.1433%" y="190.50">genera..</text></g><g><title>_drawTrace (PyReconstruct/modules/backend/view/trace_layer.py:342) (77 samples, 0.35%)</title><rect x="99.5021%" y="196" width="0.3517%" height="15" fill="rgb(241,136,10)" fg:x="21784" fg:w="77"/><text x="99.7521%" y="206.50"></text></g><g><title>generateView (PyReconstruct/modules/backend/view/section_layer.py:67) (1,094 samples, 5.00%)</title><rect x="94.8614%" y="164" width="4.9970%" height="15" fill="rgb(208,32,45)" fg:x="20768" fg:w="1094"/><text x="95.1114%" y="174.50">genera..</text></g><g><title>main (profile_interactive.py:445) (9,318 samples, 42.56%)</title><rect x="57.3334%" y="84" width="42.5615%" height="15" fill="rgb(207,135,9)" fg:x="12552" fg:w="9318"/><text x="57.5834%" y="94.50">main (profile_interactive.py:445)</text></g><g><title>session (profile_interactive.py:376) (1,187 samples, 5.42%)</title><rect x="94.4731%" y="100" width="5.4218%" height="15" fill="rgb(206,86,44)" fg:x="20683" fg:w="1187"/><text x="94.7231%" y="110.50">session..</text></g><g><title>section_scroll (profile_interactive.py:360) (1,187 samples, 5.42%)</title><rect x="94.4731%" y="116" width="5.4218%" height="15" fill="rgb(245,177,15)" fg:x="20683" fg:w="1187"/><text x="94.7231%" y="126.50">section..</text></g><g><title>changeSection (PyReconstruct/modules/gui/main/field_widget_1_base.py:439) (1,107 samples, 5.06%)</title><rect x="94.8385%" y="132" width="5.0564%" height="15" fill="rgb(206,64,50)" fg:x="20763" fg:w="1107"/><text x="95.0885%" y="142.50">change..</text></g><g><title>generateView (PyReconstruct/modules/gui/main/field_widget_1_base.py:270) (1,107 samples, 5.06%)</title><rect x="94.8385%" y="148" width="5.0564%" height="15" fill="rgb(234,36,40)" fg:x="20763" fg:w="1107"/><text x="95.0885%" y="158.50">genera..</text></g><g><title>&lt;module&gt; (profile_interactive.py:475) (21,892 samples, 100.00%)</title><rect x="0.0000%" y="68" width="99.9954%" height="15" fill="rgb(213,64,8)" fg:x="0" fg:w="21892"/><text x="0.2500%" y="78.50">&lt;module&gt; (profile_interactive.py:475)</text></g><g><title>main (profile_interactive.py:470) (22 samples, 0.10%)</title><rect x="99.8949%" y="84" width="0.1005%" height="15" fill="rgb(210,75,36)" fg:x="21870" fg:w="22"/><text x="100.1449%" y="94.50"></text></g><g><title>rmtree (shutil.py:731) (22 samples, 0.10%)</title><rect x="99.8949%" y="100" width="0.1005%" height="15" fill="rgb(229,88,21)" fg:x="21870" fg:w="22"/><text x="100.1449%" y="110.50"></text></g><g><title>all (21,893 samples, 100%)</title><rect x="0.0000%" y="52" width="100.0000%" height="15" fill="rgb(252,204,47)" fg:x="0" fg:w="21893"/><text x="0.2500%" y="62.50"></text></g></svg></svg>
