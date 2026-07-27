@@ -5,6 +5,18 @@ from datetime import datetime
 from PyReconstruct.modules.constants import getDateTime, get_now, remove_days_from_today
 
 
+## Log event prefixes that record a human deliberately removing annotation
+## work. These are the only events that entitle an import to discard traces the
+## other series still holds. Kept beside the Log class because the exact strings
+## are written by Series/Section (see Series.editObjectAttributes,
+## Section.deleteTraces, SeriesData's object bookkeeping) and read here.
+REMOVAL_EVENTS = (
+    "Delete object",
+    "Delete trace(s)",
+    "Rename object to",
+)
+
+
 class Log():
 
     def __init__(self, date : str, time : str, user : str, obj_name : str, section, event : str):
@@ -393,6 +405,37 @@ class LogSetPair():
         self.complete_match = (
             i == len(self.logset0.all_logs) == len(self.logset1.all_logs)
         )
+
+        # per-side {obj_name: [post-divergence logs]}, built on first use
+        self._post_divergence = [None, None]
+
+    def _postDivergenceLogs(self, side : int) -> dict:
+        """Index one side's post-divergence logs by object name.
+
+        The per-contour history queries below are called once per contour per
+        section -- around 120,000 times on a 318-section series -- and used to
+        answer each call by reverse-scanning the WHOLE log via
+        LogSet.getLastIndex. That made history-aware importing
+        O(sections x contours x log length), i.e. linear in the log, which is
+        worst for exactly the long-lived, heavily collaborated series the
+        feature exists for. Only logs after the divergence point can matter, and
+        only the ones naming the contour being asked about, so index them once.
+
+            Params:
+                side (int): 0 for logset0, 1 for logset1
+            Returns:
+                (dict): obj_name -> list of that object's post-divergence logs
+        """
+        if self._post_divergence[side] is None:
+            logset = (self.logset0, self.logset1)[side]
+            by_name = {}
+            for i in range(self.last_shared_index + 1, len(logset.all_logs)):
+                log = logset.all_logs[i]
+                if log.obj_name:  # series-level events carry no object name
+                    by_name.setdefault(log.obj_name, []).append(log)
+            self._post_divergence[side] = by_name
+
+        return self._post_divergence[side]
     
     def importLogs(
         self,
@@ -438,7 +481,10 @@ class LogSetPair():
             # update both the self series logs
             series.log_set.addExistingLog(log)
             self.logset0.addExistingLog(log)
-        
+
+        # logset0 has grown, so any post-divergence index built over it is stale
+        self._post_divergence = [None, None]
+
         if traces:
             # iterate through the series log and update the last users
             last_user_data = {}  # obj_name : (user, datetime)
@@ -469,8 +515,47 @@ class LogSetPair():
         """
         # determine which series have been modified since diverge
         modified_since_diverge = [False, False]
-        for i, ls in enumerate((self.logset0, self.logset1)):
-            last_index = ls.getLastIndex(snum, cname)
-            if last_index > self.last_shared_index:
+        for i in (0, 1):
+            for log in self._postDivergenceLogs(i).get(cname, ()):
+                if "ztrace" in log.event:
+                    continue
+                # a series-level log (no section range) applies to every section
+                if log.section_ranges is not None and not log.containsSection(snum):
+                    continue
                 modified_since_diverge[i] = True
+                break
         return tuple(modified_since_diverge)
+
+    def getRemovedSinceDiverge(self, cname : str, snum : int):
+        """Get which sides deliberately removed a contour since the diverge.
+
+        getModifiedSinceDiverge answers "does this side's log mention this
+        contour after the divergence point?", which collapses every kind of
+        edit into one Boolean. This answers the narrower question a merge needs
+        before it is allowed to throw annotation work away: "did a human on this
+        side record *removing* this contour?" A removal recorded in the log is
+        consented-to and may be propagated to the other series; the mere absence
+        of a log entry never licenses a removal, because logs are trimmed, are
+        rewritten when an object is deleted, and are suppressed outright while
+        an import runs.
+
+            Params:
+                cname (str): the name of the contour to check
+                snum (int): the section number of the contour
+            Returns:
+                (tuple): logset0 True/False, logset1 True/False
+        """
+        removed_since_diverge = [False, False]
+        for i in (0, 1):
+            for log in self._postDivergenceLogs(i).get(cname, ()):
+                if "ztrace" in log.event:
+                    continue
+                if not log.event.startswith(REMOVAL_EVENTS):
+                    continue
+                # a series-level removal (section_ranges is None) applies to
+                # every section; a section-specific one only to its own
+                if log.section_ranges is not None and not log.containsSection(snum):
+                    continue
+                removed_since_diverge[i] = True
+                break
+        return tuple(removed_since_diverge)

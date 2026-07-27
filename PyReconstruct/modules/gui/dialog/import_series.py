@@ -48,13 +48,48 @@ index and is calculated as the intersection of the
 two traces divided by their union."""
 
 
-tip_history = """When this option is checked, contours that have NOT
-been modified since the divergence of the two series
-will be ignored."""
+tip_history = """When this option is checked, the two series' logs are used
+to work out which side edited each object since the two
+copies diverged, so that deletions and renames are
+carried over instead of being undone. Leaving it
+unchecked makes the import a plain union: objects the
+other person deleted come back, and objects they renamed
+arrive a second time under their old name.
+
+The history is only ever used to skip work, never to
+throw it away: a trace is removed only if it overlaps
+something on the surviving side or if the log records it
+as deliberately deleted, and either way the removal is
+flagged and logged. Where the logs and the traces
+disagree, both versions are kept and flagged."""
 
 
 tip_conflicts = """When this option is checked, traces that have not been
-resolved through overlap or history will be flagged."""
+resolved through overlap or history will be flagged.
+
+Traces that an import REMOVES are always flagged and
+logged, whether or not this option is checked."""
+
+
+tip_below = """These traces overlap, but not enough to be treated as
+the same trace, so the two of you have drawn genuinely
+different shapes here.
+
+"Both series" is the only lossless choice: it keeps both
+shapes and flags them for you to arbitrate. Picking one
+series DELETES the other person's trace where it overlaps
+the one you kept. That is allowed, and every deleted
+trace is flagged and logged, but the drawn shape is
+gone."""
+
+
+tip_above = """These traces overlap enough to be treated as the same
+trace, so only one of them is kept.
+
+The surviving trace absorbs the other's tags, but NOT its
+points: the other person's version of the shape is
+discarded. "Both series" keeps both and is lossless, at
+the cost of leaving duplicates behind."""
 
 
 def addTip(widget : QWidget, tip_text : str):
@@ -268,6 +303,7 @@ class ImportTracesWidget(QWidget):
         ## Check series histories checkbox
         self.check_histories = QCheckBox(self, text="Check series histories")
         addTip(self.check_histories, tip_history)
+        self.check_histories.setChecked(True)
         top_vlayout1.addSpacing(10)
         top_vlayout1.addWidget(self.check_histories)
 
@@ -346,10 +382,12 @@ class ImportTracesWidget(QWidget):
         ## Radio button options
         hlayout = QHBoxLayout()
         vl1 = QVBoxLayout()
-        vl1.addWidget(QLabel(
+        lbl = QLabel(
             self,
             text="For traces with overlap BELOW the threshold,\nkeep traces from:"
-        ))
+        )
+        addTip(lbl, tip_below)
+        vl1.addWidget(lbl)
         self.below_threshold = RadioButtonGroup(
             self,
             [
@@ -363,10 +401,12 @@ class ImportTracesWidget(QWidget):
         hlayout.addLayout(vl1)
         hlayout.addSpacing(10)
         vl2 = QVBoxLayout()
-        vl2.addWidget(QLabel(
-            self, 
+        lbl = QLabel(
+            self,
             text="For traces with overlap ABOVE the threshold\n(functional duplicates), keep traces from:"
-        ))
+        )
+        addTip(lbl, tip_above)
+        vl2.addWidget(lbl)
         self.above_threshold = RadioButtonGroup(
             self,
             [

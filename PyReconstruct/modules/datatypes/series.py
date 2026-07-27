@@ -2208,45 +2208,52 @@ class Series():
         # if sorted(list(self.sections.keys())) != sorted(list(other.sections.keys())):
         #     return
         
-        ## Supress logging for object creation
-        self.data.supress_logging = True
-
         ## Get current date and time for tagging
         d, t = getDateTime()
         dt_str = d + "-" + t
-        
+
         histories = LogSetPair(
             self.getFullHistory(),
             other.getFullHistory()
         )
-        
-        for snum, section in self.enumerateSections(
-            message="Importing traces...",
-            series_states=series_states
-        ):
-            ## Skip if section not requested or does not exist in other series
-            skip = snum not in range(*srange) or snum not in other.sections
-            
-            if skip: 
-                continue
-            
-            o_section = other.loadSection(snum)  # other section
-            histories_param = histories if check_history else None  # skip history if checking is not requested
 
-            section.importTraces(
-                o_section,
-                regex_filters,
-                group_filters,
-                threshold,
-                flag_conflicts,
-                histories_param,
-                keep_above,
-                keep_below,
-                dt_str
-            )
-        
-        ## Un-supress logging for object creation
-        self.data.supress_logging = False
+        ## Supress logging for object creation.
+        ##
+        ## This must be restored even if the import raises: leaving it set turns
+        ## off object create/delete logging for the REST OF THE SESSION, and the
+        ## resulting holes in the log then corrupt the divergence detection of
+        ## every later import. A crash part way through a merge is bad enough
+        ## without it silently making the next merge unsafe too.
+        self.data.supress_logging = True
+
+        try:
+            for snum, section in self.enumerateSections(
+                message="Importing traces...",
+                series_states=series_states
+            ):
+                ## Skip if section not requested or does not exist in other series
+                skip = snum not in range(*srange) or snum not in other.sections
+
+                if skip:
+                    continue
+
+                o_section = other.loadSection(snum)  # other section
+                histories_param = histories if check_history else None  # skip history if checking is not requested
+
+                section.importTraces(
+                    o_section,
+                    regex_filters,
+                    group_filters,
+                    threshold,
+                    flag_conflicts,
+                    histories_param,
+                    keep_above,
+                    keep_below,
+                    dt_str
+                )
+        finally:
+            ## Un-supress logging for object creation
+            self.data.supress_logging = False
 
         ## Restrict object if with group filters
         restrict_to = []  # empty = no additional restrictions
