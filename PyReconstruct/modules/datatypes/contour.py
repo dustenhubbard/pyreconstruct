@@ -151,6 +151,12 @@ class Contour():
         # gather remaining traces that aren't the same between series
         rem_s_traces = self[i:]
         rem_o_traces = other[i:]
+        # The optimistic loop above stopped because self[i] and other[i] failed
+        # to overlap at `threshold` (or because one contour ran out, in which
+        # case one of the remainder lists is empty and the scan below is a
+        # no-op). rem_s_traces[0] is self[i] and rem_o_traces[0] is other[i],
+        # so the very first comparison the scan would make is the one we
+        # already know the answer to -- skip it once.
         first_comparison = True
         for o_trace in rem_o_traces.copy():
             found_i = None
@@ -158,7 +164,7 @@ class Contour():
                 if first_comparison:  # skip the first comparison -- we already know its false
                     first_comparison = False
                     continue
-                if s_trace.overlaps(o_trace, threshold=0.95):
+                if s_trace.overlaps(o_trace, threshold):
                     addDuplicate(s_trace, o_trace, traces)
                     found_i = i
                     break
