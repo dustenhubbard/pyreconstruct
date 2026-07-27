@@ -20,6 +20,34 @@ from PyReconstruct.modules.constants import fast_loads, fast_dumps
 from PyReconstruct.modules.backend.exports import export_svg, export_png
 
 
+def tracesWithoutCounterpart(donor : Contour, keeper : Contour) -> list:
+    """Return the traces in donor that overlap nothing at all in keeper.
+
+    This is the distinction an import needs before it discards a contour. A
+    donor trace that overlaps a keeper trace -- at any ratio, however small --
+    is plausibly an earlier or a later version of it, so resolving the two in
+    the keeper's favour is a merge decision. A donor trace that overlaps
+    *nothing* on the keeper side is not a version of anything there: it is
+    independent annotation work, and discarding it destroys a trace a human drew
+    and cannot get back.
+
+        Params:
+            donor (Contour): the contour whose traces are at risk
+            keeper (Contour): the contour that would survive
+        Returns:
+            (list): the donor traces with no counterpart in keeper
+    """
+    if not len(donor):
+        return []
+    if not len(keeper):
+        return donor.getTraces()  # nothing to overlap: all of it is independent
+
+    return [
+        d_trace for d_trace in donor
+        if not any(d_trace.overlaps(k_trace, threshold=0) for k_trace in keeper)
+    ]
+
+
 class Section():
 
     def __init__(self, n : int, series):
@@ -1014,8 +1042,59 @@ class Section():
             if log_event:
                 self.series.addLog(None, self.n, "Modify flag")
     
+    def addImportFlag(self, prefix : str, cname : str, trace : Trace, comment : str):
+        """Flag a trace an import acted on, with a comment saying why.
+
+            Params:
+                prefix (str): the flag name prefix, e.g. "import-removed"
+                cname (str): the name of the contour
+                trace (Trace): the trace to flag (used for position and colour)
+                comment (str): the explanation shown to the reviewer
+        """
+        x, y = trace.getCentroid()
+        flag = Flag(f"{prefix}_{cname}", x, y, self.n, trace.color)
+        flag.addComment(self.series.user, comment)
+        self.flags.append(flag)
+
+    def flagImportConflicts(self, cname : str, traces : list, reason : str):
+        """Flag traces an import kept because it could not safely choose between them.
+
+            Params:
+                cname (str): the name of the contour
+                traces (list): the traces to flag
+                reason (str): the explanation shown to the reviewer
+        """
+        for trace in traces:
+            self.addImportFlag("import-conflict", cname, trace, reason)
+
+    def recordImportRemoval(self, cname : str, traces : list, reason : str):
+        """Record traces that an import removed, as a flag and as a log entry.
+
+        An import is only ever allowed to destroy annotation work that a human's
+        own recorded action licenses, and never without leaving behind both a
+        flag a reviewer can find and a log entry the next merge can see. This is
+        deliberately NOT gated on the "flag conflicts" option: that option is
+        about conflicts, where both versions survive and somebody has to choose.
+        A record of destroyed work is not optional.
+
+            Params:
+                cname (str): the name of the contour
+                traces (list): the traces that were removed
+                reason (str): the explanation shown to the reviewer
+        """
+        if not traces:
+            return
+
+        for trace in traces:
+            self.addImportFlag(
+                "import-removed", cname, trace,
+                f"Trace removed by an import: {reason}.",
+            )
+
+        self.series.addLog(cname, self.n, "Remove trace(s) during import")
+
     def importTraces(
-            self, 
+            self,
             other,
             regex_filters: list=[],
             group_filters: list=[],
@@ -1094,24 +1173,93 @@ class Section():
                 for trace in other.contours[cname]:
                     trace.magScale(other.mag, self.mag)
 
-            # check the histories to find which contour has been modified since diverge
+            # Check the histories to find which contour has been modified since
+            # the two series diverged.
+            #
+            # The history gives one Boolean per side: "does this side's log
+            # mention this contour after the divergence point?" A True is
+            # positive evidence that somebody edited the contour. A False is
+            # only SILENCE, and silence is not proof that a side is unchanged --
+            # logs get trimmed, get rewritten when an object is deleted, and are
+            # suppressed outright while an import runs, so anything a previous
+            # merge brought in reads as untouched. Acting on a False therefore
+            # used to destroy real annotation work: the (False, False) branch
+            # discarded the other contour whole and the (False, True) branch
+            # replaced ours with theirs, in both cases without comparing a
+            # single point and without leaving a flag behind.
+            #
+            # So the shortcut is now checked against the data before it is
+            # taken. It may discard a trace only if that trace overlaps
+            # something on the surviving side (making it a version of it) or if
+            # a log entry records it as deliberately removed -- and a discarded
+            # trace always leaves a flag and a log entry. Anything else is
+            # independent work, which means the history cannot decide this
+            # contour: keep both sides and flag the disagreement.
+            history_orphans = []
+
             if histories and not histories.complete_match and histories.last_shared_index >= 0:
                 # determine which series have been modified since diverge
                 modified_since_diverge = histories.getModifiedSinceDiverge(cname, self.n)
-                
-                # if only one of the contours has been modified since diverge, use that one
-                if modified_since_diverge[0] != modified_since_diverge[1]:
-                    # if the other series is the one modified, replace contour and move to next
-                    if modified_since_diverge[1]:
-                        self.contours[cname] = other.contours[cname]
-                    if self.contours[cname].isEmpty(): del(self.contours[cname])  # remove contour from self if empty
-                    continue
-                elif not any(modified_since_diverge):  # if neither contour has been modified since diverge, skip completely (risky)
-                    if self.contours[cname].isEmpty(): del(self.contours[cname])  # remove contour from self if empty
-                    continue
+
+                # (True, True) is the case a merge exists for; fall through to
+                # the geometric merge below. Everything else has a shortcut.
+                if not all(modified_since_diverge):
+                    # the shortcut keeps one contour and discards the other: the
+                    # side the log says changed, or -- when the log mentions
+                    # neither -- the current series', which the two contours are
+                    # being assumed to already agree on
+                    take_other = modified_since_diverge[1]
+                    keeper = other.contours[cname] if take_other else self.contours[cname]
+                    donor = self.contours[cname] if take_other else other.contours[cname]
+
+                    # the traces the shortcut would destroy outright
+                    orphans = tracesWithoutCounterpart(donor, keeper)
+
+                    # only ask the log about a removal if something is at stake:
+                    # the scan is linear in the log length
+                    deliberate = bool(orphans) and histories.getRemovedSinceDiverge(
+                        cname, self.n
+                    )[1 if take_other else 0]
+
+                    if orphans and not deliberate:
+                        # The log claims one side is untouched, yet that side
+                        # holds traces the other has nothing over at all, and
+                        # nothing in the log says they were removed on purpose.
+                        # Decline the shortcut: the geometric merge below keeps
+                        # both sides, and these traces get flagged.
+                        history_orphans = orphans
+                    else:
+                        if take_other:
+                            self.contours[cname] = other.contours[cname]
+                        if orphans:
+                            # a removal recorded by a human is being propagated;
+                            # it is allowed to destroy work, but never silently
+                            self.recordImportRemoval(
+                                cname,
+                                orphans,
+                                "the other series' history records it as deliberately removed"
+                                if take_other else
+                                "this series' history records it as deliberately removed",
+                            )
+                        if self.contours[cname].isEmpty(): del(self.contours[cname])  # remove contour from self if empty
+                        continue
 
             # import the contour
             conflict_traces_s, conflict_traces_o = self.contours[cname].importTraces(other.contours[cname], threshold, keep_above)
+
+            # A history shortcut was declined above because it would have
+            # destroyed traces with no counterpart on the surviving side. The
+            # merge has kept them; flag them here, before the short-circuit
+            # below, because one of the conflict pools is usually empty in this
+            # situation and the flagging step at the bottom would skip them.
+            if history_orphans and flag_conflicts:
+                self.flagImportConflicts(
+                    cname,
+                    history_orphans,
+                    "kept because the two series' histories disagree with their "
+                    "traces: one history reports this contour unmodified, but "
+                    "this trace has no counterpart in the other series",
+                )
 
             # if one or both series have no conflicts, no need to flag them or check for favor below the threshold
             if not conflict_traces_s or not conflict_traces_o:
@@ -1126,15 +1274,33 @@ class Section():
                 elif keep_below == "other":
                     traces1, traces2 = conflict_traces_o, conflict_traces_s
                 # iterate through traces and delete overlaps in unfavored series
+                removed_by_policy = []
                 for trace1 in traces1:
                     for trace2 in traces2.copy():
                         if trace1.overlaps(trace2, threshold=0):
                             traces2.remove(trace2)
                             self.contours[cname].remove(trace2)
+                            removed_by_policy.append(trace2)
                 # clear favored traces, as they will never be conflicts
                 traces1.clear()
                 # any traces left in unfavored traces will be flagged
-            
+                #
+                # The two lines above are why this needs recording: the
+                # unfavoured traces have been removed from the contour and the
+                # favoured pool has been emptied, so the flagging step below has
+                # nothing left to flag and the traces would simply be gone.
+                if removed_by_policy:
+                    favoured = (
+                        "the current series"
+                        if keep_below == "self" else "the importing series"
+                    )
+                    self.recordImportRemoval(
+                        cname,
+                        removed_by_policy,
+                        "the import was asked to keep traces from "
+                        f"{favoured} only where the overlap is below the threshold",
+                    )
+
             # flag the remaining conflicts
             if flag_conflicts:                                     
                 for trace in conflict_traces_s:
