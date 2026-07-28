@@ -13,6 +13,33 @@ the README's *From source (developers)* section).
 
 ## [Unreleased]
 
+### Changed
+- **Saved `.jser` files are minified again, so saves are faster and files are
+  smaller.** The structural pretty-printing introduced in #102 was kept on the
+  assumption it was nearly free. Measured, it was not: on a 391 MB series it cost
+  **+11% of save time** and **about 27% more transient memory in the save path**
+  (an extra ~411 MB, about one additional copy of the document), for +0.65% of
+  file size. Whole-process peak memory was unchanged, which is why the cost went
+  unnoticed. Minified is now the default, reversing that part of #102 —
+  `saveJser` on the same 391 MB series goes **7.064 s → 6.333 s (−10.3%)** and
+  **393,372,829 → 390,846,078 bytes (−0.64%)**, with save-path transient memory
+  **1,922 MB → 1,511 MB (−21%)**. Smaller series shrink proportionally more
+  (−3.4% on the 560 KB fixture, −2.1% on a 4.7 MB hand-traced series).
+- **Canonical ordering is unchanged and still always applied.** It is the half of
+  #102 that earns its place: it costs **0 bytes** and no measurable time, and it
+  is what makes two saves of the same series byte-identical across processes.
+  There is deliberately no way to turn it off.
+- **If you were relying on the readable format, opt back in** by setting
+  `PYRECON_JSER_PRETTY=1`; otherwise files that had become line-structured will
+  revert to a single line on the next save. The pretty form is unchanged and
+  still worth it for reading a diff — a one-trace edit on a 781 MB series is 669
+  bytes of `diff` output pretty versus the whole file twice minified. The variable
+  is now read on **every** write instead of once at start-up, so it can be
+  changed in a running session. It replaces `PYRECON_JSER_MINIFY`, which is gone;
+  the behaviour that variable selected is now the default. Both forms are the
+  same JSON document and the reader accepts either, so this is
+  backward-compatible in both directions.
+
 ### Removed
 - **Developer update channel.** The in-app "Developer" channel and the rolling
   latest-`main` build that fed it (republished on every push to `main` under the
