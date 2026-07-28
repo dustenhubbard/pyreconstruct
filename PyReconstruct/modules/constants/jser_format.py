@@ -151,6 +151,25 @@ def canon_keys_inplace(d : dict, order) -> None:
 _NL = b"\n"
 
 
+def _dump_key(k) -> bytes:
+    """Serialize `k` as a JSON *object key*, i.e. always a quoted string.
+
+    ``fast_dumps`` passes ``orjson.OPT_NON_STR_KEYS``, so the compact writer
+    coerces a non-string key to a string (``1`` -> ``"1"``) and its output is
+    valid JSON. Dumping the key on its own does not: ``fast_dumps(1)`` is the
+    bare token ``1``, and ``{\n  1: ...\n}`` is not JSON that any parser will
+    accept -- the save would succeed and leave behind a file the app cannot
+    reopen.
+
+    The coercion is taken from the compact writer itself rather than
+    reimplemented, so the two writers cannot drift.
+    """
+    if isinstance(k, str):
+        return fast_dumps(k)
+    raw = fast_dumps({k: 0})
+    return raw[1:raw.rindex(b":")]
+
+
 def _dump_mapping_per_line(d, indent : int, out : list) -> None:
     """``{"k": <compact>, ...}`` with one key per line."""
     if not isinstance(d, dict) or not d:
@@ -158,7 +177,7 @@ def _dump_mapping_per_line(d, indent : int, out : list) -> None:
         return
     pad = b" " * (indent + 2)
     body = (b"," + _NL + pad).join(
-        [fast_dumps(k) + b": " + fast_dumps(v) for k, v in d.items()]
+        [_dump_key(k) + b": " + fast_dumps(v) for k, v in d.items()]
     )
     out.append(b"{" + _NL + pad + body + _NL + b" " * indent + b"}")
 
@@ -188,7 +207,7 @@ def _dump_contours(contours, indent : int, out : list) -> None:
     lastn = len(names) - 1
     inner = indent + 2
     for ni, name in enumerate(names):
-        out.append(b" " * inner + fast_dumps(name) + b": ")
+        out.append(b" " * inner + _dump_key(name) + b": ")
         _dump_row_array(contours[name], inner, out)
         out.append((b"," if ni != lastn else b"") + _NL)
     out.append(b" " * indent + b"}")
@@ -204,7 +223,7 @@ def _dump_section(sd, indent : int, out : list) -> None:
     last = len(keys) - 1
     inner = indent + 2
     for i, k in enumerate(keys):
-        out.append(b" " * inner + fast_dumps(k) + b": ")
+        out.append(b" " * inner + _dump_key(k) + b": ")
         if k == "contours":
             _dump_contours(sd[k], inner, out)
         elif k == "flags":
@@ -240,7 +259,7 @@ def _dump_series(sd, indent : int, out : list) -> None:
     inner = indent + 2
     for i, k in enumerate(keys):
         v = sd[k]
-        out.append(b" " * inner + fast_dumps(k) + b": ")
+        out.append(b" " * inner + _dump_key(k) + b": ")
         if k == "palette_traces":
             # {group name: [one 9-field palette row per line]}
             if not isinstance(v, dict) or not v:
@@ -250,7 +269,7 @@ def _dump_series(sd, indent : int, out : list) -> None:
                 gnames = list(v)
                 lastg = len(gnames) - 1
                 for gi, g in enumerate(gnames):
-                    out.append(b" " * (inner + 2) + fast_dumps(g) + b": ")
+                    out.append(b" " * (inner + 2) + _dump_key(g) + b": ")
                     _dump_row_array(v[g], inner + 2, out)
                     out.append((b"," if gi != lastg else b"") + _NL)
                 out.append(b" " * inner + b"}")
@@ -263,7 +282,7 @@ def _dump_series(sd, indent : int, out : list) -> None:
                 znames = list(v)
                 lastz = len(znames) - 1
                 for zi, z in enumerate(znames):
-                    out.append(b" " * (inner + 2) + fast_dumps(z) + b": ")
+                    out.append(b" " * (inner + 2) + _dump_key(z) + b": ")
                     _dump_mapping_per_line(v[z], inner + 2, out)
                     out.append((b"," if zi != lastz else b"") + _NL)
                 out.append(b" " * inner + b"}")
@@ -322,7 +341,7 @@ def dumps_jser(jser_data : dict, pretty : bool = None) -> bytes:
     # top-level key is not silently destroyed by the pretty printer
     extras = [k for k in jser_data if k not in TOP_LEVEL_KEYS]
     for k in sorted(extras, key=str):
-        out.append(b"," + _NL + fast_dumps(k) + b": " + fast_dumps(jser_data[k]))
+        out.append(b"," + _NL + _dump_key(k) + b": " + fast_dumps(jser_data[k]))
 
     out.append(_NL + b"}")
     return b"".join(out)

@@ -319,32 +319,160 @@ def _semantic(doc):
                        "log": doc.get("log", "")}, sort_keys=True)
 
 
+def _rich_source(tmp_path, name="rich.jser"):
+    """The fixture with content the round trip is supposed to preserve.
+
+    ``shapes1.jser`` has an empty log, no flags, no tags, no groups and no hosts,
+    so a save that silently discarded any of them round-trips perfectly. Nothing
+    can be shown to survive a round trip unless it is there to begin with.
+    """
+    doc = json.loads(open(FIXTURE, "rb").read())
+    doc["log"] = ("Date, Time, User, Obj, Sections, Event\n"
+                  "2026-07-27, 10:00:00, alice, d01, 1, created trace\n"
+                  "2026-07-27, 10:00:01, bob, d02, 2, modified trace\n")
+    for i, sd in enumerate(doc["sections"]):
+        if not sd:
+            continue
+        # a 7-field flag is already fully migrated, so updateJSON leaves it alone
+        sd["flags"] = [["flag%d" % i, "check this", 1.5, 2.5, [255, 0, 0],
+                        [["alice", "2026-07-27", "have a look"]], False]]
+        for rows in sd["contours"].values():
+            for row in rows:
+                row[7] = ["zzz_tag", "mmm_tag", "aaa_tag"]
+    ser = doc["series"]
+    ser["editors"] = ["zoe", "adam", "mia"]
+    ser["object_groups"] = {"zg": ["square", "star"], "ag": ["triangle"]}
+    ser["ztrace_groups"] = {"zt": ["square"]}
+    # no transitive edge: HostTree deliberately prunes a host that is already
+    # reachable through another host, and that pruning is not a round-trip loss
+    ser["host_tree"] = {"star": ["square"], "triangle": ["star"]}
+    ser["obj_attrs"] = {"square": {"comment": "a comment", "curation": ["", "", ""]}}
+    ser["user_columns"] = {"MyColumn": ["yes", "no"]}
+    fp = str(tmp_path / name)
+    with open(fp, "wb") as f:
+        f.write(json.dumps(doc).encode())
+    return fp, doc
+
+
+def _bc(sd):
+    """Brightness/contrast normalized across the legacy migration.
+
+    A pre-profiles section carries the scalar pair; the migration folds it into
+    ``brightness_contrast_profiles``, so the two shapes must compare equal.
+    """
+    bc = sd.get("brightness_contrast_profiles")
+    if bc is None:
+        bc = {"default": [sd.get("brightness", 0), int(sd.get("contrast", 0))]}
+    return {k: list(v) for k, v in bc.items()}
+
+
+def _content(doc):
+    """Everything a save must preserve, normalized for what a save may legally change.
+
+    A save is allowed to: lock sections (``align_locked``), drop a trace row's
+    trailing history field, sort tags, sort contour names, and reorder keys.
+    It is not allowed to lose anything.
+    """
+    out = {"log": doc.get("log", ""), "sections": {}}
+    for i, sd in enumerate(doc["sections"]):
+        if not sd:
+            continue
+        out["sections"][i] = {
+            "src": sd["src"], "mag": sd["mag"], "thickness": sd["thickness"],
+            "tforms": sd["tforms"], "calgrid": sd["calgrid"],
+            "bc": _bc(sd),
+            "flags": sd.get("flags", []),
+            "contours": {name: sorted([list(r[:7]) + [sorted(r[7])] for r in rows])
+                         for name, rows in sd["contours"].items()},
+        }
+    ser = doc["series"]
+    out["series"] = {
+        k: ser.get(k) for k in
+        ("current_section", "window", "alignment", "obj_attrs", "user_columns")
+    }
+    out["series"]["editors"] = sorted(ser.get("editors", []))
+    for gk in ("object_groups", "ztrace_groups", "host_tree"):
+        out["series"][gk] = {k: sorted(v) for k, v in (ser.get(gk) or {}).items()}
+    out["series"]["ztraces"] = ser.get("ztraces")
+    return out
+
+
+def _assert_actually_rich(doc):
+    """Guard the round trip against going vacuous again.
+
+    Comparing ``_content(saved) == _content(source)`` only proves something if the
+    source has content. If a future fixture change left any of these empty, the
+    comparison would quietly succeed while proving nothing about that field --
+    which is the exact defect this test was rewritten to remove. So assert the
+    inputs are non-empty before asserting they survive.
+    """
+    c = _content(doc)
+    assert c["log"].strip(), "source log is empty: losslessness of the log is untested"
+    assert c["sections"], "source has no sections"
+    ser = c["series"]
+    for key in ("editors", "object_groups", "ztrace_groups", "host_tree",
+                "obj_attrs", "user_columns"):
+        assert ser.get(key), f"source {key} is empty: its preservation is untested"
+    n_flags = sum(len(s["flags"]) for s in c["sections"].values())
+    n_traces = sum(len(rows) for s in c["sections"].values()
+                   for rows in s["contours"].values())
+    n_tagged = sum(1 for s in c["sections"].values()
+                   for rows in s["contours"].values() for r in rows if r[7])
+    assert n_flags, "source has no flag rows"
+    assert n_traces, "source has no traces"
+    assert n_tagged == n_traces, f"only {n_tagged}/{n_traces} traces carry tags"
+
+
 def test_save_is_pretty_printed_and_round_trips_losslessly(tmp_path):
-    series = _open_fixture(tmp_path)
-    fp = series.jser_fp
+    src_fp, src_doc = _rich_source(tmp_path)
+    # the comparison below is only meaningful if there is something to lose
+    _assert_actually_rich(src_doc)
+
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication(["test"])
+    from PyReconstruct.modules.datatypes.series import Series
+    from PyReconstruct.modules.backend.progress import NullProgressReporter
+
+    series = Series.openJser(src_fp, progress=NullProgressReporter)
+    series.setProgressReporter(NullProgressReporter)
+    n_sections = len(series.sections)
     series.saveJser()
     series.close()
 
-    with open(fp, "rb") as f:
+    with open(src_fp, "rb") as f:
         raw = f.read()
-    assert raw.count(b"\n") > 100, "the .jser should no longer be a single line"
     first = json.loads(raw)
 
+    assert raw.count(b"\n") > 100, "the .jser should no longer be a single line"
+
     # section count and trace count are both recoverable with grep alone
-    text = raw.decode()
-    lines = text.split("\n")
-    assert sum(1 for ln in lines if ln.startswith('  "src":')) == len(series.sections)
+    lines = raw.decode().split("\n")
+    assert sum(1 for ln in lines if ln.startswith('  "src":')) == n_sections
     assert sum(1 for ln in lines if ln.startswith("      [[")) > 0
 
-    # reopen and re-save: semantically identical, and now byte-identical
-    series2 = _open_fixture(tmp_path, name="second.jser")
-    shutil.copyfile(fp, series2.jser_fp)
-    series2.close()
-    series3 = _open_fixture(tmp_path, name="third.jser")
-    shutil.copyfile(fp, series3.jser_fp)
-    series3.close()
+    # NOTHING WAS LOST. Compared against the SOURCE, not against another output
+    # of the same writer: a writer that consistently discards the log or every
+    # flag agrees with itself on every subsequent save.
+    assert _content(first) == _content(src_doc)
+    assert first["log"] == src_doc["log"]
+    for i, sd in enumerate(first["sections"]):
+        if sd is None:
+            continue
+        assert sd["flags"] == src_doc["sections"][i]["flags"], f"flags lost on {i}"
 
-    assert _semantic(first) == _semantic(json.loads(raw))
+    # and the round trip is a fixed point: reopening and re-saving what this
+    # build wrote reproduces it byte for byte
+    second_fp = str(tmp_path / "second.jser")
+    shutil.copyfile(src_fp, second_fp)
+    shutil.rmtree(str(tmp_path / ".second"), ignore_errors=True)
+    series2 = Series.openJser(second_fp, progress=NullProgressReporter)
+    series2.setProgressReporter(NullProgressReporter)
+    series2.saveJser()
+    series2.close()
+    with open(second_fp, "rb") as f:
+        raw2 = f.read()
+    assert _content(json.loads(raw2)) == _content(first)
+    assert raw == raw2, "a second save of unchanged content changed the bytes"
 
 
 def test_minify_env_flag_restores_the_single_line_form(tmp_path, monkeypatch):
@@ -503,3 +631,92 @@ def test_truncated_minified_file_is_not_salvageable(tmp_path, monkeypatch):
     sections, traces = _salvage(cut.decode(errors="replace"))
     assert not sections
     assert not traces
+
+
+# --------------------------------------------------------------------------
+# regressions found reviewing the writer
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("where", ["obj_attrs", "host_tree", "options",
+                                   "user_columns", "ztrace_groups"])
+def test_pretty_writer_emits_string_keys_like_the_compact_writer(where):
+    """A non-string key must not turn the file into non-JSON.
+
+    ``fast_dumps`` passes ``orjson.OPT_NON_STR_KEYS``, so the compact writer
+    coerces ``1`` to ``"1"``. Dumping a key on its own does not, and the writer
+    used to emit ``  1: {...}`` -- a save that succeeds and leaves a file no
+    parser will reopen.
+    """
+    doc = _doc()
+    doc["series"][where] = {1: (["a"] if where != "obj_attrs" else {"comment": "x"})}
+    pretty = dumps_jser(doc, pretty=True)
+    # the whole point: it still parses, and to the same document
+    assert json.loads(pretty) == json.loads(dumps_jser(doc, pretty=False))
+    assert b"\n  1:" not in pretty and b'\n    1:' not in pretty
+
+
+def test_pretty_writer_emits_string_contour_and_section_keys():
+    doc = _doc()
+    doc["sections"][1]["contours"] = {7: [list(_doc()["sections"][1]["contours"]["d01"][0])]}
+    doc["sections"][1][3] = "unknown numeric key"
+    pretty = dumps_jser(doc, pretty=True)
+    assert json.loads(pretty) == json.loads(dumps_jser(doc, pretty=False))
+
+
+def test_empty_group_is_written_as_an_array_not_a_set():
+    """A bare set reaching the writer raises TypeError in orjson AND stdlib."""
+    from PyReconstruct.modules.datatypes.obj_group_dict import ObjGroupDict
+    g = ObjGroupDict(None, "objects", {"a": ["x"]})
+    g.groups["empty"] = set()          # what a direct manipulation leaves behind
+    d = g.getGroupDict()
+    assert d["empty"] == []
+    fast_dumps(d)                      # would raise TypeError on a set
+
+
+def test_tags_are_sorted_even_when_the_section_is_never_touched(tmp_path):
+    """The writer's "tags are sorted" guarantee must not depend on provenance.
+
+    ``Trace.getList`` sorts tags, but it only runs for a section that goes back
+    through the model. ``saveJser`` reads the hidden dir verbatim, so a section
+    the user never opened used to keep whatever tag order its source file had --
+    and two files with identical content then differed by thousands of bytes.
+    """
+    if not os.path.exists(FIXTURE):
+        pytest.skip("fixture shapes1.jser not found")
+    descending = ["zzz_tag", "mmm_tag", "aaa_tag"]
+    doc = json.loads(open(FIXTURE, "rb").read())
+    n = 0
+    for sd in doc["sections"]:
+        if not sd:
+            continue
+        for rows in sd["contours"].values():
+            for row in rows:
+                row[7] = list(descending)
+                n += 1
+    assert n, "fixture has no traces to tag"
+
+    src = str(tmp_path / "unsorted.jser")
+    with open(src, "wb") as f:
+        f.write(json.dumps(doc).encode())
+
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication(["test"])
+    from PyReconstruct.modules.datatypes.series import Series
+    from PyReconstruct.modules.backend.progress import NullProgressReporter
+
+    series = Series.openJser(src, progress=NullProgressReporter)
+    series.setProgressReporter(NullProgressReporter)
+    series.saveJser()          # NO edit: every section is shuttled opaquely
+    series.close()
+
+    out = json.loads(open(src, "rb").read())
+    checked = 0
+    for sd in out["sections"]:
+        if not sd:
+            continue
+        for rows in sd["contours"].values():
+            for row in rows:
+                assert row[7] == sorted(row[7]), f"unsorted tags survived: {row[7]}"
+                assert set(row[7]) == set(descending), "tags were altered, not reordered"
+                checked += 1
+    assert checked == n

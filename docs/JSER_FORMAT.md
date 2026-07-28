@@ -16,8 +16,8 @@ Two things to know before reading further:
   file from its in-memory model. The known divergences are collected in
   [Reader and writer divergences](#9-reader-and-writer-divergences); they are the parts
   most likely to change in a future canonical version.
-- **The writer is canonical and line-structured.** Identical content always produces
-  identical bytes, and the file is laid out one trace per line so that `diff`, `grep` and
+- **The writer is canonical and line-structured.** The same series saved twice produces
+  the same bytes ([one documented exception](#canonical-ordering)), and the file is laid out one trace per line so that `diff`, `grep` and
   `sed` work on it — including on a damaged file that no JSON parser will accept. See
   [Canonical ordering](#canonical-ordering) and [Line structure](#line-structure). Older
   files do not have either property; the reader accepts them regardless.
@@ -58,10 +58,20 @@ leaf value — coordinate arrays included — stays compact on the line it belon
 
 ### Canonical ordering
 
-**Identical content always produces identical bytes.** Two saves of the same series, in
-different processes, byte-compare equal. This holds for anything the writer derives from
-its in-memory model, and it is a guarantee a generator may rely on and a consumer may
-test against.
+**The same series saved twice produces the same bytes.** Two saves of the same series, in
+different processes with different hash seeds, byte-compare equal. That is the guarantee a
+generator may rely on and a consumer may test against, and it is what makes byte-level
+diffing of a `.jser` in version control work.
+
+Stated precisely, because the stronger reading is not true yet: what is canonical is the
+**order** of everything the writer emits — set-derived arrays, object keys, contour names —
+independent of provenance. What is *not* yet canonical is the **key set** of a section
+object. A section that has only ever been shuttled opaquely keeps the legacy scalar
+`brightness`/`contrast` pair (divergence 2); the same section re-derived from the model
+does not, because `Section.getDict` never emits it. So the same content can still differ
+by those two keys depending on whether the user has touched that section, and the byte
+difference cascades from there. Closing that gap means deciding whether the legacy pair is
+data or debris, which is a schema question, not a writer question — see divergence 2.
 
 Making it true required sorting the five structures that are Python `set` objects in
 memory and JSON arrays on disk. Each is written in **sorted order**:
@@ -138,6 +148,7 @@ The layout rules, stated as guarantees:
 | a section key | one per line, indented 2 |
 | a contour name | one per line, indented 4, as `    "<name>": [` |
 | a trace row | one per line, indented 6, complete and self-contained |
+| a palette trace row | one per line, **also indented 6** — see the caveat under [Line structure](#line-structure) |
 | a flag row | one per line, indented 4 |
 | a transform | one per line, indented 4 |
 | the series object | one key per line, indented 2; the large maps expand one entry per line |
@@ -153,30 +164,53 @@ with no tooling at all. On the single-line form `diff` can only say "line 1 chan
 reprint the whole file twice.
 
 **A damaged file stays partially salvageable.** Recovery by reading a `.jser` directly is
-a real workflow, and `jq` refuses to parse truncated or corrupt JSON — so line structure
-is the only thing that makes `grep`/`sed` salvage possible. From a file cut in half:
+a real workflow, and `jq` refuses to parse truncated or corrupt JSON. Line structure makes
+that recovery a matter of line-anchored patterns instead of hand-written regexes. From a
+file cut in half:
 
 ```sh
 grep -c '^  "src":'     series.jser   # sections, one match per live section
-grep -c '^      \['     series.jser   # trace rows
+grep -c '^      \['     series.jser   # trace rows -- see the caveat below
 grep -n '"d01": \['     series.jser   # every section carrying object d01, with line numbers
 sed -n '8068p'          series.jser   # exactly one trace row, valid JSON on its own
 ```
 
 Every trace row recovered this way parses independently as JSON, because the whole row is
-on one line. None of it works on a single-line file.
+on one line.
 
-Measured on a real 393 MB series (318 sections, 161,787 traces) truncated to exactly half
-its length: `jq` refuses the file, while `grep` still finds **161 sections and 80,111
-trace rows**, locates all 159 surviving sections carrying a named object, and `sed -n Np`
-on any of those lines yields a row that parses on its own. The same cut on the minified
-form yields nothing at all.
+Measured on a real 393 MB series (318 sections, 161,767 section traces) truncated to
+exactly half its length: `jq` refuses the file, while `grep` still finds **161 sections
+and 80,111 trace rows**, locates all 159 surviving sections carrying a named object, and
+`sed -n Np` on any of those lines yields a row that parses on its own.
 
-One caveat on `^{$`: the document's own opening brace is also alone in column 0, so it
-matches too. `grep -c '^  "src":'` is the exact section count.
+Two caveats, so the recipes above are not read as more than they are:
+
+- **`^      \[` is not exactly "trace rows."** Palette trace rows sit at the same indent,
+  so on a whole file the count is section traces **plus** the 20-or-so palette rows, and a
+  palette row is a 9-field row whose first field is the trace name — a different shape
+  from an 8-field section trace row. Filter on shape, not on indent alone, if the
+  distinction matters.
+- **`^{$` also matches the document's own opening brace.** `grep -c '^  "src":'` is the
+  exact section count.
+
+**What line structure does *not* buy.** It is worth being precise, because the same cut on
+the **minified** form is not unrecoverable — it is merely less convenient. Line-anchored
+patterns find nothing there, since there are no lines, but non-anchored ones do:
+`grep -oa '"src":' ` finds the same **161** sections, and one `grep -oE` for the trace-row
+shape recovers **79,736** complete, individually-parseable rows — 99.5% of what the
+pretty form yields, in about a second. So line structure buys **obvious, exact,
+tool-friendly salvage** (a fixed column, `sed -n Np`, the enclosing object name as
+context) rather than the difference between recoverable and lost.
 
 Set `PYRECON_JSER_MINIFY=1` to write the old compact single line instead. The reader
 accepts either — this is whitespace, so it is backward-compatible in both directions.
+
+The flag is read once, when the module is imported, so it must be set before the
+application starts; changing it in a running process has no effect. It governs
+**whitespace only** — [canonical ordering](#canonical-ordering) still applies, so a
+minified file written by this build is *not* byte-identical to one written by a build from
+before ordering was canonical. There is deliberately no switch that turns canonical
+ordering off.
 
 ### Encoding and byte-level invariants
 
