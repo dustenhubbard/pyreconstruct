@@ -167,6 +167,11 @@ class MainWindow(QMainWindow):
         self.trace_actions = [
             self.tracemenu,
             self.objectmenu,
+            # hoisted out of the Trace submenu onto the top strip -- they were
+            # gated by disabling tracemenu, so they must be gated here now
+            self.mergetraces_act,
+            self.mergeobjects_act,
+            self.hidetraces_act,
             self.cut_act,
             self.copy_act,
             self.copytosections_act,
@@ -177,15 +182,7 @@ class MainWindow(QMainWindow):
         ]
 
         ## Create label menu (shown when right-clicking a zarr overlay label).
-        ## Both actions operate on the interactive zarr overlay's currently
-        ## selected label ids (self.field.zarr_layer.selected_ids); their
-        ## handlers and dependencies are all live (see importLabels /
-        ## mergeLabels). "Import labels" imports the selected labels straight
-        ## away (no dialog -> no ellipsis); "Merge labels" merges them in place.
-        label_menu_list = [
-            ("importlabels_act", "Import labels", "", self.importLabels),
-            ("mergelabels_act", "Merge labels", "", self.mergeLabels)
-        ]
+        label_menu_list = get_label_menu_list(self)
         self.label_menu = QMenu(self)
         populateMenu(self, self.label_menu, label_menu_list)
 

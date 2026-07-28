@@ -836,9 +836,19 @@ class FieldWidgetTrace(FieldWidgetBase):
     ## Interactions accessible through field and trace list ####################
     ############################################################################
 
-    def getTraceMenu(self, is_in_field=True):
-        """Return the trace context menu list structure."""
-        return get_context_menu_list_trace(self, is_in_field)
+    def getTraceMenu(self, is_in_field=True, list_ops=None, find_in_field=None):
+        """Return the trace context menu list structure.
+
+            Params:
+                is_in_field (bool): True for the field submenu variant
+                list_ops (list): list-only table utilities for the trace list's
+                    bottom utility slot
+                find_in_field (callable): the trace list's "jump to this trace"
+                    handler
+        """
+        return get_context_menu_list_trace(
+            self, is_in_field, list_ops=list_ops, find_in_field=find_in_field
+        )
 
     def trace_function(fn):
         """Property given to all trace actions that are accessible through a context menu.
@@ -1180,18 +1190,26 @@ class FieldWidgetTrace(FieldWidgetBase):
     
     # ALL ZTRACE FUNCTIONS
 
-    def getZtraceMenu(self):
-        """Get the context menu list for interacting with ztraces."""
+    def getZtraceMenu(self, list_ops=None):
+        """Get the context menu list for interacting with ztraces.
+
+            Params:
+                list_ops (list): list-only table utilities ("Invert selection",
+                    "Copy z-trace values") for the standard bottom utility slot
+        """
         context_menu_list = [
             ("editztracce_act", "Edit z-trace attributes...", "", self.editZtraceAttributes),
             ("smoothztrace_act", "Smooth", "", self.smoothZtrace),
+            # Hoisted out of "3D >" alongside the object menu's equivalent (this
+            # lab is 3D-heavy). The label gains "3D" because at top level it no
+            # longer has the submenu for context.
+            ("addto3D_act", "Add to 3D scene", "", self.addZtraceTo3D),
             None,
             {
                 "attr_name": "ztracemenu_3D",
                 "text": "3D",
                 "opts":
                 [
-                    ("addto3D_act", "Add to scene", "", self.addZtraceTo3D),
                     ("remove3D_act", "Remove from scene", "", self.removeZtrace3D)
                 ]
             },
@@ -1206,9 +1224,17 @@ class FieldWidgetTrace(FieldWidgetBase):
                 ]
             },
             ("setztracealignment_act", "Edit alignment...", "", self.editZtraceAlignment),
+        ]
+
+        # table utilities, in the slot every list shares
+        if list_ops:
+            context_menu_list += [None] + list(list_ops)
+
+        context_menu_list += [
             None,
             ("deleteztrace_act", "Delete z-traces", "", self.deleteZtrace)
         ]
+
         return context_menu_list
 
     def ztrace_function(fn):

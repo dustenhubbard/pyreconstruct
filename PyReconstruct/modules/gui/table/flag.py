@@ -87,26 +87,34 @@ class FlagTableWidget(DataTable):
         populateMenuBar(self, self.menubar, menubar_list)
 
         # create the right-click menu
-        context_menu_list = [
-            # table-level selection op (parity with the other lists)
-            ("invertflagselection_act", "Invert selection", "", self.invertSelection),
-            None,
+        self.context_menu = QMenu(self)
+        populateMenu(self, self.context_menu, self.getContextMenuList())
+
+    def getContextMenuList(self):
+        """Return the right-click menu definition for the flag list.
+
+        The flag workflow is open -> fix -> resolve, so Edit and Mark resolved
+        are rows 1 and 3; the table utilities drop to the standard bottom slot
+        and both destructive actions stay last, series-wide scope spelled out.
+        """
+        return [
             ("editattribtues_act", "Edit flag...", "", self.editFlag),
-            ("flagcolorfilter_act", "Use as color filter", "", self.setColorFilter),
             None,
             # two top-level items (formerly a "Resolve" submenu); handlers and
             # attr_names unchanged.
             ("resolve_act", "Mark resolved", "", self.markResolved),
             ("unresolved_act", "Mark unresolved", "", lambda : self.markResolved(False)),
             None,
+            ("flagcolorfilter_act", "Use as color filter", "", self.setColorFilter),
+            None,
+            # table utilities, in the slot every list shares (second-from-bottom)
+            ("invertflagselection_act", "Invert selection", "", self.invertSelection),
             ("copy_act", "Copy flag values", "", self.table.copy),
             None,
             ("delete_act", "Delete flags", "", self.deleteFlags),
             ("deletematchname_act", "Delete all flags with this name (entire series)", "", self.deleteFlagName)
         ]
-        self.context_menu = QMenu(self)
-        populateMenu(self, self.context_menu, context_menu_list)
-    
+
     def getItems(self, flag : Flag, item_type : str):
         """Get the QTableWidgetItem(s) for an attribute of a flag.
         

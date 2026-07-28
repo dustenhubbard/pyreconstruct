@@ -36,9 +36,14 @@ class FieldWidgetObject(FieldWidgetTrace):
     All field functions associated with modifying objects.
     """
 
-    def getObjMenu(self):
-        """Get the context menu list for modifying objects."""
-        return get_context_menu_list_obj(self)
+    def getObjMenu(self, list_ops=None):
+        """Get the context menu list for modifying objects.
+
+            Params:
+                list_ops (list): list-only table utilities for the object
+                    list's bottom utility slot (the field passes none)
+        """
+        return get_context_menu_list_obj(self, list_ops=list_ops)
 
     # repeated code that individual functions might need to handle:
     #  - any series_states handling

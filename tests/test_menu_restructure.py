@@ -123,25 +123,35 @@ def test_operations_grabbag_is_dissolved():
     assert _submenu(menu, "Operations") is None
     assert _submenu(menu, "Attributes") is None  # reverted from phase-2a retitle
     assert _submenu(menu, "Object attributes") is not None
-    assert _submenu(menu, "Visibility") is not None
     assert _submenu(menu, "Geometry") is not None
+    # the frequency-first redesign dissolves "Visibility >" in turn: its five
+    # actions are top-level (see the layout test in
+    # test_context_menu_frequency.py)
+    assert _submenu(menu, "Visibility") is None
 
 
-def test_visibility_submenu_holds_the_five_visibility_actions():
+def test_visibility_actions_are_top_level_and_keep_their_order():
+    """The visibility family is one flat top-level group (was "Visibility >");
+    Hide/Unhide keep their pairing and the group keeps its order."""
     menu = get_context_menu_list_obj(_ObjMenuStub())
-    vis = _names(list(_walk(_submenu(menu, "Visibility"))))
-    assert vis == [
-        "hideobj_act", "unhideobj_act", "hideotherobj_act",
-        "hideallobj_act", "showallobj_act",
-    ]
+    top = [e[0] for e in menu if isinstance(e, tuple)]
+    vis = ["hideobj_act", "unhideobj_act", "hideotherobj_act",
+           "hideallobj_act", "showallobj_act"]
+    for act in vis:
+        assert act in top, f"{act} is not a top-level object-menu action"
+    idx = [top.index(a) for a in vis]
+    assert idx == sorted(idx), "visibility group lost its order"
+    assert idx == list(range(idx[0], idx[0] + len(vis))), "visibility group is not contiguous"
 
 
 def test_geometry_submenu_holds_the_geometry_actions():
+    """Pure shape ops only: "Duplicate object" was hoisted to the top strip and
+    "Remove all tags" moved out (it is a bulk TRACE operation, not geometry)."""
     menu = get_context_menu_list_obj(_ObjMenuStub())
     geo = _names(list(_walk(_submenu(menu, "Geometry"))))
     assert geo == [
-        "copyobj_act", "editobjradius_act", "editobjshape_act",
-        "smoothobj_act", "splitobj_act", "removealltags_act",
+        "editobjradius_act", "editobjshape_act",
+        "smoothobj_act", "splitobj_act",
     ]
 
 

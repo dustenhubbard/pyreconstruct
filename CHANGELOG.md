@@ -14,6 +14,30 @@ the README's *From source (developers)* section).
 ## [Unreleased]
 
 ### Changed
+- **Right-click menus are reorganized frequency-first: the everyday actions are
+  now one click, not two.** All seven right-click surfaces (2D field, zarr label,
+  and the object / trace / z-trace / section / flag lists) follow one shape:
+  the action(s) you almost always came for at the top with their shortcuts on
+  display, everyday groups next, named submenus for the long tail, table
+  utilities second-from-bottom, destructive last. Specifically: the field menu's
+  top strip is the four shortcut-bearing trace actions (Edit / Merge / Merge
+  attributes only / Hide), hoisted out of `Trace >`; the object menu's
+  `Visibility >` submenu is dissolved to a flat top-level group and
+  `Comment...`, `Duplicate object`, `Add to 3D scene` and `Group >` are hoisted
+  to top level; every list menu now leads with a domain action instead of
+  `Invert selection`, which moves to the shared bottom utility slot beside
+  `Copy <entity> values`. **No action was removed, renamed, or unbound** — all
+  112 inventoried actions remain reachable and every keyboard shortcut keeps its
+  key (shortcuts are keyed to internal action names, which are unchanged). The
+  only label change is `Add to scene` → `Add to 3D scene`, which needs the noun
+  now that it sits at top level rather than inside `3D >`.
+- **The object menu's "Remove all tags" is filed honestly.** Tags are
+  trace-level, so on an object menu this action strips tags from every trace of
+  the selected objects, series-wide — a bulk trace operation, not an object
+  attribute and not geometry (its old home). It now sits in its own group above
+  `Delete objects`.
+- **The trace list gains `Find > Find in field`**, mirroring what double-clicking
+  a row already does, for discoverability.
 - **Saved `.jser` files are minified again, so saves are faster and files are
   smaller.** The structural pretty-printing introduced in #102 was kept on the
   assumption it was nearly free. Measured, it was not: on a 391 MB series it cost
