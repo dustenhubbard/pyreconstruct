@@ -57,11 +57,13 @@ from .getdatetime import(
 
 from .fast_json import (
     fast_loads,
-    fast_dumps
+    fast_dumps,
+    std_dumps
 )
 
 from .jser_format import (
     dumps_jser,
+    pretty_default,
     canon_keys,
     canon_keys_inplace,
     SECTION_KEYS,

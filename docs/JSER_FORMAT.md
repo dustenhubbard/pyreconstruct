@@ -175,8 +175,45 @@ form yields nothing at all.
 One caveat on `^{$`: the document's own opening brace is also alone in column 0, so it
 matches too. `grep -c '^  "src":'` is the exact section count.
 
-Set `PYRECON_JSER_MINIFY=1` to write the old compact single line instead. The reader
-accepts either — this is whitespace, so it is backward-compatible in both directions.
+Set `PYRECON_JSER_MINIFY=1` to write a single line instead. The reader accepts either —
+this is whitespace, so it is backward-compatible in both directions. The variable is read
+at save time, so exporting it mid-session affects the next save.
+
+### Separators: the byte convention is normative
+
+**A minified `.jser` is byte-for-byte `json.dumps(document)`.** Separators are `", "` and
+`": "` — a space after every comma and every colon that is not inside a string — and
+numbers are spelled exactly as the Python standard library spells them. The pretty form
+uses the same leaf bytes and the same separators; only line structure and indentation
+differ, so the two forms differ in whitespace and nothing else.
+
+This is stated normatively because it is load-bearing rather than cosmetic. `.jser` is
+read and re-written by a second implementation, parsed directly by lab analysis scripts,
+and hand-edited by people; those readers were written against the bytes the standard
+library produces, which is what this program emitted for its whole history until `orjson`
+reached the write path. `orjson` writes `,` and `:` with no following space, so adopting
+it changed the artifact's byte convention as a side effect of a *performance* change, and
+nothing tested the pair together. The consequences were invisible for two releases:
+
+- a byte-for-byte re-export by the second implementation stopped matching, and
+- its parallel importer, which recognises a document by its first fourteen bytes
+  (`{"sections": [`), rejected every file this program wrote and fell back to a
+  sequential parse. Measured on a 427 MB series: **1.0 s against 24.5 s.**
+
+So a writer change that alters whitespace, separators, or number formatting is a
+**compatibility change, not a cosmetic one**, and belongs with the tests in
+`tests/test_jser_stdlib_separators.py` that pin this convention.
+
+Two practical consequences:
+
+- **Only the minified form clears that fourteen-byte check.** The pretty default begins
+  `{\n"sections": [\n`, so a consumer with a byte-prefix fast path will fall back to its
+  slower reader on a pretty file. Save minified when handing a large series to one.
+  Content is unaffected either way — a pretty file round-trips through that
+  implementation and back to this one with no drift.
+- The spaces cost about **9% of file size**. That is accepted deliberately: `.jser` is a
+  shared artifact whose job is to be readable by other tools, and size is the cheapest
+  thing it has to trade.
 
 ### Encoding and byte-level invariants
 
@@ -1135,11 +1172,14 @@ symbol, treat the corresponding claim in this page as unverified until re-checke
 | ASCII-only output, `\uXXXX` escaping, surrogate pairs | `PyReconstruct/modules/constants/fast_json.py:53`, `:56`, `:71` |
 | Rationale for ASCII escaping (Windows locale-mode readers) | `PyReconstruct/modules/constants/fast_json.py:17-31` |
 | `orjson` preferred, standard library fallback on raise | `PyReconstruct/modules/constants/fast_json.py:83-103` |
+| Stdlib `json.dumps` separators and number formatting for the `.jser` | `PyReconstruct/modules/constants/fast_json.py` (`std_dumps`, `_widen_separators`, `_diverging_number`) |
+| Minified document assembled section by section | `PyReconstruct/modules/constants/jser_format.py` (`_dumps_minified`) |
+| Separator convention and orjson-assumption tests | `tests/test_jser_stdlib_separators.py` |
 | Non-string mapping keys coerced | `PyReconstruct/modules/constants/fast_json.py:99` (`OPT_NON_STR_KEYS`) |
 | Non-finite and out-of-range integer caveats | `PyReconstruct/modules/constants/fast_json.py:9-17` |
 | `orjson` is a pinned dependency | `pyproject.toml:38`, `requirements.txt:9` |
 | Atomic replace of the `.jser` | `PyReconstruct/modules/datatypes/series.py:88-115` |
-| Structural pretty printer; `PYRECON_JSER_MINIFY` | `PyReconstruct/modules/constants/jser_format.py` (`dumps_jser`, `PRETTY_DEFAULT`) |
+| Structural pretty printer; `PYRECON_JSER_MINIFY` | `PyReconstruct/modules/constants/jser_format.py` (`dumps_jser`, `pretty_default`) |
 | Canonical key order and unknown-key preservation | `PyReconstruct/modules/constants/jser_format.py` (`canon_keys`, `SECTION_KEYS`, `SERIES_KEYS`) |
 | Section key order and contour sort applied | `PyReconstruct/modules/datatypes/section.py` (end of `Section.updateJSON`, `Section.getDict`) |
 | Series key order and options-bag order applied | `PyReconstruct/modules/datatypes/series.py` (end of `Series.updateJSON`) |

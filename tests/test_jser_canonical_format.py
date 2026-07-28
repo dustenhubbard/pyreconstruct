@@ -219,10 +219,15 @@ def test_pretty_output_parses_to_the_same_document():
     assert json.loads(dumps_jser(doc, pretty=True)) == json.loads(fast_dumps(doc))
 
 
-def test_minified_output_is_byte_identical_to_the_old_writer():
-    """The flag really is a whitespace switch, not a second serializer."""
+def test_minified_output_is_byte_identical_to_stdlib_json_dumps():
+    """The flag is a whitespace switch, and minified is the stdlib byte layout.
+
+    Previously this asserted equality with ``fast_dumps`` -- orjson's compact
+    ``,``/``:`` -- which is the convention that broke interoperability. The
+    document is now byte-for-byte what ``json.dumps`` writes.
+    """
     doc = _doc()
-    assert dumps_jser(doc, pretty=False) == fast_dumps(doc)
+    assert dumps_jser(doc, pretty=False) == json.dumps(doc).encode()
 
 
 def test_pretty_output_is_pure_ascii_with_no_trailing_newline():
@@ -348,8 +353,14 @@ def test_save_is_pretty_printed_and_round_trips_losslessly(tmp_path):
 
 
 def test_minify_env_flag_restores_the_single_line_form(tmp_path, monkeypatch):
-    from PyReconstruct.modules.constants import jser_format
-    monkeypatch.setattr(jser_format, "PRETTY_DEFAULT", False)
+    """The real environment variable, set after import, must take effect.
+
+    The flag used to be read once at import time and this test monkeypatched the
+    resulting module global -- so the documented interface, ``PYRECON_JSER_MINIFY``,
+    was never actually exercised and would not have worked when exported from a
+    running session. Setting the variable itself is the point of the test.
+    """
+    monkeypatch.setenv("PYRECON_JSER_MINIFY", "1")
     series = _open_fixture(tmp_path)
     fp = series.jser_fp
     series.saveJser()
@@ -489,8 +500,7 @@ def test_truncated_pretty_file_is_still_salvageable(tmp_path):
 
 def test_truncated_minified_file_is_not_salvageable(tmp_path, monkeypatch):
     """The control: without line structure the same cut yields nothing."""
-    from PyReconstruct.modules.constants import jser_format
-    monkeypatch.setattr(jser_format, "PRETTY_DEFAULT", False)
+    monkeypatch.setenv("PYRECON_JSER_MINIFY", "1")
     series = _open_fixture(tmp_path)
     fp = series.jser_fp
     series.saveJser()

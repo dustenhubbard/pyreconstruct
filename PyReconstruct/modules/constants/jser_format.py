@@ -1,8 +1,15 @@
-"""Canonical ordering and structural pretty-printing for the .jser writer.
+"""Canonical ordering, byte layout, and structural pretty-printing for the .jser writer.
 
-Two writer guarantees live here, and nothing else. Neither changes the schema:
+Three writer guarantees live here, and nothing else. None changes the schema:
 every file this module produces is the same JSON document the compact writer
 produced, with the same keys and the same values.
+
+**Stdlib-compatible byte layout.** Separators are ``", "`` and ``": "``, and
+every leaf is written by ``std_dumps``, so a minified ``.jser`` is byte-for-byte
+``json.dumps(document)``. That convention is not cosmetic: `.jser` is read and
+re-written by a second implementation and by lab analysis scripts, all of which
+were written against the bytes this program emitted before orjson reached the
+write path. See ``fast_json.std_dumps`` for the full account.
 
 **Canonical ordering.** Five structures are Python ``set`` objects in memory and
 JSON arrays on disk (trace ``tags``, series ``editors``, the member lists of
@@ -33,19 +40,28 @@ Why lines matter, concretely:
   ``grep -c '^      \\['`` counts traces even in a file that no JSON parser will
   touch.
 
-Set ``PYRECON_JSER_MINIFY=1`` (or pass ``pretty=False``) to get the old
-single-line output; the reader accepts both, since this is whitespace.
+Set ``PYRECON_JSER_MINIFY=1`` (or pass ``pretty=False``) to get single-line
+output; the reader accepts both, since this is whitespace. Minified output is the
+form the second implementation's parallel importer recognises, so it is also the
+form to save when handing a large series to it.
 """
 
 import os
 
-from .fast_json import fast_dumps
+from .fast_json import std_dumps
 
 
-#: Writer default. Pretty-printing is on unless explicitly disabled, per the
-#: format decision ("pretty-print by default, with a writer flag so a minified
-#: variant exists if size ever matters").
-PRETTY_DEFAULT = os.environ.get("PYRECON_JSER_MINIFY", "") != "1"
+def pretty_default() -> bool:
+    """Whether the writer pretty-prints, per ``PYRECON_JSER_MINIFY``.
+
+    Read from the environment on every call rather than once at import, so the
+    setting takes effect for the save that follows it instead of only for
+    processes started after it was exported.
+
+        Returns:
+            (bool) True to pretty-print, False for single-line output
+    """
+    return os.environ.get("PYRECON_JSER_MINIFY", "") != "1"
 
 
 # ---------------------------------------------------------------------------
@@ -142,11 +158,11 @@ def canon_keys_inplace(d : dict, order) -> None:
 # structural pretty printer
 # ---------------------------------------------------------------------------
 #
-# Every leaf is serialized by fast_dumps, so leaf bytes -- number formatting,
-# ASCII escaping, orjson-vs-stdlib fallback -- are exactly what the compact
-# writer produces. Only the structure is expanded. Coordinates never get a line
-# of their own: they are the bulk of the file, and one point per line would be
-# both enormous and less readable, not more.
+# Every leaf is serialized by std_dumps, so leaf bytes -- number formatting,
+# ASCII escaping, separators -- are exactly what stdlib json.dumps produces.
+# Only the structure is expanded. Coordinates never get a line of their own:
+# they are the bulk of the file, and one point per line would be both enormous
+# and less readable, not more.
 
 _NL = b"\n"
 
@@ -154,11 +170,11 @@ _NL = b"\n"
 def _dump_mapping_per_line(d, indent : int, out : list) -> None:
     """``{"k": <compact>, ...}`` with one key per line."""
     if not isinstance(d, dict) or not d:
-        out.append(fast_dumps(d))
+        out.append(std_dumps(d))
         return
     pad = b" " * (indent + 2)
     body = (b"," + _NL + pad).join(
-        [fast_dumps(k) + b": " + fast_dumps(v) for k, v in d.items()]
+        [std_dumps(k) + b": " + std_dumps(v) for k, v in d.items()]
     )
     out.append(b"{" + _NL + pad + body + _NL + b" " * indent + b"}")
 
@@ -171,24 +187,24 @@ def _dump_row_array(rows, indent : int, out : list) -> None:
     pretty-printing.
     """
     if not isinstance(rows, list) or not rows:
-        out.append(fast_dumps(rows))
+        out.append(std_dumps(rows))
         return
     pad = b" " * (indent + 2)
-    body = (b"," + _NL + pad).join([fast_dumps(row) for row in rows])
+    body = (b"," + _NL + pad).join([std_dumps(row) for row in rows])
     out.append(b"[" + _NL + pad + body + _NL + b" " * indent + b"]")
 
 
 def _dump_contours(contours, indent : int, out : list) -> None:
     """``{"<object name>": [<one trace per line>], ...}``."""
     if not isinstance(contours, dict) or not contours:
-        out.append(fast_dumps(contours))
+        out.append(std_dumps(contours))
         return
     out.append(b"{" + _NL)
     names = list(contours)
     lastn = len(names) - 1
     inner = indent + 2
     for ni, name in enumerate(names):
-        out.append(b" " * inner + fast_dumps(name) + b": ")
+        out.append(b" " * inner + std_dumps(name) + b": ")
         _dump_row_array(contours[name], inner, out)
         out.append((b"," if ni != lastn else b"") + _NL)
     out.append(b" " * indent + b"}")
@@ -197,14 +213,14 @@ def _dump_contours(contours, indent : int, out : list) -> None:
 def _dump_section(sd, indent : int, out : list) -> None:
     """One section block: one key per line, contours/flags/tforms expanded."""
     if not isinstance(sd, dict) or not sd:
-        out.append(fast_dumps(sd))
+        out.append(std_dumps(sd))
         return
     out.append(b"{" + _NL)
     keys = list(sd)
     last = len(keys) - 1
     inner = indent + 2
     for i, k in enumerate(keys):
-        out.append(b" " * inner + fast_dumps(k) + b": ")
+        out.append(b" " * inner + std_dumps(k) + b": ")
         if k == "contours":
             _dump_contours(sd[k], inner, out)
         elif k == "flags":
@@ -212,7 +228,7 @@ def _dump_section(sd, indent : int, out : list) -> None:
         elif k == "tforms":
             _dump_mapping_per_line(sd[k], inner, out)
         else:
-            out.append(fast_dumps(sd[k]))
+            out.append(std_dumps(sd[k]))
         out.append((b"," if i != last else b"") + _NL)
     out.append(b" " * indent + b"}")
 
@@ -232,7 +248,7 @@ _SERIES_MAPPINGS = frozenset((
 def _dump_series(sd, indent : int, out : list) -> None:
     """The series object: one key per line, the big mappings expanded."""
     if not isinstance(sd, dict) or not sd:
-        out.append(fast_dumps(sd))
+        out.append(std_dumps(sd))
         return
     out.append(b"{" + _NL)
     keys = list(sd)
@@ -240,30 +256,30 @@ def _dump_series(sd, indent : int, out : list) -> None:
     inner = indent + 2
     for i, k in enumerate(keys):
         v = sd[k]
-        out.append(b" " * inner + fast_dumps(k) + b": ")
+        out.append(b" " * inner + std_dumps(k) + b": ")
         if k == "palette_traces":
             # {group name: [one 9-field palette row per line]}
             if not isinstance(v, dict) or not v:
-                out.append(fast_dumps(v))
+                out.append(std_dumps(v))
             else:
                 out.append(b"{" + _NL)
                 gnames = list(v)
                 lastg = len(gnames) - 1
                 for gi, g in enumerate(gnames):
-                    out.append(b" " * (inner + 2) + fast_dumps(g) + b": ")
+                    out.append(b" " * (inner + 2) + std_dumps(g) + b": ")
                     _dump_row_array(v[g], inner + 2, out)
                     out.append((b"," if gi != lastg else b"") + _NL)
                 out.append(b" " * inner + b"}")
         elif k == "ztraces":
             # {ztrace name: {"color": [...], "points": [...]}}
             if not isinstance(v, dict) or not v:
-                out.append(fast_dumps(v))
+                out.append(std_dumps(v))
             else:
                 out.append(b"{" + _NL)
                 znames = list(v)
                 lastz = len(znames) - 1
                 for zi, z in enumerate(znames):
-                    out.append(b" " * (inner + 2) + fast_dumps(z) + b": ")
+                    out.append(b" " * (inner + 2) + std_dumps(z) + b": ")
                     _dump_mapping_per_line(v[z], inner + 2, out)
                     out.append((b"," if zi != lastz else b"") + _NL)
                 out.append(b" " * inner + b"}")
@@ -272,16 +288,57 @@ def _dump_series(sd, indent : int, out : list) -> None:
         elif k in _SERIES_MAPPINGS:
             _dump_mapping_per_line(v, inner, out)
         else:
-            out.append(fast_dumps(v))
+            out.append(std_dumps(v))
         out.append((b"," if i != last else b"") + _NL)
     out.append(b" " * indent + b"}")
+
+
+def _dumps_minified(jser_data : dict) -> bytes:
+    """``json.dumps(jser_data)``, assembled one section at a time.
+
+    Handing the whole document to ``std_dumps`` would give the same bytes, but its
+    stdlib fallback is all-or-nothing: a single value anywhere in the file that
+    orjson and stdlib spell differently sends the *entire* document down the slow
+    path. On a 427 MB series that measured 20.9 s against 5.8 s. Serializing each
+    section separately keeps the fallback local to the section that needs it.
+
+    The layout is stdlib's own by construction -- ``json.dumps`` writes a dict as
+    ``{`` + ``", "``-joined ``key: value`` pairs + ``}`` and a list as ``[`` +
+    ``", "``-joined elements + ``]``, in the dict's own key order -- so this is
+    assembly, not a second serializer.
+
+        Params:
+            jser_data (dict): the assembled document (sections / series / log)
+        Returns:
+            (bytes) the file contents, byte-for-byte ``json.dumps(jser_data)``
+    """
+    if not isinstance(jser_data, dict) or "sections" not in jser_data:
+        # not a .jser document; nothing worth taking apart
+        return std_dumps(jser_data)
+    if not all(isinstance(k, str) for k in jser_data):
+        # json.dumps coerces a non-string key to a quoted string; rather than
+        # reproduce that here, hand the whole document over and stay exact
+        return std_dumps(jser_data)
+    out = []
+    for k, v in jser_data.items():
+        if out:
+            out.append(b", ")
+        out.append(std_dumps(k) + b": ")
+        if k == "sections" and isinstance(v, list):
+            out.append(b"[" + b", ".join(
+                [b"null" if sd is None else std_dumps(sd) for sd in v]
+            ) + b"]")
+        else:
+            out.append(std_dumps(v))
+    return b"{" + b"".join(out) + b"}"
 
 
 def dumps_jser(jser_data : dict, pretty : bool = None) -> bytes:
     """Serialize a whole .jser document to ASCII JSON bytes.
 
-    Structurally pretty-printed with compact leaves by default; byte-for-byte the
-    old compact single line when `pretty` is False.
+    Structurally pretty-printed with compact leaves by default; byte-for-byte
+    ``json.dumps(jser_data)`` -- a single stdlib-conventional line -- when
+    `pretty` is False.
 
         Params:
             jser_data (dict): the assembled document (sections / series / log)
@@ -290,12 +347,12 @@ def dumps_jser(jser_data : dict, pretty : bool = None) -> bytes:
             (bytes) the file contents
     """
     if pretty is None:
-        pretty = PRETTY_DEFAULT
+        pretty = pretty_default()
     if not pretty:
-        return fast_dumps(jser_data)
+        return _dumps_minified(jser_data)
     if not isinstance(jser_data, dict) or "sections" not in jser_data:
         # not a .jser document; nothing structural to expand
-        return fast_dumps(jser_data)
+        return std_dumps(jser_data)
 
     out = [b"{" + _NL]
 
@@ -316,13 +373,13 @@ def dumps_jser(jser_data : dict, pretty : bool = None) -> bytes:
     _dump_series(jser_data.get("series", {}), 0, out)
     out.append(b"," + _NL)
 
-    out.append(b'"log": ' + fast_dumps(jser_data.get("log", "")))
+    out.append(b'"log": ' + std_dumps(jser_data.get("log", "")))
 
     # any key this build does not know about is still written, so a hand-added
     # top-level key is not silently destroyed by the pretty printer
     extras = [k for k in jser_data if k not in TOP_LEVEL_KEYS]
     for k in sorted(extras, key=str):
-        out.append(b"," + _NL + fast_dumps(k) + b": " + fast_dumps(jser_data[k]))
+        out.append(b"," + _NL + std_dumps(k) + b": " + std_dumps(jser_data[k]))
 
     out.append(_NL + b"}")
     return b"".join(out)
