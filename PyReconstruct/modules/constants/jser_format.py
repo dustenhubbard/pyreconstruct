@@ -353,32 +353,42 @@ def dumps_jser(jser_data : dict, pretty : bool = None) -> bytes:
         # not a .jser document; nothing structural to expand
         return fast_dumps(jser_data)
 
-    out = [b"{" + _NL]
+    # Each top-level member is built independently and they are joined with
+    # ",\n" at the end. Emitting separators inline made the writer's correctness
+    # depend on which members happened to be present, which is how it came to
+    # invent a "log" key that the compact writer does not write.
+    members = []
 
     # sections: one section block per element, opening brace alone in column 0
     # so that section boundaries are findable in a file no parser will accept.
-    out.append(b'"sections": [' + _NL)
+    part = [b'"sections": [' + _NL]
     sections = jser_data["sections"]
     last = len(sections) - 1
     for i, sd in enumerate(sections):
         if sd is None:
-            out.append(b"null")
+            part.append(b"null")
         else:
-            _dump_section(sd, 0, out)
-        out.append((b"," if i != last else b"") + _NL)
-    out.append(b"]," + _NL)
+            _dump_section(sd, 0, part)
+        part.append((b"," if i != last else b"") + _NL)
+    part.append(b"]")
+    members.append(b"".join(part))
 
-    out.append(b'"series": ')
-    _dump_series(jser_data.get("series", {}), 0, out)
-    out.append(b"," + _NL)
+    # "series" and "log" are emitted only when the document actually has them:
+    # defaulting them in would *add* keys the compact writer does not write, and
+    # the promise at the top of this module is that both writers produce the same
+    # document. saveJser always populates all three, so a missing one only arises
+    # for a caller assembling a document by hand.
+    if "series" in jser_data:
+        part = [b'"series": ']
+        _dump_series(jser_data["series"], 0, part)
+        members.append(b"".join(part))
 
-    out.append(b'"log": ' + fast_dumps(jser_data.get("log", "")))
+    if "log" in jser_data:
+        members.append(b'"log": ' + fast_dumps(jser_data["log"]))
 
     # any key this build does not know about is still written, so a hand-added
     # top-level key is not silently destroyed by the pretty printer
-    extras = [k for k in jser_data if k not in TOP_LEVEL_KEYS]
-    for k in sorted(extras, key=str):
-        out.append(b"," + _NL + _dump_key(k) + b": " + fast_dumps(jser_data[k]))
+    for k in sorted((k for k in jser_data if k not in TOP_LEVEL_KEYS), key=str):
+        members.append(_dump_key(k) + b": " + fast_dumps(jser_data[k]))
 
-    out.append(_NL + b"}")
-    return b"".join(out)
+    return b"{" + _NL + (b"," + _NL).join(members) + _NL + b"}"
