@@ -229,6 +229,13 @@ class Section():
                 # check for trace mode
                 if type(trace[6]) is not list:
                     trace[6] = ["none", "none"]
+                # canonical tag order. Trace.getList sorts tags, but that only
+                # runs for a section that goes back through the model: saveJser
+                # reads the hidden dir verbatim, so a section the user never
+                # touched kept whatever order its source file had and the
+                # writer's "tags are sorted" guarantee did not hold for it.
+                if type(trace[7]) is list and len(trace[7]) > 1:
+                    trace[7] = sorted(trace[7], key=str)
                 # check for empty/defective traces
                 if len(trace[0]) < 2:
                     flagged_traces.append(i)

@@ -126,7 +126,10 @@ class ObjGroupDict():
         groups = {}
         for g in sorted(self.groups, key=str):
             members = self.groups[g]
-            groups[g] = sorted(members, key=str) if members else members
+            # unconditional: a bare set reaching the writer raises TypeError in
+            # both orjson and the stdlib fallback, so the old empty-set
+            # passthrough was a latent save crash
+            groups[g] = sorted(members, key=str)
         return groups
     
     def getGroupList(self) -> list:
