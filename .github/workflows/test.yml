@@ -1,9 +1,13 @@
 name: tests
 
-# Runs the pytest suite so PRs gate on a green suite. Fires on every PR targeting
+# The PR gate: a ruff lint pass and the pytest suite. Fires on every PR targeting
 # main and on pushes to main itself (the post-merge validation). The tests import
 # PySide6 (gui.main), so the job installs the headless Qt system libs and runs
 # under the offscreen QPA platform — no X server / xvfb needed.
+#
+# The two jobs run in parallel rather than lint-then-test: lint finishes in well
+# under a minute, so gating the suite behind it would delay the slower signal
+# without saving anything worth the wall-clock.
 on:
   pull_request:
     branches: [main]
@@ -20,6 +24,24 @@ permissions:
   contents: read
 
 jobs:
+  # Blocking lint on the critical-error set configured in ruff.toml: syntax
+  # errors and undefined names only (E9/F63/F7/F82). The tree passes this clean
+  # as of this commit, so the gate costs no code changes and starts catching
+  # regressions immediately. It is deliberately not the full ruff default set —
+  # see the rationale in ruff.toml.
+  #
+  # No Python setup step: `uvx` fetches a standalone ruff binary, so this job
+  # needs neither an interpreter nor the project's dependencies and finishes in
+  # seconds. The version is pinned to match the Makefile's `make lint`.
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Ruff (critical-error set)
+        run: uvx ruff@0.15.20 check .
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 25   # headroom for the cold wheel install (vtk/scipy/...); the suite itself is ~seconds
