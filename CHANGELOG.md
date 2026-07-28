@@ -13,6 +13,106 @@ the README's *From source (developers)* section).
 
 ## [Unreleased]
 
+## [1.21.0-beta-5] — 2026-07-28
+
+### Added
+- **Data clean-up menu.** A "Clean up" submenu under the Series menu groups three
+  series-wide maintenance operations, each a single undoable action with a
+  progress bar over the existing `enumerateSections`/`SeriesStates` path: *Remove
+  duplicate traces* (same object name and geometrically coincident on the same
+  section, exact points or IoU above a threshold, default 0.95; never merges
+  distinct objects), *Remove pixel-dust traces* (small closed traces at or below a
+  user-chosen threshold, presented in a reviewable `PixelDustDialog` before
+  anything is deleted), and *Remove empty traces* (degenerate geometry only — no
+  points, zero-area closed, zero-length open — after a count-stating
+  confirmation). Locked objects are left untouched. `MalformedContoursDialog` is
+  generalized with an overridable column/heading spec so the review dialog reuses
+  its selection/navigation/delete/export behaviour. (#88)
+- **The pixel-dust threshold is expressed in pixels (px²)** rather than physical
+  area, matching the "smaller than N pixels on its own image" mental model.
+  `findPixelDustTraces` derives the physical cutoff per section from that
+  section's magnification (`threshold_px * section.mag**2`), so one threshold
+  adapts across sections of differing scale; each candidate carries both its pixel
+  and physical area, the review dialog shows both columns, and the input defaults
+  to 10 px². (#89)
+- **Approved-colors editor for autoseg import.** The "Autoseg import colors" group
+  in Series ▸ Options ▸ View hosts an `AutosegColorsWidget` beside the color seed:
+  the palette renders as clickable swatches (each opening `QColorDialog`), with
+  Add / Remove / "Reset to default" managing the list (floor of 2 colors, since
+  the seed and Shuffle need ≥2 to reshuffle). Persists to the existing
+  `autoseg_color_palette` option at computer-wide scope, storing `[]` while
+  unchanged from the CVD-safe `DEFAULT_AUTOSEG_PALETTE` so users keep tracking the
+  curated palette. The live preview, Shuffle and import all read that one option.
+  (#82)
+- **Shuffle control for autoseg import colors.** A "Shuffle colors" button and
+  one-line caption on the zarr import overlay beside "Import Contours".
+  `next_shuffle_seed()` rejects a candidate reproducing the current mapping, so a
+  click always visibly changes the arrangement; the result is still a plain
+  deterministic integer, so preview-equals-import and cross-section color
+  stability are unchanged. The Series ▸ Options seed field is relabelled with a
+  caption pointing at the button. Shuffling affects only the live preview and
+  future imports. (#80)
+- **"Reapply autoseg colors..."** on the object-list / object context menu pushes
+  the *current* palette and seed onto selected objects, for objects imported
+  before the color features baked their colors in. Adds
+  `AUTOSEG_TRACE_PREFIX`, `label_id_from_name` and `palette_color_for_name` to
+  `palette.py` (reproducing the exact import color for a parseable name, falling
+  back to a `PYTHONHASHSEED`-independent `zlib.crc32` of the name);
+  `series.reapplyAutosegColors` resolves per-object color once and rewrites
+  through the normal per-section `editTraceAttributes` path over only the sections
+  the objects appear on — one undoable operation, no per-object full-series scans.
+  Goes through the `object_function` wrapper, so locked objects are blocked as for
+  any bulk attribute edit, behind a confirm dialog. (#83)
+- **"Copy to sections" reports the actual sections written.** The result message
+  lists the section numbers that received the trace(s) rather than a count of
+  those requested, collapsing contiguous runs to ranges ("2-5, 10") with
+  singular/plural grammar, so a silently-skipped target is visible. Message
+  building moves into a pure `format_copy_result` helper. (#87)
+- **Menu parity actions and hoists.** "Invert selection" added to the trace,
+  z-trace, section and flag list context menus via a shared
+  `DataTable.invertSelection` that inverts only displayed/filtered rows (an active
+  filter can never select a hidden row); "Copy row text" added to the object,
+  trace and z-trace lists; the flag list's "Resolve" submenu hoisted to top-level
+  "Mark resolved" / "Mark unresolved"; and a single dynamic "Edit ...
+  attributes..." item at the top of the field context menu whose label and enabled
+  state follow the selection through a pure `edit_selected_label()` helper driven
+  by `checkActions`. (#77)
+- **Zarr-label right-click actions restored.** "Import labels" and "Merge labels"
+  and their handlers were commented out during the 2024 neuroglancer-importer
+  handoff, not because they broke; every callee (`labelsToObjects`,
+  `zarr_layer.mergeLabels`, `removeZarrLayer`, the overlay `selected_ids`) still
+  resolves. Restoring also repairs the `ZarrPalette` "Import Contours" button and
+  the `checkActions` label block, both of which referenced the missing
+  handler/actions. `mergeLabels` now disables correctly at ≤1 selected label.
+  (#77)
+- **`docs/JSER_FORMAT.md`**: a normative description of the current `.jser`
+  on-disk format — byte invariants, the hidden unpack directory, the top level and
+  the holes in the sections array, the log's pseudo-CSV rules, every positional row
+  documented index by index, the options bag and settings scoping, and the
+  migration branches in `updateJSON`. Roughly 120 machine-checked `file:line`
+  anchors, and a minimal example extracted from the doc itself that opens
+  headless, deep-equals after save and round-trips byte-identically. Also lists
+  the reader/writer divergences found while documenting. (#94)
+- **`benchmarks/` measurement harness (Phase 0).** Replaces the withdrawn RAM
+  figures and assumed hotspots with measurements. Cold and warm are explicit
+  labelled conditions and never pooled; the harness observes which path
+  `openJser` took and aborts on a mislabelled rep; loud manifest with hard-fail on
+  missing files, uniform warmup, rotated checkout order, page cache pinned; guards
+  verified by negative test. Corrected numbers (3 reps, medians): warm-vs-warm
+  2.05× / 2.39× / 2.55× at 162k/324k/485k traces; cold-vs-cold 1.44-1.48×, of
+  which roughly 20% of the cold spike is fork-attributable and 80% the shared
+  JSON-parse/unpack path. Reading all 636 section files is 0.30 s (0.6%), so the
+  file choreography is not I/O; JSON decode 15.7%, object construction 30.7%,
+  geometry 53.0%, bounding a format change at about 28%. Ran on the largest
+  available real autoseg series (407 MB, 161,767 traces) plus section-replicated
+  derivatives, labelled synthetic — the original lab series were unavailable.
+  (#96)
+- **`uv.lock` is committed** (134 packages, resolved for Python 3.11, including
+  `orjson==3.11.8`) and `uv sync` / `uv run` become the canonical developer setup
+  in the README, `docs/USER_GUIDE.md`, `CONTRIBUTING.md` and `docs/DEV_UV.md`, with
+  the plain-venv path demoted to an alternative and conda a parallel option.
+  `uv lock --upgrade` is documented as the maintainer dep-bump flow. (#86)
+
 ### Changed
 - **Right-click menus are reorganized frequency-first: the everyday actions are
   now one click, not two.** All seven right-click surfaces (2D field, zarr label,
@@ -63,6 +163,294 @@ the README's *From source (developers)* section).
   the behaviour that variable selected is now the default. Both forms are the
   same JSON document and the reader accepts either, so this is
   backward-compatible in both directions.
+- **Menu labels normalized** across the context menus, menubar, list menus and
+  the shortcuts dialog: sentence-case intrusions fixed, Unicode `…` → ASCII
+  `...` with `...` added to nine dialog-opening actions and removed from two that
+  open none, a terminology verb table applied (Edit / Set values / Duplicate /
+  Clear status / Delete `<thing>`), and scope stated in the label where two
+  actions collided ("(this section)" vs "(entire series)"). No `attr_name`,
+  option key or handler changed. (#75)
+- **Object menu restructured and View toggles made checkable.** The "Operations"
+  grab-bag is dissolved into "Visibility" and "Geometry" with every action
+  preserved; Lock/Unlock gets a single home in Attributes and the duplicate pair
+  is removed; "Export meshes" → "Export mesh as"; and the duplicate "Set
+  columns..." is removed from the object-list List menu. The five "Toggle X" View
+  items (Focus mode, Hide trace layer, Show all traces (ignore hidden), Hide
+  image, Section blend) become checkable items named for their state, keeping
+  their user-configurable shortcuts via a new `(series, "checkbox")` kbd form in
+  `newAction`; checked state resyncs from live field state in `checkActions`, and
+  since `setChecked` emits `toggled` while handlers are on `triggered`, the
+  resync never re-fires a handler. (#76)
+- **List copy actions renamed** from "Copy row text" to "Copy `<entity>` values"
+  across the object, trace, z-trace, section and flag lists — the copy is
+  tab-separated cell values with no header line. The object-menu submenu title
+  reverts to "Object attributes" to differentiate it from trace attributes.
+  Labels only; `attr_names`, shortcuts, handlers and copy behaviour unchanged.
+  (#78, #79)
+- **"Check series histories" now defaults to on** in the import dialog. With it
+  off, the import resurrects deleted objects and duplicates renamed ones; with it
+  on, deletions and renames propagate and disagreements are flagged. Since #101
+  closed the loss paths that made the on-position unsafe, on is now the correct
+  default on both axes. Visible consequence: conflicts that were previously
+  resolved silently are now flagged, including new `import-removed_<object>`
+  flags. Two tests specifically guard that a merge where both logs and the traces
+  agree still produces no new flags. (#101)
+- **Performance: anchor-point detection vectorized and QPoint construction
+  batched.** `isAnchorPoint` becomes a lazily built, per-`Grid` cached anchor mask
+  via `cv2.filter2D`, and `getAnchorTrace` a mask lookup plus boolean index; the
+  scalar `isAnchorPoint` is retained byte-for-byte as the test oracle, since it
+  raises `IndexError` past the last row/col where a mask lookup would silently
+  answer. Exact array equality over 96 randomized grids, 60 `getExterior` runs and
+  30 far-edge trials, zero mismatches. Lasso sweep on `shapes2` **13.67 s → 1.00 s
+  (13.7×)**; `getAnchorTrace` alone 60-90×. Separately, per-point QPoint
+  conversion is replaced by `list(starmap(QPoint, pix_pts.tolist()))` — PySide6
+  exposes no bulk QPolygon constructor — which is pixel-identical by construction
+  and confirmed by golden buffers over 11 shapes × 5 draw modes with 0 differing
+  pixels; dense autoseg full frames **13.16 s → 8.27 s (1.59×)**, incremental
+  frames 1.17×. The `cv2.polylines` rasterizer swap was **stopped** and pinned by
+  a test: the field never enables QPainter antialiasing, so 1102 of 1475 lit
+  outline pixels differ (max channel delta 255), and per-trace opacity needs a
+  blend per trace at 1814 ms against QPainter's 155 ms. (#97)
+- **Performance: Feret computed on demand.** `TraceData` no longer retains the
+  transformed point array for deferred Feret; it is computed from the live
+  `Section` at read time. Bit-exact against the stash path over 293 fixture traces
+  and 192 degenerate cases, with `exportTracesCSV` byte-identical on all three
+  fixtures. Retained bytes per closed `TraceData` become a constant 392 B at every
+  point count (was 648 B at 4 points rising to 16,520 B at 500): on 20k traces ×
+  64 points, **30.73 → 7.69 MB (−75%)**; on `class_series`, 3291 → 393 B per trace
+  (−88%). A Feret read recomputes and is nonetheless 17-35% faster, because the
+  old read paid NumPy-scalar to Python-float extraction per point. `exportAll` now
+  calls `saveAllData()` first so Feret columns cannot describe older geometry than
+  the rest of their row. (#98)
+- **`datatypes`/`constants` import graph is now Qt-free**, verified by subprocess
+  tests that run with `QT_QPA_PLATFORM` unset and every PySide6 import raising (a
+  real `.jser` opens, loads a section and maps traces both directions with zero
+  PySide6 in `sys.modules`). `transform.py` replaces `QTransform` with plain-float
+  affine math; `getQTransform`/`fromQTransform` remain as the only Qt adapters,
+  lazily imported, and a `Transform` no longer holds a Qt object (pickle/deepcopy
+  round-trips tested). The old implementation is kept as a test oracle and compared
+  bitwise via `struct.pack` (1 ULP or a signed zero fails): zero mismatches across
+  12 matrix-type fixtures, 550 random transforms, 3,600 composition pairs and
+  25k-point arrays both directions. One characterized divergence: `QTransform`
+  classifies matrices with a 1e-12 fuzz and drops terms below it where the pure
+  affine keeps them; a test proves with exact rational arithmetic that the new
+  result is the correctly-rounded one, and since `mapPointsArray` already used the
+  general formula, this makes `map()` and `mapPointsArray()` agree rather than
+  disagree. Performance at parity or better on every operation (`inverted` 3.1×,
+  `compose` 3.4×). (#93)
+- **Dead grid cut code deleted; 3D transform mapping vectorized.** 100 lines of
+  dead knife/cut machinery removed from `grid.py` after independently re-verifying
+  the finding, with live `getExterior`/`mergeTraces`/`cutTraces` outputs
+  byte-identical across 602 golden cases. `objects_3D.py` Surface/Contours
+  per-point `tform.map` loops are batched via `mapPointsArray` (1.4× on the meshing
+  path; full `generateVolumes` output SHA-identical across 3 series × 3 modes);
+  `Ztrace3D` deliberately stays scalar with the invariant lookup hoisted, since
+  per-point tforms and 1-point-per-section fixtures put it 18× below the
+  vectorization crossover. 220 equivalence tests written against the scalar path
+  before switching, mutation-checked. (#92)
+- **Source-install docs state Python 3.11 up front** and recommend uv (which
+  auto-downloads 3.11), with plain venv as the alternative, in the README,
+  `docs/USER_GUIDE.md` and `CONTRIBUTING.md`. `pip install -e .` fails on a
+  Python 3.14 interpreter because the project pins `>=3.11,<3.12`, and the
+  requirement was previously stated after the venv step. (#85)
+- **CI installs via `astral-sh/setup-uv` + `uv sync --frozen`** and runs pytest
+  under `uv run --frozen`, for reproducibility against the committed lock. (#86)
+- **Absolute local paths removed from bundled series assets.** Four bundled series
+  assets stored a `src_dir` copied verbatim from the machine of the developer who
+  made them, including their account name and desktop layout; the same kind of
+  path appears in two standalone `assets/misc` scripts where it is a user-entered
+  placeholder. These are dev-only test fixtures plus the shipped welcome series,
+  and the images those paths refer to are not distributed, so the value serves no
+  purpose. `""` is already the supported state: it is the `getEmptyDict()`
+  default, it is what `updateJSON` backfills when the key is absent, and
+  `create_ng_zarr/utils.py` already substitutes it before hashing because the value
+  differs between users. An empty `src_dir` degrades rather than raising — the
+  image layer sets `image_found = False` and the window offers to locate the
+  images — and the welcome series never used the stored value, since
+  `get_welcome_setup()` reassigns it at runtime. (#100)
+
+### Fixed
+- **Minimum Feret diameter was computed as a vertex-pair distance instead of the
+  minimum width.** `feret()` returned the smallest distance between an antipodal
+  pair of convex hull *vertices*. The minimum Feret diameter is the minimum
+  *width*: the smallest gap between two parallel supporting lines. The supporting
+  lines through a vertex pair are generally not perpendicular to the segment
+  joining them, so the old value is an upper bound on the width and never the
+  width itself, except by coincidence.
+
+  The collinear-hull framing this started from was a symptom, not the cause.
+  Substituting shapely/GEOS hulls under the same vertex-pair definition fixes
+  nothing (26 wrong versus 25 on a 45-case rotated-rectangle sweep) while the
+  correct formulation fixes all 45, and the defect fires with no collinearity and
+  no rotation at all: the triangle (0,0), (10,0), (5,1) reported 5.0990 where its
+  true width is 1.0. Only 3 of 8 gallery shapes passed and all three were
+  rectangles or needles, which agree by coincidence.
+
+  **Behaviour change, stated plainly: 271 of 271 closed fixture traces change,
+  every one of them downward** (old values are always overestimates — 0
+  counterexamples in 12,000 fuzz sets). Median 0.96% on `class_series`, worst
+  **45.93%** (`d03sp12` s46: 0.505747 → 0.346575); worst 14.70% on the shapes
+  series. **Errors concentrate on thin structures such as spine necks.** Minimum
+  Feret is a displayed trace-list column and is exported by `exportTracesCSV`, so
+  values previously displayed or exported were too high by these margins.
+  **Maximum Feret is bit-identical on all 271** and no other measurement is
+  affected.
+
+  Fix: `minWidth(ring)` = the smallest, over hull edges, of the hull's extent
+  along that edge's normal. Pure Python, no new dependency; `hulls()` and the
+  calipers walk still supply max Feret unchanged, and `hulls()` no longer sorts
+  the caller's list in place. Verified against an exact independent oracle over
+  12,000 fuzzed point sets and 122 fixture traces with zero mismatches; tests
+  written before the fix (39 failed, then 248 pass). Cost: an O(h²) pass, worst
+  about 11 µs/trace (1.76× on 10-point traces, 1.08× at 5000); the Feret column is
+  off by default, so a 61k-trace series with it enabled pays roughly 0.7 s. The
+  pre-fix implementation was byte-identical to upstream, which therefore ships the
+  same defect. (#95)
+- **Silent trace-loss paths in the series-to-series import are closed.** The rule
+  is now: an import may discard a trace only if that trace overlaps something on
+  the surviving side, or if a log entry records it as deliberately removed — and a
+  discarded trace always leaves behind both a flag and a log entry. Where the
+  machinery cannot decide safely, both sides are kept and the disagreement is
+  flagged rather than resolved by picking a winner.
+
+  `Section.importTraces` shortcuts a contour on one Boolean per side from
+  `getModifiedSinceDiverge` — *"does this side's log mention this contour after
+  the divergence point?"*. `True` is positive evidence of an edit; `False` is only
+  silence, and three branches treated silence as proof a side was unchanged. Logs
+  get trimmed, get rewritten when an object is deleted (`LogSet.addLog` purges
+  every prior log for a deleted object), and are suppressed outright while an
+  import runs, so anything a previous merge brought in reads as untouched to the
+  next one. `(False, False)` discarded the other section's contour whole with no
+  geometry compared and no flag; `(False, True)` replaced ours wholesale without
+  comparing a single point, overwriting unlogged work out of existence;
+  `(True, False)` dropped theirs, correct when we deleted or renamed the object but
+  silent destruction when their work simply was not logged. Separately,
+  `keep_below="self"`/`"other"` deleted every unfavoured conflict trace overlapping
+  a favoured one and then cleared the favoured pool, so the flagging step had
+  nothing left to flag.
+
+  One bound remains, unchanged by this work: when the two logs share no common
+  prefix (`last_shared_index == -1` — an empty log, a log trimmed on one side, a
+  series produced by conversion) the entire history block is skipped silently and
+  the import degrades to a plain union in which deletions resurrect. Nothing is
+  destroyed, so this is a failure of intent propagation rather than of safety.
+  Making the history check fail loudly instead of self-disabling is a separate
+  fix. Also deliberately out of scope: making the merge three-way, which
+  `LogSetPair` cannot do without a merge base anywhere in the data model.
+  `tests/test_import_silent_loss.py`, 18 tests, 12 of which fail on the previous
+  code. (#101)
+- **The import's overlap threshold was ignored for the traces that matter.**
+  `Contour.importTraces` runs two passes: an optimistic walk comparing `self[i]`
+  against `other[i]` while they overlap, which used the caller's `threshold`, and a
+  nested scan over everything left over, which compared with a literal
+  `threshold=0.95`. Pass 2 is the pass that decides the genuinely divergent
+  traces — every trace an import between two edited copies actually has to reason
+  about — so moving the dialog's "Overlap threshold" slider off its 0.95 default
+  had almost no effect, and nothing said so. Both directions did damage: at a
+  *stricter* setting (0.99, or 1.0 = "points must match perfectly") non-duplicates
+  were merged and, with the default `keep_above="self"`, **the importing series'
+  own trace was dropped outright**; at a looser setting (0.91) real duplicates were
+  kept as a conflicting pair. Measured with the real overlap primitive: two side-10
+  squares offset by `dx` have Jaccard `(10-dx)/(10+dx)`, so `dx=0.2` → 0.961 and
+  `dx=0.5` → 0.913 straddle 0.95 from either side. Fixing this also makes the
+  one-comparison skip at the top of pass 2 sound, since that skip assumes both
+  passes used the same threshold; the invariant is now documented and pinned by a
+  test. Local user-column options are no longer dropped on import. (#99)
+- **Scissors right-click destroyed the trace when the trace layer was hidden.**
+  The scissors tool picks a trace up by deleting it in `scissorsPress` (a raw
+  `section.deleteTraces`, not guarded by `@field_interaction`) and relies on the
+  right-click completion in `lineRelease` to recreate it via `newTrace` — but
+  `newTrace` is wrapped by `@field_interaction`, which is a no-op while the trace
+  layer is hidden. A pickup followed by a right-click completion with the layer
+  hidden therefore deleted the trace with nothing put back, silently destroying
+  the user's work. `lineRelease` now detects whether `newTrace` actually added the
+  replacement via the `section.added_traces` delta (the return value carries
+  `log_event`, which is forced `False` while scissoring) and restores the original
+  picked-up trace when it did not; `autoMerge` and the scissors "Modify trace(s)"
+  log are gated on the same signal. Sibling tools were checked: knife
+  (`cutTrace`) and `mergeTraces` delete and recreate inside a single
+  `@field_interaction` method, so they skip atomically when hidden and never lose
+  data — only the scissors split its delete from its guarded recreate across two
+  event handlers. Upstream issue #51. (#81)
+- **An empty object group raised `TypeError` on save.** `getGroupDict` passed a
+  bare `set` through unconverted for an empty group, which raises in orjson and in
+  the stdlib fallback, so the save died instead of writing. Members are now sorted
+  unconditionally. Pre-existing, not introduced by #102. (#103)
+- **A non-string object key made the pretty writer emit a file no parser will
+  reopen.** `fast_dumps` passes `OPT_NON_STR_KEYS`, so the compact writer coerces
+  `1` to `"1"`; dumping a key on its own did not, and the writer emitted a bare
+  `1:` — the save succeeded and replaced the previous good file. Keys now go
+  through `_dump_key`, which lifts the coercion out of the compact writer rather
+  than reimplementing it, so the two cannot drift. Not reachable from the GUI,
+  since every keyed map is keyed by a name that is always a string, but the failure
+  mode is a silently unreadable file on data that cannot be regenerated. (#103)
+- **Trace tags were sorted only when the user happened to touch the section.**
+  `Trace.getList` sorts them, but it only runs for a section that goes back through
+  the model, while `saveJser` reads the hidden directory verbatim — so identical
+  content produced 26,305 differing bytes on a 33 KB fixture depending only on
+  browsing history. Tags are now sorted in `Section.updateJSON`, beside the section
+  key order and contour name order already canonicalized there. (#103)
+- **The writer's round-trip test asserted nothing.** It compared
+  `_semantic(first)` against `_semantic(json.loads(raw))` with `first` already
+  being `json.loads(raw)`, so eight mutations that make `saveJser` silently
+  discard the audit log, every section flag, every trace tag, the editor list, the
+  host tree, the object attributes, the groups or the user columns all passed. The
+  case now builds a source carrying all of those, asserts it is genuinely
+  non-empty, and compares the saved document against that source rather than
+  against another output of the same writer. (#103)
+- **The pretty writer invented top-level keys.** For a document missing `series`
+  or `log`, the pretty printer emitted both unconditionally, defaulting them to
+  `{}` and `""`, so the two output forms disagreed on the key set — the one thing
+  `jser_format` guarantees they never do. No saved file is affected, since
+  `saveJser` always populates `sections`, `series` and `log` before calling the
+  writer, and output for a complete document is byte-identical before and after;
+  it is reachable for anything assembling a document by hand. Both keys are now
+  emitted only when present, and the top-level members are collected into a list
+  and joined with `",\n"` rather than appending separators inline, which removes
+  the dangling-comma class of bug rather than patching one instance. Pre-existing,
+  from #102. (#106)
+- **Latent `KeyError` crash in series-wide operations with the Feret column
+  enabled.** Operations such as `copyObjects` update `SeriesData` and insert
+  trace-list rows before `field.reload()` swaps in a section containing the new
+  traces, so `series.data` can hold a row the live section lacks and
+  `section.contours[name]` raised. `getFeret` now returns `None` when the contour
+  is absent or the index is past its end; the cell renders blank and refills on the
+  next section change, and the CSV writes an empty field rather than a fake 0.
+  (#98)
+- **"Use UTC time" could not be turned off until restart.** `utc_p()` did
+  `False if utc == "false" else True`, which returns `True` whenever QSettings
+  hands back a real bool — that is, with the key unset, and for the rest of a
+  session after the options dialog writes it, since Qt caches a bool in-process and
+  only a fresh process reads the string `"false"` back from the INI. A fresh
+  install therefore timestamped in UTC despite `default_settings["utc"] = False`.
+  The read now routes through the `settings_store` seam so the typed read agrees
+  with `Series.getOption("utc")`. Verified empirically. Pre-fix module was
+  byte-identical to upstream. (#93)
+- **Collada (.dae) export is detected rather than attempted.** pycollada is
+  detected via `importlib.util.find_spec` and the menu item is disabled with a
+  "(not installed)" suffix when absent, so frozen builds no longer offer an export
+  that can only fail; the runtime guard is kept as a backstop and its message
+  reworded to cover packaged installs. `export3DObjects` surfaces the missing
+  package with a clear `notify()` and early return instead of an unhandled
+  `ModuleNotFoundError`. (#90, #76)
+- **The five mesh-export formats had shared one `attr_name`** (`export3D_act`), so
+  four silently shadowed the fifth on the widget; each now has a unique name.
+  Same class of defect fixed for two menubar `attr_names`
+  (`copyscreen_act` → `savescreen_act`, `resetpalette_act` →
+  `resettracepalette_act`), and for the Object ▸ Geometry smooth action, renamed
+  `smoothobj_act` so it no longer shadows the field Trace submenu's
+  `smoothtraces_act` on the shared widget. (#76, #77, #90)
+- **The autoseg shuffle guarantee now applies to what is on screen.**
+  `next_shuffle_seed` accepts an optional ids iterable and the caller passes the
+  overlay's visible label ids (new `ZarrLayer.getPresentIds`), so "always
+  reshuffles" is evaluated against the labels the user can actually see, falling
+  back to the 1..63 range when unavailable. (#90)
+- **Shortcuts help dialog and z-trace labels.** The five View toggles are reworded
+  to match the current menu labels and the "viwed" typo is fixed; mid-label
+  "z-trace(s)" is lowercased in the field Z-trace menu and the menubar; and the
+  menubar's "Toggle show Z-traces" becomes a checkable "Show z-traces" using the
+  `(series, "checkbox")` form, synced from `show_ztraces` at build and in
+  `checkActions`. Focus mode is disabled when nothing is selected. (#90)
 
 ### Removed
 - **Developer update channel.** The in-app "Developer" channel and the rolling
