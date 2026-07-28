@@ -55,13 +55,21 @@ def test_converter_file_exists():
            "2026-07-28: 'Parallel framework: GCD', 10 threads before AND after "
            "setNumThreads(1). GCD reads none of THREAD_ENV_VARS (those target "
            "OpenMP/OpenBLAS/MKL/numexpr/Accelerate), so no env var can cap it either. "
-           "blosc DOES pin to 1 on macOS, so zarr compression stays bounded and only "
-           "cv2 image decode/resize fans out. The assertion below is CORRECT on "
-           "Linux/Windows and is deliberately left unweakened. Consequence: the "
-           "cpu_max worker slider bounds CPU on Linux/Windows but under-bounds it on "
-           "macOS, where the only remaining lever is the worker COUNT. strict=True so "
-           "that an OpenCV build which becomes cappable turns this red and gets the "
-           "marker removed.",
+           "blosc DOES pin to 1 on macOS, so zarr compression stays bounded. The "
+           "assertion below is CORRECT on Linux/Windows and is deliberately left "
+           "unweakened. strict=True so that an OpenCV build which becomes cappable "
+           "turns this red and gets the marker removed. NOTE the no-op does NOT make "
+           "the cpu_max slider under-bound CPU here: measured on this build "
+           "(opencv-python 4.8.1, macOS 27 arm64, M4 10-core), the two cv2 calls the "
+           "converter makes are single-threaded regardless of the cap -- cv2.imread of "
+           "an 8192^2 TIFF runs at 0.97 CPU-cores and every cv2.resize step of the "
+           "downsample pyramid at 1.00 cores, identical with and without "
+           "setNumThreads(1) and never above 2 OS threads. End-to-end the converter's "
+           "mean cores busy stayed at or below the worker count at 1/2/5/8 workers "
+           "(1.00/1.61/2.87/3.31). So the slider still bounds CPU on macOS, just for a "
+           "different reason than on Linux/Windows: the ops happen not to thread, "
+           "rather than the cap holding them. That is a property of this OpenCV build, "
+           "not a guarantee -- which is why this stays strict.",
 )
 def test_importing_converter_pins_native_thread_pools(tmp_path):
     """A fresh interpreter that loads the converter (as a worker does under the

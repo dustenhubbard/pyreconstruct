@@ -58,6 +58,17 @@ def _limit_worker_threads():
     also passed as the Pool ``initializer`` so it re-runs inside each worker
     under the ``spawn`` start method (Windows/macOS default), where every
     worker re-imports this module in a fresh interpreter.
+
+    macOS caveat: ``cv2.setNumThreads()`` is a no-op there because OpenCV's
+    macOS wheels build against Apple's Grand Central Dispatch
+    (``getBuildInformation()`` reports ``Parallel framework: GCD``), and no
+    environment variable above reaches GCD either. Measured on opencv-python
+    4.8.1 / macOS 27 arm64 / M4 10-core, that costs us nothing in practice:
+    the only two cv2 calls this script makes are single threaded in that build
+    regardless of the cap (``cv2.imread`` of an 8192^2 TIFF 0.97 CPU-cores,
+    each ``cv2.resize`` pyramid step 1.00, never above 2 OS threads), so the
+    worker count still bounds CPU. ``blosc.set_nthreads`` does work on macOS.
+    See tests/test_zarr_worker_cpu_bound.py for the platform xfail this earns.
     """
     try:
         cv2.setNumThreads(1)
