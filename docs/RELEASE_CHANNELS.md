@@ -73,7 +73,7 @@ Pre-releases of the UI overhaul are tagged on the held UI line
 # on the commit you want to ship, from the UI overhaul branch:
 git checkout feat/ui-v1-lists-panel
 git tag v1.30.0-alpha.1
-git push fork v1.30.0-alpha.1        # 'fork' = dustenhubbard/PyReconstruct
+git push origin v1.30.0-alpha.1        # 'origin' = dustenhubbard/PyReconstruct (renamed from 'fork' 2026-07-26)
 ```
 
 Pushing the tag triggers `build-installers`: it builds the Windows/macOS
@@ -84,15 +84,15 @@ channel is offered `v1.30.0-alpha.1` from inside the app.
 Cut the rest the same way, advancing the suffix:
 
 ```bash
-git tag v1.30.0-alpha.2 && git push fork v1.30.0-alpha.2
-git tag v1.30.0-beta.1  && git push fork v1.30.0-beta.1
-git tag v1.30.0-rc.1    && git push fork v1.30.0-rc.1
+git tag v1.30.0-alpha.2 && git push origin v1.30.0-alpha.2
+git tag v1.30.0-beta.1  && git push origin v1.30.0-beta.1
+git tag v1.30.0-rc.1    && git push origin v1.30.0-rc.1
 ```
 
 When the overhaul is ready for everyone, tag the **final** release (no suffix):
 
 ```bash
-git tag v1.30.0 && git push fork v1.30.0
+git tag v1.30.0 && git push origin v1.30.0
 ```
 
 That publishes a stable GitHub Release, so the `release` channel offers `v1.30.0`
