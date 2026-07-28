@@ -22,6 +22,8 @@ import subprocess
 import textwrap
 from pathlib import Path
 
+import pytest
+
 import PyReconstruct
 from PyReconstruct.modules.backend.func.utils import determine_cpus
 from PyReconstruct.modules.datatypes.default_settings import default_settings
@@ -44,6 +46,23 @@ def test_converter_file_exists():
     assert CONVERTER.is_file(), CONVERTER
 
 
+@pytest.mark.xfail(
+    sys.platform == "darwin",
+    strict=True,
+    reason="OpenCV's macOS wheels use Apple's Grand Central Dispatch as the parallel "
+           "framework, where cv2.setNumThreads() is a documented no-op and "
+           "cv2.getNumThreads() reports the CPU count. Measured on macOS 27 arm64 "
+           "2026-07-28: 'Parallel framework: GCD', 10 threads before AND after "
+           "setNumThreads(1). GCD reads none of THREAD_ENV_VARS (those target "
+           "OpenMP/OpenBLAS/MKL/numexpr/Accelerate), so no env var can cap it either. "
+           "blosc DOES pin to 1 on macOS, so zarr compression stays bounded and only "
+           "cv2 image decode/resize fans out. The assertion below is CORRECT on "
+           "Linux/Windows and is deliberately left unweakened. Consequence: the "
+           "cpu_max worker slider bounds CPU on Linux/Windows but under-bounds it on "
+           "macOS, where the only remaining lever is the worker COUNT. strict=True so "
+           "that an OpenCV build which becomes cappable turns this red and gets the "
+           "marker removed.",
+)
 def test_importing_converter_pins_native_thread_pools(tmp_path):
     """A fresh interpreter that loads the converter (as a worker does under the
     spawn start method) must end up with cv2 and blosc pinned to one thread and
