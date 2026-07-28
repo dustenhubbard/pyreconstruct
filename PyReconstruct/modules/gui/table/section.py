@@ -68,10 +68,17 @@ class SectionTableWidget(DataTable):
         populateMenuBar(self, self.menubar, menubar_list)
 
         # create the right-click menu
-        context_menu_list = [
-            # table-level selection op (parity with the other lists)
-            ("invertsectionselection_act", "Invert selection", "", self.invertSelection),
-            None,
+        self.context_menu = QMenu(self)
+        populateMenu(self, self.context_menu, self.getContextMenuList())
+
+    def getContextMenuList(self):
+        """Return the right-click menu definition for the section list.
+
+        Lock/Unlock lead (the app ships a global unlock shortcut, so it is the
+        everyday action); the table utilities sit second-from-bottom and the
+        destructive action is last -- the layout every list shares.
+        """
+        return [
             ("lock_act", "Lock sections", "", self.lockSections),
             ("unlock_act", "Unlock sections", "", lambda : self.lockSections(False)),
             None,
@@ -98,13 +105,13 @@ class SectionTableWidget(DataTable):
                 ]
             },
             None,
+            # table utilities, in the slot every list shares (second-from-bottom)
+            ("invertsectionselection_act", "Invert selection", "", self.invertSelection),
             ("copy_act", "Copy section values", "", self.table.copy),
             None,
             ("delete_act", "Delete sections", "", self.deleteSections)
         ]
-        self.context_menu = QMenu(self)
-        populateMenu(self, self.context_menu, context_menu_list)
-    
+
     def getFiltered(self):
         return sorted(list(self.series.sections.keys()))
     
