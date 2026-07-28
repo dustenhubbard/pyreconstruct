@@ -201,22 +201,40 @@ jobs:
         # or an alpha (v1.30.0a1) -- publishes as a GitHub pre-release. A plain
         # contains('-') check misclassifies the dashless v1.20.4rc1 as stable.
         id: rel
+        env:
+          STAGE: ${{ vars.STAGE_RELEASE_AS_DRAFT }}
         run: |
           if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            IS_STABLE=true
           else
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            IS_STABLE=false
           fi
+          # Draft policy, decided once here so the publish step and the prune step
+          # cannot disagree. Default: stage a STABLE release as a hidden draft, and
+          # publish a PRE-RELEASE immediately. Rationale: the draft is an
+          # asset-completeness gate (did all 8 installers actually attach?), which
+          # matters most where the release reaches every user; testers want betas fast.
+          # Override with the repo variable STAGE_RELEASE_AS_DRAFT:
+          #   unset / "auto" -> draft iff stable   (the default)
+          #   "true"         -> always draft       (e.g. staging a beta for a live demo)
+          #   "false"        -> never draft
+          case "${STAGE:-auto}" in
+            true)  DRAFT=true ;;
+            false) DRAFT=false ;;
+            *)     DRAFT=$IS_STABLE ;;
+          esac
+          echo "draft=$DRAFT" >> "$GITHUB_OUTPUT"
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
           prerelease: ${{ steps.rel.outputs.prerelease }}
-          # Stage a release as a hidden DRAFT (e.g. for a live demo): set the repo
-          # variable STAGE_RELEASE_AS_DRAFT=true, push the tag, then hit "Publish"
-          # when ready — assets are pre-built so it goes live instantly. The updater
-          # ignores drafts, so it stays invisible until published. Unset/false (the
-          # default) publishes immediately, exactly as before.
-          draft: ${{ vars.STAGE_RELEASE_AS_DRAFT == 'true' }}
+          # Draft decision is computed in the `rel` step above (stable -> draft,
+          # pre-release -> publish now, overridable via STAGE_RELEASE_AS_DRAFT).
+          # A staged draft is invisible to the in-app updater until published;
+          # assets are pre-built, so publishing goes live instantly.
+          draft: ${{ steps.rel.outputs.draft == 'true' }}
           body_path: release_body.md
       - name: Prune superseded pre-releases
         # A published stable vX.Y.Z supersedes its own pre-releases (v1.21.0rc1,
@@ -227,7 +245,7 @@ jobs:
         # are never touched. Skipped when staging as a draft: the stable is
         # still hidden then, and pruning would leave the line with no visible
         # release (clean up by hand after publishing a staged draft).
-        if: steps.rel.outputs.prerelease == 'false' && vars.STAGE_RELEASE_AS_DRAFT != 'true'
+        if: steps.rel.outputs.prerelease == 'false' && steps.rel.outputs.draft != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
