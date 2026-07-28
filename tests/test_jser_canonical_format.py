@@ -271,6 +271,34 @@ def test_pretty_writer_preserves_unknown_top_level_keys():
     assert json.loads(dumps_jser(doc, pretty=True))["hand_added"] == {"k": 1}
 
 
+@pytest.mark.parametrize("keep", [(), ("series",), ("log",), ("series", "log")])
+@pytest.mark.parametrize("extras", [False, True])
+def test_pretty_writer_invents_no_top_level_key(keep, extras):
+    """The two writers must agree on the *key set*, not just the values.
+
+    The pretty printer used to emit ``"series"`` and ``"log"`` unconditionally,
+    defaulting them to ``{}`` and ``""``. On a document lacking either, that added
+    a key the compact writer does not write -- so the two forms parsed to
+    different documents, contradicting the module's own guarantee. Unreachable
+    through ``saveJser``, which always populates all three, but reachable for
+    anything assembling a document by hand.
+    """
+    full = _doc()
+    doc = {"sections": full["sections"]}
+    for k in keep:
+        doc[k] = full.get(k, {} if k == "series" else "")
+    if extras:
+        doc["hand_added"] = {"k": 1}
+        doc["aaa_first"] = [1, 2]
+
+    pretty = dumps_jser(doc, pretty=True)
+    compact = dumps_jser(doc, pretty=False)
+    assert json.loads(pretty) == json.loads(compact)
+    # stated separately so a key-set difference names itself in the failure
+    assert set(json.loads(pretty)) == set(doc), "the pretty writer changed the key set"
+    assert set(json.loads(compact)) == set(doc)
+
+
 def test_pretty_handles_empty_containers():
     doc = _doc()
     doc["sections"][1]["contours"] = {}
