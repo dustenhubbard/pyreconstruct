@@ -474,10 +474,12 @@ class Series():
         # object that reached this point by some other route.
         canon_keys_inplace(jser_data["series"], SERIES_KEYS)
 
-        # Structurally pretty-printed with compact leaves: one section block, one
-        # trace, one flag per line, coordinates staying on the trace's own line.
-        # Costs ~0.65% of bytes on a real series and is what makes a one-trace
-        # diff readable and a damaged file partially salvageable with grep/sed.
+        # Minified, with canonical ordering applied. Ordering is what makes two
+        # saves of the same content byte-identical and it costs nothing; the
+        # structural pretty printer costs +11% wall time and ~27% more transient
+        # memory in this call (an extra copy of the document: it builds a list of
+        # row fragments and joins it), so it is opt-in via PYRECON_JSER_PRETTY=1
+        # for when a human is going to read the diff.
         save_bytes = dumps_jser(jser_data)
 
         jser_fp = self.jser_fp if not save_fp else save_fp

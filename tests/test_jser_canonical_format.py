@@ -1,6 +1,11 @@
-"""Tests for the .jser writer's canonical ordering and structural pretty-printing.
+"""Tests for the .jser writer's canonical ordering and its opt-in pretty printer.
 
-Three properties, none of which changes the schema:
+The writer's normative output is **minified with canonical ordering**. Pretty
+printing is available behind ``PYRECON_JSER_PRETTY=1`` and is off by default,
+because ordering is free while the whitespace costs about 11% of save time and
+about 27% more transient memory in the save path.
+
+Four properties, none of which changes the schema:
 
   * **Canonical ordering.** The five structures that are Python sets in memory
     and JSON arrays on disk (trace ``tags``, series ``editors``, the member lists
@@ -15,11 +20,17 @@ Three properties, none of which changes the schema:
     open -> tag edit -> save, and the resulting files are byte-compared.
 
   * **Truncated-file salvage.** Recovery by reading a damaged .jser directly is a
-    real workflow, and ``jq``/``json.loads`` refuse to parse truncated JSON. Line
-    structure is what makes ``grep``/``sed`` salvage possible, so it is tested
-    deliberately: a file cut in half must still yield its section boundaries and
-    individually-parseable trace rows from the intact portion. The minified
-    single-line form yields nothing from the same cut.
+    real workflow, and ``jq``/``json.loads`` refuse to parse truncated JSON. A
+    pretty file cut in half must still yield its section boundaries and
+    individually-parseable trace rows from the intact portion via *line-anchored*
+    patterns. Tested alongside the honest control: the same cut on the minified
+    form yields nothing to a line-anchored method and the *same* rows to a
+    non-anchored one, so line structure buys convenience, not recoverability.
+
+  * **The output form is selectable, honestly.** ``PYRECON_JSER_PRETTY`` is read
+    on every write rather than once at import, and the tests set the real
+    variable -- including in a fresh subprocess -- instead of monkeypatching a
+    module global, so the variable's name is itself under test.
 """
 import json
 import os
@@ -423,7 +434,19 @@ def _assert_actually_rich(doc):
     assert n_tagged == n_traces, f"only {n_tagged}/{n_traces} traces carry tags"
 
 
-def test_save_is_pretty_printed_and_round_trips_losslessly(tmp_path):
+@pytest.mark.parametrize("form", ["minified", "pretty"])
+def test_save_round_trips_losslessly(tmp_path, monkeypatch, form):
+    """Losslessness must hold in the form users actually get, and in the other one.
+
+    Parametrized deliberately: minified is the default and therefore the form
+    that matters, but pretty stays available and a divergence between them would
+    be a data bug, not a formatting one.
+    """
+    if form == "pretty":
+        monkeypatch.setenv("PYRECON_JSER_PRETTY", "1")
+    else:
+        monkeypatch.delenv("PYRECON_JSER_PRETTY", raising=False)
+
     src_fp, src_doc = _rich_source(tmp_path)
     # the comparison below is only meaningful if there is something to lose
     _assert_actually_rich(src_doc)
@@ -443,12 +466,14 @@ def test_save_is_pretty_printed_and_round_trips_losslessly(tmp_path):
         raw = f.read()
     first = json.loads(raw)
 
-    assert raw.count(b"\n") > 100, "the .jser should no longer be a single line"
-
-    # section count and trace count are both recoverable with grep alone
-    lines = raw.decode().split("\n")
-    assert sum(1 for ln in lines if ln.startswith('  "src":')) == n_sections
-    assert sum(1 for ln in lines if ln.startswith("      [[")) > 0
+    if form == "pretty":
+        assert raw.count(b"\n") > 100, "pretty output should be line-structured"
+        # section count and trace count are both recoverable with grep alone
+        lines = raw.decode().split("\n")
+        assert sum(1 for ln in lines if ln.startswith('  "src":')) == n_sections
+        assert sum(1 for ln in lines if ln.startswith("      [[")) > 0
+    else:
+        assert b"\n" not in raw, "the default output should be a single line"
 
     # NOTHING WAS LOST. Compared against the SOURCE, not against another output
     # of the same writer: a writer that consistently discards the log or every
@@ -475,9 +500,78 @@ def test_save_is_pretty_printed_and_round_trips_losslessly(tmp_path):
     assert raw == raw2, "a second save of unchanged content changed the bytes"
 
 
-def test_minify_env_flag_restores_the_single_line_form(tmp_path, monkeypatch):
+def test_pretty_env_var_is_read_at_call_time_not_import_time(monkeypatch):
+    """The opt-in must be togglable in a running process.
+
+    The previous flag was evaluated once at import, so it could not be changed
+    after start-up -- and the test that claimed to cover it monkeypatched the
+    module global instead, which meant the variable *name* was never exercised
+    and a typo in it would have gone unnoticed. This sets the real variable,
+    after import, and requires the very next call to honour it.
+    """
     from PyReconstruct.modules.constants import jser_format
-    monkeypatch.setattr(jser_format, "PRETTY_DEFAULT", False)
+    doc = _doc()
+
+    monkeypatch.delenv(jser_format.PRETTY_ENV_VAR, raising=False)
+    assert jser_format.pretty_default() is False
+    assert b"\n" not in dumps_jser(doc), "minified is the default"
+
+    monkeypatch.setenv("PYRECON_JSER_PRETTY", "1")
+    assert jser_format.pretty_default() is True
+    assert dumps_jser(doc).count(b"\n") > 5, "the env var did not take effect"
+
+    # and back again, in the same process
+    monkeypatch.setenv("PYRECON_JSER_PRETTY", "0")
+    assert jser_format.pretty_default() is False
+    assert b"\n" not in dumps_jser(doc)
+
+    monkeypatch.delenv("PYRECON_JSER_PRETTY")
+    assert b"\n" not in dumps_jser(doc)
+
+
+def test_pretty_env_var_is_honoured_when_set_before_the_process_starts():
+    """The same variable also works the ordinary way: exported, then run.
+
+    Uses a real subprocess rather than monkeypatch so that the environment is
+    genuinely inherited at interpreter start-up -- the case a user actually hits.
+    """
+    prog = (
+        "import sys;"
+        "sys.path.insert(0, sys.argv[1]);"
+        "from PyReconstruct.modules.constants.jser_format import dumps_jser;"
+        "d={'sections':[None,{'src':'a.tif','mag':1.0,'thickness':0.05,"
+        "'align_locked':True,'tforms':{'default':[1,0,0,0,1,0]},'contours':{},"
+        "'flags':[],'calgrid':False}],'series':{},'log':''};"
+        "print(dumps_jser(d).count(b'\\n'))"
+    )
+    repo = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+    def newlines(env_value):
+        env = dict(os.environ)
+        env.pop("PYRECON_JSER_PRETTY", None)
+        if env_value is not None:
+            env["PYRECON_JSER_PRETTY"] = env_value
+        env["QT_QPA_PLATFORM"] = "offscreen"
+        r = subprocess.run([sys.executable, "-c", prog, repo],
+                           check=True, capture_output=True, env=env)
+        return int(r.stdout.strip())
+
+    assert newlines(None) == 0, "default in a fresh process must be minified"
+    assert newlines("1") > 0, "PYRECON_JSER_PRETTY=1 must pretty-print"
+    assert newlines("0") == 0
+
+
+def test_explicit_pretty_argument_overrides_the_environment(monkeypatch):
+    doc = _doc()
+    monkeypatch.setenv("PYRECON_JSER_PRETTY", "1")
+    assert b"\n" not in dumps_jser(doc, pretty=False)
+    monkeypatch.delenv("PYRECON_JSER_PRETTY")
+    assert dumps_jser(doc, pretty=True).count(b"\n") > 5
+
+
+def test_default_save_is_minified(tmp_path, monkeypatch):
+    """A save with nothing set writes one line."""
+    monkeypatch.delenv("PYRECON_JSER_PRETTY", raising=False)
     series = _open_fixture(tmp_path)
     fp = series.jser_fp
     series.saveJser()
@@ -485,6 +579,41 @@ def test_minify_env_flag_restores_the_single_line_form(tmp_path, monkeypatch):
     with open(fp, "rb") as f:
         raw = f.read()
     assert b"\n" not in raw
+    json.loads(raw)          # still a valid document
+
+
+def test_pretty_env_var_opts_a_save_into_line_structure(tmp_path, monkeypatch):
+    """The opt-in reaches saveJser, not just dumps_jser."""
+    monkeypatch.setenv("PYRECON_JSER_PRETTY", "1")
+    series = _open_fixture(tmp_path)
+    fp = series.jser_fp
+    series.saveJser()
+    series.close()
+    with open(fp, "rb") as f:
+        raw = f.read()
+    assert raw.count(b"\n") > 100
+    lines = raw.decode().split("\n")
+    assert sum(1 for ln in lines if ln.startswith('  "src":')) > 0
+    json.loads(raw)
+
+
+def test_pretty_and_minified_saves_carry_the_same_document(tmp_path, monkeypatch):
+    """Whitespace only: the two forms must parse to the same document."""
+    monkeypatch.delenv("PYRECON_JSER_PRETTY", raising=False)
+    s1 = _open_fixture(tmp_path, name="mini.jser")
+    f1 = s1.jser_fp
+    s1.saveJser()
+    s1.close()
+    mini = json.loads(open(f1, "rb").read())
+
+    monkeypatch.setenv("PYRECON_JSER_PRETTY", "1")
+    s2 = _open_fixture(tmp_path, name="pretty.jser")
+    f2 = s2.jser_fp
+    s2.saveJser()
+    s2.close()
+    prettied = json.loads(open(f2, "rb").read())
+
+    assert _content(mini) == _content(prettied)
 
 
 # --------------------------------------------------------------------------
@@ -586,7 +715,8 @@ def _salvage(text):
     return sections, traces
 
 
-def test_truncated_pretty_file_is_still_salvageable(tmp_path):
+def test_truncated_pretty_file_is_still_salvageable(tmp_path, monkeypatch):
+    monkeypatch.setenv("PYRECON_JSER_PRETTY", "1")
     series = _open_fixture(tmp_path)
     fp = series.jser_fp
     series.saveJser()
@@ -615,10 +745,90 @@ def test_truncated_pretty_file_is_still_salvageable(tmp_path):
             assert len(row[0]) == len(row[1])  # x and y agree
 
 
-def test_truncated_minified_file_is_not_salvageable(tmp_path, monkeypatch):
-    """The control: without line structure the same cut yields nothing."""
-    from PyReconstruct.modules.constants import jser_format
-    monkeypatch.setattr(jser_format, "PRETTY_DEFAULT", False)
+def _scan_trace_rows(text):
+    """Recover complete positional trace rows *without* relying on line structure.
+
+    Walks balanced brackets from each ``[[`` and keeps whatever parses as a trace
+    row, which is what someone salvaging a damaged file would actually do. Works
+    the same on both output forms, which is the point being demonstrated.
+    """
+    out, i, n = [], 0, len(text)
+    while i < n:
+        i = text.find("[[", i)
+        if i < 0:
+            break
+        depth, j, instr, esc = 0, i, False, False
+        while j < n:
+            c = text[j]
+            if instr:
+                if esc:
+                    esc = False
+                elif c == "\\":
+                    esc = True
+                elif c == '"':
+                    instr = False
+            elif c == '"':
+                instr = True
+            elif c == "[":
+                depth += 1
+            elif c == "]":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        if j >= n or depth != 0:
+            break                       # ran into the truncation
+        try:
+            row = json.loads(text[i:j + 1])
+        except ValueError:
+            row = None
+        ok = (isinstance(row, list) and len(row) >= 8
+              and isinstance(row[0], list) and isinstance(row[1], list)
+              and row[0] and len(row[0]) == len(row[1])
+              and all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                      for v in row[0]))
+        if ok:
+            out.append(row)
+            i = j + 1
+        else:
+            i += 1                      # only past this bracket, not past the row
+    return out
+
+
+def test_line_anchored_salvage_finds_nothing_in_a_minified_file(tmp_path, monkeypatch):
+    """What line structure actually buys: anchored patterns, not recoverability.
+
+    Named for what it measures. ``_salvage`` is line-anchored, so of course it
+    returns nothing from a file with no lines -- that is a property of the
+    *method*, not of the format, and reading it as "minified data is lost" was
+    the circular step in the original argument for pretty-printing by default.
+    The companion test below shows the same cut is in fact recoverable.
+    """
+    monkeypatch.delenv("PYRECON_JSER_PRETTY", raising=False)
+    series = _open_fixture(tmp_path)
+    fp = series.jser_fp
+    series.saveJser()
+    series.close()
+    raw = open(fp, "rb").read()
+    assert b"\n" not in raw
+
+    cut = raw[: len(raw) // 2]
+    with pytest.raises(ValueError):
+        json.loads(cut)
+    sections, traces = _salvage(cut.decode(errors="replace"))
+    assert not sections
+    assert not traces
+
+
+def test_truncated_minified_file_is_still_recoverable_without_line_anchors(
+        tmp_path, monkeypatch):
+    """The honest control: non-anchored patterns recover the same content.
+
+    This is why pretty-printing is not worth +11% wall time and double the
+    save-path memory on every save: the salvage argument for it was measured with
+    a line-anchored method against a file with no lines.
+    """
+    monkeypatch.delenv("PYRECON_JSER_PRETTY", raising=False)
     series = _open_fixture(tmp_path)
     fp = series.jser_fp
     series.saveJser()
@@ -628,9 +838,26 @@ def test_truncated_minified_file_is_not_salvageable(tmp_path, monkeypatch):
     cut = raw[: len(raw) // 2]
     with pytest.raises(ValueError):
         json.loads(cut)
-    sections, traces = _salvage(cut.decode(errors="replace"))
-    assert not sections
-    assert not traces
+
+    text = cut.decode(errors="replace")
+    # sections are still countable without an anchor
+    assert text.count('"src":') > 0
+
+    rows = _scan_trace_rows(text)
+    assert rows, "no trace row recoverable from the minified cut"
+    for row in rows:
+        assert len(row[0]) == len(row[1])   # x and y agree
+
+    # and it is not a worse result than the pretty form gets from the same cut
+    monkeypatch.setenv("PYRECON_JSER_PRETTY", "1")
+    s2 = _open_fixture(tmp_path, name="pretty_cut.jser")
+    f2 = s2.jser_fp
+    s2.saveJser()
+    s2.close()
+    praw = open(f2, "rb").read()
+    prows = _scan_trace_rows(praw[: len(praw) // 2].decode(errors="replace"))
+    assert len(rows) == len(prows), (
+        f"minified recovered {len(rows)} rows, pretty recovered {len(prows)}")
 
 
 # --------------------------------------------------------------------------

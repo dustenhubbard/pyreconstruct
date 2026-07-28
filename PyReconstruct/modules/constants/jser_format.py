@@ -1,8 +1,26 @@
-"""Canonical ordering and structural pretty-printing for the .jser writer.
+"""Canonical ordering for the .jser writer, plus an opt-in structural pretty printer.
 
-Two writer guarantees live here, and nothing else. Neither changes the schema:
+Two writer behaviours live here, and nothing else. Neither changes the schema:
 every file this module produces is the same JSON document the compact writer
 produced, with the same keys and the same values.
+
+**The normative output form is minified** -- one line, no indentation -- **with
+canonical ordering always applied.** Pretty-printing is available on request and
+is off by default. The two halves were introduced together but they do not cost
+the same, and only one of them is free:
+
+============================  ===================  ==========================
+                              canonical ordering   pretty-printing
+============================  ===================  ==========================
+bytes on a 391 MB series      0 (exactly)          +0.65%
+``saveJser`` wall time        within noise         +11.3%
+save-path transient memory    unchanged            +27% (~1 extra copy)
+fixes byte reproducibility    yes                  no
+============================  ===================  ==========================
+
+So ordering is kept unconditionally and there is deliberately no switch to turn
+it off, while the whitespace is now something a caller asks for when a human is
+going to read the diff.
 
 **Canonical ordering.** Five structures are Python ``set`` objects in memory and
 JSON arrays on disk (trace ``tags``, series ``editors``, the member lists of
@@ -12,29 +30,31 @@ two saves of identical content produced different bytes -- byte reproducibility
 failed on any series using tags, groups or hosts. Every one of those arrays is now
 sorted, and object key order is fixed by ``canon_keys`` so that a dict which was
 back-filled by a migration (missing keys appended at the tail) has the same byte
-layout as one derived straight from the model. Measured cost: 19 bytes on a
-391 MB series.
+layout as one derived straight from the model. Measured cost on a 391 MB series:
+**0 bytes** -- sorting reorders bytes without adding or removing any, so the
+minified output is byte-for-byte the same length as before ordering existed.
 
-**Structural pretty-printing.** ``dumps_jser`` expands the document's *structure*
-onto lines while keeping every leaf compact: one section block, one trace, one
-flag, one transform per line, with coordinate arrays staying on the trace's own
-line. Measured cost: +0.65% of bytes on a real 391 MB series.
+**Structural pretty-printing (opt in).** ``dumps_jser(doc, pretty=True)`` expands
+the document's *structure* onto lines while keeping every leaf compact: one
+section block, one trace, one flag, one transform per line, with coordinate
+arrays staying on the trace's own line.
 
-Why lines matter, concretely:
+What it buys, and what it does not:
 
-- A one-trace edit produces a diff of a few kilobytes naming the enclosing object,
-  instead of ``diff`` reprinting the whole single-line file twice.
-- A **damaged** file stays partially salvageable. ``jq`` refuses to parse
-  truncated JSON, so line structure is the only thing that lets ``grep``/``sed``
-  recover the intact portion. Section boundaries are therefore deliberately
-  findable at a fixed column: every section block opens with ``{`` alone in
-  column 0 and its first key is ``  "src":``, and every trace row begins at a
-  fixed indent, so ``grep -n '^  "src":'`` enumerates sections and
-  ``grep -c '^      \\['`` counts traces even in a file that no JSON parser will
-  touch.
+- **A readable diff.** A one-trace edit shows as a few hundred bytes naming the
+  enclosing object, instead of ``diff`` reprinting the whole single-line file
+  twice. On a 781 MB series that is 781,692,354 bytes of diff versus 669. This is
+  the reason the printer exists, and it is worth asking for when you want it.
+- **Convenient salvage**, not the difference between recoverable and lost. ``jq``
+  refuses truncated JSON either way. Line structure makes recovery a matter of
+  line-anchored patterns (a fixed column, ``sed -n Np``, the enclosing object name
+  as context) rather than hand-written regexes -- but non-anchored patterns
+  recover the same sections and 99.5% of the trace rows from a minified file, so
+  this is ergonomics rather than data.
 
-Set ``PYRECON_JSER_MINIFY=1`` (or pass ``pretty=False``) to get the old
-single-line output; the reader accepts both, since this is whitespace.
+Set ``PYRECON_JSER_PRETTY=1`` in the environment, or pass ``pretty=True``, to get
+it. The reader accepts either form; this is whitespace, so it is
+backward-compatible in both directions.
 """
 
 import os
@@ -42,10 +62,23 @@ import os
 from .fast_json import fast_dumps
 
 
-#: Writer default. Pretty-printing is on unless explicitly disabled, per the
-#: format decision ("pretty-print by default, with a writer flag so a minified
-#: variant exists if size ever matters").
-PRETTY_DEFAULT = os.environ.get("PYRECON_JSER_MINIFY", "") != "1"
+#: Environment variable that opts a whole process into pretty output.
+PRETTY_ENV_VAR = "PYRECON_JSER_PRETTY"
+
+
+def pretty_default() -> bool:
+    """Whether a ``dumps_jser`` call with no explicit ``pretty=`` pretty-prints.
+
+    Read from the environment **on every call**, deliberately. The previous
+    version of this flag was evaluated once at import, which meant it could not
+    be changed in a running process -- and meant the test that claimed to cover
+    it could not actually set the variable, so it monkeypatched the module global
+    and the variable name itself was never exercised.
+
+        Returns:
+            (bool) True when ``PYRECON_JSER_PRETTY`` is set to ``1``
+    """
+    return os.environ.get(PRETTY_ENV_VAR, "") == "1"
 
 
 # ---------------------------------------------------------------------------
@@ -299,17 +332,21 @@ def _dump_series(sd, indent : int, out : list) -> None:
 def dumps_jser(jser_data : dict, pretty : bool = None) -> bytes:
     """Serialize a whole .jser document to ASCII JSON bytes.
 
-    Structurally pretty-printed with compact leaves by default; byte-for-byte the
-    old compact single line when `pretty` is False.
+    Minified by default -- a single line, with canonical ordering applied.
+    Structurally pretty-printed with compact leaves when `pretty` is True, or
+    when ``PYRECON_JSER_PRETTY=1`` is set in the environment.
+
+    Both forms are the same JSON document: pretty-printing adds whitespace and
+    nothing else.
 
         Params:
             jser_data (dict): the assembled document (sections / series / log)
-            pretty (bool): override the writer default
+            pretty (bool): force pretty on/off; None consults the environment
         Returns:
             (bytes) the file contents
     """
     if pretty is None:
-        pretty = PRETTY_DEFAULT
+        pretty = pretty_default()
     if not pretty:
         return fast_dumps(jser_data)
     if not isinstance(jser_data, dict) or "sections" not in jser_data:

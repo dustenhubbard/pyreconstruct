@@ -16,11 +16,13 @@ Two things to know before reading further:
   file from its in-memory model. The known divergences are collected in
   [Reader and writer divergences](#9-reader-and-writer-divergences); they are the parts
   most likely to change in a future canonical version.
-- **The writer is canonical and line-structured.** The same series saved twice produces
-  the same bytes ([one documented exception](#canonical-ordering)), and the file is laid out one trace per line so that `diff`, `grep` and
-  `sed` work on it — including on a damaged file that no JSON parser will accept. See
+- **The writer is canonical, and minified by default.** The same series saved twice
+  produces the same bytes ([one documented exception](#canonical-ordering)). The normative
+  output form is a single line; **structural pretty-printing is available on request** and
+  is off by default, because it costs about 11% of save time and about 27% more transient
+  memory in the save path, while canonical ordering costs nothing. See
   [Canonical ordering](#canonical-ordering) and [Line structure](#line-structure). Older
-  files do not have either property; the reader accepts them regardless.
+  files have neither property; the reader accepts them regardless.
 
 Every factual claim below is anchored to a source location in the
 [References](#10-references) appendix. Anchors were verified against commit `5f16443`.
@@ -51,9 +53,12 @@ concatenation, and no trailing newline. The file is written in one shot as bytes
 replaced over the previous file atomically, so a crash mid-save cannot truncate an
 existing series.
 
-It is **structurally pretty-printed with compact leaves**: the document's structure is
-expanded onto lines, one section block / trace / flag / transform per line, while every
-leaf value — coordinate arrays included — stays compact on the line it belongs to. See
+It is written **minified** — one line, no indentation — with
+[canonical ordering](#canonical-ordering) applied. Setting `PYRECON_JSER_PRETTY=1`
+switches the writer to a **structurally pretty-printed** form with compact leaves: the
+document's structure is expanded onto lines, one section block / trace / flag / transform
+per line, while every leaf value — coordinate arrays included — stays compact on the line
+it belongs to. Both forms are the same JSON document. See
 [Line structure](#line-structure).
 
 ### Canonical ordering
@@ -105,8 +110,10 @@ Because sorting reorders bytes without adding or removing any, canonical orderin
 
 ### Line structure
 
-The writer's layout is chosen so that a `.jser` can be worked with by line-oriented
-tools, including on a file no JSON parser will accept.
+**Opt in with `PYRECON_JSER_PRETTY=1`.** The default output is a single line; everything
+in this section describes what you get when you ask for the pretty form, and applies to
+files written with it. The layout is chosen so that a `.jser` can be worked with by
+line-oriented tools, including on a file no JSON parser will accept.
 
 ```
 {
@@ -193,21 +200,38 @@ Two caveats, so the recipes above are not read as more than they are:
 - **`^{$` also matches the document's own opening brace.** `grep -c '^  "src":'` is the
   exact section count.
 
-**What line structure does *not* buy.** It is worth being precise, because the same cut on
-the **minified** form is not unrecoverable — it is merely less convenient. Line-anchored
-patterns find nothing there, since there are no lines, but non-anchored ones do:
-`grep -oa '"src":' ` finds the same **161** sections, and one `grep -oE` for the trace-row
-shape recovers **79,736** complete, individually-parseable rows — 99.5% of what the
-pretty form yields, in about a second. So line structure buys **obvious, exact,
-tool-friendly salvage** (a fixed column, `sed -n Np`, the enclosing object name as
-context) rather than the difference between recoverable and lost.
+**What line structure does *not* buy.** It is worth being precise, because this is the
+argument that used to justify pretty-printing every save, and it does not carry that
+weight. The same cut on the **minified** form is not unrecoverable — it is merely less
+convenient. Line-anchored patterns find nothing there, since there are no lines, but
+non-anchored ones do: `grep -oa '"src":'` finds the same **161** sections, and one
+`grep -oE` for the trace-row shape recovers **79,736** complete, individually-parseable
+rows — 99.5% of what the pretty form yields, in about a second. So line structure buys
+**obvious, exact, tool-friendly salvage** (a fixed column, `sed -n Np`, the enclosing
+object name as context) rather than the difference between recoverable and lost.
 
-Set `PYRECON_JSER_MINIFY=1` to write the old compact single line instead. The reader
-accepts either — this is whitespace, so it is backward-compatible in both directions.
+The readable-diff argument is the one that holds, and it is why the printer is still here:
+a one-trace edit on a 781 MB series is 781,692,354 bytes of `diff` output minified against
+**669 bytes** pretty. That is worth asking for when a human is going to read the diff. It
+is not worth paying for on every save.
 
-The flag is read once, when the module is imported, so it must be set before the
-application starts; changing it in a running process has no effect. It governs
-**whitespace only** — [canonical ordering](#canonical-ordering) still applies, so a
+### Choosing the output form
+
+| | default | `PYRECON_JSER_PRETTY=1` |
+| --- | --- | --- |
+| layout | one line | one section block / trace / flag / transform per line |
+| canonical ordering | applied | applied |
+| size, 391 MB series | 390,846,078 B | 393,372,829 B (+0.65%) |
+| `saveJser` wall time | baseline | about +11% |
+| save-path transient memory | baseline | +27% (an extra copy of the document) |
+
+`PYRECON_JSER_PRETTY` is read **on every write**, not once at import, so it can be set,
+changed or cleared in a running process and the next save honours it. `pretty=True` /
+`pretty=False` passed to `dumps_jser` overrides the environment.
+
+The reader accepts either form — this is whitespace, so it is backward-compatible in both
+directions. The variable governs **whitespace only**:
+[canonical ordering](#canonical-ordering) always applies, so a
 minified file written by this build is *not* byte-identical to one written by a build from
 before ordering was canonical. There is deliberately no switch that turns canonical
 ordering off.
@@ -1173,7 +1197,7 @@ symbol, treat the corresponding claim in this page as unverified until re-checke
 | Non-finite and out-of-range integer caveats | `PyReconstruct/modules/constants/fast_json.py:9-17` |
 | `orjson` is a pinned dependency | `pyproject.toml:38`, `requirements.txt:9` |
 | Atomic replace of the `.jser` | `PyReconstruct/modules/datatypes/series.py:88-115` |
-| Structural pretty printer; `PYRECON_JSER_MINIFY` | `PyReconstruct/modules/constants/jser_format.py` (`dumps_jser`, `PRETTY_DEFAULT`) |
+| Structural pretty printer (opt-in); `PYRECON_JSER_PRETTY` | `PyReconstruct/modules/constants/jser_format.py` (`dumps_jser`, `pretty_default`) |
 | Canonical key order and unknown-key preservation | `PyReconstruct/modules/constants/jser_format.py` (`canon_keys`, `SECTION_KEYS`, `SERIES_KEYS`) |
 | Section key order and contour sort applied | `PyReconstruct/modules/datatypes/section.py` (end of `Section.updateJSON`, `Section.getDict`) |
 | Series key order and options-bag order applied | `PyReconstruct/modules/datatypes/series.py` (end of `Series.updateJSON`) |
