@@ -226,16 +226,18 @@ class ObjectTableWidget(DataTable):
         # fill in the menu bar object
         populateMenuBar(self, self.menubar, menubar_list)
 
-        # create the right-click menu -- prepend the object-list-only table ops
-        # ("Invert selection" + "Copy object values"); these are table selection /
-        # clipboard ops, so they can't live in the shared field object menu.
-        # "Hide Other Objects" / "Show all objects" come from the shared menu
-        # below.
-        context_menu_list = [
+        # create the right-click menu -- the object-list-only table ops
+        # ("Invert selection" + "Copy object values") are table selection /
+        # clipboard ops, so they can't live in the shared field object menu;
+        # they are passed in and mounted in the standard bottom utility slot
+        # (second-from-bottom, above the destructive group), so row 1 of the
+        # list menu is "Edit object attributes..." rather than plumbing.
+        # "Hide other objects" / "Show all objects" come from the shared menu.
+        list_ops = [
             ("invertobjselection_act1", "Invert selection", "", self.invertSelection),
             ("copyobjrow_act", "Copy object values", "", self.table.copy),
-            None,
-        ] + self.mainwindow.field.getObjMenu()
+        ]
+        context_menu_list = self.mainwindow.field.getObjMenu(list_ops=list_ops)
         self.context_menu = QMenu(self)
         populateMenu(self, self.context_menu, context_menu_list)
 

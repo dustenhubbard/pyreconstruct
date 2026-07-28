@@ -291,9 +291,23 @@ def test_flag_resolve_hoisted_to_two_top_level_items():
 # Q6: zarr-label menu restored + handlers live
 # --------------------------------------------------------------------------- #
 def test_label_menu_actions_are_restored():
-    src = _src("main/main_window.py")
-    assert '("importlabels_act", "Import labels", "", self.importLabels)' in src
-    assert '("mergelabels_act", "Merge labels", "", self.mergeLabels)' in src
+    # the definition moved to context_menu_list.get_label_menu_list (so the
+    # zarr-label surface is buildable/assertable like the other six); the two
+    # actions and their handlers are unchanged
+    from PyReconstruct.modules.gui.main.context_menu_list import get_label_menu_list
+
+    class _Stub:
+        def importLabels(self): pass
+        def mergeLabels(self): pass
+
+    stub = _Stub()
+    menu = get_label_menu_list(stub)
+    assert [(e[0], e[1]) for e in menu] == [
+        ("importlabels_act", "Import labels"),
+        ("mergelabels_act", "Merge labels"),
+    ]
+    assert menu[0][3] == stub.importLabels
+    assert menu[1][3] == stub.mergeLabels
 
 
 def test_import_and_merge_handlers_are_live_methods():
