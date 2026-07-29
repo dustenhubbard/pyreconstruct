@@ -1,0 +1,58 @@
+site_name: PyReconstruct
+site_description: >-
+  Tracing, annotation, and 3D reconstruction for serial-section and volume
+  electron microscopy.
+site_url: https://dustenhubbard.github.io/PyReconstruct/
+repo_url: https://github.com/dustenhubbard/PyReconstruct
+repo_name: dustenhubbard/PyReconstruct
+edit_uri: edit/main/docs/
+docs_dir: docs
+
+theme:
+  name: material
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.instant
+    - navigation.top
+    - navigation.sections
+    - search.suggest
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+plugins:
+  - search
+
+markdown_extensions:
+  # GitHub-style heading slugs, so in-page anchors written for the GitHub
+  # rendering of these files (e.g. #source--pip-installs) resolve here too.
+  - toc:
+      permalink: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+nav:
+  - Home: index.md
+  - User Guide: USER_GUIDE.md
+  - Performance: performance.md
+  - The .jser file format: JSER_FORMAT.md
+  - Developing with uv: DEV_UV.md
+  - Contributing: https://github.com/dustenhubbard/PyReconstruct/blob/main/CONTRIBUTING.md
+  - Security: https://github.com/dustenhubbard/PyReconstruct/blob/main/SECURITY.md
