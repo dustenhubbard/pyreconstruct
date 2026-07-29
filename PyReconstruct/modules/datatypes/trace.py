@@ -244,18 +244,46 @@ class Trace():
     
     @staticmethod
     def fromList(l : list, name : str = None):
-        """Create a trace object from a dictionary.
-        
+        """Create a trace object from a list.
+
+        Two row shapes are accepted, told apart by length, because the two
+        places traces are stored on disk differ in whether the name is part of
+        the row:
+
+          * **8 fields** -- ``getList(include_name=False)``. Section contours
+            are stored keyed by contour name, so the name is not repeated in
+            every row; the caller must supply ``name``.
+          * **9 fields** -- ``getList(include_name=True)``, name first. Palette
+            traces and undo-state baselines are stored as flat lists, so each
+            row carries its own name.
+
+        A 9-field row is self-naming even when ``name`` is passed. That is
+        deliberate and load-bearing: ``FieldState.getContours`` reads
+        name-bearing rows while also passing the contour name it keyed them
+        under, and the embedded name is the authoritative one.
+
             Params:
-                list (dict): the list trace data
-                name (str): the name of the trace
+                l (list): the list trace data, 8 or 9 fields as above
+                name (str): the name of the trace; required for an 8-field row,
+                            ignored for a 9-field one
             Returns:
-                (Trace) a Trace object constructed from the dictionary data
+                (Trace) a Trace object constructed from the list data
         """
 
+        # Read the name without consuming it. This used to be `l.pop(0)`,
+        # which mutated the caller's list: a 9-field row handed in twice
+        # raised ValueError the second time, because the first call had left
+        # it 8 fields long with `x` where the name belonged. One call site had
+        # already grown a defensive `.copy()` to work around it:
+        # `Series.getDefaultPaletteTraces`, which iterates the module-level
+        # `default_traces` constant and would otherwise destroy it on first
+        # use, permanently, for the rest of the process. Parsing a row is a
+        # read; callers should not have to know that it wasn't.
         if not name or len(l) == 9:
-            name = l.pop(0)
-        
+            name, *fields = l
+        else:
+            fields = l
+
         (
             x,
             y,
@@ -265,7 +293,7 @@ class Trace():
             hidden,
             fill_mode,
             tags
-        ) = tuple(l)
+        ) = tuple(fields)
 
         new_trace = Trace(name.strip(), color, closed)  # strip trace name
         new_trace.negative = negative
