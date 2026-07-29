@@ -221,6 +221,31 @@ class DataTable(QDockWidget):
         h = event.size().height()
         self.table.resize(w, h-20)
 
+    def selectedRows(self):
+        """Get the indices of the rows the user has selected, without repeats.
+
+        These lists are ``SelectItems``/``ExtendedSelection``, so
+        ``selectedIndexes()`` yields one index per selected *cell*: selecting a
+        single row of a six-column list returns five indexes (one per
+        selectable column), and every one of them reports the same ``row()``.
+        A ``getSelected`` built directly on ``selectedIndexes()`` therefore
+        returns each item once per column, which multiplies any caller that
+        accumulates (``section.brightness += b`` ran five times for one
+        selected row) and breaks every ``len(...) == 1`` single-selection
+        guard.
+
+        Order is preserved -- these row indices drive user-facing lists,
+        dialog prefills that read element [0], and log entries, so the result
+        has to be stable and in the order Qt reported, not a bare ``set``.
+
+            Returns:
+                (list): the selected row indices, de-duplicated, in order
+        """
+        table = self.table
+        if table is None:
+            return []
+        return list(dict.fromkeys(i.row() for i in table.selectedIndexes()))
+
     def getSelected(self, single=False):
         """Get the selected data item(s).
 
