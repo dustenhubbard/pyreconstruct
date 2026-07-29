@@ -1,0 +1,3 @@
+# Documentation build dependencies (MkDocs Material docs site).
+# mkdocs-material pulls in mkdocs, pymdown-extensions, and the search plugin.
+mkdocs-material==9.7.6
