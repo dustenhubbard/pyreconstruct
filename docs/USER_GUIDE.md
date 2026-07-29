@@ -625,9 +625,10 @@ columns you define.
   Offload log history…**), takes each object's most recent curation entry, and
   writes that status back onto the object. It only fills gaps: an object already
   marked *Curated* is left exactly as it is, and no status is ever cleared or
-  downgraded. Use it if curation you know you did is no longer showing — for
-  example after recovering an unsaved session. It is one undoable step
-  (`Ctrl+Z`).
+  downgraded. A restored *Needs curation* keeps who it was assigned to, provided
+  the marking was made in a version that records the assignee in the log. Use it
+  if curation you know you did is no longer showing — for example after
+  recovering an unsaved session. It is one undoable step (`Ctrl+Z`).
 
 ### Trace list
 
@@ -750,8 +751,9 @@ propagation.
 - **SWiFT project** — import transforms from an AlignEM-SWiFT project; you choose
   the scale to import. The number of transforms must match the number of sections.
 
-Transforms can also be imported from another series via **Series ▸ Import ▸ from
-series…** (an Alignments tab lets you pick which alignments to bring over).
+Transforms can also be imported from another series via **Series ▸ Import series
+data ▸ From another series…** (an Alignments tab lets you pick which alignments
+to bring over).
 
 ### Locking sections
 

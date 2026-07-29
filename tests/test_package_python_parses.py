@@ -33,12 +33,17 @@ Two implementation notes:
     the first, which is what someone fixing a bad merge actually wants.
 
 Note what this does and does not claim. Parsing is not importing: a file that
-compiles may still fail at import or at run time (``zarr_to_jser.py``
-requires ``cv2``, ``zarr``, and hardcoded local paths, so it cannot be
-imported or executed here). Syntactic validity is the floor, and the floor is
-what was missing.
+compiles may still fail at import or at run time (``zarr_to_jser.py``'s top
+level opens hardcoded local paths, so it cannot be imported or executed whole
+here). Syntactic validity is the floor, and the floor is what was missing.
+For the one file that has already been bitten twice, a second gate goes one
+step higher: its import statements are extracted and actually executed --
+see ``test_zarr_to_jser_import_statements_execute``.
 """
 
+import ast
+import subprocess
+import sys
 from pathlib import Path
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "PyReconstruct"
@@ -94,4 +99,43 @@ def test_bundled_scripts_are_covered_by_the_walk():
     asset_scripts = {p for p in covered if p.startswith("assets/")}
     assert len(asset_scripts) > 5, (
         f"expected several bundled asset scripts in scope, found {sorted(asset_scripts)}"
+    )
+
+
+def test_zarr_to_jser_import_statements_execute():
+    """The imports of ``assets/misc/zarr_to_jser.py`` must actually resolve.
+
+    The same file that hid a SyntaxError also carried an ``ImportError``:
+    ``from PyReconstruct.modules.backend.func import reducePoints``, a name
+    ``backend.func`` has never exported (the function lives in
+    ``modules/calc/grid.py`` and is exported from ``PyReconstruct.modules.calc``).
+    Parsing cannot catch that class of rot, and the script cannot be imported
+    whole -- its top level immediately opens hardcoded local paths -- so this
+    test extracts the module-level import statements with ``ast`` and executes
+    exactly those, alone, in a subprocess. Every dependency the script names
+    (``cv2``, ``numpy``, ``zarr``, the PyReconstruct modules) is part of this
+    project's own environment, so a failure means the script names something
+    that does not exist -- which is precisely the bug this guards against.
+    """
+
+    path = PACKAGE_ROOT / "assets" / "misc" / "zarr_to_jser.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+
+    stmts = [
+        ast.unparse(node) for node in tree.body
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+    ]
+
+    # guard the extraction itself: the regressed import must be among them
+    assert any("reducePoints" in s for s in stmts), stmts
+
+    proc = subprocess.run(
+        [sys.executable, "-c", "\n".join(stmts)],
+        capture_output=True,
+        text=True,
+        cwd=str(PACKAGE_ROOT.parent),  # repo root, so `import PyReconstruct` resolves
+        timeout=120,
+    )
+    assert proc.returncode == 0, (
+        f"an import of assets/misc/zarr_to_jser.py does not execute:\n{proc.stderr}"
     )
