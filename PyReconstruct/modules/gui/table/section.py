@@ -88,7 +88,7 @@ class SectionTableWidget(DataTable):
                 "opts":
                 [
                     ("setbc_act", "Set values...", "", self.setBC),
-                    ("incbc_acrt", "Increment values...", "", lambda : self.setBC(inc=True)),
+                    ("incbc_act", "Increment values...", "", lambda : self.setBC(inc=True)),
                     ("matchbc_act", "Match section in view", "", self.matchBC),
                     ("optimizebc_act", "Optimize...", "", self.optimizeBC),
                 ]
@@ -173,15 +173,15 @@ class SectionTableWidget(DataTable):
             Params:
                 single (bool): True if only one section should be selected
         """
-        selected_indeces = self.table.selectedIndexes()
-        if len(selected_indeces) < 1:
+        selected_rows = self.selectedRows()
+        if len(selected_rows) < 1:
             return
         n_list = []
-        for i in selected_indeces:
-            text = self.table.item(i.row(), 0).text()
+        for r in selected_rows:
+            text = self.table.item(r, 0).text()
             n = int(text.split()[0])
             n_list.append(n)
-        
+
         if single:
             if len(n_list) != 1:
                 notify("Please select only one section for this option.")

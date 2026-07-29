@@ -669,10 +669,9 @@ class ObjectTableWidget(DataTable):
             Returns:
                 (str | list): the object name(s)
         """
-        selected_indexes = self.table.selectedIndexes()
         obj_names = []
-        for i in selected_indexes:
-            n = self.model.nameAt(i.row())
+        for r in self.selectedRows():
+            n = self.model.nameAt(r)
             if n is not None:
                 obj_names.append(n)
 

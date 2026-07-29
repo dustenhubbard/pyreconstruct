@@ -51,8 +51,18 @@ PyReconstruct = "PyReconstruct.cli:main"
 # needs (pytest) on top of the runtime deps, without the heavy dev extras. pytest
 # is held to the 9.x line the suite is verified against (8.x is untested; 10 drops
 # a config shim deprecated in 9.1).
+#
+# pytest-qt supplies the `qtbot`/`qapp` fixtures the real-widget tests need: one
+# QApplication for the whole session (constructing a second one aborts) and
+# deterministic teardown of the widgets a test builds. PySide6 is already a
+# runtime dependency, so this adds no Qt of its own. It belongs in this extra,
+# not in [dependency-groups].dev, because CI installs the suite with
+# `--extra test --no-default-groups` and would otherwise not see it.
 [project.optional-dependencies]
-test = ["pytest>=9,<10"]
+test = [
+    "pytest>=9,<10",
+    "pytest-qt>=4",
+]
 
 # Developer-only tooling (PEP 735). Installed by `uv sync`, not shipped to
 # end users. Replaces the conda-only extras from dev/environment_dev.yaml.
