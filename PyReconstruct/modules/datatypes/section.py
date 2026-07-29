@@ -189,21 +189,56 @@ class Section():
                 section_data (dict): the JSON data to update
                 n (int): the section number
         """
+        # Recorded BEFORE the back-fill loop below inserts the key, because the
+        # legacy brightness/contrast migration needs to know whether the *file*
+        # carried a profiles dict -- a fact that is unrecoverable once the
+        # default has been back-filled.
+        had_bc_profiles = isinstance(
+            section_data.get("brightness_contrast_profiles"), dict
+        )
+
         empty_section = Section.getEmptyDict()
         for key in empty_section:
             if key not in section_data:
                 section_data[key] = empty_section[key]
-        
+
         # modify brightness/contrast
         if "brightness" in section_data and "contrast" in section_data:
             # fix exact numbers from an older version
             if abs(section_data["brightness"]) > 100:
                 section_data["brightness"] = 0
             section_data["contrast"] = int(section_data["contrast"])
-            # move into profiles
-            section_data["brightness_contrast_profiles"] = {
-                "default": (section_data["brightness"], section_data["contrast"])
-            }
+
+            # Move into profiles by MERGING. This used to assign a fresh
+            # single-key dict, which discarded every other named profile the
+            # section had. getDict() never writes the legacy scalars back, so
+            # they vanish on the first save -- meaning the migration ran on
+            # every open until that save, and the save then made the loss of
+            # the other profiles permanent.
+            profiles = section_data["brightness_contrast_profiles"]
+            if not isinstance(profiles, dict):
+                # Not mergeable, and would fail on load. Treat it as absent,
+                # which is what the old wholesale assignment did in effect.
+                profiles = {}
+                section_data["brightness_contrast_profiles"] = profiles
+                had_bc_profiles = False
+
+            # Whether the scalars override an existing "default" is decided by
+            # whether the file carried a profiles dict at all -- NOT by
+            # comparing values, which cannot tell a deliberate (0, 0) default
+            # from the back-filled placeholder:
+            #   no profiles key  -> a pre-profiles file; the scalars ARE its
+            #                       only brightness/contrast, so they become
+            #                       "default"
+            #   profiles present -> already profiles-aware, so that dict is
+            #                       authoritative. It is what the profiles UI
+            #                       has been showing and editing, while the
+            #                       scalars are a stale leftover of an older
+            #                       schema. Nothing is overwritten.
+            if not had_bc_profiles or "default" not in profiles:
+                profiles["default"] = (
+                    section_data["brightness"], section_data["contrast"]
+                )
 
         # scan contours
         flagged_contours = []
