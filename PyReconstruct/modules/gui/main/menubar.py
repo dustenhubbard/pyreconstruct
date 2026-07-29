@@ -39,10 +39,10 @@ def return_file_menu(self):
             ("saveas_act", "Save as...", "", self.saveAsToJser),
             {
                 "attr_name": "projectsmenu",
-                "text": "Projects",
+                "text": "Utilities",
                 "opts":
                 [
-                    ("random_act", "Randomize images...", "", self.randomizeProject),
+                    ("random_act", "Randomize project...", "", self.randomizeProject),
                     ("derandom_act", "De-randomize project...", "", self.derandomizeProject)
                 ]
             },
@@ -57,7 +57,7 @@ def return_file_menu(self):
             },
             {
                 "attr_name": "exportmenu",
-                "text": "Export",
+                "text": "Export series",
                 "opts":
                 [
                     ("exportxml_act", "To legacy Reconstruct (XML)...", "", self.exportToXML),
@@ -119,10 +119,10 @@ def return_series_menu(self):
             ("alloptions_act", "Options...", self.series, self.allOptions),
             {
                 "attr_name": "importmenu",
-                "text": "Import",
+                "text": "Import series data",
                 "opts":
                 [
-                    ("importfromseries_act", "From series...", "", self.importFromSeries),
+                    ("importfromseries_act", "From another series...", "", self.importFromSeries),
                     ("importfromzarrlabels_act", "From neuroglancer zarr labels...", "", self.importFromZarrLabels),
                 ]
             },
@@ -280,7 +280,7 @@ def return_alignments_menu(self):
             ("changealignment_act", "Edit alignments...", self.series, self.modifyAlignments),
             None,
             {
-                "attr_name": "importmenu",
+                "attr_name": "importalignmentsmenu",
                 "text": "Import alignments",
                 "opts":
                 [
