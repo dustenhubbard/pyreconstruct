@@ -298,20 +298,21 @@ def test_empty_input_trace_returns_the_same_empty_array_as_before():
     assert out.dtype == ref.dtype == np.float64
 
 
-def test_get_exterior_still_raises_when_a_contour_has_no_anchors():
-    """Pins pre-existing behaviour: the empty (0,) array fails to broadcast.
+def test_get_exterior_skips_a_contour_with_no_anchors():
+    """A contour that keeps no anchor points now yields no exterior.
 
-    getExterior() does ``new_trace += self.grid_shift``, and a shape-(0,)
-    array cannot be broadcast against a 2-tuple. A lone pixel is such a case.
-    This is not a new bug and the vectorized path reproduces it exactly.
+    The old body did ``new_trace += self.grid_shift`` unconditionally, and a
+    shape-(0,) array cannot be broadcast against a 2-tuple; ``_scalar_exterior``
+    is that body verbatim and still shows the raise. A lone pixel is such a
+    case. See tests/test_grid_exterior_no_anchors.py for the full treatment,
+    including how far the degenerate contour is reachable.
     """
     grid = np.zeros((7, 7), dtype=int)
     grid[3, 3] = 1
     g = _bare_grid(grid, shift=(0, 0))
     with pytest.raises(ValueError):
         _scalar_exterior(g)
-    with pytest.raises(ValueError):
-        _bare_grid(grid, shift=(0, 0)).getExterior()
+    assert _bare_grid(grid, shift=(0, 0)).getExterior() == []
 
 
 def test_single_point_trace_draws_nothing_and_yields_no_contours():

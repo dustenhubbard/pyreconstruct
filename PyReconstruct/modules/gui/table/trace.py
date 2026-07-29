@@ -407,16 +407,26 @@ class TraceTableWidget(DataTable):
     
     def getTraces(self, items : list) -> list:
         """Get the trace objects for a list of table items.
-        
+
+        The rows come from series.data, so a row can name a trace the displayed
+        section does not have: a series-wide operation updates the series data
+        and repaints the lists before field.reload() swaps in a section
+        containing the new traces. Such a row resolves to no trace and is
+        skipped, the same way getFeret reports no measurement for it; the reload
+        rebuilds the row against the section that does have the trace.
+
             Params:
                 items (list): the list of trace table items (name, index)
             Returns:
-                traces (list): the list of actual trace objects
+                traces (list): the trace objects the displayed section has
         """
         traces = []
         for name, index in items:
-            traces.append(self.section.contours[name][index])
-        
+            contour = self.section.contours.get(name)
+            if contour is None or index >= len(contour):
+                continue
+            traces.append(contour[index])
+
         return traces
           
     def findTrace(self):
