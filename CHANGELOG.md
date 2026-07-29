@@ -13,7 +13,7 @@ the README's *From source (developers)* section).
 
 ## [Unreleased]
 
-## [1.21.0-beta-5] — 2026-07-28
+## [1.21.0] — 2026-08-04
 
 ### Added
 - **Data clean-up menu.** A "Clean up" submenu under the Series menu groups three
@@ -113,7 +113,104 @@ the README's *From source (developers)* section).
   the plain-venv path demoted to an alternative and conda a parallel option.
   `uv lock --upgrade` is documented as the maintainer dep-bump flow. (#86)
 
+- **3D scene auto-refresh toggle.** The `WindowActivate`-triggered stale-mesh
+  regeneration is now gated behind a per-computer `3D_auto_refresh` option
+  (default on), exposed both as a Scene-menu checkbox in the 3D window and in
+  Series ▸ Options ▸ 3D. Manual refresh (Ctrl+R) is unchanged; re-enabling
+  immediately refreshes accrued edits. (#64)
+- **Developer update channel.** Third channel tracking the rolling build
+  republished on every push to `main` (fixed tag `prerelease`). `pick_release`
+  selects it by tag; freshness rides the monotonic setuptools-scm `.devN` in
+  asset versions, so the reused tag can neither miss updates nor re-offer the
+  installed build. (#66)
+
+- **Copyable error reports.** The uncaught-error dialog now shows a full report
+  (version, OS, Python, traceback) with a "Copy report to clipboard" button. The
+  packaged app has no console, so lay users could not otherwise retrieve the
+  traceback. (#58)
+- **Handled errors are copyable too.** Handled failures (e.g. a save error via
+  `_surfaceSaveError`) now route through the same copyable dialog via a
+  `Notifier.notify_error` seam, instead of a plain message with no detail. Adds
+  Help ▸ Report issues ▸ Copy diagnostic report for an on-demand version/OS
+  report. (#60)
+- **Log file and viewer.** stdout/stderr and the exception-hook report are teed
+  to a per-user log file (size-bounded, one rotated backup). Help ▸ View log file
+  (copyable, with Open log folder) and Help ▸ Open log folder surface it,
+  restoring the console visibility lost when moving from the CLI launcher to the
+  packaged app. (#61)
+
+- **Isolate objects and traces.** New actions to focus on a subset while
+  proofreading. "Hide Other Objects" hides every non-selected object across the
+  whole series so the isolation persists as you change sections (locked objects
+  are hidden too, since a lock guards edits and quantification, not visibility);
+  "Show all objects" restores them; and "Hide all objects" hides everything so
+  objects can be revealed a few at a time. All are undoable series-wide. "Invert
+  selection" flips the object-list selection, and a matching field action flips
+  the trace selection on the current section. Object actions live in the object
+  list's new Selection menu, its right-click menu, and the field Object submenu;
+  the trace actions live in the field Traces menu. Menu-only for now. (#51)
+- **Colorblind-safe colors for imported auto-segmentations.** Traces imported
+  from automatic segmentation are colored from a curated, grayscale-visible,
+  colorblind-distinguishable palette, deterministically mapped from each label
+  id. The live label overlay uses the same mapping, so the preview matches the
+  imported traces, and the color seed is exposed as an option. (#50)
+- **Copy traces to multiple sections at once.** A new "Copy to sections..."
+  action places the selected trace(s) onto multiple chosen sections at the same
+  field (x, y) location in one step. It sits at the top level of the field
+  context menu, next to Copy (not in the Trace submenu), and is also available in
+  the trace list. A picker accepts section numbers and ranges (e.g. `10-20` or
+  `5, 8, 11`); each trace is re-projected through every target section's own
+  transform so it lands at the identical field position regardless of that
+  section's alignment, and attributes (name, color, closed, tags) are preserved.
+  Traces are copied onto every chosen section, including alignment-locked ones —
+  a section lock guards its transform/alignment, not its trace content. The
+  source section is never modified.
+- **Propagate an alignment by correlation across a range.** Align by correlation
+  (`Ctrl+\`) now records its shift through the same path a manual transform uses,
+  so with propagation active the correlation shift is replayed across a chosen
+  section range (or as you scroll), exactly like a manual translate. With no
+  propagation active, it still aligns only the current section.
+- **"What's new" on demand.** A new Help ▸ What's new action reopens the
+  release-notes dialog at any time, showing the recent release history (the
+  running version plus the few before it). The once-per-version startup popup
+  and its stored last-seen record are unchanged. (#36)
+- **User-guide wiki.** The full user guide is now a GitHub wiki with a page per
+  topic, surfaced from the README and reachable in-app from Help ▸ Online
+  resources ▸ PyReconstruct user guide. (#34)
+- **"What's new" on first launch.** On the first launch of a new version — a
+  fresh install or after an update — PyReconstruct shows a dismissible "What's
+  new" dialog with that version's release notes, read from the bundled
+  `CHANGELOG.md` (offline-safe) with a link to the full notes on GitHub. It
+  appears once per version and is modeless, so it never blocks startup.
+- **Intel macOS installer.** CI now builds a native x86_64 `.dmg`
+  (`PyReconstruct-<version>-macOS-x86_64.dmg`) on a `macos-15-intel` runner
+  alongside the Apple Silicon arm64 build, so Intel Macs get a native installer.
+  The arch-named assets are unambiguous and the in-app updater already serves
+  each Mac its matching arch.
+- A `pytest` test suite covering geometry/transform equivalence and the updater's
+  selection, version-comparison, and checksum logic, plus a headless performance
+  harness. (#2, #3)
+- Reproducible fork-vs-upstream benchmarks under `benchmarks/`, with raw results,
+  aggregated medians, and an equivalence report. (#1)
+
 ### Changed
+- **Brightness and contrast are exempt from the section lock.** The lock exists
+  to protect *alignment*, not image display, and that is what it actually
+  gates: every `align_locked` check in the field widget is a transform
+  operation (`changeTform`, `translateTform`, `affineAlign`, `corrAlign`,
+  `quickAlign`, `propagateTo`, and propagate-on-section-change). The section
+  table, however, refused `setBC` / `matchBC` / `optimizeBC` on a locked
+  section, which made the lock mean "read-only section" — something it already
+  was not, since the same lock permits copying traces onto a locked section
+  (`test_copy_traces_to_sections.py`: *"a lock protects the transform, not
+  trace content"*) and the field's own `setBrightness` / `setContrast`
+  shortcuts have never checked it. The two paths therefore disagreed about the
+  same edit and the table was the anomaly; its three lock checks are removed,
+  with the reasoning recorded on `setBC`. Deliberately narrow:
+  `editThickness`, `editSrc`, `modifyAllSrc` and `reorderSections` keep their
+  lock checks, no transform path is touched, and two guard tests assert the
+  exemption did not widen to thickness or to the transform. (#113)
+
 - **Right-click menus are reorganized frequency-first: the everyday actions are
   now one click, not two.** All seven right-click surfaces (2D field, zarr label,
   and the object / trace / z-trace / section / flag lists) follow one shape:
@@ -269,7 +366,98 @@ the README's *From source (developers)* section).
   images — and the welcome series never used the stored value, since
   `get_welcome_setup()` reassigns it at runtime. (#100)
 
+- **Update-channel labels renamed for clarity**: "Release" → "Stable
+  (recommended)", "Pre-release" → "Beta (early features, may be unstable)";
+  docs and the rolling-release title synced. Underlying channel values are
+  unchanged. (#65)
+- **Beta channel now explicitly excludes the rolling build** by tag
+  (previously excluded only by ordering), so it can never shadow a curated
+  pre-release. Legacy channel values (`stable`/`edge`) still map correctly. (#66)
+- **Rolling main builds re-enabled** in CI to supply the Developer channel;
+  paused since 2026-06-29, the original conflict with the pre-release channel
+  no longer applies. (#67)
+
+- **Default scaled-Zarr name and location.** "Convert to scaled Zarr" now
+  defaults to `<series>.zarr` beside the source image directory (was
+  `_images.zarr`); the file filter is loosened so a user-chosen name still works.
+  (#57)
+- **Linux release asset** is named with the normalized PEP 440 version, matching
+  the macOS and Windows assets. (#56)
+
+- **Large-series performance.** Rewrote the per-trace geometry build and the
+  affine point mapping that dominate opening and refreshing a series, with no
+  change to the `.jser` format or data model. Open and refresh are **3–4× faster**
+  across real autoseg series from 6 MB to 1.4 GB (up to ~4.2×); the geometry is
+  verified equivalent to the previous implementation — section/object/trace counts
+  match exactly and summed area/length/radius are identical on seven of the eight
+  benchmark series (the largest differs by ~1e-11 relative on summed radius, from
+  floating-point summation order). The work
+  vectorizes `traceGeometry` into a single NumPy pass, defers the Feret-diameter
+  convex hull until it is read, maps trace points straight to NumPy arrays, and
+  uses [orjson](https://github.com/ijl/orjson) on the JSON load/save paths (with a
+  stdlib fallback). Series-wide object operations are scoped to the sections that
+  actually contain the targeted objects. (#1)
+- **In-app updater polish.** The update check now runs off the GUI thread; a new
+  update dialog shows the version, channel, download size, and release notes, then
+  downloads and checksum-verifies the installer inline with a progress bar. Added
+  an opt-in background check on startup (frozen builds, gated to once per 24 h),
+  off by default. (#3)
+- **Headless-capable data model (internal, behavior-preserving).** The internal
+  `Series` no longer imports anything from the Qt/GUI layer. Its option storage,
+  progress reporting, and user notifications now go through small injectable seams
+  (`SettingsStore`, `ProgressReporter`, `Notifier`), each with a Qt-backed default
+  adapter and a pure-Python one for headless use and tests. GUI callers get
+  identical settings, progress, and notification behavior. (#30, #31, #33, #35)
+- **In-app links point at this fork.** The Help ▸ Report issues links, the
+  "PyReconstruct source code" menu link, and the user-guide link now open this
+  fork's repository and wiki instead of the upstream SynapseWeb repo and the lab
+  wiki. Upstream provenance and credit in the README, About dialog, and
+  CONTRIBUTING are unchanged. (#34)
+- **README header.** The README now leads with the social-preview card. (#29)
+- **De-staled docs.** The README, user guide, and contributing guide were updated
+  to reflect current reality (the Linux installer, the shipped Intel build, the
+  Pre-release channel, and silent username resolution).
+- Documented the Align-by-correlation propagation workflow in the user guide and
+  wiki. (#39)
+- Renamed the updater channels to **Release** and **Pre-release (experimental)**.
+
 ### Fixed
+- **The legacy brightness/contrast migration destroyed named profiles.**
+  `Section.updateJSON` folds the pre-profiles scalar `brightness`/`contrast`
+  pair into `brightness_contrast_profiles`; it did so by *assigning* a fresh
+  single-key `{"default": (b, c)}` dict, which discarded every other named
+  profile on that section. The exposure was per-open, not one-shot: `saveJser`
+  reads each section file out of the hidden directory verbatim (`fast_loads` of
+  the raw bytes) rather than through `Section.getDict`, and `updateJSON` left
+  the legacy scalars in the dict it wrote — so a section the user never
+  individually edited kept its scalars across a save and met the migration
+  again on the next open, and the one after that. Only a section that went
+  through `Section.save` dropped them, and that save made the loss permanent.
+  The migration now **merges**. Whether the legacy pair may become `default` is
+  decided by whether the *file* carried a profiles dict at all, captured before
+  the back-fill loop inserts the key — not by comparing values, which cannot
+  distinguish a deliberate `(0, 0)` default from the back-filled placeholder.
+  No profiles key means a pre-profiles file, whose scalars are its only
+  brightness/contrast and become `default`; a profiles dict that is already
+  present is authoritative and is never overwritten, though a missing `default`
+  is still filled from the scalars. A non-dict `brightness_contrast_profiles`
+  is still repaired, which the old wholesale assignment did by accident and a
+  bare merge would crash on. Verified by a two-cycle end-to-end open/save test
+  rather than inferred. Inherited from upstream, not fork-introduced: the
+  migration block is byte-identical between `upstream/main` and this fork.
+  (#113)
+- **`openJser` locking every section on unpack is characterized, not changed.**
+  `openJser` sets `align_locked = True` on every section as it unpacks,
+  ignoring the stored value. Checked and deliberately left alone: it carries an
+  explicit "lock the section" comment, predates the fork, matches
+  `getEmptyDict()`'s `align_locked = True` default, is already documented as
+  legal by `test_jser_canonical_format.py`, and is fail-safe — honouring a
+  stored `False` would *remove* alignment protection on every open. The
+  hidden-directory resume path honours the stored value because it resumes a
+  live working directory rather than opening a file, so re-locking there would
+  discard a lock the user cleared mid-session. Both behaviours are now pinned
+  by characterization tests so they are not "fixed" later. (#113)
+
 - **Minimum Feret diameter was computed as a vertex-pair distance instead of the
   minimum width.** `feret()` returned the smallest distance between an antipodal
   pair of convex hull *vertices*. The minimum Feret diameter is the minimum
@@ -452,20 +640,6 @@ the README's *From source (developers)* section).
   `(series, "checkbox")` form, synced from `show_ztraces` at build and in
   `checkActions`. Focus mode is disabled when nothing is selected. (#90)
 
-### Removed
-- **Developer update channel.** The in-app "Developer" channel and the rolling
-  latest-`main` build that fed it (republished on every push to `main` under the
-  fixed `prerelease` tag) are removed. The rolling build's recreate-on-every-push
-  defeated GitHub's release ordering, so beta testers on builds predating the Beta
-  channel's rolling-tag exclusion (v1.21.0-beta-2 and earlier) could be offered
-  dev builds. Developers now track `main` with a source install instead
-  (README ▸ *From source (developers)*). A stored `developer` channel option
-  degrades gracefully to Beta, and the updater keeps its rolling-tag exclusion as
-  defense in depth. Reverts the channel added in #66.
-
-## [1.21.0-beta-4] — 2026-07-18
-
-### Fixed
 - **Stale trace color in the incremental field render.** `editTraceAttributes`
   copy-replaces traces; a table-refresh `clearTracking()` could leave the
   incremental render's cached trace list holding the replaced object, drawing
@@ -491,51 +665,6 @@ the README's *From source (developers)* section).
   so the CPU-usage slider genuinely limits load; default lowered 100%→50%,
   slider gains tick marks and guidance. (#72)
 
-## [1.21.0-beta-3] — 2026-07-17
-
-### Added
-- **3D scene auto-refresh toggle.** The `WindowActivate`-triggered stale-mesh
-  regeneration is now gated behind a per-computer `3D_auto_refresh` option
-  (default on), exposed both as a Scene-menu checkbox in the 3D window and in
-  Series ▸ Options ▸ 3D. Manual refresh (Ctrl+R) is unchanged; re-enabling
-  immediately refreshes accrued edits. (#64)
-- **Developer update channel.** Third channel tracking the rolling build
-  republished on every push to `main` (fixed tag `prerelease`). `pick_release`
-  selects it by tag; freshness rides the monotonic setuptools-scm `.devN` in
-  asset versions, so the reused tag can neither miss updates nor re-offer the
-  installed build. (#66)
-
-### Changed
-- **Update-channel labels renamed for clarity**: "Release" → "Stable
-  (recommended)", "Pre-release" → "Beta (early features, may be unstable)";
-  docs and the rolling-release title synced. Underlying channel values are
-  unchanged. (#65)
-- **Beta channel now explicitly excludes the rolling build** by tag
-  (previously excluded only by ordering), so it can never shadow a curated
-  pre-release. Legacy channel values (`stable`/`edge`) still map correctly. (#66)
-- **Rolling main builds re-enabled** in CI to supply the Developer channel;
-  paused since 2026-06-29, the original conflict with the pre-release channel
-  no longer applies. (#67)
-
-## [1.21.0-beta-2] — 2026-07-15
-
-### Added
-- **Copyable error reports.** The uncaught-error dialog now shows a full report
-  (version, OS, Python, traceback) with a "Copy report to clipboard" button. The
-  packaged app has no console, so lay users could not otherwise retrieve the
-  traceback. (#58)
-- **Handled errors are copyable too.** Handled failures (e.g. a save error via
-  `_surfaceSaveError`) now route through the same copyable dialog via a
-  `Notifier.notify_error` seam, instead of a plain message with no detail. Adds
-  Help ▸ Report issues ▸ Copy diagnostic report for an on-demand version/OS
-  report. (#60)
-- **Log file and viewer.** stdout/stderr and the exception-hook report are teed
-  to a per-user log file (size-bounded, one rotated backup). Help ▸ View log file
-  (copyable, with Open log folder) and Help ▸ Open log folder surface it,
-  restoring the console visibility lost when moving from the CLI launcher to the
-  packaged app. (#61)
-
-### Fixed
 - **Window no longer restores tiny or off-screen across DPI changes.** After the
   display setup changes (e.g. a 1x external monitor and a 2x Retina panel), a
   restored window that is too small or off every screen now falls back to a
@@ -547,110 +676,6 @@ the README's *From source (developers)* section).
   classes only; genuine errors such as a missing directory still fail
   immediately. (#62)
 
-### Changed
-- **Default scaled-Zarr name and location.** "Convert to scaled Zarr" now
-  defaults to `<series>.zarr` beside the source image directory (was
-  `_images.zarr`); the file filter is loosened so a user-chosen name still works.
-  (#57)
-- **Linux release asset** is named with the normalized PEP 440 version, matching
-  the macOS and Windows assets. (#56)
-
-## [1.21.0-beta-1] — 2026-07-07
-
-### Added
-- **Isolate objects and traces.** New actions to focus on a subset while
-  proofreading. "Hide Other Objects" hides every non-selected object across the
-  whole series so the isolation persists as you change sections (locked objects
-  are hidden too, since a lock guards edits and quantification, not visibility);
-  "Show all objects" restores them; and "Hide all objects" hides everything so
-  objects can be revealed a few at a time. All are undoable series-wide. "Invert
-  selection" flips the object-list selection, and a matching field action flips
-  the trace selection on the current section. Object actions live in the object
-  list's new Selection menu, its right-click menu, and the field Object submenu;
-  the trace actions live in the field Traces menu. Menu-only for now. (#51)
-- **Colorblind-safe colors for imported auto-segmentations.** Traces imported
-  from automatic segmentation are colored from a curated, grayscale-visible,
-  colorblind-distinguishable palette, deterministically mapped from each label
-  id. The live label overlay uses the same mapping, so the preview matches the
-  imported traces, and the color seed is exposed as an option. (#50)
-- **Copy traces to multiple sections at once.** A new "Copy to sections..."
-  action places the selected trace(s) onto multiple chosen sections at the same
-  field (x, y) location in one step. It sits at the top level of the field
-  context menu, next to Copy (not in the Trace submenu), and is also available in
-  the trace list. A picker accepts section numbers and ranges (e.g. `10-20` or
-  `5, 8, 11`); each trace is re-projected through every target section's own
-  transform so it lands at the identical field position regardless of that
-  section's alignment, and attributes (name, color, closed, tags) are preserved.
-  Traces are copied onto every chosen section, including alignment-locked ones —
-  a section lock guards its transform/alignment, not its trace content. The
-  source section is never modified.
-- **Propagate an alignment by correlation across a range.** Align by correlation
-  (`Ctrl+\`) now records its shift through the same path a manual transform uses,
-  so with propagation active the correlation shift is replayed across a chosen
-  section range (or as you scroll), exactly like a manual translate. With no
-  propagation active, it still aligns only the current section.
-- **"What's new" on demand.** A new Help ▸ What's new action reopens the
-  release-notes dialog at any time, showing the recent release history (the
-  running version plus the few before it). The once-per-version startup popup
-  and its stored last-seen record are unchanged. (#36)
-- **User-guide wiki.** The full user guide is now a GitHub wiki with a page per
-  topic, surfaced from the README and reachable in-app from Help ▸ Online
-  resources ▸ PyReconstruct user guide. (#34)
-- **"What's new" on first launch.** On the first launch of a new version — a
-  fresh install or after an update — PyReconstruct shows a dismissible "What's
-  new" dialog with that version's release notes, read from the bundled
-  `CHANGELOG.md` (offline-safe) with a link to the full notes on GitHub. It
-  appears once per version and is modeless, so it never blocks startup.
-- **Intel macOS installer.** CI now builds a native x86_64 `.dmg`
-  (`PyReconstruct-<version>-macOS-x86_64.dmg`) on a `macos-15-intel` runner
-  alongside the Apple Silicon arm64 build, so Intel Macs get a native installer.
-  The arch-named assets are unambiguous and the in-app updater already serves
-  each Mac its matching arch.
-- A `pytest` test suite covering geometry/transform equivalence and the updater's
-  selection, version-comparison, and checksum logic, plus a headless performance
-  harness. (#2, #3)
-- Reproducible fork-vs-upstream benchmarks under `benchmarks/`, with raw results,
-  aggregated medians, and an equivalence report. (#1)
-
-### Changed
-- **Large-series performance.** Rewrote the per-trace geometry build and the
-  affine point mapping that dominate opening and refreshing a series, with no
-  change to the `.jser` format or data model. Open and refresh are **3–4× faster**
-  across real autoseg series from 6 MB to 1.4 GB (up to ~4.2×); the geometry is
-  verified equivalent to the previous implementation — section/object/trace counts
-  match exactly and summed area/length/radius are identical on seven of the eight
-  benchmark series (the largest differs by ~1e-11 relative on summed radius, from
-  floating-point summation order). The work
-  vectorizes `traceGeometry` into a single NumPy pass, defers the Feret-diameter
-  convex hull until it is read, maps trace points straight to NumPy arrays, and
-  uses [orjson](https://github.com/ijl/orjson) on the JSON load/save paths (with a
-  stdlib fallback). Series-wide object operations are scoped to the sections that
-  actually contain the targeted objects. (#1)
-- **In-app updater polish.** The update check now runs off the GUI thread; a new
-  update dialog shows the version, channel, download size, and release notes, then
-  downloads and checksum-verifies the installer inline with a progress bar. Added
-  an opt-in background check on startup (frozen builds, gated to once per 24 h),
-  off by default. (#3)
-- **Headless-capable data model (internal, behavior-preserving).** The internal
-  `Series` no longer imports anything from the Qt/GUI layer. Its option storage,
-  progress reporting, and user notifications now go through small injectable seams
-  (`SettingsStore`, `ProgressReporter`, `Notifier`), each with a Qt-backed default
-  adapter and a pure-Python one for headless use and tests. GUI callers get
-  identical settings, progress, and notification behavior. (#30, #31, #33, #35)
-- **In-app links point at this fork.** The Help ▸ Report issues links, the
-  "PyReconstruct source code" menu link, and the user-guide link now open this
-  fork's repository and wiki instead of the upstream SynapseWeb repo and the lab
-  wiki. Upstream provenance and credit in the README, About dialog, and
-  CONTRIBUTING are unchanged. (#34)
-- **README header.** The README now leads with the social-preview card. (#29)
-- **De-staled docs.** The README, user guide, and contributing guide were updated
-  to reflect current reality (the Linux installer, the shipped Intel build, the
-  Pre-release channel, and silent username resolution).
-- Documented the Align-by-correlation propagation workflow in the user guide and
-  wiki. (#39)
-- Renamed the updater channels to **Release** and **Pre-release (experimental)**.
-
-### Fixed
 - **3D scene now tracks 2D edits.** An already-open 3D scene updates when the
   underlying 2D traces change, instead of showing a stale mesh until the object
   is removed and re-added. (#49)
@@ -708,6 +733,19 @@ the README's *From source (developers)* section).
 - Updated the macOS dmg first-launch (Gatekeeper) instructions to match current
   macOS wording.
 
+### Removed
+- **Developer update channel.** The in-app "Developer" channel and the rolling
+  latest-`main` build that fed it (republished on every push to `main` under the
+  fixed `prerelease` tag) are removed. The rolling build's recreate-on-every-push
+  defeated GitHub's release ordering, so beta testers on builds predating the Beta
+  channel's rolling-tag exclusion (v1.21.0-beta-2 and earlier) could be offered
+  dev builds. Developers now track `main` with a source install instead
+  (README ▸ *From source (developers)*). A stored `developer` channel option
+  degrades gracefully to Beta, and the updater keeps its rolling-tag exclusion as
+  defense in depth. Reverts the channel added in #66, so the net effect for
+  1.21.0 is the same two channels as 1.20.4 — the Developer channel existed
+  only between the beta-3 and beta-5 pre-releases.
+
 ## [1.20.0] - 2026-06-26
 
 ### Added
@@ -729,6 +767,6 @@ the README's *From source (developers)* section).
   hooks; a Mesa software-OpenGL fallback on Windows for RDP/VM sessions; and a
   frozen-Windows multiprocessing fix so the Zarr conversion runs.
 
-[Unreleased]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.21.0-beta-1...HEAD
-[1.21.0-beta-1]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.20.0...v1.21.0-beta-1
+[Unreleased]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.21.0...HEAD
+[1.21.0]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.20.0...v1.21.0
 [1.20.0]: https://github.com/dustenhubbard/PyReconstruct/releases/tag/v1.20.0
