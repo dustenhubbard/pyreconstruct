@@ -174,7 +174,15 @@ class Grid():
 
     def getExterior(self) -> list:
         """Get the exterior of the trace(s) on the grid.
-        
+
+        A contour that keeps no anchor points contributes no exterior. That is
+        the only case skipped here: getAnchorTrace returns a shape-(0,) array
+        for it, which cannot be broadcast against the 2-element grid_shift, and
+        an empty exterior would fail in reducePoints anyway -- every caller
+        feeds each exterior straight into it, and cv2.approxPolyDP rejects an
+        empty array. An isolated single pixel is such a contour: its value is 1
+        and it has no nonzero neighbours, so neither anchor rule fires.
+
             Returns:
                 (list) the exterior of the trace(s) (also represented as lists)
         """
@@ -184,14 +192,16 @@ class Grid():
             cv2.RETR_EXTERNAL,
             cv2.CHAIN_APPROX_NONE
         )
-        
+
         traces = []
-        
+
         for trace in cv_traces:
             new_trace = self.getAnchorTrace(trace[:,0,:])
+            if not new_trace.size:
+                continue
             new_trace += self.grid_shift
             traces.append(new_trace.tolist())
-            
+
         return traces
 
 
