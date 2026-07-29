@@ -129,9 +129,15 @@ def get_field_menu_list(self):
         None,
         # Clipboard group, muscle-memory order. "Copy to sections..." keeps its
         # place directly under "Copy" (approved: keep the noun and the ellipsis).
+        #
+        # The series form gives it its user-configurable shortcut, looked up by
+        # act_name (default Ctrl+Alt+C -- see default_settings.py for why not
+        # Ctrl+Shift+C). This is the action's only shortcut-bearing home: the
+        # trace-LIST variant in get_context_menu_list_trace passes "", because
+        # keys are only ever connected through the field.
         self.cut_act,
         self.copy_act,
-        ("copytosections_act", "Copy to sections...", "", self.field.copyTracesToSections),
+        ("copytosections_act", "Copy to sections...", self.series, self.field.copyTracesToSections),
         self.paste_act,
         self.pasteattributes_act,
         None,

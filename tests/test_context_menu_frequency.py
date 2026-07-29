@@ -763,6 +763,7 @@ def test_ctrl_e_stays_on_the_trace_action_not_the_dynamic_item():
 # QAction shortcut (not just the tuple shape) is what actually proves the
 # reorganization did not unbind a key.
 DEFAULT_KEYS = {
+    "copytosections_act": "Ctrl+Alt+C",
     "mergetraces_act": "Ctrl+M",
     "mergeobjects_act": "Ctrl+Shift+M",
     "hidetraces_act": "Ctrl+H",
