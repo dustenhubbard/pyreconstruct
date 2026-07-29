@@ -42,8 +42,32 @@ def return_file_menu(self):
                 "text": "Utilities",
                 "opts":
                 [
-                    ("random_act", "Randomize project...", "", self.randomizeProject),
-                    ("derandom_act", "De-randomize project...", "", self.derandomizeProject)
+                    ## The optional 5th tuple element is a hover tooltip
+                    ## (see newAction). Utilities holds niche, rarely used
+                    ## features, so each entry explains itself to someone who
+                    ## has never run it. Keep the copy true to the scripts in
+                    ## assets/scripts/projects/.
+                    (
+                        "random_act", "Randomize project...", "",
+                        self.randomizeProject,
+                        (
+                            "Prepare a project for blind analysis: images from each series\n"
+                            "subfolder are pooled under randomized code names and a single\n"
+                            "coded .jser is created for tracing.\n\n"
+                            "The name key is written to decode.txt in the project folder --\n"
+                            "keep it, as de-randomizing needs it."
+                        ),
+                    ),
+                    (
+                        "derandom_act", "De-randomize project...", "",
+                        self.derandomizeProject,
+                        (
+                            "Reverse a randomized project once tracing is done: original\n"
+                            "image names are restored from decode.txt and the coded .jser\n"
+                            "is split into one series per original subfolder.\n\n"
+                            "The coded files are kept in a dated 'decoded-' folder."
+                        ),
+                    ),
                 ]
             },
             {

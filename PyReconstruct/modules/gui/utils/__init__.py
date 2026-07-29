@@ -1,5 +1,6 @@
 from .utils import (
     get_screen_info,
+    MenuShortcutSpacingStyle,
     newMenu,
     newAction,
     newQAction,

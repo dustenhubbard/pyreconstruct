@@ -52,6 +52,12 @@ def runPyReconstruct(filename=None):
     # create the Qt Application
     app = QApplication(sys.argv)
 
+    # push menu shortcut keybinds clear of their labels (the native style packs
+    # them within a few pixels of the widest label). A QProxyStyle survives the
+    # setTheme stylesheet swaps, so it is installed once, here.
+    from PyReconstruct.modules.gui.utils import MenuShortcutSpacingStyle
+    app.setStyle(MenuShortcutSpacingStyle())
+
     # run program until the user closes without requesting a restart (all
     # platforms quit on closing the window; the in-app Restart reloads modules
     # and recreates the window)
