@@ -22,7 +22,7 @@ def return_file_menu(self):
         [   
             {
                 "attr_name": "newseriesmenu",
-                "text": "New",
+                "text": "New series",
                 "opts":
                 [
                     ("newfromimages_act", "From images...", self.series, self.newSeries),
@@ -31,9 +31,9 @@ def return_file_menu(self):
                     ("newfromngzarr_act", "From neuroglancer zarr...", "", self.newFromNgZarr),
                 ]
             },
-            ("open_act", "Open", self.series, self.openSeries),
-            getOpenRecentMenu(self.series, self.openSeries),
-            ("close_act", "Close", "", self.openWelcomeSeries),
+            ("open_act", "Open series...", self.series, self.openSeries),
+            getOpenRecentMenu(self.series, self.openSeries, self.clearRecentSeries),
+            ("close_act", "Close series", "", self.openWelcomeSeries),
             None,  # None acts as menu divider
             ("save_act", "Save", self.series, self.saveToJser),
             ("saveas_act", "Save as...", "", self.saveAsToJser),
@@ -67,7 +67,7 @@ def return_file_menu(self):
             None,
             ("username_act", "Change username...", "", self.changeUsername),
             None,
-            ("restart_act", "Reload", self.series, self.restart),
+            ("restart_act", "Restart PyReconstruct", self.series, self.restart),
             ("quit_act", "Quit", self.series, self.close),
             ##("test_act", "Test", "", self.test),
         ]
@@ -204,7 +204,7 @@ def return_series_menu(self):
                 ]
             },
             None,
-            ("updatecuration_act", "Update curation from history", "", self.updateCurationFromHistory),
+            ("updatecuration_act", "Restore object curation status from log", "", self.updateCurationFromHistory),
             None,
             ("bcprofiles_act", "Brightness/contrast profiles...", "", self.changeBCProfiles),
             None,

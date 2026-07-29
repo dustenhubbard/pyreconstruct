@@ -3321,7 +3321,18 @@ class MainWindow(QMainWindow):
             opened.pop()
                 
         self.series.setOption("recently_opened_series", opened)
-    
+
+    def clearRecentSeries(self):
+        """Empty the recently opened series list.
+
+        The list is a user setting, not series data, so this is not undoable and
+        does not mark the series modified. The menubar is rebuilt so the now
+        empty "Open recent series" submenu is visible immediately rather than
+        after the next series open.
+        """
+        self.series.setOption("recently_opened_series", [])
+        self.createMenuBar()
+
     def importFromSeries(self):
         """Import from another series."""
         jser_fp = FileDialog.get(

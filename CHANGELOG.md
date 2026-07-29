@@ -16,6 +16,18 @@ the README's *From source (developers)* section).
 ## [1.21.0] — 2026-08-04
 
 ### Added
+- **File ▸ Open recent series ▸ Clear recents.** The recently opened list could
+  only be emptied by editing settings; it now has a menu item, separated from the
+  remembered paths so it cannot be hit by a mis-click aimed at the last series.
+  Clearing rebuilds the menubar so the submenu is visibly empty at once. The list
+  is a computer-wide setting rather than series data, so clearing it is not
+  undoable and does not mark the series modified.
+- **A menubar inventory test** (`tests/test_menubar_labels.py`). The right-click
+  menus have been guarded by an explicit action inventory since the frequency-first
+  redesign; the menubar had no such guard. The complete tree of `main/menubar.py`
+  — 113 actions and 32 submenus, separators included — is now frozen by
+  `attr_name`, and the File and Series menus are additionally frozen label for
+  label, so a future pass has to name anything it drops, moves or renames.
 - **Data clean-up menu.** A "Clean up" submenu under the Series menu groups three
   series-wide maintenance operations, each a single undoable action with a
   progress bar over the existing `enumerateSections`/`SeriesStates` path: *Remove
@@ -194,6 +206,28 @@ the README's *From source (developers)* section).
   aggregated medians, and an equivalence report. (#1)
 
 ### Changed
+- **Six File/Series menu labels now name what they act on**, all user-reported as
+  "a verb with no object". Renames only: no item moved, none was removed, and no
+  keyboard shortcut changed (keys resolve through `series.getOption(act_name)` and
+  every `attr_name` is untouched).
+  - `File ▸ Reload` → **Restart PyReconstruct**. It saves, reloads every
+    `PyReconstruct.modules` module and recreates the main window with the same
+    series — it restarts the application, it does not reload the series. The
+    shortcuts dialog already called it "Restart"; `Ctrl+R` is unchanged.
+  - `File ▸ Open` → **Open series...** (it opens a `.jser`; `Ctrl+O` unchanged).
+  - `File ▸ Open recent` → **Open recent series**.
+  - `File ▸ Close` → **Close series**. It returns to the welcome series and stays
+    in the app, which "Close" beside "Quit" did not convey.
+  - `File ▸ New` → **New series**. All four rows create a series, so the submenu
+    names the thing once rather than repeating it four times.
+  - `Series ▸ Update curation from history` → **Restore object curation status
+    from log**. It reads the series log (including entries offloaded to
+    `existing_log.csv`), finds each object's most recent
+    "Mark as curated" / "Mark as needs curation" entry and writes that status back
+    onto objects whose stored status is missing or is still "needs curation". It
+    never clears a status and never downgrades an already-curated object, so it
+    recovers curation that the stored attributes have lost rather than
+    recomputing it.
 - **Brightness and contrast are exempt from the section lock.** The lock exists
   to protect *alignment*, not image display, and that is what it actually
   gates: every `align_locked` check in the field widget is a transform

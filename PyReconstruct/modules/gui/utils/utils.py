@@ -578,8 +578,22 @@ def getGroupsMenu(self):
     return get_menu_dict("groupsvizmenu", "Groups", opts_list)
 
 
-def getOpenRecentMenu(series, openSeries):
-    # create the submenu for opening a recent series
+def getOpenRecentMenu(series, openSeries, clearRecents=None):
+    """Create the submenu for opening a recently opened series.
+
+    Rows are listed most-recently-opened first: MainWindow.addToRecentSeries
+    inserts at index 0 and the list is walked in order here, so the order is
+    reverse-chronological by *open* time (not by file mtime). Paths that no
+    longer exist are pruned from the stored option as a side effect, and the
+    series currently open is skipped (there is nothing to reopen).
+
+        Params:
+            series (Series): the series holding the recently-opened option
+            openSeries (callable): MainWindow.openSeries
+            clearRecents (callable): handler for "Clear recents"; the row is
+                                     omitted when no handler is supplied, so
+                                     existing callers keep the old menu.
+    """
     def getCall(fp):
         return (lambda : openSeries(jser_fp=fp))
 
@@ -594,9 +608,17 @@ def getOpenRecentMenu(series, openSeries):
             )
     series.setOption("recently_opened_series", filepaths)
 
+    if clearRecents is not None:
+        # separated from the paths so it cannot be hit by a mis-click aimed at
+        # the last remembered series; no separator when the list is empty, which
+        # would otherwise open the submenu with a rule above its only row
+        if opts_list:
+            opts_list.append(None)
+        opts_list.append(("clearrecents_act", "Clear recents", "", clearRecents))
+
     return {
         "attr_name": "openrecentmenu",
-        "text": "Open recent",
+        "text": "Open recent series",
         "opts": opts_list
     }
 

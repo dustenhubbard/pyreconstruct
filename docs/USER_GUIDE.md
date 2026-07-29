@@ -276,9 +276,12 @@ username…**.
 
 ### Opening an existing series
 
-**File ▸ Open** (`Ctrl+O`) opens a `.jser` file. Recently opened series are listed
-under **File ▸ Open recent**. **File ▸ Close** returns to the welcome series (it
-does not quit the app).
+**File ▸ Open series…** (`Ctrl+O`) opens a `.jser` file. Recently opened series
+are listed under **File ▸ Open recent series**, most recently opened first (by
+when you opened them, not by file date); the list holds ten entries, drops paths
+that no longer exist, and can be emptied with **Clear recents** at the bottom of
+that submenu. **File ▸ Close series** returns to the welcome series (it does not
+quit the app).
 
 If a series' image files can't be found when it opens, PyReconstruct asks whether
 you'd like to locate them and lets you pick the image folder (you can also do this
@@ -292,7 +295,7 @@ another window (it was touched within the last few seconds), PyReconstruct shows
 
 ### Creating a new series from images
 
-**File ▸ New ▸ From images…** (`Ctrl+N`) walks you through:
+**File ▸ New series ▸ From images…** (`Ctrl+N`) walks you through:
 
 1. **Select images** — choose the section image files (JPG/JPEG, PNG, TIF/TIFF,
    BMP). The files are sorted alphanumerically, and that order becomes the section
@@ -309,7 +312,7 @@ where to save the `.jser`.
 
 ### Other ways to create a series
 
-Also under **File ▸ New**:
+Also under **File ▸ New series**:
 
 - **From scaled images…** — build from an existing scaled Zarr directory (expects
   a `scale_1` folder), then the same name/calibration/thickness prompts.
@@ -615,6 +618,16 @@ columns you define.
 - **Find ▸ First / Last** jump to the object's first/last section.
 - The **Curate** columns can be toggled across all object lists with
   **View ▸ Toggle curation in object lists** (`Ctrl+Shift+C`).
+- **Series ▸ Restore object curation status from log** recovers curation statuses
+  the series has lost. Every time you mark an object *Curated* or *Needs curation*
+  the series records it twice: on the object, and as an entry in the series log.
+  This action reads the log (including entries offloaded with **Series ▸ Log ▸
+  Offload log history…**), takes each object's most recent curation entry, and
+  writes that status back onto the object. It only fills gaps: an object already
+  marked *Curated* is left exactly as it is, and no status is ever cleared or
+  downgraded. Use it if curation you know you did is no longer showing — for
+  example after recovering an unsaved session. It is one undoable step
+  (`Ctrl+Z`).
 
 ### Trace list
 
@@ -860,7 +873,7 @@ Options ▸ Backup**.)
 > 📸 *Screenshot: the Backup Settings dialog showing the folder, the auto-backup checkbox, and the filename preview.*
 
 Because backups are just `.jser` files, **restore a backup by opening it** with
-**File ▸ Open**. If the configured backup folder is missing at save time (for
+**File ▸ Open series…**. If the configured backup folder is missing at save time (for
 example a disconnected network drive), PyReconstruct prompts you to set it, or
 disables auto-backup until you do.
 
@@ -897,7 +910,7 @@ These are the defaults; rebind them under **Help ▸ Shortcuts list** (`?`).
 | `Ctrl+O` | Open series |
 | `Ctrl+S` | Save |
 | `Ctrl+Shift+B` | Backup now |
-| `Ctrl+R` | Reload |
+| `Ctrl+R` | Restart PyReconstruct |
 | `Ctrl+Q` | Quit |
 | `Shift+O` | Series options |
 
