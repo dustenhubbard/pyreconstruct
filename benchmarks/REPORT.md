@@ -9,6 +9,20 @@ of the code. The correction is below, followed by re-measured warm-vs-warm and
 cold-vs-cold numbers, a cold-spike attribution, and an interactive profile whose
 purpose is to decide the plan's Phase 2 (Rust) gate.
 
+> **ERRATA 2026-07-28 — two of this report's forward-looking figures were
+> overturned when the work was implemented.** The `cv2.polylines` "22-26×"
+> (§7) and the "24.7 s" caching opportunity (§5, refinement 3) were
+> **projections from micro-benchmarks**, not measurements of the real code
+> paths, and both inverted on contact with those paths: the rasterizer swap
+> would have been ~12× *slower* and was rejected; the `refresh()` Section cache
+> saves 8.21 s, well short of what §5 implied, at a cost of +2217 MB, and was
+> rejected. Each
+> is annotated inline where it appears — struck, with the measurement that
+> replaced it — and §7a summarises which Phase 0 figures were projections,
+> which were measurements, and what the delivered work actually did.
+> **The report's two headline conclusions are unaffected:** the ~3.3-3.6×
+> open+refresh speedup and the "cut the Rust workstream" verdict both survive.
+
 **Which commit measured what** (these differ; they are not mixed):
 
 | measurement | fork side | upstream side |
@@ -320,14 +334,56 @@ Three refinements to the audit's framing:
    and cannot touch the 30.7% object-construction or 53.0% geometry shares.
 3. **`refresh()` doing a redundant re-read is itself a finding.** A warm open pays
    decode + object construction (24.7 s here) to build Sections, and any subsequent
-   `refresh()` throws them away and pays it again. Caching or reusing loaded
+   `refresh()` throws them away and pays it again. ~~Caching or reusing loaded
    Sections is a pure-Python win available without touching the format at all —
-   worth more than a codec swap, and not currently in the plan.
+   worth more than a codec swap, and not currently in the plan.~~
+
+   > **CORRECTION 2026-07-28 — the caching conclusion is withdrawn; the
+   > decomposition it rests on is not.**
+   >
+   > The 24.7 s is a *measurement* and stands: it is stages B + C of the table
+   > above (8.37 + 16.35), the decode and object-construction cost of one pass.
+   > The redundant second pass is also real — instrumenting the fork counts
+   > **318 `Section` builds at open and 318 more at refresh** on `WVHJM_407`.
+   >
+   > What was wrong was the *inference* that a cache recovers that 24.7 s. It
+   > does not, and the Section cache was **built, measured and REJECTED**:
+   >
+   > - a **perfect** cache (every Section retained, no eviction) saves
+   >   **8.21 s** where this refinement implied ~24.7 s — geometry, not
+   >   `Section` construction, dominates what `refresh()` actually redoes.
+   >   (Conditions differ and are not interchangeable: the 8.21 s and +2217 MB
+   >   were measured on `WVHJM_407` (318 sections), the stage table above on
+   >   `WVHJM_x2` (636 sections). The direction of the result is not in doubt —
+   >   a saving smaller than the per-pass decode+construction cost of a
+   >   half-sized series — but do not subtract one figure from the other);
+   > - it costs **+2217 MB RSS (3.65× steady state)**, i.e. ~270 MB retained per
+   >   second saved — on the very series where §4 documents a 2.05-2.55× memory
+   >   regression we are trying to *reduce*. Trading memory for time is the
+   >   wrong direction here;
+   > - a **bounded LRU cannot rescue it**: `refresh()` is a sequential scan of
+   >   the whole series, which is LRU's worst case — every entry is evicted
+   >   before it is reused;
+   > - there is a **correctness landmine** independent of performance.
+   >   `SeriesData.updateSection` (`series_data.py:262-268`) rebuilds *all*
+   >   contours only when `section.getAllModifiedNames()` is empty, and
+   >   `Section.save()` is what clears that set. With live Sections retained
+   >   across a refresh, mutate-without-save followed by `refresh()` would
+   >   rebuild only the modified contours into a data dict that was just
+   >   cleared — **silently dropping every other object from the object list**.
+   >   Missing, not merely stale.
+   >
+   > **The real prize in this area is different work:** skip *geometry* for
+   > sections whose file is unchanged (mtime/size keyed) in
+   > `SeriesData.refresh()`. That needs no extra memory, because `SeriesData`
+   > already retains that data between refreshes. Not yet implemented.
 
 **Bottom line for the format decision:** restructuring serialization addresses at
 most ~28% of cold-open time and none of the steady-state memory regression in §4.
 The larger levers are avoiding materialization of every trace as Python objects
-(lazy/columnar sections), and not rebuilding them twice. Streaming the whole-file
+(lazy/columnar sections), and ~~not rebuilding them twice~~ **[2026-07-28: not
+rebuilding their *geometry* twice — retaining the Sections themselves was
+measured and rejected, see refinement 3 above]**. Streaming the whole-file
 parse is still worth doing, but for the *transient memory* peak documented in §4
 rather than for time.
 
@@ -460,19 +516,62 @@ Candidate by candidate:
 | `mapPointsArray` (3.4%) | no — already NumPy-vectorized | yes | n/a | disqualified on (i) |
 | `findClosest` (2.8%), `pointInPoly` (1.0%) | no — `cv2.pointPolygonTest` | yes | n/a | disqualified on (i) |
 
+**[2026-07-28: both "no" answers in column (iii) held, and both are now
+*implemented* rather than projected — but the QPoint row's fix is `starmap`
+batching, not the `cv2.polylines` swap this section proposed (which was measured
+and rejected; see the retraction below). The table's verdicts are unchanged.]**
+
 The two genuinely pure-Python hotspots both fail criterion (iii), and this was
-**measured, not asserted**:
+**measured, not asserted** — but read the next two bullets with §7a: what was
+measured here were *stand-alone micro-benchmarks*, and only one of the two
+speedups survived being implemented in the real function.
 
 - **`isAnchorPoint`** is exactly a 3×3 neighbour-count convolution. Replacing the
   scalar loop with `cv2.filter2D` plus a boolean mask is **bit-identical (30/30
   randomized trials, zero mismatches) and 22.8× faster**
   (`artifacts/verify_isanchorpoint_vectorizable.py`).
-- **The QPoint listcomp** is removable by batching into OpenCV: rasterizing 500
+  **[2026-07-28: HELD UP. Implemented in #97 as a lazily built per-`Grid` cached
+  anchor mask. Exact, and end-to-end a lasso sweep on `shapes2` went 13.67 s →
+  1.00 s (13.7×), with `getAnchorTrace` alone 60-90×. The 22.8× was the
+  micro-benchmark of the kernel; 13.7× is the measured whole-gesture figure and
+  is the one to quote.]**
+- ~~**The QPoint listcomp** is removable by batching into OpenCV: rasterizing 500
   traces × 120 points via `cv2.polylines` into a buffer is **22-26× faster** than
   the QPoint-per-point path, including the per-frame `int32` cast
-  (`artifacts/verify_qpoint_batchable.py`). Rebuilding the same list as a
+  (`artifacts/verify_qpoint_batchable.py`).~~ Rebuilding the same list as a
   `QPolygon` first saves nothing (148.6 ms vs 149.7 ms) — confirming the cost is
   the per-point Python/Qt object construction, not the draw call.
+
+  > **RETRACTED 2026-07-28 — the 22-26× does not exist, and the swap would have
+  > been ~12× SLOWER. `cv2.polylines` was REJECTED.**
+  >
+  > The 22-26× was a projection from a micro-benchmark that drew **every trace
+  > in one `cv2.polylines` call in a single colour**. The real `_drawTrace`
+  > varies **colour, pen width and opacity per trace**, and per-trace opacity
+  > requires a **blend per trace**. Measured on the real per-trace loop:
+  > **1814 ms for the OpenCV path vs 155 ms for QPainter** — the swap loses by
+  > ~12×. The micro-benchmark was not measuring the work the function does.
+  >
+  > The pixel caveat below was also *understated*, not merely unquantified: the
+  > field **never enables QPainter antialiasing**, so this is not a question of
+  > edge softness. Two Bresenham-family rasterizers simply light different
+  > pixels — **1102 of 1475 lit outline pixels differ (74.7%), max channel delta
+  > 255** on a wobbly blob. For a 1 px non-antialiased trace that is most of
+  > what the user sees.
+  >
+  > `tests/test_trace_layer_qpoint_batching.py::test_qt_and_cv2_rasterizers_disagree_materially`
+  > now pins that disagreement so the "just use cv2" idea is not silently
+  > retried; it fails if the two rasterizers ever start agreeing, which is the
+  > condition under which the swap becomes worth revisiting.
+  >
+  > **What actually removed the rank-1 hotspot** (#97): the listcomp was
+  > replaced by `list(starmap(QPoint, pix_pts.tolist()))` — PySide6 exposes no
+  > bulk `QPolygon` constructor — which is **pixel-identical by construction**
+  > (0 differing pixels across 11 shapes × 5 draw modes) and worth **1.59× on
+  > dense full frames (13.16 s → 8.27 s)**, 1.17× on incremental frames. An
+  > allocation-path change, not a rasterizer change. Criterion (iii) is still
+  > failed — the hotspot *was* addressable without Rust — but by batching the
+  > allocation, not by handing the raster to OpenCV.
 
 Both fixes are the plan's own prescription, not a new proposal: §1's `grid.py`
 finding already says that if profiling shows per-gesture latency matters, the
@@ -493,17 +592,62 @@ time when measured in isolation. Batching the inner loop with shapely would leav
 essentially all of the lasso latency in place; vectorizing `isAnchorPoint` removes
 it.
 
-Caveat stated plainly: swapping Qt's rasterizer for OpenCV's changes antialiasing
+~~Caveat stated plainly: swapping Qt's rasterizer for OpenCV's changes antialiasing
 and pixel output, so it needs golden-file tests and is a *characterized
-difference*, not a drop-in. That is a cost of the Phase 1e fix — it is not an
+difference*, not a drop-in. That is a cost of the Phase 1e fix~~ — it is not an
 argument for Rust, which would face the identical pixel-equivalence problem plus a
 toolchain and distribution burden the plan already prices as unaffordable at a bus
 factor of 1.
 
+**[2026-07-28: the caveat turned out to be the decisive objection, not a
+manageable cost.** The golden-file tests were written, and they showed the
+difference is whole on/off pixels on 74.7% of a trace's lit outline (the field
+never antialiases), while the per-trace opacity blend made the OpenCV path ~12×
+slower. There was no "characterized difference" worth accepting: the swap was
+rejected outright. **Do not read this paragraph as a green light with a
+footnote.]**
+
 **Consequence for the plan:** answer "no" to open question #1 — Rust does not
 survive Phase 0. Phase 2 should be cut, and its budget redirected to Phase 1e
-(vectorize `isAnchorPoint`; batch the trace raster), Phase 1d (the warm-memory
+(vectorize `isAnchorPoint`; ~~batch the trace raster~~ **[batch the QPoint
+allocation — the raster itself stays with Qt]**), Phase 1d (the warm-memory
 regression measured in §4), and the object-construction cost measured in §5.
+
+---
+
+## 7a. Phase 0's projections vs what implementation measured
+
+**The failure mode this section exists to name: Phase 0 generalised stand-alone
+micro-benchmarks to real code paths that do more work.** Both retractions above
+have the same shape — a script that isolated one operation was fast, and the
+production function around it either did something the script omitted (per-trace
+colour, width and opacity) or spent its time somewhere else entirely (geometry,
+not `Section` construction). A micro-benchmark bounds a *best case for the
+operation it ran*; it is not a prediction about the function it is standing in
+for. **Before quoting any row of this report forward, check whether it was
+measured on the real path or on a script.**
+
+| Phase 0 figure | kind | what it measured | outcome |
+|---|---|---|---|
+| ~3.3-3.6× open+refresh (§4) | **measurement** | `Series.openJser` / `SeriesData.refresh()`, 3 reps × 3 series, per-condition | **stands** |
+| 2.05-2.55× warm memory regression (§4) | **measurement** | `ru_maxrss`, warm-vs-warm, spread 0.0-0.7% | **stands**; addressed by #98 (Phase 1d) |
+| ~80/20 cold-spike attribution (§4) | **measurement** | cold vs warm peaks, both checkouts | **stands** |
+| stage table A-D, incl. 24.7 s decode+construction (§5) | **measurement** | `decompose_open.py` on the real pass | **stands as a decomposition** |
+| "caching Sections is worth that 24.7 s" (§5.3) | **projection** (inference from the decomposition) | nothing — no cache existed | **REJECTED**: a perfect cache saves 8.21 s at +2217 MB (`WVHJM_407`), plus a data-loss landmine |
+| `isAnchorPoint` 22.8× (§7) | **projection** (micro-benchmark) | `cv2.filter2D` vs the scalar loop, in isolation | **held up**: 13.7× measured end-to-end on a lasso sweep (#97) |
+| `cv2.polylines` 22-26× (§7) | **projection** (micro-benchmark) | one polylines call, all traces, single colour, no opacity | **REJECTED**: real per-trace loop is 1814 ms vs QPainter's 155 ms (~12× slower) |
+
+Delivered so far, with measured end-to-end figures:
+
+- **#97** — cached `cv2.filter2D` anchor mask (exact): lasso sweep 13.67 s → 1.00 s
+  (**13.7×**), `getAnchorTrace` 60-90×. `starmap` QPoint batching
+  (pixel-identical, 0 differing pixels over 11 shapes × 5 draw modes): dense full
+  frames 13.16 s → 8.27 s (**1.59×**).
+- **#98** (Phase 1d) — Feret computed on demand: retained bytes per closed
+  `TraceData` become a constant **392 B at any point count** (was 648 B at 4 points
+  rising to 16,520 B at 500), i.e. **−75%** on 20k traces × 64 points and **−88%**
+  on `class_series`. This attacks the §4 regression directly, which is also why
+  spending +2217 MB on a Section cache was the wrong trade.
 
 ---
 

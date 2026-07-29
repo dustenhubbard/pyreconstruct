@@ -1,6 +1,12 @@
 """Verify the claim that Grid.isAnchorPoint's 8-neighbour test is exactly a
 3x3 convolution, i.e. addressable by batching into numpy/OpenCV.
-Not a proposed patch -- evidence for the Phase 2 gate decision only."""
+Not a proposed patch -- evidence for the Phase 2 gate decision only.
+
+2026-07-28: this claim HELD UP and was implemented in #97 as a lazily built,
+per-Grid cached anchor mask. The speedup printed below is a micro-benchmark of
+the kernel; end-to-end, a lasso sweep on shapes2 went 13.67 s -> 1.00 s
+(13.7x), with getAnchorTrace alone 60-90x. Quote the 13.7x, not this number.
+See ../REPORT.md section 7a."""
 import numpy as np, cv2, time, sys
 sys.path.insert(0, ".")
 from PyReconstruct.modules.calc.grid import Grid
