@@ -427,6 +427,26 @@ class MainWindow(QMainWindow):
                 self.addAction("", self.series.getOption(act_name), act)
             )
     
+    def findImagesBesideJser(self) -> bool:
+        """Attempt to recover missing images from the jser's own directory.
+
+        A moved or shared series usually travels with its images, so the
+        directory holding the jser is tried before prompting the user.
+
+            Returns:
+                (bool) True if the images were located and loaded
+        """
+        jser_dir = os.path.dirname(self.series.jser_fp)
+        # probe for the image file, but hand changeSrcDir its DIRECTORY
+        candidate = os.path.join(
+            jser_dir,
+            os.path.basename(self.field.section.src)
+        )
+        if not os.path.isfile(candidate):
+            return False
+        self.changeSrcDir(jser_dir)
+        return bool(self.field.section_layer.image_found)
+
     def changeSrcDir(self, new_src_dir : str = None, notify=False):
         """Open a series of dialogs to change the image source directory.
         
@@ -783,16 +803,8 @@ class MainWindow(QMainWindow):
 
         # ensure that images are found
         if not self.field.section_layer.image_found:
-            # check jser directory
-            src_path = os.path.join(
-                os.path.dirname(self.series.jser_fp),
-                os.path.basename(self.field.section.src)
-            )
-            images_found = os.path.isfile(src_path)
-            
-            if images_found:
-                self.changeSrcDir(src_path)
-            else:
+            # images usually sit beside the jser; try there before asking
+            if not self.findImagesBesideJser():
                 self.changeSrcDir(notify=True)
         # prompt user to scale zarr images if not scaled
         elif (self.field.section_layer.image_found and 
