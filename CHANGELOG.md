@@ -228,6 +228,33 @@ the README's *From source (developers)* section).
     never clears a status and never downgrades an already-curated object, so it
     recovers curation that the stored attributes have lost rather than
     recomputing it.
+- **A second menu-label pass names the remaining File/Series objects, and
+  File ▸ Projects becomes a catch-all.** Same rules as the pass above: renames
+  only, nothing moved or removed, no keyboard shortcut changed, every label
+  verified against its handler.
+  - `File ▸ Export` → **Export series**. Both rows act on the open series:
+    "To legacy Reconstruct (XML)..." converts it to a legacy `.ser`, and
+    "To Neuroglancer (Zarr)..." writes its images over a chosen section range
+    (plus any chosen object groups as labels) to a Neuroglancer-compatible
+    zarr.
+  - `Series ▸ Import` → **Import series data**, and its `From series...` →
+    **From another series...** (the handler's own docstring: "Import from
+    another series"). Both rows bring data into the open series — traces,
+    z-traces, flags, attributes, alignments, palettes and
+    brightness/contrast profiles from another `.jser`, or neuroglancer zarr
+    labels converted to objects.
+  - `File ▸ Projects` → **Utilities** — the maintainer's catch-all for the
+    rarely used functions this submenu collects, and a signal for where
+    future niche items go. Inside it, `Randomize images...` →
+    **Randomize project...**, so the pair shares its noun with
+    `De-randomize project...`: `randomize_project` acts on a project
+    directory (codes its images and emits a single coded `.jser`) and
+    `derandomize_project` reverses exactly that.
+  - Housekeeping made visible by the menubar inventory test: the Alignments
+    import submenu's internal `attr_name` is now `importalignmentsmenu` (it
+    shared `importmenu` with Series ▸ Import, so the second `setattr`
+    overwrote the first; nothing read it). Menubar `attr_name`s are now
+    asserted unique.
 - **Brightness and contrast are exempt from the section lock.** The lock exists
   to protect *alignment*, not image display, and that is what it actually
   gates: every `align_locked` check in the field widget is a transform
@@ -456,6 +483,15 @@ the README's *From source (developers)* section).
 - Renamed the updater channels to **Release** and **Pre-release (experimental)**.
 
 ### Fixed
+- **Restoring "Needs curation" from the log keeps the assignee.** Marking an
+  object as needing curation stores the assignee on the object, but the log
+  entry carried only the bare event "Mark as needs curation" — so *Series ▸
+  Restore object curation status from log* had nothing to recover and wrote
+  the status back with an empty User column. The event now records the
+  assignee ("Mark as needs curation (assigned to `<user>`)") and the restore
+  parses it back out. Unassigned markings log the bare event exactly as
+  before, and logs written before this change still restore as they did —
+  with the status but no assignee, since none was ever recorded in them.
 - **The legacy brightness/contrast migration destroyed named profiles.**
   `Section.updateJSON` folds the pre-profiles scalar `brightness`/`contrast`
   pair into `brightness_contrast_profiles`; it did so by *assigning* a fresh

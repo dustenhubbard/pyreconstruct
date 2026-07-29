@@ -8,7 +8,7 @@ import random
 # add src modules to the system path
 sys.path.append(os.path.join(os.getcwd(), "..", ".."))
 from PyReconstruct.modules.datatypes import Series, Transform, Trace
-from PyReconstruct.modules.backend.func import reducePoints
+from PyReconstruct.modules.calc import reducePoints
 
 def getExteriors(mask : np.ndarray) -> list[np.ndarray]:
     """Get the exteriors from a mask.

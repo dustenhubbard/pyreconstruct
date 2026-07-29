@@ -2624,7 +2624,14 @@ class Series():
                 self.log_set.removeCuration(name)
             elif cr_status == "Needs curation":
                 self.setAttr(name, "curation", (False, assign_to, getDateTime()[0]))
-                self.addLog(name, None, "Mark as needs curation")
+                # record the assignee in the log event so that
+                # updateCurationFromHistory can restore it (older logs carry
+                # the bare event and restore with no assignee)
+                if assign_to:
+                    event = f"Mark as needs curation (assigned to {assign_to})"
+                else:
+                    event = "Mark as needs curation"
+                self.addLog(name, None, event)
             elif cr_status == "Curated":
                 self.setAttr(name, "curation", (True, self.user, getDateTime()[0]))
                 self.addLog(name, None, "Mark as curated")
@@ -2852,7 +2859,15 @@ class Series():
                 if name not in self.obj_attrs:
                     self.obj_attrs[name] = {}
                 if "curation" not in self.obj_attrs[name]:
-                    self.obj_attrs[name]["curation"] = (False, "", log.date)
+                    # recover the assignee that setCuration records in the
+                    # event text; logs from before the assignee was recorded
+                    # carry the bare event and restore with no assignee
+                    m = re.fullmatch(
+                        r"Mark as needs curation \(assigned to (.+)\)",
+                        log.event
+                    )
+                    assign_to = m.group(1) if m else ""
+                    self.obj_attrs[name]["curation"] = (False, assign_to, log.date)
                 marked_objs.add(name)
     
     def _settingsStore(self):

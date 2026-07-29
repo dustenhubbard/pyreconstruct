@@ -117,6 +117,10 @@ def _submenu(items, attr_name):
 # every row, separators included, in order. Built with no object groups (the
 # View menu appends a dynamic "Groups" submenu when the series has any) and no
 # recently opened series.
+#
+# One deliberate attr_name change since capture, commented in place below:
+# the Alignments import submenu is "importalignmentsmenu" (was "importmenu",
+# a duplicate of the Series one).
 MENUBAR_BASELINE = [
     (0, "menu", "filemenu"),
     (1, "menu", "newseriesmenu"),
@@ -227,7 +231,10 @@ MENUBAR_BASELINE = [
     (0, "menu", "alignmentsmenu"),
     (1, "act", "changealignment_act"),
     (1, "sep", None),
-    (1, "menu", "importmenu"),
+    # renamed from "importmenu", which Series > Import also used: newMenu does
+    # setattr(mw, attr_name, menu), so the second build overwrote the first and
+    # MainWindow.importmenu could only ever mean the Alignments submenu
+    (1, "menu", "importalignmentsmenu"),
     (2, "act", "importtransforms_act"),
     (2, "act", "import_swift_transforms_act"),
     (1, "sep", None),
@@ -354,6 +361,56 @@ def test_renamed_label(attr):
     assert labels[attr] != old
 
 
+# The second label pass: the deferred "verb with no object" items from the pass
+# above, plus the maintainer's catch-all name for the former Projects submenu.
+# Same rules: every label verified against its handler, nothing moved, no
+# shortcut changed.
+RENAMED_SECOND_PASS = {
+    # attr_name: (old label, new label)
+    #
+    # exportToXML converts the open series to a legacy XML .ser;
+    # exportToZarr's handler docstring is "Export series as a
+    # neuroglancer-compatible zarr" (images over a section range/window plus
+    # any chosen group labels). Both act on the open series.
+    "exportmenu": ("Export", "Export series"),
+    # both children bring data into the open series: traces / z-traces /
+    # flags / attributes / alignments / palettes / b-c profiles from another
+    # series, or zarr labels converted to objects
+    "importmenu": ("Import", "Import series data"),
+    # importFromSeries's own docstring: "Import from another series."
+    "importfromseries_act": ("From series...", "From another series..."),
+    # the maintainer's catch-all for rarely used, user-requested functions;
+    # signals where future niche items go
+    "projectsmenu": ("Projects", "Utilities"),
+    # randomize_project acts on a project directory (codes its images and
+    # emits one coded jser); derandomize_project reverses it. The pair now
+    # shares its noun -- "De-randomize project..." is unchanged.
+    "random_act": ("Randomize images...", "Randomize project..."),
+}
+
+
+@pytest.mark.parametrize("attr", sorted(RENAMED_SECOND_PASS))
+def test_second_pass_renamed_label(attr):
+    old, new = RENAMED_SECOND_PASS[attr]
+    labels = _labels()
+    assert labels[attr] == new, f"{attr} should read {new!r}, not {labels[attr]!r}"
+    assert labels[attr] != old
+
+
+def test_menubar_attr_names_are_unique():
+    """No two menubar rows may share an attr_name.
+
+    newMenu/newAction do ``setattr(mainwindow, attr_name, ...)``, so a
+    duplicate silently overwrites the earlier attribute -- Series > Import and
+    Alignments > Import alignments shared "importmenu" until the latter was
+    renamed, leaving ``MainWindow.importmenu`` pointing only at the Alignments
+    submenu. Nothing read it, so nothing broke; this pins the invariant so the
+    next duplicate cannot sit unnoticed."""
+    names = [attr for _d, kind, attr, _t in _rows() if kind != "sep"]
+    dupes = {n for n in names if names.count(n) > 1}
+    assert dupes == set(), f"duplicate menubar attr_names: {sorted(dupes)}"
+
+
 # The two menus in scope, as the user reads them. Frozen so a future pass has to
 # name every label it changes -- the same guarantee test_context_menu_frequency
 # gives the seven right-click surfaces. Indentation = submenu depth, "-----" is a
@@ -371,13 +428,13 @@ FILE_MENU_LABELS = [
     "-----",
     "Save",
     "Save as...",
-    "Projects >",
-    "    Randomize images...",
+    "Utilities >",
+    "    Randomize project...",
     "    De-randomize project...",
     "Backup >",
     "    Backup now...",
     "    Settings...",
-    "Export >",
+    "Export series >",
     "    To legacy Reconstruct (XML)...",
     "    To Neuroglancer (Zarr)...",
     "-----",
@@ -389,8 +446,8 @@ FILE_MENU_LABELS = [
 
 SERIES_MENU_LABELS = [
     "Options...",
-    "Import >",
-    "    From series...",
+    "Import series data >",
+    "    From another series...",
     "    From neuroglancer zarr labels...",
     "Images >",
     "    Find/change image directory",
