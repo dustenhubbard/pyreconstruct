@@ -253,17 +253,24 @@ class SectionTableWidget(DataTable):
         self.mainwindow.seriesModified(True)
     
     def setBC(self, section_numbers=None, b=None, c=None, inc=False, log_event=True):
-        """Set the brightness/contrast for a set of sections."""
+        """Set the brightness/contrast for a set of sections.
+
+        Deliberately NOT gated on the section lock. The lock protects
+        ALIGNMENT -- the transform, and the operations that write it
+        (arrow-key translation, align by correlation, affine align,
+        propagation). Brightness and contrast are image *display* settings
+        stored alongside the transform; changing them cannot move a section.
+        Requiring an unlock to adjust them made the lock mean "read-only
+        section", which it does not: the same lock already permits copying
+        traces onto a locked section, and the field's own brightness and
+        contrast shortcuts have never checked it. That left the two paths
+        disagreeing about the same edit.
+        """
         if section_numbers is None:
             section_numbers = self.getSelected()
             if not section_numbers:
                 return
-        
-        for snum in section_numbers:
-            if self.series.data["sections"][snum]["locked"]:
-                notify("Unlock section(s) before modifying.")
-                return
-        
+
         if b is None or c is None:
             desc = "increment" if inc else "(-100 - 100)"
 
@@ -304,31 +311,27 @@ class SectionTableWidget(DataTable):
         self.mainwindow.seriesModified(True)
     
     def matchBC(self):
-        """Match the brightness/contrast of the selected sections with the current section."""
+        """Match the brightness/contrast of the selected sections with the current section.
+
+        Not lock-gated, for the reason given on ``setBC``.
+        """
         section_numbers = self.getSelected()
         if not section_numbers:
             return
-        
-        for snum in section_numbers:
-            if self.series.data["sections"][snum]["locked"]:
-                notify("Unlock section(s) before modifying.")
-                return
-        
+
         b = self.mainwindow.field.section.brightness
         c = self.mainwindow.field.section.contrast
         self.setBC(section_numbers, b, c)
     
     def optimizeBC(self):
-        """Optimize the brightness/contrast of the selected sections."""
+        """Optimize the brightness/contrast of the selected sections.
+
+        Not lock-gated, for the reason given on ``setBC``.
+        """
         section_numbers = self.getSelected()
         if not section_numbers:
             return
-        
-        for snum in section_numbers:
-            if self.series.data["sections"][snum]["locked"]:
-                notify("Unlock section(s) before modifying.")
-                return
-        
+
         self.mainwindow.optimizeBC(section_numbers)
     
     def editThickness(self, log_event=True):
