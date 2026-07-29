@@ -13,6 +13,27 @@ the README's *From source (developers)* section).
 
 ## [Unreleased]
 
+### Added
+- **A keyboard shortcut for "Copy to sections...".** The action now has a
+  user-configurable default of `Ctrl+Alt+C`, listed in the shortcuts dialog next
+  to Copy. `Ctrl+Shift+C` was the natural sibling of `Ctrl+C` and was requested
+  in review, but it is already **Toggle curation in object lists** and is
+  documented as such, so the copy-to-sections key keeps the "C for copy" mnemonic
+  on the otherwise unused `Ctrl+Alt` tier rather than displacing a live binding.
+  The key is bound through the field only; the trace list leaves it unbound, as
+  every other list menu does. A new test additionally asserts that no two actions
+  in the configurable shortcut set share a default key — Qt answers such a clash
+  by firing *neither* action, which is invisible until a user reports a dead
+  shortcut.
+
+### Changed
+- **The "Copy to sections" picker suggests real sections from the open series.**
+  The dialog's hint and input placeholder were a fixed `10-20` / `5, 8, 11`, which
+  meant nothing in a series that does not run to 20. They now show the series' own
+  range plus three sections sampled from it, and the hint text is shorter. Samples
+  are drawn from the sections that actually exist, so a series with gaps is never
+  offered an example that the picker would then reject.
+
 ## [1.21.0] — 2026-08-04
 
 ### Added

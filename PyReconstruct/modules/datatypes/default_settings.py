@@ -110,6 +110,13 @@ default_settings = {
     "undo_act": "Ctrl+Z",
     "redo_act": "Ctrl+Y",
     "copy_act": "Ctrl+C",
+    # Sibling of copy_act, so it wants to sit next to Ctrl+C. Ctrl+Shift+C is
+    # NOT free -- it has been togglecuration_act's default since before this
+    # action existed (see "Lists" below, and docs/USER_GUIDE.md) -- so the
+    # copy-to-sections key keeps the "C for copy" mnemonic on the otherwise
+    # unused Ctrl+Alt tier instead of displacing a documented binding. Like
+    # every key in this dict it is user-configurable in the shortcuts dialog.
+    "copytosections_act": "Ctrl+Alt+C",
     "cut_act": "Ctrl+X",
     "paste_act": "Ctrl+V",
     "pasteattributes_act": "Ctrl+B",
