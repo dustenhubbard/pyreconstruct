@@ -364,12 +364,15 @@ def seriesToLabels(series: Series,
     raw = data_zg["raw"]
 
     shape = raw.shape
-    sections = list(range(*window[1]))
     mag = get_true_mag(raw)
     resolution = get_resolution(raw)
     alignment = raw.attrs["alignment"]
 
     if window:
+
+        ## window is (x, y, w, h), (start, end): the section range is its
+        ## second element, so it can only be read inside this branch
+        sections = list(range(*window[1]))
 
         offset = get_offset(
             window,
@@ -378,11 +381,14 @@ def seriesToLabels(series: Series,
             relative_to=raw_window,
             section_diff=section_diff
         )
-        
+
         window = window[0]
 
     else:
 
+        ## seriesToZarr wrote both of these next to each other, so the sections
+        ## come back from the same place the window does
+        sections = list(raw.attrs["sections"])
         window = raw.attrs["window"]
         offset = raw.attrs["offset"]
 
