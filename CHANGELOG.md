@@ -33,6 +33,22 @@ the README's *From source (developers)* section).
   range plus three sections sampled from it, and the hint text is shorter. Samples
   are drawn from the sections that actually exist, so a series with gaps is never
   offered an example that the picker would then reject.
+- **The lint gate now covers the bundled helper scripts, and the dev-only ones
+  stop shipping.** `ruff.toml` excluded `PyReconstruct/assets` as "not on any
+  import path", while `package-data` shipped `assets/**/*`: all 18 `.py` files
+  under `assets/` went into every wheel and installer, and CI opened none of
+  them. That is how `assets/misc/zarr_to_jser.py` reached users carrying a
+  `SyntaxError` and a `C:\path\to\...` constant, and `jser_to_zarr_v2.py` still
+  carries the same hardcoded placeholder. Dropping the exclusion took no code
+  change: the critical-error set (`E9`, `F63`, `F7`, `F82`) already passes clean
+  over the whole tree. Separately, three asset directories with no runtime
+  consumer are now excluded from the wheel and the installers: `assets/misc/`
+  (standalone scripts whose `tif_to_zarr` launchers still point at the `src/`
+  layout retired in 2023), `assets/scripts/img/` (`mask.py` needs `colorama`,
+  not a runtime dependency, so the shipped copy could never run), and
+  `assets/scripts/contours_from_labels/`. They stay in the repository, stay
+  linted, and keep working from a checkout through `dev/scripts/`. Everything
+  the app imports or launches still ships, verified against an installed wheel.
 
 ### Fixed
 - **Undoing an alignment change no longer leaves the alignment it removed in the
