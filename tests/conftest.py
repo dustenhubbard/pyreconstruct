@@ -47,6 +47,7 @@ fixtures below.
 import importlib.util
 import os
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -843,3 +844,110 @@ def main_window(qapp, series_jser, qsettings_snapshot, main_window_dialogs):
         window.series.modified = False
         window.close()
         window.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# Latched keyboard modifiers, and why every test gets cleaned up whether or not
+# it presses a key.
+#
+# `QApplication.keyboardModifiers()` is process-wide state, and under PySide6
+# 6.5.2 a synthetic modified key press leaves it set after the press is over.
+# Both spellings do it, measured on this platform:
+#
+#     QTest.keyClick(w, Qt.Key_A, Qt.ControlModifier | Qt.ShiftModifier)
+#         -> keyboardModifiers() == Qt.ShiftModifier, and stays there
+#     QTest.keySequence(w, QKeySequence("Ctrl+Shift+O"))
+#         -> Qt.ShiftModifier
+#     QTest.keySequence(w, QKeySequence("Ctrl+G"))
+#         -> Qt.ControlModifier
+#
+# Nothing resets it at the end of the test, the end of the module, or the end of
+# the fixture that owned the widget: `qapp` is session-scoped, so the residue
+# outlives every widget and reaches every later test in the run.
+#
+# The damage is done to tests that press no keys at all, and it does not need a
+# mouse event to reach them. `QAbstractItemViewPrivate::extendedSelectionCommand`
+# is passed the originating event when there is one and falls back to
+# `QGuiApplication::keyboardModifiers()` when there is not, so the *programmatic*
+# selection calls inherit the latch:
+#
+#     table.clearSelection(); table.selectRow(0)
+#         no latch          -> row 0 selected, 3 indexes
+#         ShiftModifier     -> NOTHING selected, 0 indexes
+#         ControlModifier   -> row 0 selected, 3 indexes
+#
+# Shift means "extend from the current index", and after `clearSelection()` there
+# is no current index to extend from, so the selection call silently does
+# nothing. `tests/test_section_list_real_widget.py` uses `selectRow` and presses
+# no keys, and it fails 7 of 46 with a `ShiftModifier` latch standing. Control is
+# "toggle", which from an empty selection lands on the same answer, which is why
+# a run can be green purely because its last key press was `Ctrl+G` rather than
+# `Ctrl+Shift+O`. `setCurrentCell` is unaffected by either.
+#
+# So this is cleared centrally rather than at the call sites. Per-press cleanup
+# is exactly the kind of thing a new test forgets, and the failure it causes
+# lands in a different file.
+#
+# On the mechanism:
+#
+#   * It takes a key *press* to reset the mask. `QApplication::notify` records
+#     the modifiers of a `KeyPress` it delivers, so a `KeyRelease` on its own
+#     leaves the latch standing, whether it comes from `QTest` or from
+#     `QApplication.sendEvent`. `QTest.keyClick` sends both, in that order.
+#   * The target widget need not be shown, focused, or parented. A bare
+#     throwaway `QWidget` works, which is what makes this safe to run from a
+#     teardown after the test's own window has already been closed.
+#
+# A fresh widget per call, deliberately: caching one would leave a PySide
+# wrapper alive across the session, and stale-wrapper ownership is the other
+# 6.5.2 trap this suite already works around (see the note above
+# `menu_leaf_paths`).
+# ---------------------------------------------------------------------------
+
+
+def clear_latched_modifiers() -> None:
+    """Reset `QApplication.keyboardModifiers()` to `Qt.NoModifier`.
+
+    Safe and cheap to call unconditionally: a no-op when PySide6 has not been
+    imported, when no `QApplication` exists, and when no modifier is latched. It
+    does not create a `QApplication` and does not import PySide6, so a Qt-free
+    test run stays Qt-free.
+
+    Called automatically for every test by `_no_latched_modifiers` below. Call
+    it directly only from *within* a test that presses a modified sequence and
+    then clicks something in the same test, where the automatic cleanup has not
+    run yet.
+    """
+    widgets = sys.modules.get("PySide6.QtWidgets")
+    if widgets is None or widgets.QApplication.instance() is None:
+        return
+
+    from PySide6.QtCore import Qt
+
+    if widgets.QApplication.keyboardModifiers() == Qt.NoModifier:
+        return
+
+    from PySide6.QtTest import QTest
+
+    # An unmodified press through QTest clears the whole mask, whichever
+    # modifiers are standing. Key_Shift produces no text, so a focused editor
+    # elsewhere in the session cannot be corrupted by it, and the event is
+    # addressed to the throwaway widget rather than to whatever has focus.
+    QTest.keyClick(widgets.QWidget(), Qt.Key_Shift, Qt.NoModifier)
+
+
+@pytest.fixture(autouse=True)
+def _no_latched_modifiers():
+    """Guarantee every test starts and ends with no keyboard modifier latched.
+
+    Autouse and suite-wide on purpose. The tests that suffer are not the tests
+    that press keys, so scoping this to the GUI files would leave the hazard in
+    place for the next real-widget file somebody adds.
+
+    Cleared on setup as well as teardown so that residue from anything outside a
+    test's own teardown (a session-scoped finalizer, an aborted run resumed with
+    `--lf`) cannot reach the next test either.
+    """
+    clear_latched_modifiers()
+    yield
+    clear_latched_modifiers()
