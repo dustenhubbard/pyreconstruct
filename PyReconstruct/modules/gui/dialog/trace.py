@@ -46,6 +46,14 @@ class TraceDialog(QDialog):
         self.is_palette = is_palette
         self.is_obj_list = is_obj_list
 
+        # True when the selection did not agree on a single set of tags, so the
+        # tags field is displayed blank because there is nothing to display and
+        # NOT because the traces have no tags. exec() needs the distinction: a
+        # blank field means "no value chosen" here, and "clear the tags"
+        # otherwise. MultiInput cannot carry it, since it renders both None and
+        # an empty set as one empty row.
+        self.tags_mixed = False
+
         # get the display values if traces have been provided
         if traces:
             trace = traces[0]
@@ -73,6 +81,7 @@ class TraceDialog(QDialog):
                     points = None
                 if trace.tags != tags:
                     tags = set()
+                    self.tags_mixed = True
                 if trace.fill_mode[0] != fill_style:
                     fill_style = None
                 if trace.fill_mode[1] != fill_condition:
@@ -80,6 +89,11 @@ class TraceDialog(QDialog):
         else:
             if not name:
                 name = "*"
+            if tags is None:
+                # The caller had no single value to supply. The object list
+                # passes tags=None for a multi-object selection, which is the
+                # same "selection disagrees" case as the loop above.
+                self.tags_mixed = True
             if not tags:
                 tags = set()
             fill_style = None
@@ -250,6 +264,13 @@ class TraceDialog(QDialog):
 
             # tags
             tags = set(self.tags_input.getEntries())
+            if self.tags_mixed and not tags:
+                # The field was blank because the selection disagreed, and the
+                # user left it blank, so no new value was chosen. Return None,
+                # which every consumer reads as "leave the existing tags
+                # alone". An empty set here means "replace with no tags" and
+                # would erase the tags of every selected trace.
+                tags = None
             trace.tags = tags
 
             # shape

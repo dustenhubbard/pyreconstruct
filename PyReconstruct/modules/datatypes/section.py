@@ -582,7 +582,10 @@ class Section():
                 traces (list): the list of traces to modify
                 name (str): the new name
                 color (tuple): the new color
-                tags (set): the new set of tags
+                tags (set): the new set of tags. None leaves each trace's own
+                    tags untouched (as for name/color/mode); an empty set
+                    REPLACES them with no tags, which is how
+                    Series.removeAllTraceTags clears them.
                 mode (tuple): the new fill mode for the traces
                 add_tags (bool): True if tags should be added (rather than replaced)
                 log_event (bool): true if the event should be logged
