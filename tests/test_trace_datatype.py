@@ -603,3 +603,103 @@ def test_overlap_ratio_quarter_overlap():
     r = a.getOverlapRatio(b)
     assert r == pytest.approx(1.0 / 7.0, abs=0.02)
     assert 0 < r < 1
+
+
+# ---------------------------------------------------------------------------
+# getOverlapRatio() on degenerate ("pixel dust") traces
+#
+# A trace with fewer than three points, or with all its points on one line,
+# has no area. When BOTH traces are confined to the same vertical or the same
+# horizontal line, their combined bounding box collapses in that axis and the
+# box area is 0. The ratio is scaled by 1e4/area, so a 0 area raised
+# ZeroDivisionError and took the whole "delete duplicate traces" run down.
+#
+# Traces like this really do occur: Trace.smooth() already skips traces with
+# fewer than three points and calls them pixel dust.
+# ---------------------------------------------------------------------------
+
+def make_trace(points, closed=True, name="degenerate"):
+    t = Trace(name, (255, 0, 0), closed=closed)
+    t.points = list(points)
+    return t
+
+
+DEGENERATE_PAIRS = [
+    # two vertical segments on the same x, y ranges overlapping
+    ([(0, 0), (0, 10)], [(0, 5), (0, 15)]),
+    # two vertical segments on the same x, one contained in the other
+    ([(0, 0), (0, 10)], [(0, 2), (0, 8)]),
+    # a single point and a vertical segment through the same x
+    ([(0, 0)], [(0, 0), (0, 10)]),
+    # two horizontal segments on the same y
+    ([(0, 0), (10, 0)], [(5, 0), (15, 0)]),
+    # more than two points, still all on one vertical line
+    ([(3, 0), (3, 5), (3, 10)], [(3, 4), (3, 6), (3, 8)]),
+    # a single point and a longer vertical run through the same x
+    ([(3, 5)], [(3, 0), (3, 5), (3, 10)]),
+]
+
+
+@pytest.mark.parametrize("pts_a,pts_b", DEGENERATE_PAIRS)
+def test_overlap_ratio_zero_area_bounding_box_returns_zero(pts_a, pts_b):
+    """A collapsed combined bounding box gives 0, not ZeroDivisionError."""
+    a = make_trace(pts_a)
+    b = make_trace(pts_b)
+    assert a.getOverlapRatio(b) == 0
+    assert b.getOverlapRatio(a) == 0
+
+
+@pytest.mark.parametrize("pts_a,pts_b", DEGENERATE_PAIRS)
+def test_overlaps_survives_zero_area_bounding_box(pts_a, pts_b):
+    """overlaps() answers False for these instead of raising."""
+    a = make_trace(pts_a)
+    b = make_trace(pts_b)
+    assert a.overlaps(b) is False
+    assert a.overlaps(b, threshold=1) is False
+    assert a.overlaps(b, threshold=0.5) is False
+
+
+def test_overlap_ratio_identical_single_points_is_zero_but_overlaps_is_true():
+    """Pin the one place the guard reads oddly, and show it is unreachable.
+
+    Two traces that are the same single point share a collapsed bounding box,
+    so the ratio is 0 even though they are wholly coincident. Nothing observes
+    that: overlaps() is the only caller of getOverlapRatio, and it settles
+    identical point-lists before it ever asks for a ratio.
+    """
+    a = make_trace([(3, 4)])
+    b = make_trace([(3, 4)])
+    assert a.getOverlapRatio(b) == 0
+    assert a.overlaps(b) is True
+
+
+def test_overlaps_identical_single_points_is_true():
+    """The user-visible case: identical pixel dust is still a duplicate.
+
+    This goes through the point-by-point comparison at the top of overlaps(),
+    which never reaches the ratio, so the zero-area guard cannot hide it.
+    """
+    a = make_trace([(3, 4)])
+    b = make_trace([(3, 4)])
+    assert a.overlaps(b) is True
+    assert a.overlaps(b, threshold=1) is True
+
+
+def test_overlaps_identical_collinear_traces_is_true():
+    """Same for a longer trace whose points all sit on one line."""
+    a = make_trace([(3, 0), (3, 5), (3, 10)])
+    b = make_trace([(3, 0), (3, 5), (3, 10)])
+    assert a.overlaps(b) is True
+
+
+def test_overlap_ratio_degenerate_traces_off_axis_still_computed():
+    """A degenerate trace whose box is NOT collapsed keeps its old answer.
+
+    Two perpendicular segments crossing at the origin span a real box in both
+    axes, so the rasterized comparison still runs; the guard must not swallow
+    these.
+    """
+    a = make_trace([(0, 0), (10, 0)])
+    b = make_trace([(0, 0), (0, 10)])
+    r = a.getOverlapRatio(b)
+    assert 0 < r < 1
