@@ -1,3 +1,22 @@
+"""Convert a folder of images into a flat zarr store, interactively.
+
+Superseded in the app by ``Series > Images > Convert to scaled images``, which
+writes the multiscale ``scale_N`` layout that ``ImageLayer.loadImage`` prefers.
+This script writes one zarr array per image at the top level of the store, the
+pre-scale layout; the app still accepts it, but only by migrating the store into
+``scale_1/`` in place on first open.
+
+Kept as a standalone fallback for a checkout. Run it from the repository root::
+
+    uv run python PyReconstruct/assets/misc/tif_to_zarr.py
+
+It prompts for the image folder and the store name, so it needs a terminal and a
+display. Two wrapper scripts used to sit beside it, ``tif_to_zarr.sh`` and
+``tif_to_zarr.bat``; both invoked ``src/assets/misc/tif_to_zarr.py`` and sourced
+an ``env/`` virtualenv, neither of which has existed since the 2023 move to a
+pip-installable layout, so they were removed rather than rewritten.
+"""
+
 import os
 import cv2
 import zarr

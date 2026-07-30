@@ -62,6 +62,23 @@ the README's *From source (developers)* section).
   rebuilds the context menus, and only when the set of alignment names actually
   changed.
 
+### Removed
+- **The two `tif_to_zarr` launcher scripts.** `PyReconstruct/assets/misc/`
+  shipped a `tif_to_zarr.sh` and a `tif_to_zarr.bat` whose whole job was to
+  activate a virtualenv and run `src/assets/misc/tif_to_zarr.py`. Neither half of
+  that has existed since November 2023, when `src/` was renamed `PyReconstruct/`
+  for the pip-installable layout and the dev environment moved to `uv`'s
+  `.venv`: the shell version fails on line 4 at `env/bin/activate` before it ever
+  reaches the missing path. The `.sh` also never located itself, so its
+  `cd ../../..` was relative to whatever directory the user happened to be in.
+  Nothing referenced either file (not the docs, the manual, the README, `dev/`,
+  the packaging spec, or the suite), and the job they front is now done in the
+  app by `Series > Images > Convert to scaled images`, which additionally
+  writes the multiscale layout the field renderer prefers. Repairing a string in
+  each would have left two files that still could not run, so they are removed
+  and `tif_to_zarr.py` documents its own invocation instead. The script itself
+  stays and still works from a checkout.
+
 ## [1.21.0] — 2026-08-04
 
 ### Added
