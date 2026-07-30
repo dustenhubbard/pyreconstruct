@@ -15,6 +15,11 @@ class ObjGroupDict():
         self.series = series
         self.contain_type = contain_type
 
+        # the documented default is "no existing groups"; the empty-group scan
+        # below dereferences groups before the "if groups:" guard reaches it
+        if groups is None:
+            groups = {}
+
         # scan the dictionary for empty groups
         for group, obj_list in groups.copy().items():
             if not any(obj_list):

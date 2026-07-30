@@ -2224,7 +2224,7 @@ class Series():
         
             Params:
                 other (Series): the series to import from
-                srange (tuple): the range of sections to include in import (exclusive)
+                srange (tuple): the range of sections to include in import (exclusive; None for every section)
                 regex_filters (list): regex filters for objects
                 group_filters (list): group filters for objects
                 threshold (float): the overlap threshold
@@ -2265,7 +2265,8 @@ class Series():
                 series_states=series_states
             ):
                 ## Skip if section not requested or does not exist in other series
-                skip = snum not in range(*srange) or snum not in other.sections
+                in_srange = srange is None or snum in range(*srange)
+                skip = not in_srange or snum not in other.sections
 
                 if skip:
                     continue
