@@ -557,8 +557,12 @@ On the field (right-click empty space, or use the shortcuts):
     compare them.
   - **Hide image** (`I`), **Focus mode** (`X`).
 
-**Undo** (`Ctrl+Z`) / **Redo** (`Ctrl+Y`) cover actions on the field. (Some edits
-made through the lists are noted there as not undoable.)
+**Undo** (`Ctrl+Z`) / **Redo** (`Ctrl+Y`) cover actions on the field and actions
+taken through the lists, including series-wide edits such as renaming, recoloring,
+or changing the radius or shape of an object across every section. When an action
+touched more than one section, undo asks whether to revert all of them or only the
+current section. Three actions are genuinely not undoable and warn before running:
+deleting sections, reordering sections, and optimizing brightness/contrast.
 
 **Find a contour** on the current section with **Section ▸ Find contour…**
 (`Shift+F`); jump to an object's first contour anywhere in the series with
