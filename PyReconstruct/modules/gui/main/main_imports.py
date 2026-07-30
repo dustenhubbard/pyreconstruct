@@ -72,6 +72,7 @@ from PyReconstruct.modules.gui.popup import (
 from PyReconstruct.modules.gui.utils import (
     populateMenuBar,
     populateMenu,
+    user_is_present,
     notify,
     notifyConfirm,
     saveNotify,
