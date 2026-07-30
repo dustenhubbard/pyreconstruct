@@ -213,8 +213,68 @@ def test_check_actions_is_inert_before_actions_exist(main_window):
 
 # --- the recent-series submenu ------------------------------------------------
 
+@pytest.fixture
+def own_recents(main_window):
+    """`main_window`, with the recents option scoped to this test alone.
+
+    `recently_opened_series` is a *computer*-scoped option: `Series.setOption`
+    resolves it to `Series.qsettings_defaults`, so it is addressed with
+    `code=None` and lands in `QSettings("KHLab", "PyReconstruct")` under a bare
+    key. That is one machine-wide slot shared by every reader on the box, which
+    makes these two tests read and write state that nothing in the test session
+    owns. Three consequences, the first two measured rather than argued:
+
+      * Concurrent runs corrupt each other. Two `pytest` processes on one
+        machine interleave `setOption` and `getOption` on the same key, and the
+        loser reads the other process' value. Measured on this file: four
+        concurrent `pytest tests/test_main_window_headless.py -k recent`
+        processes, 11 of 12 test outcomes failed, one with
+        `assert [] == [.../recent_one.jser, .../recent_two.jser]` -- the `[]`
+        being another process' "Clear recents" landing between this process'
+        write and its read. Ordinary for a machine running more than one
+        checkout, and it presents as an unreproducible flake.
+      * Every run edits the developer's own preferences. `openSeries` calls
+        `addToRecentSeries`, so building `main_window` prepends a `tmp_path`
+        `.jser` to their real recents list, and these tests then overwrite it.
+        Measured by reading the key back through `QSettings` before and after a
+        run: ten entries, every one of them a pytest `tmp_path`, which is the
+        whole list (`addToRecentSeries` caps it at ten). Read it with `QSettings`
+        and not `defaults read`: the domain on disk is `com.khlab.PyReconstruct`,
+        and `defaults` writes to the name it is given rather than the name that
+        exists, so a mixed-case `com.KHLab.PyReconstruct` reads through but
+        writes somewhere the application never looks.
+      * The result depends on what the store already held. Not observed to fail
+        on its own here (the file passes 12 of 12 alone, and under `-m gui` in 8
+        shuffled orders), because each test writes the option before it reads it.
+        A test that is correct only because of the order of two statements is one
+        edit away from not being.
+
+    `DictSettingsStore` is the seam's own answer and the idiom the rest of the
+    suite already uses for this (`test_menubar_labels.py`,
+    `test_update_channel_option.py`, `test_curation_restore_assignee.py`). It is
+    a per-test, in-memory store, so the option cannot be seen or written by
+    anything outside the test.
+
+    Injected after the window is built rather than before, on purpose. Before
+    would also cover `openSeries`' own `addToRecentSeries` call, and it would
+    mean the whole startup path read every one of its ~100 options out of an
+    empty store instead of the developer's real one, which changes what
+    `test_main_window_constructs_over_a_real_series` and the `checkActions` tests
+    are exercising. The coupling being removed is between the *assertions* and
+    the machine, and those all run after this point.
+
+    Nothing about what these tests verify changes. The menubar, the submenu, the
+    `QAction`, `clearRecentSeries` and `getOpenRecentMenu`'s pruning are all the
+    real ones; only the backing store for one option is private.
+    """
+    from PyReconstruct.modules.backend.settings_store import DictSettingsStore
+
+    main_window.series.setSettingsStore(DictSettingsStore())
+    return main_window
+
+
 def test_clear_recents_rebuilds_the_menubar_from_inside_its_own_action(
-    main_window, tmp_path
+    own_recents, tmp_path
 ):
     """"Clear recents" rebuilds the menubar while its own action is running.
 
@@ -232,27 +292,27 @@ def test_clear_recents_rebuilds_the_menubar_from_inside_its_own_action(
     for path in (first, second):
         path.write_text("{}")  # must exist; getOpenRecentMenu prunes missing paths
 
-    main_window.series.setOption(
+    own_recents.series.setOption(
         "recently_opened_series", [str(first), str(second)]
     )
-    main_window.createMenuBar()
+    own_recents.createMenuBar()
 
-    assert main_window.series.getOption("recently_opened_series") == [
+    assert own_recents.series.getOption("recently_opened_series") == [
         str(first), str(second)
     ]
-    rows = [action.text() for action in main_window.openrecentmenu.actions()]
+    rows = [action.text() for action in own_recents.openrecentmenu.actions()]
     assert str(first) in rows and str(second) in rows
 
-    main_window.clearrecents_act.trigger()
+    own_recents.clearrecents_act.trigger()
 
-    assert main_window.series.getOption("recently_opened_series") == []
+    assert own_recents.series.getOption("recently_opened_series") == []
     # the submenu was rebuilt in place, not left showing the stale rows
     assert [
-        action.text() for action in main_window.openrecentmenu.actions()
+        action.text() for action in own_recents.openrecentmenu.actions()
     ] == ["Clear recents"]
 
 
-def test_recent_series_prunes_paths_that_no_longer_exist(main_window, tmp_path):
+def test_recent_series_prunes_paths_that_no_longer_exist(own_recents, tmp_path):
     """A remembered series that has been deleted is dropped, not listed.
 
     `getOpenRecentMenu` prunes as a side effect of building the submenu, so this
@@ -262,13 +322,50 @@ def test_recent_series_prunes_paths_that_no_longer_exist(main_window, tmp_path):
     present.write_text("{}")
     missing = tmp_path / "deleted.jser"
 
-    main_window.series.setOption(
+    own_recents.series.setOption(
         "recently_opened_series", [str(present), str(missing)]
     )
-    main_window.createMenuBar()
+    own_recents.createMenuBar()
 
-    assert main_window.series.getOption("recently_opened_series") == [
+    assert own_recents.series.getOption("recently_opened_series") == [
         str(present)
     ]
-    rows = [action.text() for action in main_window.openrecentmenu.actions()]
+    rows = [action.text() for action in own_recents.openrecentmenu.actions()]
     assert str(missing) not in rows
+
+
+def test_the_recents_tests_own_the_option_they_assert_on(own_recents):
+    """The two tests above cannot see, or be seen by, anything outside them.
+
+    Without this the isolation is one careless edit from being undone: swapping
+    `own_recents` back to `main_window` in either test above reintroduces the
+    machine-wide coupling and both tests still pass on a quiet machine, which is
+    exactly how it got here.
+
+    The `default_settings` assertion covers the other direction: an in-memory
+    store starts empty, and `getOption`'s store-miss branch returns
+    `defaults[option_name]` *by reference*, so a miss on a container option hands
+    out the module-level `default_settings` object itself. Callers that mutate the
+    returned list in place (`addToRecentSeries`: `remove`, `insert`, `pop`) would
+    then edit the process-wide default every later `Series` reads. The two tests
+    above happen to write the option before they read it, so the miss branch is
+    never reached and this holds; it is asserted rather than assumed because that
+    is a property of the order of two statements, not of the fixture.
+    """
+    from PyReconstruct.modules.backend.settings_store import (
+        DictSettingsStore, QSettingsStore,
+    )
+    from PyReconstruct.modules.datatypes.default_settings import default_settings
+
+    store = own_recents.series._settingsStore()
+    assert isinstance(store, DictSettingsStore)
+    assert not isinstance(store, QSettingsStore)
+
+    assert default_settings["recently_opened_series"] == []
+
+    # and the option really does resolve to the private store, computer scope
+    own_recents.series.setOption("recently_opened_series", ["/nonexistent.jser"])
+    assert store.contains(None, "recently_opened_series")
+    assert own_recents.series.getOption(
+        "recently_opened_series"
+    ) == ["/nonexistent.jser"]
