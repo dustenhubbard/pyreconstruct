@@ -101,7 +101,7 @@ def get_hoisted_trace_actions(field):
     """
     return [
         ("mergetraces_act", "Merge traces", field.series, field.mergeTraces),
-        ("mergeobjects_act", "Merge attributes only", field.series, lambda : field.mergeTraces(merge_attrs=True)),
+        ("mergeobjects_act", "Merge attributes only", field.series, lambda : field.mergeTraces(merge_attrs_only=True)),
         ("hidetraces_act", "Hide traces", field.series, field.hideTraces),
     ]
 
@@ -392,7 +392,7 @@ def get_context_menu_list_trace(self, is_in_field=True, list_ops=None, find_in_f
     context_menu += [
         None,
         ("mergetraces_act", "Merge traces", sc, self.mergeTraces),
-        ("mergeobjects_act", "Merge attributes only", sc, lambda : self.mergeTraces(merge_attrs=True)),
+        ("mergeobjects_act", "Merge attributes only", sc, lambda : self.mergeTraces(merge_attrs_only=True)),
         None,
         ("hidetraces_act", "Hide traces", sc, self.hideTraces),
         ("unhidetraces_act", "Unhide", "", lambda : self.hideTraces(hide=False)),
