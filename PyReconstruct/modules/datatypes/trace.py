@@ -553,6 +553,18 @@ class Trace():
         xmin, xmax = min(xmin1, xmin2), max(xmax1, xmax2)
         ymin, ymax = min(ymin1, ymin2), max(ymax1, ymax2)
         initial_area = (xmax-xmin) * (ymax-ymin)
+
+        # The combined bounding box collapses when both traces sit on the same
+        # vertical or the same horizontal line: a single point and a vertical
+        # run through it, two collinear segments, and so on. Traces like this
+        # are real -- smooth() already skips sub-three-point "pixel dust" --
+        # and there is no box to rasterize into, so no area to compare. Two
+        # such traces cannot overlap by area, and identical ones are already
+        # settled by the point-by-point comparison in overlaps(), which never
+        # asks for a ratio. Answer 0 rather than dividing by zero.
+        if initial_area == 0:
+            return 0
+
         scale_factor = (1e4 / initial_area) ** 0.5
 
         # scale the points
