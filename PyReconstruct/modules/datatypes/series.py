@@ -2792,7 +2792,24 @@ class Series():
         self.object_groups.removeObject(name)
 
         # obj_attrs
-        del(self.obj_attrs[name])
+        #
+        # pop, not del: this is the only one of the three cleanups here that
+        # required the name to be present. ObjGroupDict.removeObject reaches
+        # getObjectGroups, which returns an empty set for a name it does not
+        # know, HostTree.removeObject returns early on one, and the sibling
+        # renameObjAttrs guards with `if old_name in self.obj_attrs`. A del also
+        # sits *between* the other two, so a missing entry did not fail cleanly:
+        # it left object_groups stripped, host_tree untouched, and a KeyError
+        # propagating out of Section.save().
+        #
+        # The invariant that made the del safe is still an invariant, and
+        # tests/test_remove_obj_attrs_guard.py pins it rather than leaving it to
+        # an incidental KeyError. The only caller, SeriesData.updateSection,
+        # calls addLog(obj_name, None, "Delete object") on the line above, and
+        # addLog writes setAttr(obj_name, "last_user", self.user), which creates
+        # obj_attrs[obj_name]. That holds only while obj_name is truthy and
+        # series.user is not None; neither is checked at the call site.
+        self.obj_attrs.pop(name, None)
 
         # object host
         self.host_tree.removeObject(name)
