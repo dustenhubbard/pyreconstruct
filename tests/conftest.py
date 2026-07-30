@@ -15,7 +15,11 @@ Four jobs, all deliberately small:
    ``pytest --markers`` self-documenting and what stops a typo'd marker from
    being silently ignored under ``--strict-markers``.
 
-3. Provide the shared fixtures for *real-widget* GUI tests: a Series opened
+3. Turn a missing ``pytest-qt`` into a collection-time error rather than a
+   silent skip, for gui-marked tests only. See
+   ``pytest_collection_modifyitems`` for the mechanism and the reason.
+
+4. Provide the shared fixtures for *real-widget* GUI tests: a Series opened
    from a copy of a checked-in .jser, a live data-list dock widget, and a
    recorder that stands in for the modal dialogs. See the fixture docstrings.
 
@@ -35,6 +39,7 @@ different: it is carried from the day it lands, by the tests that use the
 fixtures below.
 """
 
+import importlib.util
 import os
 import shutil
 from pathlib import Path
@@ -105,6 +110,63 @@ def pytest_configure(config):
         "CI, but is the first thing to suspect if the suite ever hangs.",
     ):
         config.addinivalue_line("markers", marker)
+
+
+# pytest-qt lives in the `test` extra, not in the runtime dependencies, and it is
+# the only thing that supplies the session-scoped `qapp` fixture that
+# `stub_mainwindow` and `section_table` below depend on. A .venv synced without
+# `--extra test` therefore has pytest but no pytest-qt, which is a state that
+# occurs in practice: a worktree synced with a bare `uv sync` reaches it.
+#
+# `find_spec` rather than an import: this runs at conftest import time, before
+# any test module is imported, and importing pytest-qt here would register its
+# plugin twice.
+_HAS_PYTEST_QT = importlib.util.find_spec("pytestqt") is not None
+
+_NO_PYTEST_QT = """\
+pytest-qt is not installed, so the `qapp` fixture that gui-marked tests depend
+on does not exist. {count} gui test(s) were collected and cannot run.
+
+This aborts the run instead of skipping those tests. Skipping was the previous
+behavior and it is what made the failure dangerous: the suite still reported
+green, one line of "N passed" with the widget tests silently absent, and a
+reviewer reads green as tested.
+
+Install the test extra:
+    uv sync --frozen --no-default-groups --extra test
+
+Or run the suite the way `make test` and CI run it, which cannot reach this
+state:
+    uv run --frozen --no-default-groups --extra test python -m pytest
+
+To exclude the widget tests deliberately, pass -m "not gui". That is a
+supported invocation and it does not trip this guard.
+"""
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config, items):
+    """Abort the run if gui tests were collected but pytest-qt is missing.
+
+    Deliberately an error and not a skip. The gui-marked modules used to guard
+    themselves with a module-scope ``pytest.importorskip("pytestqt")``, which
+    meant a run in an environment without the `test` extra dropped every widget
+    test and still exited 0. Measured on this tree: 4228 tests collected with
+    pytest-qt present, 4157 without it, and the difference reported as "2
+    skipped" because the skips are per-module, not per-test.
+
+    ``trylast=True`` is load-bearing. Conftest hook implementations run *before*
+    the builtin plugins' by default, and it is ``_pytest.mark``'s own
+    ``pytest_collection_modifyitems`` that applies ``-m``. Running last means
+    `items` has already had the mark expression applied, so a deliberate
+    ``-m "not gui"`` has no gui items left and this guard stays quiet. Anything
+    that would actually have tried to run a gui test raises.
+    """
+    if _HAS_PYTEST_QT:
+        return
+    gui_items = [item for item in items if item.get_closest_marker("gui")]
+    if gui_items:
+        raise pytest.UsageError(_NO_PYTEST_QT.format(count=len(gui_items)))
 
 
 class DialogRecorder:
