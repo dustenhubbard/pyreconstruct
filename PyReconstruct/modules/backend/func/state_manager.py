@@ -58,6 +58,7 @@ class FieldState():
         elif contours is None:  # assume stored in JSON already
             self.contours = None
         else:
+            baseline_preexisted = os.path.isfile(self.contours_fp)
             try:
                 if src_fp is not None:  # copy the section's on-disk file as baseline
                     # The section is unmodified since it was loaded, so its on-disk
@@ -74,11 +75,14 @@ class FieldState():
                         json.dump(json_contours, f)
                 self.contours = None
             except OSError:
-                # the baseline could not be written (e.g. the bundled welcome
-                # series opened from a read-only install dir): clean up any
-                # partial file and keep the state in memory instead
+                # the baseline could not be written (e.g. a read-only install
+                # dir): clean up and keep the state in memory instead. Only
+                # remove a file this call created -- a pre-existing file is
+                # someone else's (the bundled welcome.0.s0 was being deleted
+                # outright when the install's files were read-only but its
+                # directory was not), and we never wrote a byte of it.
                 try:
-                    if os.path.isfile(self.contours_fp):
+                    if not baseline_preexisted and os.path.isfile(self.contours_fp):
                         os.remove(self.contours_fp)
                 except OSError:
                     pass
@@ -194,7 +198,21 @@ class SectionStates():
                 section (Section): the section object to store states for
                 series (Series): the series that contains the sections
         """
-        contours_fp = os.path.join(series.hidden_dir, f"{series.sections[section.n]}.s0")
+        # The welcome series' "hidden dir" is the bundled assets directory, not a
+        # working copy: the app opens it in place from the install tree. Writing
+        # an undo baseline there writes into the installation itself, which in a
+        # source checkout modifies a tracked file (welcome.0.s0 goes from "{}" to
+        # a copy of welcome.0) and on a read-only install either fails or, worse,
+        # trips the OSError cleanup below into deleting the bundled file. Nothing
+        # about the welcome series is meant to persist -- Series.save,
+        # Section.save and Series.setOption all no-op for it, and Save/Save As
+        # are disabled in the menus -- so keep its baseline in memory. It holds a
+        # single section with no contours, so there is nothing to gain from the
+        # file path anyway.
+        if series.isWelcomeSeries():
+            contours_fp = None
+        else:
+            contours_fp = os.path.join(series.hidden_dir, f"{series.sections[section.n]}.s0")
         # When the section is unmodified since it was loaded from disk (the
         # case for every initialize() on the hot paths: series-wide object
         # operations and section navigation both load a section and initialize
