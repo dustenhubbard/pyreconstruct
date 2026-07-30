@@ -196,6 +196,13 @@ class DialogRecorder:
         self.dialogs = []
         self.responses = []
         self.undo_warning_accepted = True
+        # used only by the extra MainWindow surface further down
+        self.confirm_accepted = True
+        self.save_response = "no"
+        self.save_prompts = 0
+        self.unsaved_prompts = 0
+        self.message_boxes = []
+        self.message_box_response = None
 
     def notify(self, message, *args, **kwargs):
         self.notices.append(message)
@@ -214,6 +221,37 @@ class DialogRecorder:
 
     def progbar(self, *args, **kwargs):
         return _NullProgbar()
+
+    # -- the extra surface MainWindow binds (see the main_window fixture) ------
+
+    def notifyConfirm(self, message, *args, **kwargs):
+        self.notices.append(message)
+        return self.confirm_accepted
+
+    def saveNotify(self, *args, **kwargs):
+        self.save_prompts += 1
+        return self.save_response
+
+    def unsavedNotify(self, *args, **kwargs):
+        self.unsaved_prompts += 1
+        return False
+
+    def messageBox(self, *args, **kwargs):
+        """Stand-in for the QMessageBox statics. Records (title, text)."""
+        self.message_boxes.append(tuple(args[1:3]))
+        return self.message_box_response
+
+    def inputText(self, *args, **kwargs):
+        self.dialogs.append(args[1] if len(args) > 1 else "")
+        return "", False
+
+    def inputNumber(self, *args, **kwargs):
+        self.dialogs.append(args[1] if len(args) > 1 else "")
+        return 0, False
+
+    def fileDialogGet(self, *args, **kwargs):
+        self.dialogs.append(args[2] if len(args) > 2 else "")
+        return ""
 
 
 class _NullProgbar:
@@ -404,3 +442,177 @@ def unlocked_section_table(section_table):
         section.align_locked = False
         section.save()
     return section_table
+
+
+# --- the top-level window ----------------------------------------------------
+#
+# Everything below builds a real MainWindow. Two things had to change in the app
+# before that was possible offscreen; both are in the PR that added this
+# fixture, and neither is a test-only hack:
+#
+#   1. `gui.utils.utils.user_is_present()` names the predicate `notify` and
+#      `notifyConfirm` were already applying inline (a QApplication exists and
+#      the platform is not `offscreen`).
+#   2. `MainWindow.openSeries` consults it before raising the three prompts it
+#      uses to finish opening an incomplete series: "Images Not Found"
+#      (`changeSrcDir`), the non-cancelable "Series Code" dialog
+#      (`setSeriesCode`), and the unscaled-zarr question. `notifyNewEditor`
+#      does the same. Offscreen those are permanent stalls, not slow dialogs.
+#
+# What is left here is hygiene, not bypass: leave the developer's real QSettings
+# as they were found, and stop the window's own teardown from asking to save.
+
+
+# Every global QSettings key a MainWindow can write between construction and
+# closeEvent. Enumerated rather than discovered because `allKeys()` on macOS also
+# returns the whole global NSUserDefaults domain (`AppleLanguages`,
+# `com/apple/trackpad/*`, ...), and restoring *that* by clear-and-rewrite would
+# copy ~80 unrelated system defaults into the app's own plist. Verified by
+# reading the call sites, not by grepping for the string: `main_window.py`
+# (`window/geometry`, `username`, `last_folder`) and `mouse_palette.py`
+# (`PALETTE_VIS_KEYS` and `palette/<group>_<axis>`).
+_MAIN_WINDOW_SETTINGS_KEYS = (
+    "window/geometry",
+    "username",
+    "last_folder",
+    "palette/trace_hidden",
+    "palette/inc_hidden",
+    "palette/bc_hidden",
+    "palette/sb_hidden",
+) + tuple(
+    f"palette/{group}_{axis}"
+    for group in ("mode", "trace", "inc", "bc", "sb")
+    for axis in ("x", "y")
+)
+
+
+@pytest.fixture
+def qsettings_snapshot():
+    """Leave `QSettings("KHLab", "PyReconstruct")` as the test found it.
+
+    MainWindow reads and writes the developer's real user settings on the way up
+    and down: `window/geometry` (`__init__` and `closeEvent`), `username`
+    (`resolveUsernameStartup`), `last_folder` (`openSeries`), plus the mouse
+    palette's positions and visibility. Left alone, a test run edits the
+    developer's own preferences and its results depend on them.
+
+    This restores rather than redirects, deliberately. Redirecting is the tidier
+    idea and does not work: `QSettings.setDefaultFormat(IniFormat)` plus
+    `setPath` leaves the two-argument organization/application constructor on
+    macOS' NativeFormat plist (verified: `format()` still reports
+    `NativeFormat` and `fileName()` still points into `~/Library/Preferences`).
+    Patching the name in each module that builds one is the other option, but the
+    constructor is inline in `main_window`, `mouse_palette` and `file_dialog`.
+
+    Values go back as the exact QVariants they were read as, so this is lossless
+    for the `QByteArray` geometry blob as well as the plain strings. A key that
+    did not exist before is removed rather than written back as None.
+    """
+    from PySide6.QtCore import QSettings
+
+    settings = QSettings("KHLab", "PyReconstruct")
+    before = {
+        key: settings.value(key)
+        for key in _MAIN_WINDOW_SETTINGS_KEYS
+        if settings.contains(key)
+    }
+    yield settings
+    restore = QSettings("KHLab", "PyReconstruct")
+    for key in _MAIN_WINDOW_SETTINGS_KEYS:
+        if key in before:
+            restore.setValue(key, before[key])
+        else:
+            restore.remove(key)
+    restore.sync()
+
+
+@pytest.fixture
+def main_window_dialogs(monkeypatch):
+    """Neutralize every blocking dialog `MainWindow` can reach from a slot.
+
+    The construction path no longer needs this (see the note above), but a test
+    that *drives* a menu action does: `main_window.py` binds `notify`,
+    `notifyConfirm`, `saveNotify`, `unsavedNotify`, `noUndoWarning` and
+    `getProgbar` into its own namespace, and calls `QMessageBox`, `QInputDialog`,
+    `QuickDialog` and `FileDialog` directly.
+
+    Offscreen, `notify` and `notifyConfirm` now fall through to their console
+    branch, whose `input()` raises under pytest's capture and *hangs* under
+    `-s`. The rest are raw modals with no offscreen branch at all
+    (`saveNotify` and `unsavedNotify` included) and stall outright. Recording
+    what would have been shown is also more useful to assert on.
+    """
+    from PySide6.QtWidgets import QInputDialog, QMessageBox
+
+    from PyReconstruct.modules.gui.dialog import FileDialog, QuickDialog
+    from PyReconstruct.modules.gui.main import main_window as mw
+
+    recorder = DialogRecorder()
+
+    for attr, replacement in (
+        ("notify", recorder.notify),
+        ("notifyConfirm", recorder.notifyConfirm),
+        ("saveNotify", recorder.saveNotify),
+        ("unsavedNotify", recorder.unsavedNotify),
+        ("noUndoWarning", recorder.noUndoWarning),
+        ("getProgbar", recorder.progbar),
+    ):
+        monkeypatch.setattr(mw, attr, replacement)
+
+    for name in ("question", "information", "warning", "critical"):
+        monkeypatch.setattr(
+            QMessageBox, name, staticmethod(recorder.messageBox)
+        )
+    monkeypatch.setattr(
+        QInputDialog, "getText", staticmethod(recorder.inputText)
+    )
+    for name in ("getDouble", "getInt"):
+        monkeypatch.setattr(
+            QInputDialog, name, staticmethod(recorder.inputNumber)
+        )
+    monkeypatch.setattr(
+        QuickDialog, "get", staticmethod(recorder.quickDialogGet)
+    )
+    monkeypatch.setattr(
+        FileDialog, "get", staticmethod(recorder.fileDialogGet)
+    )
+    return recorder
+
+
+@pytest.fixture
+def main_window(qapp, series_jser, qsettings_snapshot, main_window_dialogs):
+    """A live `MainWindow` opened on a writable copy of the fixture series.
+
+    Real in every part that matters: a real `FieldWidget`, a real `MousePalette`,
+    a real populated menubar, real context menus, real shortcuts. The fixture
+    series ships no images, so `field.section_layer.image_found` is False and the
+    image layer is blank. That is the one thing tests here cannot assert on.
+
+    Costs roughly a second to build, so ask for it per test rather than
+    per assertion.
+
+    Teardown, in order and each for a reason:
+
+      * restore `sys.excepthook`. `MainWindow.__init__` installs
+        `customExcepthook` process-wide; left in place it would swallow
+        tracebacks for every later test in the session.
+      * clear `series.modified`. `closeEvent` calls
+        `saveToJser(notify=True, close=True)`, which raises the "save before
+        exiting?" prompt when the series is dirty. Discarding is correct here:
+        the series is a per-test copy under `tmp_path`.
+      * `close()` rather than only `deleteLater()`, so `closeEvent` runs and the
+        series' hidden working directory is cleaned up the way it is in the app.
+    """
+    import sys as _sys
+
+    from PyReconstruct.modules.gui.main import MainWindow
+
+    previous_excepthook = _sys.excepthook
+    window = MainWindow(str(series_jser))
+    try:
+        yield window
+    finally:
+        _sys.excepthook = previous_excepthook
+        window.series.modified = False
+        window.close()
+        window.deleteLater()

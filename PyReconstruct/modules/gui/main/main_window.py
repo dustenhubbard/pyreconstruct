@@ -478,9 +478,10 @@ class MainWindow(QMainWindow):
         self.seriesModified(True)
         
         # prompt user to scale zarr images if not scaled
-        if (self.field.section_layer.image_found and 
+        if (self.field.section_layer.image_found and
             self.field.section_layer.is_zarr_file and
-            not self.field.section_layer.is_scaled):
+            not self.field.section_layer.is_scaled and
+            user_is_present()):
             reply = QMessageBox.question(
                 self,
                 "Zarr Scaling",
@@ -804,12 +805,13 @@ class MainWindow(QMainWindow):
         # ensure that images are found
         if not self.field.section_layer.image_found:
             # images usually sit beside the jser; try there before asking
-            if not self.findImagesBesideJser():
+            if not self.findImagesBesideJser() and user_is_present():
                 self.changeSrcDir(notify=True)
         # prompt user to scale zarr images if not scaled
-        elif (self.field.section_layer.image_found and 
+        elif (self.field.section_layer.image_found and
             self.field.section_layer.is_zarr_file and
-            not self.field.section_layer.is_scaled):
+            not self.field.section_layer.is_scaled and
+            user_is_present()):
             reply = QMessageBox.question(
                 self,
                 "Zarr Scaling",
@@ -819,16 +821,19 @@ class MainWindow(QMainWindow):
             )
             if reply == QMessageBox.Yes:
                 self.srcToZarr(create_new=False)
-        
+
         # get the series code from the user if needed
         if not self.series.isWelcomeSeries() and not self.series.code:
             detected_code = re.search(
-                self.series.getOption("series_code_pattern"), 
+                self.series.getOption("series_code_pattern"),
                 self.series.name
             )
             if detected_code:
                 self.series.code = detected_code.group()
-            self.setSeriesCode(cancelable=False)
+            # the dialog is not cancelable and loops until a code is entered, so
+            # it can only be raised when someone is there to answer it
+            if user_is_present():
+                self.setSeriesCode(cancelable=False)
             self.seriesModified()
         
         # notify new users of any warnings
@@ -3179,6 +3184,10 @@ class MainWindow(QMainWindow):
     
     def notifyNewEditor(self):
         """Provide any relevant notifications to new editors."""
+        if not user_is_present():
+            # notify()'s offscreen fallback blocks on stdin, and this is a
+            # courtesy notice with nobody to read it
+            return
         if (
             not self.series.isWelcomeSeries() and
             self.series.user not in self.series.editors and
