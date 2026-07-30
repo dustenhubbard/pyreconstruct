@@ -46,7 +46,9 @@ both measured on PySide6 6.5.2:
 
 import pytest
 
-pytest.importorskip("pytestqt", reason="real-widget tests need pytest-qt")
+# No `importorskip("pytestqt")` here on purpose. It would drop this whole module
+# silently when pytest-qt is missing, which is the failure the gui marker and
+# tests/conftest.py's collection guard exist to make loud instead.
 
 pytestmark = pytest.mark.gui
 
