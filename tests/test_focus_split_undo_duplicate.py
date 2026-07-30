@@ -112,6 +112,12 @@ class _Field:
         self.pasteAttributes = types.MethodType(
             FieldWidgetTrace.pasteAttributes, self
         )
+        # the lock check both focus-mode branches now go through. The real one,
+        # not a stub: these objects are unlocked, so it passes through, and if it
+        # ever stops passing through that is worth failing on here too.
+        self.refuseLockedTraces = types.MethodType(
+            FieldWidgetTrace.refuseLockedTraces, self
+        )
 
     # --- the real FieldWidget.saveState, minus the tables and the main window.
     # field_widget_1_base.saveState is addState + updateData; updateData ends in

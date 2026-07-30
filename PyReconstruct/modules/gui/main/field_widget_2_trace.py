@@ -429,6 +429,43 @@ class FieldWidgetTrace(FieldWidgetBase):
         self.generateView(generate_image=False)
 
     ############################################################################
+    ## The lock check ##########################################################
+    ############################################################################
+
+    def refuseLockedTraces(self, traces : list) -> bool:
+        """Refuse an operation that would change a locked object's trace data.
+
+        The one lock check behind every field operation that adds, deletes or
+        modifies traces. Returns True if the operation must not proceed, and
+        tells the user why before it does: a silent refusal reads as a broken
+        shortcut.
+
+        All-or-nothing on a mixed selection, which is what `trace_function`,
+        `object_function` and `deleteContours` already do: one locked object
+        refuses the whole operation rather than quietly performing it on the
+        rest, so the user cannot end up with half an edit applied.
+
+        Not to be confused with `notifyLocked`, which asks whether to unlock and
+        is used at the *start* of a mouse gesture (`scissorsPress`, and the
+        tracing-mode gate in `mousePressEvent`). This one is the commit-time
+        refusal used by everything that acts on a selection.
+
+            Params:
+                traces (list): the traces the operation would change
+            Returns:
+                (bool): True if the operation was refused
+        """
+        for name in set(t.name for t in traces):
+            if self.series.getAttr(name, "locked"):
+                notify(
+                    "Cannot modify locked objects.\n"
+                    "Please unlock before modifying."
+                )
+                return True
+
+        return False
+
+    ############################################################################
     ## Interactions only accessible through the field ##########################
     ############################################################################
 
@@ -552,7 +589,15 @@ class FieldWidgetTrace(FieldWidgetBase):
         if len(self.section.selected_traces) == 0:
             notify("Select trace you would like to cut.")
             return False
-        
+
+        # The knife deletes the selected traces and replaces them with the
+        # pieces. `mousePressEvent` dispatches KNIFE *before* it reaches its
+        # `usingLocked()` branch, and that branch reads `tracing_trace` (the
+        # palette's name for a new trace) rather than the object being cut, so
+        # neither one guards this. The check belongs here, against the selection.
+        if self.refuseLockedTraces(self.section.selected_traces):
+            return False
+
         if len(set(t.name for t in self.section.selected_traces)) > 1:
             notify("Select a single object to cut at a time.")
             return False
@@ -788,6 +833,12 @@ class FieldWidgetTrace(FieldWidgetBase):
     
     @field_interaction
     def cut(self):
+        # `getCopiedTraces(cut=True)` deletes the selected traces, so this is a
+        # delete and lock has to refuse it. `copy` above is left alone: it reads
+        # the selection and changes nothing.
+        if self.refuseLockedTraces(self.section.selected_traces):
+            return False
+
         copied_traces = self.section_layer.getCopiedTraces(cut=True)
         if copied_traces:
             self.clipboard = copied_traces
@@ -818,7 +869,12 @@ class FieldWidgetTrace(FieldWidgetBase):
     def pasteAttributes(self):
         if not self.clipboard:
             return False
-        
+
+        # this rewrites the name of every selected trace, which moves the trace
+        # out of one object and into another
+        if self.refuseLockedTraces(self.section.selected_traces):
+            return False
+
         trace = self.clipboard[0]
         name, color, tags, mode = trace.name, trace.color, trace.tags, trace.fill_mode
 
@@ -850,54 +906,71 @@ class FieldWidgetTrace(FieldWidgetBase):
             self, is_in_field, list_ops=list_ops, find_in_field=find_in_field
         )
 
-    def trace_function(fn):
-        """Property given to all trace actions that are accessible through a context menu.
-        
-        Handles passing the correct traces into the functions.
+    def _trace_function(check_locked: bool):
+        """Build the trace-action decorator, with or without the lock check.
+
+        Two decorators come out of this, and the difference between them is the
+        whole reason it is a factory. See `trace_function` and
+        `visibility_trace_function` below.
+
+            Params:
+                check_locked (bool): True if the action changes trace data and
+                    must therefore refuse locked objects
         """
-        def wrapper(self, *args, **kwargs):
-            
-            ## Get the selected names
-            vscroll = None  # scroll bar if object list
-            data_table = self.table_manager.hasFocus()
-            
-            if isinstance(data_table, TraceTableWidget):
-                selected_traces = data_table.getTraces(data_table.getSelected())
+        def decorator(fn):
+            def wrapper(self, *args, **kwargs):
 
-                vscroll = data_table.table.verticalScrollBar()  # track scroll bar pos
-                scroll_pos = vscroll.value()
-            
-            else:
-                selected_traces = self.section.selected_traces.copy()
-                
-            ## If no objs selected
-            if not selected_traces:
-                return
-            
-            ## Check for locked objects
-            for n in set(t.name for t in selected_traces):
-                if self.series.getAttr(n, "locked"):
-                    notify(
-                        "Cannot modify locked objects.\n"
-                        "Please unlock before modifying."
-                    )
+                ## Get the selected names
+                vscroll = None  # scroll bar if object list
+                data_table = self.table_manager.hasFocus()
+
+                if isinstance(data_table, TraceTableWidget):
+                    selected_traces = data_table.getTraces(data_table.getSelected())
+
+                    vscroll = data_table.table.verticalScrollBar()  # track scroll bar pos
+                    scroll_pos = vscroll.value()
+
+                else:
+                    selected_traces = self.section.selected_traces.copy()
+
+                ## If no objs selected
+                if not selected_traces:
                     return
-            
-            # save the data in the field
-            self.mainwindow.saveAllData()
 
-            # call function with selected names inserted
-            completed = fn(self, selected_traces, *args, **kwargs)
+                ## Check for locked objects
+                if check_locked and self.refuseLockedTraces(selected_traces):
+                    return
 
-            if not completed:
-                return
-            
-            # reset the scroll bar position if applicable
-            if vscroll: vscroll.setValue(scroll_pos)
+                # save the data in the field
+                self.mainwindow.saveAllData()
 
-            # call to update is handled by field_interaction decorator
-        
-        return wrapper
+                # call function with selected names inserted
+                completed = fn(self, selected_traces, *args, **kwargs)
+
+                if not completed:
+                    return
+
+                # reset the scroll bar position if applicable
+                if vscroll: vscroll.setValue(scroll_pos)
+
+                # call to update is handled by field_interaction decorator
+
+            return wrapper
+
+        return decorator
+
+    # Property given to all trace actions that are accessible through a context
+    # menu. Handles passing the correct traces into the functions, and refuses
+    # the action outright if any selected trace belongs to a locked object.
+    trace_function = _trace_function(check_locked=True)
+
+    # `trace_function` without the lock check, for actions that change what is
+    # drawn rather than what is measured. Locking an object protects its
+    # quantitative data (traces added, deleted or modified) and nothing else, so
+    # an action that leaves every point, name and tag identical must not be
+    # refused. Same reasoning as `hideOtherTraces` below, which sidesteps
+    # `trace_function` entirely for want of this.
+    visibility_trace_function = _trace_function(check_locked=False)
 
     @trace_function
     def copyTracesToSections(self, traces : list):
@@ -997,7 +1070,11 @@ class FieldWidgetTrace(FieldWidgetBase):
         """
         return self.section.deleteTraces(traces, flags)
     
-    @trace_function
+    # visibility_trace_function, NOT trace_function: hiding a trace changes what
+    # is drawn, not what is measured. Every point, name and tag survives it, so
+    # lock has no business refusing it. This matches "Hide Other" below, which
+    # was already written this way.
+    @visibility_trace_function
     @field_interaction
     def hideTraces(self, traces : list, hide=True):
         """Hide/Unhide the requested traces (selected traces by default)

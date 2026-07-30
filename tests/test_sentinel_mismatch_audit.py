@@ -332,10 +332,16 @@ def test_merge_traces_accepts_the_keyword_the_menu_sends():
     survives the wrapper and only raises inside the method. That is why the
     typo went unnoticed, and why the check has to reach the real parameters."""
     # mergeTraces carries two stacked decorators, so peel wrappers until the
-    # real function is reached
+    # real function is reached. Search the closure for the function rather than
+    # indexing it: cells follow `co_freevars`, which is alphabetical, so a
+    # decorator that closes over anything besides the wrapped function moves the
+    # one being looked for off cell 0.
     inner = FieldWidgetTrace.mergeTraces
     while inner.__name__ != "mergeTraces":
-        inner = inner.__closure__[0].cell_contents
+        inner = next(
+            cell.cell_contents for cell in inner.__closure__
+            if inspect.isfunction(cell.cell_contents)
+        )
 
     params = inspect.signature(inner).parameters
     assert "merge_attrs_only" in params
