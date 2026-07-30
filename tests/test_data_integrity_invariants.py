@@ -1121,6 +1121,10 @@ def field(qapp, rich_series, monkeypatch):
 
     class _Widget:
         mergeTraces = FieldWidgetTrace.mergeTraces
+        # The lock check `trace_function` now runs before doing anything. The
+        # real one, not a stub: nothing here is locked, so it passes through,
+        # and if it ever stops passing through that is worth failing on.
+        refuseLockedTraces = FieldWidgetTrace.refuseLockedTraces
 
         def __init__(self):
             self.series = rich_series
