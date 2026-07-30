@@ -351,6 +351,13 @@ class FieldWidgetData(FieldWidgetObject):
                 dy (float): y-translate
         """
         if self.section.selected_traces or self.section.selected_ztraces:
+            # moving points is a modification to existing traces, so refuse it
+            # for a locked object. Refusing the whole call rather than the
+            # locked part of it keeps a mixed selection from being torn apart:
+            # the ztraces would otherwise move while the traces stayed put.
+            if self.refuseLockedTraces(self.section.selected_traces):
+                return
+
             self.section.translateTraces(dx, dy)
             self.saveState()
             self.generateView()

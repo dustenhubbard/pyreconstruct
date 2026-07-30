@@ -253,7 +253,14 @@ class FieldWidgetMouse(FieldWidgetData):
                     if not obj_locked and not self.focus_mode:
                         self.selectTrace(self.selected_trace)
                         
-                    if self.focus_mode and focus_edit_p(event):
+                    # Both focus-mode edits below rewrite a trace's name, which
+                    # moves it out of one object and into another. `obj_locked`
+                    # is read above for the ordinary select branch; the focus
+                    # branch has to honor it too, and used not to.
+                    if (
+                        self.focus_mode and focus_edit_p(event) and
+                        not self.refuseLockedTraces([self.selected_trace])
+                    ):
 
                         self.selectTrace(self.selected_trace)
 
@@ -281,7 +288,7 @@ class FieldWidgetMouse(FieldWidgetData):
                             self.generateView()
 
                         else:  ## incorporate into obj
-                            
+
                             self.pasteAttributes()
 
                 ## z-trace selected
@@ -297,15 +304,26 @@ class FieldWidgetMouse(FieldWidgetData):
             
             ## Unhide traces
             self.section.temp_hide = []
-            
+
             ## Save traces in final position
             self.is_moving_trace = False
-            dx = (event.x() - self.clicked_x) * self.series.screen_mag
-            dy = (event.y() - self.clicked_y) * self.series.screen_mag * -1
-            self.section.translateTraces(dx, dy)
-            self.generateView(update=False)
-            self.saveState()
-        
+
+            # Dropping a dragged trace is a modification to existing traces.
+            # Checked here at the commit rather than in `pointerMove`, where the
+            # drag begins: `notify` is modal, and raising a modal from inside a
+            # move event with the button still held would block the gesture it
+            # is reporting on. Unhiding above has already put the traces back
+            # where they started, so the refused drag simply snaps back.
+            if self.refuseLockedTraces(self.section.selected_traces):
+                self.generateView(update=False)
+
+            else:
+                dx = (event.x() - self.clicked_x) * self.series.screen_mag
+                dy = (event.y() - self.clicked_y) * self.series.screen_mag * -1
+                self.section.translateTraces(dx, dy)
+                self.generateView(update=False)
+                self.saveState()
+
         ## User selected an area (lasso) of traces
         elif self.lclick and self.is_selecting_traces:
             
