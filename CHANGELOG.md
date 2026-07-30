@@ -79,6 +79,20 @@ the README's *From source (developers)* section).
   and `tif_to_zarr.py` documents its own invocation instead. The script itself
   stays and still works from a checkout.
 
+### Removed
+- **The bundled `assets/misc/zarr_to_jser.py` script.** A hand-edit-the-constants
+  developer script that imported a label zarr back into a series. It could not run
+  against anything the app produces: it read a `srange` zarr attribute that no
+  current code writes (`seriesToZarr` writes `sections`), and it called
+  `Section.addTrace(log_message=...)`, a keyword that signature no longer has. Its
+  only producer, `assets/misc/jser_to_zarr_v2.py`, has drifted the same way. The
+  job is done by `labelsToObjects` in
+  `PyReconstruct/modules/backend/autoseg/conversions.py`, reached from the field
+  right-click "Import labels" and the zarr palette's "Import Contours" button,
+  which additionally handles a downsampled labels array, per-id selection, the
+  curated color palette, and group assignment. The import-resolution test that
+  guarded the deleted file now covers every script in `assets/misc/` instead.
+
 ## [1.21.0] — 2026-08-04
 
 ### Added

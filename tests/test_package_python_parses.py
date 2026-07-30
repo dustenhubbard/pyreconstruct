@@ -1,7 +1,7 @@
 """Every ``.py`` file shipped in the package must parse.
 
 This exists because a shipped asset script sat broken in the repository for
-years. ``assets/misc/zarr_to_jser.py`` line 82 read::
+years. ``assets/misc/zarr_to_jser.py`` (since deleted) line 82 read::
 
     tform = alignment[str(snum)])
 
@@ -33,12 +33,13 @@ Two implementation notes:
     the first, which is what someone fixing a bad merge actually wants.
 
 Note what this does and does not claim. Parsing is not importing: a file that
-compiles may still fail at import or at run time (``zarr_to_jser.py``'s top
-level opens hardcoded local paths, so it cannot be imported or executed whole
-here). Syntactic validity is the floor, and the floor is what was missing.
-For the one file that has already been bitten twice, a second gate goes one
-step higher: its import statements are extracted and actually executed --
-see ``test_zarr_to_jser_import_statements_execute``.
+compiles may still fail at import or at run time (every script in
+``assets/misc/`` opens hardcoded local paths at module level, so none of them
+can be imported or executed whole here). Syntactic validity is the floor, and
+the floor is what was missing. A second gate goes one step higher for the
+directory that housed the broken file: each script's module-level import
+statements are extracted and actually executed -- see
+``test_bundled_misc_script_imports_execute``.
 """
 
 import ast
@@ -93,8 +94,8 @@ def test_bundled_scripts_are_covered_by_the_walk():
 
     covered = {p.relative_to(PACKAGE_ROOT).as_posix() for p in PACKAGE_ROOT.rglob("*.py")}
 
-    assert "assets/misc/zarr_to_jser.py" in covered
     assert "assets/misc/jser_to_zarr_v2.py" in covered
+    assert "assets/misc/crop_zarr.py" in covered
 
     asset_scripts = {p for p in covered if p.startswith("assets/")}
     assert len(asset_scripts) > 5, (
@@ -102,40 +103,58 @@ def test_bundled_scripts_are_covered_by_the_walk():
     )
 
 
-def test_zarr_to_jser_import_statements_execute():
-    """The imports of ``assets/misc/zarr_to_jser.py`` must actually resolve.
+def test_bundled_misc_script_imports_execute():
+    """Every ``assets/misc/`` script's module-level imports must actually resolve.
 
-    The same file that hid a SyntaxError also carried an ``ImportError``:
+    The file that hid a SyntaxError also carried an ``ImportError``:
     ``from PyReconstruct.modules.backend.func import reducePoints``, a name
     ``backend.func`` has never exported (the function lives in
     ``modules/calc/grid.py`` and is exported from ``PyReconstruct.modules.calc``).
-    Parsing cannot catch that class of rot, and the script cannot be imported
-    whole -- its top level immediately opens hardcoded local paths -- so this
+    Parsing cannot catch that class of rot, and these scripts cannot be imported
+    whole -- their top level immediately opens hardcoded local paths -- so this
     test extracts the module-level import statements with ``ast`` and executes
-    exactly those, alone, in a subprocess. Every dependency the script names
-    (``cv2``, ``numpy``, ``zarr``, the PyReconstruct modules) is part of this
-    project's own environment, so a failure means the script names something
-    that does not exist -- which is precisely the bug this guards against.
+    exactly those, alone, in a subprocess, once per script. Every dependency
+    they name (``cv2``, ``numpy``, ``zarr``, ``PySide6``, the PyReconstruct
+    modules) is part of this project's own environment, so a failure means a
+    script names something that does not exist.
+
+    Scoped to ``assets/misc/`` rather than all of ``assets/``: the wider tree
+    holds scripts written against third-party tooling that is deliberately not a
+    dependency of this project (``assets/scripts/img/mask.py`` imports
+    ``colorama``), so a repo-wide version of this gate would report absent
+    optional tooling as rot. ``assets/misc/`` is the set of scripts written
+    against *this* codebase's own API, which is the API that drifts under them.
     """
 
-    path = PACKAGE_ROOT / "assets" / "misc" / "zarr_to_jser.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    directory = PACKAGE_ROOT / "assets" / "misc"
+    scripts = sorted(directory.glob("*.py"))
 
-    stmts = [
-        ast.unparse(node) for node in tree.body
-        if isinstance(node, (ast.Import, ast.ImportFrom))
-    ]
+    # guard the glob: an empty directory would make this vacuously pass
+    assert len(scripts) >= 3, f"expected several scripts in {directory}, found {scripts}"
 
-    # guard the extraction itself: the regressed import must be among them
-    assert any("reducePoints" in s for s in stmts), stmts
+    failures = []
 
-    proc = subprocess.run(
-        [sys.executable, "-c", "\n".join(stmts)],
-        capture_output=True,
-        text=True,
-        cwd=str(PACKAGE_ROOT.parent),  # repo root, so `import PyReconstruct` resolves
-        timeout=120,
-    )
-    assert proc.returncode == 0, (
-        f"an import of assets/misc/zarr_to_jser.py does not execute:\n{proc.stderr}"
+    for path in scripts:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        stmts = [
+            ast.unparse(node) for node in tree.body
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+        ]
+        if not stmts:
+            continue
+
+        proc = subprocess.run(
+            [sys.executable, "-c", "\n".join(stmts)],
+            capture_output=True,
+            text=True,
+            cwd=str(PACKAGE_ROOT.parent),  # repo root, so `import PyReconstruct` resolves
+            timeout=180,
+        )
+        if proc.returncode != 0:
+            rel = path.relative_to(PACKAGE_ROOT.parent).as_posix()
+            failures.append(f"{rel}:\n{proc.stderr.strip()}")
+
+    assert not failures, (
+        f"{len(failures)} of {len(scripts)} bundled misc script(s) name an import "
+        "that does not execute:\n" + "\n".join(failures)
     )
