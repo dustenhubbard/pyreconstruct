@@ -34,6 +34,18 @@ the README's *From source (developers)* section).
   are drawn from the sections that actually exist, so a series with gaps is never
   offered an example that the picker would then reject.
 
+### Fixed
+- **Undoing an alignment change no longer leaves the alignment it removed in the
+  right-click menu.** The field's "Series alignment" submenu is built once from
+  the series' alignment names, and a series-wide undo or redo reloaded the field
+  and the lists without rebuilding it. After undoing an "Edit alignments..."
+  change that created an alignment, the submenu still offered the created name.
+  Selecting it set the series to an alignment the sections no longer carry, and
+  the resulting `KeyError` came from `Section.tform` inside `paintEvent`, so the
+  window repainted and raised it again without end. The series-wide undo now
+  rebuilds the context menus, and only when the set of alignment names actually
+  changed.
+
 ## [1.21.0] — 2026-08-04
 
 ### Added
