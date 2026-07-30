@@ -26,6 +26,11 @@ Four jobs, all deliberately small:
 4. Print the settings notice, if there is one, below the result line. See
    ``pytest_terminal_summary`` and ``tests/qsettings_isolation.py``.
 
+4. Provide the menu-tree helpers (`menu_leaf_paths`, `menu_action`,
+   `menu_shortcut`) and `local_series_settings`. Both exist for tests that check
+   a *live* menu rather than the dicts that built it; see the comment above
+   `menu_leaf_paths` for why that is a different check.
+
 Note on (2): the ``needs_data``/``needs_pr2`` markers are **scaffolding, and
 nothing carries them yet**. That is intentional. The suite currently has no test
 that depends on an external corpus or on a second interpreter, so there is
@@ -475,6 +480,13 @@ _MAIN_WINDOW_SETTINGS_KEYS = (
     "window/geometry",
     "username",
     "last_folder",
+    # `openSeries` pushes the opened path onto this list, so every test that uses
+    # the `main_window` fixture adds one `tmp_path` entry to the developer's real
+    # recent-series list. Harmless in the app (`getOpenRecentMenu` prunes paths
+    # that no longer exist) but it is still a write, and the list grows by one per
+    # test. Measured before adding it here: five runs of the menu-verification
+    # module left ten dead pytest paths behind.
+    "recently_opened_series",
     "palette/trace_hidden",
     "palette/inc_hidden",
     "palette/bc_hidden",
@@ -577,6 +589,221 @@ def main_window_dialogs(monkeypatch):
         FileDialog, "get", staticmethod(recorder.fileDialogGet)
     )
     return recorder
+
+
+# --- walking a real menu tree -------------------------------------------------
+#
+# The reusable half of menu verification. `menu_leaf_paths` and `menu_action`
+# take a *live* QMenuBar or QMenu and address it the way the user does, by the
+# path they read off the screen ("Series > Options..."), so a test can say what
+# a menu contains without knowing which dict in `menubar.py` produced it.
+#
+# Why this is not the same as the existing menu tests. `test_menubar_labels.py`,
+# `test_menu_restructure.py` and `test_context_menu_frequency.py` read the
+# *definition*: the nested lists and dicts `return_menubar` and
+# `get_context_menu_list_*` return. That catches a wrong label or a row deleted
+# from the source. It cannot catch anything `populateMenu` does with those
+# dicts, because it never runs it: a menu silently dropped, a row wired to a
+# different QAction than the attribute other code gates, a shortcut that the
+# option lookup resolved to the empty string. Those need the widget, and the
+# widget needs a MainWindow.
+#
+# ---------------------------------------------------------------------------
+# READ THIS BEFORE WALKING A LIVE MENU. Two PySide6 6.5.2 behaviors make the
+# obvious code wrong, both measured on this tree, both silent:
+#
+#   1. `QWidget.actions()` and `QAction.menu()` hand back wrappers whose
+#      lifetime Python manages. Drop them and the *wrapper* is invalidated even
+#      though the C++ object is still in the menu. A walk that keeps only the
+#      leaves it was asked for therefore leaves invalid wrappers behind it, and
+#      the next call through one raises
+#      `RuntimeError: Internal C++ object ... already deleted`. Measured: walk
+#      the menubar keeping only the leaf dict, and all 8 top-level `QMenu`
+#      wrappers come back invalid while `menubar.actions()` still reports 8 live
+#      menus. `menu_leaf_paths` therefore pins every wrapper it creates for as
+#      long as the root widget lives (see `_KEEPALIVE_ATTR`).
+#
+#   2. The wrappers a walk creates are *not* the wrappers `MainWindow` holds in
+#      its `<act_name>` attributes, and creating them can invalidate those. So
+#      `menu_action(menubar, "Edit > Cut") is main_window.cut_act` is not a
+#      reliable comparison: it can be False for the same C++ QAction, and
+#      reading the attribute afterwards can raise. Compare with `same_action`,
+#      which compares the C++ addresses, and read anything you need off a
+#      `MainWindow` attribute *before* walking, not after.
+#
+# The consequence for tests: do not call `createMenuBar()` after walking the
+# menubar in the same test. `newAction` reaches through the old attributes to
+# remove the previous action, and that raises. Verified.
+# ---------------------------------------------------------------------------
+
+_KEEPALIVE_ATTR = "_menu_walk_keepalive"
+
+
+def _cpp_address(obj) -> int:
+    """The C++ address behind a PySide wrapper."""
+    import shiboken6
+
+    return shiboken6.Shiboken.getCppPointer(obj)[0]
+
+
+def same_action(first, second) -> bool:
+    """Whether two wrappers refer to the same C++ `QAction`.
+
+    Use instead of `is`. Two live wrappers for one C++ object compare unequal
+    under `is` in PySide6 6.5.2, so `is` gives false negatives on exactly the
+    check a menu test most wants to make (this row is that named action).
+    """
+    if first is None or second is None:
+        return False
+    return _cpp_address(first) == _cpp_address(second)
+
+
+def menu_leaf_paths(root) -> dict:
+    """Map ``"A > B > C"`` to the `QAction` at that path, for every leaf.
+
+    Args:
+        root: a live `QMenuBar` or `QMenu`.
+
+    Separators are skipped (they have no label, and two adjacent ones would
+    collide). Submenus contribute their children rather than themselves, so
+    every key names something clickable. A duplicated path raises rather than
+    overwriting: two rows with the same label under one parent is itself a
+    defect, and silently keeping the last one would hide it.
+
+    Every intermediate wrapper is appended to a list stashed on ``root``, for
+    the reason in the block comment above: without it the walk invalidates the
+    submenu wrappers it passed through and leaves the tree unreadable.
+    """
+    from PySide6.QtWidgets import QMenuBar
+
+    keepalive = getattr(root, _KEEPALIVE_ATTR, None)
+    if keepalive is None:
+        keepalive = []
+        setattr(root, _KEEPALIVE_ATTR, keepalive)
+
+    leaves = {}
+
+    def walk(menu, prefix):
+        actions = menu.actions()
+        keepalive.append(actions)
+        for action in actions:
+            keepalive.append(action)
+            if action.isSeparator():
+                continue
+            submenu = action.menu()
+            if submenu is not None:
+                keepalive.append(submenu)
+                walk(submenu, prefix + [action.text()])
+                continue
+            path = " > ".join(prefix + [action.text()])
+            if path in leaves:
+                raise AssertionError(f"duplicate menu path: {path!r}")
+            leaves[path] = action
+
+    if isinstance(root, QMenuBar):
+        top = root.actions()
+        keepalive.append(top)
+        for action in top:
+            keepalive.append(action)
+            submenu = action.menu()
+            if submenu is not None:
+                keepalive.append(submenu)
+                walk(submenu, [action.text()])
+    else:
+        walk(root, [])
+    return leaves
+
+
+def menu_action(root, path: str):
+    """The `QAction` at ``path`` under ``root``, or None if there is none.
+
+    None rather than an exception, so a test can assert absence as easily as
+    presence. A path naming a *submenu* returns None too: a submenu is not
+    clickable, and conflating the two is how a test ends up passing against a
+    menu whose only entry is another menu.
+    """
+    return menu_leaf_paths(root).get(path)
+
+
+def menu_shortcut(root, path: str) -> str:
+    """The shortcut string carried by the action at ``path``.
+
+    Empty string for an action with no shortcut, which is what
+    `QKeySequence.toString()` returns. Raises `KeyError` for a path that is not
+    there, because "no such row" and "row with no shortcut" are different
+    answers and a test asking for a shortcut has already assumed the row.
+    """
+    return menu_leaf_paths(root)[path].shortcut().toString()
+
+
+def submenu_at(root, path: str):
+    """The `QMenu` at ``path`` under ``root``, or None.
+
+    The counterpart to `menu_action`: `menu_action` deliberately refuses to
+    return a submenu, and a test that wants to walk one needs a way to name it.
+    """
+    parts = path.split(" > ")
+    menu = root
+    for part in parts:
+        found = None
+        actions = menu.actions()
+        keepalive = getattr(root, _KEEPALIVE_ATTR, None)
+        if keepalive is None:
+            keepalive = []
+            setattr(root, _KEEPALIVE_ATTR, keepalive)
+        keepalive.append(actions)
+        for action in actions:
+            keepalive.append(action)
+            if action.text() == part and action.menu() is not None:
+                found = action.menu()
+                keepalive.append(found)
+                break
+        if found is None:
+            return None
+        menu = found
+    return menu
+
+
+@pytest.fixture
+def local_series_settings():
+    """Redirect one series' option reads and writes into memory.
+
+    Required by any test that writes a `Series` option. The global-scope options
+    (every ``*_act`` keyboard shortcut among them) live in the developer's real
+    `QSettings`, and `Series.getOption` writes the default back whenever a key is
+    absent, so even *reading* an option can leave a key behind. `qsettings_snapshot`
+    does not cover these: it restores the four keys `main_window.py` writes plus the
+    mouse palette's, not the ~60 shortcut keys.
+
+    `DictSettingsStore` is the seam the data model already exposes for this
+    (`Series.setSettingsStore`), so this is injection rather than patching. Both
+    scopes are covered by the one store, global and per-series-code.
+
+    Yields a callable: pass it the window, and it swaps the store on that
+    window's series and rebuilds the menus so the actions pick the new store's
+    values up. The real store is restored on teardown.
+
+    Both menus are rebuilt, in the order `MainWindow.__init__` uses them.
+    `createMenuBar` alone is not enough: a dozen `<name>_act` attributes are
+    owned by the *context* menus (`sethosts_act`, `edittrace_act`, ...), so
+    rebuilding only the menubar leaves them carrying shortcuts from the previous
+    store.
+    """
+    from PyReconstruct.modules.backend.settings_store import DictSettingsStore
+
+    swapped = []
+
+    def redirect(window):
+        window.series.setSettingsStore(DictSettingsStore())
+        swapped.append(window.series)
+        window.createMenuBar()
+        window.createContextMenus()
+        return window.series
+
+    yield redirect
+
+    for series in swapped:
+        series.setSettingsStore(None)
 
 
 @pytest.fixture
