@@ -2,23 +2,64 @@
 
 Shows what changed since the user's last-seen version -- on a fresh install or
 after an update that may span several versions -- and can be reopened on demand
-from Help -> What's new. It reuses the updater dialog's markdown notes renderer.
-It is a normal, dismissible, *modeless* dialog: it never blocks startup or
-steals focus the way a prompt would.
+from Help -> What's new. It is a normal, dismissible, *modeless* dialog: it never
+blocks startup or steals focus the way a prompt would.
+
+This is the *only* place the app puts release notes in front of the user
+unasked, and it does so once per version. The updater dialog deliberately does
+not render them: at that point the notes describe a version the user has not
+installed, so showing them there meant the same notes appeared twice around
+every update.
 """
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextBrowser,
 )
+from PySide6.QtGui import QTextCursor
 from PySide6.QtCore import Qt, QSettings
 
-from PyReconstruct.modules.gui.dialog.update_dialog import make_notes_browser
 from PyReconstruct.modules.backend.updater.install_info import current_version_str
 from PyReconstruct.modules.gui.main.first_launch import (
     whats_new_due, whats_new_content, github_release_url, WHATSNEW_KEY,
 )
 
 ORG, APP = "KHLab", "PyReconstruct"
+
+
+def _space_after_headings(browser, extra=10):
+    """Add breathing room below markdown headings in a notes browser.
+
+    Qt's ``setMarkdown`` ignores the document default stylesheet, so we walk the
+    blocks and bump the bottom margin on heading blocks instead. Applies to
+    whatever headings the notes carry.
+    """
+    doc = browser.document()
+    cursor = QTextCursor(doc)
+    block = doc.begin()
+    while block.isValid():
+        fmt = block.blockFormat()
+        if fmt.headingLevel() > 0:
+            fmt.setBottomMargin(fmt.bottomMargin() + extra)
+            cursor.setPosition(block.position())
+            cursor.setBlockFormat(fmt)
+        block = block.next()
+
+
+def make_notes_browser(markdown_text, min_height=180):
+    """Build a read-only ``QTextBrowser`` that renders release-note markdown.
+
+    Falls back to plain text if the markdown can't be rendered.
+    """
+    text = markdown_text or "_No release notes were published._"
+    browser = QTextBrowser()
+    browser.setOpenExternalLinks(True)
+    try:
+        browser.setMarkdown(text)
+        _space_after_headings(browser)
+    except Exception:
+        browser.setPlainText(text)
+    browser.setMinimumHeight(min_height)
+    return browser
 
 
 class WhatsNewDialog(QDialog):
