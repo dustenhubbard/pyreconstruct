@@ -3402,8 +3402,41 @@ class Series():
                 self.user_columns[col_name] = opts
     
     def deleteSections(self, section_numbers : list, log_event=True):
-        """Delete sections in the series."""
-        for snum in section_numbers:
+        """Delete sections in the series.
+
+            Params:
+                section_numbers (list): the section numbers to delete. Repeats
+                    are collapsed; a number the series does not have raises
+                    KeyError before anything is deleted.
+                log_event (bool): True if the deletions should be logged
+        """
+        # Normalize and validate the whole request before deleting anything.
+        #
+        # Every pass of the loop below removes a file and an index entry, and the
+        # z-trace repointing only runs once the loop has finished, so a raise
+        # part-way through leaves a series that is half deleted: section files
+        # gone, z-traces still carrying points on sections that no longer exist,
+        # and no route back, because the caller has already accepted the
+        # no-undo warning and saved. A repeated section number produced exactly
+        # that, since the second copy reached self.sections[snum] after the first
+        # had removed it. Measured on a 5-section series, deleteSections([2, 2]):
+        # KeyError, s.2 deleted, and all four z-traces left with a point on
+        # section 2.
+        #
+        # Repeats are the caller's normal failure mode rather than a hypothetical
+        # one: the section list is a multi-column, cell-selectable table, so a
+        # selected row yielded the same section number once per column until
+        # DataTable.selectedRows started de-duplicating by row. That fix belongs
+        # where it is, but the caller is not the right place for this operation's
+        # atomicity to live.
+        snums = list(dict.fromkeys(section_numbers))
+        missing = [snum for snum in snums if snum not in self.sections]
+        if missing:
+            raise KeyError(
+                f"cannot delete section(s) {missing}: not in this series"
+            )
+
+        for snum in snums:
             # delete the file
             filename = self.sections[snum]
             os.remove(os.path.join(self.getwdir(), filename))
@@ -3411,12 +3444,13 @@ class Series():
             del(self.sections[snum])
             if log_event:
                 self.addLog(None, snum, "Delete section")
-        
+
         # remove ztrace links to sections
+        deleted = set(snums)
         for ztrace in self.ztraces.values():
             pts = []
             for pt in ztrace.points:
-                if pt[2] not in section_numbers:
+                if pt[2] not in deleted:
                     pts.append(pt)
             ztrace.points = pts
     
