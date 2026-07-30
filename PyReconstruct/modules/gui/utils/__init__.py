@@ -8,6 +8,7 @@ from .utils import (
     populateMenu,
     populateMenuBar,
     setMainWindow,
+    user_is_present,
     notify,
     notifyConfirm,
     noUndoWarning,

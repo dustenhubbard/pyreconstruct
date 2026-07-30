@@ -306,11 +306,29 @@ def setMainWindow(mw):
     mainwindow = mw
 
 
+def user_is_present() -> bool:
+    """Whether a real user can see and answer a blocking dialog.
+
+    The predicate `notify` and `notifyConfirm` were already applying inline,
+    named once so callers outside this module can ask it too.
+
+    False when there is no `QApplication`, and false under
+    `QT_QPA_PLATFORM=offscreen`: offscreen has no window manager and no user, so
+    a modal dialog spins an event loop that nothing ever dismisses. That is not
+    a slow dialog, it is a permanent stall, which is why the callers below fall
+    back to the console instead.
+
+    `qt_offscreen` is read at call time (module global, not a default argument)
+    so a test can flip it to exercise the interactive branch.
+    """
+    return bool(QApplication.instance()) and not qt_offscreen
+
+
 def notify(message, title="PyReconstruct"):
     """Show an informational message to the user."""
 
-    if QApplication.instance() and not qt_offscreen:
-        
+    if user_is_present():
+
         QMessageBox.information(
             mainwindow,
             title,
@@ -331,8 +349,8 @@ def notifyConfirm(message, yn=False, title="Confirm"):
 
     if yn:
 
-        if QApplication.instance() and not qt_offscreen:
-            
+        if user_is_present():
+
             response = QMessageBox.question(
                 mainwindow,
                 title,
@@ -350,8 +368,8 @@ def notifyConfirm(message, yn=False, title="Confirm"):
         
     else:
 
-        if QApplication.instance() and not qt_offscreen:
-        
+        if user_is_present():
+
             response = QMessageBox.warning(
                 mainwindow,
                 title,
