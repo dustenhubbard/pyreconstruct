@@ -1,6 +1,6 @@
 """Suite-wide pytest configuration.
 
-Three jobs, all deliberately small:
+Four jobs, all deliberately small:
 
 1. Default the Qt platform to ``offscreen`` so the suite runs headless without
    the caller having to remember an environment variable. The datatypes import
@@ -18,6 +18,9 @@ Three jobs, all deliberately small:
 3. Provide the shared fixtures for *real-widget* GUI tests: a Series opened
    from a copy of a checked-in .jser, a live data-list dock widget, and a
    recorder that stands in for the modal dialogs. See the fixture docstrings.
+
+4. Print the settings notice, if there is one, below the result line. See
+   ``pytest_terminal_summary`` and ``tests/qsettings_isolation.py``.
 
 Note on (2): the ``needs_data``/``needs_pr2`` markers are **scaffolding, and
 nothing carries them yet**. That is intentional. The suite currently has no test
@@ -41,6 +44,32 @@ import pytest
 # Must run before any test module imports PySide6, which conftest collection
 # guarantees: pytest imports this file before it imports any test module.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+# Redirects every `QSettings` in the session to a throwaway location, and watches
+# the real one, so no test can edit the developer's own application preferences.
+# Imported here, next to the line above, because both have to happen
+# before any test module imports PySide6: this one rebinds the `QSettings` name,
+# and a module that already imported it keeps its own reference. `isolated_qsettings`
+# is an autouse session fixture, so importing the name is what registers it -- it
+# is not unused. See tests/qsettings_isolation.py for the mechanism and for the
+# two Qt-sanctioned alternatives that were measured and do not work on macOS.
+import qsettings_isolation  # noqa: E402
+from qsettings_isolation import isolated_qsettings  # noqa: E402,F401
+
+
+def pytest_terminal_summary(terminalreporter):
+    """Print the settings notice under the pass count, where it gets read.
+
+    The session fixture already warns, but a warnings-summary entry two screens
+    above the result line is easy to miss in a four-thousand-test run, and this
+    is the one thing about a run that the developer has to actually read. Says
+    nothing when the real store is untouched, which is the normal case.
+    """
+    note = qsettings_isolation.terminal_note
+    if not note:
+        return
+    terminalreporter.write_sep("=", "real application settings", yellow=True)
+    terminalreporter.write_line(note)
 
 # A small, real, multi-section series that ships with the repo (198 sections,
 # used by the checker's own tests). Real enough to exercise loadSection/save
