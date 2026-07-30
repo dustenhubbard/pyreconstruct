@@ -18,8 +18,11 @@ selected row moved brightness by 50.
 
 import pytest
 
-pytest.importorskip("pytestqt", reason="real-widget tests need pytest-qt")
-
+# No `importorskip("pytestqt")` here on purpose. It used to be, and it meant a
+# .venv without the `test` extra dropped this whole module and the suite still
+# said green. The `gui` mark plus the guard in tests/conftest.py
+# (`pytest_collection_modifyitems`) turns that same environment into a hard
+# error, while leaving `-m "not gui"` working.
 pytestmark = pytest.mark.gui
 
 

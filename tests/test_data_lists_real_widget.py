@@ -36,8 +36,10 @@ the widgets' own ``createMenus`` paths execute unmodified.
 
 import pytest
 
-pytest.importorskip("pytestqt", reason="real-widget tests need pytest-qt")
-
+# No `importorskip("pytestqt")` here on purpose. See the same note in
+# tests/test_section_list_real_widget.py: the skip is what let a mis-synced
+# .venv drop every widget test and still report a green run. The guard now lives
+# in tests/conftest.py and errors instead.
 pytestmark = pytest.mark.gui
 
 
