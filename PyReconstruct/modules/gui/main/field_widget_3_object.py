@@ -292,10 +292,21 @@ class FieldWidgetObject(FieldWidgetTrace):
     @object_function(update_objects=True, reload_field=False)
     def editComment(self, obj_names : list):
         """Edit the comment of the object."""
-        if len(obj_names) == 1:
-            comment = self.series.getAttr(obj_names[0], "comment")
+        ## Show the selection's comment whenever there is a single one to show,
+        ## which for more than one object means they all agree. When they
+        ## disagree there is nothing to display, and a blank field then means
+        ## "no value chosen", NOT "clear the comment". Writing it back
+        ## unconditionally erased the comment of every selected object, and it
+        ## did so even when they all agreed, because the field was blanked on
+        ## selection size alone rather than on the values.
+        existing = {self.series.getAttr(name, "comment") for name in obj_names}
+        if len(existing) == 1:
+            comment = existing.pop() or ""
+            mixed = False
         else:
             comment = ""
+            mixed = True
+
         new_comment, confirmed = QInputDialog.getText(
             self,
             "Object Comment",
@@ -304,9 +315,12 @@ class FieldWidgetObject(FieldWidgetTrace):
         )
         if not confirmed:
             return False
-        
+
+        if mixed and not new_comment:
+            return False  # nothing chosen, so leave every comment as it was
+
         self.series_states.addState()
-        
+
         for obj_name in obj_names:
             self.series.setAttr(obj_name, "comment", new_comment)
             self.series.addLog(obj_name, None, "Edit object comment")
@@ -679,8 +693,12 @@ class FieldWidgetObject(FieldWidgetTrace):
                     "object",
                     self.series.jser_fp
                 )
-                if scene_obj:
-                    print("alpha set")
+                ## Guard the opacity the same way the setAttr above does. A
+                ## blank field is "no value chosen", and passing it through
+                ## stored None on SceneObject.alpha, after which the 3D scene's
+                ## opacity-increment shortcut raised on None + i and a saved
+                ## scene recorded "alpha": None.
+                if scene_obj and new_opacity is not None:
                     scene_obj.setAlpha(new_opacity)
                     
         self.mainwindow.seriesModified(True)
