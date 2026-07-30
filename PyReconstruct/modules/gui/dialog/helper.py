@@ -119,7 +119,7 @@ class MultiInput(QWidget):
     def add(self):
         """Add a line edit row to the field."""
         if self.is_combo:
-            w = CompleterBox(self, self.combo_items)
+            w = CompleterBox(self, self.combo_items, allow_new=(not self.restrict_to_opts))
         else:
             w = QLineEdit(self)
         self.input_layout.addWidget(w)
