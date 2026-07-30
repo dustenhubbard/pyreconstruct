@@ -2843,9 +2843,11 @@ class MainWindow(QMainWindow):
             # (act3D covers this via field.reload())
             self.seriesModified(True)
         def act3D():
-            self.field.series_states.undoState(redo)
-            self.field.reload()
-            self.field.table_manager.recreateTables()
+            # FieldWidget.seriesUndo() is this same sequence; it had no callers
+            # and had already drifted from the copy here, which is how the
+            # alignment submenu refresh came to be missing from the path the
+            # user actually reaches
+            self.field.seriesUndo(redo)
 
         # both 3D and 2D possible and they are linked
         if can_3D and can_2D and linked:

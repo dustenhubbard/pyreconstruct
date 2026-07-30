@@ -368,13 +368,25 @@ class FieldWidgetBase:
     
     def seriesUndo(self, redo=False) -> None:
         """Undo an action across the series.
-        
+
             Params:
                 redo (bool): True if should redo instead of undo
         """
+        # the "Series alignment" submenu and its <name>_alignment_act actions are
+        # built from series.alignments at createContextMenus() time, so an undo
+        # that adds or removes an alignment leaves the submenu listing a name the
+        # sections no longer carry
+        alignments_before = set(self.series.alignments)
+
         self.series_states.undoState(redo)
         self.reload()
         self.table_manager.recreateTables()
+
+        # rebuild only when the set of names actually changed: the submenu is one
+        # of ~200 actions createContextMenus() recreates, and most series undos
+        # (traces, groups, attributes) leave the alignments alone
+        if set(self.series.alignments) != alignments_before:
+            self.mainwindow.createContextMenus()
     
     def swapABsections(self) -> None:
         """Switch the A and B sections.
