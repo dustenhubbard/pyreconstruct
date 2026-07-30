@@ -1,10 +1,14 @@
 """A single, polished dialog for the in-app updater.
 
-Shows the available version, channel, download size, and the release notes
-("What's new"), then runs the download + checksum verify inline (progress bar +
-status) and hands the verified installer to the main window for the
-launch-on-close step. Styling is intentionally plain Qt so it inherits the app
-theme.
+Shows the available version, channel and download size, then runs the download +
+checksum verify inline (progress bar + status) and hands the verified installer
+to the main window for the launch-on-close step. Styling is intentionally plain
+Qt so it inherits the app theme.
+
+It deliberately does *not* render the release notes. Those belong to the version
+the user is running, and are shown once, on the first launch after the update
+lands (``gui.dialog.whats_new``). This dialog links to them instead, for anyone
+who wants to read them before deciding.
 """
 import threading
 import tempfile
@@ -12,16 +16,16 @@ import shutil
 from pathlib import Path
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QTextBrowser, QProgressBar,
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar,
     QPushButton, QWidget,
 )
-from PySide6.QtGui import QTextCursor
 from PySide6.QtCore import Qt
 
 from PyReconstruct.modules.backend.threading import ThreadPool
 from PyReconstruct.modules.backend.updater.updater import (
     download_asset, fetch_checksum, UpdateCancelled,
 )
+from PyReconstruct.modules.gui.main.first_launch import github_release_url
 
 
 def human_size(n):
@@ -32,50 +36,14 @@ def human_size(n):
         n /= 1024
 
 
-def _space_after_headings(browser, extra=10):
-    """Add breathing room below markdown headings in a notes browser.
-
-    Qt's ``setMarkdown`` ignores the document default stylesheet, so we walk the
-    blocks and bump the bottom margin on heading blocks instead. Applies to
-    whatever headings the notes carry.
-    """
-    doc = browser.document()
-    cursor = QTextCursor(doc)
-    block = doc.begin()
-    while block.isValid():
-        fmt = block.blockFormat()
-        if fmt.headingLevel() > 0:
-            fmt.setBottomMargin(fmt.bottomMargin() + extra)
-            cursor.setPosition(block.position())
-            cursor.setBlockFormat(fmt)
-        block = block.next()
-
-
-def make_notes_browser(markdown_text, min_height=180):
-    """Build a read-only ``QTextBrowser`` that renders release-note markdown.
-
-    Shared by the updater dialog and the first-launch "What's new" dialog so both
-    render notes identically (markdown view, external links, heading spacing).
-    Falls back to plain text if the markdown can't be rendered.
-    """
-    text = markdown_text or "_No release notes were published._"
-    browser = QTextBrowser()
-    browser.setOpenExternalLinks(True)
-    try:
-        browser.setMarkdown(text)
-        _space_after_headings(browser)
-    except Exception:
-        browser.setPlainText(text)
-    browser.setMinimumHeight(min_height)
-    return browser
-
-
 class UpdateDialog(QDialog):
     """Presents an available update and performs the download/verify in place.
 
     On success it sets ``parent._pending_installer`` / ``_pending_update_dir`` and
     accepts; the caller then closes the window so the existing closeEvent launches
     the installer. The dialog never launches anything itself.
+
+    The release notes are linked, not rendered: see the module docstring.
     """
 
     def __init__(self, parent, info, channel):
@@ -107,10 +75,20 @@ class UpdateDialog(QDialog):
         sub = f"You have {local}  ·  channel: {self._channel}  ·  download: {human_size(self._asset.get('size'))}"
         lay.addWidget(QLabel(sub))
 
-        notes = (self._release or {}).get("body") or "_No release notes were published._"
-        self._notes = make_notes_browser(notes)
-        lay.addWidget(QLabel("<b>What's new</b>"))
-        lay.addWidget(self._notes)
+        # No notes body here. Rendering them at this point showed the user the
+        # notes for a version they have not installed and may decline, then
+        # showed the same notes again on the first launch after the update
+        # landed. The post-update showing is the one that matches what is in
+        # front of the reader, so this dialog links to the notes and says when
+        # they will appear.
+        if status == "newer":
+            lay.addWidget(QLabel(f"See what's new the first time you open {remote}."))
+        link = QLabel(
+            f'<a href="{github_release_url(remote)}">Release notes for {remote} ↗</a>'
+        )
+        link.setTextFormat(Qt.RichText)
+        link.setOpenExternalLinks(True)
+        lay.addWidget(link)
 
         # progress (hidden until download starts)
         self._progress = QProgressBar()
