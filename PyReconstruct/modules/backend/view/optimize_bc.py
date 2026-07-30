@@ -120,11 +120,11 @@ def optimizeSeriesBC(series : Series, desired_mean=128, desired_std=60, section_
             series (Series): the series to optimize the brightness and contrast for
             desired_mean (int): the desired pixel average
             desired_std (float): the desired pixel standard deviation
-            section_nums (list): the section numbers to optimize
+            section_nums (list): the section numbers to optimize (None for every section)
             window (list): the x, y, w, h window (None if using full images)
     """
     for snum, section in series.enumerateSections():
-        if section_nums is not None and snum in section_nums:
+        if section_nums is None or snum in section_nums:
             optimizeSectionBC(section, desired_mean, desired_std, window)
             section.save()
     
