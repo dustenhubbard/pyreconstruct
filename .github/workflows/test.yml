@@ -78,6 +78,30 @@ jobs:
         # the git-built `dev` group (funlib) the suite does not need; --extra test adds pytest.
         run: uv sync --frozen --no-default-groups --extra test
 
+      - name: Widget tests are present (fail if the gui marker collects nothing)
+        # The failure this catches is a green run with the widget tests silently
+        # absent. pytest-qt is in the `test` extra, so an environment without it
+        # has no `qapp` fixture; tests/conftest.py now raises on that, but this
+        # step covers the other direction, where the gui tests are still
+        # collectable and simply are not there any more: a rename that drops the
+        # mark, a deleted module, a deselecting flag added to addopts. In all of
+        # those the suite goes green with fewer tests and nothing says so.
+        #
+        # Counting: `--collect-only -q` prints one `path: N` line per file and no
+        # grand total, so the count is summed here. Costs ~3s of collection.
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set -euo pipefail
+          count=$(uv run --frozen --no-default-groups --extra test \
+                    python -m pytest --collect-only -q -m gui \
+                  | awk -F': ' '/^tests\// {sum += $2} END {print sum + 0}')
+          echo "gui-marked tests collected: $count"
+          if [ "$count" -eq 0 ]; then
+            echo '::error::the gui marker collected 0 tests. The real-widget suite is not running.'
+            exit 1
+          fi
+
       - name: Run test suite (headless / offscreen)
         env:
           QT_QPA_PLATFORM: offscreen
