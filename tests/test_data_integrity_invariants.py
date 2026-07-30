@@ -616,10 +616,9 @@ def test_rename_across_a_multi_object_selection_stays_coherent(rich_series):
     left behind pointing at a name that no longer exists (I7).
 
     ``circle2`` and ``triangle`` are used rather than ``star`` and ``square``
-    because those two are in a host relationship, and renaming a host and its
-    traveler to one name currently raises ``RecursionError``. That is a real
-    defect, pinned by ``test_renaming_an_object_to_its_host_crashes`` below, not
-    something to route around silently.
+    so that this test covers a plain rename with no host relationship in play.
+    The host case is covered separately by
+    ``test_renaming_an_object_to_its_host_stays_coherent`` below.
     """
     before_counts = trace_counts(rich_series)
     states = SeriesStates(rich_series)
@@ -642,25 +641,17 @@ def test_rename_across_a_multi_object_selection_stays_coherent(rich_series):
     assert_coherent(rich_series, "undo of the rename")
 
 
-@pytest.mark.xfail(
-    raises=RecursionError, strict=True,
-    reason="HostTree.renameObject can make an object its own host, and "
-           "HostTree.getHosts(traverse=True) has no cycle guard. Renaming an "
-           "object to the name of its host, or renaming a host and its traveler "
-           "to one name, blows the stack partway through the rename and leaves "
-           "the series half-renamed. Not fixed here: this is a tests-only "
-           "change.",
-)
-def test_renaming_an_object_to_its_host_crashes(rich_series):
-    """Pins a real defect found while writing this module.
+def test_renaming_an_object_to_its_host_stays_coherent(rich_series):
+    """Renaming an object onto its own host has to leave the series coherent.
 
-    ``square`` is hosted by ``star``. Renaming ``square`` to ``star`` makes
-    ``star`` a host of itself, and the ``checkRedundantHosts`` call at the end of
-    ``HostTree.add`` then recurses through ``getHosts`` until the stack is gone.
-    Reached from the object list's rename action, so a user can hit it.
+    ``square`` is hosted by ``star``. Renaming ``square`` to ``star`` used to
+    make ``star`` a host of itself, and the ``checkRedundantHosts`` call at the
+    end of ``HostTree.add`` then recursed through ``getHosts`` until the stack
+    was gone, leaving the series half-renamed. Reached from the object list's
+    rename action, so a user could hit it.
 
-    Marked ``strict``, so this test fails the moment the defect is fixed and the
-    marker has to be removed deliberately.
+    ``HostTree`` now refuses to create the cycle and drops the relationship
+    between the two objects being collapsed, so the rename completes.
     """
     assert rich_series.getDict()["host_tree"] == {"square": ["star"]}
     rich_series.editObjectAttributes(["square"], name="star")

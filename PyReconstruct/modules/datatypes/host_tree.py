@@ -23,6 +23,10 @@ class HostTree():
             Params:
                 obj_name (str): the name of the object
                 hosts (list): the hosts of the above obj
+
+            Returns:
+                (list): the hosts that were refused because the edge would have
+                    made obj_name a host of itself, directly or through a chain
         """
 
         if isinstance(hosts, str):
@@ -35,12 +39,26 @@ class HostTree():
                     "travelers": set(),
                 }
         
+        # An object may not end up hosting itself: the app states this to the
+        # user in setHosts and in the field's host-assignment drag ("An object
+        # cannot host itself", "Objects cannot host each other"), but those are
+        # caller-side checks, so any path that did not repeat them could still
+        # build a cycle. renameObject was such a path. The invariant is enforced
+        # here instead so no caller can bypass it, and it is checked one host at
+        # a time because an earlier host in the list can be what makes a later
+        # one cyclic.
+        refused = []
         for host in hosts:
+            if host == obj_name or obj_name in self.getHosts(host, True):
+                refused.append(host)
+                continue
             self.objects[obj_name]["hosts"].add(host)
             self.objects[host]["travelers"].add(obj_name)
         
         # special case: if one of the hosts if hosted by another of the hosts, trim to lowest-level host
         self.checkRedundantHosts()
+
+        return refused
     
     def checkRedundantHosts(self):
         """Check if any objects are hosted by multiple objects that are already hosts of each other."""
@@ -65,9 +83,16 @@ class HostTree():
         del(self.objects[obj_name])
     
     def renameObject(self, old_name : str, new_name : str):
-        """Rename an object in the tree."""
-        hosts = self.getHosts(old_name)
-        travelers = self.getTravelers(old_name)
+        """Rename an object in the tree.
+
+        A rename can collapse two objects into one: renaming a traveler to its
+        host's name, or renaming a host and its traveler to the same name in one
+        edit. The relationship between them then has only one end left, so it is
+        dropped instead of becoming a self-host edge. Deeper collisions (the new
+        name is a grand-host of the old one) are caught by add().
+        """
+        hosts = [h for h in self.getHosts(old_name) if h != new_name]
+        travelers = [t for t in self.getTravelers(old_name) if t != new_name]
         self.removeObject(old_name)
         self.add(new_name, hosts)
         for traveler in travelers:
@@ -84,6 +109,39 @@ class HostTree():
             self.objects[host]["travelers"].remove(obj_name)
         self.objects[obj_name]["hosts"] = set()
     
+    def _reachable(self, start : list, edge : str, only_secondary : bool):
+        """Collect every name reachable from start by following one edge type.
+
+        Iterative with a visited set. The recursive version this replaces had no
+        visited set, so a cycle recursed until the stack overflowed; cycles are
+        now refused by add(), but a tree loaded from a file written before that
+        check existed can still contain one, and traversal has to survive it to
+        get far enough to repair it.
+
+        For acyclic input the result is identical to the recursive version: every
+        name reachable at distance >= 1 from the origin, or >= 2 when
+        only_secondary is True. A name reachable at both distances is included
+        either way, which is what checkRedundantHosts relies on.
+
+            Params:
+                start (list): the origin's direct neighbors
+                edge (str): "hosts" or "travelers"
+                only_secondary (bool): True to omit the direct neighbors
+        """
+        found = set() if only_secondary else set(start)
+        seen = set(start)
+        stack = list(start)
+        while stack:
+            name = stack.pop()
+            if name not in self.objects:
+                continue
+            for nxt in self.objects[name][edge]:
+                found.add(nxt)
+                if nxt not in seen:
+                    seen.add(nxt)
+                    stack.append(nxt)
+        return list(found)
+
     def getHosts(self, obj_name : str, traverse=False, only_secondary=False):
         """Get the hosts of a certain object.
         
@@ -97,11 +155,7 @@ class HostTree():
         hosts = list(self.objects[obj_name]["hosts"]).copy()
         if not traverse:
             return hosts
-        else:
-            s = set() if only_secondary else set(hosts.copy())
-            for h in hosts:
-                s = s.union(set(self.getHosts(h, traverse)))
-            return list(s)
+        return self._reachable(hosts, "hosts", only_secondary)
     
     def getTravelers(self, obj_name : str, traverse=False, only_secondary=False):
         """Get the objects that are hosted by the requested object
@@ -116,11 +170,7 @@ class HostTree():
         travelers = list(self.objects[obj_name]["travelers"]).copy()
         if not traverse:
             return travelers
-        else:
-            s = set() if only_secondary else set(travelers.copy())
-            for t in travelers:
-                s = s.union(set(self.getTravelers(t, traverse)))
-            return list(s)
+        return self._reachable(travelers, "travelers", only_secondary)
     
     def getObjToUpdate(self, obj_names : list):
         """Get object names that require table updating in the GUI if the given obj(s) are modified."""
@@ -190,13 +240,17 @@ class HostTree():
             hosts = [h for h in d["hosts"] if passesFilters(h, regex_filters)]
             self.add(obj_name, hosts)
     
-    def getASCII(self, obj_name : str, hosts=True, prefix=""):
+    def getASCII(self, obj_name : str, hosts=True, prefix="", _path=()):
         """Get an ASCII representation of the hosts/travelers of an object.
         
             Params:
                 obj_name (str): the name of the object
                 hosts (bool): True if host tree, False if traveler tree
                 prefix (str): used in recursion
+                _path (tuple): the ancestors of obj_name, used in recursion to
+                    stop at a cycle. A path check rather than a visited set: a
+                    name legitimately appears more than once in this output when
+                    two objects share a host, and that must keep printing twice.
         """
         if prefix == "":
             tree_str = obj_name + "\n"
@@ -205,6 +259,7 @@ class HostTree():
         else:
             tree_str = ""
         
+        path = _path + (obj_name,)
         objs = sorted(list(self.objects[obj_name][("hosts" if hosts else "travelers")]))
         for i, obj in enumerate(objs):
             # determine if extra statement should be added
@@ -222,8 +277,8 @@ class HostTree():
             else:
                 tree_str += prefix + "├── " + obj + extra_str + "\n"
                 new_prefix = prefix + "│   "
-            if obj in self.objects:
-                tree_str += self.getASCII(obj, hosts, new_prefix)
+            if obj in self.objects and obj not in path:
+                tree_str += self.getASCII(obj, hosts, new_prefix, path)
         
         return tree_str
 
