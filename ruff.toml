@@ -15,10 +15,19 @@
 
 target-version = "py311"   # matches the PySide6==6.5.2 pin (3.11-only wheels)
 
-# Bundled helper scripts shipped as package data, not part of the importable
-# package. They are excluded here because they are not on any import path and
-# include known-broken standalone snippets.
-extend-exclude = ["PyReconstruct/assets"]
+# No exclusions. `PyReconstruct/assets` used to be excluded here on the grounds
+# that its helper scripts are "not on any import path", but package-data ships
+# every one of them, so the exclusion only meant the gate never saw code that
+# users receive. Two of those scripts were shipped broken for years as a result.
+#
+# Nothing had to be fixed to bring them in: the critical-error set below already
+# passes clean over the whole tree, assets included. If a bundled script really
+# is beyond repair, the answer is to stop shipping it (see
+# `[tool.setuptools.exclude-package-data]` in `pyproject.toml`), not to hide it
+# from the linter while continuing to ship it.
+#
+# `tests/test_shipped_python_is_linted.py` pins the invariant: anything the
+# wheel ships must be in the linter's scope.
 
 [lint]
 # E9  - syntax errors

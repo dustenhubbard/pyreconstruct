@@ -33,11 +33,29 @@ hiddenimports = []
 
 # --- App assets: welcome series, icons, and the helper .py scripts that run.py
 #     relaunches via runpy. Bundle the tree at <_MEIPASS>/PyReconstruct/assets
-#     so locations.py (frozen branch) finds it. assets/checker (~1.8 MB) is
-#     dev-only test data (used as a fixture by the source test suite) with no
-#     runtime consumer — keep it out of the installers.
+#     so locations.py (frozen branch) finds it.
+#
+#     Skipped subtrees, all dev-only with no runtime consumer. These mirror
+#     `[tool.setuptools.exclude-package-data]` in pyproject.toml (plus checker,
+#     which the wheel still carries as a test fixture) so the installers and the
+#     wheel ship the same code:
+#
+#       checker/         ~1.8 MB of test data, a fixture for the source suite
+#       misc/            standalone scripts, unreachable: module-level input()
+#                        or hand-edited constants, and the two tif_to_zarr
+#                        launchers point at the pre-2023 src/ layout
+#       scripts/img/     mask.py needs colorama, not a runtime dependency
+#       scripts/contours_from_labels/
+#                        reached only by dev/scripts/ng-make-contours
+_DEV_ONLY_ASSET_DIRS = (
+    ("checker",),
+    ("misc",),
+    ("scripts", "img"),
+    ("scripts", "contours_from_labels"),
+)
 for _p in ASSETS.rglob("*"):
-    if "checker" in _p.relative_to(ASSETS).parts:
+    _parts = _p.relative_to(ASSETS).parts
+    if any(_parts[:len(_d)] == _d for _d in _DEV_ONLY_ASSET_DIRS):
         continue
     if _p.is_file():
         _dest = Path("PyReconstruct/assets") / _p.relative_to(ASSETS).parent
