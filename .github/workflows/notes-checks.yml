@@ -10,10 +10,11 @@ name: notes
 # BLOCKING = True in scripts/check_changelog_entry.py; nothing in this file
 # needs to change.
 #
-# No `branches:` filter, deliberately. `test.yml` filters on `branches: [main]`,
-# so a pull request stacked on another branch gets no continuous integration at
-# all. That is a real blind spot and this check does not reproduce it: a stacked
-# pull request changes the application exactly as much as a direct one does.
+# No `branches:` filter, deliberately: a pull request changes the application
+# exactly as much whatever branch it targets, so a base-branch filter here would
+# only decide which changes go unrecorded. `test.yml` carried the filter this one
+# was written to avoid and no longer does, so both workflows now run on every
+# pull request.
 #
 # `edited` and the label types are in the trigger list because the opt-out lives
 # in the pull request body. Without `edited`, adding the opt-out line would not

@@ -1,9 +1,9 @@
 name: tests
 
-# The PR gate: a ruff lint pass and the pytest suite. Fires on every PR targeting
-# main and on pushes to main itself (the post-merge validation). The tests import
-# PySide6 (gui.main), so the job installs the headless Qt system libs and runs
-# under the offscreen QPA platform — no X server / xvfb needed.
+# The PR gate: a ruff lint pass and the pytest suite. Fires on every pull request
+# whatever it targets, and on pushes to main itself (the post-merge validation).
+# The tests import PySide6 (gui.main), so the job installs the headless Qt system
+# libs and runs under the offscreen QPA platform, with no X server / xvfb needed.
 #
 # The two jobs run in parallel rather than lint-then-test: lint finishes in well
 # under a minute, so gating the suite behind it would delay the slower signal
@@ -17,9 +17,30 @@ name: tests
 # the new tag's commit SHA and updating both the pin and the comment (renovate/
 # dependabot automate this; adopting one is a separate decision). The release
 # pipeline is deliberately not converted yet — this workflow only.
+#
+# No `branches:` filter on `pull_request`, deliberately, and this is the same
+# reasoning notes-checks.yml already records. The filter used to read
+# `branches: [main]`, which meant a pull request opened against any other branch
+# ran nothing at all: no lint, no suite, and a green-looking merge box with no
+# checks behind it. #174 merged that way, stacked on
+# `feat/update-check-on-by-default`, with a rollup of zero checks. Stacking is
+# banned now, which shrinks the exposure, but a trigger that silently runs
+# nothing is worth closing on its own: a release branch, a long-lived feature
+# branch or a documentation branch all take pull requests too, and none of them
+# announce that the gate is off.
+#
+# The cost is that a pull request between any two branches now runs the suite.
+# That is acceptable here: the suite itself is seconds, the wall-clock is the
+# cold dependency install and setup-uv caches it, and `concurrency` below already
+# cancels a superseded run per ref. The population it adds is small in any case,
+# because a pull request that does not target main is now the exception.
+#
+# `push` keeps `branches: [main]` on purpose. That trigger is post-merge
+# validation, and removing its filter would run the whole suite on every push to
+# every branch in the repository, most of which are work in progress and many of
+# which already have an open pull request running the same jobs.
 on:
   pull_request:
-    branches: [main]
   push:
     branches: [main]
 
