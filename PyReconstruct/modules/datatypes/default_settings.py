@@ -98,6 +98,20 @@ default_settings = {
     "homeview_act": "Home",
     "selectall_act": "Ctrl+A",
     "deselect_act": "Ctrl+D",
+    # Third member of the selection trio, so it wants to sit beside Ctrl+A and
+    # Ctrl+D. Ctrl+Shift+I is the invert-selection key in Photoshop (Select >
+    # Inverse), Krita and Affinity Photo, so the muscle memory is borrowed rather
+    # than invented. It is free here: no other entry in this dict claims it, and
+    # neither do the shortcuts written straight into the source (the arrow and
+    # function keys in main_window.py, the palette digits it generates, Ctrl+\ in
+    # menubar.py). Qt renders it as Cmd+Shift+I on macOS, where it is a Finder
+    # and Mail menu item but not a system-global binding, so it never reaches
+    # this app's window. Ctrl+Alt+I was the runner-up and was rejected because
+    # Ctrl+Alt is indistinguishable from AltGr on international layouts, which
+    # Microsoft's own keyboard guidelines warn against and Qt does not
+    # disambiguate (QTBUG-73247). Like every key in this dict it is
+    # user-configurable in the shortcuts dialog.
+    "invertselection_act": "Ctrl+Shift+I",
     "edittrace_act": "Ctrl+E",
     "mergetraces_act": "Ctrl+M",
     "mergeobjects_act": "Ctrl+Shift+M",

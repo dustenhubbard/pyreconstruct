@@ -143,7 +143,7 @@ def get_field_menu_list(self):
         None,
         ("selectall_act", "Select all traces", self.series, self.field.selectAllTraces),
         ("deselect_act", "Deselect all traces", self.series, self.field.deselectAllTraces),
-        ("invertselection_act", "Invert selection", "", self.field.invertTraceSelection),
+        ("invertselection_act", "Invert selection", self.series, self.field.invertTraceSelection),
         None,
         # The familiar entity triad survives; Trace > now holds only the long
         # tail (the four everyday actions moved to the top strip).
