@@ -397,6 +397,177 @@ def test_help_menu_offers_whats_new_reopen():
     assert copydiag == [("copydiag_act", "Copy diagnostic report...", "", diag_sentinel)]
 
 
+# ---- the welcome-only update-checks note ------------------------------------
+# A newcomer has no way to discover that PyReconstruct checks for updates at
+# all, or that the switches for it -- the check itself and the Beta channel --
+# are in Series ▸ Options. The welcome showing is the one place that says so.
+# The other two framings must stay clear of it: someone updating has just used
+# the check, and someone reopening the notes from the Help menu went looking
+# rather than needing to be oriented.
+#
+# These assert on distinctive fragments rather than the whole paragraph, so the
+# copy can be reworded without failing a test for no reason -- but they do hold
+# both facts the note exists to deliver: that the check can be turned off, and
+# that a Beta channel exists.
+def test_welcome_carries_the_update_checks_note():
+    c = F.whats_new_content("1.20.3", last_seen=None, text=WN, installed_app=True)
+    assert c["orienter"] == "Welcome to PyReconstruct"
+    body = c["body"]
+    assert "checks once a day" in body       # the app checks on its own
+    assert "turn this off" in body           # and the check can be turned off
+    assert "Beta channel" in body            # and there is a second channel
+    assert "Series ▸ Options" in body        # where both of those live
+    # an aside after the release history, set off by a rule -- not mistakable
+    # for one more release bullet
+    assert body.index("Bullet three-A.") < body.index("checks once a day")
+    assert "\n---\n" in body
+
+
+@pytest.mark.parametrize("last_seen", ["1.20.1", "1.20.2"])
+def test_update_framing_never_carries_the_note(last_seen):
+    """Someone updating already knows the check exists; they just used it.
+
+    ``installed_app=True`` throughout, so it is the framing keeping the note
+    out and not the install kind.
+    """
+    c = F.whats_new_content("1.20.3", last_seen=last_seen, text=WN, installed_app=True)
+    assert c["orienter"] == f"What's new since {last_seen}"
+    assert "checks once a day" not in c["body"]
+    assert "Beta channel" not in c["body"]
+
+
+@pytest.mark.parametrize("last_seen", [None, "1.20.2", "garbage"])
+def test_on_demand_reopen_never_carries_the_note(last_seen):
+    """The Help-menu re-open is a reader who went looking, not a newcomer.
+
+    ``last_seen=None`` is the combination that would leak it: with nothing
+    stored, the only thing separating this from a fresh install is the
+    ``on_demand`` flag. ``installed_app=True`` throughout, so it is the framing
+    keeping the note out and not the install kind.
+    """
+    c = F.whats_new_content("1.20.3", last_seen=last_seen, on_demand=True, text=WN,
+                            installed_app=True)
+    assert c["orienter"] == "Recent releases"
+    assert "checks once a day" not in c["body"]
+    assert "Beta channel" not in c["body"]
+
+
+def test_welcome_note_survives_the_generic_fallback_body():
+    """A build whose running version has no bundled section still orients.
+
+    The body falls back to the friendly generic note there. A first-run reader
+    on such a build is exactly the person who most needs telling, so the note
+    rides along with the fallback rather than being lost with the sections.
+    """
+    c = F.whats_new_content("9.9.9", last_seen=None, text=WN, installed_app=True)
+    assert c["orienter"] == "Welcome to PyReconstruct"
+    assert "Full release notes on GitHub" in c["body"]   # the generic body
+    assert "Bullet" not in c["body"]                     # still leaks no sections
+    assert "checks once a day" in c["body"]
+    assert "Series ▸ Options" in c["body"]
+
+    # nothing bundled at all -- the generic body is the whole body
+    c2 = F.whats_new_content("1.20.3", last_seen=None, text="", installed_app=True)
+    assert "Full release notes on GitHub" in c2["body"]
+    assert "Beta channel" in c2["body"]
+
+
+@pytest.mark.parametrize("kwargs", [{"last_seen": "1.20.1"}, {"on_demand": True}])
+def test_generic_fallback_carries_no_note_outside_the_welcome(kwargs):
+    c = F.whats_new_content("9.9.9", text=WN, installed_app=True, **kwargs)
+    assert "Full release notes on GitHub" in c["body"]   # the generic body
+    assert "checks once a day" not in c["body"]
+
+
+def test_welcome_note_reaches_the_stray_welcome_cases_too():
+    """The welcome framing is not only the no-stored-version fresh install.
+
+    ``whats_new_due`` also fires when the stored last-seen version cannot be
+    parsed -- a corrupt record shows once and self-heals -- and that showing is
+    framed as a welcome, so it carries the note. That is the right outcome: a
+    reader whose record was lost is in a newcomer's position. A stored version
+    not older than the running one welcomes for the same reason, though the
+    startup gate declines to show it at all.
+    """
+    for last_seen in ("garbage", "1.99.0"):
+        c = F.whats_new_content("1.20.2", last_seen=last_seen, text=WN, installed_app=True)
+        assert c["orienter"] == "Welcome to PyReconstruct"
+        assert "checks once a day" in c["body"]
+
+
+# ---- the note is a claim about the installed app ----------------------------
+# `MainWindow.checkForUpdatesStartup` returns early unless
+# `install_kind() == "frozen"`, so anywhere else the note would be describing
+# something that never happens. The gate compares against that one value rather
+# than testing for "not source": `install_kind` answers "source" for a git
+# checkout and a pip install alike today, and a kind added later should be
+# excluded until someone decides otherwise, not included by default.
+@pytest.mark.parametrize("kind,noted", [
+    ("frozen", True),      # the installed app, the only one that checks
+    ("source", False),     # git checkout and pip install alike
+    ("flatpak", False),    # a kind nobody has added yet: excluded by default
+    ("", False),
+    (None, False),
+])
+def test_update_checks_note_is_limited_to_the_installed_app(monkeypatch, kind, noted):
+    monkeypatch.setattr(F, "install_kind", lambda: kind)
+    c = F.whats_new_content("1.20.3", last_seen=None, text=WN)
+    assert c["orienter"] == "Welcome to PyReconstruct"   # welcomed either way
+    assert "Bullet three-A." in c["body"]                # and shown the notes
+    assert ("checks once a day" in c["body"]) is noted
+
+
+def test_update_checks_note_is_silent_when_the_install_kind_cannot_be_read():
+    """A broken detector must not cost the reader the release notes.
+
+    The builder's contract is that it never raises; the note is the part that
+    gets dropped, not the dialog.
+    """
+    def boom():
+        raise RuntimeError("no install metadata")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(F, "install_kind", boom)
+        c = F.whats_new_content("1.20.3", last_seen=None, text=WN)
+    assert "Bullet three-A." in c["body"]
+    assert "checks once a day" not in c["body"]
+
+
+def test_installed_app_is_injectable_and_beats_the_detected_install_kind(monkeypatch):
+    """The caller can answer the question, so a test need not patch the world."""
+    monkeypatch.setattr(F, "install_kind", lambda: "source")
+    noted = F.whats_new_content("1.20.3", last_seen=None, text=WN, installed_app=True)
+    assert "checks once a day" in noted["body"]
+
+    monkeypatch.setattr(F, "install_kind", lambda: "frozen")
+    silent = F.whats_new_content("1.20.3", last_seen=None, text=WN, installed_app=False)
+    assert "checks once a day" not in silent["body"]
+
+
+# ---- the generic fallback greets a newcomer rather than thanking them --------
+def test_generic_fallback_greets_under_the_welcome_framing():
+    """Nobody updated on a first run, so do not thank the reader for updating.
+
+    Turns on the framing the dialog already knows about. Independent of the
+    install kind: a source build gets the right opener too, it just gets no
+    update-checks note under it.
+    """
+    c = F.whats_new_content("9.9.9", last_seen=None, text=WN, installed_app=False)
+    assert c["orienter"] == "Welcome to PyReconstruct"
+    assert c["body"].startswith("Welcome to PyReconstruct.")
+    assert "Thanks for updating" not in c["body"]
+    assert "Full release notes on GitHub" in c["body"]   # still points at them
+    assert "checks once a day" not in c["body"]          # source build: no note
+
+
+@pytest.mark.parametrize("kwargs", [{"last_seen": "1.20.1"}, {"on_demand": True}])
+def test_generic_fallback_keeps_the_updating_wording_everywhere_else(kwargs):
+    """The wording that was already right stays exactly as it was."""
+    c = F.whats_new_content("9.9.9", text=WN, installed_app=True, **kwargs)
+    assert c["body"].startswith("Thanks for updating PyReconstruct.")
+    assert "Welcome to PyReconstruct." not in c["body"]
+
+
 # ---- startup-flow guard (first-run friction audit) --------------------------
 def test_startup_username_resolver_has_no_path_to_a_prompt():
     """Guard the first-run flow against a reintroduced startup prompt.
