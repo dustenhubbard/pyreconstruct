@@ -13,6 +13,8 @@ the README's *From source (developers)* section).
 
 ## [Unreleased]
 
+## [1.21.0-beta-6] - 2026-07-30
+
 ### Added
 - **A keyboard shortcut for "Copy to sections...".** The action now has a
   user-configurable default of `Ctrl+Alt+C`, listed in the shortcuts dialog next
@@ -25,6 +27,68 @@ the README's *From source (developers)* section).
   in the configurable shortcut set share a default key — Qt answers such a clash
   by firing *neither* action, which is invisible until a user reports a dead
   shortcut.
+- **Hover tooltips on File > Utilities, and room between a menu label and its
+  shortcut.** Utilities collects niche, rarely run tools, so each entry now
+  explains itself on hover to someone who has never used it; the copy was written
+  against the scripts the handlers actually run rather than against the labels,
+  and names the artifacts each one produces (`decode.txt`, the coded `.jser`, the
+  dated `decoded-` folder). The mechanism generalizes to any menu: `newAction`
+  takes an optional fifth tuple element, the tooltip, and opts the containing menu
+  into `setToolTipsVisible(True)` whenever it sets one, which is required because
+  `QAction.setToolTip()` alone shows nothing in a `QMenu`. Opting in only when a
+  tooltip is set matters, since a `QAction`'s tooltip otherwise defaults to its
+  own label and every item would sprout a tooltip repeating what it already says.
+  Separately, the widest label in a menu ran into the shortcut column, measured at
+  5.5 px of gap on the default macOS theme against 18.5 px of left padding. A
+  `QProxyStyle` now pads the gap. A stylesheet rule was rejected on measurement:
+  any `QMenu::item` rule swaps the item to the CSS box model and strips the native
+  left padding with it, moving the label ink from x=18.5 to x=0.5. (#125)
+- **A documentation site built from `docs/`.** A MkDocs Material configuration at
+  the repository root renders the existing user guide, the uv development notes
+  and a performance summary as a searchable site with a light/dark toggle,
+  deployable to GitHub Pages. Additive only: the GitHub wiki and the in-app Help
+  link are untouched, and no existing document moved. (#44)
+- **`MainWindow` is constructible headlessly, and the menus are now verified
+  through a live window.** `MainWindow.openSeries` raises three prompts to finish
+  opening a series that is missing something (images not found, no series code, an
+  unexpected editor), and under `QT_QPA_PLATFORM=offscreen` there is no window
+  manager and no user, so each one spun a modal event loop that nothing ever
+  dismissed. That is a permanent stall rather than a slow dialog, and it is why
+  the window itself had never been covered. Each site was confirmed to stall on
+  its own, with the other two stubbed and `faulthandler.dump_traceback_later`
+  reporting where the process was parked. A `main_window` fixture now yields a
+  live window over a real series, and 29 tests walk the menus it actually builds.
+  The menu tests that existed read the *definition* the menu functions return and
+  never ran `populateMenu`, so they could not see a menu dropped on the way to the
+  widget, a row wired to a different `QAction` than the attribute that gates it,
+  or a shortcut whose option lookup came back empty. (#140, #152)
+- **A data-integrity check that runs after destructive operations.** The three
+  worst defects found in this cycle were all silent data loss, and in all three
+  the suite was green while the defect shipped: the section list deleting a file
+  and then raising, the trace attributes dialog erasing tags, and the undo
+  baseline being written into the bundled assets. A unit test asserts what a
+  function returns, and none of the three changed what any function returned. What
+  each of them broke was a property of the series. `check_series` opens a real
+  series, performs destructive operations on it, and collects every violated
+  invariant together rather than stopping at the first, so one failure reports
+  everything that is wrong. (#143)
+- **A test that a configurable shortcut reaches the action it is listed for.** A
+  shortcut has to agree in three places (a default in `default_settings.py`, a row
+  in the shortcuts dialog, and the third element of the action tuple that
+  `newAction` turns into `QAction.setShortcut`) and only the third binds anything.
+  Two disagreed, and both were user-visible: `Set hosts...` is documented in the
+  dialog with `Ctrl+Shift+H` and that key has never done anything, and `Set view to
+  image` accepts a rebind that is stored and then silently discarded. (#158)
+- **Real-widget selection tests for the four sibling data lists.** Each of the
+  trace, z-trace, flag and object lists is built as the real widget over a
+  writable copy of the checked-in `class_series.jser`, a real row selection is
+  made through the widget's own selection model, and `getSelected()` is asserted
+  to return one de-duplicated, order-preserving entry per selected row. Per-widget
+  rather than helper-only, because every list overrides `getSelected()` and maps
+  rows to a different payload through a different surface, and the object list is
+  the one model-backed list, a lazy `QAbstractTableModel` behind a `QTableView`. A
+  regression in any of those mappings is invisible to coverage of the shared
+  helper alone. (#123)
 
 ### Changed
 - **The "Copy to sections" picker suggests real sections from the open series.**
@@ -49,6 +113,100 @@ the README's *From source (developers)* section).
   `assets/scripts/contours_from_labels/`. They stay in the repository, stay
   linted, and keep working from a checkout through `dev/scripts/`. Everything
   the app imports or launches still ships, verified against an installed wheel.
+- **`ruff check` is a blocking CI gate.** `ruff.toml` selects the critical-error
+  set only (`E9`, `F63`, `F7`, `F82`: syntax errors and undefined names) and a
+  `lint` job in `test.yml` enforces it. The tree passes that set clean, so the
+  gate landed at zero diff and started protecting immediately. It is deliberately
+  not the full default set, which reports several thousand findings on this tree,
+  roughly 79% of them whitespace, unused imports and import order, and would mean
+  a four-thousand-line diff across 173 files conflicting with every open branch.
+  A `tests/conftest.py` and a root `Makefile` land alongside it. (#111)
+- **`gitpython` bumped to 3.1.57 and `vtk` to 9.5.2, off twelve published
+  advisories.** An OSV scan of all 106 resolved packages, the full transitive set
+  from `uv.lock` rather than the 20 direct pins, found vulnerabilities in exactly
+  these two. `gitpython==3.1.50` carried nine HIGH advisories, all of them
+  command-injection or argument-injection paths through clone options, config
+  section names, `expandvars()` and `git diff --output`; `vtk==9.4.2` carried
+  three CVEs. (#130)
+- **The test suite no longer writes to the machine's real application settings.**
+  Running the suite modified the maintainer's own preferences three times in one
+  night, through three separate routes: a fixture calling `QSettings.clear()` and
+  rewriting `allKeys()` (on macOS `NativeFormat` is `NSUserDefaults`, and
+  `allKeys()` on an app domain also returns the global domain, so the rewrite
+  copied 67 system defaults into the app's plist), a test assigning `series.user`
+  (whose setter addresses the machine-wide scope and overwrote the stored
+  username), and every `main_window` fixture build prepending a pytest `tmp_path`
+  to `recently_opened_series`. Three routes in one night is a pattern rather than
+  three accidents, so the whole suite's `QSettings` are redirected at the session
+  level: a rule that cannot be forgotten rather than one that has to be
+  remembered. The two recent-series tests additionally get their own store, since
+  `recently_opened_series` resolves to one machine-wide slot shared by every
+  process on the box, which made their result a property of the machine. (#157,
+  #162)
+- **A missing `pytest-qt` now fails the run instead of quietly dropping the widget
+  tests.** `pytest-qt` is declared in the `test` extra rather than in
+  `dependencies`, and it is the only source of the session-scoped `qapp` fixture
+  the real-widget tests are built on. A `.venv` synced without `--extra test`
+  therefore had `pytest` but not `pytest-qt`, and both gui modules guarded
+  themselves with a module-scope `pytest.importorskip("pytestqt")`, so they
+  removed themselves from collection rather than failing: 4228 tests collected and
+  green became 4157 collected and green, exit 0 either way. The marker is now the
+  sanctioned mechanism and a guard test forbids the module-scope `importorskip`
+  that hid the gap. (#145, #164)
+- **The suite clears the latched keyboard modifier between tests.**
+  `QApplication.keyboardModifiers()` is process-wide, so a test that leaves a
+  modifier held changes what a later test sees, through state no test can inspect.
+  The menu suite is green today under any file-level ordering but not under a
+  test-level reordering, which is a latent flake rather than a passing suite. A
+  fixture now resets the latch. (#163)
+- **Stable releases are staged as drafts and pre-releases publish immediately.**
+  The draft step is an asset-completeness gate that catches a matrix leg which
+  failed to attach its installer. That protection matters most for a stable
+  release, which reaches every user; for a beta it is friction, since testers
+  should get the build without a manual publish. One global variable previously
+  served both, so the correct value depended on which kind of cut was next and had
+  to be flipped back afterward, which was a standing hazard. The decision is now
+  computed once from the tag, in the existing classify step, so the publish and
+  prune steps can no longer disagree. `STAGE_RELEASE_AS_DRAFT` survives as a
+  three-state override for staging a beta deliberately. (#109)
+- **The test workflow's actions moved off the Node 20 runtime, and are pinned by
+  commit SHA.** GitHub annotates `actions/checkout@v4` and `astral-sh/setup-uv@v5`
+  as Node 20-deprecated and force-runs them on Node 24. The annotation predates
+  this cycle and is harmless today, but it becomes a hard failure the moment Node
+  20 support is withdrawn. Both move to the newest floating major that declares
+  `node24` natively, and every major crossed was read rather than assumed. (#119,
+  #123)
+- **Five documentation claims that an action cannot be undone are corrected.** The
+  `WARNING: This action cannot be undone.` dialog stopped appearing on object
+  attribute edits and on stamp radius and shape edits when those actions were
+  given real undo states, and the warning was deleted from them in the same
+  commit. The documentation was never updated, so the manual still told users that
+  editing attributes or a radius was unrecoverable, and that Undo and Redo would
+  not reach anything done through the object or section list. Tests now pin which
+  actions really do warn, so the documentation and the code cannot drift apart
+  again silently. (#134)
+- **Two benchmark figures the implementation overturned are retracted in place.**
+  `benchmarks/REPORT.md` is cited when performance decisions are made, and two of
+  its forward-looking figures did not survive being implemented, so anyone citing
+  the document was citing numbers that had inverted. The correction is by
+  annotation, with the original text struck and the measurement that replaced it
+  beside it, because a silently edited number teaches nobody why it was wrong. The
+  `cv2.polylines` speedup is the larger of the two: the 22-26x came from a script
+  drawing every trace in one call in a single color with no opacity, while the
+  real draw loop varies color, pen width and opacity per trace and so needs a
+  blend per trace, on which the OpenCV path measures 1814 ms against QPainter's
+  155 ms. (#114)
+- **The macOS thread-cap notes carry measured CPU numbers, and the thread-pin
+  check xfails there.** `cv2.setNumThreads()` is a no-op under Apple's Grand
+  Central Dispatch and `getNumThreads()` reports the CPU count, so the pin check
+  cannot pass on macOS and no environment variable caps it either, since GCD reads
+  none of the OpenMP/OpenBLAS/MKL variables the cap sets. The assertion is left
+  unweakened because it is correct on Linux and Windows, and `strict=True` means
+  an OpenCV build that becomes cappable turns the test red and gets the marker
+  removed. The marker text originally asserted two consequences that were reasoned
+  rather than measured, and both were wrong on this build; they are replaced with
+  per-operation numbers taken from the shipped converter invoked exactly as the
+  GUI invokes it. (#110, #112)
 
 ### Fixed
 - **Undoing an alignment change no longer leaves the alignment it removed in the
@@ -61,6 +219,255 @@ the README's *From source (developers)* section).
   window repainted and raised it again without end. The series-wide undo now
   rebuilds the context menus, and only when the set of alignment names actually
   changed.
+- **A locked object's traces could be cut, moved, renamed and split.** Reachable
+  through the ordinary interface and silently destructive: select a trace, turn on
+  focus mode, tick `Locked` on that object's row in the object list, page to the
+  next section, press `Ctrl+X`, and the object's traces on the new section are
+  deleted with no message while the object is still locked. Ticking `Locked` used
+  to make that safe, because both lock entry points deselect everything and
+  `Section.addSelectedTrace` drops a trace whose object is locked, so the
+  selection normally cannot hold one. Paging undoes it: `changeSection`
+  repopulates the selection from `focus_mode` by assignment rather than through
+  `addSelectedTrace`, and neither lock entry point clears focus mode. That refusal
+  in `addSelectedTrace` was the only lock check on these paths; each one read the
+  selection and mutated it, relying on the selection never containing a locked
+  trace instead of checking, and the assumption was never stated anywhere a reader
+  would find it. Six operations now check for themselves through one shared
+  `refuseLockedTraces`: cut, paste attributes, the arrow-key translate, the knife,
+  the pointer drag, and the focus-mode split and incorporate. Each reports rather
+  than refusing silently, because a silent refusal reads as a dead shortcut. The
+  drag is checked at the release rather than at the start, since `notify` is modal
+  and raising it mid-gesture with the button held would block the gesture it is
+  reporting on, and unhiding the traces already restores their position, so a
+  refused drag snaps back. In the other direction, hide and unhide no longer check
+  the lock at all: hiding changes what is drawn, not what is measured, and every
+  point, name and tag survives it. Selection itself is untouched, so the ordinary
+  way of selecting a locked object's trace still does nothing. (#166, #168)
+- **Remove duplicate traces ended in `ZeroDivisionError` on a real working
+  series.** Reported from `1.21.0b5` on Windows: the operation stopped, nothing
+  was cleaned up, and the dialog went away. `Trace.getOverlapRatio` rasterizes both
+  traces into a fixed-size mask and picks the raster scale from the area of their
+  combined bounding box, which collapses to zero when both traces lie on the same
+  vertical or the same horizontal line. Two collinear segments, a single point and
+  a run passing through it, or a three-point trace whose points share an `x` all do
+  that, and degenerate traces of that shape are expected in real data. The only
+  caller does not catch it, so the exception took the whole pass down on the first
+  such pair and the remaining sections were never scanned. The function now
+  returns 0 for a combined box with no area: two traces confined to one line have
+  no area in common to measure, so 0 is the honest answer, and it reads as "not a
+  duplicate" at every threshold the callers use. Degenerate traces that really are
+  duplicates are still cleaned up. (#167)
+- **Renaming an object to the name of its host crashed and left the series
+  unopenable.** Renaming a traveler to its host's name, renaming a host and its
+  traveler to one name in a single edit, or renaming an object to the name of its
+  grand-host raises `RecursionError` partway through `Series.editObjectAttributes`.
+  The object's group memberships and `obj_attrs` have already been copied onto the
+  new name by then but no trace has been renamed, so both names exist and both
+  carry the attributes. The saved file is the worse half: the crash leaves a
+  self-host edge in the tree, `getDict()` writes it out as `{"square": ["square"]}`,
+  and `HostTree.__init__` raises `RecursionError` on that dict. The app keeps
+  running after the crash, so a user who saves afterward gets a `.jser` that cannot
+  be opened again. `HostTree.getHosts` and `getTravelers` recursed over neighbors
+  with no visited set, and `renameObject` created the cycle by reading the old
+  name's relationships, removing the old object, then re-adding them under the new
+  name. Cycles are now refused in `HostTree.add` rather than tolerated. This is not
+  a new rule: `setHosts` and the field's host-assignment drag already refuse both
+  the self-host and the mutual-host cases and say so, but those are caller-side
+  checks that a path could simply not repeat, and `renameObject` was such a path.
+  Traversal additionally became iterative with a visited set, because a file
+  written before this fix can already contain a cycle and traversal has to survive
+  one to get far enough to repair it. (#147)
+- **A repeated or unknown section number half-deleted a series.**
+  `Series.deleteSections` was a bare loop removing a file and a dictionary entry
+  per requested number, with the z-trace repointing after the loop, so any raise
+  partway through left a series that was half deleted and unrecoverably so: the
+  section list has already shown its no-undo warning and saved by the time the
+  datatype runs. A repeated number produced exactly that, because the second copy
+  reached an entry the first had removed. Measured on a copy of `shapes1.jser`,
+  `deleteSections([2, 2])` raised `KeyError` with sections 0, 1, 3, 4 remaining and
+  every z-trace still carrying a point on the section that no longer exists, which
+  the next save writes back out. The z-traces are the damage, and they are damaged
+  precisely because the repointing loop sits after the delete loop and never ran. A
+  section number the series does not have did the same to everything ahead of it in
+  the list. The request is now normalized once, at the top: repeats collapse with
+  first-seen order preserved, and an unknown number raises before anything is
+  removed rather than at whatever position it happened to occupy. (#151)
+- **The trace attributes dialog erased tags on a mixed selection.** Select two
+  traces of the same object carrying different tags, open the attributes dialog,
+  press OK without touching the tags field, and both come back with no tags at all.
+  Nothing warns, and the tags field looked empty the whole time, so there is no
+  reason for the user to suspect the edit touched tags. `TraceDialog` folds a
+  disagreeing selection down to one displayed value per field, using `"*"` for the
+  name and `None` for color, points and both halves of the fill mode; for tags it
+  used an empty set. `Section.editTraceAttributes` reads `None` as "leave this
+  alone" and an empty set as a real value, so it assigned the empty set to every
+  trace in the selection. Tags were the one field of the five whose "no single
+  value" sentinel was not the one the consumer recognizes. The empty set could not
+  simply become `None` at the consumer, because an empty set is the legitimate way
+  to say "clear all tags" and is exactly what `Remove all trace tags` sends. The
+  producer is repaired instead: the dialog records that it blanked the field for
+  lack of a single value and returns `None` rather than an empty set when the field
+  is still blank on confirm. A field the user actually emptied is unaffected. (#136)
+- **The object attributes dialog could not remove a tag.** Deleting a tag from the
+  Tags field and confirming did nothing, and clearing the field entirely did
+  nothing, on every selection. `Series.editObjectAttributes` called through with
+  `add_tags=True` unconditionally, and under that flag the consumer iterates the
+  incoming set and adds each element to the trace's own tags. So a set with one tag
+  deleted is indistinguishable from the same set with it present, and an empty set
+  is an empty loop: only the assigning branch can remove. The dialog pre-fills the
+  field from the object's real tags for a single-object selection, so it showed
+  real tags, accepted an edit, reported the edit back, and the edit was then
+  discarded, with nothing warning and nothing logging a difference. (#141)
+- **The object comment editor blanked comments on a multi-selection, and "Merge
+  attributes only" crashed.** Both came out of an audit of the bug class behind
+  this cycle's two data-loss defects: an empty or absent collection carrying a
+  different meaning at the producer than at the consumer. `editComment` blanked its
+  field whenever more than one object was selected, on selection size alone and
+  never on the values, and the blank was then written onto every selected object.
+  The `Merge attributes only` action sent `merge_attrs=True` where the keyword is
+  `merge_attrs_only`, so both copies of the action crashed. A third instance is
+  fixed in the same pass: a blank opacity field in the 3D edit dialog returns
+  `None`, which the sibling attribute setter reads as "leave it alone" while
+  `SceneObject.setAlpha` takes the same `None` unguarded, corrupting state and then
+  crashing with the 3D scene open. The audit ran four passes, three of them AST
+  rather than grep, because the half of the class where `None` is used as a
+  container is not greppable; the pass that mattered was the one with guard
+  suppression turned off, which catches a guard sitting *after* the use or
+  inverting its sense, and all three latent defects came from it. The passes were
+  calibrated against `upstream/main`, where both already-known instances are
+  detected by the pass meant to detect them. The mechanical reason tags broke while
+  color and fill did not is that `int`, `float`, `color`, `file`, `dir` and `shape`
+  fields all return `None` when blank, and only `multitext` and `multicombo` return
+  an empty list. (#142)
+- **A regex typed into an added filter row was silently replaced by another
+  object's name.** `MultiInput` builds each initial combo row honoring the field's
+  `restrict_to_opts`, but the `+` button's slot left `allow_new` at its default of
+  `False`, so in a permissive field the first row accepted free text and every row
+  added afterward did not. The symptom is a substitution rather than a rejected
+  keystroke: `CompleterBox.focusOutEvent` does not clear an out-of-list entry, it
+  replaces it with the current completion or, failing that, the first item in the
+  drop-down. Typing a regex into an added row and tabbing away turned it into the
+  alphabetically first name in the list, and the dialog then reported that name as
+  though the user had picked it. The dialog's own validation cannot catch this,
+  since it only checks membership when `restrict_to_opts` is set, which is exactly
+  when the substitution is correct. Five fields change behavior, all of them regex
+  filters: the two on `Add to Scene`, the two on the `Import series` traces tab,
+  and the one on its z-traces tab. (#135)
+- **Opening the welcome series wrote into the application's own bundled assets.**
+  Launching from a source checkout left the working tree dirty, with
+  `assets/welcome_series/.welcome/welcome.0.s0` changed from the committed `{}` to
+  a full section file. The welcome series is opened in place from the install tree,
+  so its hidden working directory and its installation are the same directory,
+  which is true of no other series: every other one gets a hidden directory created
+  fresh beside the user's `.jser`. `SectionStates.initialize` writes an undo
+  baseline into that directory on open, and for the welcome series that path
+  resolves onto the shipped file. (#137)
+- **Removing a row from a multi-value field left the dialog too tall.** Pressing
+  `-` on a `multitext` or `multicombo` field gave the row's height back a press
+  later rather than on the press that removed the row, so a band of unused space
+  opened inside the dialog and every further `-` moved that band rather than
+  closing it. The dialog never got back to the size it had for the same number of
+  rows on the way up: five rows down to one measured 262, 233, 204, 175, 146
+  against a one-row height of 146, ending 29 px (one row) high throughout, and the
+  same sequence on `cocoa` behaved identically, so it is not an offscreen artifact.
+  The cause is a stale size hint rather than a stale minimum size. Removing the
+  widget marks the layouts dirty and posts a layout request that Qt delivers only
+  after the slot returns, so both the field's hint and the host's still described
+  the layout with the removed row in it and `adjustSize()` resized to the previous
+  row count. Setting the window minimum to zero, activating only the host's layout,
+  and three further geometry calls each changed nothing; activating the field's own
+  layout and then the host's produced the correct sequence, and that is the fix.
+  Nothing is deferred and no offset is applied: the resize still happens inside the
+  slot, it just gets a current hint to resize to. The `+` direction was measured in
+  the same pass against a report that it clipped the new row, found not to clip,
+  and its asymmetry with `-` pinned as correct rather than patched. (#161, #155)
+- **`Series.removeObjAttrs` no longer raises on a name with no attributes entry.**
+  The unconditional delete becomes a `pop` with a default. No reachable path
+  changes: the one call site is preceded on the line above by an `addLog` that
+  writes provenance as a side effect and creates the entry the next line deletes,
+  for an object that may never have had one. That guarantee is conditional, holding
+  only while the object name is truthy and a user is set, which is why the
+  invariant the delete was standing in for is now pinned by a test rather than left
+  implicit. (#160)
+- **Four optional-collection defaults now behave the way their docstrings say.**
+  The same class as the reachable defects above: a parameter documented as
+  optional, defaulting to `None`, then dereferenced as a container. In three of the
+  four the guard exists but sits after the use or inverts its sense, which is why
+  reading the guard alone says the code is fine. On its own documented default,
+  `ObjGroupDict.__init__` raises `AttributeError` four lines before its guard,
+  `seriesToLabels` raises `TypeError` before its guard (leaving the branch that
+  reads the window back off the zarr dead), `Series.importTraces` raises `TypeError`
+  on its section range, and `optimizeSeriesBC` optimizes zero sections silently.
+  None is reachable today, since every caller supplies a real value, and each was
+  re-verified independently by calling it with its own default and walking its call
+  graph rather than by trusting the earlier report. Two further reported instances
+  were checked and deliberately left alone. (#146)
+- **A version's release notes are shown once, on the first launch of that version,
+  instead of twice around every update.** Two independent paths put notes on screen
+  for the same version: the update prompt rendered the GitHub release body for the
+  *remote* version, and the What's new dialog rendered the bundled notes for the
+  version now running, gated on a stored last-seen version. Nothing connected them,
+  so taking an update meant reading the notes at the prompt and reading them again
+  on the next start. Only the second showing describes what the reader is actually
+  running; the first describes a version they have not installed and may decline,
+  and it competes with the update offer itself for attention. The notes body is
+  therefore removed from the update prompt, which keeps the version, channel,
+  download size, a link to the release notes and a line saying the notes appear on
+  first open. Declining and taking the update a week later behaves the same, since
+  the prompt writes nothing and the stored version is unchanged. (#169)
+- **Undoing a focus-mode trace split produced a duplicate trace.** Reported
+  upstream: shift-clicking a trace in focus mode to split it out as `<obj>_split`
+  and then undoing left two traces, one under each name. The focus-mode split
+  branch mutates the section and then only regenerates the view; it is the only
+  caller of `editTraceAttributes` in the GUI that neither carries the interaction
+  decorator nor saves a state itself, while its sibling branch three lines below,
+  the incorporate-into-object merge, does. The duplication follows from which
+  contours undo restores: with no state recorded for the split, the current state
+  is still the one written by the previous edit, so its modified set names that
+  edit's contours and cannot name the split's. (#129)
+- **`Trace.fromList` consumed the list it was given.** Inherited from upstream
+  byte for byte rather than fork-introduced. A whole-package parse gate landed
+  alongside it, walking all of `PyReconstruct/` with builtin `compile()` rather
+  than `py_compile` (which would write bytecode into the source tree for every
+  non-imported script it touched) and reporting every offender in one assertion.
+  191 files, well under a second. The gap it closes is real: a standalone script
+  that no module imports is parsed by nothing, so a syntax error in one could reach
+  users and be found first by a user following the autoseg workflow. Parsing is not
+  importing, and the gate says so; syntactic validity is the floor, and the floor
+  was missing. (#118)
+- **Two degenerate-input crashes are guarded.** `Grid.getExterior()` raised
+  `ValueError` on a contour that keeps no anchor points, because the anchor lookup
+  returns a shape-`(0,)` array against which a two-element shift cannot broadcast.
+  It now skips such a contour: with no anchor points there is no exterior to emit,
+  and appending an empty one would only relocate the crash, since both public entry
+  points feed every exterior straight into a reducer that rejects an empty array.
+  This is a latent crash in a public method rather than a reproduced user-facing
+  one: a sweep of about 50,000 randomized traces produced 51,756 contours and no
+  anchor-free one, and that sweep is pinned so a future change to the line drawing
+  that does produce one is caught. Separately, the trace list's contour lookup was
+  unguarded across the same desync window that crashed the Feret columns. The list's
+  rows come from the series data rather than from the section it is displaying, and
+  a series-wide operation writes its sections, repaints the lists, and only
+  afterward swaps in a section object containing the new traces; between those two
+  steps a row can name a trace the displayed section lacks. Every trace-list
+  context-menu action goes through that lookup. (#121)
+- **Recovering a series whose images moved built a doubled path.** When a series is
+  opened whose image directory no longer resolves, the open path probes for an
+  image file beside the `.jser` and, on a hit, passed that *file* to
+  `changeSrcDir`, which documents its argument as the new image *directory* and
+  assigns it straight through. Joining the section's own filename onto it then
+  produced `/tmp/imgs/shapes_0.tif/shapes_0.tif`, which resolves to nothing. The
+  recovery also marked the series modified before anything could check whether the
+  images had actually reloaded, and passed `notify=False`, so the failure was
+  silent. The shipped checker fixture reproduces the trigger. (#115)
+- **The data lists returned one item per selected cell rather than one per selected
+  row.** All five lists are multi-column tables with item selection, so a row-wise
+  selection returned each item once per selectable column: on a 198-section series
+  with five selectable columns, selecting one row returned five entries and
+  inverting the selection returned 990 instead of 198. Actions that require exactly
+  one item rejected a single selected row with "Please select only one section".
+  De-duplicated by row, order-preserving, in one shared helper on the base table.
+  (#117)
 
 ### Removed
 - **The two `tif_to_zarr` launcher scripts.** `PyReconstruct/assets/misc/`
@@ -78,8 +485,6 @@ the README's *From source (developers)* section).
   each would have left two files that still could not run, so they are removed
   and `tif_to_zarr.py` documents its own invocation instead. The script itself
   stays and still works from a checkout.
-
-### Removed
 - **The bundled `assets/misc/zarr_to_jser.py` script.** A hand-edit-the-constants
   developer script that imported a label zarr back into a series. It could not run
   against anything the app produces: it read a `srange` zarr attribute that no
@@ -919,4 +1324,5 @@ the README's *From source (developers)* section).
 
 [Unreleased]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.21.0...HEAD
 [1.21.0]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.20.0...v1.21.0
+[1.21.0-beta-6]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.21.0-beta-5...v1.21.0-beta-6
 [1.20.0]: https://github.com/dustenhubbard/PyReconstruct/releases/tag/v1.20.0
