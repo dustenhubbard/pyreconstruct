@@ -13,8 +13,6 @@ the README's *From source (developers)* section).
 
 ## [Unreleased]
 
-## [1.21.0-beta-6] - 2026-07-30
-
 ### Added
 - **A keyboard shortcut for "Invert selection".** The field action shipped with a
   right-click row and a working handler but with its shortcut written into the
@@ -39,6 +37,67 @@ the README's *From source (developers)* section).
   skips the seven tabs that are not about alignments. Each row's target name
   prefills from the source alignment's own name, since importing under the same
   name is what users mostly want.
+
+### Changed
+- **Importing an alignment onto a name already in use now asks instead of
+  refusing.** The importer previously rejected any target name the series already
+  had ("Alignment name already exists in current series"), which left no way to
+  replace an alignment short of renaming the new one. It now lists the alignments
+  that would be replaced, states that the replacement happens on every section and
+  that undo will not recover the old transforms, and proceeds only if the user
+  confirms. The prompt fires only when a name really is taken, so an import that
+  adds new alignments is unchanged. Palettes and brightness/contrast profiles keep
+  the old refuse-outright behavior; overwriting those was not asked for and they
+  are not undoable either.
+
+### Fixed
+- **Importing transforms adds the new alignment to the alignment menu.** Both
+  `Alignments > Import alignments` entries, `From .txt file...` and
+  `From SWiFT project...`, create an alignment and make it the current one, and
+  neither rebuilt the menus afterwards. The created alignment was missing from the
+  field's "Series alignment" submenu, which went on showing the previous alignment
+  as the checked one. The current alignment then had no menu action of its own, and
+  `changeAlignment` looks one up by name for the alignment it is leaving, so the
+  next alignment switch by either route (the submenu, or "Edit alignments...")
+  raised `AttributeError` and put up an error report instead of switching. Both
+  imports now rebuild the context menus, and only when the set of alignment names
+  actually changed.
+- **Importing alignments from another series is now undoable.** The Alignments tab
+  of Series > Import series data > From another series rewrites `section.tforms`
+  on every section in the series, and there was no way back: `importTransforms`
+  took a `series_states` argument, the caller passed one, and the method never
+  forwarded it to `enumerateSections`, so no undo state was recorded anywhere. It
+  now records the same unbreakable series-wide state the `.txt` importer and
+  `Series.modifyAlignments` already record, so one undo restores every section's
+  previous transforms, and a redo re-applies the import. The state is deliberately
+  unbreakable: a per-section undo would leave the imported alignment on some
+  sections and not others, which `Series.alignments` rejects as corrupt. Measured
+  on the 198-section `class_series` fixture, recording the states costs about
+  20 ms on top of a 60 ms import.
+- **Renaming or deleting a brightness/contrast profile is now undoable.** `Series >
+  Brightness/contrast profiles...` rewrites `section.bc_profiles` on every section
+  in the series, and there was no way back. `MainWindow.changeBCProfiles` passed
+  the undo states to `Series.modifyBCProfiles`, which had no such parameter, so the
+  object bound to `log_event` instead: truthy, so nothing raised, logging happened
+  by accident, and no undo state was recorded. One undo now restores every
+  section's profiles and the profile the series was displaying, and a redo
+  re-applies the change. Brightness and contrast adjustments themselves are still
+  not undoable, deliberately: the profiles are stored on the series undo state
+  rather than in `FieldState`, so an unrelated undo cannot revert a slider nudge.
+  Measured on the 198-section `class_series` fixture, recording the states costs
+  about 26 ms on top of a 67 ms rename.
+- **Renaming or deleting the brightness/contrast profile currently on screen no
+  longer raises.** `Series > Brightness/contrast profiles...` rewrote every
+  section's profiles and then reloaded the field before switching profiles, so a
+  rename left `series.bc_profile` naming a key that no longer existed.
+  `Section.brightness` indexes `bc_profiles` by that name and the reload reads it
+  through the brightness/contrast palette, giving `KeyError: '<old name>'` on the
+  forward path, with no undo involved. The displayed profile now follows the
+  rename, and deleting it falls back to `default`.
+
+## [1.21.0-beta-6] - 2026-07-30
+
+### Added
 - **A keyboard shortcut for "Copy to sections...".** The action now has a
   user-configurable default of `Ctrl+Alt+C`, listed in the shortcuts dialog next
   to Copy. `Ctrl+Shift+C` was the natural sibling of `Ctrl+C` and was requested
@@ -114,7 +173,6 @@ the README's *From source (developers)* section).
   helper alone. (#123)
 
 ### Changed
-
 - **The startup update check is now on by default, and existing installs are
   corrected once.** `update_check_on_startup` defaulted to `False`, and
   `Series.getOption` persists a default the first time it is read, so every
@@ -135,16 +193,6 @@ the README's *From source (developers)* section).
   only on the welcome framing, and only in the installed app, since a checkout
   never runs the check and the claim would be false there. The generic fallback
   body no longer opens with "Thanks for updating" on a first run.
-- **Importing an alignment onto a name already in use now asks instead of
-  refusing.** The importer previously rejected any target name the series already
-  had ("Alignment name already exists in current series"), which left no way to
-  replace an alignment short of renaming the new one. It now lists the alignments
-  that would be replaced, states that the replacement happens on every section and
-  that undo will not recover the old transforms, and proceeds only if the user
-  confirms. The prompt fires only when a name really is taken, so an import that
-  adds new alignments is unchanged. Palettes and brightness/contrast profiles keep
-  the old refuse-outright behavior; overwriting those was not asked for and they
-  are not undoable either.
 - **The "Copy to sections" picker suggests real sections from the open series.**
   The dialog's hint and input placeholder were a fixed `10-20` / `5, 8, 11`, which
   meant nothing in a series that does not run to 20. They now show the series' own
@@ -551,51 +599,6 @@ the README's *From source (developers)* section).
   which additionally handles a downsampled labels array, per-id selection, the
   curated color palette, and group assignment. The import-resolution test that
   guarded the deleted file now covers every script in `assets/misc/` instead.
-
-### Fixed
-- **Importing transforms adds the new alignment to the alignment menu.** Both
-  `Alignments > Import alignments` entries, `From .txt file...` and
-  `From SWiFT project...`, create an alignment and make it the current one, and
-  neither rebuilt the menus afterwards. The created alignment was missing from the
-  field's "Series alignment" submenu, which went on showing the previous alignment
-  as the checked one. The current alignment then had no menu action of its own, and
-  `changeAlignment` looks one up by name for the alignment it is leaving, so the
-  next alignment switch by either route (the submenu, or "Edit alignments...")
-  raised `AttributeError` and put up an error report instead of switching. Both
-  imports now rebuild the context menus, and only when the set of alignment names
-  actually changed.
-- **Importing alignments from another series is now undoable.** The Alignments tab
-  of Series > Import series data > From another series rewrites `section.tforms`
-  on every section in the series, and there was no way back: `importTransforms`
-  took a `series_states` argument, the caller passed one, and the method never
-  forwarded it to `enumerateSections`, so no undo state was recorded anywhere. It
-  now records the same unbreakable series-wide state the `.txt` importer and
-  `Series.modifyAlignments` already record, so one undo restores every section's
-  previous transforms, and a redo re-applies the import. The state is deliberately
-  unbreakable: a per-section undo would leave the imported alignment on some
-  sections and not others, which `Series.alignments` rejects as corrupt. Measured
-  on the 198-section `class_series` fixture, recording the states costs about
-  20 ms on top of a 60 ms import.
-- **Renaming or deleting a brightness/contrast profile is now undoable.** `Series >
-  Brightness/contrast profiles...` rewrites `section.bc_profiles` on every section
-  in the series, and there was no way back. `MainWindow.changeBCProfiles` passed
-  the undo states to `Series.modifyBCProfiles`, which had no such parameter, so the
-  object bound to `log_event` instead: truthy, so nothing raised, logging happened
-  by accident, and no undo state was recorded. One undo now restores every
-  section's profiles and the profile the series was displaying, and a redo
-  re-applies the change. Brightness and contrast adjustments themselves are still
-  not undoable, deliberately: the profiles are stored on the series undo state
-  rather than in `FieldState`, so an unrelated undo cannot revert a slider nudge.
-  Measured on the 198-section `class_series` fixture, recording the states costs
-  about 26 ms on top of a 67 ms rename.
-- **Renaming or deleting the brightness/contrast profile currently on screen no
-  longer raises.** `Series > Brightness/contrast profiles...` rewrote every
-  section's profiles and then reloaded the field before switching profiles, so a
-  rename left `series.bc_profile` naming a key that no longer existed.
-  `Section.brightness` indexes `bc_profiles` by that name and the reload reads it
-  through the brightness/contrast palette, giving `KeyError: '<old name>'` on the
-  forward path, with no undo involved. The displayed profile now follows the
-  rename, and deleting it falls back to `default`.
 
 ## [1.21.0] — 2026-08-04
 
