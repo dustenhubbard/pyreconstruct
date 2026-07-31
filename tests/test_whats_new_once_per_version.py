@@ -264,7 +264,12 @@ def test_startup_shows_the_notes_once_per_version_in_the_real_window(
     dialog = main_window._whatsnew_dialog
     assert dialog is not None and dialog.isVisible()
     assert dialog.isModal() is False                      # never blocks startup
-    assert "Added the shiny new thing." in dialog._notes.toPlainText()
+    rendered = dialog._notes.toPlainText()
+    assert "Added the shiny new thing." in rendered
+    # the maintainer byline rides at the bottom of the notes, exactly once, all
+    # the way through the real startup handler and dialog
+    assert rendered.count(F.MAINTAINER_BYLINE) == 1
+    assert rendered.index("Added the shiny new thing.") < rendered.index(F.MAINTAINER_BYLINE)
     assert settings.value(F.WHATSNEW_KEY) == "1.21.0"     # recorded as seen
 
     dialog.close()

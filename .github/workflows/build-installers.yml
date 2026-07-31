@@ -193,6 +193,10 @@ jobs:
             else
               echo "_For developers, the full technical changelog:_ **[commit history](https://github.com/${GITHUB_REPOSITORY}/commits/${GITHUB_REF_NAME})**"
             fi
+            # Maintainer provenance line, quiet and set off from the notes above.
+            # Single-quoted so it is emitted literally, with no shell interpolation.
+            echo ""
+            echo '_An independent build of PyReconstruct, maintained by Dusten Hubbard._'
           } > release_body.md
           echo "----- release_body.md -----"; cat release_body.md
       - name: Classify release

@@ -104,7 +104,18 @@ class WhatsNewDialog(QDialog):
         orienter.setFont(of)
         lay.addWidget(orienter)
 
-        self._notes = make_notes_browser(content["body"], min_height=260)
+        # The maintainer provenance line rides at the very bottom of the notes,
+        # set off from them by a rule and rendered in a quieter (italic) register
+        # so it reads as an aside about who maintains this build, not as one more
+        # release bullet. It comes from the builder as its own field and is the
+        # same on every framing (update, welcome, on-demand, generic fallback);
+        # appending it here, once, is the only place it is rendered, so it can
+        # never double up with the notes body above it.
+        notes_md = content["body"]
+        byline = content.get("byline")
+        if byline:
+            notes_md = f"{notes_md}\n\n---\n\n_{byline}_" if notes_md else f"_{byline}_"
+        self._notes = make_notes_browser(notes_md, min_height=260)
         lay.addWidget(self._notes)
 
         link = QLabel(f'<a href="{url}">Full release notes on GitHub ↗</a>')
