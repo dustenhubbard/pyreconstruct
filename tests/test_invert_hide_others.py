@@ -151,12 +151,21 @@ def test_invert_includes_hidden_in_show_all_mode():
     assert set(s.selected_traces) == {h}
 
 
-def test_invert_never_selects_locked_objects():
+def test_invert_selects_locked_objects():
+    """Deliberately the inverse of what this test used to assert.
+
+    It pinned `Section.addSelectedTrace` refusing a locked object's trace, so
+    inverting in the field skipped locked objects while
+    `test_object_invert_does_not_exclude_locked_rows` had the object list
+    selecting locked rows freely. Two inverts, opposite answers, same question.
+    Lock guards mutations that change quantitative data and nothing else, so the
+    field was the side that was wrong. The two now agree.
+    """
     a, locked = mk("a"), mk("locked")
     s = bare_section([a, locked], locked_names={"locked"})
     s.selected_traces = [a]
     s.invertTraceSelection()
-    assert s.selected_traces == []   # a deselected; locked can't be selected
+    assert s.selected_traces == [locked]   # a deselected, locked selected
 
 
 def test_invert_leaves_ztrace_and_flag_selection_untouched():
