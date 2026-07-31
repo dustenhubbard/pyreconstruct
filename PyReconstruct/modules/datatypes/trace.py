@@ -95,9 +95,63 @@ class Trace():
             return False
         return True
 
+    ## How far apart, per axis, two corresponding points may sit and still count
+    ## as the same point. Named because a caller that wants to skip a pair of
+    ## traces cheaply has to allow for it: two traces can match point for point
+    ## under this tolerance while their bounding boxes do not touch, so a
+    ## bounding-box test that rules a pair out has to be slack by this much or it
+    ## will rule out pairs that pointsMatch accepts. Real data has such pairs;
+    ## see Series._duplicatePairs.
+    POINTS_MATCH_TOLERANCE = 1e-2
+
+    def pointsMatch(self, other) -> bool:
+        """Check if two traces are the same point sequence, within a tolerance.
+
+        The cheap half of overlaps(): equal point counts and every pair of
+        corresponding points within POINTS_MATCH_TOLERANCE in both axes. Settled
+        without measuring any area, which is what lets overlaps() answer for
+        shapes that have no area to measure (see getOverlapRatio's zero-area
+        note).
+
+            Params:
+                other (Trace): the trace to compare
+            Returns:
+                (bool): whether the two point sequences coincide
+        """
+        if len(self.points) != len(other.points):
+            return False
+        tol = self.POINTS_MATCH_TOLERANCE
+        for (x1, y1), (x2, y2) in zip(self.points, other.points):
+            if abs(x1-x2) > tol or abs(y1-y2) > tol:
+                return False
+        return True
+
+    @staticmethod
+    def ratioIsOverlap(r : float, threshold : float) -> bool:
+        """Apply the overlap threshold to an already-measured overlap ratio.
+
+        Split out of overlaps() so a caller that needs the ratio itself (to
+        report it, say) can measure once and still reach the same verdict
+        overlaps() would. The threshold is exclusive below 1, and a threshold of
+        exactly 1 demands an exact ratio of 1.
+
+            Params:
+                r (float): an overlap ratio, as returned by getOverlapRatio
+                threshold (float): the threshold overlap ratio (exclusive)
+            Returns:
+                (bool): whether that ratio counts as overlapping
+        """
+        ## bool(), not the comparison itself: getOverlapRatio divides two
+        ## numpy sums, so the comparison yields numpy.bool_ and callers that
+        ## assert `is True` would fail on it. overlaps() has always returned a
+        ## plain bool here and tests hold it to that.
+        if threshold < 1:
+            return bool(r > threshold)
+        return bool(threshold == r == 1)
+
     def overlaps(self, other, threshold=0.99):
         """Check if trace points overlap.
-        
+
             Params:
                 other (Trace): the trace to compare
                 threshold (float): the threshold overlap ratio to define overlapping (exclusive)
@@ -106,28 +160,14 @@ class Trace():
         """
         if self.closed != other.closed:
             return False
-        
+
         # compare points directly
-        points_match = True
-        if len(self.points) != len(other.points):
-            points_match = False
-        else:      
-            for (x1, y1), (x2, y2) in zip(self.points, other.points):
-                if abs(x1-x2) > 1e-2 or abs(y1-y2) > 1e-2:
-                    points_match = False
-                    break
-        if points_match:
+        if self.pointsMatch(other):
             return True
-        
+
         # compare amount of overlap
-        r = self.getOverlapRatio(other)
-        if threshold < 1 and r > threshold:
-            return True
-        elif threshold == r == 1:
-            return True
-        else:
-            return False
-    
+        return self.ratioIsOverlap(self.getOverlapRatio(other), threshold)
+
     def setHidden(self, hidden=True):
         """Set whether the trace is hidden.
         
