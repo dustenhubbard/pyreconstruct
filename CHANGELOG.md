@@ -24,7 +24,7 @@ the README's *From source (developers)* section).
   on the otherwise unused `Ctrl+Alt` tier rather than displacing a live binding.
   The key is bound through the field only; the trace list leaves it unbound, as
   every other list menu does. A new test additionally asserts that no two actions
-  in the configurable shortcut set share a default key — Qt answers such a clash
+  in the configurable shortcut set share a default key. Qt answers such a clash
   by firing *neither* action, which is invisible until a user reports a dead
   shortcut.
 - **Hover tooltips on File > Utilities, and room between a menu label and its
@@ -531,7 +531,7 @@ the README's *From source (developers)* section).
 - **A menubar inventory test** (`tests/test_menubar_labels.py`). The right-click
   menus have been guarded by an explicit action inventory since the frequency-first
   redesign; the menubar had no such guard. The complete tree of `main/menubar.py`
-  — 113 actions and 32 submenus, separators included — is now frozen by
+  (113 actions and 32 submenus, separators included) is now frozen by
   `attr_name`, and the File and Series menus are additionally frozen label for
   label, so a future pass has to name anything it drops, moves or renames.
 - **Data clean-up menu.** A "Clean up" submenu under the Series menu groups three
@@ -541,11 +541,11 @@ the README's *From source (developers)* section).
   section, exact points or IoU above a threshold, default 0.95; never merges
   distinct objects), *Remove pixel-dust traces* (small closed traces at or below a
   user-chosen threshold, presented in a reviewable `PixelDustDialog` before
-  anything is deleted), and *Remove empty traces* (degenerate geometry only — no
-  points, zero-area closed, zero-length open — after a count-stating
+  anything is deleted), and *Remove empty traces* (degenerate geometry only: no
+  points, zero-area closed, zero-length open; after a count-stating
   confirmation). Locked objects are left untouched. `MalformedContoursDialog` is
   generalized with an overridable column/heading spec so the review dialog reuses
-  its selection/navigation/delete/export behaviour. (#88)
+  its selection/navigation/delete/export behavior. (#88)
 - **The pixel-dust threshold is expressed in pixels (px²)** rather than physical
   area, matching the "smaller than N pixels on its own image" mental model.
   `findPixelDustTraces` derives the physical cutoff per section from that
@@ -567,7 +567,7 @@ the README's *From source (developers)* section).
   `next_shuffle_seed()` rejects a candidate reproducing the current mapping, so a
   click always visibly changes the arrangement; the result is still a plain
   deterministic integer, so preview-equals-import and cross-section color
-  stability are unchanged. The Series ▸ Options seed field is relabelled with a
+  stability are unchanged. The Series ▸ Options seed field is relabeled with a
   caption pointing at the button. Shuffling affects only the live preview and
   future imports. (#80)
 - **"Reapply autoseg colors..."** on the object-list / object context menu pushes
@@ -578,7 +578,7 @@ the README's *From source (developers)* section).
   back to a `PYTHONHASHSEED`-independent `zlib.crc32` of the name);
   `series.reapplyAutosegColors` resolves per-object color once and rewrites
   through the normal per-section `editTraceAttributes` path over only the sections
-  the objects appear on — one undoable operation, no per-object full-series scans.
+  the objects appear on. One undoable operation, no per-object full-series scans.
   Goes through the `object_function` wrapper, so locked objects are blocked as for
   any bulk attribute edit, behind a confirm dialog. (#83)
 - **"Copy to sections" reports the actual sections written.** The result message
@@ -604,7 +604,7 @@ the README's *From source (developers)* section).
   handler/actions. `mergeLabels` now disables correctly at ≤1 selected label.
   (#77)
 - **`docs/JSER_FORMAT.md`**: a normative description of the current `.jser`
-  on-disk format — byte invariants, the hidden unpack directory, the top level and
+  on-disk format: byte invariants, the hidden unpack directory, the top level and
   the holes in the sections array, the log's pseudo-CSV rules, every positional row
   documented index by index, the options bag and settings scoping, and the
   migration branches in `updateJSON`. Roughly 120 machine-checked `file:line`
@@ -613,8 +613,8 @@ the README's *From source (developers)* section).
   the reader/writer divergences found while documenting. (#94)
 - **`benchmarks/` measurement harness (Phase 0).** Replaces the withdrawn RAM
   figures and assumed hotspots with measurements. Cold and warm are explicit
-  labelled conditions and never pooled; the harness observes which path
-  `openJser` took and aborts on a mislabelled rep; loud manifest with hard-fail on
+  labeled conditions and never pooled; the harness observes which path
+  `openJser` took and aborts on a mislabeled rep; loud manifest with hard-fail on
   missing files, uniform warmup, rotated checkout order, page cache pinned; guards
   verified by negative test. Corrected numbers (3 reps, medians): warm-vs-warm
   2.05× / 2.39× / 2.55× at 162k/324k/485k traces; cold-vs-cold 1.44-1.48×, of
@@ -623,7 +623,7 @@ the README's *From source (developers)* section).
   file choreography is not I/O; JSON decode 15.7%, object construction 30.7%,
   geometry 53.0%, bounding a format change at about 28%. Ran on the largest
   available real autoseg series (407 MB, 161,767 traces) plus section-replicated
-  derivatives, labelled synthetic — the original lab series were unavailable.
+  derivatives, labeled synthetic. The original lab series were unavailable.
   (#96)
 - **`uv.lock` is committed** (134 packages, resolved for Python 3.11, including
   `orjson==3.11.8`) and `uv sync` / `uv run` become the canonical developer setup
@@ -680,8 +680,8 @@ the README's *From source (developers)* section).
   `5, 8, 11`); each trace is re-projected through every target section's own
   transform so it lands at the identical field position regardless of that
   section's alignment, and attributes (name, color, closed, tags) are preserved.
-  Traces are copied onto every chosen section, including alignment-locked ones —
-  a section lock guards its transform/alignment, not its trace content. The
+  Traces are copied onto every chosen section, including alignment-locked ones.
+  A section lock guards its transform/alignment, not its trace content. The
   source section is never modified.
 - **Propagate an alignment by correlation across a range.** Align by correlation
   (`Ctrl+\`) now records its shift through the same path a manual transform uses,
@@ -695,8 +695,8 @@ the README's *From source (developers)* section).
 - **User-guide wiki.** The full user guide is now a GitHub wiki with a page per
   topic, surfaced from the README and reachable in-app from Help ▸ Online
   resources ▸ PyReconstruct user guide. (#34)
-- **"What's new" on first launch.** On the first launch of a new version — a
-  fresh install or after an update — PyReconstruct shows a dismissible "What's
+- **"What's new" on first launch.** On the first launch of a new version (a
+  fresh install or after an update), PyReconstruct shows a dismissible "What's
   new" dialog with that version's release notes, read from the bundled
   `CHANGELOG.md` (offline-safe) with a link to the full notes on GitHub. It
   appears once per version and is modeless, so it never blocks startup.
@@ -718,7 +718,7 @@ the README's *From source (developers)* section).
   every `attr_name` is untouched).
   - `File ▸ Reload` → **Restart PyReconstruct**. It saves, reloads every
     `PyReconstruct.modules` module and recreates the main window with the same
-    series — it restarts the application, it does not reload the series. The
+    series. It restarts the application, it does not reload the series. The
     shortcuts dialog already called it "Restart"; `Ctrl+R` is unchanged.
   - `File ▸ Open` → **Open series...** (it opens a `.jser`; `Ctrl+O` unchanged).
   - `File ▸ Open recent` → **Open recent series**.
@@ -745,11 +745,11 @@ the README's *From source (developers)* section).
     zarr.
   - `Series ▸ Import` → **Import series data**, and its `From series...` →
     **From another series...** (the handler's own docstring: "Import from
-    another series"). Both rows bring data into the open series — traces,
+    another series"). Both rows bring data into the open series: traces,
     z-traces, flags, attributes, alignments, palettes and
     brightness/contrast profiles from another `.jser`, or neuroglancer zarr
     labels converted to objects.
-  - `File ▸ Projects` → **Utilities** — the maintainer's catch-all for the
+  - `File ▸ Projects` → **Utilities**: the maintainer's catch-all for the
     rarely used functions this submenu collects, and a signal for where
     future niche items go. Inside it, `Randomize images...` →
     **Randomize project...**, so the pair shares its noun with
@@ -767,7 +767,7 @@ the README's *From source (developers)* section).
   operation (`changeTform`, `translateTform`, `affineAlign`, `corrAlign`,
   `quickAlign`, `propagateTo`, and propagate-on-section-change). The section
   table, however, refused `setBC` / `matchBC` / `optimizeBC` on a locked
-  section, which made the lock mean "read-only section" — something it already
+  section, which made the lock mean "read-only section", something it already
   was not, since the same lock permits copying traces onto a locked section
   (`test_copy_traces_to_sections.py`: *"a lock protects the transform, not
   trace content"*) and the field's own `setBrightness` / `setContrast`
@@ -790,16 +790,16 @@ the README's *From source (developers)* section).
   `Comment...`, `Duplicate object`, `Add to 3D scene` and `Group >` are hoisted
   to top level; every list menu now leads with a domain action instead of
   `Invert selection`, which moves to the shared bottom utility slot beside
-  `Copy <entity> values`. **No action was removed, renamed, or unbound** — all
+  `Copy <entity> values`. **No action was removed, renamed, or unbound.** All
   112 inventoried actions remain reachable and every keyboard shortcut keeps its
   key (shortcuts are keyed to internal action names, which are unchanged). The
   only label change is `Add to scene` → `Add to 3D scene`, which needs the noun
   now that it sits at top level rather than inside `3D >`.
 - **The object menu's "Remove all tags" is filed honestly.** Tags are
   trace-level, so on an object menu this action strips tags from every trace of
-  the selected objects, series-wide — a bulk trace operation, not an object
-  attribute and not geometry (its old home). It now sits in its own group above
-  `Delete objects`.
+  the selected objects, series-wide. That is a bulk trace operation, not an
+  object attribute and not geometry (its old home). It now sits in its own
+  group above `Delete objects`.
 - **The trace list gains `Find > Find in field`**, mirroring what double-clicking
   a row already does, for discoverability.
 - **Saved `.jser` files are minified again, so saves are faster and files are
@@ -808,7 +808,7 @@ the README's *From source (developers)* section).
   **+11% of save time** and **about 27% more transient memory in the save path**
   (an extra ~411 MB, about one additional copy of the document), for +0.65% of
   file size. Whole-process peak memory was unchanged, which is why the cost went
-  unnoticed. Minified is now the default, reversing that part of #102 —
+  unnoticed. Minified is now the default, reversing that part of #102:
   `saveJser` on the same 391 MB series goes **7.064 s → 6.333 s (−10.3%)** and
   **393,372,829 → 390,846,078 bytes (−0.64%)**, with save-path transient memory
   **1,922 MB → 1,511 MB (−21%)**. Smaller series shrink proportionally more
@@ -820,11 +820,11 @@ the README's *From source (developers)* section).
 - **If you were relying on the readable format, opt back in** by setting
   `PYRECON_JSER_PRETTY=1`; otherwise files that had become line-structured will
   revert to a single line on the next save. The pretty form is unchanged and
-  still worth it for reading a diff — a one-trace edit on a 781 MB series is 669
+  still worth it for reading a diff: a one-trace edit on a 781 MB series is 669
   bytes of `diff` output pretty versus the whole file twice minified. The variable
   is now read on **every** write instead of once at start-up, so it can be
   changed in a running session. It replaces `PYRECON_JSER_MINIFY`, which is gone;
-  the behaviour that variable selected is now the default. Both forms are the
+  the behavior that variable selected is now the default. Both forms are the
   same JSON document and the reader accepts either, so this is
   backward-compatible in both directions.
 - **Menu labels normalized** across the context menus, menubar, list menus and
@@ -846,10 +846,10 @@ the README's *From source (developers)* section).
   since `setChecked` emits `toggled` while handlers are on `triggered`, the
   resync never re-fires a handler. (#76)
 - **List copy actions renamed** from "Copy row text" to "Copy `<entity>` values"
-  across the object, trace, z-trace, section and flag lists — the copy is
+  across the object, trace, z-trace, section and flag lists. The copy is
   tab-separated cell values with no header line. The object-menu submenu title
   reverts to "Object attributes" to differentiate it from trace attributes.
-  Labels only; `attr_names`, shortcuts, handlers and copy behaviour unchanged.
+  Labels only; `attr_names`, shortcuts, handlers and copy behavior unchanged.
   (#78, #79)
 - **"Check series histories" now defaults to on** in the import dialog. With it
   off, the import resurrects deleted objects and duplicates renamed ones; with it
@@ -867,8 +867,8 @@ the README's *From source (developers)* section).
   answer. Exact array equality over 96 randomized grids, 60 `getExterior` runs and
   30 far-edge trials, zero mismatches. Lasso sweep on `shapes2` **13.67 s → 1.00 s
   (13.7×)**; `getAnchorTrace` alone 60-90×. Separately, per-point QPoint
-  conversion is replaced by `list(starmap(QPoint, pix_pts.tolist()))` — PySide6
-  exposes no bulk QPolygon constructor — which is pixel-identical by construction
+  conversion is replaced by `list(starmap(QPoint, pix_pts.tolist()))` (PySide6
+  exposes no bulk QPolygon constructor), which is pixel-identical by construction
   and confirmed by golden buffers over 11 shapes × 5 draw modes with 0 differing
   pixels; dense autoseg full frames **13.16 s → 8.27 s (1.59×)**, incremental
   frames 1.17×. The `cv2.polylines` rasterizer swap was **stopped** and pinned by
@@ -928,9 +928,9 @@ the README's *From source (developers)* section).
   purpose. `""` is already the supported state: it is the `getEmptyDict()`
   default, it is what `updateJSON` backfills when the key is absent, and
   `create_ng_zarr/utils.py` already substitutes it before hashing because the value
-  differs between users. An empty `src_dir` degrades rather than raising — the
+  differs between users. An empty `src_dir` degrades rather than raising (the
   image layer sets `image_found = False` and the window offers to locate the
-  images — and the welcome series never used the stored value, since
+  images), and the welcome series never used the stored value, since
   `get_welcome_setup()` reassigns it at runtime. (#100)
 
 - **Update-channel labels renamed for clarity**: "Release" → "Stable
@@ -955,7 +955,7 @@ the README's *From source (developers)* section).
   affine point mapping that dominate opening and refreshing a series, with no
   change to the `.jser` format or data model. Open and refresh are **3–4× faster**
   across real autoseg series from 6 MB to 1.4 GB (up to ~4.2×); the geometry is
-  verified equivalent to the previous implementation — section/object/trace counts
+  verified equivalent to the previous implementation: section/object/trace counts
   match exactly and summed area/length/radius are identical on seven of the eight
   benchmark series (the largest differs by ~1e-11 relative on summed radius, from
   floating-point summation order). The work
@@ -991,12 +991,12 @@ the README's *From source (developers)* section).
 ### Fixed
 - **Restoring "Needs curation" from the log keeps the assignee.** Marking an
   object as needing curation stores the assignee on the object, but the log
-  entry carried only the bare event "Mark as needs curation" — so *Series ▸
+  entry carried only the bare event "Mark as needs curation", so *Series ▸
   Restore object curation status from log* had nothing to recover and wrote
   the status back with an empty User column. The event now records the
   assignee ("Mark as needs curation (assigned to `<user>`)") and the restore
   parses it back out. Unassigned markings log the bare event exactly as
-  before, and logs written before this change still restore as they did —
+  before, and logs written before this change still restore as they did,
   with the status but no assignee, since none was ever recorded in them.
 - **The legacy brightness/contrast migration destroyed named profiles.**
   `Section.updateJSON` folds the pre-profiles scalar `brightness`/`contrast`
@@ -1005,16 +1005,16 @@ the README's *From source (developers)* section).
   profile on that section. The exposure was per-open, not one-shot: `saveJser`
   reads each section file out of the hidden directory verbatim (`fast_loads` of
   the raw bytes) rather than through `Section.getDict`, and `updateJSON` left
-  the legacy scalars in the dict it wrote — so a section the user never
+  the legacy scalars in the dict it wrote, so a section the user never
   individually edited kept its scalars across a save and met the migration
   again on the next open, and the one after that. Only a section that went
   through `Section.save` dropped them, and that save made the loss permanent.
   The migration now **merges**. Whether the legacy pair may become `default` is
   decided by whether the *file* carried a profiles dict at all, captured before
-  the back-fill loop inserts the key — not by comparing values, which cannot
-  distinguish a deliberate `(0, 0)` default from the back-filled placeholder.
-  No profiles key means a pre-profiles file, whose scalars are its only
-  brightness/contrast and become `default`; a profiles dict that is already
+  the back-fill loop inserts the key. It is not decided by comparing values,
+  which cannot distinguish a deliberate `(0, 0)` default from the back-filled
+  placeholder. No profiles key means a pre-profiles file, whose scalars are its
+  only brightness/contrast and become `default`; a profiles dict that is already
   present is authoritative and is never overwritten, though a missing `default`
   is still filled from the scalars. A non-dict `brightness_contrast_profiles`
   is still repaired, which the old wholesale assignment did by accident and a
@@ -1027,11 +1027,11 @@ the README's *From source (developers)* section).
   ignoring the stored value. Checked and deliberately left alone: it carries an
   explicit "lock the section" comment, predates the fork, matches
   `getEmptyDict()`'s `align_locked = True` default, is already documented as
-  legal by `test_jser_canonical_format.py`, and is fail-safe — honouring a
+  legal by `test_jser_canonical_format.py`, and is fail-safe. Honoring a
   stored `False` would *remove* alignment protection on every open. The
-  hidden-directory resume path honours the stored value because it resumes a
+  hidden-directory resume path honors the stored value because it resumes a
   live working directory rather than opening a file, so re-locking there would
-  discard a lock the user cleared mid-session. Both behaviours are now pinned
+  discard a lock the user cleared mid-session. Both behaviors are now pinned
   by characterization tests so they are not "fixed" later. (#113)
 
 - **Minimum Feret diameter was computed as a vertex-pair distance instead of the
@@ -1050,8 +1050,8 @@ the README's *From source (developers)* section).
   true width is 1.0. Only 3 of 8 gallery shapes passed and all three were
   rectangles or needles, which agree by coincidence.
 
-  **Behaviour change, stated plainly: 271 of 271 closed fixture traces change,
-  every one of them downward** (old values are always overestimates — 0
+  **Behavior change, stated plainly: 271 of 271 closed fixture traces change,
+  every one of them downward** (old values are always overestimates; 0
   counterexamples in 12,000 fuzz sets). Median 0.96% on `class_series`, worst
   **45.93%** (`d03sp12` s46: 0.505747 → 0.346575); worst 14.70% on the shapes
   series. **Errors concentrate on thin structures such as spine necks.** Minimum
@@ -1072,13 +1072,13 @@ the README's *From source (developers)* section).
   same defect. (#95)
 - **Silent trace-loss paths in the series-to-series import are closed.** The rule
   is now: an import may discard a trace only if that trace overlaps something on
-  the surviving side, or if a log entry records it as deliberately removed — and a
+  the surviving side, or if a log entry records it as deliberately removed. A
   discarded trace always leaves behind both a flag and a log entry. Where the
   machinery cannot decide safely, both sides are kept and the disagreement is
   flagged rather than resolved by picking a winner.
 
   `Section.importTraces` shortcuts a contour on one Boolean per side from
-  `getModifiedSinceDiverge` — *"does this side's log mention this contour after
+  `getModifiedSinceDiverge`: *"does this side's log mention this contour after
   the divergence point?"*. `True` is positive evidence of an edit; `False` is only
   silence, and three branches treated silence as proof a side was unchanged. Logs
   get trimmed, get rewritten when an object is deleted (`LogSet.addLog` purges
@@ -1089,12 +1089,12 @@ the README's *From source (developers)* section).
   comparing a single point, overwriting unlogged work out of existence;
   `(True, False)` dropped theirs, correct when we deleted or renamed the object but
   silent destruction when their work simply was not logged. Separately,
-  `keep_below="self"`/`"other"` deleted every unfavoured conflict trace overlapping
-  a favoured one and then cleared the favoured pool, so the flagging step had
+  `keep_below="self"`/`"other"` deleted every unfavored conflict trace overlapping
+  a favored one and then cleared the favored pool, so the flagging step had
   nothing left to flag.
 
   One bound remains, unchanged by this work: when the two logs share no common
-  prefix (`last_shared_index == -1` — an empty log, a log trimmed on one side, a
+  prefix (`last_shared_index == -1`: an empty log, a log trimmed on one side, a
   series produced by conversion) the entire history block is skipped silently and
   the import degrades to a plain union in which deletions resurrect. Nothing is
   destroyed, so this is a failure of intent propagation rather than of safety.
@@ -1108,8 +1108,8 @@ the README's *From source (developers)* section).
   against `other[i]` while they overlap, which used the caller's `threshold`, and a
   nested scan over everything left over, which compared with a literal
   `threshold=0.95`. Pass 2 is the pass that decides the genuinely divergent
-  traces — every trace an import between two edited copies actually has to reason
-  about — so moving the dialog's "Overlap threshold" slider off its 0.95 default
+  traces (every trace an import between two edited copies actually has to reason
+  about), so moving the dialog's "Overlap threshold" slider off its 0.95 default
   had almost no effect, and nothing said so. Both directions did damage: at a
   *stricter* setting (0.99, or 1.0 = "points must match perfectly") non-duplicates
   were merged and, with the default `keep_above="self"`, **the importing series'
@@ -1123,7 +1123,7 @@ the README's *From source (developers)* section).
 - **Scissors right-click destroyed the trace when the trace layer was hidden.**
   The scissors tool picks a trace up by deleting it in `scissorsPress` (a raw
   `section.deleteTraces`, not guarded by `@field_interaction`) and relies on the
-  right-click completion in `lineRelease` to recreate it via `newTrace` — but
+  right-click completion in `lineRelease` to recreate it via `newTrace`, but
   `newTrace` is wrapped by `@field_interaction`, which is a no-op while the trace
   layer is hidden. A pickup followed by a right-click completion with the layer
   hidden therefore deleted the trace with nothing put back, silently destroying
@@ -1134,7 +1134,7 @@ the README's *From source (developers)* section).
   log are gated on the same signal. Sibling tools were checked: knife
   (`cutTrace`) and `mergeTraces` delete and recreate inside a single
   `@field_interaction` method, so they skip atomically when hidden and never lose
-  data — only the scissors split its delete from its guarded recreate across two
+  data. Only the scissors split its delete from its guarded recreate across two
   event handlers. Upstream issue #51. (#81)
 - **An empty object group raised `TypeError` on save.** `getGroupDict` passed a
   bare `set` through unconverted for an empty group, which raises in orjson and in
@@ -1143,14 +1143,14 @@ the README's *From source (developers)* section).
 - **A non-string object key made the pretty writer emit a file no parser will
   reopen.** `fast_dumps` passes `OPT_NON_STR_KEYS`, so the compact writer coerces
   `1` to `"1"`; dumping a key on its own did not, and the writer emitted a bare
-  `1:` — the save succeeded and replaced the previous good file. Keys now go
+  `1:`. The save succeeded and replaced the previous good file. Keys now go
   through `_dump_key`, which lifts the coercion out of the compact writer rather
   than reimplementing it, so the two cannot drift. Not reachable from the GUI,
   since every keyed map is keyed by a name that is always a string, but the failure
   mode is a silently unreadable file on data that cannot be regenerated. (#103)
 - **Trace tags were sorted only when the user happened to touch the section.**
   `Trace.getList` sorts them, but it only runs for a section that goes back through
-  the model, while `saveJser` reads the hidden directory verbatim — so identical
+  the model, while `saveJser` reads the hidden directory verbatim, so identical
   content produced 26,305 differing bytes on a 33 KB fixture depending only on
   browsing history. Tags are now sorted in `Section.updateJSON`, beside the section
   key order and contour name order already canonicalized there. (#103)
@@ -1164,7 +1164,7 @@ the README's *From source (developers)* section).
   against another output of the same writer. (#103)
 - **The pretty writer invented top-level keys.** For a document missing `series`
   or `log`, the pretty printer emitted both unconditionally, defaulting them to
-  `{}` and `""`, so the two output forms disagreed on the key set — the one thing
+  `{}` and `""`, so the two output forms disagreed on the key set, the one thing
   `jser_format` guarantees they never do. No saved file is affected, since
   `saveJser` always populates `sections`, `series` and `log` before calling the
   writer, and output for a complete document is byte-identical before and after;
@@ -1183,10 +1183,11 @@ the README's *From source (developers)* section).
   (#98)
 - **"Use UTC time" could not be turned off until restart.** `utc_p()` did
   `False if utc == "false" else True`, which returns `True` whenever QSettings
-  hands back a real bool — that is, with the key unset, and for the rest of a
-  session after the options dialog writes it, since Qt caches a bool in-process and
-  only a fresh process reads the string `"false"` back from the INI. A fresh
-  install therefore timestamped in UTC despite `default_settings["utc"] = False`.
+  hands back a real bool. That is the case with the key unset, and for the rest
+  of a session after the options dialog writes it, since Qt caches a bool
+  in-process and only a fresh process reads the string `"false"` back from the
+  INI. A fresh install therefore timestamped in UTC despite
+  `default_settings["utc"] = False`.
   The read now routes through the `settings_store` seam so the typed read agrees
   with `Series.getOption("utc")`. Verified empirically. Pre-fix module was
   byte-identical to upstream. (#93)
@@ -1319,7 +1320,7 @@ the README's *From source (developers)* section).
   (README ▸ *From source (developers)*). A stored `developer` channel option
   degrades gracefully to Beta, and the updater keeps its rolling-tag exclusion as
   defense in depth. Reverts the channel added in #66, so the net effect for
-  1.21.0 is the same two channels as 1.20.4 — the Developer channel existed
+  1.21.0 is the same two channels as 1.20.4. The Developer channel existed
   only between the beta-3 and beta-5 pre-releases.
 
 ## [1.20.0] - 2026-06-26
