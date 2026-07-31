@@ -1,4 +1,4 @@
-# Benchmarks — fork perf vs. upstream
+# Benchmarks: fork perf vs. upstream
 
 Local performance study of this fork's `main` against the upstream commit it was
 compared against originally (`SynapseWeb/PyReconstruct@7b2c92f`).
@@ -14,13 +14,13 @@ compared against originally (`SynapseWeb/PyReconstruct@7b2c92f`).
 
 Per `(checkout, series, condition)`, in a fresh interpreter per rep:
 
-- **open** — `Series.openJser(path)` (JSON load; the fork uses orjson)
-- **refresh** — `SeriesData(series).refresh()` (builds every trace's geometry)
-- **save** — `Series.saveJser(...)` (JSON dump; skipped above `--skip-save-above-mb`)
+- **open**: `Series.openJser(path)` (JSON load; the fork uses orjson)
+- **refresh**: `SeriesData(series).refresh()` (builds every trace's geometry)
+- **save**: `Series.saveJser(...)` (JSON dump; skipped above `--skip-save-above-mb`)
 - **peak RSS**, plus resident size sampled after open and after refresh, so a
   memory spike can be attributed to the parse path rather than to geometry
 
-### cold vs. warm — read this before interpreting any number
+### cold vs. warm: read this before interpreting any number
 
 `Series.openJser` short-circuits. If a hidden unpack directory `.<name>/`
 containing `<name>.ser` sits beside the `.jser`, the series is built from those
@@ -36,7 +36,7 @@ These are two different workloads with different peak memory:
 | **warm** | hidden-dir fast path, no JSON parse | reopening a series already unpacked locally |
 
 They must never be averaged. The original version of this harness did exactly
-that, and its published memory figures were withdrawn as a result — see
+that, and its published memory figures were withdrawn as a result. See
 `REPORT.md` § *Correction*.
 
 The OS page cache is a separate axis. `drop_caches` needs root, so instead the
@@ -62,7 +62,7 @@ Data files, and which run they belong to:
 
 | file | run |
 |---|---|
-| `results_phase0.jsonl`, `summary_phase0.csv` | the Phase 0 cold/warm re-run — **these are the current numbers** |
+| `results_phase0.jsonl`, `summary_phase0.csv` | the Phase 0 cold/warm re-run. **These are the current numbers** |
 | `results.jsonl`, `summary.csv` | the June 2026 run whose memory figures were **withdrawn**. Retained only as the evidence behind `REPORT.md` § *Correction*. `aggregate.py` deliberately refuses to process `results.jsonl`, because its reps silently mix cold and warm. |
 
 ## Reproduce
