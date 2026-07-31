@@ -29,6 +29,16 @@ the README's *From source (developers)* section).
   additionally asserts that no two *live* actions share a sequence, counting
   actions inside menus and not only those attached to the window, which is the
   case the existing check could not see.
+- **Alignments ▸ Import alignments ▸ From another series (.jser).** Importing an
+  alignment from a colleague's series was reachable only through Series ▸ Import
+  series data ▸ From another series, the eight-tab whole-series merge dialog,
+  while Alignments ▸ Import alignments offered only `.txt` and SWiFT. All three
+  sources now sit together, with `.jser` first as the common case. The new entry
+  runs the same `Series.importTransforms` the merge dialog's Alignments tab runs,
+  so the calibration check and the magnification rescaling are unchanged; it just
+  skips the seven tabs that are not about alignments. Each row's target name
+  prefills from the source alignment's own name, since importing under the same
+  name is what users mostly want.
 - **A keyboard shortcut for "Copy to sections...".** The action now has a
   user-configurable default of `Ctrl+Alt+C`, listed in the shortcuts dialog next
   to Copy. `Ctrl+Shift+C` was the natural sibling of `Ctrl+C` and was requested
@@ -125,6 +135,16 @@ the README's *From source (developers)* section).
   only on the welcome framing, and only in the installed app, since a checkout
   never runs the check and the claim would be false there. The generic fallback
   body no longer opens with "Thanks for updating" on a first run.
+- **Importing an alignment onto a name already in use now asks instead of
+  refusing.** The importer previously rejected any target name the series already
+  had ("Alignment name already exists in current series"), which left no way to
+  replace an alignment short of renaming the new one. It now lists the alignments
+  that would be replaced, states that the replacement happens on every section and
+  that undo will not recover the old transforms, and proceeds only if the user
+  confirms. The prompt fires only when a name really is taken, so an import that
+  adds new alignments is unchanged. Palettes and brightness/contrast profiles keep
+  the old refuse-outright behavior; overwriting those was not asked for and they
+  are not undoable either.
 - **The "Copy to sections" picker suggests real sections from the open series.**
   The dialog's hint and input placeholder were a fixed `10-20` / `5, 8, 11`, which
   meant nothing in a series that does not run to 20. They now show the series' own

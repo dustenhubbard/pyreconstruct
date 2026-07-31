@@ -59,6 +59,7 @@ from PyReconstruct.modules.gui.dialog import (
     ShortcutsDialog,
     BackupCommentDialog,
     ImportSeriesDialog,
+    ImportAlignmentsDialog,
     PixelDustDialog,
 )
 
