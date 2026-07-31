@@ -519,6 +519,19 @@ the README's *From source (developers)* section).
   curated color palette, and group assignment. The import-resolution test that
   guarded the deleted file now covers every script in `assets/misc/` instead.
 
+### Fixed
+- **Importing transforms adds the new alignment to the alignment menu.** Both
+  `Alignments > Import alignments` entries, `From .txt file...` and
+  `From SWiFT project...`, create an alignment and make it the current one, and
+  neither rebuilt the menus afterwards. The created alignment was missing from the
+  field's "Series alignment" submenu, which went on showing the previous alignment
+  as the checked one. The current alignment then had no menu action of its own, and
+  `changeAlignment` looks one up by name for the alignment it is leaving, so the
+  next alignment switch by either route (the submenu, or "Edit alignments...")
+  raised `AttributeError` and put up an error report instead of switching. Both
+  imports now rebuild the context menus, and only when the set of alignment names
+  actually changed.
+
 ## [1.21.0] — 2026-08-04
 
 ### Added
