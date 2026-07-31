@@ -2733,6 +2733,14 @@ class Series():
                 series_states (SeriesStates): the series undo states from the GUI
                 log_event (bool): True if the event should be logged
         """
+        # Which target names already exist, read before the loop. Section.save()
+        # feeds section.tforms back into series.data (Series.alignments reads
+        # that), so after the first save every imported name looks pre-existing
+        # and the create/replace split would come out empty. Both GUI callers
+        # already evaluate self.alignments to build the dialog, so reading it
+        # here adds no failure mode of its own.
+        existing_alignments = set(self.alignments)
+
         # breakable=False: this rewrites section.tforms on every section, so the
         # undo has to be all-or-nothing. A breakable series state can be
         # dissolved into per-section undos (SeriesStates.undoSection), which
@@ -2755,9 +2763,24 @@ class Series():
                     s_section.tforms[new_name] = Transform.identity()
             s_section.save()
 
+        # Logged after the loop, not before: enumerateSections can raise partway
+        # through (a section that will not load), and a log line claiming an
+        # import that did not finish is worse than no line at all.
         if log_event:
-            alignments_str = " ".join(a[0] for a in import_as)
-            self.addLog(None, None, f"Import alignments {alignments_str} from another series")
+            # Target names, not source names. The log describes this series, and
+            # a source name the user renamed on the way in names an alignment
+            # that does not exist here. The two are the same name on every
+            # import that does not rename, which is the common case.
+            created = [new_name for _, new_name in import_as
+                       if new_name not in existing_alignments]
+            replaced = [new_name for _, new_name in import_as
+                        if new_name in existing_alignments]
+            if created:
+                created_str = " ".join(created)
+                self.addLog(None, None, f"Import alignments {created_str} from another series")
+            if replaced:
+                replaced_str = " ".join(replaced)
+                self.addLog(None, None, f"Update alignments {replaced_str} from another series")
 
         self.save()
     
