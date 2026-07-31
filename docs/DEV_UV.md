@@ -12,12 +12,12 @@ contributors:
   just to get Python 3.11.
 - `uv sync` installs PyReconstruct into a project-local `.venv` and resolves
   against the committed `uv.lock`, so everyone gets the same pinned dependency
-  set — and, because the package is installed, `import PyReconstruct` works with
+  set. Because the package is installed, `import PyReconstruct` also works with
   no `PYTHONPATH` fiddling.
 
 > `pyproject.toml` is the source of truth for the uv workflow. uv reads
 > `[project.dependencies]` (runtime), `[project.optional-dependencies].test`
-> (the `test` extra — pytest), and `[dependency-groups].dev` (dev-only tooling).
+> (the `test` extra, pytest), and `[dependency-groups].dev` (dev-only tooling).
 > The conda env and `requirements.txt` are the older, parallel mechanism.
 
 ## 1. Install uv
@@ -44,7 +44,7 @@ sudo apt-get install -y --no-install-recommends \
 
 A machine that already runs the conda env (`pyrecon_dev`) has these already.
 
-## 2. Create the environment — `uv sync`
+## 2. Create the environment with `uv sync`
 
 `uv sync` creates `.venv/` in the repo (git-ignored), installs PyReconstruct in
 editable mode, and applies the committed `uv.lock` (re-resolving only if
@@ -61,13 +61,13 @@ which groups/extras you select:
 `uv sync` with no flags installs the **`dev` dependency group**
 (`psycopg2-binary`, `funlib.show.neuroglancer`) because uv treats a group named
 `dev` as a default. That mirrors the dev tooling in the conda
-`environment_dev.yaml` — and additionally installs PyReconstruct itself in
+`environment_dev.yaml`, and additionally installs PyReconstruct itself in
 editable mode, which the conda env does not do.
 
 > **`funlib.show.neuroglancer` is a dev-only tool installed from git, and the
 > only fragile dependency here.** It is *not* needed to run the app or the test
-> suite. If its git build fails on your platform — or you just want a lean
-> environment — use `--no-default-groups` to skip the whole `dev` group.
+> suite. If its git build fails on your platform, or you just want a lean
+> environment, use `--no-default-groups` to skip the whole `dev` group.
 
 ## 3. Run the app
 
@@ -88,18 +88,18 @@ Both pull the `dev` group by default (the funlib git build). To launch without i
 uv run --no-default-groups PyReconstruct/run.py
 ```
 
-> **Note — each `uv run` re-syncs `.venv` to match the flags you pass it**, adding
+> **Note: each `uv run` re-syncs `.venv` to match the flags you pass it**, adding
 > or removing packages so the environment exactly matches the request. Alternating
 > between `uv run PyReconstruct/run.py` (pulls the `dev` group) and the test
 > command below (`--no-default-groups`, which drops it) will reinstall/remove the
-> `dev` group each time. To avoid the churn, pick one environment shape — e.g.
-> `uv sync --no-default-groups --extra test` once — and pass the same flags to
+> `dev` group each time. To avoid the churn, pick one environment shape (e.g.
+> `uv sync --no-default-groups --extra test` once) and pass the same flags to
 > every `uv run`.
 
 ## 4. Run the tests
 
 The suite imports `gui.main` (PySide6), so it runs under the offscreen Qt
-platform — no X server or `xvfb` needed. The lean test environment (runtime +
+platform. No X server or `xvfb` is needed. The lean test environment (runtime +
 pytest, no dev tooling) installs exactly what CI installs (`pip install -e ".[test]"`):
 
 ```bash
@@ -119,21 +119,21 @@ green with a handful of documented `xfail`s (orjson NaN/Inf JSON divergence).
 
 Standalone preview scripts under `dev/` carry [PEP 723](https://peps.python.org/pep-0723/)
 inline metadata, so uv builds a throwaway environment from the script's own
-header — no project sync, no conda env:
+header, with no project sync and no conda env:
 
 ```bash
 uv run --script dev/update_dialog_preview.py
 ```
 
 (That particular script renders the in-app update dialog and needs a **real
-display** — run it on macOS/Windows or a Linux box with a desktop, not offscreen.)
+display**. Run it on macOS/Windows or a Linux box with a desktop, not offscreen.)
 
 ## 6. The lockfile
 
-`uv.lock` **is committed** — PyReconstruct ships as an application, so a pinned,
+`uv.lock` **is committed**: PyReconstruct ships as an application, so a pinned,
 reproducible dependency set is what we want. `uv sync` (and `uv run`) apply it as
 is, and `uv sync --frozen` errors out rather than silently re-resolving if the
-lock and `pyproject.toml` have diverged — that is what CI and reproducible setups
+lock and `pyproject.toml` have diverged. That is what CI and reproducible setups
 should use.
 
 Bumping dependencies is a **maintainer** action: edit the pin in `pyproject.toml`
