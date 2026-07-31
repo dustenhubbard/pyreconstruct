@@ -434,7 +434,7 @@ class PixelDustDialog(MalformedContoursDialog):
 
 
 class DifferentlyNamedDuplicatesDialog(MalformedContoursDialog):
-    """Report traces that duplicate each other under two different names.
+    """Review traces that duplicate each other under two different names.
 
     Each row is a pair: one shape traced twice, once under each of two object
     names, which is what happens when two people trace the same structure. Both
@@ -443,12 +443,27 @@ class DifferentlyNamedDuplicatesDialog(MalformedContoursDialog):
     of the two and "Go to other trace" frames the second, so the same field view
     can be compared against both.
 
-    This list reports and does not delete. Two traces sharing one name are
-    unambiguous and Series.deleteDuplicateTraces collapses them, but when the
-    names differ, which name is the right one is a question about the data: the
-    two objects may have different hosts, groups, or curation status, and the
-    answer can be to rename or to merge rather than to delete. So the pairs are
-    reported, and what to do about each one is left to the person reading them.
+    **The choice is per row, and nothing is inferred.** Two traces sharing one
+    name are unambiguous and Series.deleteDuplicateTraces collapses them, but
+    when the names differ, which name is right is a question about the data: the
+    two objects can carry different hosts, groups or curation status. So this
+    dialog does not resolve a pair; it asks. The two name cells of a row are
+    checkable, mutually exclusive, and both start unchecked: checking one says
+    "this is the name to keep", and "Delete unselected" then deletes the other
+    trace of every row that was answered. **A row nobody answered is skipped**,
+    and the summary says how many were, because a default here would be the tool
+    guessing at the one thing it cannot know.
+
+    The choice lives in the two name cells rather than in a radio-button column
+    because a check state is item data and so travels with the row through any
+    column sort, and because a widget filling a name cell would take that cell's
+    click away from row selection -- which is what "Go to trace" and "Go to
+    other trace" run off.
+
+    Deletion is deliberately NOT the base class's: this dialog passes no
+    ``delete`` callback up, so "Delete selected" and "Delete all" never appear.
+    Both would be wrong here. Row selection is how a pair is inspected, not how
+    it is answered, and "all" of a pairs list would mean deleting both sides.
     """
 
     COLUMNS = ["Object", "Duplicate of", "Section", "Overlap", "Area (um^2)",
@@ -456,12 +471,12 @@ class DifferentlyNamedDuplicatesDialog(MalformedContoursDialog):
     WINDOW_TITLE = "Duplicates named differently"
     DEFAULT_SORT_COLUMN = 2  # "Section"
 
-    def __init__(self, mainwindow: QWidget, records: list, navigate=None):
-        """Create the pairs list. Takes no delete callback, on purpose.
+    # the two checkable name columns, and the value each contributes to a choice
+    KEEP_COLUMNS = {0: "first", 1: "other"}
 
-        Report-only is a property of this dialog rather than a choice each caller
-        makes, so there is no ``delete`` parameter to pass one through: adding
-        deletion here has to be a deliberate change to this class.
+    def __init__(self, mainwindow: QWidget, records: list, navigate=None,
+                 delete_unselected=None):
+        """Create the pairs list.
 
             Params:
                 mainwindow (QWidget): the parent window
@@ -469,8 +484,124 @@ class DifferentlyNamedDuplicatesDialog(MalformedContoursDialog):
                     Series.findDifferentlyNamedDuplicates
                 navigate (callable): optional navigate(section_num, obj_name,
                     index) callback, used by both "Go to" buttons
+                delete_unselected (callable): optional
+                    delete_unselected(choices) callback, taking
+                    ``(record, keep)`` tuples as
+                    Series.deleteDifferentlyNamedDuplicates does and returning
+                    the tuples actually applied. "Delete unselected" is only
+                    shown when it is provided; the list is otherwise read-only.
         """
+        self.delete_unselected = delete_unselected
+        self._suppress_check_signal = False
+        # delete=None on purpose: see the class docstring. The base class's
+        # Delete buttons are the wrong two buttons for a list of pairs.
         super().__init__(mainwindow, records, navigate=navigate, delete=None)
+        self._makeNameCellsCheckable()
+        self.table.itemChanged.connect(self._onCheckStateChanged)
+        self._syncDeleteButton()
+
+    def _makeNameCellsCheckable(self):
+        """Make both name cells of every row checkable, and start them empty.
+
+        Run after the base class has populated and sorted the table. Check state
+        is item data, so it stays with its row through later re-sorting.
+        """
+        self._suppress_check_signal = True
+        try:
+            for row in range(self.table.rowCount()):
+                for col in self.KEEP_COLUMNS:
+                    item = self.table.item(row, col)
+                    if item is None:
+                        continue
+                    item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                    item.setCheckState(Qt.Unchecked)
+        finally:
+            self._suppress_check_signal = False
+
+    def _onCheckStateChanged(self, item):
+        """Keep a row's two name checkboxes mutually exclusive."""
+        if self._suppress_check_signal:
+            return
+        col = item.column()
+        if col not in self.KEEP_COLUMNS:
+            return
+        if item.checkState() == Qt.Checked:
+            # exactly one name can be kept, so checking one clears the other
+            self._suppress_check_signal = True
+            try:
+                for other_col in self.KEEP_COLUMNS:
+                    if other_col == col:
+                        continue
+                    other = self.table.item(item.row(), other_col)
+                    if other is not None:
+                        other.setCheckState(Qt.Unchecked)
+            finally:
+                self._suppress_check_signal = False
+        self._syncDeleteButton()
+
+    def _choiceAtRow(self, row):
+        """Return (record, keep) for a row, or None when it was not answered.
+
+        ``keep`` is "first" when the "Object" name is checked and "other" when
+        the "Duplicate of" name is. Nothing checked returns None, and no rule
+        turns that into a choice.
+        """
+        record = self._recordAtRow(row)
+        if record is None:
+            return None
+        for col, keep in self.KEEP_COLUMNS.items():
+            item = self.table.item(row, col)
+            if item is not None and item.checkState() == Qt.Checked:
+                return (record, keep)
+        return None
+
+    def chosenPairs(self):
+        """Return the (record, keep) tuples for every row that was answered."""
+        choices = []
+        for row in range(self.table.rowCount()):
+            choice = self._choiceAtRow(row)
+            if choice is not None:
+                choices.append(choice)
+        return choices
+
+    def _syncDeleteButton(self):
+        """Enable "Delete unselected" only while some row has been answered."""
+        if self.delete_unselected_button is None:
+            return
+        self.delete_unselected_button.setEnabled(bool(self.chosenPairs()))
+
+    def _updateRowActionButtons(self):
+        """Also refresh the delete button, which selection does not drive."""
+        super()._updateRowActionButtons()
+        self._syncDeleteButton()
+
+    def deleteUnselectedTraces(self):
+        """Delete the unkept trace of every answered row, after confirming."""
+        if not self.delete_unselected:
+            return
+        choices = self.chosenPairs()
+        if not choices:
+            return
+        count = len(choices)
+        noun = "trace" if count == 1 else "traces"
+        skipped = len(self.records) - count
+        skipped_note = ""
+        if skipped:
+            was = "pair was" if skipped == 1 else "pairs were"
+            skipped_note = (
+                f"\n\n{skipped} {was} left alone (no name selected). "
+                "Nothing is chosen for you."
+            )
+        if not notifyConfirm(
+            f"Delete {count} {noun} from the series?\n\n"
+            "In each row you selected a name, the trace under the OTHER name "
+            f"is deleted.{skipped_note}\n\n"
+            "This can be undone (Ctrl+Z).",
+            yn=True,
+        ):
+            return
+        applied = self.delete_unselected(choices) or []
+        self._pruneRecords([record for record, _keep in applied])
 
     def _columnSpecs(self):
         return [
@@ -486,7 +617,11 @@ class DifferentlyNamedDuplicatesDialog(MalformedContoursDialog):
         ]
 
     def _addExtraButtons(self):
-        """Add "Go to other trace", which frames the pair's second trace."""
+        """Add "Go to other trace", and "Delete unselected" when it can delete.
+
+        "Delete unselected" is registered with needs_selection False: it is
+        driven by the per-row checkboxes, not by which row is highlighted.
+        """
         self.goto_other_button = QPushButton("Go to other trace", self)
         self.goto_other_button.setToolTip(
             "Focus the field on the other trace of the selected pair"
@@ -494,6 +629,22 @@ class DifferentlyNamedDuplicatesDialog(MalformedContoursDialog):
         self.goto_other_button.setEnabled(False)
         self.goto_other_button.clicked.connect(self.goToSelectedOtherContour)
         self.extra_buttons.append((self.goto_other_button, True))
+
+        self.delete_unselected_button = None
+        if self.delete_unselected:
+            self.delete_unselected_button = QPushButton(
+                "Delete unselected", self
+            )
+            self.delete_unselected_button.setToolTip(
+                "In every row where you selected a name, delete the trace "
+                "under the other name. Rows with no name selected are left "
+                "alone (can be undone)"
+            )
+            self.delete_unselected_button.setEnabled(False)
+            self.delete_unselected_button.clicked.connect(
+                self.deleteUnselectedTraces
+            )
+            self.extra_buttons.append((self.delete_unselected_button, False))
 
     def goToSelectedOtherContour(self):
         """Focus the field on the second trace of the selected pair."""
@@ -510,7 +661,7 @@ class DifferentlyNamedDuplicatesDialog(MalformedContoursDialog):
         )
 
     def _headingText(self):
-        """Explain what a row is and why nothing is deleted from here."""
+        """Explain what a row is and that the choice in each one is the user's."""
         num_pairs = len(self.records)
         if not num_pairs:
             return (
@@ -523,7 +674,7 @@ class DifferentlyNamedDuplicatesDialog(MalformedContoursDialog):
         }
         pair_word = "pair" if num_pairs == 1 else "pairs"
 
-        return (
+        text = (
             f"{num_pairs} {pair_word} of overlapping traces across "
             f"{len(names)} objects, each pair traced under two different "
             "names.\n\n"
@@ -534,10 +685,30 @@ class DifferentlyNamedDuplicatesDialog(MalformedContoursDialog):
             "right one does not follow from it: the two objects can carry "
             "different hosts, groups or curation, and the answer may be to "
             "rename or to merge rather than to delete one.\n\n"
-            "So this list reports. Select a row and use “Go to trace” and "
-            "“Go to other trace” to see both traces of a pair in the field, "
-            "then decide. The Overlap column is the measured overlap ratio "
-            "(1 means the two traces have the same points), and both areas "
-            "are physical (um^2) on that trace's own section.\n\n"
-            "Nothing in the series has been changed."
+        )
+
+        if not self.delete_unselected:
+            return text + (
+                "So this list reports. Select a row and use “Go to trace” and "
+                "“Go to other trace” to see both traces of a pair in the "
+                "field, then decide. The Overlap column is the measured "
+                "overlap ratio (1 means the two traces have the same points), "
+                "and both areas are physical (um^2) on that trace's own "
+                "section.\n\n"
+                "Nothing in the series has been changed."
+            )
+
+        return text + (
+            "So the choice in each row is yours. Select a row and use "
+            "“Go to trace” and “Go to other trace” to see both traces of a "
+            "pair in the field, then tick the name you want to KEEP — either "
+            "one, not both. “Delete unselected” then deletes the trace under "
+            "the other name, in every row you ticked. The Overlap column is "
+            "the measured overlap ratio (1 means the two traces have the same "
+            "points), and both areas are physical (um^2) on that trace's own "
+            "section.\n\n"
+            "Rows you leave unticked are left completely alone: nothing is "
+            "chosen for you, and no rule decides which name wins. Nothing is "
+            "deleted until you choose to delete, and it can be undone "
+            "(Ctrl+Z)."
         )

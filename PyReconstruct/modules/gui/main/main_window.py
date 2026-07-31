@@ -2851,16 +2851,18 @@ class MainWindow(QMainWindow):
         self.seriesModified(True)
 
     def findDifferentlyNamedDuplicates(self):
-        """Report traces that duplicate each other under two different names.
+        """Review traces that duplicate each other under two different names.
 
         The sibling of "Remove duplicate traces...", for the case that one
         cannot see: two people tracing the same structure give it two names, so
         the two traces never end up in the same contour and the same-name
         comparison never puts them side by side.
 
-        This reports and does not delete. Which of the two names survives is a
-        question about the data rather than about geometry, so the review list
-        opens without a delete callback and nothing in the series is touched.
+        Which of the two names survives is a question about the data rather than
+        about geometry, so this operation never chooses one. The scan reports
+        every pair and the review list asks per row which name to keep; only the
+        rows answered there are acted on, and the trace under the other name is
+        what gets deleted. A row left unanswered is skipped, not defaulted.
         """
         self.saveAllData()
 
@@ -2888,13 +2890,16 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # review list only: no delete callback, so the dialog shows no Delete
-        # buttons and this operation cannot change the series
+        # a review list that can act on the rows the user answers, and only
+        # those: the callback takes (record, keep) choices, never the whole list
         self.differently_named_duplicates_dialog = (
             DifferentlyNamedDuplicatesDialog(
                 self,
                 pairs,
                 navigate=self.field.focusMalformedContour,
+                delete_unselected=(
+                    self.field.deleteDifferentlyNamedDuplicates
+                ),
             )
         )
         self.differently_named_duplicates_dialog.show()

@@ -2137,11 +2137,17 @@ class Series():
         a duplicate it cannot find. This scans across names instead, comparing
         every trace on a section with every other one, and reports what it finds.
 
-        Reports only; nothing is modified. Which of the two names is the right
-        one is a judgment about the data rather than something geometry can
-        settle, so this operation does not choose, and the review list it feeds
-        offers no delete. Locked objects are skipped unless ``include_locked``
-        is True, matching findPixelDustTraces and findEmptyTraces.
+        This scan modifies nothing. Which of the two names is the right one is a
+        judgment about the data rather than something geometry can settle, so
+        this operation never chooses: the review list it feeds asks the person
+        reading it, one row at a time, and deleteDifferentlyNamedDuplicates
+        applies only the choices actually made. A row nobody answered is left
+        alone rather than resolved by any rule, because every rule available
+        here ("keep the name on more sections", "keep the larger trace") would
+        be geometry answering a question about the data. Locked objects are
+        skipped unless ``include_locked`` is True, matching findPixelDustTraces
+        and findEmptyTraces; a locked object surfaced that way can still not
+        have a trace deleted (see deleteDifferentlyNamedDuplicates).
 
         Overlap is decided exactly as it is for same-name duplicates, by
         Trace.overlaps' two tests: an identical point sequence, or an overlap
@@ -2210,6 +2216,91 @@ class Series():
                 candidates.append(record)
 
         return candidates
+
+    def deleteDifferentlyNamedDuplicates(self, choices : list,
+                                         series_states=None,
+                                         log_event=True) -> list:
+        """Delete the unkept side of cross-name duplicate pairs the user chose.
+
+        The removal half of findDifferentlyNamedDuplicates. Each choice is a
+        ``(record, keep)`` tuple: ``record`` is a pair record from that scan and
+        ``keep`` names which of the pair's two traces to keep, ``"first"`` for
+        the record's own trace (its "name") or ``"other"`` for the one carried
+        under the "other_" keys. The trace that was not kept is deleted; both
+        traces of the pair survive if no choice was made.
+
+        **Nothing is inferred.** A choice that is neither ``"first"`` nor
+        ``"other"`` -- ``None`` above all, which is what an unanswered row
+        carries -- is skipped, not resolved by a default. Silence is not a
+        selection: the caller has to say which name is right, because that is
+        the one thing the geometry cannot say.
+
+        **A locked object never loses a trace here**, even when the scan that
+        produced the record was run with ``include_locked=True`` and so put the
+        locked object on the list. Deleting a trace changes quantitative data,
+        which is exactly what locking an object refuses; the lock is checked
+        against the object being *deleted from*, since keeping a trace does not
+        modify it.
+
+        Deletion runs through deleteMalformedTraces, the same path the
+        pixel-dust and empty-trace clean-ups use, so it is one undoable
+        operation (enumerateSections records the undo state into
+        ``series_states``) and each trace is re-found after its section is
+        reloaded by its stored color+points signature rather than by identity.
+
+            Params:
+                choices (list): (record, keep) tuples, described above
+                series_states (dict): optional dict of undo states for GUI
+                log_event (bool): True if events should be logged
+            Returns:
+                (list): the (record, keep) tuples whose trace was found and
+                    deleted, so a caller can prune exactly those rows
+        """
+        targets = []
+        for choice in choices:
+            record, keep = choice
+            if keep == "first":
+                delete_name = record["other_name"]
+                delete_match = record["other_match"]
+                keep_name = record["name"]
+            elif keep == "other":
+                delete_name = record["name"]
+                delete_match = record["match"]
+                keep_name = record["other_name"]
+            else:
+                continue  # no choice made: never guess which name is right
+            if self.getAttr(delete_name, "locked"):
+                continue  # deleting a trace is a quantitative change
+            targets.append({
+                "name": delete_name,
+                "section": record["section"],
+                "match": delete_match,
+                ## carried through deleteMalformedTraces, which returns the very
+                ## dicts it deleted, so the log and the return value can name
+                ## the pair each deletion came from
+                "keep_name": keep_name,
+                "choice": choice,
+            })
+
+        if not targets:
+            return []
+
+        deleted = self.deleteMalformedTraces(
+            targets,
+            series_states=series_states,
+            message="Deleting duplicates named differently...",
+        )
+
+        if log_event:
+            for target in deleted:
+                self.addLog(
+                    target["name"],
+                    target["section"],
+                    "Delete duplicate trace named differently "
+                    f"(kept '{target['keep_name']}')",
+                )
+
+        return [target["choice"] for target in deleted]
 
     def editObjectRadius(self, obj_names : list, new_rad : float, series_states=None):
         """Change the radii of all traces of an object.

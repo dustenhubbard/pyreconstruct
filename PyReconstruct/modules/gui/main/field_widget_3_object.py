@@ -288,7 +288,72 @@ class FieldWidgetObject(FieldWidgetTrace):
             )
 
         return deleted
-    
+
+    def deleteDifferentlyNamedDuplicates(self, choices: list) -> list:
+        """Delete the unkept trace of each cross-name duplicate pair chosen.
+
+        The delete callback behind the pairs list's "Delete unselected". Each
+        choice is a ``(record, keep)`` tuple naming which of the pair's two
+        traces to keep; the other one goes. Mirrors deleteMalformedContours:
+        save field data, delete through the series (whose enumerateSections
+        records the undo state), then refresh the tables and field. Returns the
+        choices actually applied so the dialog can prune exactly those rows.
+
+        Locked objects keep their traces. Series.deleteDifferentlyNamedDuplicates
+        is the guard that makes that true -- it re-checks the lock itself, so a
+        pair surfaced by a scan run with "check locked traces" on cannot be
+        resolved by deleting from the locked side. This layer only says so.
+        """
+        if not choices:
+            return []
+
+        # name the objects that would lose a trace, so a refusal can explain
+        # itself; the series refuses them again regardless of what is said here
+        locked_names = set()
+        locked_rows = 0
+        for record, keep in choices:
+            name = record["other_name"] if keep == "first" else record["name"]
+            if self.series.getAttr(name, "locked"):
+                locked_names.add(name)
+                locked_rows += 1
+        if locked_names:
+            notify(
+                "Cannot delete traces of locked objects:\n"
+                + ", ".join(sorted(locked_names))
+                + "\n\nPlease unlock before deleting. Any other rows you "
+                "chose will still be applied."
+            )
+
+        # persist field edits to section data before reloading sections
+        self.mainwindow.saveAllData()
+
+        applied = self.series.deleteDifferentlyNamedDuplicates(
+            choices,
+            series_states=self.series_states,
+        )
+
+        if applied:
+            names = set()
+            for record, keep in applied:
+                names.add(record["name"])
+                names.add(record["other_name"])
+            self.table_manager.updateObjects(names)
+            self.reload()
+            self.mainwindow.seriesModified(True)
+
+        # a row can go unapplied because its object is locked (reported above)
+        # or because the trace is no longer where the scan saw it
+        missed = len(choices) - len(applied) - locked_rows
+        if missed > 0:
+            were = "was" if missed == 1 else "were"
+            notify(
+                f"{missed} of the traces you chose to delete {were} not found "
+                "and could not be deleted — they may have been changed or "
+                "removed since the scan."
+            )
+
+        return applied
+
     @object_function(update_objects=True, reload_field=False)
     def editComment(self, obj_names : list):
         """Edit the comment of the object."""
