@@ -55,7 +55,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25   # headroom for the cold wheel install (vtk/scipy/...); the suite itself is ~seconds
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1 -- shallow is fine: no test reads the setuptools-scm version
+      # Still a shallow clone: no test reads the setuptools-scm version. Tags
+      # are the one exception and they are cheap to add on their own.
+      # tests/test_notes_headings_have_tags.py compares every `## [x.y.z]`
+      # heading in WHATS_NEW.md and CHANGELOG.md against the tag list, and
+      # without this it would see an empty list and pass for the wrong reason.
+      # It fails loudly rather than skipping if the list ever comes back empty.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-tags: true
 
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
         with:
