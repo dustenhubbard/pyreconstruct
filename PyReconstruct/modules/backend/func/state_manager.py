@@ -435,6 +435,52 @@ class SeriesState():
         self.undo_lens = {}  # keep track of individial section undos (these will be populated as the enumerateSections loop progresses)
         self.series_attrs = {}
         self.breakable = breakable
+        # section number : the section's bc_profiles before this state's action.
+        # Populated only by an action that rewrites bc_profiles, which is why it
+        # does not live in FieldState alongside tforms and flags: see
+        # recordBCProfiles.
+        self.bc_profiles = {}
+
+    def recordBCProfiles(self, snum : int, bc_profiles : dict):
+        """Store a section's brightness/contrast profiles as they were before the action.
+
+        Kept on the series state rather than in FieldState, deliberately.
+        FieldState is captured for every per-section undo, and
+        brightness/contrast is the one piece of section data the app does not
+        treat as undoable: FieldWidget.setBrightness and setContrast change it
+        without calling saveState(), and MainWindow.optimizeBC gates itself
+        behind noUndoWarning(). Storing bc_profiles in FieldState would
+        therefore make an unrelated undo (say, of a trace drawn after the
+        slider was moved) silently roll the user's brightness back, which is a
+        worse bug than the one being fixed. Recording only for the actions that
+        actually rewrite the profiles keeps the restore exact and leaves every
+        other undo alone.
+
+            Params:
+                snum (int): the section number
+                bc_profiles (dict): profile name : (brightness, contrast)
+        """
+        if snum not in self.bc_profiles:
+            self.bc_profiles[snum] = deepcopy(bc_profiles)
+
+    def swapBCProfiles(self, section : Section) -> bool:
+        """Exchange a section's brightness/contrast profiles with the stored ones.
+
+        An exchange rather than a one-way restore, so that undo and redo are the
+        same operation, exactly as applySeriesAttributes does for the series
+        attributes.
+
+            Params:
+                section (Section): the section to restore
+            Returns:
+                (bool): True if this state had profiles stored for the section
+        """
+        if section.n not in self.bc_profiles:
+            return False
+        stored = self.bc_profiles[section.n]
+        self.bc_profiles[section.n] = deepcopy(section.bc_profiles)
+        section.bc_profiles = stored
+        return True
     
     # STATIC METHOD
     def getSeriesAttributes(series : Series):
@@ -451,6 +497,14 @@ class SeriesState():
 
         alignment = series.alignment
 
+        # the current brightness/contrast profile, for the same reason the
+        # current alignment is stored: Series.modifyBCProfiles can rename or
+        # delete the profile the series is displaying, and Section.brightness
+        # indexes bc_profiles by this name, so an undo that restored the old
+        # profile names without restoring the selected one would leave
+        # series.bc_profile pointing at a key that no longer exists
+        bc_profile = series.bc_profile
+
         ztraces = deepcopy(series.ztraces)
 
         user_columns = deepcopy(series.user_columns)
@@ -464,6 +518,7 @@ class SeriesState():
             "object_groups" : object_groups,
             "ztrace_groups" : ztrace_groups,
             "alignment" : alignment,
+            "bc_profile" : bc_profile,
             "ztraces" : ztraces,
             "user_columns": user_columns,
             "object_columns": object_columns,
@@ -567,6 +622,23 @@ class SeriesStates():
         new_state.resetSeriesAttributes(self.series)
         self.undos.append(new_state)
     
+    def recordBCProfiles(self, snum : int, bc_profiles : dict):
+        """Store a section's brightness/contrast profiles on the newest series state.
+
+        Called by the series-wide operations that rewrite bc_profiles, from
+        inside their enumerateSections loop, before the section is modified.
+        Rewriting bc_profiles trips none of the trackers SeriesIterator checks
+        (getAllModifiedNames, tformsModified, flags_modified), so such a section
+        never gets a per-section undo state and the profiles have to be carried
+        by the series state itself.
+
+            Params:
+                snum (int): the section number
+                bc_profiles (dict): profile name : (brightness, contrast)
+        """
+        if self.undos:
+            self.undos[-1].recordBCProfiles(snum, bc_profiles)
+
     def addSectionUndo(self, snum : int):
         """Flag the section's latest undo state as part of the most recent series undo.
         
@@ -676,19 +748,25 @@ class SeriesStates():
         
         state = self.redos[-1] if redo else self.undos[-1]
         
-        # undo/redo the inidividual sections
-        sections = state.undo_lens.keys()
+        # undo/redo the inidividual sections. A section can be in this set for
+        # either of two reasons: it has a per-section undo state belonging to
+        # this series state (undo_lens), or the action rewrote its
+        # brightness/contrast profiles, which SeriesIterator cannot detect and
+        # so records here instead (bc_profiles).
+        sections = set(state.undo_lens.keys()) | set(state.bc_profiles.keys())
         if sections:
             for snum, section in self.series.enumerateSections(
                 message=("Re" if redo else "Un") + "doing action..."
             ):
                 if snum not in sections:
                     continue
-                states = self[snum]
-                if redo:
-                    states.redoState(section, self.series)
-                else:
-                    states.undoState(section, self.series)
+                if snum in state.undo_lens:
+                    states = self[snum]
+                    if redo:
+                        states.redoState(section, self.series)
+                    else:
+                        states.undoState(section, self.series)
+                state.swapBCProfiles(section)
                 section.save()
         
         # undo/redo the series attributes

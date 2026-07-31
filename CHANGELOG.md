@@ -576,6 +576,18 @@ the README's *From source (developers)* section).
   sections and not others, which `Series.alignments` rejects as corrupt. Measured
   on the 198-section `class_series` fixture, recording the states costs about
   20 ms on top of a 60 ms import.
+- **Renaming or deleting a brightness/contrast profile is now undoable.** `Series >
+  Brightness/contrast profiles...` rewrites `section.bc_profiles` on every section
+  in the series, and there was no way back. `MainWindow.changeBCProfiles` passed
+  the undo states to `Series.modifyBCProfiles`, which had no such parameter, so the
+  object bound to `log_event` instead: truthy, so nothing raised, logging happened
+  by accident, and no undo state was recorded. One undo now restores every
+  section's profiles and the profile the series was displaying, and a redo
+  re-applies the change. Brightness and contrast adjustments themselves are still
+  not undoable, deliberately: the profiles are stored on the series undo state
+  rather than in `FieldState`, so an unrelated undo cannot revert a slider nudge.
+  Measured on the 198-section `class_series` fixture, recording the states costs
+  about 26 ms on top of a 67 ms rename.
 
 ## [1.21.0] — 2026-08-04
 

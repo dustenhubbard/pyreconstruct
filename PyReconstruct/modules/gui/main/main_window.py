@@ -2085,7 +2085,10 @@ class MainWindow(QMainWindow):
                     modified = True
                     break
             if modified:
-                self.series.modifyBCProfiles(profiles_dict, self.field.series_states)
+                self.series.modifyBCProfiles(
+                    profiles_dict,
+                    series_states=self.field.series_states,
+                )
                 self.field.reload()
         
         if profile_name:
