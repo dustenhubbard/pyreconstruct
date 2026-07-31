@@ -16,7 +16,7 @@ The University of Texas at Austin) and the in-app **Help ▸ Shortcuts list**.
 >
 > > 📸 *Screenshot: short description of what to capture.*
 >
-> Contributions of screenshots are welcome — see [CONTRIBUTING.md](https://github.com/dustenhubbard/PyReconstruct/blob/main/CONTRIBUTING.md).
+> Contributions of screenshots are welcome. See [CONTRIBUTING.md](https://github.com/dustenhubbard/PyReconstruct/blob/main/CONTRIBUTING.md).
 
 > **Shortcuts.** Key combinations shown here are the **defaults**. Almost all of
 > them are rebindable under **Help ▸ Shortcuts list** (press `?`). A few menu
@@ -54,15 +54,15 @@ platforms).
 ### One-click installers (Windows, macOS, and Linux)
 
 Download the latest build from
-**[Releases](https://github.com/dustenhubbard/PyReconstruct/releases)** — no
-Python required.
+**[Releases](https://github.com/dustenhubbard/PyReconstruct/releases)**. No Python
+required.
 
-- **Windows** — `PyReconstruct-<version>-Windows-x86_64-Setup.exe`. This is a
+- **Windows**: `PyReconstruct-<version>-Windows-x86_64-Setup.exe`. This is a
   per-user installer (no administrator rights required). Builds are unsigned for
   now, so Windows SmartScreen may warn that the publisher is unknown; choose
   **More info ▸ Run anyway**. Re-running a newer installer upgrades the existing
   installation in place.
-- **macOS (Apple Silicon or Intel)** — `PyReconstruct-<version>-macOS-arm64.dmg` on
+- **macOS (Apple Silicon or Intel)**: `PyReconstruct-<version>-macOS-arm64.dmg` on
   Apple Silicon, or `PyReconstruct-<version>-macOS-x86_64.dmg` on an Intel Mac. Open
   the `.dmg` and drag **PyReconstruct** onto the **Applications** shortcut. Builds are
   unsigned for now, so the first launch of a browser-downloaded copy is blocked by
@@ -80,8 +80,8 @@ Python required.
 Both macOS builds are native (arm64 and x86_64), and the in-app updater serves each
 Mac its matching architecture.
 
-- **Linux** — `PyReconstruct-<version>-Linux-installer.tar.gz`. Extract it and run
-  `bash install.sh` — a no-root `.sh` installer that builds an isolated virtual
+- **Linux**: `PyReconstruct-<version>-Linux-installer.tar.gz`. Extract it and run
+  `bash install.sh`, a no-root `.sh` installer that builds an isolated virtual
   environment, puts a `pyreconstruct` launcher on your PATH, and adds an
   application-menu entry. It needs a system **Python 3.11** (`python3.11` + `venv`;
   on Debian/Ubuntu, `sudo apt install python3.11 python3.11-venv`) and targets
@@ -89,11 +89,11 @@ Mac its matching architecture.
 
 ### From source (Linux, other platforms, and developers)
 
-PyReconstruct requires **Python 3.11** — the pinned version the app and its
+PyReconstruct requires **Python 3.11**, the pinned version the app and its
 native dependencies are validated on (the project pins `>=3.11,<3.12`). Your
 system `python3` is likely newer, and installing against it will fail; the steps
 below get you 3.11 without changing your system Python. The recommended tool is
-[uv](https://docs.astral.sh/uv/), which downloads Python 3.11 for you — install
+[uv](https://docs.astral.sh/uv/), which downloads Python 3.11 for you. Install
 it with `curl -LsSf https://astral.sh/uv/install.sh | sh` (or `brew install uv`).
 
 For a quick, non-editable install into a fresh 3.11 environment:
@@ -122,9 +122,9 @@ uv sync                            # creates .venv from uv.lock (exact pinned de
 uv run PyReconstruct               # launch
 ```
 
-To move to the newest `main` later: `git pull`, then `uv run PyReconstruct` —
-`uv run` re-syncs `.venv` to the lockfile automatically, so there is no manual
-reinstall step.
+To move to the newest `main` later: `git pull`, then `uv run PyReconstruct`.
+There is no manual reinstall step, because `uv run` re-syncs `.venv` to the
+lockfile automatically.
 
 If you prefer a plain `venv` and already have `python3.11` on PATH, an editable
 install works too, though it resolves dependencies fresh rather than from
@@ -152,21 +152,21 @@ list.)
 
 The frozen Windows and macOS one-click builds can update themselves from within the
 app. The updater downloads the new build from GitHub Releases and **verifies it
-against a published SHA-256 checksum before installing** — if the checksum can't be
+against a published SHA-256 checksum before installing**. If the checksum can't be
 reached or doesn't match, nothing is installed. (The Linux `.sh` installer updates
-by re-running `install.sh` — see [Installing PyReconstruct](#1-installing-pyreconstruct).)
+by re-running `install.sh`; see [Installing PyReconstruct](#1-installing-pyreconstruct).)
 
 ### Update channels
 
 PyReconstruct offers two update channels, selected under **Series ▸ Options…**
 (`Shift+O`) in the **Updates** section:
 
-- **Stable (recommended)** — stable builds, tagged `vX.Y.Z`.
-- **Beta (early features, may be unstable)** — the latest pre-release build (release
+- **Stable (recommended)**: stable builds, tagged `vX.Y.Z`.
+- **Beta (early features, may be unstable)**: the latest pre-release build (release
   candidates, tagged like `vX.Y.ZrcN`); newer features, less testing.
 
 The default channel is **Stable**. (Developers who want the newest unreleased code
-run a source install instead of a frozen build — see
+run a source install instead of a frozen build; see
 [Source / `pip` installs](#source--pip-installs) below.)
 
 > 📸 *Screenshot: Series ▸ Options ▸ Updates, showing the Stable / Beta radio buttons and the "Check for updates on startup" checkbox.*
@@ -202,7 +202,7 @@ configured under **Series ▸ Options ▸ Updates** (the **Branch:** field, defa
 The same reinstall is available from the command line: `PyReconstruct --update`
 (reinstall the current branch) or `PyReconstruct --switch <branch>` (change branch,
 then reinstall). If you installed editable (`pip install -e .`), a plain `git pull`
-is usually all you need — the working tree is what runs. A source install on `main`
+is usually all you need. The working tree is what runs. A source install on `main`
 is the supported way to follow every commit now that the in-app Developer channel
 has been removed.
 
@@ -214,31 +214,31 @@ PyReconstruct is organized around serial-section microscopy: a block of tissue i
 cut into an ordered stack of thin sections, each imaged, and structures are traced
 through the stack.
 
-- **Series** — a complete project: an ordered set of sections plus series-wide
+- **Series**. A complete project: an ordered set of sections plus series-wide
   settings. You work on one series at a time. A series is stored as a single
   `.jser` file (see below).
-- **Section** — one cross-section in the stack. Each section has an index, a
+- **Section**: one cross-section in the stack. Each section has an index, a
   background **image**, a **magnification** (`mag`, in µm per image pixel), a
   **thickness** (in µm), brightness/contrast, and its own set of traces.
-- **Trace** — a single connected shape or curve drawn on one section. A trace can
+- **Trace**: a single connected shape or curve drawn on one section. A trace can
   be **closed** (an outline enclosing area, e.g. a cell cross-section) or **open**
   (a curve with length but no enclosed area, e.g. a process or a measurement line).
-- **Contour** — all traces with the same name **on a single section**.
-- **Object** — all traces with the same name **throughout the whole series**.
+- **Contour**: all traces with the same name **on a single section**.
+- **Object**: all traces with the same name **throughout the whole series**.
   Objects are what you reconstruct in 3D and measure in the object list.
-- **Z-trace** — a single curve that runs **across sections** (its points carry a
+- **Z-trace**: a single curve that runs **across sections** (its points carry a
   section index), used to measure distances through the volume.
-- **Flag** — a labeled, optionally colored marker placed at a point on a section,
+- **Flag**: a labeled, optionally colored marker placed at a point on a section,
   with comments and a resolved/unresolved state. Flags are useful for to-do notes,
   questions, and review.
-- **Transform** — a section's affine transform, six numbers `a b c d e f`: `a b d
+- **Transform**. A section's affine transform, six numbers `a b c d e f`: `a b d
   e` give rotation/shear/scale and `c f` give x/y translation. The **same**
   transform is applied to the section's image *and* its traces, so traces stay
-  fixed to the image — moving the alignment moves image and traces together.
-- **Alignment** — a named set of per-section transforms across the whole series. A
+  fixed to the image. Moving the alignment moves image and traces together.
+- **Alignment**: a named set of per-section transforms across the whole series. A
   series can hold several alignments and you can switch between them. (See
   [Alignment](#10-alignment).)
-- **Host / traveler** — an optional parent/child relationship between objects: an
+- **Host / traveler**. An optional parent/child relationship between objects: an
   object can be hosted by ("ride on") another object. Used to keep related
   structures organized and to group them in the 3D scene.
 
@@ -247,7 +247,7 @@ through the stack.
 A series is saved as a single `.jser` file. It is a JSON document with the
 series-level settings, the per-section data (including each section's image
 filename, magnification, and thickness), and the edit log. **The `.jser` does not
-contain the images themselves** — it stores image filenames, and the actual image
+contain the images themselves**: it stores image filenames, and the actual image
 files live in the series' image source directory. While a series is open,
 PyReconstruct unpacks it into a hidden working folder next to the `.jser` and
 repacks on save.
@@ -268,10 +268,10 @@ Zarr from **Series ▸ Images ▸ Convert to scaled images** (see
 
 ### On first launch
 
-With no file specified, PyReconstruct opens a **welcome series** — a small,
+With no file specified, PyReconstruct opens a **welcome series**, a small
 read-only demo you can use to explore the interface. The welcome series cannot be
 saved or backed up; create or open a real series to begin work. A **username** is
-resolved automatically and recorded against the edits you make — PyReconstruct no
+resolved automatically and recorded against the edits you make. PyReconstruct no
 longer prompts for it on launch; change it anytime under **File ▸ Change
 username…**.
 
@@ -298,12 +298,12 @@ another window (it was touched within the last few seconds), PyReconstruct shows
 
 **File ▸ New series ▸ From images…** (`Ctrl+N`) walks you through:
 
-1. **Select images** — choose the section image files (JPG/JPEG, PNG, TIF/TIFF,
+1. **Select images**: choose the section image files (JPG/JPEG, PNG, TIF/TIFF,
    BMP). The files are sorted alphanumerically, and that order becomes the section
    order (section 0, 1, 2, …), so name your images so they sort correctly.
-2. **Series name** — used to name the series.
-3. **Image calibration (µm/px)** — microns per image pixel. Default **0.00254**.
-4. **Section thickness (µm)** — default **0.05**. Thickness feeds the volume and
+2. **Series name**: used to name the series.
+3. **Image calibration (µm/px)**: microns per image pixel. Default **0.00254**.
+4. **Section thickness (µm)**: default **0.05**. Thickness feeds the volume and
    flat-area calculations in the object list.
 
 The new series opens fitted to the first image; you are then prompted to choose
@@ -315,20 +315,20 @@ where to save the `.jser`.
 
 Also under **File ▸ New series**:
 
-- **From scaled images…** — build from an existing scaled Zarr directory (expects
-  a `scale_1` folder), then the same name/calibration/thickness prompts.
-- **From legacy .ser…** — create from legacy *Reconstruct* XML `.ser` files.
-- **From neuroglancer zarr…** — create from a Neuroglancer Zarr.
+- **From scaled images…** builds from an existing scaled Zarr directory (expects
+  a `scale_1` folder), then runs the same name/calibration/thickness prompts.
+- **From legacy .ser…** creates a series from legacy *Reconstruct* XML `.ser` files.
+- **From neuroglancer zarr…** creates a series from a Neuroglancer Zarr.
 
 ### Image directory and Zarr conversion
 
 Under **Series ▸ Images**:
 
-- **Find/change image directory** — point the series at the folder containing its
+- **Find/change image directory** points the series at the folder containing its
   images. The chosen directory is remembered with the series.
-- **Convert to scaled images** — convert the series' images into a scaled
+- **Convert to scaled images** converts the series' images into a scaled
   (`.zarr`) store for faster loading of large images.
-- **Update image scales** — add or refresh scale levels on an existing Zarr.
+- **Update image scales** adds or refreshes scale levels on an existing Zarr.
 
 ---
 
@@ -341,22 +341,22 @@ of preset traces, bottom-center), section-increment buttons, brightness/contrast
 sliders, and a scale bar. Each overlay group can be dragged to reposition it, and
 **View ▸ Reset palette position** restores the defaults.
 
-> 📸 *Screenshot: the main window labeled — field, tool palette (right), trace palette (bottom), scale bar (bottom-left), section-increment buttons.*
+> 📸 *Screenshot: label the main window's field, tool palette (right), trace palette (bottom), scale bar (bottom-left), and section-increment buttons.*
 
 ### Moving between sections
 
-- **Page Up** / **Page Down** — next / previous section.
-- **Mouse wheel** over the field — scroll up for the next section, down for the
+- **Page Up** / **Page Down**: next / previous section.
+- **Mouse wheel** over the field: scroll up for the next section, down for the
   previous (works in any tool mode).
-- **Go to section** (`Ctrl+G`) — jump to a section number.
+- **Go to section** (`Ctrl+G`): jump to a section number.
 - The section-increment buttons (▲/▼) in the corner do the same as PgUp/PgDown
   (handy on tablets).
 
 ### Panning and zooming (in any tool)
 
-- **Middle-click and drag** — pan the view.
-- **Ctrl + mouse wheel** — zoom about the cursor.
-- **Home** — fit the view to the image. **View ▸ View magnification…** sets an
+- **Middle-click and drag**: pan the view.
+- **Ctrl + mouse wheel**: zoom about the cursor.
+- **Home**: fit the view to the image. **View ▸ View magnification…** sets an
   exact zoom (useful for consistent figure scale).
 
 The dedicated **Pan/Zoom** tool (below) is an alternative when a middle mouse
@@ -385,7 +385,7 @@ under **Series ▸ Options**.)
 ## 6. The tool palette
 
 The tool palette is the column of mode buttons (top-right by default). Click a
-button — or press its shortcut — to switch the active tool. **Right-clicking a
+button (or press its shortcut) to switch the active tool. **Right-clicking a
 tool button opens that tool's settings** (where it has any).
 
 In every tool except Pan/Zoom, **right-clicking the field** opens a context menu
@@ -419,7 +419,7 @@ Slices a selected trace along a freehand line.
 - Select the trace(s) to cut first (they must share one object name and be all
   open or all closed), then **drag** the knife across them.
 - Resulting pieces smaller than a threshold percentage of the original are
-  discarded — right-click the Knife button to set **% original trace** (default
+  discarded. Right-click the Knife button to set **% original trace** (default
   **1.0**) and to enable **Smooth cuts**.
 
 ### Scissors
@@ -437,14 +437,14 @@ only.
 
 Right-click either button to choose the drawing **mode**:
 
-- **Scribble** — hold and drag to draw freehand; release to finish.
-- **Poly** — click to place each vertex; **right-click to finish**; **Backspace**
+- **Scribble**: hold and drag to draw freehand; release to finish.
+- **Poly**: click to place each vertex; **right-click to finish**; **Backspace**
   removes the last point.
-- **Combo** (default) — a quick click starts a poly/clicked line; click-and-drag
+- **Combo** (default): a quick click starts a poly/clicked line; click-and-drag
   scribbles.
 
-For **Closed Trace** you can also pick a fixed **shape** — freehand **Trace**,
-**Rectangle**, or **Ellipse** (drag to size) — and optionally auto-merge new traces
+For **Closed Trace** you can also pick a fixed **shape** (freehand **Trace**,
+**Rectangle**, or **Ellipse**; drag to size) and optionally auto-merge new traces
 into selected same-named traces, or apply a rolling-average smooth while
 scribbling.
 
@@ -456,11 +456,11 @@ Places a copy of the current trace-palette preset's shape at a fixed size.
 - **Click and drag** to set the radius for that stamp (diameter = drag distance).
 
 The stamp shape and its radius come from the selected trace-palette button (set
-them by right-clicking that button — see [The trace palette](#7-the-trace-palette)).
+them by right-clicking that button; see [The trace palette](#7-the-trace-palette)).
 
 ### Grid (`G`)
 
-Replicates the current preset into a rectangular array — useful for stereology
+Replicates the current preset into a rectangular array, useful for stereology
 sampling. **Click** to place the grid. Right-click the Grid button to set the
 element size, spacing, and number of columns/rows. With **Sampling frame** enabled
 (the default), each cell is drawn as a counting frame (a red exclusion line and a
@@ -487,7 +487,7 @@ object list and can be set from the object list's context menu.
 
 ### Z-trace tool
 
-Creates a [z-trace](#3-core-concepts) — a curve through the stack. Select the
+Creates a [z-trace](#3-core-concepts), a curve through the stack. Select the
 tool, then **click** points (changing sections between clicks as needed with the
 mouse wheel); **right-click to finish**. The new z-trace takes the current
 preset's name and color. (This tool is selected from the palette; it has no default
@@ -505,7 +505,7 @@ near the palette.
 - The default palette has **20 presets**, arranged as two rows of ten.
 - Select a preset with the number keys: **`1`–`9`, `0`** for the first row, and
   **`Shift+1`–`Shift+9`, `Shift+0`** for the second.
-- **Right-click a preset** (or press `Ctrl`+its number) to edit its attributes —
+- **Right-click a preset** (or press `Ctrl`+its number) to edit its attributes:
   name, color, fill mode, tags, the trace **shape**, and the **stamp radius
   (microns)** used by the Stamp and Grid tools.
 
@@ -529,31 +529,31 @@ preset from a copied trace.
 Most trace editing is on the **field context menu** (right-click selected traces),
 with keyboard shortcuts for the common actions. Selected-trace actions affect *all*
 selected traces. The top of that menu carries a single **Edit ... attributes...**
-shortcut that follows your selection — it reads **Edit trace attributes...** when
+shortcut that follows your selection: it reads **Edit trace attributes...** when
 traces are selected and **Edit z-trace attributes...** when z-traces are, so the
 most-used edit is one click away above the per-entity submenus.
 
-- **Edit attributes** (`Ctrl+E`) — change name, color, tags, and fill mode.
-- **Merge traces** (`Ctrl+M`) — merge the exteriors of selected traces (they must
+- **Edit attributes** (`Ctrl+E`): change name, color, tags, and fill mode.
+- **Merge traces** (`Ctrl+M`): merge the exteriors of selected traces (they must
   share a name).
-- **Hide** (`Ctrl+H`) / **Unhide all** (`Ctrl+U`) — hidden traces can't be edited
+- **Hide** (`Ctrl+H`) / **Unhide all** (`Ctrl+U`). Hidden traces can't be edited
   until unhidden.
-- **Make negative / positive** — negative traces subtract from (cut into) the area
+- **Make negative / positive**. Negative traces subtract from (cut into) the area
   of same-named traces, e.g. to carve a hole; this matters for area and 3D volume.
 - **Cut / Copy / Paste** (`Ctrl+X` / `Ctrl+C` / `Ctrl+V`) and **Paste attributes**
-  (`Ctrl+B`) — copy a trace's name/color/tags onto selected traces.
-- **Delete** (`Delete` or `Backspace`) — delete the selected traces.
+  (`Ctrl+B`), which copies a trace's name/color/tags onto selected traces.
+- **Delete** (`Delete` or `Backspace`): delete the selected traces.
 
 On the field (right-click empty space, or use the shortcuts):
 
 - **Select all** (`Ctrl+A`) / **Deselect** (`Ctrl+D`).
 - The **View** submenu items are checkboxes that show their current on/off state;
   each also has a keyboard shortcut that toggles it:
-  - **Hide trace layer** (`H`) and **Show all traces (ignore hidden)** (`A`) —
+  - **Hide trace layer** (`H`) and **Show all traces (ignore hidden)** (`A`)
     temporarily hide or show every trace regardless of individual hidden state
     (the field border turns red when all are force-hidden, green when all are
     force-shown). These differ from per-trace Hide/Unhide.
-  - **Section blend** (`Space`) — blend the current and last-viewed section, to
+  - **Section blend** (`Space`) blends the current and last-viewed section, to
     compare them.
   - **Hide image** (`I`), **Focus mode** (`X`).
 
@@ -587,18 +587,18 @@ allowed), and several can be open at once.
 
 ### Features shared by the lists
 
-- **Set columns…** — choose which columns are shown and reorder them.
-- **Export…** — write the displayed columns/rows to CSV.
-- **Refresh** — reload from the series data (the object list also auto-refreshes as
-  you trace; the trace list has no separate Refresh — it tracks the current
-  section).
-- **Filters** — most lists filter by a **regex** on the name (where `#` is
+- **Set columns…** lets you choose which columns are shown and reorder them.
+- **Export…** writes the displayed columns/rows to CSV.
+- **Refresh** reloads from the series data (the object list also auto-refreshes as
+  you trace; the trace list tracks the current section and has no separate
+  Refresh).
+- **Filters**. Most lists filter by a **regex** on the name (where `#` is
   shorthand for a digit), and by **group** and/or **tag** where applicable.
 - **Ctrl+C** copies selected cells. **Delete/Backspace** deletes the selected rows'
   underlying data. Right-click a selection for that list's context menu.
 - Every list's context menu offers **Invert selection** (select the displayed rows
-  that aren't selected, and vice versa — it only ever acts on rows currently shown,
-  so an active filter is respected) and **Copy _entity_ values** (named for the list —
+  that aren't selected, and vice versa; it only ever acts on rows currently shown,
+  so an active filter is respected) and **Copy _entity_ values** (named for the list:
   **Copy object values**, **Copy trace values**, etc.; the same as `Ctrl+C`).
 
 > 📸 *Screenshot: the Object list docked on the left, with the column/filter menus visible.*
@@ -632,7 +632,7 @@ columns you define.
   marked *Curated* is left exactly as it is, and no status is ever cleared or
   downgraded. A restored *Needs curation* keeps who it was assigned to, provided
   the marking was made in a version that records the assignee in the log. Use it
-  if curation you know you did is no longer showing — for example after
+  if curation you know you did is no longer showing, for example after
   recovering an unsaved session. It is one undoable step (`Ctrl+Z`).
 
 ### Trace list
@@ -683,12 +683,12 @@ external CSV.
 
 An **alignment** is a named set of per-section transforms. The currently active
 alignment determines how each section's image and traces are positioned. Switching
-alignments never changes the underlying images or trace coordinates — only how they
+alignments never changes the underlying images or trace coordinates, only how they
 are displayed.
 
 Every series includes a special **`no-alignment`** entry (the identity transform).
 It can't be edited, renamed, or deleted, and you can't edit transforms while it is
-active — switch to a real alignment first.
+active. Switch to a real alignment first.
 
 ### Switching and managing alignments
 
@@ -701,33 +701,33 @@ active — switch to a real alignment first.
 
 ### Adjusting a section's transform
 
-- **Alignments ▸ Edit transformation** (`Ctrl+T`) — enter the six transform numbers
+- **Alignments ▸ Edit transformation** (`Ctrl+T`): enter the six transform numbers
   `a b c d e f` directly. (Blocked on locked sections and while in `no-alignment`.)
 - **Keyboard nudges** (when no traces are selected, these move the section's
   transform; otherwise they move the selected traces):
-  - Arrow keys — translate (medium step); `Ctrl`+arrows = small, `Shift`+arrows =
+  - Arrow keys: translate (medium step); `Ctrl`+arrows = small, `Shift`+arrows =
     big. Step sizes are set in **Series ▸ Options**.
-  - `Ctrl+Shift+Left` / `Ctrl+Shift+Right` — rotate about the cursor.
-  - `F1`–`F4` (with `Shift` to reverse) — scale and shear in X/Y.
+  - `Ctrl+Shift+Left` / `Ctrl+Shift+Right`: rotate about the cursor.
+  - `F1`–`F4` (with `Shift` to reverse): scale and shear in X/Y.
 
 ### Assisted alignment
 
-- **Estimate affine transform** — align the current section to the comparison ("B")
+- **Estimate affine transform** aligns the current section to the comparison ("B")
   section from matched traces. Select **3 or more** traces of the same name on both
   sections (the same number on each); PyReconstruct computes the affine transform
   that best maps one set of centroids onto the other.
-- **Align by correlation** (`Ctrl+\`) — automatically register the current image to
+- **Align by correlation** (`Ctrl+\`) automatically registers the current image to
   the section beneath it by image cross-correlation (a translation-only adjustment).
-- **Propagate transform** — record a transform adjustment and apply it across many
+- **Propagate transform** records a transform adjustment and applies it across many
   sections: **Start propagation recording**, make your adjustment, then **Propagate
-  to start** / **Propagate to end** (or simply navigate — while recording, moving to
+  to start** / **Propagate to end** (or simply navigate; while recording, moving to
   a new unlocked section applies the recorded change). A red dot is shown on the
   field while recording. Locked sections are skipped.
 
 ### Align by correlation, then propagate across a range
 
 The `Ctrl+\` correlation shift can be recorded and propagated across a range of
-sections, exactly like a manual transform — but **you must start recording before
+sections, exactly like a manual transform, but **you must start recording before
 you correlate**:
 
 1. Navigate to the section you want to align.
@@ -740,7 +740,7 @@ you correlate**:
 5. **Alignments ▸ Propagate transform ▸ End propagation recording**.
 
 Order matters: starting recording resets the accumulator, so pressing `Ctrl+\`
-*before* you start recording will not capture that alignment — always start
+*before* you start recording will not capture that alignment. Always start
 recording first. As with manual transforms, locked sections are skipped during
 propagation.
 
@@ -756,12 +756,12 @@ propagation.
   Differing calibrations are flagged first, and transforms are rescaled to this
   series' pixel size. Sections missing from the other series get an identity
   transform.
-- **.txt file** — one line per section: `section a b c d e f` (the integer section
+- **.txt file**. One line per section: `section a b c d e f` (the integer section
   number followed by the six transform numbers). Every section number must exist in
   the series; the translation terms are interpreted in pixels and scaled by the
   section magnification. The imported transforms are written to a new alignment
   named after the file (with the date appended), and the series switches to it.
-- **SWiFT project** — import transforms from an AlignEM-SWiFT project; you choose
+- **SWiFT project**: import transforms from an AlignEM-SWiFT project; you choose
   the scale to import. The number of transforms must match the number of sections.
 
 The same alignment import is also one tab of **Series ▸ Import series data ▸ From
@@ -796,24 +796,25 @@ z-trace list.
 
 Each object has a **3D type** (set in **Edit 3D settings…** from the object list):
 
-- **Surface** (default) — a smoothed surface reconstructed from the object's traces
+- **Surface** (default): a smoothed surface reconstructed from the object's traces
   (negative traces are subtracted, e.g. to hollow out a structure).
-- **Spheres** — one sphere per trace, sized to the trace's radius (good for
+- **Spheres**: one sphere per trace, sized to the trace's radius (good for
   point-like or stamped objects).
-- **Contours** — each trace rendered as a thin slab, showing the raw cross-sections.
+- **Contours**: each trace rendered as a thin slab, showing the raw cross-sections.
 
 Z-traces render as tubes. **Edit 3D settings…** also sets per-object **opacity**.
 
 Series-wide 3D quality is controlled in **Series ▸ Options** (the 3D section): an
 **XY Resolution** slider (less detail/faster ↔ more detail/slower), the **3D
-smoothing** method (Humphrey — recommended — Mutable Diffusion Laplacian, Taubin, or
-None), the **smoothing iterations**, and the **screenshot resolution (dpi)**.
+smoothing** method (Humphrey is recommended; the others are Mutable Diffusion
+Laplacian, Taubin, and None), the **smoothing iterations**, and the **screenshot
+resolution (dpi)**.
 
 ### Navigating the 3D scene
 
-- **Left-drag** — rotate; **middle-drag** — pan; **right-drag** — zoom. (`Ctrl`-drag
+- **Left-drag** rotates; **middle-drag** pans; **right-drag** zooms. (`Ctrl`-drag
   also rotates.)
-- **Double-click** an object — jump the 2D field to that point on the corresponding
+- **Double-click** an object to jump the 2D field to that point on the corresponding
   section.
 - Click meshes to select them. With objects selected: arrow keys translate in X/Y,
   `Ctrl`+Up/Down translates in Z, `Shift`+arrows and `Ctrl+Shift`+Up/Down rotate.
@@ -825,32 +826,32 @@ None), the **smoothing iterations**, and the **screenshot resolution (dpi)**.
 
 The 3D window has its own menu bar:
 
-- **Scale cube** — toggle a reference cube with the **C** key (or **Scale Cube ▸
+- **Scale cube**: toggle a reference cube with the **C** key (or **Scale Cube ▸
   Display in scene**). To move it, select it (left-click) and use the arrow keys
   (X/Y) and `Ctrl`+Up/Down (Z). Edit its **edge length (µm)**, color, opacity, and
-  outline width via **Edit ▸ Edit attributes…** (`Ctrl+E`) — it's a physical
+  outline width via **Edit ▸ Edit attributes…** (`Ctrl+E`). It's a physical
   measuring reference.
-- **Scene ▸ Change background** — set the background color.
-- **Scene ▸ Organize scene…** (`Ctrl+Shift+H`) — line objects up side by side, by
+- **Scene ▸ Change background** sets the background color.
+- **Scene ▸ Organize scene…** (`Ctrl+Shift+H`) lines objects up side by side, by
   host group or individually.
-- **Scene ▸ Set translate/rotate step…** — the movement increments (default 0.1 µm
-  and 10°).
-- **File ▸ Save scene… / Load scene…** — save the scene (objects, colors, camera) to
+- **Scene ▸ Set translate/rotate step…** sets the movement increments (default
+  0.1 µm and 10°).
+- **File ▸ Save scene… / Load scene…** save the scene (objects, colors, camera) to
   a JSON file and reload it later (also **Series ▸ 3D ▸ Load 3D scene…** from the
   main window). **Add to scene** can also pull objects from another series.
 
 ### Saving images and exporting meshes
 
-- **Scene ▸ Save scene screenshot…** — save a rendered image (PNG, JPG, TIF, or BMP)
+- **Scene ▸ Save scene screenshot…** saves a rendered image (PNG, JPG, TIF, or BMP)
   at the configured DPI.
-- **Scene ▸ Export scene…** — export the whole scene as a single Wavefront `.obj`
+- **Scene ▸ Export scene…** exports the whole scene as a single Wavefront `.obj`
   (with a `.mtl` material file).
-- From the **Object list ▸ 3D ▸ Export mesh as** — export individual objects as
+- From the **Object list ▸ 3D ▸ Export mesh as**, export individual objects as
   **Wavefront (.obj)**, **OFF (.off)**, **Stanford PLY (.ply)**, **STL (.stl)**, or
   **Collada (.dae)**. (Surface and Spheres objects export; contour and tube types do
   not. Collada export additionally requires the optional `pycollada` package; if it
   is missing you'll be told, rather than seeing an error.)
-- **Object list ▸ 3D ▸ Export quantitative data** — write per-object surface area
+- **Object list ▸ 3D ▸ Export quantitative data** writes per-object surface area
   and volume to CSV. (Note these depend on the meshing settings; verify mesh quality
   before relying on the numbers.)
 
@@ -863,7 +864,7 @@ The 3D window has its own menu bar:
 **File ▸ Save** (`Ctrl+S`) writes the series back to its `.jser`. **File ▸ Save
 as…** writes a copy to a new location. PyReconstruct does **not** auto-save on a
 timer, so save regularly. (If you close with unsaved changes, you are prompted to
-save; and if a session ends uncleanly, reopening offers to recover it — see
+save. If a session ends uncleanly, reopening offers to recover it; see
 [Opening and creating a series](#4-opening-and-creating-a-series).)
 
 ### Backups
@@ -871,15 +872,16 @@ save; and if a session ends uncleanly, reopening offers to recover it — see
 A backup is a complete copy of the series saved as an ordinary `.jser` into a
 folder you choose, with a filename you configure. There are two ways to make one:
 
-- **File ▸ Backup ▸ Backup now…** (`Ctrl+Shift+B`) — save the current data and write
+- **File ▸ Backup ▸ Backup now…** (`Ctrl+Shift+B`) saves the current data and writes
   a backup, optionally with a comment appended to the filename.
-- **Automatic backups** — enable **Auto-backup (create backup on every save)** in
+- **Automatic backups**: enable **Auto-backup (create backup on every save)** in
   the backup settings, and a backup is written every time you Save or Save As.
 
 **File ▸ Backup ▸ Settings…** configures the **Backup Folder** and the filename
-template, assembled from optional parts — a prefix, the series code, the series
-name, the date and time (with customizable strftime patterns), the username, and a
-suffix — joined by a delimiter. A live preview shows the resulting filename, and
+template. The template is assembled from optional parts joined by a delimiter: a
+prefix, the series code, the series name, the date and time (with customizable
+strftime patterns), the username, and a suffix. A live preview shows the
+resulting filename, and
 name collisions get a numeric suffix (`-01`, `-02`, …). The folder and the
 auto-backup toggle are remembered **per series**; the naming template is shared
 across all series. (The backup folder and naming are also available under **Series ▸
