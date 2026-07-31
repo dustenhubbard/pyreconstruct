@@ -1,0 +1,63 @@
+name: notes
+
+# Reports a pull request that changes the application without recording it in
+# CHANGELOG.md. See scripts/check_changelog_entry.py for the rule, the two
+# automatic exemptions, and the opt-out.
+#
+# REPORT-ONLY. This workflow always exits 0. The finding arrives as a warning
+# annotation and a job summary, not as a failed check. To make it a gate, set
+# BLOCKING = True in scripts/check_changelog_entry.py; nothing in this file
+# needs to change.
+#
+# No `branches:` filter, deliberately. `test.yml` filters on `branches: [main]`,
+# so a pull request stacked on another branch gets no continuous integration at
+# all. That is a real blind spot and this check does not reproduce it: a stacked
+# pull request changes the application exactly as much as a direct one does.
+#
+# `edited` and the label types are in the trigger list because the opt-out lives
+# in the pull request body. Without `edited`, adding the opt-out line would not
+# re-run the check and the warning would stay on the pull request after it had
+# been answered. The label types cost nothing and keep the same true if the
+# opt-out ever moves to a label.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+
+# One in-flight run per pull request; a newer push or edit supersedes the old.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege. The check reads the changed-file list from git and the body
+# from the event payload, and writes only a job summary.
+permissions:
+  contents: read
+
+jobs:
+  changelog-entry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # fetch-depth: 2 is enough for the diff below: the pull_request event
+      # checks out the merge commit, whose first parent is the base. No project
+      # environment is set up at all -- the check is stdlib-only Python, and the
+      # runner image already has one.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 2
+
+      - name: Collect the changed files
+        run: git diff --name-only HEAD^1 HEAD > "${RUNNER_TEMP}/changed-files.txt"
+
+      # Through a file and an environment variable, never interpolated into the
+      # shell: a pull request body is attacker-controlled text.
+      - name: Collect the pull request body
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s' "$PR_BODY" > "${RUNNER_TEMP}/pr-body.txt"
+
+      - name: Changelog entry recorded
+        run: |
+          python3 scripts/check_changelog_entry.py \
+            --changed-files "${RUNNER_TEMP}/changed-files.txt" \
+            --body "${RUNNER_TEMP}/pr-body.txt"
