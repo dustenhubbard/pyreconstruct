@@ -204,6 +204,7 @@ MENUBAR_BASELINE = [
     (1, "act", "findobjectfirst_act"),
     (1, "menu", "cleanupmenu"),
     (2, "act", "removeduplicates_act"),
+    (2, "act", "finddiffnamedduplicates_act"),
     (2, "act", "removepixeldust_act"),
     (2, "act", "removeempty_act"),
     (1, "sep", None),
@@ -348,9 +349,9 @@ def test_no_baseline_action_was_lost():
 
 
 def test_menubar_action_and_submenu_counts():
-    """113 actions at capture, 115 now (the two additions); submenus unchanged."""
+    """113 actions at capture, 116 now (the additions); submenus unchanged."""
     rows = _rows()
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 115
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 116
     assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 32
 
 
@@ -498,6 +499,7 @@ SERIES_MENU_LABELS = [
     "Find first object contour...",
     "Clean up >",
     "    Remove duplicate traces...",
+    "    Find duplicates named differently...",
     "    Remove pixel-dust traces...",
     "    Remove empty traces...",
     "-----",

@@ -32,6 +32,9 @@ class MalformedContoursDialog(QDialog):
 
     COLUMNS = ["Object", "Section", "Point count", "Location (x, y)", "Reason"]
     WINDOW_TITLE = "Traces skipped during smoothing"
+    # column the table is sorted by when it opens; subclasses that put a
+    # different column at index 1 override it to keep the sort meaningful
+    DEFAULT_SORT_COLUMN = 1
 
     def _columnSpecs(self):
         """Return (record-key, kind) pairs, one per column in COLUMNS.
@@ -89,7 +92,7 @@ class MalformedContoursDialog(QDialog):
         self.table.setSortingEnabled(False)
         self._populate()
         self.table.setSortingEnabled(True)
-        self.table.sortItems(1)  # default sort by section number
+        self.table.sortItems(self.DEFAULT_SORT_COLUMN)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.cellDoubleClicked.connect(self._onDoubleClick)
 
@@ -134,12 +137,19 @@ class MalformedContoursDialog(QDialog):
             self.delete_all_button.setEnabled(bool(self.records))
             self.delete_all_button.clicked.connect(self.deleteAllContours)
 
+        # subclass hook, run before the selection signal is connected so
+        # anything it adds is already there the first time the slot fires
+        self.extra_buttons = []  # (button, needs_a_selected_row)
+        self._addExtraButtons()
+
         # connected after the buttons exist so the slot can safely touch them
         self.table.itemSelectionChanged.connect(self._updateRowActionButtons)
 
         buttonbox = QDialogButtonBox(QDialogButtonBox.Close, self)
         buttonbox.rejected.connect(self.reject)
         buttonbox.addButton(self.goto_button, QDialogButtonBox.ActionRole)
+        for button, _ in self.extra_buttons:
+            buttonbox.addButton(button, QDialogButtonBox.ActionRole)
         buttonbox.addButton(copy_button, QDialogButtonBox.ActionRole)
         buttonbox.addButton(save_button, QDialogButtonBox.ActionRole)
         if self.delete:
@@ -228,12 +238,23 @@ class MalformedContoursDialog(QDialog):
             return "—"
         return f"({loc[0]}, {loc[1]})"
 
+    def _addExtraButtons(self):
+        """Subclass hook: append (button, needs_selection) to extra_buttons.
+
+        Nothing here by default. A button appended with needs_selection True is
+        disabled while no row is selected, exactly like "Go to trace".
+        """
+        return
+
     def _updateRowActionButtons(self):
         """Enable selection-dependent buttons only while a row is selected."""
         has_selection = self.table.selectionModel().hasSelection()
         self.goto_button.setEnabled(has_selection)
         if self.delete_selected_button is not None:
             self.delete_selected_button.setEnabled(has_selection)
+        for button, needs_selection in self.extra_buttons:
+            if needs_selection:
+                button.setEnabled(has_selection)
 
     def _recordAtRow(self, row):
         """Return the record for the given table row (or None)."""
@@ -409,4 +430,114 @@ class PixelDustDialog(MalformedContoursDialog):
             "one — and deselect any legitimate trace you want to keep. Then use "
             "“Delete selected” or “Delete all” to remove them (can be undone).\n\n"
             "Nothing is removed until you choose to delete."
+        )
+
+
+class DifferentlyNamedDuplicatesDialog(MalformedContoursDialog):
+    """Report traces that duplicate each other under two different names.
+
+    Each row is a pair: one shape traced twice, once under each of two object
+    names, which is what happens when two people trace the same structure. Both
+    names are shown, along with the measured overlap and each trace's area, so
+    the pair can be judged rather than guessed at. "Go to trace" frames the first
+    of the two and "Go to other trace" frames the second, so the same field view
+    can be compared against both.
+
+    This list reports and does not delete. Two traces sharing one name are
+    unambiguous and Series.deleteDuplicateTraces collapses them, but when the
+    names differ, which name is the right one is a question about the data: the
+    two objects may have different hosts, groups, or curation status, and the
+    answer can be to rename or to merge rather than to delete. So the pairs are
+    reported, and what to do about each one is left to the person reading them.
+    """
+
+    COLUMNS = ["Object", "Duplicate of", "Section", "Overlap", "Area (um^2)",
+               "Other area (um^2)", "Point count", "Location (x, y)", "Reason"]
+    WINDOW_TITLE = "Duplicates named differently"
+    DEFAULT_SORT_COLUMN = 2  # "Section"
+
+    def __init__(self, mainwindow: QWidget, records: list, navigate=None):
+        """Create the pairs list. Takes no delete callback, on purpose.
+
+        Report-only is a property of this dialog rather than a choice each caller
+        makes, so there is no ``delete`` parameter to pass one through: adding
+        deletion here has to be a deliberate change to this class.
+
+            Params:
+                mainwindow (QWidget): the parent window
+                records (list): pair records from
+                    Series.findDifferentlyNamedDuplicates
+                navigate (callable): optional navigate(section_num, obj_name,
+                    index) callback, used by both "Go to" buttons
+        """
+        super().__init__(mainwindow, records, navigate=navigate, delete=None)
+
+    def _columnSpecs(self):
+        return [
+            ("name", "str"),
+            ("other_name", "str"),
+            ("section", "int"),
+            ("ratio", "float"),
+            ("area", "float"),
+            ("other_area", "float"),
+            ("points", "int"),
+            ("location", "loc"),
+            ("reason", "str"),
+        ]
+
+    def _addExtraButtons(self):
+        """Add "Go to other trace", which frames the pair's second trace."""
+        self.goto_other_button = QPushButton("Go to other trace", self)
+        self.goto_other_button.setToolTip(
+            "Focus the field on the other trace of the selected pair"
+        )
+        self.goto_other_button.setEnabled(False)
+        self.goto_other_button.clicked.connect(self.goToSelectedOtherContour)
+        self.extra_buttons.append((self.goto_other_button, True))
+
+    def goToSelectedOtherContour(self):
+        """Focus the field on the second trace of the selected pair."""
+        if not self.navigate:
+            return
+        rows = self.table.selectionModel().selectedRows()
+        if not rows:
+            return
+        record = self._recordAtRow(rows[0].row())
+        if record is None:
+            return
+        self.navigate(
+            record["section"], record["other_name"], record["other_index"]
+        )
+
+    def _headingText(self):
+        """Explain what a row is and why nothing is deleted from here."""
+        num_pairs = len(self.records)
+        if not num_pairs:
+            return (
+                "No pairs left to report.\n\n"
+                "You can close this window."
+            )
+
+        names = {r["name"] for r in self.records} | {
+            r["other_name"] for r in self.records
+        }
+        pair_word = "pair" if num_pairs == 1 else "pairs"
+
+        return (
+            f"{num_pairs} {pair_word} of overlapping traces across "
+            f"{len(names)} objects, each pair traced under two different "
+            "names.\n\n"
+            "Two traces of one object that sit on top of each other are "
+            "duplicates without any doubt, and "
+            "“Remove duplicate traces...” collapses those. When the names "
+            "differ the geometry says the same thing, but which name is the "
+            "right one does not follow from it: the two objects can carry "
+            "different hosts, groups or curation, and the answer may be to "
+            "rename or to merge rather than to delete one.\n\n"
+            "So this list reports. Select a row and use “Go to trace” and "
+            "“Go to other trace” to see both traces of a pair in the field, "
+            "then decide. The Overlap column is the measured overlap ratio "
+            "(1 means the two traces have the same points), and both areas "
+            "are physical (um^2) on that trace's own section.\n\n"
+            "Nothing in the series has been changed."
         )

@@ -2843,6 +2843,55 @@ class MainWindow(QMainWindow):
         self.field.reload()
         self.seriesModified(True)
 
+    def findDifferentlyNamedDuplicates(self):
+        """Report traces that duplicate each other under two different names.
+
+        The sibling of "Remove duplicate traces...", for the case that one
+        cannot see: two people tracing the same structure give it two names, so
+        the two traces never end up in the same contour and the same-name
+        comparison never puts them side by side.
+
+        This reports and does not delete. Which of the two names survives is a
+        question about the data rather than about geometry, so the review list
+        opens without a delete callback and nothing in the series is touched.
+        """
+        self.saveAllData()
+
+        # the same two controls as "Remove duplicate traces...", so the pair of
+        # operations reads the same way
+        structure = [
+            ["Overlap threshold:", ("float", 0.95, (0, 1))],
+            [("check", ("check locked traces", False))]
+        ]
+        response, confirmed = QuickDialog.get(
+            self, structure, "Find duplicates named differently"
+        )
+        if not confirmed:
+            return
+        threshold = response[0]
+        include_locked = response[1][0][1]
+
+        pairs = self.series.findDifferentlyNamedDuplicates(
+            threshold, include_locked
+        )
+        if not pairs:
+            notify(
+                "No differently-named duplicate traces found at that overlap "
+                "threshold."
+            )
+            return
+
+        # review list only: no delete callback, so the dialog shows no Delete
+        # buttons and this operation cannot change the series
+        self.differently_named_duplicates_dialog = (
+            DifferentlyNamedDuplicatesDialog(
+                self,
+                pairs,
+                navigate=self.field.focusMalformedContour,
+            )
+        )
+        self.differently_named_duplicates_dialog.show()
+
     def removePixelDustTraces(self):
         """Find tiny "pixel-dust" traces and remove them through a review list.
 
