@@ -21,6 +21,14 @@ Also guarded here:
     the act_name still appears in a menu AND still carries the series form.
   * SCOPE HONESTY -- tags are trace-level, comments are object-level, so the
     object menu's bulk tag action must not live under "Object attributes >".
+    Widened 2026-07-31: no label may appear on both the object menu and the
+    trace menu unless the two do the same amount of work. Four did ("Smooth
+    traces", "Edit radius...", "Edit shape...", "Unhide"), one object-wide and
+    one selection-scoped, and nothing in either label said which. The fourth was
+    found by the standing rule rather than by reading the menu, and was fixed
+    a few hours after the other three once the maintainer chose to narrow his
+    "leave the visibility section alone" instruction for it. See
+    test_no_label_is_shared_between_the_object_and_trace_menus.
 
 The definitions are built against light stubs (no Qt loop), matching the idiom
 of test_menu_restructure / test_menu_parity_hoist.
@@ -187,7 +195,7 @@ FIELD_TOP_LEVEL = [
     "Edit attributes...",
     "Merge traces",
     "Merge attributes only",
-    "Hide traces",
+    "Hide selected traces",
     "-----",
     # clipboard, uninterrupted muscle-memory order; "Copy to sections..."
     # directly under "Copy"
@@ -224,9 +232,11 @@ def test_field_top_strip_is_exactly_four_actions():
     strip = rows[: rows.index("-----")]
     assert strip == [
         "Edit attributes...", "Merge traces",
-        "Merge attributes only", "Hide traces",
+        "Merge attributes only", "Hide selected traces",
     ]
-    assert "Smooth traces" not in strip
+    # "Smooth traces" until 2026-07-31, when the label gained its scope; the
+    # old string would have satisfied this assertion forever without biting.
+    assert "Smooth selected traces" not in strip
     assert "Make negative" not in strip
     assert "Make positive" not in strip
 
@@ -286,26 +296,15 @@ OBJECT_ROWS = [
     "    -----",
     "    Edit 3D settings...",
     "-----",
-    # the whole visibility family, flat, in its established order
-    "Hide",
-    "Unhide",
+    # the whole visibility family, flat, three hide/unhide pairs by scope
+    "Hide object",
+    "Unhide object",
     "Hide other objects",
+    "Restore previous visibility",
     "Hide all objects",
-    "Show all objects",
+    "Unhide all objects",
     "-----",
-    # object-level settings, one section
-    "Comment...",
-    "Duplicate object",
-    "Group >",
-    "    Add to group...",
-    "    Remove from group...",
-    "    Remove from all groups",
-    "Set curation >",
-    "    Needs curation",
-    "    Curated",
-    "    Clear status",
-    "Custom categories >",
-    "    New...",
+    # object-level settings, one section, most used first (2026-07-31)
     "Object attributes >",
     "    Set hosts...",
     "    Clear hosts",
@@ -317,11 +316,22 @@ OBJECT_ROWS = [
     "    -----",
     "    Lock",
     "    Unlock",
-    "Geometry >",
-    "    Edit radius...",
-    "    Edit shape...",
-    "    Smooth traces",
-    "    Split into separate objects",
+    "Smooth object",
+    "Duplicate object",
+    "Split into separate objects",
+    "Edit object radius...",
+    "Edit object shape...",
+    "Group >",
+    "    Add to group...",
+    "    Remove from group...",
+    "    Remove from all groups",
+    "Set curation >",
+    "    Needs curation",
+    "    Curated",
+    "    Clear status",
+    "Custom categories >",
+    "    New...",
+    "Leave object comment...",
     "-----",
     "Create Z-trace >",
     "    On contour midpoints",
@@ -367,13 +377,17 @@ def test_object_menu_list_variant_adds_utilities_second_from_bottom():
 def test_object_list_utilities_are_below_the_domain_actions():
     rows = _rows(_obj_menu(list_ops=OBJ_LIST_OPS))
     assert rows.index("Invert selection") > rows.index("Edit object attributes...")
-    assert rows.index("Invert selection") > rows.index("Hide")
+    assert rows.index("Invert selection") > rows.index("Hide object")
     assert rows.index("Copy object values") < rows.index("Delete objects")
 
 
 @pytest.mark.parametrize("label", [
-    "Comment...", "Duplicate object", "Add to 3D scene",
-    "Hide", "Hide other objects",
+    "Leave object comment...", "Duplicate object", "Add to 3D scene",
+    "Hide object", "Hide other objects",
+    # 2026-07-31: "smoothing is frequent", so it left "Geometry >" for the top
+    # level. The two edit rows followed when that left the submenu at two items.
+    "Smooth object", "Edit object radius...", "Edit object shape...",
+    "Split into separate objects",
 ])
 def test_often_used_object_actions_are_zero_hop(label):
     """The actions the maintainer named as frequent are top-level (one click),
@@ -435,29 +449,54 @@ def test_object_menu_row_order_is_the_approved_one():
         settings they should be in the same section as Object attributes and
         Geometry."
 
-    Order only. Nothing was renamed, added, removed, or moved between a submenu
-    and the top level. This test replaces the ordering the previous
-    frequency-first rework pinned; that decision was not wrong, it was
-    superseded.
+    Revised 2026-07-31. That pass was order only; this one renames and flattens.
+    Inside the object-settings section: "Object attributes >" leads, the three
+    commands whose labels used to collide with the trace menu now name their
+    scope, "Smooth object" and the two edit rows are top-level, "Split into
+    separate objects" sits beside "Duplicate object" because it is structural
+    rather than a trace operation, "Geometry >" is gone, and the comment action
+    closes the section as "Leave object comment...". His words: "Dissolve the
+    Geometry name. Split object location you suggested makes sense."
+
+    Amended later the same day with the fourth rename. "Unhide" was the one
+    remaining shared label, and it lives in the visibility section that the
+    2026-07-29 pass was told to leave alone. Shown the collision, he narrowed
+    that instruction rather than keeping it: "Make it 'Unhide object' and 'Unhide
+    selected traces', consistent with the three renames [...] Touches the
+    visibility section, but leaving one collision unfixed is the inconsistency
+    users actually hit."
+
+    Amended again the same day, once the whole visibility section was put in
+    front of him as a scope-by-action matrix. "The view section is good" had
+    stopped being the operative instruction after the fourth rename entered it,
+    and the matrix showed the section was incomplete rather than merely uneven.
+    His call: "build the restore, skip the blanket unhide-other." So the section
+    grew one row and lost none, and its order now expresses three hide/unhide
+    pairs -- object, isolate, series. See
+    test_the_visibility_section_completes_the_scope_matrix.
     """
     assert _top_level(_obj_menu()) == [
         "Edit object attributes...",
         "Add to 3D scene",
         "3D >",
         "-----",
-        "Hide",
-        "Unhide",
+        "Hide object",
+        "Unhide object",
         "Hide other objects",
+        "Restore previous visibility",
         "Hide all objects",
-        "Show all objects",
+        "Unhide all objects",
         "-----",
-        "Comment...",
+        "Object attributes >",
+        "Smooth object",
         "Duplicate object",
+        "Split into separate objects",
+        "Edit object radius...",
+        "Edit object shape...",
         "Group >",
         "Set curation >",
         "Custom categories >",
-        "Object attributes >",
-        "Geometry >",
+        "Leave object comment...",
         "-----",
         "Create Z-trace >",
         "-----",
@@ -481,16 +520,70 @@ def test_the_two_3d_rows_are_adjacent():
 
 def test_object_level_settings_share_one_section():
     """"Group >" and "Set curation >" are per-object settings, so they belong in
-    the same section as "Object attributes >" and "Geometry >" -- his reasoning
-    for moving them down. A separator between any two of them would split the
-    section again."""
+    the same section as "Object attributes >" -- his reasoning for moving them
+    down. A separator between any two of them would split the section again.
+
+    "Geometry >" was a member of this list until it was dissolved on 2026-07-31;
+    the two edit rows it held are now members in their own right, so the section
+    it belonged to is asserted the same way with more members in it.
+    """
     rows = _top_level(_obj_menu())
-    members = ["Group >", "Set curation >", "Object attributes >", "Geometry >"]
+    members = [
+        "Object attributes >", "Smooth object", "Duplicate object",
+        "Split into separate objects", "Edit object radius...",
+        "Edit object shape...", "Group >", "Set curation >",
+        "Leave object comment...",
+    ]
     idx = [rows.index(m) for m in members]
     assert idx == sorted(idx)
     assert "-----" not in rows[idx[0]:idx[-1] + 1], (
         "the object-level settings are split across sections"
     )
+
+
+def test_the_geometry_submenu_is_gone():
+    """His two-item rule: "if a submenu has only two items we should double check
+    if it's even worth a submenu."
+
+    "Geometry >" held four rows. "Smooth object" was promoted for frequency and
+    "Split into separate objects" moved beside "Duplicate object" (structural,
+    not a trace operation), which left exactly two edit rows. That is the bar, so
+    the submenu was dissolved rather than renamed: with the scope in the labels
+    there was nothing left for a container to describe. Renaming it to something
+    "less generic and descriptive", his earlier ask, is moot.
+    """
+    menu = _obj_menu()
+    assert not any(isinstance(e, dict) and e["text"] == "Geometry" for e in menu)
+    assert "objgeometrymenu" not in [
+        e.get("attr_name") for e in menu if isinstance(e, dict)
+    ]
+    top = _top_level(menu)
+    for label in ("Edit object radius...", "Edit object shape...",
+                  "Smooth object", "Split into separate objects"):
+        assert label in top, f"{label} lost its home when Geometry > was dissolved"
+
+
+def test_split_object_sits_beside_duplicate_object():
+    """Structural pair, more used first. He named "Duplicate object" as the more
+    used of the two and said the split action "sits closer to" it than to radius
+    and shape, which are trace-shape edits applied object-wide."""
+    rows = _top_level(_obj_menu())
+    assert rows[rows.index("Duplicate object") + 1] == "Split into separate objects"
+
+
+def test_leave_object_comment_closes_its_section():
+    """It "deserves" a place but not a frequent one, so it is last in the
+    object-settings section, directly above the separator that ends it."""
+    rows = _top_level(_obj_menu())
+    i = rows.index("Leave object comment...")
+    assert rows[i + 1] == "-----"
+
+
+def test_object_attributes_submenu_leads_the_settings_section():
+    """His ask: "Object attributes" leads the section it named."""
+    rows = _top_level(_obj_menu())
+    i = rows.index("Object attributes >")
+    assert rows[i - 1] == "-----"
 
 
 def test_comment_and_duplicate_are_below_the_top_spots():
@@ -500,21 +593,91 @@ def test_comment_and_duplicate_are_below_the_top_spots():
     rows = _top_level(_obj_menu())
     strip = rows[: rows.index("-----")]
     assert strip == ["Edit object attributes...", "Add to 3D scene", "3D >"]
-    assert "Comment..." not in strip
+    assert "Leave object comment..." not in strip
     assert "Duplicate object" not in strip
 
 
-def test_the_visibility_section_was_left_alone():
-    """"The view section with the various Hide options is good" -- unchanged
-    members, unchanged order, still one uninterrupted section."""
+def test_the_visibility_section_completes_the_scope_matrix():
+    """Three hide/unhide pairs, one per scope of action, and nothing else.
+
+    This test was `test_the_visibility_section_was_left_alone` until 2026-07-31,
+    guarding "the view section with the various Hide options is good" as an
+    instruction to change nothing. That instruction is spent: the fourth rename
+    entered the section earlier the same day with his explicit go-ahead, and once
+    the whole section was laid out as a scope-by-action matrix he asked for it to
+    be finished -- "build the restore, skip the blanket unhide-other."
+
+    So the rule it pins is now positive rather than negative, which is the
+    stronger form: every hide has the unhide at its own scope beside it.
+
+        Hide object                    Unhide object                 object
+        Hide other objects             Restore previous visibility   isolate
+        Hide all objects               Unhide all objects            series
+
+    The three approved changes, with his words:
+
+      * "Hide" -> "Hide object": "yes make it Hide object". Symmetry with row
+        one's unhide; it never collided with the trace menu.
+      * "Show all objects" -> "Unhide all objects", so one verb means one thing.
+      * "Restore previous visibility" added, the inverse "Hide other objects"
+        never had.
+
+    Deliberately NOT here, and rejected rather than forgotten: "Unhide other
+    objects". Unhiding the complement of the selection after an isolate leaves
+    everything visible, which is "Unhide all objects"; see
+    test_no_blanket_unhide_other_objects_row.
+
+    Still asserted twice over, once by label and once by `act_name`, because that
+    is what "unchanged members" means and a relabel cannot satisfy the second
+    half by accident. Nothing in this section moves without his call, the same
+    way both of these did.
+    """
     rows = _top_level(_obj_menu())
-    start = rows.index("Hide")
+    start = rows.index("Hide object")
     assert rows[start - 1] == "-----"
-    assert rows[start:start + 5] == [
-        "Hide", "Unhide", "Hide other objects", "Hide all objects",
-        "Show all objects",
+    assert rows[start:start + 6] == [
+        "Hide object", "Unhide object",
+        "Hide other objects", "Restore previous visibility",
+        "Hide all objects", "Unhide all objects",
     ]
-    assert rows[start + 5] == "-----"
+    assert rows[start + 6] == "-----"
+
+    # membership and order by act_name, which no relabel can satisfy by accident.
+    # Top-level entries only: a visibility action that fell into a submenu must
+    # fail here rather than be found by a recursive walk.
+    #
+    # showallobj_act keeps its name against the new "Unhide all objects" label on
+    # purpose: act_name is the key a user-configurable shortcut is stored under
+    # (series.getOption(act_name)), so renaming it would drop any stored binding.
+    acts = [e[0] for e in _obj_menu() if isinstance(e, tuple)]
+    first = acts.index("hideobj_act")
+    assert acts[first:first + 6] == [
+        "hideobj_act", "unhideobj_act",
+        "hideotherobj_act", "restorevisibility_act",
+        "hideallobj_act", "showallobj_act",
+    ]
+
+
+def test_the_restore_sits_directly_under_the_isolate_it_undoes():
+    """"Restore previous visibility" is the inverse of "Hide other objects", and
+    the only way a user learns that from a menu is adjacency."""
+    rows = _top_level(_obj_menu())
+    assert rows.index("Restore previous visibility") == \
+        rows.index("Hide other objects") + 1
+
+
+def test_no_blanket_unhide_other_objects_row():
+    """Rejected explicitly, and worth a test so it is not re-derived.
+
+    After isolating {A}, unhiding the complement of the selection leaves
+    everything visible -- byte for byte what "Unhide all objects" already does.
+    Its only distinct behavior needs the selection to have changed since the
+    isolate, and then it surprises. A row that duplicates an existing command is
+    not discoverability.
+    """
+    rows = _rows(_obj_menu(list_ops=OBJ_LIST_OPS))
+    assert "Unhide other objects" not in rows
+    assert "unhideotherobj_act" not in _act_names(_obj_menu())
 
 
 def test_group_submenu_is_top_level_on_the_object_menu():
@@ -550,23 +713,28 @@ def test_object_menu_attr_names_are_unique_on_both_surfaces():
 # --------------------------------------------------------------------------- #
 def test_comment_is_an_object_level_action_at_the_top_level():
     """Comments really are an object attribute (series.obj_attrs[name]["comment"]),
-    so "Comment..." is honest on the object menu -- and frequent, so top-level."""
-    assert "Comment..." in _top_level(_obj_menu())
+    so the action is honest on the object menu -- and frequent enough to be
+    top-level. The label says so now: "Comment..." named neither the object nor
+    the fact that a comment is stored on it, sitting among rows that read as
+    trace operations."""
+    assert "Leave object comment..." in _top_level(_obj_menu())
+    assert "editobjcomment_act" in _act_names(_obj_menu())
 
 
 def test_bulk_tag_action_is_not_filed_as_an_object_attribute():
     """Tags live on Trace, not on the object. On an OBJECT menu "Remove all
     tags" strips tags from every trace of the selected objects, series-wide
     (series.removeAllTraceTags) -- a bulk TRACE operation. Filing it under
-    "Object attributes >" would misdescribe it, and "Geometry >" (its old home)
-    is not geometry either."""
+    "Object attributes >" would misdescribe it, and "Geometry >" (an earlier
+    home) was not geometry either. That submenu no longer exists, so the second
+    half of the guard is now that it cannot come back and take the action with
+    it."""
     menu = _obj_menu()
     attrs = next(e for e in menu if isinstance(e, dict)
                  and e["text"] == "Object attributes")
     assert "removealltags_act" not in _act_names(attrs["opts"])
-    geometry = next(e for e in menu if isinstance(e, dict)
-                    and e["text"] == "Geometry")
-    assert "removealltags_act" not in _act_names(geometry["opts"])
+    submenus = [e["text"] for e in menu if isinstance(e, dict)]
+    assert "Geometry" not in submenus
 
 
 def test_bulk_tag_action_sits_in_its_own_group_above_delete():
@@ -600,6 +768,128 @@ def test_object_attributes_submenu_holds_only_object_level_attributes():
     ]
 
 
+# The three commands that existed on both menus under one label, with the
+# implementation each label actually reached. Verified 2026-07-31 by reading
+# them, not by reading the menu:
+#
+#   Smooth object            Series.smoothObject      enumerateSections over
+#                                                     getObjectSections(names),
+#                                                     every trace of the contour
+#   Smooth selected traces   FieldWidgetTrace         the traces passed in, on
+#                            .smoothTraces            self.section only
+#   Edit object radius...    Series.editObjectRadius  enumerateSections, all
+#                                                     traces of the contour
+#   Edit selected radius...  Section.editTraceRadius  the traces passed in
+#   Edit object shape...     Series.editObjectShape   enumerateSections, all
+#                                                     traces of the contour
+#   Edit selected shape...   Section.editTraceShape   the traces passed in
+#
+# The traces "passed in" are the current selection: FieldWidgetTrace's
+# trace_function decorator supplies section.selected_traces (or the trace
+# table's selected rows), so the trace copies are selection-scoped on one
+# section and the object copies are object-scoped across every section the
+# object appears on.
+SCOPE_PAIRS = [
+    ("Smooth object", "Smooth selected traces"),
+    ("Edit object radius...", "Edit selected radius..."),
+    ("Edit object shape...", "Edit selected shape..."),
+    # The fourth pair, added 2026-07-31 after the standing rule below found it.
+    # Same asymmetry as the three above, verified by reading each implementation:
+    #
+    #   unhideobj_act    -> FieldWidgetObject.hideObj(hide=False) [object_function]
+    #                    -> Series.hideObjects(names, False), which walks
+    #                       enumerateSections over getObjectSections(names) and
+    #                       clears `hidden` on every trace of the contour.
+    #   unhidetraces_act -> FieldWidgetTrace.hideTraces(hide=False)
+    #                       [visibility_trace_function, which supplies the trace
+    #                       table's selection or section.selected_traces]
+    #                    -> Section.hideTraces(traces, False), on self.section only.
+    ("Unhide object", "Unhide selected traces"),
+    # The fifth pair, added later on 2026-07-31, and the only one the collision
+    # rule below could never have found: these two labels never collided. The
+    # object copy read "Hide" and the trace copy read "Hide traces", so
+    # test_no_label_is_shared_between_the_object_and_trace_menus was satisfied
+    # while the pair stayed asymmetric -- one label named no scope and the other
+    # named the wrong axis. The scope-by-action matrix is what found it:
+    #
+    #   hideobj_act    -> FieldWidgetObject.hideObj(hide=True) [object_function]
+    #                  -> Series.hideObjects(names, True), enumerateSections over
+    #                     getObjectSections(names), sets `hidden` on every trace
+    #                     of the contour, section.save() per section.
+    #   hidetraces_act -> FieldWidgetTrace.hideTraces(hide=True)
+    #                     [visibility_trace_function, which supplies the trace
+    #                     table's selection or section.selected_traces]
+    #                  -> Section.hideTraces(traces, True), on self.section only.
+    #
+    # Identical asymmetry to the unhide pair above, which is the point: a pair
+    # cannot be scoped in one direction and unscoped in the other.
+    ("Hide object", "Hide selected traces"),
+]
+
+
+@pytest.mark.parametrize("obj_label,trace_label", SCOPE_PAIRS)
+def test_the_scoped_pair_labels_are_distinct_and_on_the_right_menu(
+        obj_label, trace_label):
+    """Each pair now says which one it is.
+
+    Before 2026-07-31 the object copy and the trace copy shared a label. The
+    internal attr_names were already distinct (a shared one made "one silently
+    shadow the other" on the widget, and that was fixed); the labels were not,
+    and a user has only the label.
+    """
+    obj_rows = _rows(_obj_menu())
+    trace_rows = _rows(_trace_menu(is_in_field=False, list_ops=TRACE_LIST_OPS))
+    assert obj_label in obj_rows
+    assert obj_label not in trace_rows
+    assert trace_label in trace_rows
+    assert trace_label not in obj_rows
+
+
+# Exceptions to the rule below, each one a deliberate decision rather than an
+# oversight. Anything not listed here fails the test.
+KNOWN_SHARED_LABELS = {
+    # The table utility every list shares by design, and it does the same thing
+    # on both surfaces. Not a scope collision.
+    "Invert selection",
+    # "Unhide" was listed here for exactly one day. This test found it as a real
+    # fourth instance of the collision, and it was recorded rather than fixed
+    # because the object copy sits in the visibility section that was out of
+    # scope. Shown the entry, the maintainer chose to fix it: "Make it 'Unhide
+    # object' and 'Unhide selected traces' [...] leaving one collision unfixed is
+    # the inconsistency users actually hit." It is now the fourth row of
+    # SCOPE_PAIRS above, so the exception is gone rather than permanent.
+    #
+    # The set is the right shape for that outcome and worth keeping at one entry:
+    # a recorded exception is a decision someone can overturn, where a collision
+    # absorbed by a loose assertion is invisible.
+}
+
+
+def test_no_label_is_shared_between_the_object_and_trace_menus():
+    """The standing form of the rule, rather than a list of the three known
+    offenders: the object menu and the trace menu are populated onto one widget
+    and are read side by side, so a label on both is a label a user cannot use to
+    tell two different amounts of work apart.
+
+    Submenu titles are excluded (a container is not a command) and so are
+    separators.
+    """
+    def labels(menu):
+        return {
+            r.strip() for r in _rows(menu)
+            if r.strip() not in ("-----", "<QAction>") and not r.strip().endswith(">")
+        }
+
+    shared = labels(_obj_menu()) & labels(
+        _trace_menu(is_in_field=False, list_ops=TRACE_LIST_OPS,
+                    find_in_field=lambda: None)
+    )
+    assert not shared - KNOWN_SHARED_LABELS, (
+        f"labels on both the object and trace menus: "
+        f"{sorted(shared - KNOWN_SHARED_LABELS)}"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # 5. trace menu (field "Trace >" + trace list)
 # --------------------------------------------------------------------------- #
@@ -607,7 +897,7 @@ TRACE_FIELD_ROWS = [
     "Edit trace attributes...",
     "-----",
     # long tail only -- edit/merge/hide are on the field menu's top strip
-    "Smooth traces",
+    "Smooth selected traces",
     "Make negative",
     "Make positive",
     "-----",
@@ -620,16 +910,16 @@ TRACE_LIST_ROWS = [
     "Merge traces",
     "Merge attributes only",
     "-----",
-    "Hide traces",
-    "Unhide",
+    "Hide selected traces",
+    "Unhide selected traces",
     "-----",
     "Set open",
     "Set closed",
     "Make negative",
     "Make positive",
-    "Edit radius...",
-    "Edit shape...",
-    "Smooth traces",
+    "Edit selected radius...",
+    "Edit selected shape...",
+    "Smooth selected traces",
     "-----",
     "Copy to sections...",
     "Create flag...",
