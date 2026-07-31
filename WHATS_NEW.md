@@ -6,7 +6,78 @@ full release notes on GitHub (linked from the dialog).
 
 ## [Unreleased]
 
-- **New: Take an alignment from another series without opening the whole import window.** Alignments ▸ Import alignments now lists three sources together, and the first is "From another series (.jser)": pick a series, tick the alignments you want, and rename any of them on the way in. It used to be buried in Series ▸ Import series data alongside traces, flags, and palettes, which is still where to go if you want all of those at once. Importing an alignment under a name your series already uses now replaces it rather than being refused, and PyReconstruct tells you which alignments will be replaced and waits for you to agree first.
+## [1.21.0-beta-7] — 2026-07-31
+
+- **Fixed: A deleted section no longer comes back the next time you open the series.** Deleting a section,
+  saving and reopening could bring it back, with its z-trace point gone and the log recording a deletion
+  that did not stick. Nothing reported an error. Deleting the highest-numbered section instead failed the
+  save outright, left the progress dialog stuck, and made every save after it fail too. The writer built its
+  list of sections from the files it found on disk rather than from the series, so a section the series had
+  removed was written back out.
+- **Fixed: Duplicate detection finds duplicate open traces.** Open traces were compared by the area they
+  enclose, and an open trace does not enclose an area, so duplicates went unreported however closely the two
+  lay on top of each other. Open traces are now compared along their length instead. Closed traces are
+  unchanged in how they are measured. Reported by Lyndsey Kirk.
+- **Fixed: The knife no longer deletes the object when the cut cannot be made.** A cut it could not compute
+  removed the trace instead of leaving it alone.
+- **Fixed: Dragging traces and paging to another section before letting go no longer looks like it deleted
+  them.** A drag hides the traces it is carrying and draws them under the cursor, and only the release puts
+  them back. Since the wheel pages sections with the button still held, releasing on a different section put
+  nothing back anywhere: the traces stayed hidden on the section they came from, invisible and unclickable
+  when you paged back to it. The gesture now cancels cleanly and tells you the traces were put back.
+  Dragging traces *onto* another section is currently being worked on.
+- **Fixed: The 2D field selects a locked object's traces again.** Locking an object stopped its traces from
+  being selectable in the field. Locking refuses changes to quantitative trace data, never selection, color,
+  or visibility.
+- **Fixed: Splitting an object no longer leaves a stray "last edited by" record under its old name.**
+  "Split into separate objects" gives each of the object's traces its own numbered name, so the object you
+  started from is left with nothing on any section. Everything attached to it is cleared correctly, but the
+  log written straight afterwards put the editor stamp back, on an object that no longer existed. It was
+  saved into the series, so any new object later given that name inherited it.
+- **Fixed: Renaming and deleting brightness/contrast profiles behave.** Both rewrote the profile on every
+  section without recording an undo state, so Ctrl+Z could not reach either one, and renaming the profile
+  you were looking at dropped the display back to the default until you switched away and back.
+- **Fixed: Importing transforms adds the new alignment to the alignment menu immediately.** The alignment
+  was imported, but did not appear in the menu until something else happened to rebuild it.
+- **New: `Alignments ▸ Import alignments ▸ From another series (.jser)`.** Taking an alignment from a
+  colleague's series was reachable only through `Series ▸ Import series data`, the whole-series merge dialog
+  where alignments are one tab among eight. All three sources now sit together, with `.jser` first as the
+  common case: pick a series, tick the alignments you want, and rename any of them on the way in. Importing
+  onto a name your series already uses now asks and names what would be replaced, rather than refusing
+  outright, and the whole import can be undone with Ctrl+Z.
+- **New: `Series ▸ Clean up ▸ Find duplicates named differently...`** finds similarly shaped and positioned
+  traces under two different names, and lets you remove whichever one you do not want. The existing "Remove
+  duplicate traces..." only compares traces that share the same name, so it never sees these. Each pair is
+  listed with both names, the measured overlap and both areas, and you can jump to either in the field. Tick
+  the name to keep, and "Delete unselected" removes the other; rows you leave alone are untouched. It never
+  guesses which name is right, because that is a judgment about your data rather than about the geometry. A
+  batch of deletions can be undone with one Ctrl+Z, and locked objects are left alone.
+- **New: `Restore previous visibility`** puts back the visibility you had before "Hide other objects", on
+  the object right-click menu directly beneath it. Previously the only way back was "Show all objects",
+  which unhides everything and throws away any hiding you had done deliberately.
+- **New: Ctrl+Shift+D adds the selected objects to the 3D scene.** The action had no shortcut and no row in
+  the shortcuts dialog to assign one; it now has both and is remappable to another shortcut if you prefer.
+- **New: Ctrl+Shift+I inverts the selection.** The action existed with a right-click row and a working
+  handler, but its shortcut was written into the source as an empty string, so it had no key and no row in
+  the shortcuts dialog. The selection trio now reads Ctrl+A, Ctrl+D, Ctrl+Shift+I, and all three are
+  remappable.
+- **Changed: Five right-click commands that appear on both the object and the trace menu now say what they
+  act on.** `Smooth object` against `Smooth selected traces`, and the same pairing for hide, unhide, edit
+  radius and edit shape. The labels were identical while the commands were not: the object version works on
+  every section the object appears on, the trace version on the current selection on the current section,
+  and now the labels say which.
+- **Changed: The object right-click menu is reordered** so `Add to 3D scene` sits next to the `3D ▸`
+  submenu, and the per-object settings are collected in one place. Nothing was renamed, added or removed,
+  and the visibility family is untouched.
+- **Changed: The log now says when an alignment import replaced an existing alignment**, instead of
+  recording every import the same way. If you want to keep the old alignment as well, give the incoming one a
+  different name in the import dialog: each row's target name is yours to edit, and only a name already in
+  use asks you to confirm a replacement. Ctrl+Z restores an alignment if you replace one by accident.
+- **Worth knowing.** The overlap threshold in the duplicate scans now means something different for **open
+  traces**, and exactly what it always meant for **closed traces**. For a closed trace the threshold
+  compares enclosed areas, and still does. An open trace encloses nothing, which is why the old measure
+  missed obvious duplicates; for open traces the threshold now compares how much of each trace's length
+  runs within a few pixels of the other. 0.95 is safe. Raise it if you want the scan to be stricter.
 
 ## [1.21.0-beta-6] — 2026-07-30
 

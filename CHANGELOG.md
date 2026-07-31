@@ -13,12 +13,14 @@ the README's *From source (developers)* section).
 
 ## [Unreleased]
 
+## [1.21.0-beta-7] - 2026-07-31
+
 ### Added
 - **A keyboard shortcut for "Invert selection".** The field action shipped with a
   right-click row and a working handler but with its shortcut written into the
   source as an empty string, so it had no key, no row in the shortcuts dialog,
   and no entry in `default_settings.py`. It now defaults to `Ctrl+Shift+I`
-  (`Cmd+Shift+I` on macOS) and is rebindable like the rest of the set, which
+  (`Cmd+Shift+I` on macOS) and is remappable like the rest of the set, which
   makes the selection trio read `Ctrl+A` / `Ctrl+D` / `Ctrl+Shift+I`.
   `Ctrl+Shift+I` is the invert-selection key in Photoshop, Krita and Affinity
   Photo, and it is claimed by no system-global binding on Windows, macOS or
@@ -37,6 +39,111 @@ the README's *From source (developers)* section).
   skips the seven tabs that are not about alignments. Each row's target name
   prefills from the source alignment's own name, since importing under the same
   name is what users mostly want.
+- **`Series ▸ Clean up ▸ Find duplicates named differently...` reports one shape
+  that was traced twice under two object names.** "Remove duplicate traces..."
+  never finds those, and not because it checks a name: `Trace.overlaps` is purely
+  geometric and never reads one. The restriction comes from the loop, which draws
+  both traces out of a single `section.contours[cname]`, and contours are keyed by
+  trace name, so two differently-named traces were never handed to the comparison
+  at all. That is exactly what two people tracing the same structure produce. The
+  new scan compares every trace on a section against every other one, decides
+  overlap by the same two tests `Trace.overlaps` always used, and lists the pairs
+  it finds with both names, the measured overlap and each trace's area, with
+  "Go to trace" and "Go to other trace" framing the two sides of a pair in the
+  field.
+
+  It reports and does not delete. Two traces under one name are unambiguous, so
+  "Remove duplicate traces..." collapses them; when the names differ, which name
+  is right does not follow from the geometry, and the answer can be to rename or
+  to merge rather than to delete. Locked objects are skipped by default, matching
+  the pixel-dust and empty-trace scans, and nothing in the series is modified
+  either way. The same-name operation is unchanged.
+
+  Comparing across names means comparing every trace with every other, which is
+  quadratic where the old loop was not, and `Trace.getOverlapRatio` rasterizes two
+  polygons per comparison. Measured on the densest section of a real
+  161,767-trace autoseg series (1,291 traces, 715 objects), the plain quadratic
+  comparison takes 8.6 s for that one section and 2.5 s for a section of median
+  density, which is about 13 minutes for the series. The shipped scan reaches the
+  same answer in 0.033 s and 0.013 s by never measuring a ratio it can rule out
+  first: an x-sorted sweep stops the inner loop once no remaining trace can reach
+  the current one, and a ceiling derived from the two bounding boxes and the two
+  areas bounds the ratio a pair could possibly reach. That takes the densest
+  section from 616,059 rasterized comparisons to 2, and the cost grows with the
+  number of traces rather than with its square: 20,000 traces on one section
+  scan in 0.75 s.
+- **Ctrl+Shift+D adds the selected objects to the 3D scene.** The action had no
+  keyboard shortcut and no way to assign one, because the shortcuts dialog only
+  offers rows for the actions it knows about and this one was missing from the
+  list. It now has a default binding and a row in the shortcuts dialog, so it is
+  remappable like every other key. Ctrl+Shift+<letter> is
+  the tier the app already uses for feature actions, and the sequence was
+  checked as free against all existing bindings and against the sequences macOS,
+  Windows and Linux reserve.
+- **`Series ▸ Clean up ▸ Find duplicates named differently...` can now remove the
+  duplicate, one pair at a time, and it never picks which name goes.** The scan
+  found pairs and stopped there, because which of two names is correct is a
+  judgment about the data and the geometry cannot settle it. It still cannot, so
+  the tool does not try: both name cells of a row are tickable and mutually
+  exclusive, ticking one says "keep this name", and "Delete unselected" then
+  deletes the trace under the other name in every row that was answered. A row
+  left unticked is left completely alone, and the confirmation says how many rows
+  that was. No rule fills a gap in, not "keep the name on more sections" and not
+  "keep the larger trace", because a rule there would be the tool answering the
+  one question it cannot answer.
+
+  Removing a trace runs through the same path the pixel-dust and empty-trace
+  clean-ups use, so a batch of answered rows is one undoable operation (Ctrl+Z
+  restores every deleted trace) and each trace is re-found by its stored
+  color-and-points signature after its section reloads, rather than by identity.
+  Each deletion is logged against the object that lost a trace, on its section,
+  naming the object kept.
+
+  Locked objects keep their traces. The scan skips locked objects unless "check
+  locked traces" is on, and a pair surfaced that way still cannot be resolved by
+  deleting from the locked side: the refusal is in
+  `Series.deleteDifferentlyNamedDuplicates` itself rather than in the scan, so
+  the delete path cannot be reached for a locked object by any route. Deleting a
+  trace changes quantitative data, which is what locking an object refuses;
+  nothing about selection or visibility changed. The unlocked side of such a pair
+  can still be deleted, since keeping a trace does not modify it.
+
+  The choice is item check state rather than a radio button placed in the cell,
+  for two reasons that are behavioral: check state travels with its row through a
+  column sort, so re-sorting the table cannot shuffle answers onto the wrong
+  pairs, and a widget filling a name cell would take that cell's click away from
+  row selection, which is what "Go to trace" and "Go to other trace" run off. The
+  generic "Delete selected" and "Delete all" of the other clean-up lists
+  deliberately do not appear here: row selection is how a pair is inspected, not
+  how it is answered, and "all" of a list of pairs would mean deleting both
+  sides. The same-name operation, the columns, the sort order and the
+  `include_locked` behavior are all unchanged.
+- **The release notes now carry a maintainer byline.** The "What's new" dialog
+  renders it once below the notes, set off by a rule, on every framing (an
+  update, a fresh install, the Help menu re-open, and the generic fallback), and
+  the GitHub release body prints it near the developer-changelog footer. The line
+  reads "An independent build of PyReconstruct, maintained by Dusten Hubbard." so
+  a lab that installs a build knows whose it is and reports its issues to the
+  right person. It comes from a single `MAINTAINER_BYLINE` field on the notes
+  builder, so the two surfaces cannot drift apart.
+- **`Restore previous visibility`, a new object right-click command, undoes
+  `Hide other objects` without throwing away the hides you made yourself.**
+  Isolating an object hid every other object across the whole series and had no
+  inverse. `Show all objects` was offered as the way back, and it unhides
+  everything, so any object you had deliberately hidden before isolating came back
+  visible too, silently. The new command replays the visibility recorded at the
+  moment you isolated, per trace, so an object you had hidden stays hidden and
+  everything else returns. It sits directly under `Hide other objects` on all
+  three menus that offer the isolate -- the field's `Object ▸` submenu, the object
+  list's right-click menu, and the object list's own `Selection` menu -- is greyed
+  out until an isolate has left something to restore, and a single Ctrl+Z undoes it
+  like any other volume-wide visibility change.
+
+  One level only: isolating again replaces what would be restored rather than
+  stacking, so "previous" always means "before the last isolate". Nothing is
+  written to the `.jser` for this, so the recorded state lasts as long as the
+  series stays open. Locked objects are hidden and restored like any other, since
+  locking guards edits and quantification rather than visibility.
 
 ### Changed
 - **Importing an alignment onto a name already in use now asks instead of
@@ -49,6 +156,88 @@ the README's *From source (developers)* section).
   adds new alignments is unchanged. Palettes and brightness/contrast profiles keep
   the old refuse-outright behavior; overwriting those was not asked for and they
   are not undoable either.
+- **The object right-click menu is reordered so Add to 3D scene sits directly
+  above the 3D ▸ submenu it belongs to.** The two were fifteen rows apart, with
+  the whole visibility family, Group ▸ and Set curation ▸ between them, so the
+  pair read as two unrelated entries and finding one gave no hint where the
+  other was. They are now adjacent, and the rest of the menu falls into three
+  sections behind them: the visibility family unchanged, then the per-object
+  settings (Comment..., Duplicate object, Group ▸, Set curation ▸, Custom
+  categories ▸, Object attributes ▸ and Geometry ▸) collected in one place, then
+  the tail ending in Delete objects. Nothing was renamed, added or removed, and
+  every action keeps the submenu it lived in. One builder backs both surfaces,
+  so the object list's menu and the field menu's Object ▸ submenu change
+  together.
+
+- **Add to 3D scene is offered inside 3D ▸ as well as at the top level.**
+  Hoisting it out of the submenu entirely made it harder to find, not easier:
+  3D ▸ held only Remove from scene, so anyone who opened the submenu looking for
+  "add" came away empty and went hunting. It now appears in both places, the way
+  Edit object attributes... already does. Only the top-level copy carries the
+  keyboard shortcut, because two actions sharing one sequence is an ambiguous
+  binding and Qt answers an ambiguous shortcut by firing neither action.
+- **Importing an alignment over one that already exists is now recorded in the
+  log as an update rather than as an import.** Replacing a same-named alignment
+  already worked, and `Alignments > Import alignments` already names the
+  alignments about to be replaced and asks before doing it, but the log said the
+  same thing either way: one `Import alignments <names> from another series`
+  line, whether the names were new or were overwriting a colleague's earlier work
+  on every section in the series. An alignment quietly replaced everywhere is the
+  change a reader of the log most needs to find. `Series.importTransforms` now
+  splits the names it was handed into those the series did not have and those it
+  did, reading that split before it starts saving sections, and logs
+  `Import alignments ...` and `Update alignments ...` separately. Both lines name
+  the alignment as it exists in this series, so an alignment renamed on the way in
+  is logged under the name it was given rather than the name it had in the other
+  series; on an import that does not rename, which is the default, the line reads
+  exactly as it did before.
+- **Five right-click commands that exist on both the object menu and the trace
+  menu now say which one they are.** `Smooth traces`, `Edit radius...`, `Edit
+  shape...`, `Unhide` and `Hide` each existed twice, once per menu, with nothing
+  in either label to tell them apart. The object copies walked every section the
+  object appears on and changed every trace of the contour
+  (`Series.smoothObject`, `Series.editObjectRadius`, `Series.editObjectShape`,
+  `Series.hideObjects`); the trace copies changed the traces you had selected, on
+  the section in front of you (`Section.editTraceRadius`,
+  `Section.editTraceShape`, `Trace.smooth`, `Section.hideTraces`). Picking the
+  wrong one on a large series meant a series-wide change where you wanted a local
+  one, and the only way to tell them apart was to run one. The object copies are
+  now `Smooth object`, `Edit object radius...`, `Edit object shape...`, `Unhide
+  object` and `Hide object`; the trace copies are `Smooth selected traces`, `Edit
+  selected radius...`, `Edit selected shape...`, `Unhide selected traces` and
+  `Hide selected traces`. The commands themselves are unchanged, so anything you
+  were doing still works. Only the labels moved.
+
+- **`Show all objects` is now `Unhide all objects`, so one verb means one
+  thing.** It was the only command in the object menu's visibility group that
+  said "show" for what every other row calls unhiding, and it is the exact
+  complement of `Hide all objects`. `Show all traces (ignore hidden)` under
+  `View` keeps its verb on purpose: that one is a display mode that overrides the
+  hidden flag without clearing it, so it genuinely is not an unhide. The object
+  list's own `Selection` menu offers the same command and now reads the same way.
+
+- **The object menu's `Geometry ▸` submenu is gone and its four commands are
+  top-level.** `Smooth object` is promoted because smoothing is frequent and did
+  not deserve a hop, and `Split into separate objects` now sits directly under
+  `Duplicate object`, being a structural command rather than a trace edit. That
+  left the submenu holding two items, which is not enough to earn one, so it was
+  dissolved rather than renamed: with the scope in the labels there is nothing
+  left for a container to describe. `Comment...` becomes `Leave object
+  comment...` and closes the object-settings section, whose order is now `Object
+  attributes ▸`, `Smooth object`, `Duplicate object`, `Split into separate
+  objects`, `Edit object radius...`, `Edit object shape...`, `Group ▸`, `Set
+  curation ▸`, `Custom categories ▸`, `Leave object comment...`. One builder
+  backs both surfaces, so the object list's menu and the field menu's `Object ▸`
+  submenu change together.
+
+- **The object menu's visibility group now reads as three pairs, one per scope
+  of action.** `Hide object` / `Unhide object` act on the selected object across
+  the whole series; `Hide other objects` / `Restore previous visibility` isolate
+  and un-isolate; `Hide all objects` / `Unhide all objects` act on everything. It
+  is still one uninterrupted section in its established order, with one row added
+  and none removed or moved. `Unhide other objects` is deliberately absent: after
+  isolating, unhiding everything that is not selected leaves the whole series
+  visible, which `Unhide all objects` already does.
 
 ### Fixed
 - **Splitting an object no longer leaves stale provenance under its old name.**
@@ -113,6 +302,166 @@ the README's *From source (developers)* section).
   through the brightness/contrast palette, giving `KeyError: '<old name>'` on the
   forward path, with no undo involved. The displayed profile now follows the
   rename, and deleting it falls back to `default`.
+- **Dragging traces in the field and changing section before letting go no
+  longer looks like it deleted them.** A pointer drag hides the traces it is
+  carrying in their section's `temp_hide` list and draws them under the cursor
+  instead, and only the release that ends the gesture puts them back. The scroll
+  wheel pages sections, so the button can be held while the field moves to
+  another section, and nothing tied the two ends of the gesture to one section:
+  the release cleared `temp_hide` on the section then on screen rather than the
+  one the traces came off, and translated that section's selection, which
+  `changeSection` had just emptied. The drop therefore moved nothing and said
+  nothing, and the traces stayed hidden on the section they came from. A
+  temp-hidden trace is also left out of `traces_in_view`, which is what hit
+  testing reads, so on paging back they were invisible and unclickable until that
+  section was reloaded. Nothing was ever lost on disk, because `temp_hide` is not
+  saved. The drag now ends when the field changes under it, the traces reappear
+  where they started, and the field says so instead of going quiet.
+- **The 2D field selects a locked object's traces again.** Clicking one did
+  nothing, "Select all traces" passed it over, "Invert selection" left it out and
+  "Find in field" framed it without selecting it, while the object list selected
+  locked rows freely. Locking an object prevents mutations that change
+  quantitative data (traces added, deleted or modified) and nothing else, so
+  refusing selection was too wide, and the two invert commands answered the same
+  question two different ways. `Section.addSelectedTrace` dropped the trace, and
+  `findTrace` and `pointerRelease` each carried a second copy of the check around
+  their own selection. Those refusals used to be the only thing standing between
+  a locked object and cut, paste attributes, the arrow-key translate, the knife,
+  a pointer drag and the focus-mode split; every one of those now refuses through
+  a lock check of its own (`refuseLockedTraces`), so dropping the selection
+  refusal gives up no protection. Hiding, unhiding, copying, zooming to and
+  adding to the 3D scene work on a locked object's traces from the field as well.
+- **A deleted section no longer comes back the next time the series is opened.**
+  Deleting a section, saving, and reopening could put the section back, with the
+  z-trace points that used to cross it still gone and a "Delete section" line
+  still in the log. Nothing reported an error at any point, so the first sign was
+  a section reappearing in the section list some time later, and deleting it a
+  second time did the same thing again. If the section deleted was the
+  highest-numbered one, every save from then on failed instead, with a crash
+  report and a progress dialog that would not go away, until the series was
+  closed and reopened.
+
+  The .jser writer built its list of sections from the files it found in the
+  series' hidden working directory rather than from the series' own index of
+  sections, and never compared the two. `Series.deleteSections` removes both the
+  file and the index entry, but the 2D field is still holding the deleted
+  section, and every save writes that held section's file back out, including the
+  save the delete itself performs while rebuilding the lists. The file therefore
+  returned while the index entry stayed gone, and the writer believed the file.
+  For the highest-numbered section the returning file's number was past the end
+  of the sections array, which raised `IndexError` out of the save; only
+  `OSError` was handled, so the save crashed rather than reporting a failure, and
+  since nothing removed the file, the next save raised in the same place.
+
+  The writer now reads exactly the sections the index names, so a section file
+  the series no longer lists cannot reach the .jser, and `Section.save` declines
+  to write a section the series has deleted, so the stale file is not created in
+  the first place. That second part also matters after a crash, because the
+  unsaved-work recovery scan reads the same directory and has no index to check
+  it against.
+
+- **A save that would drop a section now refuses instead, and says which
+  section.** The reverse disagreement, a section the series lists whose working
+  file has gone missing or become unreadable, used to write that section into the
+  .jser as `null`, report the save as successful, and replace the previous .jser
+  with one short a section. Because the save is atomic, delivery of the
+  incomplete file was reliable and the last good copy was gone. The missing
+  section cannot be recovered from the working directory in either case, so the
+  .jser already on disk is the only copy of it that is left; the save now stops
+  before writing anything and names the sections and the directory involved.
+  Deleting every section in a series refuses on the same grounds: a .jser with no
+  sections is one PyReconstruct declines to open.
+- **The knife no longer deletes the object when the cut cannot be made.**
+  `cutTrace` deleted the selected traces and only then recreated one trace per
+  returned piece, so a cut that returned nothing left the object gone, put
+  nothing in its place, showed no message and reported success. Two paths reach
+  that state: `cut_closed_traces` dropped any trace whose outline crosses itself,
+  which freehand tracing produces routinely, and a "% original trace" threshold
+  high enough to discard every piece threw away the cut's own output. Both are
+  now decided before anything is committed. A trace that crosses itself is
+  refused with a message naming the reason, a cut that comes back empty is
+  refused outright, and a knife click with no drag behind it leaves the section
+  untouched rather than deleting and recreating the selection.
+
+- **A second mouse button part way through a cut no longer abandons it.** A
+  drawing tablet's barrel button, or any stray press while the pen was down, fell
+  through `mousePressEvent`'s "favor right click" branch, which clears the stroke
+  drawn so far and drops the left-click state the knife commits on, and then
+  opened the field context menu over the object being cut. The stroke was lost
+  and a menu nobody asked for stood under a still-moving pen, one release away
+  from "Delete selected". A cut in progress now owns the gesture and the press is
+  ignored, the way a line trace in progress already suppresses that menu. Clear
+  **Ignore the other mouse buttons** in the knife's right-click dialog, or in
+  `Series ▸ Options... ▸ Knife`, to get the older behavior back.
+- **Duplicate detection finds duplicate open traces.** Reported by Lyndsey Kirk,
+  whose lab's cfa traces are about 98% open lines: a pair measuring 0.2581 and
+  0.25894 in length, 0.33% apart and an obvious duplicate by eye, was not flagged
+  at a 95% overlap threshold, and the pairs the scan did report were nearly all
+  closed traces. Both `Series ▸ Clean up ▸ Remove duplicate traces...` and
+  `Series ▸ Clean up ▸ Find duplicates named differently...` were affected, as was
+  the duplicate check that runs when one series is imported into another.
+
+  `Trace.getOverlapRatio` measured overlap by rasterizing both traces with
+  `skimage.draw.polygon` and dividing the intersection by the union. That
+  function implicitly closes the point list, so for an open trace the region
+  being filled is the sliver between the polyline and the straight chord from its
+  last point back to its first. The shape of that sliver is governed by the
+  trace's own wiggle rather than by where the curve lies, and two independent
+  tracings of one structure have independent wiggle, so their slivers disagree
+  even when the curves sit on top of each other. A near-straight profile is the
+  worst case, because the chord runs close to the line and the sliver is almost
+  entirely noise: two such profiles 0.08% apart in length measured an overlap of
+  0.19. Lowering the threshold was not an available fix, since 0.19 would need a
+  threshold near 15%, which would call every trace on the section a duplicate of
+  its neighbors.
+
+  Open traces are now compared curve to curve instead. Both polylines are
+  resampled at even spacing along their arc length, each sample is measured
+  against the other trace's line segments rather than against its points, and the
+  result is the smaller of the two directions: the fraction of one trace lying
+  within tolerance of the other, and the fraction of the other lying within
+  tolerance of the one. Taking the smaller keeps it symmetric and conservative,
+  so a short trace running along part of a long one scores about the ratio of
+  their lengths and is not called a duplicate of it. Because segments are
+  measured and not points, how densely each trace was clicked no longer changes
+  the answer, and a trace redrawn from end to start reads as the duplicate it is.
+  The tolerance is 2% of the shorter trace's length, bounded at both ends by an
+  absolute distance in image pixels: never less than one pixel, never more than
+  five. The fraction has the right shape, since a longer structure is clicked
+  more coarsely and two tracings of it disagree by more, but on its own it goes
+  wrong at both ends. On the reported series the shortest genuine duplicate pair
+  is a 29 pixel line whose two tracings differ by 0.72 of a pixel, and 2% of 29
+  pixels is 0.58, so the pair was missed; the longest traces run to 6,846 pixels,
+  where 2% is 137 pixels and two unrelated structures ten pixels apart would have
+  been called the same one. Five pixels is the distance PyReconstruct already
+  treats as the same point when it compares two traces point by point.
+
+  The result is still a ratio from 0 to 1, so the **Overlap threshold** each of
+  these operations asks for keeps its scale and its direction, and a setting that
+  worked before still works. What it means for an open pair has changed, though,
+  and the tooltips now say so: it is no longer an area shared over an area
+  covered, and a threshold of 1.0 no longer implies the two traces have identical
+  points. For an open pair, 1.0 means the two lines stay within a few image
+  pixels of each other from end to end.
+
+  The curve comparison is confined to the operations that ask whether two traces
+  are the same trace. Importing one series into another also asks a different
+  question in two places, whether two traces overlap at all, and uses the answer
+  to work out which of a colleague's traces are independent work rather than
+  another version of something already there. That question keeps the measure it
+  has always used, so those decisions come out exactly as they did before.
+
+  Closed traces keep the area comparison unchanged, which is the right measure
+  for them, and a pair with one open and one closed trace was never compared at
+  all. The cross-name scan needed a second change to benefit: it skips pairs
+  whose overlap cannot reach the threshold, using a ceiling derived from the two
+  areas, and for an open trace that area is the same meaningless sliver. The
+  reported pair ceilinged at 0.63 and was discarded before any overlap was
+  measured, so open pairs are now exempt from that test. They cost less to
+  measure than closed ones rather than more, because comparing curves is several
+  times cheaper than rasterizing two polygons: on a 440-trace section of open
+  profiles carrying 40 duplicate pairs, the scan found 6 of them in 0.064 s
+  before and all 40 in 0.023 s after.
 
 ## [1.21.0-beta-6] - 2026-07-30
 
