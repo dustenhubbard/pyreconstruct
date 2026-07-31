@@ -475,3 +475,29 @@ def test_the_heading_says_the_choice_is_the_users(qtbot):
     assert "left completely alone" in heading
     assert "nothing is chosen for you" in heading
     assert "Nothing in the series has been changed." not in heading
+
+
+@pytest.mark.parametrize("can_delete", [False, True])
+def test_both_headings_explain_the_overlap_column_for_open_traces(qtbot,
+                                                                 can_delete):
+    """The Overlap column means two things, and BOTH headings have to say so.
+
+    A closed pair's ratio is shared area over covered area; an open pair's is how
+    much of each line runs within a few image pixels of the other (see
+    Trace.getOverlapRatio). The heading used to claim only "1 means the two
+    traces have the same points", which is true of the first and not the second.
+
+    Parametrized over both branches on purpose. The explanation lived in one
+    branch when the wording was written and in two by the time it landed, so a
+    merge that updated only one branch would leave the *delete-capable* heading
+    -- the one above a button that removes a trace -- describing the wrong
+    measure. This fails if either branch loses it.
+    """
+    dialog = _dialog(
+        qtbot, delete_unselected=(lambda choices: []) if can_delete else None
+    )
+    heading = dialog.heading.text()
+    assert bool(dialog.delete_unselected) is can_delete, "premise: right branch"
+    assert "for two closed traces, the area they share" in heading
+    assert "for two open traces, how much of each line lies within a few" in heading
+    assert "stay that close from end to end" in heading

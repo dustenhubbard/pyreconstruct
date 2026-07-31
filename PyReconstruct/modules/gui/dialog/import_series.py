@@ -36,16 +36,26 @@ in their points. We refer to multiple valid, but
 non-identical traces for a single object as
 functional duplicates.
 
-Setting the overlap threshold to 1.0 will instruct
-PyReconstruct to consider traces duplicates only
-if their points match perfectly. This is in most
+Setting the overlap threshold to 1.0 asks for the
+strictest comparison available. This is in most
 cases too strict. A value of 0.95 is usually
 sufficient to identify overlapping, non-identical
 traces of a single object that are all valid.
 
-The overlap fraction is also known as the Jaccard
-index and is calculated as the intersection of the
-two traces divided by their union."""
+How the fraction is measured depends on the pair.
+Two closed traces are compared by area: the
+fraction is the area they share divided by the
+area they cover together. Two open traces are
+compared along their length instead, because the
+area inside an open line is not a meaningful
+quantity: the fraction is how much of each line
+lies within a few image pixels of the other. For
+an open pair, 1.0 therefore means the two lines
+stay within that distance of each other from end
+to end, and not that their points are identical.
+
+An open trace and a closed trace are never
+considered duplicates of each other."""
 
 
 tip_history = """When this option is checked, the two series' logs are used
