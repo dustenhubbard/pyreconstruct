@@ -2394,7 +2394,107 @@ class Series():
                 self.addLog(name, None, event)
         
         self.modified = True
-    
+
+    def snapshotObjectVisibility(self, obj_names) -> dict:
+        """Record the hidden flags of a set of objects, series-wide.
+
+        Read straight out of the in-memory object index
+        (``data["objects"][name].traces``, keyed by section number, each
+        ``TraceData`` carrying the ``hidden`` of the trace at that index in the
+        section's contour), which ``Section.save`` keeps current. So this costs
+        no section loads and is cheap enough to run in front of an isolate.
+
+        PER TRACE, not per object, because that is the only granularity the data
+        has: there is no object-level ``hidden`` attribute anywhere -- the flag
+        lives on ``Trace.hidden``, and ``hideObjects`` writes the same value onto
+        every trace of the contour. An object-level snapshot would therefore be
+        lossy for a contour whose traces were hidden individually (the trace
+        menu's ``Hide selected traces`` does exactly that), and restoring it
+        would unhide traces the user hid by hand.
+
+            Params:
+                obj_names (iterable): the object names to record
+            Returns:
+                (dict): {object name: {section number: [hidden, ...]}}, the list
+                    indexed the same way the section's contour is
+        """
+        snapshot = {}
+        for name in obj_names:
+            obj_data = self.data["objects"].get(name)
+            if obj_data is None:
+                continue
+            snapshot[name] = {
+                snum: [t.hidden for t in traces]
+                for snum, traces in obj_data.traces.items()
+            }
+        return snapshot
+
+    def restoreObjectVisibility(self, snapshot : dict, series_states=None, log_event=True):
+        """Put back the hidden flags recorded by snapshotObjectVisibility.
+
+        Only the sections the snapshot mentions are loaded, and only contours
+        whose flags actually differ are written, so a restore that changes
+        nothing costs no section writes and records no per-section undo.
+
+        Traces are matched by their index in the contour, the same way
+        ``TraceData`` resolves a table row back to a trace. If a contour's length
+        changed since the snapshot (traces added or deleted in between) the
+        overlap is restored and the rest is left as it is: a stale index would
+        otherwise hide the wrong trace.
+
+        No lock check, deliberately. Locking guards edits and quantification,
+        not visibility, so a locked object's traces are restored like any other's
+        -- the same rule ``hideObjects`` and ``hideOtherObjects`` follow.
+
+            Params:
+                snapshot (dict): as returned by snapshotObjectVisibility
+                series_states (dict): optional dict for GUI undo states
+                log_event (bool): True if event should be logged
+            Returns:
+                (bool): True if any trace's hidden flag was changed
+        """
+        if not snapshot:
+            return False
+
+        section_numbers = set()
+        for by_section in snapshot.values():
+            section_numbers.update(by_section.keys())
+        if not section_numbers:
+            return False
+
+        changed_any = False
+        for snum, section in self.enumerateSections(
+            message="Restoring visibility...",
+            series_states=series_states,
+            section_numbers=section_numbers
+        ):
+            modified = False
+            for name, by_section in snapshot.items():
+                flags = by_section.get(snum)
+                if not flags or name not in section.contours:
+                    continue
+                contour = section.contours[name]
+                contour_modified = False
+                for i, hidden in enumerate(flags[:len(contour)]):
+                    if contour[i].hidden != hidden:
+                        contour[i].setHidden(hidden)
+                        contour_modified = True
+                if contour_modified:
+                    section.modified_contours.add(name)
+                    modified = True
+            if modified:
+                section.save()
+                changed_any = True
+
+        if log_event and changed_any:
+            for name in snapshot:
+                self.addLog(name, None, "Restore previous visibility")
+
+        if changed_any:
+            self.modified = True
+
+        return changed_any
+
     def hideAllTraces(self, hidden=True, series_states=None, log_event=True):
         """Hide all traces in the entire series.
         

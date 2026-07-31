@@ -3,6 +3,10 @@
 PR3 -- object-menu restructure:
   * the old "Operations" grab-bag is dissolved into "Visibility" and
     "Geometry" submenus; the attributes submenu is titled "Object attributes";
+    (both of those two have since been dissolved in turn -- "Visibility" by the
+    frequency-first redesign and "Geometry" on 2026-07-31 -- so the tests below
+    assert their absence. The grab-bag not coming back is what this file
+    guards.)
   * Lock/Unlock has a SINGLE home (the Attributes submenu) -- the duplicate
     pair (lockobj_act1 / unlockobj_act1) is gone;
   * the five 3D-export formats carry UNIQUE attr_names (they previously all
@@ -123,19 +127,30 @@ def test_operations_grabbag_is_dissolved():
     assert _submenu(menu, "Operations") is None
     assert _submenu(menu, "Attributes") is None  # reverted from phase-2a retitle
     assert _submenu(menu, "Object attributes") is not None
-    assert _submenu(menu, "Geometry") is not None
     # the frequency-first redesign dissolves "Visibility >" in turn: its five
     # actions are top-level (see the layout test in
     # test_context_menu_frequency.py)
     assert _submenu(menu, "Visibility") is None
+    # and "Geometry >" followed it on 2026-07-31, under the maintainer's rule
+    # that a two-item submenu has to justify itself. Its four actions are all
+    # top-level now -- see test_former_geometry_actions_are_all_top_level below.
+    assert _submenu(menu, "Geometry") is None
 
 
 def test_visibility_actions_are_top_level_and_keep_their_order():
     """The visibility family is one flat top-level group (was "Visibility >");
-    Hide/Unhide keep their pairing and the group keeps its order."""
+    Hide/Unhide keep their pairing and the group keeps its order.
+
+    Six members as of 2026-07-31, not five: `restorevisibility_act` was added as
+    the inverse "Hide other objects" never had, and it sits immediately after the
+    isolate so the group reads as three hide/unhide pairs. The labels and the full
+    order are pinned in test_context_menu_frequency.py; what this guards is that
+    the group stays flat, contiguous and in order.
+    """
     menu = get_context_menu_list_obj(_ObjMenuStub())
     top = [e[0] for e in menu if isinstance(e, tuple)]
-    vis = ["hideobj_act", "unhideobj_act", "hideotherobj_act",
+    vis = ["hideobj_act", "unhideobj_act",
+           "hideotherobj_act", "restorevisibility_act",
            "hideallobj_act", "showallobj_act"]
     for act in vis:
         assert act in top, f"{act} is not a top-level object-menu action"
@@ -144,15 +159,23 @@ def test_visibility_actions_are_top_level_and_keep_their_order():
     assert idx == list(range(idx[0], idx[0] + len(vis))), "visibility group is not contiguous"
 
 
-def test_geometry_submenu_holds_the_geometry_actions():
-    """Pure shape ops only: "Duplicate object" was hoisted to the top strip and
-    "Remove all tags" moved out (it is a bulk TRACE operation, not geometry)."""
+def test_former_geometry_actions_are_all_top_level():
+    """"Geometry >" once held exactly these four (after "Duplicate object" was
+    hoisted and "Remove all tags" moved out, being a bulk TRACE operation rather
+    than geometry). All four are top-level as of 2026-07-31.
+
+    "Smooth object" was promoted for frequency and "Split into separate objects"
+    moved beside "Duplicate object", leaving two edit rows. The maintainer's rule
+    is that a two-item submenu should be questioned; it did not survive the
+    question, so its remaining pair is top-level and the container is gone. The
+    row order is pinned in test_context_menu_frequency.py; what this guards is
+    that dissolving the submenu did not drop anything into a different one.
+    """
     menu = get_context_menu_list_obj(_ObjMenuStub())
-    geo = _names(list(_walk(_submenu(menu, "Geometry"))))
-    assert geo == [
-        "editobjradius_act", "editobjshape_act",
-        "smoothobj_act", "splitobj_act",
-    ]
+    top = [e[0] for e in menu if isinstance(e, tuple)]
+    for act in ("editobjradius_act", "editobjshape_act",
+                "smoothobj_act", "splitobj_act"):
+        assert act in top, f"{act} is not a top-level object-menu action"
 
 
 def test_no_object_capability_was_lost_in_restructure():
@@ -244,18 +267,32 @@ def test_collada_menu_item_disabled_only_when_absent(qapp, monkeypatch):
 
 
 def test_smooth_action_names_do_not_shadow_across_menus():
-    """The object 'Smooth traces' and the field-trace 'Smooth traces' are
-    populated onto the same widget, so they must carry DISTINCT attr_names
-    (else one silently shadows the other, as export3D_act once did)."""
+    """The object 'Smooth object' and the field-trace 'Smooth selected traces'
+    are populated onto the same widget, so they must carry DISTINCT attr_names
+    (else one silently shadows the other, as export3D_act once did).
+
+    Both read "Smooth traces" when this test was written, and the labels stayed
+    identical for as long as the attr_names had been distinct. The labels were
+    scoped on 2026-07-31; the guard on the names is unchanged, and the labels
+    themselves are guarded in test_context_menu_frequency.py.
+    """
     from PyReconstruct.modules.gui.main.context_menu_list import (
         get_context_menu_list_trace,
     )
-    obj_names = _names(_obj_menu())
-    trace_names = _names(list(_walk(get_context_menu_list_trace(_Anything()))))
+    obj_walked = _obj_menu()
+    trace_walked = list(_walk(get_context_menu_list_trace(_Anything())))
+    obj_names = _names(obj_walked)
+    trace_names = _names(trace_walked)
     assert "smoothobj_act" in obj_names
     assert "smoothtraces_act" in trace_names
     assert "smoothobj_act" not in trace_names
     assert "smoothtraces_act" not in obj_names
+    # and the two labels differ, which is the half a user can actually see
+    obj_label = next(t for n, t, _k in obj_walked if n == "smoothobj_act")
+    trace_label = next(t for n, t, _k in trace_walked if n == "smoothtraces_act")
+    assert obj_label != trace_label
+    assert obj_label == "Smooth object"
+    assert trace_label == "Smooth selected traces"
 
 
 def test_export_submenu_retitled():

@@ -390,6 +390,13 @@ class MainWindow(QMainWindow):
         ## Calibrate
         self.calibrate_act.setEnabled(bool(self.field.section.selected_traces))
 
+        ## "Restore previous visibility" (object menu) needs a snapshot, which
+        ## only "Hide other objects" takes and only the restore consumes. The
+        ## field menu is populated onto this window, so this covers the field
+        ## surface; the object list's own copy is synced in
+        ## ObjectTableWidget.contextMenuEvent.
+        sync_restore_visibility_action(self, self.field.visibility_snapshot)
+
         # ## Zarr layer
         # self.removezarrlayer_act.setEnabled(bool(self.series.zarr_overlay_fp))
             

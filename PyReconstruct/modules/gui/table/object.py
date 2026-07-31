@@ -157,9 +157,20 @@ class ObjectTableWidget(DataTable):
                 [
                     ("invertobjselection_act", "Invert selection", "", self.invertSelection),
                     None,
+                    # The object list's OWN menubar, a third surface for three of
+                    # the visibility commands (distinct QActions, hence the _act1
+                    # names). It offers the isolate, so it offers the inverse:
+                    # leaving "Restore previous visibility" off the one menu that
+                    # can start an isolate would be the same one-way trap the
+                    # restore exists to close. Labels track the context menu's --
+                    # "Unhide all objects", not "Show all objects", so one verb
+                    # means one thing on every surface. Enabled state is resynced
+                    # from `aboutToShow` below (a menubar menu is always on
+                    # screen, so build-time state is never enough).
                     ("hideotherobj_act1", "Hide other objects", "", self.mainwindow.field.hideOtherObjects),
+                    ("restorevisibility_act1", "Restore previous visibility", "", self.mainwindow.field.restorePreviousVisibility),
                     ("hideallobj_act1", "Hide all objects", "", self.mainwindow.field.hideAllObjects),
-                    ("showallobj_act1", "Show all objects", "", self.mainwindow.field.unhideAllObjects),
+                    ("showallobj_act1", "Unhide all objects", "", self.mainwindow.field.unhideAllObjects),
                 ]
             },
             {
@@ -232,7 +243,7 @@ class ObjectTableWidget(DataTable):
         # they are passed in and mounted in the standard bottom utility slot
         # (second-from-bottom, above the destructive group), so row 1 of the
         # list menu is "Edit object attributes..." rather than plumbing.
-        # "Hide other objects" / "Show all objects" come from the shared menu.
+        # The visibility rows come from the shared menu.
         list_ops = [
             ("invertobjselection_act1", "Invert selection", "", self.invertSelection),
             ("copyobjrow_act", "Copy object values", "", self.table.copy),
@@ -247,6 +258,41 @@ class ObjectTableWidget(DataTable):
             disable_unavailable_export_formats,
         )
         disable_unavailable_export_formats(self)
+
+        # The menubar's "Selection" menu carries the second copy of
+        # "Restore previous visibility" (restorevisibility_act1). A menubar menu
+        # is always on screen, so aboutToShow is its equivalent of the context
+        # menu's open event. Sync once now as well, so the row is correct before
+        # the menu has ever been opened.
+        self.selectionmenu.aboutToShow.connect(self.syncVisibilityActions)
+        self.syncVisibilityActions()
+
+    def syncVisibilityActions(self):
+        """Bring this widget's visibility actions in line with the live field.
+
+        Only "Restore previous visibility" needs it so far: it depends on a
+        snapshot taken by "Hide other objects" and consumed by the restore, so its
+        enabled state cannot be decided when the menu is built.
+        """
+        # Local import for the same reason createMenus uses one: gui.main imports
+        # gui.table, so a module-level import here would be circular.
+        from PyReconstruct.modules.gui.main.context_menu_list import (
+            sync_restore_visibility_action,
+        )
+        sync_restore_visibility_action(
+            self, self.mainwindow.field.visibility_snapshot
+        )
+
+    def contextMenuEvent(self, event=None):
+        """Resync the runtime-dependent object actions, then open the menu.
+
+        This menu is built once in createMenus and reused, so an action whose
+        enabled state depends on live state has to be resynced on every open. The
+        field menu's copy gets the same treatment from MainWindow.checkActions,
+        which runs on every field right-click.
+        """
+        self.syncVisibilityActions()
+        super().contextMenuEvent(event)
 
     def updateTitle(self):
         """Update the title of the table."""
