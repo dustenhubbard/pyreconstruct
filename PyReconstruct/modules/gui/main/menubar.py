@@ -308,6 +308,12 @@ def return_alignments_menu(self):
                 "text": "Import alignments",
                 "opts":
                 [
+                    ## "From another series" is first because it is the common
+                    ## case (taking a colleague's alignment) and because it was
+                    ## previously only reachable through Series > Import series
+                    ## data, where a user looking for an alignment import does
+                    ## not think to look.
+                    ("import_jser_alignments_act", "From another series (.jser)...", "", self.importAlignmentsFromSeries),
                     ("importtransforms_act", "From .txt file...", "", self.importTransforms),
                     ("import_swift_transforms_act", "From SWiFT project...", "", self.importSwiftTransforms),
                 ]
