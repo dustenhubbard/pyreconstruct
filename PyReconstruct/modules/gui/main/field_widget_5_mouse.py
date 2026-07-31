@@ -168,6 +168,10 @@ class FieldWidgetMouse(FieldWidgetData):
         ): 
             if not self.is_moving_trace:  # user has just decided to move the trace
                 self.is_moving_trace = True
+                # remember which section the drag is carrying traces off of:
+                # temp_hide below is set on this section, and the release can
+                # only commit the move against this section (issue #108)
+                self.moving_section = self.section
                 # clear lasso trace
                 self.current_trace = []
                 # get pixel points
@@ -230,6 +234,60 @@ class FieldWidgetMouse(FieldWidgetData):
             # draw to screen
             self.update()
     
+    def cancelTraceMove(self) -> bool:
+        """Abandon a pointer drag in progress, putting back what it hid.
+
+        A drag hides the traces it is carrying in its own section's
+        ``temp_hide`` and draws them under the cursor instead, so only the
+        release that ends the gesture can commit it. Anything that interrupts
+        the drag in between used to leave it half-applied, and a section change
+        is the interruption users reach (the scroll wheel pages sections, and
+        the button can be held while it does): the release then translated the
+        NEW section's selection, which ``changeSection`` has just emptied, so
+        nothing moved, while the source section kept the dragged traces in its
+        ``temp_hide`` -- invisible AND unselectable, because a temp-hidden trace
+        is left out of ``traces_in_view``, until that section is reloaded. Work
+        that looks deleted (issue #108).
+
+        Restores visibility, drops the drag and says so. A gesture that quietly
+        evaporates reads as lost work, the same reasoning as
+        ``refuseLockedTraces``.
+
+        Touches visibility and the drag state only, never trace data, so it is
+        deliberately NOT gated on the object lock: a locked object's traces have
+        to come back too (see the lock rule in ``refuseLockedTraces``).
+
+            Returns:
+                (bool): True if a drag was in progress and was cancelled
+        """
+        if not self.is_moving_trace:
+            return False
+
+        source = self.moving_section
+
+        self.is_moving_trace = False
+        self.moving_section = None
+        self.moving_traces = []
+        self.moving_points = []
+        self.moving_flags = []
+        self.current_trace = []
+
+        # unhide on the section the drag started on, which is not necessarily
+        # the one on screen now
+        if source is not None:
+            source.temp_hide = []
+
+        # repaint before the modal below, so the restored traces are already
+        # on screen behind it
+        self.generateView()
+
+        notify(
+            "The traces you were dragging were put back.\n"
+            "A drag has to end on the section it started on."
+        )
+
+        return True
+
     def pointerRelease(self, event):
         """Called when mouse is released in pointer mode."""
 
@@ -300,28 +358,46 @@ class FieldWidgetMouse(FieldWidgetData):
         
         ## User moved traces
         elif self.lclick and self.is_moving_trace:
-            
-            ## Unhide traces
-            self.section.temp_hide = []
 
-            ## Save traces in final position
-            self.is_moving_trace = False
+            ## Drag that began on another section: cannot be committed here
+            #
+            # `endPendingEvents` normally catches this at the moment the section
+            # changes, which is every route through `MainWindow.changeSection`.
+            # This is the invariant behind that: `FieldWidget.changeSection` can
+            # also be called directly (`moveTo` from the 3D scene), and the
+            # commit below is only meaningful against the section the drag
+            # started on. Identity, not section number: a mid-drag `reload`
+            # rebuilds the section, and the carried traces belong to the old
+            # object.
+            if self.moving_section is not self.section:
 
-            # Dropping a dragged trace is a modification to existing traces.
-            # Checked here at the commit rather than in `pointerMove`, where the
-            # drag begins: `notify` is modal, and raising a modal from inside a
-            # move event with the button still held would block the gesture it
-            # is reporting on. Unhiding above has already put the traces back
-            # where they started, so the refused drag simply snaps back.
-            if self.refuseLockedTraces(self.section.selected_traces):
-                self.generateView(update=False)
+                self.cancelTraceMove()
 
             else:
-                dx = (event.x() - self.clicked_x) * self.series.screen_mag
-                dy = (event.y() - self.clicked_y) * self.series.screen_mag * -1
-                self.section.translateTraces(dx, dy)
-                self.generateView(update=False)
-                self.saveState()
+
+                ## Unhide traces
+                self.section.temp_hide = []
+
+                ## Save traces in final position
+                self.is_moving_trace = False
+                self.moving_section = None
+
+                # Dropping a dragged trace is a modification to existing traces.
+                # Checked here at the commit rather than in `pointerMove`, where
+                # the drag begins: `notify` is modal, and raising a modal from
+                # inside a move event with the button still held would block the
+                # gesture it is reporting on. Unhiding above has already put the
+                # traces back where they started, so the refused drag simply
+                # snaps back.
+                if self.refuseLockedTraces(self.section.selected_traces):
+                    self.generateView(update=False)
+
+                else:
+                    dx = (event.x() - self.clicked_x) * self.series.screen_mag
+                    dy = (event.y() - self.clicked_y) * self.series.screen_mag * -1
+                    self.section.translateTraces(dx, dy)
+                    self.generateView(update=False)
+                    self.saveState()
 
         ## User selected an area (lasso) of traces
         elif self.lclick and self.is_selecting_traces:

@@ -201,6 +201,14 @@ class FieldWidgetView(FieldWidgetPaint):
         """End ongoing events that are connected to the mouse."""
         if self.is_line_tracing and not self.is_z_tracing:
             self.lineRelease(override=True)
+
+        # A pointer drag is the other gesture that spans several events, and it
+        # is the one whose callers reach here mid-gesture: the button can be held
+        # while the wheel pages sections, while an undo runs, or while the tool
+        # or palette trace changes under a shortcut. All of those invalidate the
+        # drag, so it ends here rather than being committed later against
+        # whatever the field has become (issue #108).
+        self.cancelTraceMove()
     
     def backspace(self):
         """Called when backspace OR Del is pressed: either delete traces or undo line trace."""

@@ -328,6 +328,10 @@ def test_pointer_drag_refuses_to_move_a_locked_trace(locked_selection):
     field.single_click = False
     field.click_time = 0            # long enough ago to not be a single click
     field.is_moving_trace = True
+    # the section the drag started on. `pointerRelease` will only commit a drag
+    # against this section, so the lock refusal below is only reached when the
+    # release is looking at the same one (issue #108).
+    field.moving_section = field.section
     field.clicked_x, field.clicked_y = 100, 100
     field.section.temp_hide = [trace]
 
@@ -352,6 +356,7 @@ def test_pointer_drag_moves_an_unlocked_trace(
     field.single_click = False
     field.click_time = 0
     field.is_moving_trace = True
+    field.moving_section = field.section    # the drag started here (issue #108)
     field.clicked_x, field.clicked_y = 100, 100
     field.section.temp_hide = [trace]
 
