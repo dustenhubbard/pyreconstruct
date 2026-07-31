@@ -1090,15 +1090,20 @@ class MainWindow(QMainWindow):
                 "Select file containing transforms"
             )
         if not tforms_fp: return
-        
+
+        alignments_before = set(self.series.alignments)
+
         # import the transforms
         importTransforms(self.series, tforms_fp, series_states=self.field.series_states)
-        
+
         # reload the section
         self.field.reload()
 
         # refresh the data and lists
         self.field.table_manager.recreateTables()
+
+        # the import adds an alignment and makes it current
+        self.refreshAlignmentActions(alignments_before)
 
         notify("Transforms imported successfully.")
 
@@ -1149,15 +1154,20 @@ class MainWindow(QMainWindow):
         scale = response[0]
         cal_grid = response[1][0][1]
 
+        alignments_before = set(self.series.alignments)
+
         # import transforms
         print(f'Importing SWiFT transforms at scale {scale}...')
         if cal_grid: print('Cal grid included in series')
         importSwiftTransforms(self.series, swift_fp, scale, cal_grid, series_states=self.field.series_states)
-        
+
         self.field.reload()
 
         # refresh the data and lists
         self.field.table_manager.recreateTables()
+
+        # the import adds an alignment and makes it current
+        self.refreshAlignmentActions(alignments_before)
 
         notify("Transforms imported successfully.")
     
@@ -1974,7 +1984,30 @@ class MainWindow(QMainWindow):
             attr = getattr(self, f"{current_alignment}_alignment_act")  # generated from createContextMenu
             attr.setChecked(False)
             self.field.changeAlignment(new_alignment)
-    
+
+    def refreshAlignmentActions(self, alignments_before):
+        """Rebuild the context menus if the series' alignment names changed.
+
+        The "Series alignment" submenu and the one <name>_alignment_act per
+        name are both built from series.alignments at createContextMenus()
+        time, so an operation that adds or removes an alignment leaves the
+        submenu listing the old set. A missing entry is the visible half of
+        that; the other half is that changeAlignment() looks its actions up
+        with a bare getattr on *both* the new and the current name, so once
+        series.alignment names an alignment with no action, the next switch
+        raises AttributeError from either route into it.
+
+            Params:
+                alignments_before (set): the alignment names as they were
+                    before the operation
+        """
+        # conditional because the submenu is one of roughly 200 actions
+        # createContextMenus() recreates, and an import does not always change
+        # the names: a malformed transforms file is a no-op, and re-importing
+        # the same file on the same day reuses the alignment name
+        if set(self.series.alignments) != set(alignments_before):
+            self.createContextMenus()
+
     def changeBCProfiles(self):
         """Open dialog to modify and change brightness/contrast profiles."""
         self.saveAllData()
