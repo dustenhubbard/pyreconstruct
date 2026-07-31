@@ -22,7 +22,7 @@ one-click installers, an in-app updater, and ongoing user-interface modernizatio
 ## Who it's for
 
 Neuroscientists and EM researchers who trace neural structures across stacks of
-serial sections — segmenting objects, aligning sections, measuring morphology,
+serial sections: segmenting objects, aligning sections, measuring morphology,
 and building 3D reconstructions of cells, organelles, and synapses from
 volume-EM datasets. It reads and writes the `.jser` series format and handles
 large autosegmented series with hundreds of thousands of traces.
@@ -31,20 +31,19 @@ large autosegmented series with hundreds of thousands of traces.
 
 ### One-click installers (recommended)
 
-Download the latest build from
-**[Releases](https://github.com/dustenhubbard/PyReconstruct/releases)** — no
-Python required:
+No Python required. Download the latest build from
+**[Releases](https://github.com/dustenhubbard/PyReconstruct/releases)**:
 
-- **Windows** — `PyReconstruct-<version>-Windows-x86_64-Setup.exe`. Builds are
+- **Windows**: `PyReconstruct-<version>-Windows-x86_64-Setup.exe`. Builds are
   unsigned for now; if SmartScreen warns, choose **More info → Run anyway**.
-- **macOS** — `PyReconstruct-<version>-macOS-arm64.dmg` on Apple Silicon, or
+- **macOS**: `PyReconstruct-<version>-macOS-arm64.dmg` on Apple Silicon, or
   `PyReconstruct-<version>-macOS-x86_64.dmg` on an Intel Mac; then drag
   PyReconstruct to Applications. Builds are unsigned for now, so the first launch
-  is blocked by Gatekeeper — clear the quarantine flag once in Terminal:
+  is blocked by Gatekeeper. Clear the quarantine flag once in Terminal:
   ```
   xattr -dr com.apple.quarantine /Applications/PyReconstruct.app
   ```
-- **Linux** — `PyReconstruct-<version>-Linux-installer.tar.gz`. Extract it and run
+- **Linux**: `PyReconstruct-<version>-Linux-installer.tar.gz`. Extract it and run
   `bash install.sh`; it builds an isolated virtual environment, drops a
   `pyreconstruct` launcher on your PATH, and adds an application-menu entry. It
   needs a system **Python 3.11** (`python3.11` + `venv`) and targets x86_64. To
@@ -64,11 +63,11 @@ default.
 To track the latest commits on `main` (this replaces the old in-app "Developer"
 update channel), run a source install rather than a frozen build.
 
-PyReconstruct requires **Python 3.11** — the pinned version the app and its
+PyReconstruct requires **Python 3.11**, the pinned version the app and its
 native dependencies are validated on (the project pins `>=3.11,<3.12`). The
 canonical setup uses [uv](https://docs.astral.sh/uv/): it reads that pin, fetches
 Python 3.11 for you, and installs the exact dependency set recorded in the
-committed `uv.lock` — no system Python changes, no version guessing.
+committed `uv.lock`. No system Python changes, no version guessing.
 
 ```
 curl -LsSf https://astral.sh/uv/install.sh | sh   # once; or: brew install uv
@@ -78,12 +77,12 @@ uv sync                            # creates .venv from uv.lock (exact pinned de
 uv run PyReconstruct               # launch
 ```
 
-Update loop: `git pull`, then `uv run PyReconstruct` — `uv run` re-syncs `.venv`
+Update loop: `git pull`, then `uv run PyReconstruct`, which re-syncs `.venv`
 to the lockfile automatically, so pulled code runs immediately with no manual
-reinstall. You can also update from inside the app — **Help ▸ Check for updates**
-on a source install reinstalls the branch set under **Series ▸ Options ▸ Updates**
-(default `main`) — or from the command line with `PyReconstruct --update`
-(`PyReconstruct --switch <branch>` to change branch first).
+reinstall. You can also update from inside the app, or from the command line with
+`PyReconstruct --update` (`PyReconstruct --switch <branch>` to change branch
+first). On a source install, **Help ▸ Check for updates** reinstalls the branch
+set under **Series ▸ Options ▸ Updates** (default `main`).
 
 <details>
 <summary>Alternative: a plain <code>venv</code> without uv</summary>
@@ -118,17 +117,17 @@ and in-app under **Help ▸ Online resources**.
 
 ## Documentation
 
-- **[Wiki](https://github.com/dustenhubbard/PyReconstruct/wiki)** — the full user guide, browsable by topic.
-- **[User guide](docs/USER_GUIDE.md)** — installing and updating, opening and
+- **[Wiki](https://github.com/dustenhubbard/PyReconstruct/wiki)**: the full user guide, browsable by topic.
+- **[User guide](docs/USER_GUIDE.md)**: installing and updating, opening and
   building a series, the tracing tools, the data lists, alignment, 3D
   reconstruction, and backups.
-- **[Contributing guide](CONTRIBUTING.md)** — development setup, running the
+- **[Contributing guide](CONTRIBUTING.md)**: development setup, running the
   tests, the code layout, and the branch/PR conventions.
 
 ## Performance
 
-Large autosegmented series — those with tens to hundreds of thousands of traces —
-were previously slow to open and refresh. This distribution rewrites the hot
+Large autosegmented series (tens to hundreds of thousands of traces) were
+previously slow to open and refresh. This distribution rewrites the hot
 geometry and serialization paths, with no change to the `.jser` format or the
 data model:
 
@@ -139,10 +138,10 @@ data model:
 - **Verified equivalence.** The optimized code reproduces the previous
   implementation's geometry: section, object, and trace counts match exactly, and
   summed area, length, and radius are identical on seven of the eight benchmark
-  series — on the largest (492k traces) the summed radius differs by ~1e-11
+  series. On the largest (492k traces) the summed radius differs by ~1e-11
   relative, from floating-point summation order, not from doing less work. The
   speedup comes from doing the same work faster, not from skipping work.
-- **Algorithmic, single-threaded wins** — vectorized per-trace geometry, a lazy
+- **Algorithmic, single-threaded wins**: vectorized per-trace geometry, a lazy
   Feret-diameter (convex-hull) computation, NumPy point mapping, and
   [orjson](https://github.com/ijl/orjson) on the JSON load/save paths. They help
   every machine, and most on the large series that were previously near-unusable.
@@ -156,13 +155,13 @@ upstream they were forked from.
 
 What this distribution adds over upstream, all in the current stable release:
 
-- **One-click installers for every platform** — Windows, macOS (native Apple
+- **One-click installers for every platform.** Windows, macOS (native Apple
   Silicon *and* Intel builds, on an updated 3D stack: vtk 9.4.2 + vedo 2025.5.4),
   and Linux, built in CI.
 - **In-app updater** that updates the frozen Windows/macOS builds from GitHub
   Releases, on a stable or beta channel and verified by checksum (see
   [Install](#install)).
-- **3–4× faster large-series open & refresh** — the performance work above, with
+- **3–4× faster large-series open & refresh**: the performance work above, with
   verified geometry equivalence.
 - **A correctness test suite** (geometry/transform equivalence, updater logic)
   and a headless performance harness.
@@ -181,7 +180,7 @@ Found a problem, have a feature idea, or want to improve the docs? Please
 Thanks for the help!
 
 Found a **security vulnerability**? Please report it privately instead of opening a
-public issue — see [`SECURITY.md`](SECURITY.md).
+public issue. See [`SECURITY.md`](SECURITY.md).
 
 ## Credits
 
@@ -191,7 +190,7 @@ Lab, Department of Neuroscience, Center for Learning and Memory, **The Universit
 of Texas at Austin**) and introduced in *PNAS* (2025; see
 [Citation](#citation)). The upstream project lives at
 [SynapseWeb/PyReconstruct](https://github.com/SynapseWeb/PyReconstruct). It
-succeeds the original **Reconstruct** by John C. Fiala — a long-standing,
+succeeds the original **Reconstruct**, John C. Fiala's long-standing,
 Windows-only serial-section reconstruction program.
 
 This distribution is independently developed and maintained by **Dusten Hubbard**
