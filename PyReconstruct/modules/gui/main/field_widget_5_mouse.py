@@ -248,15 +248,14 @@ class FieldWidgetMouse(FieldWidgetData):
                 ## normal trace selected
                 if self.selected_type == "trace":
 
-                    obj_locked = self.series.getAttr(self.selected_trace.name, "locked")
-
-                    if not obj_locked and not self.focus_mode:
+                    if not self.focus_mode:
                         self.selectTrace(self.selected_trace)
-                        
+
                     # Both focus-mode edits below rewrite a trace's name, which
-                    # moves it out of one object and into another. `obj_locked`
-                    # is read above for the ordinary select branch; the focus
-                    # branch has to honor it too, and used not to.
+                    # moves it out of one object and into another, so they keep
+                    # a lock check. Clicking to select above does not: lock
+                    # guards edits, not selection, and this branch used to be
+                    # the reason a click on a locked object's trace did nothing.
                     if (
                         self.focus_mode and focus_edit_p(event) and
                         not self.refuseLockedTraces([self.selected_trace])

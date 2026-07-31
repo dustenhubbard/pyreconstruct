@@ -833,8 +833,10 @@ class Section():
 
         Only traces visible in the field can become selected: hidden and
         group-hidden traces are skipped unless include_hidden is True (the
-        show-all-traces mode). Locked objects are never selected (addSelectedTrace
-        refuses them). Selected ztrace points and flags are left untouched.
+        show-all-traces mode). A locked object's traces are selected like any
+        other, which is what the object list's invert already does: lock guards
+        edits, not selection. Selected ztrace points and flags are left
+        untouched.
 
         (Only meant for GUI use.)
 
@@ -1386,14 +1388,23 @@ class Section():
     
     def addSelectedTrace(self, trace : Trace):
         """Add a trace to the selected trace list.
-        
+
+        Locking an object does not affect selection. Lock prevents mutations
+        that change quantitative data (traces added, deleted or modified), and
+        every field operation that does one of those carries its own check:
+        `FieldWidgetTrace.refuseLockedTraces` for the six that read the
+        selection directly, `trace_function` for the trace context menu and
+        `object_function(update_objects=True)` for the object one.
+
+        This used to refuse a locked object's trace, which made it the only
+        thing standing between a locked object and those operations. It was
+        also visible to the user as an inconsistency: the field's invert
+        selection silently skipped locked objects while the object list
+        selected locked rows freely.
+
             Params:
                 trace (Trace): the trace to append to the list.
         """
-        # check if trace is within locked object
-        if self.series.getAttr(trace.name, "locked"):
-            return
-        
         self.selected_traces.append(trace)
 
     def exportAsSVG(self, svg_fp):
