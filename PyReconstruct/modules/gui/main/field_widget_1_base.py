@@ -58,6 +58,11 @@ class FieldWidgetBase:
         self.moving_points : list           = None
         self.moving_flags : list            = None
 
+        # the section a pointer drag began on. A drag hides what it carries in
+        # THAT section's temp_hide and can only be committed against it, so the
+        # release has to be able to tell whether it is still looking at it.
+        self.moving_section                 = None
+
         self.mouse_mode : int               = 0
 
         self.is_selecting_traces : bool     = False
