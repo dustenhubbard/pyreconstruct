@@ -24,6 +24,14 @@ from PyReconstruct.modules.backend.updater.install_info import install_kind
 
 WHATSNEW_KEY = "last_whatsnew_version"
 
+# Provenance line shown below the notes in every framing of the What's-new dialog,
+# and near the footer of the GitHub release body. Maintainer-approved verbatim: it
+# names who maintains this build without naming any other repository, so a lab that
+# installs it knows whose build it is and reports its issues to the right person.
+# It is a quiet provenance line, not a boast; keep it a distinct field so it reads
+# as an aside below the notes rather than as one more release bullet.
+MAINTAINER_BYLINE = "An independent build of PyReconstruct, maintained by Dusten Hubbard."
+
 
 # --- username ----------------------------------------------------------------
 def resolve_username(settings, series=None, default_factory=get_username):
@@ -330,6 +338,9 @@ def whats_new_content(current, last_seen=None, cap=5, text=None, on_demand=False
                          the welcome framing, and only there,
                          ``WELCOME_UPDATE_NOTE`` is appended to whichever of
                          those two bodies was built.
+      * ``byline``    -- the maintainer provenance line (``MAINTAINER_BYLINE``),
+                         the same on every framing; the dialog renders it once
+                         below the body, set off by a rule.
       * ``truncated`` -- True when more than ``cap`` missed sections existed.
 
     Sections shown: when ``last_seen`` is a valid version older than ``current``,
@@ -397,7 +408,7 @@ def whats_new_content(current, last_seen=None, cap=5, text=None, on_demand=False
         body = GENERIC_WELCOME_NOTES if welcoming else GENERIC_NOTES
         return {"version": current, "date": friendly, "orienter": orienter,
                 "body": _with_welcome_note(body) if show_update_note else body,
-                "truncated": False}
+                "byline": MAINTAINER_BYLINE, "truncated": False}
 
     truncated = False
     if updating:
@@ -426,4 +437,4 @@ def whats_new_content(current, last_seen=None, cap=5, text=None, on_demand=False
     body = _render_sections(shown, truncated)
     return {"version": current, "date": friendly, "orienter": orienter,
             "body": _with_welcome_note(body) if show_update_note else body,
-            "truncated": truncated}
+            "byline": MAINTAINER_BYLINE, "truncated": truncated}

@@ -275,6 +275,53 @@ def test_whats_new_reads_bundled_file_and_is_offline_safe(monkeypatch, tmp_path)
     assert "Full release notes on GitHub" in F.whats_new_content("1.20.3")["body"]
 
 
+# ---- the maintainer byline (provenance line on every framing) ---------------
+# The byline names who maintains this build, so a lab that installs it credits it
+# correctly and reports its issues to the right person. It is a distinct field so
+# the dialog can set it off from the notes as a quiet aside rather than mixing it
+# into the release bullets, and it must be present on every framing.
+BYLINE = "An independent build of PyReconstruct, maintained by Dusten Hubbard."
+
+
+def test_maintainer_byline_constant_is_the_approved_text_verbatim():
+    # Locked verbatim: it is maintainer-approved and checked to contain no fork
+    # tells; a reword could reintroduce one.
+    assert F.MAINTAINER_BYLINE == BYLINE
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"last_seen": "1.20.1"},                 # an update
+    {"last_seen": None},                     # a fresh install (welcome)
+    {"on_demand": True},                     # the Help-menu re-open
+    {"last_seen": None, "installed_app": True},   # welcome, installed app
+])
+def test_byline_is_present_on_every_framing_with_notes(kwargs):
+    c = F.whats_new_content("1.20.3", text=WN, **kwargs)
+    assert c["byline"] == BYLINE
+    # it is a distinct field, never folded into the rendered notes body, so the
+    # dialog renders it exactly once (below) and it can never double up
+    assert BYLINE not in c["body"]
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"last_seen": None},                     # welcome + generic fallback
+    {"last_seen": "1.20.1"},                 # update + generic fallback
+    {"on_demand": True},                     # on-demand + generic fallback
+])
+def test_byline_is_present_on_the_generic_fallback_body(kwargs):
+    # a running version with no bundled section at all falls back to the generic
+    # body; the byline rides along there too
+    c = F.whats_new_content("9.9.9", text=WN, **kwargs)
+    assert "Full release notes on GitHub" in c["body"]   # the generic body
+    assert c["byline"] == BYLINE
+    assert BYLINE not in c["body"]
+
+
+def test_byline_is_present_when_nothing_is_bundled_at_all():
+    c = F.whats_new_content("1.20.3", last_seen=None, text="")
+    assert c["byline"] == BYLINE
+
+
 # ---- github link ------------------------------------------------------------
 def test_github_release_url_points_at_the_updater_repo():
     assert F.GITHUB_REPO in F.github_release_url()
@@ -620,6 +667,35 @@ def test_whats_new_dialog_is_modeless_and_renders_its_content(qapp):
         assert "Full release notes on GitHub" in labels
         assert "A shiny new thing." in dlg._notes.toPlainText()  # body rendered
         assert "Got it" in [b.text() for b in dlg.findChildren(QPushButton)]
+    finally:
+        dlg.deleteLater()
+
+
+@pytest.mark.parametrize("kwargs,orienter", [
+    ({"last_seen": "1.20.1"}, "What's new since 1.20.1"),   # an update
+    ({"last_seen": None}, "Welcome to PyReconstruct"),      # a fresh install
+    ({"on_demand": True}, "Recent releases"),              # the Help-menu re-open
+    ({"last_seen": "1.20.1", "version": "9.9.9"}, None),   # the generic fallback
+])
+def test_dialog_renders_the_byline_once_below_the_notes(qapp, kwargs, orienter):
+    """The real dialog puts the byline in its notes browser, exactly once, on
+    every framing -- including the generic fallback (a running version with no
+    bundled section). Asserted on the rendered QTextBrowser, not just the dict."""
+    from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
+
+    version = kwargs.pop("version", "1.20.3")
+    content = F.whats_new_content(version, text=WN, **kwargs)
+    if orienter is not None:
+        assert content["orienter"] == orienter
+    dlg = WhatsNewDialog(None, version, content=content)
+    try:
+        rendered = dlg._notes.toPlainText()
+        assert BYLINE in rendered                       # rendered, not just in the dict
+        assert rendered.count(BYLINE) == 1              # exactly once, never twice
+        # set off from the notes: it trails the body rather than leading it
+        if content["body"]:
+            first_body_line = content["body"].splitlines()[0].lstrip("#").strip()
+            assert rendered.index(first_body_line) < rendered.index(BYLINE)
     finally:
         dlg.deleteLater()
 
