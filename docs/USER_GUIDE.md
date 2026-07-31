@@ -421,6 +421,13 @@ Slices a selected trace along a freehand line.
 - Resulting pieces smaller than a threshold percentage of the original are
   discarded. Right-click the Knife button to set **% original trace** (default
   **1.0**) and to enable **Smooth cuts**.
+- A press of another mouse button part way through a cut is ignored, so a
+  drawing tablet's barrel button cannot cancel the stroke or open the field menu
+  over the object. Clear **Ignore the other mouse buttons** in the same
+  right-click dialog to get the older behavior, where the second press abandons
+  the cut and opens the menu.
+- A trace whose outline crosses itself cannot be cut. The knife says so and
+  leaves the object alone; smooth or redraw the trace and cut again.
 
 ### Scissors
 
