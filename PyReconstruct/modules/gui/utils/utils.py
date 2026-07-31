@@ -387,6 +387,23 @@ def noUndoWarning():
 
 
 def saveNotify():
+    """Ask whether to save before exiting. Returns "yes", "no" or "cancel".
+
+    With no user present the answer is "yes", because it is the only one of the
+    three that neither loses work nor stalls. `saveToJser(notify=True)` treats
+    "no" as discard-and-close: it calls `Series.close()`, which deletes the
+    hidden working directory holding every unsaved edit, and that is
+    unrecoverable. "cancel" makes `MainWindow.closeEvent` call `event.ignore()`,
+    so the window never closes, which offscreen is the same stall by another
+    route. "yes" writes the series to the `.jser` it was opened from.
+    """
+    if not user_is_present():
+        print(
+            "This series has been modified and there is nobody to ask about "
+            "saving; saving it before exit."
+        )
+        return "yes"
+
     response = QMessageBox.question(
         mainwindow,
         "Exit",
@@ -407,6 +424,21 @@ def saveNotify():
 
 
 def unsavedNotify():
+    """Ask whether to open a recovered series. Returns True to open it.
+
+    With no user present the answer is True, for the same reason: False is the
+    destructive branch. `openSeries` responds to False by deleting every file in
+    the hidden directory and removing it, and that directory is the only copy of
+    the work the previous session did not save. True opens it and deletes
+    nothing, leaving the saved `.jser` on disk untouched as well.
+    """
+    if not user_is_present():
+        print(
+            "An unsaved version of this series was found and there is nobody "
+            "to ask about it; opening it rather than discarding it."
+        )
+        return True
+
     response = QMessageBox.question(
         mainwindow,
         "Unsaved Series",
