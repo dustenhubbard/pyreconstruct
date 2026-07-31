@@ -687,14 +687,24 @@ class DifferentlyNamedDuplicatesDialog(MalformedContoursDialog):
             "rename or to merge rather than to delete one.\n\n"
         )
 
+        ## the Overlap column means two different things now, and the row that
+        ## offers to delete a trace is the one that must say so: for a closed
+        ## pair the ratio is an area comparison, for an open pair it is how
+        ## closely the two lines run. Both branches carry the explanation.
+        overlap_text = (
+            "The Overlap column is the measured overlap ratio: for two closed "
+            "traces, the area they share over the area they cover together, so "
+            "1 means the two traces have the same points; for two open traces, "
+            "how much of each line lies within a few image pixels of the "
+            "other, so 1 means the two lines stay that close from end to end. "
+            "Both areas are physical (um^2) on that trace's own section."
+        )
+
         if not self.delete_unselected:
             return text + (
                 "So this list reports. Select a row and use “Go to trace” and "
                 "“Go to other trace” to see both traces of a pair in the "
-                "field, then decide. The Overlap column is the measured "
-                "overlap ratio (1 means the two traces have the same points), "
-                "and both areas are physical (um^2) on that trace's own "
-                "section.\n\n"
+                "field, then decide. " + overlap_text + "\n\n"
                 "Nothing in the series has been changed."
             )
 
@@ -703,10 +713,7 @@ class DifferentlyNamedDuplicatesDialog(MalformedContoursDialog):
             "“Go to trace” and “Go to other trace” to see both traces of a "
             "pair in the field, then tick the name you want to KEEP — either "
             "one, not both. “Delete unselected” then deletes the trace under "
-            "the other name, in every row you ticked. The Overlap column is "
-            "the measured overlap ratio (1 means the two traces have the same "
-            "points), and both areas are physical (um^2) on that trace's own "
-            "section.\n\n"
+            "the other name, in every row you ticked. " + overlap_text + "\n\n"
             "Rows you leave unticked are left completely alone: nothing is "
             "chosen for you, and no rule decides which name wins. Nothing is "
             "deleted until you choose to delete, and it can be undone "

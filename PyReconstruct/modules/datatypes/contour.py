@@ -112,13 +112,22 @@ class Contour():
 
         return (xmax + xmin) / 2, (ymax + ymin) / 2
 
-    def importTraces(self, other, threshold : float = 0.95, keep_above : str = "self"):
+    def importTraces(self, other, threshold : float = 0.95, keep_above : str = "self",
+                     mag : float = None):
         """Import all of the traces from another contour.
-        
+
+        ``mag`` is the magnification of the section both contours sit on, and is
+        required to compare two open traces: it bounds the curve tolerance in
+        image pixels (see Trace.getOverlapRatio). Section.importTraces, the only
+        caller, passes its own ``self.mag`` -- and it has already brought the
+        other series' traces onto that magnification with Trace.magScale, so one
+        value is correct for both sides.
+
             Params:
                 other (Contour): the contour with traces to import
                 threshold (float): the overlap threshold
                 keep_above (str): the series that is favored for functional duplicates (above the overlap threshold; "self", "other", or "")
+                mag (float): the section's magnification (Section.mag)
         """
         # keep track of new trace list
         traces = []
@@ -142,7 +151,7 @@ class Contour():
                 break
             s_trace = self[i]
             o_trace = other[i]
-            if s_trace.overlaps(o_trace, threshold):
+            if s_trace.overlaps(o_trace, threshold, mag):
                 addDuplicate(s_trace, o_trace, traces)
             else:
                 break
@@ -164,7 +173,7 @@ class Contour():
                 if first_comparison:  # skip the first comparison -- we already know its false
                     first_comparison = False
                     continue
-                if s_trace.overlaps(o_trace, threshold):
+                if s_trace.overlaps(o_trace, threshold, mag):
                     addDuplicate(s_trace, o_trace, traces)
                     found_i = i
                     break
