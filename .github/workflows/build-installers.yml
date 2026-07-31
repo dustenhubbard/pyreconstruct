@@ -189,9 +189,9 @@ jobs:
             echo "---"
             PREV=$(git tag --sort=-version:refname | awk -v c="$GITHUB_REF_NAME" 'found{print; exit} $0==c{found=1}')
             if [ -n "$PREV" ]; then
-              echo "_For developers — the full technical changelog:_ **[compare ${PREV} → ${GITHUB_REF_NAME}](https://github.com/${GITHUB_REPOSITORY}/compare/${PREV}...${GITHUB_REF_NAME})**"
+              echo "_For developers, the full technical changelog:_ **[compare ${PREV} → ${GITHUB_REF_NAME}](https://github.com/${GITHUB_REPOSITORY}/compare/${PREV}...${GITHUB_REF_NAME})**"
             else
-              echo "_For developers — the full technical changelog:_ **[commit history](https://github.com/${GITHUB_REPOSITORY}/commits/${GITHUB_REF_NAME})**"
+              echo "_For developers, the full technical changelog:_ **[commit history](https://github.com/${GITHUB_REPOSITORY}/commits/${GITHUB_REF_NAME})**"
             fi
           } > release_body.md
           echo "----- release_body.md -----"; cat release_body.md
