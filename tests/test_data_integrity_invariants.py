@@ -702,15 +702,12 @@ def test_split_object_conserves_every_trace(rich_series):
     new_names = rich_series.splitObject("star", series_states=states)
     rich_series.data.refresh()
 
-    # I7 is suspended for obj_attrs only: splitObject copies the source
-    # object's attributes onto every new object but never removes the source's
-    # own entry, so obj_attrs keeps a key for an object that no longer has
-    # traces. Group membership and the host tree *are* cleaned, so the rest of
-    # I7 still applies. Pinned by test_split_object_leaks_obj_attrs below.
-    assert_coherent(
-        rich_series, "splitObject('star')",
-        ignore=("I7 objects/references: obj_attrs",),
-    )
+    # I7 applies in full. splitObject copies the source object's attributes
+    # onto every new object and now also drops the source's own entry, so
+    # obj_attrs keeps no key for an object that no longer has traces, the same
+    # way group membership and the host tree are already cleaned. Covered
+    # directly by test_split_object_leaves_no_obj_attrs_behind below.
+    assert_coherent(rich_series, "splitObject('star')")
     counts = trace_counts(rich_series)
     assert "star" not in counts
     assert sorted(new_names) == sorted(n for n in counts if n.startswith("star_"))
@@ -730,15 +727,19 @@ def test_split_object_conserves_every_trace(rich_series):
     assert_coherent(rich_series, "undo of splitObject")
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Series.splitObject copies the source object's attributes onto each new "
-    "object but never calls removeObjAttrs on the source, so obj_attrs keeps an "
-    "entry for a name with no traces. Series.deleteAllTraces and "
-    "Series.deleteObjects both do clean it, so this is an inconsistency and not "
-    "the intended contract. Not fixed here: this is a tests-only change."
-))
-def test_split_object_leaks_obj_attrs(rich_series):
-    """Pins the obj_attrs entry left behind by a split."""
+def test_split_object_leaves_no_obj_attrs_behind(rich_series):
+    """A split has to leave no ``obj_attrs`` entry for the object it emptied.
+
+    ``Series.splitObject`` copies the source object's attributes onto each new
+    object, and used to never drop the source's own entry, so ``obj_attrs`` kept
+    a key for a name with no traces. ``Series.deleteAllTraces`` and
+    ``Series.deleteObjects`` both did clean it, so this was an inconsistency and
+    not the intended contract.
+
+    ``splitObject`` now drops the entry its own ``addLog`` re-creates after the
+    centralized cleanup has run, so all three paths that empty an object end the
+    same way.
+    """
     rich_series.splitObject("star")
     rich_series.data.refresh()
     assert "star" not in rich_series.getDict()["obj_attrs"]
