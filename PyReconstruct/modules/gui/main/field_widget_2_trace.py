@@ -62,8 +62,10 @@ class FieldWidgetTrace(FieldWidgetBase):
         range_y = max_y - min_y
         self.series.window = [min_x - range_x/2, min_y - range_y/2, range_x * 2, range_y * 2]
 
-        # set the trace as the only selected trace
-        if trace.hidden or self.hide_trace_layer or self.series.getAttr(trace.name, "locked"):
+        # Set the trace as the only selected trace. A trace nobody can see is
+        # not selected; a locked object's trace is, the same as anywhere else
+        # (lock guards edits, not selection).
+        if trace.hidden or self.hide_trace_layer:
             self.section.selected_traces = []
         else:
             self.section.selected_traces = [trace]
