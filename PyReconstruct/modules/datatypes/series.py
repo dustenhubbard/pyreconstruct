@@ -3490,6 +3490,30 @@ class Series():
         if log_event:
             self.addLog(name, None, "Split into individual objects per trace")
         
+        # Drop the source's obj_attrs entry if the split emptied the object.
+        #
+        # The split leaves no traces under the source name, so the last
+        # section.save() above reaches SeriesData.updateSection, which drops the
+        # object from data["objects"] and calls removeObjAttrs(name) to clear its
+        # group membership, its obj_attrs entry and its host_tree entry. addLog
+        # then writes setAttr(name, "last_user", user), which re-creates
+        # obj_attrs[name] *after* that cleanup, keyed on an object that no longer
+        # exists. obj_attrs is serialized into the .jser, so the entry outlives
+        # the session, accumulates one key per split, and re-attaches stale
+        # provenance to any object later given this name.
+        #
+        # The log cannot simply be moved above the loop instead: updateSection
+        # emits a "Delete object" log for the emptied source, and LogSet.addLog
+        # drops every earlier log for that object name, so logging first would
+        # lose the split event itself.
+        #
+        # deleteAllTraces and deleteObjects both end with a clean obj_attrs (the
+        # same "Delete object" log is written by updateSection immediately before
+        # removeObjAttrs, so their stamp is the one that gets cleared). A split
+        # empties an object the same way and should leave the same nothing.
+        if name not in self.data["objects"]:
+            self.obj_attrs.pop(name, None)
+
         return new_names
 
     def setObjHosts(self, obj_names : list, host_names : list):
