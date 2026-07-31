@@ -91,6 +91,27 @@ the README's *From source (developers)* section).
   helper alone. (#123)
 
 ### Changed
+
+- **The startup update check is now on by default, and existing installs are
+  corrected once.** `update_check_on_startup` defaulted to `False`, and
+  `Series.getOption` persists a default the first time it is read, so every
+  machine that had ever launched the app already had `False` stored and a new
+  default could never reach it. The stored value was not a choice, it was a copy
+  of the old default, so `backend/settings_migrations.py` overwrites it exactly
+  once and records that it has, keyed on the presence of a marker in the same
+  settings scope. A user who turns the check off afterwards is never overwritten,
+  the option is written before the marker so a failed write is retried rather
+  than recorded as done, and nothing on that path raises. The check itself is
+  unchanged: it runs only in the installed app, once per 24 hours, and swallows
+  every failure. Testing it in the on state also turned up a defect worth naming:
+  a timestamp dated in the future read as "checked recently" forever, silently
+  disabling the check while the setting still showed as on, reachable by any
+  machine that wrote the stamp before its clock synced.
+- **The first-run welcome now says the app checks for updates, and that a Beta
+  channel exists.** Nothing pointed anyone at either setting. The note appears
+  only on the welcome framing, and only in the installed app, since a checkout
+  never runs the check and the claim would be false there. The generic fallback
+  body no longer opens with "Thanks for updating" on a first run.
 - **The "Copy to sections" picker suggests real sections from the open series.**
   The dialog's hint and input placeholder were a fixed `10-20` / `5, 8, 11`, which
   meant nothing in a series that does not run to 20. They now show the series' own
