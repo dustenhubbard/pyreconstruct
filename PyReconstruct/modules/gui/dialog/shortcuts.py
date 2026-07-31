@@ -177,6 +177,7 @@ help_shortcuts = [
     ("redo_act", "Redo"),
     ("copy_act", "Copy selected traces to clipboard"),
     ("copytosections_act", "Copy selected traces onto other sections"),
+    ("addobjto3D_act", "Add selected object(s) to the 3D scene"),
     ("cut_act", "Cut selected traces to clipboard"),
     ("paste_act", "Paste clipboard traces into section"),
     ("pasteattributes_act", "Apply attributes of copied traces to selected trace(s)"),

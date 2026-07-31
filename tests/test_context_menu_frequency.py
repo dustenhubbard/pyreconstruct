@@ -264,32 +264,16 @@ def test_label_menu_layout():
 # --------------------------------------------------------------------------- #
 # 3. object menu (field "Object >" + object list)
 # --------------------------------------------------------------------------- #
+# Row order approved by the maintainer on 2026-07-29, superseding the original
+# frequency-first arrangement. See test_object_menu_row_order_is_the_approved_one
+# below for what changed and why.
 OBJECT_ROWS = [
-    # top strip: edit + the three often-used actions
+    # top strip: the two actions that "deserve the frequently used top spots",
+    # with "3D >" directly under the top-level 3D row it belongs to
     "Edit object attributes...",
-    "Comment...",
-    "Duplicate object",
     "Add to 3D scene",
-    "-----",
-    # the whole visibility family, flat
-    "Hide",
-    "Unhide",
-    "Hide other objects",
-    "Hide all objects",
-    "Show all objects",
-    "-----",
-    "Group >",
-    "    Add to group...",
-    "    Remove from group...",
-    "    Remove from all groups",
-    "Set curation >",
-    "    Needs curation",
-    "    Curated",
-    "    Clear status",
-    "Custom categories >",
-    "    New...",
-    "-----",
     "3D >",
+    "    Add to scene",
     "    Remove from scene",
     "    -----",
     "    Export mesh as >",
@@ -301,10 +285,27 @@ OBJECT_ROWS = [
     "    Export quantitative data...",
     "    -----",
     "    Edit 3D settings...",
-    "Create Z-trace >",
-    "    On contour midpoints",
-    "    From trace sequence",
     "-----",
+    # the whole visibility family, flat, in its established order
+    "Hide",
+    "Unhide",
+    "Hide other objects",
+    "Hide all objects",
+    "Show all objects",
+    "-----",
+    # object-level settings, one section
+    "Comment...",
+    "Duplicate object",
+    "Group >",
+    "    Add to group...",
+    "    Remove from group...",
+    "    Remove from all groups",
+    "Set curation >",
+    "    Needs curation",
+    "    Curated",
+    "    Clear status",
+    "Custom categories >",
+    "    New...",
     "Object attributes >",
     "    Set hosts...",
     "    Clear hosts",
@@ -321,6 +322,10 @@ OBJECT_ROWS = [
     "    Edit shape...",
     "    Smooth traces",
     "    Split into separate objects",
+    "-----",
+    "Create Z-trace >",
+    "    On contour midpoints",
+    "    From trace sequence",
     "-----",
     "View history",
     "Copy attributes to palette",
@@ -376,18 +381,140 @@ def test_often_used_object_actions_are_zero_hop(label):
     assert label in _top_level(_obj_menu())
 
 
-def test_add_to_3d_scene_left_the_3d_submenu_but_remove_and_export_stayed():
-    """Approved hoist: the frequent member leaves the submenu, the rare ones
-    stay. The label gains the "3D" noun now that it has no submenu for context."""
+def test_add_to_3d_scene_is_at_top_level_AND_in_the_3d_submenu():
+    """Revised 2026-07-29 at the maintainer's request, after using the app.
+
+    The earlier decision hoisted "Add to 3D scene" OUT of "3D >" entirely, on the
+    theory that the frequent member should leave and the rare ones stay. In
+    practice that made it hard to find: the top-level copy sits in the
+    frequent-actions strip, far from "3D >", so someone looking for "add" opens
+    "3D >" first, sees only "Remove from scene", and hunts. His words: "i had to
+    hunt for add to 3D scene menu item in the top level because it was so far
+    from the 3D submenu."
+
+    So it now appears in BOTH places, which is how "Edit object attributes..."
+    already behaves. This test previously asserted the opposite; the product
+    decision changed, the test was not wrong.
+
+    Restoring the submenu copy was only half the fix. The distance itself was
+    the complaint, and the row reorder closes it: see
+    test_the_two_3d_rows_are_adjacent.
+    """
     menu = _obj_menu()
     assert "Add to 3D scene" in _top_level(menu)
     three_d = next(e for e in menu if isinstance(e, dict) and e["text"] == "3D")
     submenu_labels = _rows(three_d["opts"])
-    assert not any(r.strip().startswith("Add to") for r in submenu_labels)
+    assert "Add to scene" in submenu_labels, (
+        'the "3D >" submenu should also offer "Add to scene", beside "Remove from scene"'
+    )
     assert "Remove from scene" in submenu_labels
     assert "Export mesh as >" in submenu_labels
-    # the action itself is unchanged, so its handler/shortcut identity survives
-    assert "addobjto3D_act" in _act_names(menu)
+    # both copies exist as distinct actions; sharing an attr_name would make the
+    # second overwrite the first on the widget
+    names = _act_names(menu)
+    assert "addobjto3D_act" in names
+    assert "addobjto3Dsub_act" in names
+
+
+def test_object_menu_row_order_is_the_approved_one():
+    """The maintainer's approved object-menu order, 2026-07-29.
+
+    He was unhappy with the previous arrangement for weeks and finally named
+    the reason: "the 3D scene menu item is too far from the 3D submenu". The
+    top-level "Add to 3D scene" sat at row 2 and "3D >" at row 15, with the
+    visibility family, "Group >" and "Set curation >" in between, so "the 3D
+    sections are disjointed".
+
+    Three principles decided the new order, in his words:
+
+      * "Edit object attributes and Add to 3D scene deserve the frequently used
+        top spots but not Comment nor Duplicate object."
+      * "The view section with the various Hide options is good" -- left alone,
+        same members, same order, its own section.
+      * "The Group section should be lower, since these are object-level
+        settings they should be in the same section as Object attributes and
+        Geometry."
+
+    Order only. Nothing was renamed, added, removed, or moved between a submenu
+    and the top level. This test replaces the ordering the previous
+    frequency-first rework pinned; that decision was not wrong, it was
+    superseded.
+    """
+    assert _top_level(_obj_menu()) == [
+        "Edit object attributes...",
+        "Add to 3D scene",
+        "3D >",
+        "-----",
+        "Hide",
+        "Unhide",
+        "Hide other objects",
+        "Hide all objects",
+        "Show all objects",
+        "-----",
+        "Comment...",
+        "Duplicate object",
+        "Group >",
+        "Set curation >",
+        "Custom categories >",
+        "Object attributes >",
+        "Geometry >",
+        "-----",
+        "Create Z-trace >",
+        "-----",
+        "View history",
+        "Copy attributes to palette",
+        "-----",
+        "Remove all tags",
+        "-----",
+        "Delete objects",
+    ]
+
+
+def test_the_two_3d_rows_are_adjacent():
+    """His actual objection, as a standing guard rather than a row list: the
+    top-level "Add to 3D scene" must sit directly above the "3D >" submenu that
+    holds its counterpart "Remove from scene". Any future row inserted between
+    the two re-creates the complaint."""
+    rows = _top_level(_obj_menu())
+    assert rows[rows.index("Add to 3D scene") + 1] == "3D >"
+
+
+def test_object_level_settings_share_one_section():
+    """"Group >" and "Set curation >" are per-object settings, so they belong in
+    the same section as "Object attributes >" and "Geometry >" -- his reasoning
+    for moving them down. A separator between any two of them would split the
+    section again."""
+    rows = _top_level(_obj_menu())
+    members = ["Group >", "Set curation >", "Object attributes >", "Geometry >"]
+    idx = [rows.index(m) for m in members]
+    assert idx == sorted(idx)
+    assert "-----" not in rows[idx[0]:idx[-1] + 1], (
+        "the object-level settings are split across sections"
+    )
+
+
+def test_comment_and_duplicate_are_below_the_top_spots():
+    """"Edit object attributes and Add to 3D scene deserve the frequently used
+    top spots but not Comment nor Duplicate object." Both stay top-level (one
+    click), just not in the strip above the first separator."""
+    rows = _top_level(_obj_menu())
+    strip = rows[: rows.index("-----")]
+    assert strip == ["Edit object attributes...", "Add to 3D scene", "3D >"]
+    assert "Comment..." not in strip
+    assert "Duplicate object" not in strip
+
+
+def test_the_visibility_section_was_left_alone():
+    """"The view section with the various Hide options is good" -- unchanged
+    members, unchanged order, still one uninterrupted section."""
+    rows = _top_level(_obj_menu())
+    start = rows.index("Hide")
+    assert rows[start - 1] == "-----"
+    assert rows[start:start + 5] == [
+        "Hide", "Unhide", "Hide other objects", "Hide all objects",
+        "Show all objects",
+    ]
+    assert rows[start + 5] == "-----"
 
 
 def test_group_submenu_is_top_level_on_the_object_menu():

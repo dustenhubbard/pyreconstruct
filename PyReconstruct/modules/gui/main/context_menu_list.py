@@ -198,58 +198,61 @@ def get_context_menu_list_obj(self, list_ops=None):
     keeps its familiar submenus, table utilities sit second-from-bottom and the
     destructive actions come last.
 
+    Row order approved by the maintainer on 2026-07-29, replacing the earlier
+    frequency-first arrangement. Two things changed, both his:
+
+      * "Add to 3D scene" now sits directly above the "3D >" submenu it belongs
+        to. Previously it was row 2 of the top strip and "3D >" was row 15, with
+        the whole visibility family, "Group >" and "Set curation >" between them
+        -- "the 3D scene menu item is too far from the 3D submenu".
+      * "Group >" and "Set curation >" dropped out of the upper half to join
+        "Object attributes >" and "Geometry >": "since these are object-level
+        settings they should be in the same section as Object attributes and
+        Geometry". "Comment..." and "Duplicate object" came down with them,
+        because they "deserve" a place but not one of "the frequently used top
+        spots".
+
+    The visibility family keeps its existing order and its own section ("the
+    view section with the various Hide options is good"), and the destructive
+    row stays last. Nothing was renamed, added or removed.
+
         Params:
             list_ops (list): list-only table utilities ("Invert selection",
                 "Copy object values") to mount in the standard bottom utility
                 slot. The object list passes them; the field passes nothing.
     """
     return [
-        # Top strip: edit + the three actions the maintainer named as
-        # often-used (comment, duplicate, add to 3D scene).
+        # Top strip: the two actions the maintainer named as deserving the
+        # frequently used top spots, plus the 3D submenu they lead into.
         ("editobjattribtues_act", "Edit object attributes...", "", self.editAttributes),
-        ("editobjcomment_act", "Comment...", "", self.editComment),
-        ("copyobj_act", "Duplicate object", "", self.copyObjects),
         # Hoisted out of "3D >" (this lab is 3D-heavy): the frequent member
         # leaves the submenu, the rare ones stay. The label gains "3D" because
         # at top level "Add to scene" no longer has the submenu for context.
-        ("addobjto3D_act", "Add to 3D scene", "", self.addTo3D),
-        None,
-        # The whole visibility family, flat (was a "Visibility >" submenu).
-        ("hideobj_act", "Hide", "", self.hideObj),
-        ("unhideobj_act", "Unhide", "", lambda : self.hideObj(False)),
-        ("hideotherobj_act", "Hide other objects", "", self.hideOtherObjects),
-        ("hideallobj_act", "Hide all objects", "", self.hideAllObjects),
-        ("showallobj_act", "Show all objects", "", self.unhideAllObjects),
-        None,
-        {
-            # Hoisted to top level (was inside "Object attributes >"); mirrors
-            # the z-trace menu's "Group >", so there is one pattern to learn.
-            "attr_name": "objgroupmenu",
-            "text": "Group",
-            "opts":
-            [
-                ("addobjgroup_act", "Add to group...", "", self.addToGroup),
-                ("removeobjgroup_act", "Remove from group...", "", self.removeFromGroup),
-                ("removeobjallgroups_act", "Remove from all groups", "", self.removeFromAllGroups),
-            ]
-        },
-        {
-            "attr_name": "curatemenu",
-            "text": "Set curation",
-            "opts":
-            [
-                ("needscuration_act", "Needs curation", "", lambda : self.bulkCurate("Needs curation")),
-                ("curated_act", "Curated", "", lambda : self.bulkCurate("Curated")),
-                ("blankcurate_act", "Clear status", "", lambda : self.bulkCurate("")),
-            ]
-        },
-        getUserColsMenu(self.series, self.addUserCol, self.setUserCol, self.editUserCol),
-        None,
+        #
+        # It ALSO stays inside "3D >" directly below (as "Add to scene").
+        # Hoisting it out entirely was the wrong trade: someone looking for it
+        # goes to "3D >" first, does not find it, and hunts. Both placements is
+        # how "Edit object attributes..." already behaves, so this matches an
+        # established pattern rather than inventing one. Keeping the two rows
+        # adjacent is what makes the pair read as one thing.
+        #
+        # Only THIS copy carries the shortcut. Two actions sharing one shortcut
+        # is an ambiguous binding, and Qt answers an ambiguous shortcut by firing
+        # NEITHER action -- the exact trap that made Ctrl+Shift+C unusable for
+        # copy-to-sections.
+        ("addobjto3D_act", "Add to 3D scene", self.series, self.addTo3D),
         {
             "attr_name": "menu_3D",
             "text": "3D",
             "opts":
             [
+                # Mirrors the top-level "Add to 3D scene" so the pair is
+                # discoverable together: someone hunting for "add" naturally
+                # opens "3D >", where previously only "Remove from scene" lived.
+                # No shortcut here on purpose; the top-level copy owns it, and
+                # duplicating a shortcut makes it ambiguous, which Qt resolves
+                # by firing neither action.
+                ("addobjto3Dsub_act", "Add to scene", "", self.addTo3D),
                 ("removeobj3D_act", "Remove from scene", "", self.remove3D),
                 None,
                 {
@@ -277,16 +280,45 @@ def get_context_menu_list_obj(self, list_ops=None):
                 ("editobj3D_act", "Edit 3D settings...", "", self.edit3D)
             ]
         },
+        None,
+        # The whole visibility family, flat (was a "Visibility >" submenu), in
+        # its own section and in its established order -- left alone on purpose.
+        ("hideobj_act", "Hide", "", self.hideObj),
+        ("unhideobj_act", "Unhide", "", lambda : self.hideObj(False)),
+        ("hideotherobj_act", "Hide other objects", "", self.hideOtherObjects),
+        ("hideallobj_act", "Hide all objects", "", self.hideAllObjects),
+        ("showallobj_act", "Show all objects", "", self.unhideAllObjects),
+        None,
+        # Object-level settings, one section. "Comment..." and "Duplicate
+        # object" lead it: still top-level (one click, no submenu), but below
+        # the two rows that earned the top spots. "Group >", "Set curation >"
+        # and the custom-category columns join "Object attributes >" and
+        # "Geometry >" here because they are all per-object settings.
+        ("editobjcomment_act", "Comment...", "", self.editComment),
+        ("copyobj_act", "Duplicate object", "", self.copyObjects),
         {
-            "attr_name": "objztracemenu",
-            "text": "Create Z-trace",
+            # Hoisted to top level (was inside "Object attributes >"); mirrors
+            # the z-trace menu's "Group >", so there is one pattern to learn.
+            "attr_name": "objgroupmenu",
+            "text": "Group",
             "opts":
             [
-                ("csztrace_act", "On contour midpoints", "", self.createZtrace),
-                ("atztrace_act", "From trace sequence", "", lambda : self.createZtrace(cross_sectioned=False)),
+                ("addobjgroup_act", "Add to group...", "", self.addToGroup),
+                ("removeobjgroup_act", "Remove from group...", "", self.removeFromGroup),
+                ("removeobjallgroups_act", "Remove from all groups", "", self.removeFromAllGroups),
             ]
         },
-        None,
+        {
+            "attr_name": "curatemenu",
+            "text": "Set curation",
+            "opts":
+            [
+                ("needscuration_act", "Needs curation", "", lambda : self.bulkCurate("Needs curation")),
+                ("curated_act", "Curated", "", lambda : self.bulkCurate("Curated")),
+                ("blankcurate_act", "Clear status", "", lambda : self.bulkCurate("")),
+            ]
+        },
+        getUserColsMenu(self.series, self.addUserCol, self.setUserCol, self.editUserCol),
         {
             # Stored OBJECT attributes only. Trace-level actions do not belong
             # here (see the bulk trace group at the bottom of this menu).
@@ -324,6 +356,16 @@ def get_context_menu_list_obj(self, list_ops=None):
                 # other (same class of bug as the old export3D_act).
                 ("smoothobj_act", "Smooth traces", "", self.smoothObject),
                 ("splitobj_act", "Split into separate objects", "", self.splitObject),
+            ]
+        },
+        None,
+        {
+            "attr_name": "objztracemenu",
+            "text": "Create Z-trace",
+            "opts":
+            [
+                ("csztrace_act", "On contour midpoints", "", self.createZtrace),
+                ("atztrace_act", "From trace sequence", "", lambda : self.createZtrace(cross_sectioned=False)),
             ]
         },
         None,
