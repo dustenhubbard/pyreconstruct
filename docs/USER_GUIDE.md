@@ -748,6 +748,14 @@ propagation.
 
 **Alignments ▸ Import alignments**:
 
+- **Another series (.jser)**: choose a series, then choose which of its alignments
+  to bring over and what to call each one here. Each name starts out the same as
+  it is in the other series; type over it to import under a different name.
+  Importing under a name this series already uses replaces that alignment on every
+  section, and PyReconstruct names the alignments at risk and asks before it does.
+  Differing calibrations are flagged first, and transforms are rescaled to this
+  series' pixel size. Sections missing from the other series get an identity
+  transform.
 - **.txt file** — one line per section: `section a b c d e f` (the integer section
   number followed by the six transform numbers). Every section number must exist in
   the series; the translation terms are interpreted in pixels and scaled by the
@@ -756,9 +764,9 @@ propagation.
 - **SWiFT project** — import transforms from an AlignEM-SWiFT project; you choose
   the scale to import. The number of transforms must match the number of sections.
 
-Transforms can also be imported from another series via **Series ▸ Import series
-data ▸ From another series…** (an Alignments tab lets you pick which alignments
-to bring over).
+The same alignment import is also one tab of **Series ▸ Import series data ▸ From
+another series…**, which is where to go when you want alignments *and* traces,
+flags, or palettes in a single pass.
 
 ### Locking sections
 

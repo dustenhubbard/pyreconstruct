@@ -6,6 +6,8 @@ full release notes on GitHub (linked from the dialog).
 
 ## [Unreleased]
 
+- **New: Take an alignment from another series without opening the whole import window.** Alignments ▸ Import alignments now lists three sources together, and the first is "From another series (.jser)": pick a series, tick the alignments you want, and rename any of them on the way in. It used to be buried in Series ▸ Import series data alongside traces, flags, and palettes, which is still where to go if you want all of those at once. Importing an alignment under a name your series already uses now replaces it rather than being refused, and PyReconstruct tells you which alignments will be replaced and waits for you to agree first.
+
 ## [1.21.0-beta-6] — 2026-07-30
 
 - **Fixed: Locking an object now protects it everywhere.** Locking is meant to stop anything that would change your traced data, but several actions went around it: cutting (Ctrl+X), pasting attributes (Ctrl+B), nudging with the arrow keys, the scalpel, dragging a selected trace, and splitting a trace in focus mode all worked on a locked object's traces. One sequence deleted them with no message at all: select a trace, turn on focus mode, tick Locked on that object in the object list, move to the next section, then cut. Undo would have brought them back, but nothing told you there was anything to undo. All six actions now refuse and say so.

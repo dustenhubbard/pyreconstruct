@@ -1,5 +1,12 @@
 """Menubar label pass: verbs given their objects (File and Series menus).
 
+Note on MENUBAR_EXPECTED, updated after this module was first written: the
+baseline is a losslessness guard, so sanctioned ADDITIONS are folded in beside
+it rather than treated as failures. Each one is annotated at the point it is
+inserted. The list of additions grew by one when the alignment sources were
+gathered under Alignments > Import alignments; see the comment there.
+
+
 Six menubar labels were reported as "a verb with no object" -- the user cannot
 tell what the item acts on. They are renamed here; nothing is moved, nothing is
 removed, and one item is added ("Clear recents", which did not exist).
@@ -298,21 +305,36 @@ MENUBAR_BASELINE = [
     (1, "act", "emailteam_act"),
 ]
 
-# The single sanctioned addition: "Clear recents" inside "Open recent series".
-# With no recent paths there is no separator above it (a rule above a lone row
-# reads like a mistake), so the row lands directly under its submenu.
+# Sanctioned additions on top of the baseline. The baseline is a losslessness
+# guard, not a freeze: rows may be ADDED, and each addition is recorded here
+# with the reason, so the diff stays reviewable and a row still cannot vanish.
+#
+# 1. "Clear recents" inside "Open recent series". With no recent paths there is
+#    no separator above it (a rule above a lone row reads like a mistake), so
+#    the row lands directly under its submenu.
+# 2. "From another series (.jser)..." at the top of the Alignments import
+#    submenu. Added because the decision changed, not because the test was
+#    wrong: importing a colleague's alignment was reachable only through
+#    Series > Import series data > From another series, which is the
+#    whole-series merge dialog, while Alignments > Import alignments offered
+#    only .txt and SWiFT. All three sources now sit together.
 _CLEAR_RECENTS_ROW = (2, "act", "clearrecents_act")
+_IMPORT_JSER_ALIGNMENTS_ROW = (2, "act", "import_jser_alignments_act")
 MENUBAR_EXPECTED = list(MENUBAR_BASELINE)
 MENUBAR_EXPECTED.insert(
     MENUBAR_BASELINE.index((1, "menu", "openrecentmenu")) + 1, _CLEAR_RECENTS_ROW
 )
+MENUBAR_EXPECTED.insert(
+    MENUBAR_EXPECTED.index((1, "menu", "importalignmentsmenu")) + 1,
+    _IMPORT_JSER_ALIGNMENTS_ROW,
+)
 
 
-def test_menubar_structure_matches_the_baseline_plus_clear_recents():
+def test_menubar_structure_matches_the_baseline_plus_additions():
     """Nothing moved, nothing dropped: the whole tree, row for row.
 
-    Labels are deliberately not part of this comparison -- the point of the PR
-    is that they change while the structure does not.
+    Labels are deliberately not part of this comparison -- the point of the
+    label pass is that they change while the structure does not.
     """
     built = [(d, kind, attr) for d, kind, attr, _text in _rows()]
     assert built == MENUBAR_EXPECTED
@@ -326,9 +348,9 @@ def test_no_baseline_action_was_lost():
 
 
 def test_menubar_action_and_submenu_counts():
-    """113 actions before, 114 now (the one addition); submenu count unchanged."""
+    """113 actions at capture, 115 now (the two additions); submenus unchanged."""
     rows = _rows()
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 114
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 115
     assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 32
 
 
