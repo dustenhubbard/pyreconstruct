@@ -16,6 +16,19 @@ the README's *From source (developers)* section).
 ## [1.21.0-beta-6] - 2026-07-30
 
 ### Added
+- **A keyboard shortcut for "Invert selection".** The field action shipped with a
+  right-click row and a working handler but with its shortcut written into the
+  source as an empty string, so it had no key, no row in the shortcuts dialog,
+  and no entry in `default_settings.py`. It now defaults to `Ctrl+Shift+I`
+  (`Cmd+Shift+I` on macOS) and is rebindable like the rest of the set, which
+  makes the selection trio read `Ctrl+A` / `Ctrl+D` / `Ctrl+Shift+I`.
+  `Ctrl+Shift+I` is the invert-selection key in Photoshop, Krita and Affinity
+  Photo, and it is claimed by no system-global binding on Windows, macOS or
+  Linux. `Ctrl+Alt+I` was the runner-up and was rejected because `Ctrl+Alt` is
+  indistinguishable from `AltGr` on international keyboard layouts. A new test
+  additionally asserts that no two *live* actions share a sequence, counting
+  actions inside menus and not only those attached to the window, which is the
+  case the existing check could not see.
 - **A keyboard shortcut for "Copy to sections...".** The action now has a
   user-configurable default of `Ctrl+Alt+C`, listed in the shortcuts dialog next
   to Copy. `Ctrl+Shift+C` was the natural sibling of `Ctrl+C` and was requested
