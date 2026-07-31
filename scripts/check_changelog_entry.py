@@ -10,13 +10,21 @@ at the time, so the record drifted and nobody found out until the file no
 longer described the release.
 
 The rule this implements is narrow on purpose: a pull request that touches
-``PyReconstruct/`` should also touch ``CHANGELOG.md``. Three ways out, all
-cheap:
+``PyReconstruct/`` should also record the change. Three ways out, all cheap:
 
-  * touch ``CHANGELOG.md``;
+  * add a fragment under ``changelog.d/``, which is the normal way, or touch
+    ``CHANGELOG.md``, which still counts;
   * change nothing outside ``tests/`` and ``.github/``, which is exempt
     automatically;
   * write an opt-out line in the pull request body and say why.
+
+The fragment is now the first of those and ``CHANGELOG.md`` the fallback, which
+is the only part of this check that changed when ``changelog.d/`` arrived. The
+reason is not tidiness: seven pull requests conflicted in ``CHANGELOG.md`` and
+in nothing else in a single afternoon, every one of them a both-added collision
+on the same ``### Fixed`` heading. A check that points every author at the same
+file is a check that manufactures those collisions. See
+``changelog.d/README.md``.
 
 The opt-out is a body line rather than a label. A label needs write access to
 the repository, so an outside contributor cannot apply one and has to wait for
@@ -37,7 +45,7 @@ of ignoring the annotation.
 
 Usage::
 
-    check_changelog_entry.py --changed-files FILE --body FILE [--changelog PATH]
+    check_changelog_entry.py --changed-files FILE --body FILE
 
 ``--changed-files`` is a newline-separated list of repository-relative paths.
 ``--body`` is the pull request body. Stdlib only, so this runs with no project
@@ -57,7 +65,17 @@ BLOCKING = False
 
 APP_PREFIX = "PyReconstruct/"
 CHANGELOG = "CHANGELOG.md"
+FRAGMENT_DIR = "changelog.d/"
 EXEMPT_PREFIXES = ("tests/", ".github/")
+
+# Files that live in the fragment directory and are not fragments. Adding one of
+# these is a documentation change, not a record of a code change.
+NOT_FRAGMENTS = (FRAGMENT_DIR + "README.md",)
+
+# Help text only. ``scripts/changelog_fragments.py`` is the source of truth for
+# what a category may be, and it validates; this check does not, because
+# deciding whether a file is a fragment needs only its directory.
+CATEGORIES = ("added", "changed", "fixed", "removed")
 
 # `No changelog entry: <reason>`, optionally as a markdown list item, anywhere
 # in the body. A reason is required: a bare marker with nothing after the colon
@@ -69,36 +87,17 @@ OPT_OUT_RE = re.compile(
 
 OPT_OUT_EXAMPLE = "No changelog entry: <why this has nothing to record>"
 
+NEW_FRAGMENT_COMMAND = "python3 scripts/changelog_fragments.py new <category>"
+
 # The house style, written out rather than sampled from the file: the real
-# bullets are hard-wrapped, so no single line of CHANGELOG.md is a usable
-# example and a sampled one comes out cut off mid-sentence.
+# bullets are hard-wrapped, so no single line of one is a usable example and a
+# sampled one comes out cut off mid-sentence.
 ENTRY_SHAPE = "- **Short title, bold, ending in a period.** What changed and why."
 
-# The buckets an entry can go in. Used when the topmost section has none of its
-# own yet, which is the normal state of `## [Unreleased]` right after a release.
-KEEP_A_CHANGELOG_SECTIONS = ("Added", "Changed", "Fixed", "Removed")
 
-
-def _top_section(changelog_text):
-    """``(heading, subsections)`` for the topmost ``##`` section.
-
-    ``heading`` is the section an entry belongs under right now, and
-    ``subsections`` are its ``###`` buckets. Falls back to the Keep a Changelog
-    set when the section is empty or the file is unreadable, so the message is
-    never blank and never tells anyone to go and read a convention first.
-    """
-    heading = None
-    subsections = []
-    for line in (changelog_text or "").splitlines():
-        if line.startswith("## "):
-            if heading is not None:
-                break
-            heading = line[3:].strip()
-        elif heading is not None and line.startswith("### "):
-            name = line[4:].strip()
-            if name and name not in subsections:
-                subsections.append(name)
-    return heading or "[Unreleased]", subsections or list(KEEP_A_CHANGELOG_SECTIONS)
+def _is_fragment(path):
+    """Whether ``path`` records a change in the fragment directory."""
+    return path.startswith(FRAGMENT_DIR) and path not in NOT_FRAGMENTS
 
 
 def evaluate(changed_files, pr_body):
@@ -108,7 +107,8 @@ def evaluate(changed_files, pr_body):
 
       ``no-app-change``  nothing under ``PyReconstruct/`` changed
       ``exempt``         nothing outside ``tests/`` and ``.github/`` changed
-      ``recorded``       ``CHANGELOG.md`` is in the change
+      ``recorded``       a fragment or ``CHANGELOG.md`` is in the change, and
+                         ``detail`` names which
       ``opted-out``      the body carries the opt-out line; detail is the reason
       ``missing``        the finding
     """
@@ -125,8 +125,14 @@ def evaluate(changed_files, pr_body):
     if not any(f.startswith(APP_PREFIX) for f in files):
         return "no-app-change", ""
 
+    # The fragment is looked for first so that the detail names it in the
+    # ordinary case. Either alone is enough; assembling a release touches both.
+    fragments = sorted(f for f in files if _is_fragment(f))
+    if fragments:
+        return "recorded", fragments[0]
+
     if CHANGELOG in files:
-        return "recorded", ""
+        return "recorded", CHANGELOG
 
     match = OPT_OUT_RE.search(pr_body or "")
     if match:
@@ -135,15 +141,15 @@ def evaluate(changed_files, pr_body):
     return "missing", ""
 
 
-def _message(changed_files, changelog_text):
+def _message(changed_files):
     """The finding, written so the fix takes seconds and needs nothing read."""
     app_files = sorted(f for f in changed_files if f.strip().startswith(APP_PREFIX))
     shown = app_files[:5]
     more = len(app_files) - len(shown)
-    heading, subsections = _top_section(changelog_text)
     lines = [
-        f"This changes {len(app_files)} file(s) under {APP_PREFIX} and does not "
-        f"touch {CHANGELOG}.",
+        f"This changes {len(app_files)} file(s) under {APP_PREFIX} and records "
+        f"nothing: no fragment under {FRAGMENT_DIR} and no change to "
+        f"{CHANGELOG}.",
         "",
         "Changed:",
     ]
@@ -152,11 +158,21 @@ def _message(changed_files, changelog_text):
         lines.append(f"  ... and {more} more")
     lines += [
         "",
-        f"Add an entry to {CHANGELOG}, under `## {heading}`, in one of:",
-        "  " + "  ".join(subsections),
+        "Add a fragment:",
+        f"  {NEW_FRAGMENT_COMMAND}",
+        "",
+        "  <category> is one of: " + " ".join(CATEGORIES),
+        "",
+        f"That writes a file under {FRAGMENT_DIR} that nothing else touches, so "
+        "it cannot conflict with another pull request, and it is not filed "
+        "under a release until the release is assembled. Put the entry in it "
+        "and commit it with the code.",
         "",
         "Shape of an entry:",
         f"  {ENTRY_SHAPE}",
+        "",
+        f"{FRAGMENT_DIR}README.md has a worked example. Editing {CHANGELOG} "
+        "directly still counts.",
         "",
         "Or, if there is genuinely nothing to record, put this line in the "
         "pull request body:",
@@ -180,15 +196,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--changed-files", required=True, type=Path)
     parser.add_argument("--body", required=True, type=Path)
-    parser.add_argument("--changelog", type=Path, default=Path(CHANGELOG))
     args = parser.parse_args(argv)
 
     changed_files = args.changed_files.read_text(encoding="utf-8").splitlines()
     pr_body = args.body.read_text(encoding="utf-8") if args.body.exists() else ""
-    try:
-        changelog_text = args.changelog.read_text(encoding="utf-8")
-    except OSError:
-        changelog_text = ""
 
     status, detail = evaluate(changed_files, pr_body)
 
@@ -199,13 +210,13 @@ def main(argv=None):
             if BLOCKING
             else "Missing changelog entry (report-only, not blocking)"
         )
-        _emit(level, title, _message(changed_files, changelog_text))
+        _emit(level, title, _message(changed_files))
         return 1 if BLOCKING else 0
 
     explanation = {
         "no-app-change": f"nothing under {APP_PREFIX} changed",
         "exempt": "nothing changed outside " + " and ".join(EXEMPT_PREFIXES),
-        "recorded": f"{CHANGELOG} is part of this change",
+        "recorded": f"{detail} is part of this change",
         "opted-out": f"opted out in the pull request body: {detail}",
     }[status]
     print(f"changelog check: ok ({explanation})")

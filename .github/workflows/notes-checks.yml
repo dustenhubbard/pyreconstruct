@@ -1,8 +1,9 @@
 name: notes
 
-# Reports a pull request that changes the application without recording it in
-# CHANGELOG.md. See scripts/check_changelog_entry.py for the rule, the two
-# automatic exemptions, and the opt-out.
+# Reports a pull request that changes the application without recording it,
+# either as a fragment under changelog.d/ or as a change to CHANGELOG.md. See
+# scripts/check_changelog_entry.py for the rule, the two automatic exemptions,
+# and the opt-out, and changelog.d/README.md for what an author writes.
 #
 # REPORT-ONLY. This workflow always exits 0. The finding arrives as a warning
 # annotation and a job summary, not as a failed check. To make it a gate, set
