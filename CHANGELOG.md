@@ -51,6 +51,25 @@ the README's *From source (developers)* section).
   are not undoable either.
 
 ### Fixed
+- **Splitting an object no longer leaves stale provenance under its old name.**
+  A split moves every trace onto new names, so the source object ends up with
+  nothing on any section, and the save that follows correctly clears its group
+  membership, its attributes and its host entry. The log written immediately
+  afterwards then re-created the attributes entry, stamping `last_user` on an
+  object that no longer existed. That entry is written into the `.jser`, so it
+  outlived the session, gained one key per split, and re-attached the old
+  object's provenance to anything later given that name. The stamp is now
+  dropped when the split empties the source. Moving the log earlier instead
+  would have lost the split event itself, because the delete log the save emits
+  discards every earlier log for that name.
+- **Closing a modified series without a person present no longer stalls or
+  discards work.** The prompts asking whether to save before exiting, and
+  whether to reopen a recovered series, wait for an answer that never comes when
+  nothing is driving the window by hand. Both now answer for themselves, and
+  both answer the way that cannot lose anything: the exit prompt saves, because
+  declining deletes the hidden working directory holding every unsaved edit and
+  cancelling stops the close entirely, and the recovery prompt opens the
+  recovered series, because declining deletes it.
 - **Importing transforms adds the new alignment to the alignment menu.** Both
   `Alignments > Import alignments` entries, `From .txt file...` and
   `From SWiFT project...`, create an alignment and make it the current one, and
