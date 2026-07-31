@@ -10,9 +10,10 @@ Loaded by file path, the same way ``test_prune_prereleases.py`` loads the other
 CI script. Both are stdlib-only tools that ship in ``scripts/`` rather than in
 the package, so neither is on an import path.
 
-The four cases pinned here are the four the check has to get right: it fires on
-an application change with no entry, and it stays quiet when the entry is there,
-when the author opted out in the body, and when only tests and workflows change.
+The five cases pinned here are the five the check has to get right: it fires on
+an application change that records nothing, and it stays quiet when a fragment
+is there, when ``CHANGELOG.md`` is there, when the author opted out in the body,
+and when only tests and workflows change.
 """
 
 import importlib.util
@@ -32,15 +33,60 @@ APP_CHANGE = [
     "PyReconstruct/modules/datatypes/series.py",
 ]
 
+FRAGMENT = "changelog.d/stale-color-render-9c1f04.fixed.md"
+
 
 def test_application_change_without_an_entry_is_the_finding():
     status, _ = check.evaluate(APP_CHANGE, "Fixes a crash.")
     assert status == "missing"
 
 
-def test_changelog_in_the_change_is_enough():
-    status, _ = check.evaluate(APP_CHANGE + ["CHANGELOG.md"], "Fixes a crash.")
+def test_a_fragment_is_enough():
+    """The normal way to record a change, and the reason this directory exists."""
+    status, detail = check.evaluate(APP_CHANGE + [FRAGMENT], "Fixes a crash.")
     assert status == "recorded"
+    assert detail == FRAGMENT
+
+
+@pytest.mark.parametrize(
+    "fragment",
+    [
+        "changelog.d/a-000000.added.md",
+        "changelog.d/b-111111.changed.md",
+        "changelog.d/c-222222.fixed.md",
+        "changelog.d/d-333333.removed.md",
+        # The category is the last dotted field, so a slug may contain dots.
+        "changelog.d/fix.for.v1.21-abc123.fixed.md",
+    ],
+)
+def test_any_fragment_in_the_directory_counts(fragment):
+    """The check does not validate the category; the assembler does.
+
+    Splitting it the other way would put the same list of categories in two
+    files and let them drift, and a check that rejected a category the
+    assembler accepts would be wrong in the direction that costs an author
+    time.
+    """
+    status, _ = check.evaluate(APP_CHANGE + [fragment], "")
+    assert status == "recorded"
+
+
+def test_the_fragment_readme_is_documentation_and_does_not_count():
+    """Otherwise editing the instructions would silence the check."""
+    status, _ = check.evaluate(APP_CHANGE + ["changelog.d/README.md"], "")
+    assert status == "missing"
+
+
+def test_changelog_in_the_change_is_still_enough():
+    """The direct edit keeps working. It is how an assembled release lands."""
+    status, detail = check.evaluate(APP_CHANGE + ["CHANGELOG.md"], "Fixes a crash.")
+    assert status == "recorded"
+    assert detail == "CHANGELOG.md"
+
+
+def test_a_fragment_is_named_ahead_of_the_changelog_when_both_are_present():
+    status, detail = check.evaluate(APP_CHANGE + ["CHANGELOG.md", FRAGMENT], "")
+    assert (status, detail) == ("recorded", FRAGMENT)
 
 
 def test_tests_and_workflows_only_is_exempt_without_asking():
@@ -108,39 +154,36 @@ def test_exemption_wins_over_scope_even_if_scope_widens():
     assert status == "exempt"
 
 
-def test_the_message_names_the_file_the_sections_and_the_opt_out():
-    """The message has to make the fix obvious without reading a convention."""
+def test_the_message_names_the_command_the_categories_and_the_opt_out():
+    """The message has to make the fix obvious without reading a convention.
 
-    changelog = (
-        "# Changelog\n\n"
-        "## [Unreleased]\n\n"
-        "### Added\n"
-        "- **A thing.** It does something.\n\n"
-        "### Fixed\n"
-        "- **Another thing.** It stopped doing something.\n\n"
-        "## [1.0.0] - 2026-01-01\n\n"
-        "### Removed\n"
-        "- **An old thing.**\n"
-    )
-    message = check._message(APP_CHANGE, changelog)
+    It names the command rather than a file and a heading, which is the whole
+    difference: an author who never has to decide which release section an entry
+    belongs under cannot file it under the wrong one.
+    """
+    message = check._message(APP_CHANGE)
 
-    assert "CHANGELOG.md" in message
-    # The section an entry goes under, named, not left to be looked up.
-    assert "## [Unreleased]" in message
-    assert "Added" in message and "Fixed" in message
-    # Only the topmost section's buckets: `Removed` belongs to 1.0.0.
-    assert "Removed" not in message
+    assert check.NEW_FRAGMENT_COMMAND in message
+    assert check.FRAGMENT_DIR in message
+    for category in check.CATEGORIES:
+        assert category in message
     assert check.ENTRY_SHAPE in message
     assert check.OPT_OUT_EXAMPLE in message
+    # The fallback is named, so nobody concludes the direct edit stopped working.
+    assert check.CHANGELOG in message
     for path in APP_CHANGE:
         assert path in message
 
 
-def test_the_message_survives_an_unreadable_changelog():
-    message = check._message(APP_CHANGE, "")
-    for section in check.KEEP_A_CHANGELOG_SECTIONS:
-        assert section in message
-    assert "## [Unreleased]" in message
+def test_the_message_does_not_send_anyone_to_a_release_heading():
+    """The old message named the topmost section. That is now the wrong advice.
+
+    Naming a heading is what produced eight entries filed under a build that
+    does not contain them, so no heading appears here at all.
+    """
+    message = check._message(APP_CHANGE)
+    assert "[Unreleased]" not in message
+    assert "###" not in message
 
 
 def test_the_check_is_report_only():

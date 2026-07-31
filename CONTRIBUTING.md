@@ -247,6 +247,57 @@ trailers crediting AI assistants) to commits or pull requests.
   `(#N)` PR reference.
 - Make sure the test suite passes (`QT_QPA_PLATFORM=offscreen python -m pytest`) and
   add tests for fixes and behavioral changes where practical.
+- If the PR changes anything under `PyReconstruct/`, add a changelog fragment. See
+  the next section.
+
+## Changelog entries
+
+Changes are recorded one file per change in `changelog.d/`, and collated into
+`CHANGELOG.md` when a release is assembled. **Do not edit `CHANGELOG.md`
+directly.**
+
+```sh
+python3 scripts/changelog_fragments.py new fixed
+```
+
+That prints a path such as `changelog.d/stale-color-render-9c1f04.fixed.md` and
+writes a template into it. Put the entry in the file and commit it alongside the
+code. The category is the argument, and is one of `added`, `changed`, `fixed`,
+`removed`, matching the four headings `CHANGELOG.md` uses.
+
+The file holds the markdown bullet itself, exactly as it will appear in
+`CHANGELOG.md`: a bold lead sentence naming the user-visible effect, then the
+mechanism, then the resolution, hard-wrapped at 80 columns with continuation lines
+indented by two spaces. Nothing reformats it, so multi-paragraph prose comes
+through as written. [`changelog.d/README.md`](changelog.d/README.md) has a worked
+example taken from the file.
+
+Two reasons this is a directory rather than one shared file. Nothing shares a
+file, so two PRs landing near each other cannot conflict over a `### Fixed`
+heading; and nothing is filed under a release until the release is assembled, so
+an entry written before a tag and merged after it cannot end up inside a section
+for a build that does not contain it.
+
+A PR that changes `PyReconstruct/` and records nothing gets a warning annotation
+from the `notes` workflow. It is report-only and never blocks a merge. If there is
+genuinely nothing to record, put a line in the PR body saying so and why:
+
+```
+No changelog entry: internal refactor, no user-visible behavior change
+```
+
+Changes confined to `tests/` and `.github/` are exempt automatically.
+
+Release assembly, which maintainers run and contributors do not:
+
+```sh
+python3 scripts/changelog_fragments.py list                      # what is waiting
+python3 scripts/changelog_fragments.py assemble 1.21.0 --dry-run # preview
+python3 scripts/changelog_fragments.py assemble 1.21.0           # write it
+```
+
+`WHATS_NEW.md` is a separate, curated, per-release document and is not part of
+this.
 
 ---
 
