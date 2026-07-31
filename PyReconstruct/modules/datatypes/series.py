@@ -1065,7 +1065,7 @@ class Series():
                 elif old_a in old_tforms and new_a not in old_tforms:
                     self.addLog(None, None, f"Rename alignment {old_a} to {new_a}")
     
-    def modifyBCProfiles(self, profiles_dict : dict, log_event=True):
+    def modifyBCProfiles(self, profiles_dict : dict, series_states=None, log_event=True):
         """Modify the series's brightness/contrast profiles.
 
         Accepts input from dialog. Note: Do not use this method outside of
@@ -1073,12 +1073,24 @@ class Series():
         
             Params:
                 profiles_dict (dict): returned from the bc_profiles dialog
+                series_states (SeriesStates): the series undo states from the GUI
                 log_event (bool): True if event should be logged
         """
-        for _, section in self.enumerateSections(
-            message="Modifying brightness/contrast profiles..."
+        # breakable=False: renaming or deleting a profile rewrites bc_profiles on
+        # every section, and Series.bc_profiles raises when the sections disagree
+        # about which profiles exist, so the undo has to be all-or-nothing rather
+        # than dissolvable into per-section undos.
+        for snum, section in self.enumerateSections(
+            message="Modifying brightness/contrast profiles...",
+            series_states=series_states,
+            breakable=False
         ):
             old_profiles = section.bc_profiles.copy()
+            # SeriesIterator records a per-section undo only when a section
+            # reports modified traces, transforms or flags, and bc_profiles is
+            # none of those, so hand the old profiles to the series state here.
+            if series_states is not None:
+                series_states.recordBCProfiles(snum, old_profiles)
             new_profiles = {}
             for new_p, old_p in profiles_dict.items():
                 if old_p is None:
