@@ -37,6 +37,14 @@ class SeriesOpenError(Exception):
     """Raised when a file cannot be opened as a series (corrupt or not a jser)."""
 
 
+class SeriesSaveError(Exception):
+    """Raised when a series cannot be written without losing a section.
+
+    Always raised before anything is written, so the existing .jser on disk is
+    still the last good copy when this reaches the caller.
+    """
+
+
 _SETTINGS_STORE = None
 
 
@@ -412,89 +420,188 @@ class Series():
 
     def saveJser(self, save_fp : str = None, close : bool = False):
         """Save the jser file.
-        
+
+        The section set written is `self.sections`, the series' index, and not
+        the hidden directory's listing. The two can disagree, and when they do
+        the index is right: a numbered file with no entry in `self.sections` is
+        not part of the series, and the writer used to put it back.
+
+        Deleting a section made exactly that disagreement, through ordinary GUI
+        use and with no error anywhere. `deleteSections` removes the file and the
+        index entry, but the field is still holding the deleted `Section` object
+        (`changeSection` parks it in `field.b_section` via `swapABsections`), and
+        `MainWindow.saveAllData` writes `b_section`'s file back into the hidden
+        dir on every save, `recreateTables` included, inside the delete action
+        itself. `Section.save` now declines to rewrite a section the series no
+        longer has, so the stale file is not usually created in the first place;
+        this loop is the part that has to hold whatever the hidden dir contains.
+        Reading from the listing had three outcomes, all of them bad:
+
+          * an interior section came back on the next open, with the z-trace
+            points that crossed it gone (`deleteSections` repointed the z-traces)
+            and a "Delete section" line in the log that did not stick
+          * the highest-numbered section raised `IndexError` out of
+            `jser_data["sections"][int(ext)] = ...`, because the stale file's
+            extension was past the end of a list sized from `self.sections`.
+            Only `OSError` was caught, so the save crashed, the progress dialog
+            was left on screen, and, since the stale file stayed where it was,
+            **every later save failed the same way**
+          * a section file missing from the hidden dir was written as `null`,
+            the save reported success, and the atomic write replaced the last
+            good .jser with one short a section
+
+        Both disagreements now refuse, before anything is written, rather than
+        write a .jser that is missing a section. A missing or unreadable section
+        file means the data is already gone from the working copy that was being
+        edited, so no save can preserve it, and refusing costs nothing that
+        proceeding would have saved: every section file that does exist stays in
+        the hidden dir and is recovered on the next open, and the previous .jser
+        still holds the missing section, which is a real recovery route that a
+        successful save would have destroyed. Proceeding loses a section for
+        good; refusing loses an afternoon at worst, and only if the user gives up
+        on the recovery route.
+
             Params:
                 save_fp (str): the optional override filepath to save the jser file
                 close (bool): True if series should be closed after saving
+            Raises:
+                SeriesSaveError: if the series cannot be written without losing a
+                    section. Nothing is written, so the existing .jser is still
+                    the last good copy.
         """
         self.save()
 
-        jser_data = {}
+        jser_fp = self.jser_fp if not save_fp else save_fp
 
-        filenames = os.listdir(self.hidden_dir)
+        # Pre-flight, before the reporter exists and before a single byte is
+        # written: cheap stats, and a refusal here leaves no dialog and no
+        # half-written document.
+        snums = sorted(self.sections)
+        if not snums:
+            self._refuseSave(
+                jser_fp,
+                "the series has no sections. A .jser with no sections cannot be "
+                "reopened, so writing one would replace the existing file with "
+                "an unopenable one."
+            )
+
+        missing = [
+            snum for snum in snums
+            if not os.path.isfile(os.path.join(self.hidden_dir, self.sections[snum]))
+        ]
+        if missing:
+            self._refuseSave(
+                jser_fp,
+                f"the working file for section(s) {missing} is gone from\n"
+                f"{self.hidden_dir}\n\n"
+                "Saving now would write a series without them. The sections are "
+                "still in the existing file, so copy it somewhere safe before "
+                "doing anything else."
+            )
+
+        jser_data = {}
 
         reporter = self._progressReporterFactory()(
             text="Saving series...",
             cancel=False
         )
-        progress = 0
-        final_value = len(filenames)
+        # finish() in a finally: an exception used to leave the progress dialog
+        # on screen with no way to dismiss it.
+        try:
+            progress = 0
+            final_value = len(snums) + 2  # the sections, the .ser, the log
 
-        # get the max section number
-        sections_len = max(self.sections.keys())+1
-        jser_data["sections"] = [None] * sections_len
-        jser_data["series"] = {}
-        jser_data["log"] = ""
+            # Sized from the index, and every index below comes from the same
+            # dict, so a section number can no longer be out of range.
+            jser_data["sections"] = [None] * (snums[-1] + 1)
+            jser_data["series"] = {}
+            jser_data["log"] = ""
 
-        for filename in filenames:
-            if "." not in filename:  # skip the timer file
-                continue
-            ext = filename[filename.rfind(".")+1:]
-            fp = os.path.join(self.hidden_dir, filename)
+            for snum in snums:
+                fp = os.path.join(self.hidden_dir, self.sections[snum])
+                try:
+                    with open(fp, "rb") as f:
+                        jser_data["sections"][snum] = fast_loads(f.read())
+                except (OSError, ValueError) as e:
+                    # Same reasoning as a missing file: refuse rather than write
+                    # the section out as null.
+                    self._refuseSave(
+                        jser_fp,
+                        f"the working file for section {snum} could not be read "
+                        f"({e}). Saving now would write a series without it."
+                    )
 
-            if ext.isnumeric():
-                with open(fp, "rb") as f:
-                    filedata = fast_loads(f.read())
-                jser_data["sections"][int(ext)] = filedata
-            elif ext == "ser":
-                with open(fp, "rb") as f:
-                    filedata = fast_loads(f.read())
-                # manually remove log set from series data if exists
-                if filedata.get("log_set"): del(filedata["log_set"])
-                # add the log_set string to the log
-                log_set_str = str(self.log_set)
-                if log_set_str:
-                    jser_data["log"] += "\n" + str(self.log_set)
-                # save the series
-                jser_data["series"] = filedata
-            elif filename == "existing_log.csv":
-                with open(fp, "r", encoding="utf-8", errors="replace") as f:
+                progress += 1
+                reporter.set_progress(progress/final_value * 100)
+
+            # the series file itself (self.filepath is the .ser in the hidden dir)
+            with open(self.filepath, "rb") as f:
+                filedata = fast_loads(f.read())
+            # manually remove log set from series data if exists
+            if filedata.get("log_set"): del(filedata["log_set"])
+            # add the log_set string to the log
+            log_set_str = str(self.log_set)
+            if log_set_str:
+                jser_data["log"] += "\n" + log_set_str
+            # save the series
+            jser_data["series"] = filedata
+            progress += 1
+            reporter.set_progress(progress/final_value * 100)
+
+            # continue saving the existing log file
+            existing_log_fp = os.path.join(self.hidden_dir, "existing_log.csv")
+            if os.path.isfile(existing_log_fp):
+                with open(existing_log_fp, "r", encoding="utf-8", errors="replace") as f:
                     existing_log = ""
                     for line in f.readlines():
                         if line.strip():
                             existing_log += line
-                # continue saving the existing log file
                 jser_data["log"] = existing_log + jser_data["log"]
-
-            reporter.set_progress(progress/final_value * 100)
             progress += 1
-        
-        # Canonical series key order. The .ser in the hidden dir is written from
-        # Series.getDict (already canonical), so this only matters for a series
-        # object that reached this point by some other route.
-        canon_keys_inplace(jser_data["series"], SERIES_KEYS)
+            reporter.set_progress(progress/final_value * 100)
 
-        # Minified, with canonical ordering applied. Ordering is what makes two
-        # saves of the same content byte-identical and it costs nothing; the
-        # structural pretty printer costs +11% wall time and ~27% more transient
-        # memory in this call (an extra copy of the document: it builds a list of
-        # row fragments and joins it), so it is opt-in via PYRECON_JSER_PRETTY=1
-        # for when a human is going to read the diff.
-        save_bytes = dumps_jser(jser_data)
+            # Canonical series key order. The .ser in the hidden dir is written from
+            # Series.getDict (already canonical), so this only matters for a series
+            # object that reached this point by some other route.
+            canon_keys_inplace(jser_data["series"], SERIES_KEYS)
 
-        jser_fp = self.jser_fp if not save_fp else save_fp
-        try:
-            # atomic: the previous .jser stays intact until the new one is complete
-            _atomicWrite(jser_fp, save_bytes)
-        except OSError as e:
-            self._surfaceSaveError(jser_fp, e)
-            raise
+            # Minified, with canonical ordering applied. Ordering is what makes two
+            # saves of the same content byte-identical and it costs nothing; the
+            # structural pretty printer costs +11% wall time and ~27% more transient
+            # memory in this call (an extra copy of the document: it builds a list of
+            # row fragments and joins it), so it is opt-in via PYRECON_JSER_PRETTY=1
+            # for when a human is going to read the diff.
+            save_bytes = dumps_jser(jser_data)
 
-        if close:
-            self.close()
+            try:
+                # atomic: the previous .jser stays intact until the new one is complete
+                _atomicWrite(jser_fp, save_bytes)
+            except OSError as e:
+                self._surfaceSaveError(jser_fp, e)
+                raise
 
-        reporter.finish()
-    
+            if close:
+                self.close()
+        finally:
+            reporter.finish()
+
+    def _refuseSave(self, jser_fp : str, reason : str):
+        """Tell the user why the save is not happening, then raise.
+
+        Mirrors the OSError path in saveJser: the same "existing file was left
+        unchanged" wording, through the same injectable notifier, and then the
+        exception, so the caller does not go on to mark the series saved.
+
+            Params:
+                jser_fp (str): the filepath that was not written
+                reason (str): what stopped the save, in the user's terms
+            Raises:
+                SeriesSaveError: always
+        """
+        err = SeriesSaveError(reason)
+        self._surfaceSaveError(jser_fp, err)
+        raise err
+
     def move(self, new_jser_fp : str, section : Section = None, b_section : Section = None):
         """Move/rename the series to its jser filepath.
         
