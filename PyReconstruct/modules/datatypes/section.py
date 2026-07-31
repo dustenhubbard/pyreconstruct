@@ -412,6 +412,18 @@ class Section():
         if self.series.isWelcomeSeries():
             return
 
+        # A section the series no longer has is not written back. self.filepath
+        # was resolved from series.sections at construction, so a Section object
+        # outlives its entry in the index and keeps pointing at the file that
+        # deleteSections removed: the field holds the deleted section in
+        # b_section (changeSection -> swapABsections), and MainWindow.saveAllData
+        # saves b_section on every save, recreateTables included, which put the
+        # file straight back and resurrected the section on the next open. There
+        # is nothing to persist for a section that is not part of the series, so
+        # this is a no-op and not a refusal.
+        if self.n not in self.series.sections:
+            return
+
         # update the series data
         if update_series_data:
             self.series.data.updateSection(self, update_traces=True)
