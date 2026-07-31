@@ -488,6 +488,13 @@ _MAIN_WINDOW_SETTINGS_KEYS = (
     # test. Measured before adding it here: five runs of the menu-verification
     # module left ten dead pytest paths behind.
     "recently_opened_series",
+    # `applyUpdateCheckDefaultStartup` runs the one-time correction that turns
+    # the launch-time update check on for a machine that inherited it off. Both
+    # keys are global, both are written during construction, and the marker in
+    # particular has to go back: left set, it would tell every later launch in
+    # the session that the correction had already run.
+    "update_check_on_startup",
+    "update_check_on_startup_default_applied",
     "palette/trace_hidden",
     "palette/inc_hidden",
     "palette/bc_hidden",
