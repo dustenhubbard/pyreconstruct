@@ -23,15 +23,15 @@ Open issues on this distribution's
 in-app **Help ▸ Report issues (GitHub)** submenu also links to. Three issue
 templates are available from the "New issue" chooser:
 
-- **Bug report** — please include the **version or commit** you're running. Find it
+- **Bug report**: please include the **version or commit** you're running. Find it
   at the top of the **Help** menu in the app (clicking it copies the commit hash to
   your clipboard), along with your OS, Python version, steps to reproduce, and any
   console error output.
-- **Feature request** — describe the problem you're trying to solve, not only a
+- **Feature request**: describe the problem you're trying to solve, not only a
   proposed solution.
-- **Documentation request** — tell us what's missing or unclear.
+- **Documentation request**: tell us what's missing or unclear.
 
-For a **security vulnerability**, please don't open a public issue — report it
+For a **security vulnerability**, please don't open a public issue. Report it
 privately as described in [`SECURITY.md`](SECURITY.md).
 
 ---
@@ -57,7 +57,7 @@ uv run PyReconstruct               # launch (installs PyReconstruct editable)
 
 `uv sync` installs PyReconstruct in editable mode into `.venv/` (git-ignored), so
 `import PyReconstruct` works with no `PYTHONPATH` fiddling. The update loop is
-`git pull` then `uv run PyReconstruct` — `uv run` re-syncs `.venv` to the lockfile
+`git pull` then `uv run PyReconstruct`, which re-syncs `.venv` to the lockfile
 automatically. To bump a dependency, edit its pin in `pyproject.toml` and run
 `uv lock --upgrade` (or `uv lock --upgrade-package <name>`), then commit the
 refreshed `uv.lock`. See [docs/DEV_UV.md](docs/DEV_UV.md) for the group/extra
@@ -110,7 +110,8 @@ provides the `PyReconstruct` console command (the entry point declared in
 
 The test suite lives in `tests/` and runs headless. It needs a Qt platform plugin
 because a couple of tests construct a `QApplication`, so set the **offscreen**
-platform. With uv (installs exactly what CI installs — runtime + the `test` extra):
+platform. With uv, which installs exactly what CI installs (runtime plus the `test`
+extra):
 
 ```bash
 QT_QPA_PLATFORM=offscreen uv run --no-default-groups --extra test python -m pytest
@@ -125,25 +126,25 @@ QT_QPA_PLATFORM=offscreen PYTHONPATH="$PWD" python -m pytest
 The suite is fast and requires no display or network. `pytest.ini` restricts
 collection to `tests/` and runs quietly (`-q`). (Under `uv sync` and in an
 environment created by `make env`, the package is importable, so `PYTHONPATH` is
-redundant there — but it's needed for a bare checkout.)
+redundant there, but it's needed for a bare checkout.)
 
-What the tests cover (a representative selection — the suite has grown well beyond
-these):
+What the tests cover, as a representative selection (the suite has grown well
+beyond these):
 
 | Test file | Focus |
 |---|---|
 | `test_geometry.py` | Pins the combined NumPy `traceGeometry()` pass to the scalar reference geometry functions (length/area/centroid/radius) over fixed and random polygons. |
 | `test_transform.py` | The vectorized affine point map (`Transform.map` / `mapPointsArray`) against per-point `QTransform.map`, including inverted round-trips. |
 | `test_transform_qt_equivalence.py` | The Qt-free affine against the `QTransform` it replaced, bit-for-bit (map / mapPointsArray / inverted / compose / determinant) over fixtures, 550 random transforms and 400k coordinates, plus the one characterized divergence (Qt's 1e-12 fuzzy type classification). |
-| `test_qt_free_core.py` | The guarantee that `modules/constants` and `modules/datatypes` import and run — including opening a jser — with any `PySide6` import blocked and no Qt platform set. |
-| `test_perf_equivalence.py` | Broad equivalence/property suite for the performance rewrite — geometry, transforms, the `orjson` JSON wrapper (with documented `xfail` divergences), lazy Feret caching, and section lookups. |
+| `test_qt_free_core.py` | The guarantee that `modules/constants` and `modules/datatypes` import and run (including opening a jser) with any `PySide6` import blocked and no Qt platform set. |
+| `test_perf_equivalence.py` | Broad equivalence/property suite for the performance rewrite: geometry, transforms, the `orjson` JSON wrapper (with documented `xfail` divergences), lazy Feret caching, and section lookups. |
 | `test_updater.py` | The in-app updater's pure functions (release/asset selection, version comparison, checksum parsing) with the network monkeypatched. |
 | `test_affine_align_guard.py` | Regression test: "estimate affine transform" must warn and do nothing with fewer than three matched traces. |
 | `test_edit_object_attributes.py` | Regression test: editing object attributes with `sections=None` means "all sections the object is on." |
 | `test_missing_return_guards.py` | Regression tests for missing `return`-after-guard bugs in several `main_window` actions. |
 | `test_set_series_mag.py` | Regression test: a non-positive series magnification is rejected. |
 
-Several of these are regression tests for specific fixes — when you fix a bug or
+Several of these are regression tests for specific fixes. When you fix a bug or
 change behavior, please add a headless test alongside it where practical.
 
 ---
@@ -185,17 +186,17 @@ PyReconstruct/
 
 Top-level directories outside the package:
 
-- `tests/` — the pytest suite (see above).
-- `dev/` — developer tooling (`Makefile`, `environment_dev.yaml`, `link_shell.sh`,
+- `tests/`: the pytest suite (see above).
+- `dev/`: developer tooling (`Makefile`, `environment_dev.yaml`, `link_shell.sh`,
   helper `scripts/`).
-- `packaging/` — PyInstaller spec, runtime hooks, and the macOS, Windows, and Linux
+- `packaging/`: PyInstaller spec, runtime hooks, and the macOS, Windows, and Linux
   installer build files.
-- `launch/` — clone-and-run scripts for end users.
-- `benchmarks/` — the performance harness, results, and report.
-- `manual/` — the older upstream user manual (kept for reference; superseded by
+- `launch/`: clone-and-run scripts for end users.
+- `benchmarks/`: the performance harness, results, and report.
+- `manual/`: the older upstream user manual (kept for reference; superseded by
   [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)).
-- `docs/` — this distribution's user-facing documentation.
-- `.github/` — issue templates and CI workflows.
+- `docs/`: this distribution's user-facing documentation.
+- `.github/`: issue templates and CI workflows.
 
 Where it's practical, keep computation and data-model logic in `backend/`,
 `datatypes/`, and `calc/` (GUI-free and testable), and keep `gui/` focused on
@@ -233,18 +234,18 @@ Examples from this repo's history: `perf(jser): 3-4x faster open & refresh on la
 autoseg series`, `feat(updater): in-app updater polish`, `docs: rewrite README and
 add CHANGELOG`.
 
-Keep messages **measured and factual** — describe the change and its rationale;
+Keep messages **measured and factual**: describe the change and its rationale;
 avoid hyperbole. Don't add automated co-author or attribution trailers (for example,
 trailers crediting AI assistants) to commits or pull requests.
 
 ### Pull requests
 
 - Open pull requests **against this repository** (`dustenhubbard/PyReconstruct`,
-  `main` branch) — not the upstream `SynapseWeb/PyReconstruct` repository.
+  `main` branch), not the upstream `SynapseWeb/PyReconstruct` repository.
 - Keep a PR focused on one logical change.
-- PRs are **squash-merged**, so the **PR title becomes the squashed commit subject**
-  — write the PR title as a Conventional Commit header. The merged commit keeps the
-  `(#N)` PR reference.
+- PRs are **squash-merged**, so the **PR title becomes the squashed commit
+  subject**. Write the PR title as a Conventional Commit header. The merged commit
+  keeps the `(#N)` PR reference.
 - Make sure the test suite passes (`QT_QPA_PLATFORM=offscreen python -m pytest`) and
   add tests for fixes and behavioral changes where practical.
 - If the PR changes anything under `PyReconstruct/`, add a changelog fragment. See
