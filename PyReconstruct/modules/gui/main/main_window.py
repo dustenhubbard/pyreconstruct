@@ -88,7 +88,10 @@ class MainWindow(QMainWindow):
         ## Resolve the username silently -- no prompt on launch
         self.resolveUsernameStartup()
 
-        ## Opt-in background update check (frozen builds), once the window is up
+        ## One-time settings correction, before anything reads the option below
+        self.applyUpdateCheckDefaultStartup()
+
+        ## Background update check (frozen builds), once the window is up
         from PySide6.QtCore import QTimer
         QTimer.singleShot(2500, self.checkForUpdatesStartup)
 
@@ -574,6 +577,27 @@ class MainWindow(QMainWindow):
         from PyReconstruct.modules.gui.main.first_launch import resolve_username
         resolve_username(QSettings("KHLab", "PyReconstruct"), self.series)
         self.notifyNewEditor()
+
+    def applyUpdateCheckDefaultStartup(self):
+        """Apply the launch-time update check's on-by-default, once per machine.
+
+        ``update_check_on_startup`` shipped off, and `Series.getOption` wrote
+        that off into the settings of every machine that has ever opened the
+        app, as a side effect of reading it. Turning the default on therefore
+        reaches nobody who already has the app until the inherited value is
+        corrected, which is what this does -- once, recording that it has, so
+        a user who turns the check off afterwards keeps it off.
+
+        Called from ``__init__`` rather than from ``openSeries``: this is a
+        machine-wide setting, so it belongs to launching the app and not to
+        opening a series. It runs synchronously, before the timer that
+        dispatches ``checkForUpdatesStartup`` is even scheduled, so the first
+        read of the option in the running app already sees the corrected value.
+        """
+        from PyReconstruct.modules.backend.settings_migrations import (
+            apply_update_check_on_startup_default,
+        )
+        apply_update_check_on_startup_default()
 
     def showWhatsNewStartup(self):
         """Show the 'What's new' dialog once per version (fresh install/upgrade).
@@ -2971,11 +2995,17 @@ class MainWindow(QMainWindow):
             self.close()
 
     def checkForUpdatesStartup(self):
-        """Opt-in background check on launch; quietly surfaces a genuine upgrade.
+        """Background check on launch; quietly surfaces a genuine upgrade.
 
         Frozen builds only, gated to once per 24h via QSettings so it never burns
         the anonymous GitHub rate limit. Any failure is swallowed — a background
-        convenience must never disrupt startup.
+        convenience must never disrupt startup. On by default, and switchable in
+        Series > Options > Updates.
+
+        The stamp is written *before* the check is dispatched, deliberately: a
+        check that fails has still spent the day, so a refused connection or a
+        403 cannot turn into a launch-after-launch retry against an API that
+        allows 60 anonymous requests an hour per address.
         """
         try:
             if install_kind() != "frozen" or self.series is None:
@@ -2988,7 +3018,16 @@ class MainWindow(QMainWindow):
                 last = float(settings.value("last_update_check_epoch", 0) or 0)
             except (TypeError, ValueError):
                 last = 0
-            if time.time() - last < 24 * 3600:
+            # A stamp ahead of now is not a recent check. It is a clock that was
+            # wrong when the stamp was written (a machine that syncs its time
+            # only after login, a restored VM snapshot) or a corrupt stored
+            # value. Reading it as recent would hold the check off until the
+            # clock caught up, which for a large enough value is permanently,
+            # and silently: the option still reads as on and nothing ever
+            # checks. So anything ahead of now counts as stale -- the check runs
+            # and rewrites the stamp, which heals the stored value in one launch.
+            elapsed = time.time() - last
+            if 0 <= elapsed < 24 * 3600:
                 return
             settings.setValue("last_update_check_epoch", time.time())
             channel = self.series.getOption("update_channel")
