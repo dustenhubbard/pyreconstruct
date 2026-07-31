@@ -46,6 +46,12 @@ class FieldWidgetBase:
 
         self.propagate_tform : bool         = False
 
+        # Session-only visibility snapshot taken by "Hide other objects", so
+        # "Restore previous visibility" can put back the state the isolate
+        # overwrote. Single level (a second isolate replaces it), never written
+        # to the .jser, and reset whenever a new field is built for a series.
+        self.visibility_snapshot : dict     = None
+
         self.focus_mode : bool              = False
         self.hide_trace_layer : bool        = False
         self.show_all_traces : bool         = False

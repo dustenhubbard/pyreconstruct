@@ -444,6 +444,16 @@ class FieldWidgetObject(FieldWidgetTrace):
         if not others:  # everything is already selected -> nothing to hide
             return False
 
+        # Record the whole series' visibility BEFORE isolating, so "Restore
+        # previous visibility" can put back deliberate hides. Whole series, not
+        # just the complement, because the command's name promises the state as
+        # it was: a hide made to the KEPT object while isolated has to come out
+        # too. Single level -- a second isolate replaces this, there is no stack.
+        # Session-only: nothing about it is written to the .jser.
+        self.visibility_snapshot = self.series.snapshotObjectVisibility(
+            list(self.series.data["objects"].keys())
+        )
+
         self.series.hideObjects(others, True, self.series_states)
         self.table_manager.updateObjects(others)
 
@@ -466,10 +476,16 @@ class FieldWidgetObject(FieldWidgetTrace):
         self.reload()
 
     def unhideAllObjects(self):
-        """Show all objects: unhide every object throughout the whole series.
+        """Unhide all objects: unhide every object throughout the whole series.
 
-        The clear restore for "Hide other objects"; undoable series-wide, like
-        the object hide itself.
+        The volume-wide complement of "Hide all objects"; undoable series-wide,
+        like the object hide itself. Locked objects are unhidden too -- locking
+        guards edits and quantification, not visibility.
+
+        This is NOT the restore for "Hide other objects", though it used to be
+        described that way. It unhides everything, which discards every
+        deliberate hide the user made before isolating; "Restore previous
+        visibility" is the command that puts those back.
         """
         all_names = list(self.series.data["objects"].keys())
         if not all_names:
@@ -477,6 +493,43 @@ class FieldWidgetObject(FieldWidgetTrace):
         self.mainwindow.saveAllData()
         self.series.hideObjects(all_names, False, self.series_states)
         self.table_manager.updateObjects(all_names)
+        self.mainwindow.seriesModified(True)
+        self.reload()
+
+    def restorePreviousVisibility(self):
+        """Put visibility back to what it was just before the last isolate.
+
+        "Hide other objects" hides every other object series-wide, and had no
+        inverse: the only way back was "Unhide all objects", which unhides
+        everything and so throws away every hide the user had made on purpose
+        before isolating. This replays the per-trace hidden flags recorded at the
+        moment of the isolate (Series.snapshotObjectVisibility), so an object the
+        user had hidden stays hidden and everything else comes back.
+
+        SINGLE LEVEL, by design. A second isolate overwrites the snapshot rather
+        than pushing onto a stack, so this always means "before the most recent
+        isolate" and never needs a history to reason about.
+
+        The snapshot is consumed: after a restore there is nothing left to
+        restore, and the action disables itself again (MainWindow.checkActions
+        for the field menu, ObjectTableWidget.contextMenuEvent for the object
+        list). Undoing the restore is Ctrl+Z, which works because the restore
+        goes through the same series_states machinery as every other
+        volume-wide visibility change.
+
+        With no snapshot the command is unreachable, so the guard here is a
+        backstop rather than the mechanism.
+
+        Locked objects are restored like any other -- locking guards edits and
+        quantification, not visibility.
+        """
+        snapshot = self.visibility_snapshot
+        if not snapshot:
+            return
+        self.mainwindow.saveAllData()
+        self.series.restoreObjectVisibility(snapshot, self.series_states)
+        self.visibility_snapshot = None
+        self.table_manager.updateObjects(list(snapshot.keys()))
         self.mainwindow.seriesModified(True)
         self.reload()
 

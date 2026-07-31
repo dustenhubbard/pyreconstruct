@@ -211,6 +211,136 @@ def test_check_actions_is_inert_before_actions_exist(main_window):
     main_window.actions_initialized = True
 
 
+def test_restore_previous_visibility_is_disabled_until_an_isolate_runs(main_window):
+    """"Restore previous visibility" is unreachable with no snapshot behind it.
+
+    Only reachable on a real window: the action object is created by
+    `createContextMenus`, and the field object menu is populated onto the window,
+    so `mainwindow.restorevisibility_act` is the copy the field's right-click
+    shows. `checkActions` runs on every context-menu open, which is what makes a
+    build-once menu track runtime state.
+
+    The alternative to disabling is an enabled row that silently does nothing,
+    which teaches the user the command is broken rather than that it is not
+    applicable yet.
+    """
+    field = main_window.field
+    assert field.visibility_snapshot is None, "a fresh field has no snapshot"
+
+    main_window.checkActions()
+    assert not main_window.restorevisibility_act.isEnabled()
+
+    ## the shape hideOtherObjects leaves behind, without driving the isolate
+    field.visibility_snapshot = {"whatever": {field.section.n: [False]}}
+    main_window.checkActions()
+    assert main_window.restorevisibility_act.isEnabled()
+
+    ## and the restore consumes it, so the row goes back to disabled
+    field.visibility_snapshot = None
+    main_window.checkActions()
+    assert not main_window.restorevisibility_act.isEnabled()
+
+
+def test_the_object_list_has_its_own_two_copies_of_the_restore_action(main_window):
+    """Three surfaces offer the command and each has its own QAction object.
+
+    The object list carries two of them: `restorevisibility_act` in its right-click
+    menu and `restorevisibility_act1` in its own `Selection` menubar menu, which is
+    where "Hide other objects" is also offered. Pinned because the failure mode is
+    invisible: the field copy would track state correctly while a list copy stayed
+    at whatever it was built with.
+    """
+    main_window.field.openList("object")
+    table = main_window.field.table_manager.tables["object"][-1]
+
+    copies = [
+        main_window.restorevisibility_act,
+        table.restorevisibility_act,
+        table.restorevisibility_act1,
+    ]
+    assert len({id(a) for a in copies}) == 3
+    assert all(a.text() == "Restore previous visibility" for a in copies)
+
+
+def test_the_object_lists_selection_menu_carries_the_same_visibility_labels(main_window):
+    """The third surface, previously pinned nowhere.
+
+    The object list's own `Selection` menubar menu duplicates three visibility
+    commands with `_act1` names, and it said `Show all objects` after the context
+    menu's copy became `Unhide all objects`. One verb means one thing on every
+    surface, so this pins the labels and the pairing of the isolate with its
+    inverse.
+    """
+    main_window.field.openList("object")
+    table = main_window.field.table_manager.tables["object"][-1]
+
+    labels = [
+        a.text() if not a.isSeparator() else "-----"
+        for a in table.selectionmenu.actions()
+    ]
+    assert labels == [
+        "Invert selection",
+        "-----",
+        "Hide other objects",
+        "Restore previous visibility",
+        "Hide all objects",
+        "Unhide all objects",
+    ]
+
+
+def test_the_object_lists_menubar_restore_follows_the_live_snapshot(main_window):
+    """Driven through the real signal, not by calling the sync helper.
+
+    A menubar menu is always on screen, so `aboutToShow` is its equivalent of the
+    context menu's open event. Emitting it is what a user opening `Selection` does.
+    """
+    main_window.field.openList("object")
+    table = main_window.field.table_manager.tables["object"][-1]
+
+    main_window.field.visibility_snapshot = None
+    table.selectionmenu.aboutToShow.emit()
+    assert not table.restorevisibility_act1.isEnabled()
+
+    main_window.field.visibility_snapshot = {"a": {0: [True]}}
+    table.selectionmenu.aboutToShow.emit()
+    assert table.restorevisibility_act1.isEnabled()
+
+    main_window.field.visibility_snapshot = None
+    table.selectionmenu.aboutToShow.emit()
+    assert not table.restorevisibility_act1.isEnabled()
+
+
+def test_the_object_lists_context_menu_restore_follows_the_live_snapshot(main_window):
+    """The list's right-click copy, through `contextMenuEvent` itself.
+
+    Driven with a real `QContextMenuEvent` and nothing selected: the base class
+    returns before exec'ing the menu, so the test does not block on a modal, and
+    that early-return path is exactly the one that must still have resynced. The
+    event must be a real one -- `DataTable.contextMenuEvent` hands it to Qt, which
+    segfaults on None.
+    """
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QContextMenuEvent
+
+    main_window.field.openList("object")
+    table = main_window.field.table_manager.tables["object"][-1]
+    table.table.clearSelection()
+    assert not table.getSelected(), "an empty selection is what keeps this safe"
+
+    def right_click():
+        table.contextMenuEvent(QContextMenuEvent(
+            QContextMenuEvent.Mouse, QPoint(1, 1), QPoint(1, 1)
+        ))
+
+    main_window.field.visibility_snapshot = None
+    right_click()
+    assert not table.restorevisibility_act.isEnabled()
+
+    main_window.field.visibility_snapshot = {"a": {0: [True]}}
+    right_click()
+    assert table.restorevisibility_act.isEnabled()
+
+
 # --- the recent-series submenu ------------------------------------------------
 
 @pytest.fixture

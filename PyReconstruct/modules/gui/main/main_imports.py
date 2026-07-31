@@ -180,4 +180,5 @@ from .context_menu_list import (
     get_label_menu_list,
     edit_selected_label,
     disable_unavailable_export_formats,
+    sync_restore_visibility_action,
 )
