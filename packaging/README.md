@@ -2,11 +2,11 @@
 
 This directory builds the one-click desktop installers. It produces a frozen
 app with PyInstaller, which is then wrapped per platform (Windows: Inno Setup;
-macOS: `.dmg`). This is a **proof of concept** — builds are currently unsigned.
+macOS: `.dmg`). This is a **proof of concept**: builds are currently unsigned.
 On Windows users get an "unknown publisher" SmartScreen warning (click *More
 info → Run anyway*). On macOS it's stricter: a downloaded, quarantined app is
 refused outright ("PyReconstruct is damaged and can't be opened") until the
-quarantine attribute is cleared — see the macOS section. Real signing /
+quarantine attribute is cleared. See the macOS section. Real signing /
 notarization is a post-POC milestone.
 
 | File | Purpose |
@@ -58,9 +58,9 @@ bash packaging/macos/make_dmg.sh
 
 `make_dmg.sh` names the dmg by arch via the `ARCH` env var (defaults to
 `x86_64`); set `ARCH=arm64` on Apple Silicon. PyInstaller freezes for the arch
-of the running Python, so CI builds both arches natively on their own runners —
-arm64 on `macos-14` and x86_64 on `macos-15-intel` (GitHub retired the Intel
-`macos-13` image in Dec 2025) — now that vtk 9.4.2 ships wheels for both. A
+of the running Python, so CI builds both arches natively on their own runners,
+now that vtk 9.4.2 ships wheels for both: arm64 on `macos-14` and x86_64 on
+`macos-15-intel` (GitHub retired the Intel `macos-13` image in Dec 2025). A
 single `universal2` build is intentionally avoided: not all of the
 native dependencies (vtk, scipy, scikit-image, opencv, the cloud-volume codecs)
 ship universal2 wheels, so a universal2 freeze would force source builds and
@@ -76,7 +76,7 @@ refuses it ("…is damaged and can't be opened"). To run it, drag
 (Apps pulled by the in-app updater over the API are generally not quarantined;
 this mainly affects browser downloads from the Releases page.)
 
-## VTK 3D viewport — the main risk
+## VTK 3D viewport: the main risk
 
 vtk is on **9.4.2**, which `pyinstaller-hooks-contrib` covers; the spec also
 forces the OpenGL render modules via `hiddenimports` as belt-and-suspenders. If

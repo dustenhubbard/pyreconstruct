@@ -1,6 +1,6 @@
 # PyReconstruct on Linux (`.sh` installer)
 
-A self-contained shell installer — **no AppImage, no root**. It builds an
+A self-contained shell installer: **no AppImage, no root**. It builds an
 isolated virtual environment, installs PyReconstruct and its pinned
 dependencies into it, drops a `pyreconstruct` launcher on your PATH, and adds an
 application-menu entry with the app icon.
@@ -19,7 +19,7 @@ From a source checkout (installs that tree):
 bash packaging/linux/install.sh
 ```
 
-Standalone — the same script installs from the fork when run outside a checkout:
+The same script installs from the fork when run standalone, outside a checkout:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dustenhubbard/PyReconstruct/main/packaging/linux/install.sh | bash
