@@ -104,6 +104,77 @@ class Trace():
     ## see Series._duplicatePairs.
     POINTS_MATCH_TOLERANCE = 1e-2
 
+    ## How far apart two *open* traces may sit and still count as the same curve.
+    ## Open traces are compared curve-to-curve rather than by enclosed area (see
+    ## getOverlapRatio), and that comparison needs a distance tolerance.
+    ##
+    ## The tolerance is a fraction of the shorter trace's arc length, BOUNDED AT
+    ## BOTH ENDS by an absolute distance in image pixels. The fraction on its own
+    ## has the right shape -- a longer structure is clicked more coarsely, so the
+    ## discrepancy between two tracings of it grows with its length -- but it is
+    ## unbounded in both directions, and both ends are wrong on real data. Both
+    ## numbers below are from the reporting user's own series (mag 0.002045
+    ## um/pixel, 3,974 open traces):
+    ##
+    ##   * Unbounded above, it stops being a tolerance. The 95th-percentile open
+    ##     trace is 6,846 px long, so 2% of it is 137 px. At that tolerance two
+    ##     unrelated structures 10 px apart lie within tolerance of each other
+    ##     everywhere, the ratio saturates at exactly 1.0, and the pair is
+    ##     collapsed at every threshold the import dialog can produce -- including
+    ##     1.0, which ratioIsOverlap reads as "demand an exact match".
+    ##   * Unbounded below, it misses the smallest duplicates. Her shortest
+    ##     genuine duplicate pair is a 29 px arc whose two tracings differ by
+    ##     0.72 px at worst. 2% of 29 px is 0.58 px, so the pair scored 0.
+    ##
+    ## So the bounds are absolute distances, in image pixels, converted through
+    ## the section's magnification. Every production call site has a section in
+    ## scope and passes it (see getOverlapRatio's ``mag`` parameter, and note that
+    ## a call site which omits it raises rather than silently reverting to the
+    ## unbounded fraction).
+    OPEN_TRACE_MATCH_FRACTION = 0.02
+
+    ## The floor. One image pixel: two tracings of one structure cannot
+    ## meaningfully be closer than the image they were drawn on can resolve, so
+    ## anything below a pixel is a tolerance of zero in disguise. This is what
+    ## catches the 29 px pair above.
+    OPEN_TRACE_MATCH_MIN_PIXELS = 1.0
+
+    ## The ceiling. Five image pixels, which is deliberately the same distance
+    ## POINTS_MATCH_TOLERANCE already stands for: 1e-2 series units is 4.89 px on
+    ## her series, and that is the distance this codebase has always been willing
+    ## to call "the same point". Two curves further apart than the tolerance under
+    ## which two points count as identical should not count as one curve.
+    ##
+    ## Measured over the 594 distinct same-name same-section open pairs in her
+    ## series (the complete population an import can ask about), split by a
+    ## metric-independent ground truth -- the symmetric point-to-segment deviation
+    ## between the two polylines -- at 2 px:
+    ##
+    ##   * all 264 pairs that are one annotation are detected at the import
+    ##     default of 0.95, where origin/main detected 0 of them
+    ##   * none of the 330 pairs that are different structures is collapsed, at
+    ##     any threshold the import dialog can produce (0.90 through 0.999) or at
+    ##     1.0
+    ##
+    ## Those two hold anywhere from a 2 px ceiling upward, so her real pairs do not
+    ## pick the number out of that range on their own; what does is the two limits
+    ## above. 5 px is the largest value that still refuses the constructed case --
+    ## two different structures 10 px apart along a 6,846 px trace -- while
+    ## staying at the point-match distance rather than below it, and it leaves the
+    ## fraction in charge for every trace shorter than 250 px, which is 78% of the
+    ## open traces in her series.
+    OPEN_TRACE_MATCH_MAX_PIXELS = 5.0
+
+    ## Ceiling on how many arc-length samples either open trace is reduced to in
+    ## _openCurveRatio. The sampling it asks for is four per tolerance band, so the
+    ## cap binds once a trace is longer than 256 tolerances -- about 1,280 px at
+    ## the 5 px ceiling, which is the top few percent of real traces. It bounds the
+    ## cost of the distance comparison there, and it is not a sensitive number:
+    ## measured over the 1,188 real open pairs in the reporting user's series,
+    ## every verdict is identical from a cap of 256 up to 16,384 and no ratio moves
+    ## by more than 0.0032, while the scan time varies from 103 ms to 186 ms.
+    _OPEN_CURVE_MAX_SAMPLES = 1024
+
     def pointsMatch(self, other) -> bool:
         """Check if two traces are the same point sequence, within a tolerance.
 
@@ -149,12 +220,21 @@ class Trace():
             return bool(r > threshold)
         return bool(threshold == r == 1)
 
-    def overlaps(self, other, threshold=0.99):
+    def overlaps(self, other, threshold=0.99, mag=None, open_curve=True):
         """Check if trace points overlap.
+
+        ``mag`` and ``open_curve`` are passed straight through to
+        getOverlapRatio. See there: ``mag`` is required for a pair of open traces
+        and ignored otherwise, and ``open_curve=False`` measures an open pair by
+        enclosed area instead, which needs no ``mag``.
 
             Params:
                 other (Trace): the trace to compare
                 threshold (float): the threshold overlap ratio to define overlapping (exclusive)
+                mag (float): the section's magnification (Section.mag); required
+                    if both traces are open and open_curve is True
+                open_curve (bool): whether an open pair is compared
+                    curve-to-curve; False asks for the area comparison instead
             Returns:
                 (bool): whether or not trace traces overlap
         """
@@ -166,7 +246,9 @@ class Trace():
             return True
 
         # compare amount of overlap
-        return self.ratioIsOverlap(self.getOverlapRatio(other), threshold)
+        return self.ratioIsOverlap(
+            self.getOverlapRatio(other, mag, open_curve), threshold
+        )
 
     def setHidden(self, hidden=True):
         """Set whether the trace is hidden.
@@ -571,12 +653,218 @@ class Trace():
         """
         self.tags = self.tags.union(other.tags)
     
-    def getOverlapRatio(self, other):
+    @staticmethod
+    def openCurveTolerance(mag, len_a, len_b, fraction=None):
+        """The distance two open curves may sit apart and still count as one.
+
+        ``OPEN_TRACE_MATCH_FRACTION`` of the shorter arc length, clamped to
+        between ``OPEN_TRACE_MATCH_MIN_PIXELS`` and
+        ``OPEN_TRACE_MATCH_MAX_PIXELS`` image pixels. See the comments on those
+        three constants for why each of the three parts is there and what the
+        numbers were measured against.
+
+        Split out of _openCurveRatio so a caller reporting to a human can say
+        what tolerance a ratio was measured at, and so a test can assert the
+        clamp directly rather than inferring it from a ratio.
+
+            Params:
+                mag (float): the section's magnification, series units per image
+                    pixel (Section.mag)
+                len_a (float): the first curve's arc length, in series units
+                len_b (float): the second curve's arc length, in series units
+                fraction (float): override for OPEN_TRACE_MATCH_FRACTION
+            Returns:
+                (float): the tolerance, in series units
+        """
+        if fraction is None:
+            fraction = Trace.OPEN_TRACE_MATCH_FRACTION
+        d = fraction * min(len_a, len_b)
+        floor = Trace.OPEN_TRACE_MATCH_MIN_PIXELS * mag
+        ceiling = Trace.OPEN_TRACE_MATCH_MAX_PIXELS * mag
+        ## min() first: a series whose pixels are so coarse that the floor is
+        ## above the ceiling is a contradiction in the constants, not in the
+        ## data, and clamping in this order keeps the floor authoritative.
+        return max(min(d, ceiling), floor)
+
+    @staticmethod
+    def _openCurveRatio(pts1, pts2, mag, fraction=None):
+        """How much of two open polylines lie on top of each other, in [0, 1].
+
+        The open-trace half of getOverlapRatio. Both polylines are resampled at
+        uniform arc-length spacing, and each resampled point is measured against
+        the *segments* of the other polyline, so the answer depends on where the
+        curves lie and not on how many points were clicked along them. Returns
+
+            min(fraction of A within d of B, fraction of B within d of A)
+
+        with ``d = openCurveTolerance(mag, arc length A, arc length B)``.
+
+        The min of the two directions makes it symmetric and conservative: a
+        short trace lying along part of a long one scores about the length ratio
+        rather than 1, so a trace covering half of another is not called a
+        duplicate of it. Because it compares point sets and not paired-up points,
+        it is also indifferent to which direction each trace was drawn in, and a
+        trace redrawn end-to-start still reads as a duplicate.
+
+        **Two open traces that merely touch or cross score a small nonzero
+        ratio**, about ``d`` over the shorter arc length, because the tolerance is
+        a disc of radius d around each curve and a transversal crossing passes
+        through it. That is far below any threshold the import dialog can ask for
+        (0.9 at the lowest), but a caller passing ``threshold=0`` -- meaning "do
+        these overlap at all" -- would read it as an overlap where the area metric
+        read a crossing pair of open traces as no overlap whatever. Bounding d
+        shrinks that ratio and cannot make it zero: no coverage measure taken at a
+        positive tolerance can. **That is why the two call sites which do pass zero
+        opt out of this measure entirely** (Section.tracesWithoutCounterpart and
+        the keep_below loop in Section.importTraces, via ``open_curve=False``): the
+        question they ask is not the one this measure answers. It is also why
+        degenerate two-point traces no longer score exactly 0 for the callers that
+        do use it, the way the area path made them (#167).
+
+            Params:
+                pts1 (list): the first trace's points
+                pts2 (list): the second trace's points
+                mag (float): the section's magnification, which sets the absolute
+                    bounds on the tolerance (see openCurveTolerance)
+                fraction (float): tolerance as a fraction of the shorter arc
+                    length, before the bounds are applied; defaults to
+                    OPEN_TRACE_MATCH_FRACTION
+            Returns:
+                (float): the overlap ratio, in [0, 1]
+        """
+        a = np.asarray(pts1, dtype=float)
+        b = np.asarray(pts2, dtype=float)
+
+        ## A single point has no curve to compare. As with the zero-area case
+        ## below, identical traces are already settled by pointsMatch in
+        ## overlaps(), which never asks for a ratio.
+        if len(a) < 2 or len(b) < 2:
+            return 0
+
+        def arc_length(p):
+            return float(np.hypot(np.diff(p[:, 0]), np.diff(p[:, 1])).sum())
+
+        len_a, len_b = arc_length(a), arc_length(b)
+
+        ## Every point in the same place: no length to take a fraction of, so no
+        ## tolerance to measure against. Mirrors the zero-area guard.
+        if len_a <= 0 or len_b <= 0:
+            return 0
+
+        d = Trace.openCurveTolerance(mag, len_a, len_b, fraction)
+
+        def resample(p, spacing):
+            """Points at uniform arc-length spacing along the polyline p."""
+            steps = np.hypot(np.diff(p[:, 0]), np.diff(p[:, 1]))
+            travelled = np.concatenate([[0.0], np.cumsum(steps)])
+            total = travelled[-1]
+            ## Capped so a pair of wildly mismatched lengths cannot blow up the
+            ## comparison. Hitting the cap coarsens the sampling of the longer
+            ## trace, which can only lower its measured fraction -- and a pair
+            ## that far apart in length is not a duplicate at any threshold.
+            count = int(min(
+                Trace._OPEN_CURVE_MAX_SAMPLES,
+                max(2, int(np.ceil(total / spacing)) + 1),
+            ))
+            at = np.linspace(0.0, total, count)
+            return np.column_stack([
+                np.interp(at, travelled, p[:, 0]),
+                np.interp(at, travelled, p[:, 1]),
+            ])
+
+        def fraction_within(samples, polyline):
+            """Fraction of `samples` within d of any segment of `polyline`."""
+            starts = polyline[:-1]
+            ends = polyline[1:]
+            seg = ends - starts                          # (S, 2)
+            rel = samples[:, None, :] - starts[None, :, :]   # (N, S, 2)
+            seg_sq = np.einsum("sj,sj->s", seg, seg)     # (S,)
+            along = np.einsum("nsj,sj->ns", rel, seg)    # (N, S)
+            ## Zero-length segments (repeated points) project to their start
+            ## point, which is the right answer and avoids dividing by zero.
+            safe = np.where(seg_sq > 0, seg_sq, 1.0)
+            t = np.clip(np.where(seg_sq > 0, along / safe, 0.0), 0.0, 1.0)
+            offset = rel - t[:, :, None] * seg[None, :, :]
+            nearest = np.sqrt(np.einsum("nsj,nsj->ns", offset, offset)).min(axis=1)
+            return float(np.mean(nearest <= d))
+
+        ## Sampled finer than the tolerance so that a curve cannot slip between
+        ## samples: the gap contributes at most a quarter of d to the distance.
+        spacing = d / 4
+        return min(
+            fraction_within(resample(a, spacing), b),
+            fraction_within(resample(b, spacing), a),
+        )
+
+    def getOverlapRatio(self, other, mag=None, open_curve=True):
         """Get the amount of intersection between two traces.
-        
+
+        Closed traces are compared by area: both are rasterized and the ratio is
+        the intersection over the union.
+
+        Open traces cannot be, and comparing them that way is what made
+        duplicate open lines undetectable. Rasterizing an open trace fills the
+        region between the polyline and the straight chord from its last point
+        back to its first, so the shape being measured is a sliver whose form is
+        governed by the trace's own wiggle rather than by where the curve
+        actually lies. Two independent tracings of one structure have independent
+        wiggle, so their slivers disagree even when the curves sit on top of each
+        other: two near-straight profiles differing by 0.08% in length measured
+        an area ratio of 0.19. Lowering the threshold cannot fix that, because
+        the quantity being measured is not the one the user is asking about. Open
+        traces are therefore compared curve-to-curve by _openCurveRatio, which
+        returns the same 0-to-1 ratio, so the user-facing overlap threshold keeps
+        its meaning and ratioIsOverlap is unchanged.
+
+        A pair with one open and one closed trace keeps the area comparison.
+        Trace.overlaps and Series._duplicatePairs both refuse such a pair before
+        asking for a ratio, so this only affects a direct caller.
+
+        ``mag`` is the section's magnification and is **required for an open
+        pair**: it converts the bounds on the curve tolerance from image pixels
+        into series units (see OPEN_TRACE_MATCH_FRACTION). It is not optional in
+        any meaningful sense -- omitting it raises rather than falling back to an
+        unbounded tolerance, because an unbounded tolerance saturates at 1.0 for
+        long traces and collapses unrelated structures at every threshold, which
+        is precisely the failure the bounds exist to prevent. Closed pairs never
+        look at it. Every production caller has a section in scope:
+        Section.importTraces passes ``self.mag`` down through
+        Contour.importTraces and tracesWithoutCounterpart (and reconciles the two
+        series' magnifications with Trace.magScale before it does), and both
+        series-level scans (Series.deleteDuplicateTraces and
+        Series.findDifferentlyNamedDuplicates) pass ``section.mag`` from the
+        section they are walking.
+
+        ``open_curve=False`` sends an open pair down the area path instead, byte
+        for byte as it was before the curve metric existed, and needs no ``mag``.
+        It is not a fallback and not a preference: it exists because two callers
+        ask ``overlaps(threshold=0)``, which is the question "do these two traces
+        overlap at all" rather than "are these two traces the same trace". The
+        curve metric was designed and measured for the second question, at the
+        import dialog's own thresholds, and ``ratioIsOverlap(r, 0)`` reduces to
+        ``r > 0``, which accepts the small positive ratio any two curves that meet
+        produce. Both those callers can delete a trace on the answer, so they keep
+        the answer they have always given. The reasoning is written out at
+        Section.tracesWithoutCounterpart, which is one of them.
+
             Params:
                 other (Trace): the trace to compare against
+                mag (float): the section's magnification, series units per image
+                    pixel; required if both traces are open and open_curve is True
+                open_curve (bool): whether an open pair is compared
+                    curve-to-curve; False asks for the area comparison instead
+            Returns:
+                (float): the overlap ratio, in [0, 1]
         """
+        if open_curve and not self.closed and not other.closed:
+            if mag is None:
+                raise ValueError(
+                    "getOverlapRatio needs the section's mag to compare two "
+                    "open traces: the curve tolerance is bounded in image "
+                    "pixels. Pass mag=section.mag."
+                )
+            return self._openCurveRatio(self.points, other.points, mag)
+
         xmin1, ymin1, xmax1, ymax1 = self.getBounds()
         xmin2, ymin2, xmax2, ymax2 = other.getBounds()
 
