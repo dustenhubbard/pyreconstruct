@@ -588,6 +588,14 @@ the README's *From source (developers)* section).
   rather than in `FieldState`, so an unrelated undo cannot revert a slider nudge.
   Measured on the 198-section `class_series` fixture, recording the states costs
   about 26 ms on top of a 67 ms rename.
+- **Renaming or deleting the brightness/contrast profile currently on screen no
+  longer raises.** `Series > Brightness/contrast profiles...` rewrote every
+  section's profiles and then reloaded the field before switching profiles, so a
+  rename left `series.bc_profile` naming a key that no longer existed.
+  `Section.brightness` indexes `bc_profiles` by that name and the reload reads it
+  through the brightness/contrast palette, giving `KeyError: '<old name>'` on the
+  forward path, with no undo involved. The displayed profile now follows the
+  rename, and deleting it falls back to `default`.
 
 ## [1.21.0] — 2026-08-04
 

@@ -9,6 +9,48 @@ from PyReconstruct.modules.datatypes.series import SeriesOpenError
 from PyReconstruct.modules.backend.func.window_geometry import window_geometry_is_usable
 
 
+def remappedBCProfile(current : str, profiles_dict : dict) -> str:
+    """Return the name the displayed brightness/contrast profile has after a rewrite.
+
+    `Series.modifyBCProfiles` rewrites `section.bc_profiles` on every section, so
+    a rename or a deletion can remove the key `series.bc_profile` points at.
+    `Section.brightness` and `Section.contrast` index `bc_profiles` by that name,
+    so the pointer has to move with the rename.
+
+        Params:
+            current (str): the profile the series is displaying
+            profiles_dict (dict): returned from the bc_profiles dialog, mapping
+                new profile name -> old profile name, with None meaning deleted
+        Returns:
+            (str): the profile to display after the rewrite
+    """
+    # A new profile is recorded as new_name -> the current profile, so the
+    # current profile can be the source of more than one entry. Its own
+    # identity mapping wins: creating a profile must not switch to it.
+    if profiles_dict.get(current) == current:
+        return current
+
+    for new_profile, old_profile in profiles_dict.items():
+        if old_profile == current:
+            return new_profile
+
+    # Nothing carries the profile forward, so it was deleted. "default" is the
+    # one profile the dialog refuses to rename or remove, hence always a valid
+    # target. The remaining fallbacks are for a series whose sections somehow
+    # have no "default" at all.
+    survivors = sorted(
+        new_profile
+        for new_profile, old_profile in profiles_dict.items()
+        if old_profile is not None
+    )
+    if "default" in survivors:
+        return "default"
+    elif survivors:
+        return survivors[0]
+    else:
+        return current
+
+
 class MainWindow(QMainWindow):
 
     def __init__(self, filename):
@@ -2085,10 +2127,21 @@ class MainWindow(QMainWindow):
                     modified = True
                     break
             if modified:
+                # Applied before the reload: field.reload() refreshes the
+                # brightness/contrast palette, which reads
+                # field.section.brightness, which indexes bc_profiles by
+                # series.bc_profile. Leaving the pointer on a renamed or deleted
+                # profile until after the reload raised KeyError.
+                new_profile = remappedBCProfile(self.series.bc_profile, profiles_dict)
                 self.series.modifyBCProfiles(
                     profiles_dict,
                     series_states=self.field.series_states,
                 )
+                # Assigned rather than switched through field.changeBCProfile:
+                # that also reads the brightness, and field.section is still the
+                # pre-dialog object carrying the old profile names until the
+                # reload replaces it.
+                self.series.bc_profile = new_profile
                 self.field.reload()
         
         if profile_name:
