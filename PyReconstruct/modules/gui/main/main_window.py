@@ -268,6 +268,11 @@ class MainWindow(QMainWindow):
             self.mergetraces_act,
             self.mergeobjects_act,
             self.hidetraces_act,
+            # the top-strip copy of "Edit object attributes...": the objects it
+            # edits are the ones owning the selected traces, so it is gated by
+            # the trace selection exactly as its "Object >" copy is (that copy
+            # rides on objectmenu above)
+            self.editobjattrs_act,
             self.cut_act,
             self.copy_act,
             self.copytosections_act,

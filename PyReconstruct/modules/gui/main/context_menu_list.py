@@ -152,8 +152,8 @@ def get_hoisted_trace_actions(field):
 def get_field_menu_list(self):
 
     return [
-        # Top strip (Q1): the four shortcut-bearing trace actions -- what a user
-        # almost always came here to do, with their shortcuts on display.
+        # Top strip (Q1): the five actions a user almost always came here to do,
+        # with their shortcuts on display.
         #
         # Row 1 is a single top-level shortcut to the primary "Edit ...
         # attributes..." dialog for whatever is selected. Its label and enabled
@@ -168,6 +168,34 @@ def get_field_menu_list(self):
         # selection and hold the trace-only shortcut) -- see the spec's
         # implementation note.
         ("editselected_act", "Edit attributes...", "", self.editSelectedAttributes),
+        # Row 2, requested by a beta-5 tester: "put Edit object attributes... at
+        # the top level beside Edit trace attributes...". Row 1 IS that label
+        # whenever traces are selected, so this sits directly under it.
+        #
+        # It is a separate always-present row rather than a third case of
+        # editselected_act, because an object is not a third kind of selection.
+        # The field has trace and z-trace selections only; the objects here are
+        # the ones owning the SELECTED TRACES, so with traces selected both
+        # dialogs are meaningful at once and a relabeling action can only offer
+        # one of them. Adding "object" as a case would make it unreachable: the
+        # trace case would always win the same selection.
+        #
+        # No new resolution rule: editAttributes is wrapped in
+        # FieldWidgetObject.object_function, which derives the object names from
+        # the selected traces (or, when an object list has focus, that list's
+        # selection). This row therefore acts on exactly what the object list's
+        # own row-1 copy acts on.
+        #
+        # Duplicating the "Object >" row-1 label is deliberate and is the
+        # established pattern here: "Edit trace attributes..." likewise appears
+        # both as row 1 (relabeled) and at the top of "Trace >". Only the
+        # attr_name has to be unique -- every one of these menus is populated
+        # onto the same widget, so a repeat would silently shadow the submenu
+        # copy. The submenu keeps its historical (misspelled) editobjattribtues_act
+        # because the object LIST is built from that same shared builder and is
+        # out of scope here. Neither copy carries a shortcut, so there is no
+        # ambiguous-binding trap of the addobjto3D kind.
+        ("editobjattrs_act", "Edit object attributes...", "", self.field.editAttributes),
         *get_hoisted_trace_actions(self.field),
         None,
         # Clipboard group, muscle-memory order. "Copy to sections..." keeps its
