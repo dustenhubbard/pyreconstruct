@@ -233,11 +233,23 @@ class _FieldStub:
     """The minimum `FieldWidgetObject.editAttributes` and its decorator touch."""
 
     def __init__(self, series, obj_names):
+        import types
+
+        from PyReconstruct.modules.gui.main.field_widget_2_trace import (
+            FieldWidgetTrace,
+        )
+
         self.series = series
         self.series_states = None
         self.section = _FakeSection(obj_names)
         self.table_manager = _FakeTable()
         self.mainwindow = _FakeMainWindow()
+
+        # `editAttributes` refuses a rename onto a locked object. The real
+        # check, not a stub: nothing here is locked, so it passes through.
+        self.refuseLockedDestination = types.MethodType(
+            FieldWidgetTrace.refuseLockedDestination, self
+        )
 
     def reload(self):
         pass

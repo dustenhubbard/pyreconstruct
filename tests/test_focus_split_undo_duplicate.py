@@ -112,11 +112,17 @@ class _Field:
         self.pasteAttributes = types.MethodType(
             FieldWidgetTrace.pasteAttributes, self
         )
-        # the lock check both focus-mode branches now go through. The real one,
-        # not a stub: these objects are unlocked, so it passes through, and if it
-        # ever stops passing through that is worth failing on here too.
+        # the lock checks both focus-mode branches now go through. The real
+        # ones, not stubs: these objects are unlocked, so both pass through, and
+        # if either ever stops passing through that is worth failing on here
+        # too. `refuseLockedDestination` is the second half, added because the
+        # split renames the trace into `<obj>_split`, which is an object of its
+        # own and can be locked.
         self.refuseLockedTraces = types.MethodType(
             FieldWidgetTrace.refuseLockedTraces, self
+        )
+        self.refuseLockedDestination = types.MethodType(
+            FieldWidgetTrace.refuseLockedDestination, self
         )
 
     # --- the real FieldWidget.saveState, minus the tables and the main window.

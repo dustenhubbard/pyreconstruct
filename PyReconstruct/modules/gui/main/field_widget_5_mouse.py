@@ -325,24 +325,34 @@ class FieldWidgetMouse(FieldWidgetData):
 
                         if clicked_focus_obj:  ## remove is selecting same obj
 
-                            self.section.editTraceAttributes(
-                                traces=[self.selected_trace],
-                                name=f"{self.selected_trace.name}_split",
-                                color=self.selected_trace.color,
-                                tags=self.selected_trace.tags,
-                                mode=self.selected_trace.fill_mode
-                            )
+                            split_name = f"{self.selected_trace.name}_split"
 
-                            # Record the split as an undo state, in the same
-                            # order @field_interaction uses (issue #99). The
-                            # split renames a trace out of the focused object
-                            # and into a brand-new <obj>_split contour; without
-                            # a state naming BOTH contours, a later undo
-                            # restores the original trace while leaving the
-                            # <obj>_split copy in place -- one trace becomes
-                            # two.
-                            self.saveState()
-                            self.generateView()
+                            # The destination is generated rather than typed,
+                            # but an object of that name can already exist and
+                            # be locked, and then the split adds a trace to it.
+                            # Guarded rather than returned early: the tail of
+                            # `pointerRelease` still has to clear
+                            # `current_trace`.
+                            if not self.refuseLockedDestination(split_name):
+
+                                self.section.editTraceAttributes(
+                                    traces=[self.selected_trace],
+                                    name=split_name,
+                                    color=self.selected_trace.color,
+                                    tags=self.selected_trace.tags,
+                                    mode=self.selected_trace.fill_mode
+                                )
+
+                                # Record the split as an undo state, in the same
+                                # order @field_interaction uses (issue #99). The
+                                # split renames a trace out of the focused object
+                                # and into a brand-new <obj>_split contour;
+                                # without a state naming BOTH contours, a later
+                                # undo restores the original trace while leaving
+                                # the <obj>_split copy in place -- one trace
+                                # becomes two.
+                                self.saveState()
+                                self.generateView()
 
                         else:  ## incorporate into obj
 

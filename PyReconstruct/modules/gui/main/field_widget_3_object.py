@@ -164,6 +164,13 @@ class FieldWidgetObject(FieldWidgetTrace):
             t.name, t.color, t.tags, t.fill_mode
         )
 
+        # `object_function` cleared the selected objects; the name the user
+        # typed is a different object and nothing has checked it. Renaming onto
+        # it merges the whole selection into it on every section it appears on,
+        # which is the widest way to add traces to a locked object.
+        if self.refuseLockedDestination(name):
+            return False
+
         self.series.editObjectAttributes(
             obj_names,
             name,
