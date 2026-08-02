@@ -62,7 +62,16 @@ class Points:
 
     def __add__(self, other_points) -> None:
 
-        if isinstance(other_points, tuple or list):
+        # Dispatch on this module's own vocabulary: Point is a Tuple, PointSeq
+        # is a List[Point]. So a tuple is ONE point and is appended; anything
+        # else is a sequence of points and extends. Do not "tidy" this to
+        # isinstance(other_points, (tuple, list)) -- that reads like a fix for
+        # the old `tuple or list` spelling but silently reverses the meaning of
+        # a PointSeq argument, appending the whole list as if it were a single
+        # point. Written `tuple or list`, which Python evaluates to `tuple`
+        # before isinstance runs, this branch has always been tuple-only; the
+        # spelling was wrong and the behaviour was right.
+        if isinstance(other_points, tuple):
 
             self.points.append(other_points)
 
