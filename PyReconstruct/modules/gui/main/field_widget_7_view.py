@@ -66,7 +66,18 @@ class FieldWidgetView(FieldWidgetPaint):
 
     def updateStatusBar(self, trace : Trace = None):
         """Update status bar with useful information.
-        
+
+        The readout goes into the main window's permanent status-bar label, not
+        into `statusbar.showMessage()`. `showMessage` posts a *temporary*
+        message, and Qt blanks temporary messages whenever a status-tip event
+        reaches the window: hovering any `QAction` sends one, and an action
+        without a status tip sends an empty string, so moving the pointer from
+        the field up to the menu bar used to wipe the readout until the pointer
+        came back. A permanent widget is untouched by that, and it also stops
+        this readout from destroying genuine transient notices posted with
+        `showMessage` (`MainWindow._onStartupCheck`) -- the two now sit side by
+        side in the bar instead of overwriting each other.
+
             Params:
                 trace (Trace): optional trace to add to status bar
         """
@@ -97,7 +108,14 @@ class FieldWidgetView(FieldWidgetPaint):
         self.status_list.append(position)
         
         # display the distance between the current position and the last point if line tracing
-        if self.is_line_tracing:
+        #
+        # `self.current_trace` is checked as well as the flag: every caller that
+        # empties `current_trace` today either clears `is_line_tracing` first or
+        # runs in a mouse mode that never sets it, so the two are consistent, but
+        # nothing enforces that and `self.current_trace[-1]` on an empty list is
+        # an `IndexError` raised out of a paint event. Skipping the distance is
+        # the right answer for a line trace with no points anyway.
+        if self.is_line_tracing and self.current_trace:
             last_x, last_y = self.current_trace[-1]
             d = distance(last_x, last_y, self.mouse_x, self.mouse_y)
             d = d / self.scaling * self.section.mag
@@ -110,7 +128,20 @@ class FieldWidgetView(FieldWidgetPaint):
                 self.status_list.append(f"Closest trace: {trace.name} (ztrace)")
          
         s = "  |  ".join(self.status_list)
-        self.mainwindow.statusbar.showMessage(s)
+
+        # `paintText` calls this from every paint event, so an unconditional
+        # write meant a `setText` and a status-bar relayout per frame even when
+        # not one character had changed. Comparing against what is displayed
+        # confines the write to the events that actually move the readout: a
+        # mouse move over the field, a section change, and a change of
+        # alignment, brightness/contrast profile or closest trace.
+        label = getattr(self.mainwindow, "status_label", None)
+        if label is None:
+            # a harness main window standing in for the real one, without the
+            # permanent widget. Behave as the field always did.
+            self.mainwindow.statusbar.showMessage(s)
+        elif label.text() != s:
+            label.setText(s)
 
     def ztraceDialog(self):
         """Opens a dialog to edit selected traces."""
