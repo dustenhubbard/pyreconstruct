@@ -415,7 +415,68 @@ def test_show_whats_new_is_ungated_and_reopens_every_time(monkeypatch, tmp_path)
     assert [v for v, _ in shown] == ["1.20.3", "1.20.3"]
     content = shown[0][1]
     assert content["orienter"] == "Recent releases"
-    assert "### 1.20.3" in content["body"] and "### 1.20.2" in content["body"]
+    assert "### 1.20.3" in content["body"]
+
+
+# ---- how much the Help-menu re-open pre-expands ------------------------------
+#
+# Updated deliberately: this path used to render the previous releases in full
+# too, which on the shipped 1.21.0-beta-7 notes came to a 23,456-character
+# scroll. The reader opened it for the version they are running, so that is what
+# it opens on; the rest stays one click away rather than pre-expanded.
+
+def _on_demand_body(monkeypatch, tmp_path, current="1.20.3"):
+    """The content `show_whats_new` actually hands the dialog."""
+    from PyReconstruct.modules.gui.dialog import whats_new as W
+    wn = tmp_path / "WHATS_NEW.md"
+    wn.write_text(WN, encoding="utf-8")
+    monkeypatch.setattr(F, "find_whats_new_path", lambda: wn)
+    monkeypatch.setattr(W, "current_version_str", lambda: current)
+    captured = []
+    W.show_whats_new(
+        None,
+        show=lambda parent, version, last_seen=None, content=None: captured.append(content),
+    )
+    return captured[0]
+
+
+def test_help_menu_reopen_shows_only_the_running_version(monkeypatch, tmp_path):
+    """The current release is rendered; the ones before it are not."""
+    content = _on_demand_body(monkeypatch, tmp_path)
+    assert "### 1.20.3" in content["body"]
+    assert "Bullet three-A." in content["body"]        # its own notes, in full
+    assert "### 1.20.2" not in content["body"]
+    assert "### 1.20.1" not in content["body"]
+
+
+def test_help_menu_reopen_keeps_earlier_releases_reachable(monkeypatch, tmp_path):
+    """Capped, not hidden: the truncation pointer is what makes this honest."""
+    content = _on_demand_body(monkeypatch, tmp_path)
+    assert content["truncated"] is True
+    assert "and earlier releases" in content["body"]
+    assert "full notes on GitHub" in content["body"]
+
+
+def test_help_menu_reopen_is_shorter_than_it_was(monkeypatch, tmp_path):
+    """Against what this path used to render: the same builder at the default
+    cap, which is what `show_whats_new` passed before.
+
+    Deliberately not compared against the post-update catch-up. That comparison
+    holds on the shipped notes (6,838 characters against 15,816 for
+    1.21.0-beta-7) and fails on this fixture, whose releases are two bullets
+    each, so the truncation line alone outweighs a release. Asserting it here
+    would be pinning a property of the fixture rather than of the change."""
+    on_demand = _on_demand_body(monkeypatch, tmp_path)
+    uncapped = F.whats_new_content("1.20.3", on_demand=True, text=WN)
+    assert len(on_demand["body"]) < len(uncapped["body"])
+
+
+def test_post_update_catch_up_still_renders_every_missed_release(monkeypatch, tmp_path):
+    """Unchanged by the cap: someone updating across releases still gets them
+    all. `ON_DEMAND_CAP` applies to the Help menu and nowhere else."""
+    c = F.whats_new_content("1.20.3", last_seen="1.20.1", text=WN)
+    assert "### 1.20.3" in c["body"] and "### 1.20.2" in c["body"]
+    assert c["truncated"] is False
 
 
 def test_help_menu_offers_whats_new_reopen():

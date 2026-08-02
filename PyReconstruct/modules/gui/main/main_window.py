@@ -651,14 +651,31 @@ class MainWindow(QMainWindow):
     def showWhatsNewStartup(self):
         """Show the 'What's new' dialog once per version (fresh install/upgrade).
 
-        Dismissible and modeless -- never blocks startup. Any failure is
-        swallowed so this first-launch convenience can't disrupt the app.
+        Dismissible and modeless -- never blocks startup. Any failure is still
+        swallowed so this first-launch convenience can't disrupt the app, but it
+        is written to the log first, along with the outcome when nothing failed.
+
+        Both halves earned their place. A beta-7 launch that did not put the
+        dialog in front of the user left no traceback, no dialog and no way to
+        tell whether the gate had declined, the dialog had raised, or the hook
+        had never run: the only evidence was the stored version having moved,
+        recovered from the preferences file days later. Logging the exception
+        alone would have said nothing here, because nothing raised, so the
+        taken branch is logged too. One line per launch, in the log the Help
+        menu already opens.
         """
+        from PyReconstruct.modules.backend.func.logging_setup import (
+            log_note, log_exception,
+        )
         try:
             from PyReconstruct.modules.gui.dialog.whats_new import maybe_show_whats_new
-            maybe_show_whats_new(self)
+            shown = maybe_show_whats_new(self)
+            log_note(
+                "What's new (startup): dialog shown" if shown
+                else "What's new (startup): not due for this version"
+            )
         except Exception:
-            pass
+            log_exception("What's new (startup) failed; continuing without it")
 
     def showWhatsNew(self):
         """Reopen the 'What's new' dialog on demand (Help -> What's new).
@@ -666,13 +683,16 @@ class MainWindow(QMainWindow):
         Ungated: shows the recent release history whether or not the startup
         popup already ran for this version, and leaves the once-per-version
         record untouched. Any failure is swallowed, mirroring the startup
-        handler, so a menu click can't propagate an error into the event loop.
+        handler, so a menu click can't propagate an error into the event loop --
+        and logged, for the same reason: a menu item that quietly does nothing
+        is indistinguishable from one that was never clicked.
         """
+        from PyReconstruct.modules.backend.func.logging_setup import log_exception
         try:
             from PyReconstruct.modules.gui.dialog.whats_new import show_whats_new
             show_whats_new(self)
         except Exception:
-            pass
+            log_exception("What's new (Help menu) failed")
 
     def changeUsername(self, new_name : str = None):
         """Edit the login name used to track history.
