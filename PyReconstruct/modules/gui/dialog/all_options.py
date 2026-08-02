@@ -1,3 +1,5 @@
+import os
+
 from PySide6.QtWidgets import (
     QDialog,
     QWidget,
@@ -22,6 +24,21 @@ from PyReconstruct.modules.constants import is_frozen
 from PyReconstruct.modules.backend.updater.updater import (
     channel_radio_index, radio_response_channel,
 )
+from PyReconstruct.modules.backend.func.utils import determine_cpus
+
+
+def cpuSliderReadout(percent : int) -> str:
+    """Say what a CPU-usage percentage buys, in workers.
+
+    The complaint this answers was that a setting the user believed was four
+    workers ran eight, with nothing on screen to check it against. The option is
+    a share of the cores, so the share alone is not the answer to "how many
+    workers"; both go in the readout, resolved the same way the converter
+    resolves them.
+    """
+    workers = determine_cpus(percent)
+    total = os.cpu_count() or 1
+    return f"{percent}% ({workers} of {total} workers)"
 
 class AllOptionsDialog(QDialog):
 
@@ -239,7 +256,11 @@ class AllOptionsDialog(QDialog):
         
         structure = [
             ["XY Resolution:"],
-            ["less detail (fast)", ("slider", self.series.getOption("3D_xy_res", use_defaults)), "more detail (slow)"],
+            # 3D_xy_res is a percentage: 0 puts the mesh voxel at the coarsest
+            # of the section magnification and thickness, 100 at the finest.
+            ["less detail (fast)",
+             ("slider", self.series.getOption("3D_xy_res", use_defaults), {"suffix": "%"}),
+             "more detail (slow)"],
             [" "],
             ["3D smoothing:"],
             [("radio",
@@ -291,24 +312,28 @@ class AllOptionsDialog(QDialog):
 
         # scale bar opts
 
+        # scale_bar_width is a percentage of the field width and runs 20-100
+        # (see MousePalette.createSB). The slider carries that range itself, so
+        # the number on screen is the number stored. It used to be squeezed onto
+        # an 0-100 groove on the way in and squeezed back on the way out, which
+        # was invisible to the user and did not round trip: 60 of the 81 values
+        # the option can hold came back one lower, the default of 25 included,
+        # so pressing OK without touching anything narrowed the scale bar.
         sbw = self.series.getOption("scale_bar_width", use_defaults)
-        sbw = (sbw - 20) / 80 * 100  # adjust scale bar width value so that it is between 0 and 100 (rather than 20 and 100)
         structure = [
-            [("check", 
+            [("check",
               ("show numbers", self.series.getOption("show_scale_bar_text", use_defaults)),
               ("show ticks", self.series.getOption("show_scale_bar_ticks", use_defaults))
             )],
-            ["Scale bar size:"],
-            [("slider", sbw)],
+            ["Scale bar size (percent of field width):"],
+            [("slider", sbw, {"minimum": 20, "maximum": 100, "suffix": "%"})],
         ]
 
         def setOption(response):
-            
+
             self.series.setOption("show_scale_bar_text", response[0][0][1])
             self.series.setOption("show_scale_bar_ticks", response[0][1][1])
-            sbw = response[1]
-            sbw = int(sbw / 100 * 80 + 20)
-            self.series.setOption("scale_bar_width", sbw)
+            self.series.setOption("scale_bar_width", response[1])
 
         self.addOptionWidget("scale_bar", structure, setOption)
 
@@ -399,7 +424,7 @@ class AllOptionsDialog(QDialog):
 
         structure = [
             ["CPU usage (image-to-zarr conversion):"],
-            ["min", ("slider", cpu_max, 25), "max"],
+            ["min", ("slider", cpu_max, 25, {"fmt": cpuSliderReadout}), "max"],
             ["Sets how many parallel workers convert images to zarr -- a share"],
             ["of your CPU, not a fixed number of cores. Recommended: about half"],
             ["(the default). Lower it if the program or computer feels sluggish"],
