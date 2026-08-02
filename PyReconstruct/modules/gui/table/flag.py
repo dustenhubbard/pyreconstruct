@@ -48,6 +48,14 @@ class FlagTableWidget(DataTable):
     
     def createMenus(self):
         """Create the menu for the object table widget."""
+        # The checkbox row has to be built from self.show_resolved, not from a
+        # constant. toggleDisplayResolved rebuilds this whole menubar, so the
+        # action the user just checked is destroyed and replaced on every
+        # toggle; a bare "checkbox" makes the replacement unchecked whatever the
+        # filter is actually doing. Same "checkbox-True" form the object list's
+        # column filters use.
+        display_resolved_cb = "checkbox-True" if self.show_resolved else "checkbox"
+
         # Create menubar menu
         menubar_list = [
             {
@@ -65,7 +73,7 @@ class FlagTableWidget(DataTable):
                 "text": "Filter",
                 "opts":
                 [
-                    ("displayresolved_act", "Display resolved flags", "checkbox", self.toggleDisplayResolved),
+                    ("displayresolved_act", "Display resolved flags", display_resolved_cb, self.toggleDisplayResolved),
                     ("refilter_act", "Regex filter...", "", self.setREFilter),
                     {
                         "attr_name": "colormenu",
@@ -426,7 +434,11 @@ class FlagTableWidget(DataTable):
     
     def toggleDisplayResolved(self):
         """Toggle whether or not resolved flags are displayed in the table."""
-        self.show_resolved = self.displayresolved_act.isChecked()
+        # Flip the widget's own field rather than reading the action back.
+        # createTable() rebuilds the menubar underneath us, so the action this
+        # handler was connected to does not survive the call, and the same
+        # pattern is what the object list's column filters already use.
+        self.show_resolved = not self.show_resolved
         self.createTable()
     
     def setREFilter(self):
