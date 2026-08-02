@@ -39,6 +39,20 @@ class Notifier(ABC):
         """
         return self.notify(message)
 
+    def confirm(self, message, title="Confirm"):
+        """Ask the user to approve ``message`` before something destructive.
+
+        Returns True if they approved, False if they declined, and None if
+        there was nobody to ask. None is not consent: it means the caller is
+        running without a user (a script, a test, the offscreen platform) and
+        should carry on doing what it did before this question existed, since
+        refusing every such run would break loading a series in a script.
+
+        The default never asks, so non-GUI notifiers need no change and can
+        never block. Only the Qt adapter overrides it.
+        """
+        return None
+
 
 class QtNotifier(Notifier):
     """Default notifier backed by the GUI ``notify`` helper (prior behavior).
@@ -70,6 +84,21 @@ class QtNotifier(Notifier):
             show_save_error(message, report)
             return True
         return False
+
+    def confirm(self, message, title="Confirm"):
+        """Ask through the GUI ``notifyConfirm`` helper, or not at all.
+
+        The same guard as ``notify``, and for the same reason: ``notifyConfirm``
+        falls back to reading a yes/no from stdin when no GUI is up, which would
+        block a script or a test forever. Guarding here means that branch is
+        never reached, and the caller gets None ("nobody to ask") instead.
+        """
+        from PySide6.QtWidgets import QApplication
+        from PyReconstruct.modules.gui.utils.utils import qt_offscreen
+        if QApplication.instance() is not None and not qt_offscreen:
+            from PyReconstruct.modules.gui.utils import notifyConfirm
+            return bool(notifyConfirm(message, title=title))
+        return None
 
 
 class NullNotifier(Notifier):

@@ -10,7 +10,7 @@ from typing import Union
 from .log import LogSet, LogSetPair
 from .ztrace import Ztrace
 from .section import Section
-from .trace import Trace
+from .trace import Trace, normalizeObjectName
 from .transform import Transform
 from .obj_group_dict import ObjGroupDict
 from .series_data import SeriesData
@@ -43,6 +43,158 @@ class SeriesSaveError(Exception):
     Always raised before anything is written, so the existing .jser on disk is
     still the last good copy when this reaches the caller.
     """
+
+
+def contourNameCollisions(jser_data : dict) -> dict:
+    """Find the object names a load would fold together, without loading.
+
+    ``Section.updateJSON`` normalizes a contour key that contains whitespace or
+    a comma, and appends its traces to whatever contour already holds the
+    normalized name. Two names that differ only in those characters therefore
+    become one object, and the second one's identity is gone: its groups, its
+    comment, its curation status and its hosts are all keyed by the name that no
+    longer exists.
+
+    Reported over the whole file rather than per section, because two names can
+    collide across sections without ever meeting inside one, and the series data
+    they orphan is series-wide either way.
+
+        Params:
+            jser_data (dict): the parsed jser
+        Returns:
+            (dict): merged name -> the sorted source names folded into it, for
+                every name with more than one source. A name that is merely
+                renamed (one source) is not a collision and is not listed.
+    """
+    sources = {}
+    for section_data in jser_data.get("sections") or []:
+        if not section_data:
+            continue
+        for cname in (section_data.get("contours") or {}):
+            sources.setdefault(normalizeObjectName(cname), set()).add(cname)
+    return {
+        merged: sorted(names, key=str)
+        for merged, names in sources.items()
+        if len(names) > 1
+    }
+
+
+def contourMergeWarning(collisions : dict) -> str:
+    """The text shown before a load folds distinct objects together.
+
+    Separate from the load so it can be read and tested without one, and so the
+    caller decides how to surface it.
+    """
+    lines = [
+        "This series has object names that differ only in spaces or commas.",
+        "",
+        "Object names cannot hold either character, so opening the series "
+        "converts them to underscores. Where that produces a name another "
+        "object already has, the two become one object. Their traces are all "
+        "kept, but only one set of groups, comments, curation and hosts "
+        "survives the merge.",
+        "",
+    ]
+    for merged in sorted(collisions, key=str):
+        names = ", ".join(repr(n) for n in collisions[merged])
+        lines.append(f"    {names} -> {merged!r}")
+    lines += [
+        "",
+        "Cancel to leave the file untouched, then rename the objects in a copy "
+        "if you want to keep them apart.",
+    ]
+    return "\n".join(lines)
+
+
+def applyContourRenames(series_data : dict, renames : dict, collisions : dict):
+    """Repoint the series' object references after contours have been renamed.
+
+    ``Section.updateJSON`` renames the contour keys but only ever sees one
+    section. Everything a series knows *about* an object -- its group
+    memberships, its ``obj_attrs`` entry (comment, curation, alignment, user
+    column values, last user, 3D settings) and its place in the host tree -- is
+    keyed by name in the series file, and was left behind pointing at a name no
+    section holds any more. Renaming a contour and dropping all of that is
+    silent data loss on a plain open, with no collision needed.
+
+    Where several names merged onto one, only one attribute set can survive.
+    The winner is the source that already had the merged name if there is one
+    (it was not renamed, so nothing about it should change), otherwise the first
+    in sorted order. Groups and hosts are unioned instead, since membership is
+    additive and a union can only ever keep more. Attribute keys the winner does
+    not have are filled from the losers in sorted order: that never overrides
+    the winner and it is strictly better than discarding them.
+
+    (Updates ``series_data`` in place.)
+
+        Params:
+            series_data (dict): the series JSON, after ``Series.updateJSON``
+            renames (dict): old name -> new name, aggregated over all sections
+            collisions (dict): merged name -> sorted source names
+    """
+    if not renames:
+        return
+
+    # merged name -> the sources it takes attributes from, winner first
+    order = {}
+    for old, new in renames.items():
+        order.setdefault(new, [])
+    for merged, names in collisions.items():
+        if merged not in order:
+            continue
+        winner = merged if merged in names else names[0]
+        order[merged] = [winner] + [n for n in names if n != winner]
+    for old, new in sorted(renames.items(), key=lambda kv: str(kv[0])):
+        if not order[new]:
+            order[new] = [old]
+
+    obj_attrs = series_data.get("obj_attrs")
+    if isinstance(obj_attrs, dict):
+        for merged, names in sorted(order.items(), key=lambda kv: str(kv[0])):
+            merged_attrs = {}
+            for name in names:
+                source = obj_attrs.get(name)
+                if not isinstance(source, dict):
+                    continue
+                for key, value in source.items():
+                    if key not in merged_attrs:
+                        merged_attrs[key] = value
+            for name in names:
+                if name != merged:
+                    obj_attrs.pop(name, None)
+            if merged_attrs:
+                obj_attrs[merged] = merged_attrs
+
+    groups = series_data.get("object_groups")
+    if isinstance(groups, dict):
+        for group, members in groups.items():
+            if not isinstance(members, list):
+                continue
+            renamed = [renames.get(m, m) for m in members]
+            # dedupe, preserving the file's order: two members of one group can
+            # merge onto the same name
+            seen = set()
+            groups[group] = [
+                m for m in renamed if not (m in seen or seen.add(m))
+            ]
+
+    host_tree = series_data.get("host_tree")
+    if isinstance(host_tree, dict):
+        rebuilt = {}
+        for obj_name, hosts in host_tree.items():
+            if not isinstance(hosts, list):
+                rebuilt[obj_name] = hosts  # shape this code does not know: keep
+                continue
+            target = renames.get(obj_name, obj_name)
+            merged_hosts = rebuilt.setdefault(target, [])
+            for host in hosts:
+                host = renames.get(host, host)
+                # a merge can make an object its own host; that is a cycle the
+                # host tree rejects, so drop it rather than write it out
+                if host != target and host not in merged_hosts:
+                    merged_hosts.append(host)
+        host_tree.clear()
+        host_tree.update({k: v for k, v in rebuilt.items() if v})
 
 
 _SETTINGS_STORE = None
@@ -235,7 +387,7 @@ class Series():
     
     ## OPENING, LOADING, AND MOVING THE JSER FILE
     @staticmethod
-    def openJser(fp : str, progress=None):
+    def openJser(fp : str, progress=None, notifier=None):
         """Process the file containing all section and series information.
 
             Params:
@@ -244,8 +396,13 @@ class Series():
                     (text, cancel) -> ProgressReporter); defaults to the
                     Qt-backed reporter. Headless callers may pass
                     NullProgressReporter.
+                notifier: an optional Notifier used to ask before folding
+                    distinct objects together (see contourNameCollisions);
+                    defaults to the Qt-backed notifier, which asks nothing when
+                    no GUI is up and the load proceeds as before.
             Returns:
-                (Series): the series object created from the jser
+                (Series): the series object created from the jser, or None if
+                    the user declined the object merge
         """
         # check for existing hidden folder
         sdir = os.path.dirname(fp)
@@ -328,7 +485,15 @@ class Series():
         # UPDATE TO INCLUDE A LOG
         if "log" not in jser_data:
             jser_data["log"] = "Date, Time, User, Obj, Sections, Event"
-        
+
+        # Distinct objects about to become one object. Asked BEFORE the hidden
+        # directory exists, so declining leaves the file exactly as it was.
+        collisions = contourNameCollisions(jser_data)
+        if collisions:
+            asker = notifier if notifier is not None else _default_notifier()
+            if asker.confirm(contourMergeWarning(collisions)) is False:
+                return None
+
         # creating loading bar
         factory = progress if progress is not None else _default_progress_reporter_factory()
         reporter = factory(text="Opening series...")
@@ -350,6 +515,7 @@ class Series():
         try:
             # extract JSON section data
             sections = {}
+            renames = {}
             for snum, section_data in enumerate(jser_data["sections"]):
                 # check for empty section, skip if so
                 if section_data is None:
@@ -358,7 +524,9 @@ class Series():
                 filename = sname + "." + str(snum)
                 section_fp = os.path.join(hidden_dir, filename)
 
-                Section.updateJSON(section_data, snum)  # update any missing attributes
+                # update any missing attributes; collect the contour renames so
+                # the series data can follow them below
+                renames.update(Section.updateJSON(section_data, snum))
 
                 section_data["align_locked"] = True  # lock the section
 
@@ -390,6 +558,10 @@ class Series():
             # add empty log_set for opening/saving purposes
             series_data["log_set"] = []
             Series.updateJSON(series_data)
+            # Carry the contour renames above into everything the series keys by
+            # object name. Runs after updateJSON, which is what folds the legacy
+            # curation / last_user / 3D_modes maps into obj_attrs.
+            applyContourRenames(series_data, renames, collisions)
             series_fp = os.path.join(hidden_dir, sname + ".ser")
             with open(series_fp, "wb") as f:
                 f.write(fast_dumps(series_data))
