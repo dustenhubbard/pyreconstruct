@@ -3,7 +3,7 @@ import re
 import json
 import shutil
 from datetime import datetime
-from copy import deepcopy
+from copy import copy, deepcopy
 from pathlib import Path
 from typing import Union
 
@@ -3575,8 +3575,9 @@ class Series():
             if get_default:
                 opt = Series.getEmptyDict()["options"][option_name]
             else:
-                opt = self.options[option_name]
-                
+                raw = self.options[option_name]
+                opt = copy(raw) if isinstance(raw, (list, dict)) else raw
+
             return opt
         
         ## Get sane settings and defaults
