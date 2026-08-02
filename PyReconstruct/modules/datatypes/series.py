@@ -251,20 +251,43 @@ def applyContourRenames(series_data : dict, renames : dict, collisions : dict):
         host_tree.update({k: v for k, v in rebuilt.items() if v})
 
 
+
+#: Module-local override, kept for callers that set it directly. Leave it None
+#: and the default resolves through `settings_store.default_settings_store()`,
+#: which is the one process-wide cache. Setting it can only make isolation
+#: tighter, never looser, so it cannot reopen the seam closed below.
 _SETTINGS_STORE = None
 
 
 def _default_settings_store():
-    """Lazily create and cache the default QSettings-backed settings store.
+    """Resolve the default settings store for a `Series` with none injected.
 
-    Imported lazily so that this module does not pull in Qt just to resolve
-    the default; behavior for GUI callers is identical to direct QSettings use.
+    Delegates to `settings_store.default_settings_store()` rather than keeping
+    a second cache of its own. That matters for more than tidiness: this
+    function is what `Series.getOption`/`setOption` fall back on, so while it
+    cached separately, `set_default_settings_store()` -- the sanctioned way to
+    redirect settings away from the real `QSettings("KHLab", "PyReconstruct")`
+    domain -- closed only the store that `constants.getdatetime` uses and left
+    every `getOption` call resolving the real one. A caller that redirected
+    settings the documented way still got a half-open seam, and the half that
+    worked looked like proof that it had worked.
+
+    `Series.getOption` writes the default back when a key is absent, so a
+    *read* through the missed half was a write: reading `series.user` stored
+    `get_username()` into the real domain, which is how the developer's own
+    username was overwritten once already.
+
+    Behavior is unchanged for the shipped application: with no override
+    installed the delegate lazily creates the same `QSettingsStore`. The Qt
+    import stays deferred (`settings_store` imports `QSettings` inside
+    `QSettingsStore._settings`), so resolving the default still pulls in no Qt.
     """
-    global _SETTINGS_STORE
-    if _SETTINGS_STORE is None:
-        from PyReconstruct.modules.backend.settings_store import QSettingsStore
-        _SETTINGS_STORE = QSettingsStore()
-    return _SETTINGS_STORE
+    if _SETTINGS_STORE is not None:
+        return _SETTINGS_STORE
+    from PyReconstruct.modules.backend.settings_store import (
+        default_settings_store
+    )
+    return default_settings_store()
 
 
 _PROGRESS_REPORTER_FACTORY = None
