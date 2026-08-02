@@ -261,16 +261,45 @@ class FlagTableWidget(DataTable):
         
         self.setWindowTitle(title)
     
+    def getSectionRowIndex(self, snum : int):
+        """Get the row index of a section's flags (or where they SHOULD be).
+
+        The section number cannot be read out of the table cells:
+        ``CopyTableWidget.getRowIndex`` assumes column 0 holds the key, and
+        the flag list is the one data list whose key column ("Section") is
+        user-hideable -- it has no ``static_columns``, so hiding Section
+        makes column 0 the Color swatch and a text search has no column
+        that carries the section number at all. ``displayed_flags`` is kept
+        parallel to the table rows by ``setRow``/``insertRow``/``removeRow``
+        whatever columns are shown, so the lookup keys off the flags
+        themselves. Only the first ``rowCount()`` entries are live:
+        recreating the table with fewer rows leaves stale entries past
+        ``rowCount()`` (``createTable`` does not truncate the list).
+
+            Params:
+                snum (int): the section number
+            Returns:
+                (int): the row index for that section's flags in the table
+                (bool): whether the section actually has rows in the table
+        """
+        for row_index in range(self.table.rowCount()):
+            row_snum = self.displayed_flags[row_index].snum
+            if snum < row_snum:
+                return row_index, False
+            elif snum == row_snum:
+                return row_index, True
+        return self.table.rowCount(), False
+
     def updateData(self, section : Section):
         """Update the flags for a section.
-        
+
             Params:
                 section (Section): the section to update
         """
-        row, exists_in_table = self.table.getRowIndex(str(section.n))
+        row, exists_in_table = self.getSectionRowIndex(section.n)
         while exists_in_table:
             self.removeRow(row)
-            row, exists_in_table = self.table.getRowIndex(str(section.n))
+            row, exists_in_table = self.getSectionRowIndex(section.n)
         
         for flag in sorted(section.flags):
             if self.passesFilters(flag):
