@@ -837,10 +837,45 @@ def main_window(qapp, series_jser, qsettings_snapshot, main_window_dialogs):
         the series is a per-test copy under `tmp_path`.
       * `close()` rather than only `deleteLater()`, so `closeEvent` runs and the
         series' hidden working directory is cleaned up the way it is in the app.
+
+    The What's-new gate is closed before the window is built, and that is load
+    bearing rather than tidy-minded. `MainWindow.__init__` ends with
+    `QTimer.singleShot(750, self.showWhatsNewStartup)`, and the redirected
+    settings store starts every session empty, so on the first window built in a
+    session that handler is due. The timer belongs to the window, but teardown
+    only calls `deleteLater()`, so whether the window is destroyed before 750 ms
+    elapse depends on when a later test happens to run `processEvents`. Lose the
+    race and a modeless `WhatsNewDialog` opens in the middle of an unrelated
+    test, parented to a window that test never asked for.
+
+    What that costs is not cosmetic. The dialog becomes
+    `QApplication.activeWindow()` and never closes, and Qt resolves a
+    `Qt::WindowShortcut` against the active window, so every later `QTest`
+    keystroke aimed at the `MainWindow` is silently dropped; a popup showing at
+    that moment is dismissed by the activation change as well. Measured on
+    `tests/test_menu_stays_open_on_toggle.py`, which failed 15 of 30 full-file
+    runs on this alone, in three different tests, and passed every time in
+    isolation.
+
+    Recording the running version as already seen makes the handler a no-op for
+    every test that does not want it, and the tests that do
+    (`test_whats_new_once_per_version.py`, `test_welcome_update_note.py`) set the
+    key themselves and call the handler directly, so they are unaffected. The
+    write lands in the session's throwaway store, never the real one.
     """
     import sys as _sys
 
+    from PySide6.QtCore import QSettings
+
+    from PyReconstruct.modules.gui.dialog.whats_new import (
+        APP,
+        ORG,
+        current_version_str,
+    )
     from PyReconstruct.modules.gui.main import MainWindow
+    from PyReconstruct.modules.gui.main.first_launch import WHATSNEW_KEY
+
+    QSettings(ORG, APP).setValue(WHATSNEW_KEY, current_version_str())
 
     previous_excepthook = _sys.excepthook
     window = MainWindow(str(series_jser))
