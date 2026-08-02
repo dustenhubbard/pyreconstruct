@@ -54,5 +54,6 @@ nav:
   - Performance: performance.md
   - The .jser file format: JSER_FORMAT.md
   - Developing with uv: DEV_UV.md
+  - Release channels: RELEASE_CHANNELS.md
   - Contributing: https://github.com/dustenhubbard/PyReconstruct/blob/main/CONTRIBUTING.md
   - Security: https://github.com/dustenhubbard/PyReconstruct/blob/main/SECURITY.md
