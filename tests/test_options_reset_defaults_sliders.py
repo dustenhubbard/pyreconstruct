@@ -74,21 +74,19 @@ def _identity(value):
     return value
 
 
-def _scale_bar_position(value):
-    """The dialog maps the stored 20-100 scale bar width onto the 0-100 groove.
-
-    The truncation here is the dialog's own: 25 lands on position 6, not 6.25.
-    That rounding predates this change and is left alone.
-    """
-    return int((value - 20) / 80 * 100)
-
-
 # (option key, widget name, response index, a value that is not the default,
 #  stored value -> slider position)
+#
+# `scale_bar_width` used to need a mapping of its own here, because the dialog
+# squeezed the stored 20-100 range onto an 0-100 groove and squeezed it back on
+# the way out. This branch deletes that squeeze -- it did not round trip, and 60
+# of the 81 values came back one lower -- so the slider carries the 20-100 range
+# itself and the number on screen is the number stored. Identity, like the other
+# two. Left unchanged, this table fails with `assert 60 == 50` and `assert 25 == 6`.
 SLIDERS = [
     ("3D_xy_res", "smoothing_3D", 0, 73, _identity),
     ("cpu_max", "computation", 0, 90, _identity),
-    ("scale_bar_width", "scale_bar", 1, 60, _scale_bar_position),
+    ("scale_bar_width", "scale_bar", 1, 60, _identity),
 ]
 
 
