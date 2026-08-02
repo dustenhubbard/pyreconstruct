@@ -239,7 +239,7 @@ class AllOptionsDialog(QDialog):
         
         structure = [
             ["XY Resolution:"],
-            ["less detail (fast)", ("slider", self.series.getOption("3D_xy_res")), "more detail (slow)"],
+            ["less detail (fast)", ("slider", self.series.getOption("3D_xy_res", use_defaults)), "more detail (slow)"],
             [" "],
             ["3D smoothing:"],
             [("radio",
@@ -291,7 +291,7 @@ class AllOptionsDialog(QDialog):
 
         # scale bar opts
 
-        sbw = self.series.getOption("scale_bar_width")
+        sbw = self.series.getOption("scale_bar_width", use_defaults)
         sbw = (sbw - 20) / 80 * 100  # adjust scale bar width value so that it is between 0 and 100 (rather than 20 and 100)
         structure = [
             [("check", 
@@ -395,7 +395,7 @@ class AllOptionsDialog(QDialog):
         self.addOptionWidget("time", structure, setOption)
 
         # computational power
-        cpu_max = self.series.getOption("cpu_max")
+        cpu_max = self.series.getOption("cpu_max", use_defaults)
 
         structure = [
             ["CPU usage (image-to-zarr conversion):"],
