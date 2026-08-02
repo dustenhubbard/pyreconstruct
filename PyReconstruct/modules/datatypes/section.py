@@ -1,7 +1,7 @@
 import os
 import re
 import json
-from typing import List, Union
+from typing import Dict, List, Union
 
 from .contour import Contour
 from .trace import Trace, normalizeObjectName
@@ -1009,8 +1009,18 @@ class Section():
 
         return modified
 
-    def setGroupVisibility(self, group_viz: Union[List[str], None]=None) -> None:
-        """Modify traces_group_hide based on group visibility."""
+    def setGroupVisibility(self, group_viz: Union[Dict[str, bool], None]=None) -> None:
+        """Modify traces_group_hide based on group visibility.
+
+            Params:
+                group_viz (dict): group name -> True if the group is visible.
+                                  Omitted, None, or empty means there is nothing
+                                  to apply and traces_group_hide is left alone.
+        """
+        ## Nothing to apply: leave traces_group_hide as it is
+        if not group_viz:
+
+            return
 
         ## Get list of groups to hide
         hide_groups = [group for group, viz in group_viz.items() if not viz]
