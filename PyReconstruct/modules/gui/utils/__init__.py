@@ -23,6 +23,7 @@ from .utils import (
     getProgbar,
     notifyLocked,
     checkMag,
+    importHistoryWarning,
     getUserColsMenu,
     getAlignmentsMenu,
     getOpenRecentMenu,

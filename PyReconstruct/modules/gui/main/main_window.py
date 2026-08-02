@@ -3709,6 +3709,21 @@ class MainWindow(QMainWindow):
                 keep_below,
             ) = tuple(response["traces"])
 
+            # The history check silently does nothing when the two series' logs
+            # share no starting point, and the import degrades to a plain union
+            # of both series. Say so first: the result reads as a normal import
+            # either way, and this is the last point at which nothing has been
+            # changed yet, so the user can still back out. See
+            # importHistoryWarning for what "no starting point" means and how a
+            # log ends up that way.
+            if check_history:
+                history_warning = importHistoryWarning(self.series, o_series)
+                if history_warning and not notifyConfirm(
+                    history_warning, yn=True
+                ):
+                    o_series.close()
+                    return
+
             self.series.importTraces(
                 o_series, 
                 srange, 
