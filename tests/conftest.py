@@ -201,6 +201,7 @@ class DialogRecorder:
         self.notices = []
         self.dialogs = []
         self.responses = []
+        self.file_responses = []
         self.undo_warning_accepted = True
         # used only by the extra MainWindow surface further down
         self.confirm_accepted = True
@@ -257,6 +258,8 @@ class DialogRecorder:
 
     def fileDialogGet(self, *args, **kwargs):
         self.dialogs.append(args[2] if len(args) > 2 else "")
+        if self.file_responses:
+            return self.file_responses.pop(0)
         return ""
 
 
