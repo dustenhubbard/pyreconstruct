@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 from datetime import datetime
 
-from PyReconstruct.modules.constants import getDateTime, get_now, remove_days_from_today
+from PyReconstruct.modules.constants import getDateTime, remove_days_from_today
 
 
 ## Log event prefixes that record a human deliberately removing annotation

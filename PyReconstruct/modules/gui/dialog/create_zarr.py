@@ -5,9 +5,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, 
     QLabel, 
     QLineEdit,
-    QVBoxLayout, 
-    QComboBox, 
-    QPushButton
+    QVBoxLayout
 )
 
 from .helper import resizeLineEdit

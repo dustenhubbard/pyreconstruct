@@ -2,8 +2,8 @@ import os
 import re
 import math
 
-from PySide6.QtWidgets import QWidget, QStyle, QSlider
-from PySide6.QtGui import QIcon, QPixmap, QColor, QFont
+from PySide6.QtWidgets import QWidget, QSlider
+from PySide6.QtGui import QIcon, QPixmap, QFont
 from PySide6.QtCore import QSize, Qt, QSettings
 
 # Palette-visibility preferences are global (a UI choice, not per-series) and

@@ -134,7 +134,6 @@ def test_scene_menu_checkbox_resyncs_on_window_activate(qapp, tmp_path):
     is open leaves the Scene-menu checkbox stale. Focusing the window
     (WindowActivate) must resync the checkbox to the stored option -- WITHOUT
     firing the toggle handler / writing the option again."""
-    from types import SimpleNamespace
     from PySide6.QtWidgets import QApplication, QWidget, QMenu
     from PySide6.QtCore import QEvent
     from PyReconstruct.modules.gui.popup.custom_plotter import Container

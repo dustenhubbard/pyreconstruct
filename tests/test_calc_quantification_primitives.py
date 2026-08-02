@@ -13,7 +13,6 @@ centroids, Pythagorean triples, perimeters) and mathematical identities
 echoed back from the functions under test. traceGeometry and the
 interpolate_points empty/single guard are covered elsewhere and not retested.
 """
-import math
 
 import pytest
 

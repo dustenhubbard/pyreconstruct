@@ -1,19 +1,14 @@
 import os
 
 from PySide6.QtWidgets import (
-    QApplication,
     QWidget, 
     QDialog, 
     QDialogButtonBox, 
     QHBoxLayout, 
     QLabel, 
     QVBoxLayout, 
-    QTextEdit,
     QPushButton,
-    QStyle,
     QLineEdit,
-    QScrollArea,
-    QApplication,
     QCheckBox,
     QSlider,
     QTabWidget,
@@ -22,7 +17,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from .helper import (
-    BrowseWidget, MultiInput, BorderedWidget, RadioButtonGroup, resizeLineEdit,
+    MultiInput, BorderedWidget, RadioButtonGroup, resizeLineEdit,
     defaultTickInterval,
 )
 from .quick_dialog import getLayout

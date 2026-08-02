@@ -1,5 +1,4 @@
 import os
-import zarr
 
 from PySide6.QtWidgets import (
     QCheckBox,

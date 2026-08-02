@@ -13,8 +13,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QProxyStyle,
     QStyle,
-    QStyleOptionMenuItem,
-    QTableWidget
+    QStyleOptionMenuItem
 )
 from PySide6.QtGui import (
     QAction,

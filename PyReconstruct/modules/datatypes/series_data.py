@@ -2,7 +2,6 @@
 
 from typing import Union
 
-import numpy as np
 
 from PyReconstruct.modules.calc import traceGeometry
 

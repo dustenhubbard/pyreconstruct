@@ -1,5 +1,4 @@
 from PySide6.QtGui import QPainter, QColor, QFontMetrics, QFont
-from PySide6.QtCore import QRect
 
 from PyReconstruct.modules.gui.utils import drawOutlinedText
 

@@ -13,7 +13,6 @@ interaction wrapper has no try/except, so the harmless click surfaced an error
 dialog instead of being a no-op. cutTraces takes plain lists, so this is tested
 directly with no Qt.
 """
-import pytest
 
 from PyReconstruct.modules.calc.grid import cutTraces
 

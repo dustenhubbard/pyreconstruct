@@ -1,6 +1,5 @@
 import os
 import json
-from datetime import datetime
 import numpy as np
 
 from PyReconstruct.modules.datatypes import Series, Transform

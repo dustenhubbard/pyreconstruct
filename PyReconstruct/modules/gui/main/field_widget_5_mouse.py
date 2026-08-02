@@ -12,7 +12,7 @@ from PySide6.QtGui import (
     QCursor,
 )
 
-from PyReconstruct.modules.calc import pixmapPointToField, distance, colorize, ellipseFromPair, lineDistance
+from PyReconstruct.modules.calc import pixmapPointToField, distance, ellipseFromPair, lineDistance
 from PyReconstruct.modules.gui.dialog import QuickDialog
 from PyReconstruct.modules.gui.utils import notify
 from PyReconstruct.modules.constants import locations as loc
