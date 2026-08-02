@@ -605,7 +605,18 @@ class Series():
                 # the series data can follow them below
                 renames.update(Section.updateJSON(section_data, snum))
 
-                section_data["align_locked"] = True  # lock the section
+                # Every section locks on open, and the stored value is ignored
+                # on purpose -- this is the intended behavior, not an oversight,
+                # so please do not "fix" it. Opening a file protects its
+                # alignments; honoring a stored False would remove that
+                # protection for the one case it exists to cover. The asymmetry
+                # with the hidden-dir fast path above is deliberate in the same
+                # way: that path resumes a live working directory rather than
+                # opening a file, so re-locking there would silently discard a
+                # lock the user cleared mid-session. Pinned by
+                # tests/test_bc_profiles_and_section_lock.py, finding 2, which
+                # covers both halves.
+                section_data["align_locked"] = True
 
                 # gather the section numbers and section filenames
                 sections[snum] = filename
@@ -786,8 +797,18 @@ class Series():
             # the series file itself (self.filepath is the .ser in the hidden dir)
             with open(self.filepath, "rb") as f:
                 filedata = fast_loads(f.read())
-            # manually remove log set from series data if exists
-            if filedata.get("log_set"): del(filedata["log_set"])
+            # `log_set` is the hidden dir's working accumulator, not part of the
+            # .jser: its rows are flattened into the "log" text a few lines down
+            # and `openJser` overwrites the key with [] on the way back in, so a
+            # copy in the series dict would be dead weight at best. Removed
+            # unconditionally. It used to be `if filedata.get("log_set")`, a
+            # truthiness test standing in for an existence test, which skipped
+            # the removal for a present-but-empty log set and wrote `"log_set":
+            # []` into the file. No content was ever lost -- the removal is not
+            # what carries the rows out -- but the key's presence tracked
+            # session activity rather than series content, so save, reopen, save
+            # was not byte-idempotent for any series that logged an event.
+            filedata.pop("log_set", None)
             # add the log_set string to the log
             log_set_str = str(self.log_set)
             if log_set_str:
