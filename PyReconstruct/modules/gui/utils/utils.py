@@ -824,6 +824,82 @@ def checkMag(s_series, o_series):
     return True
 
 
+def importHistoryWarning(s_series, o_series):
+    """The warning to show before an import that asked for the history check
+    but cannot use it. None when `last_shared_index >= 0`.
+
+    That is not the same as "None when the history check will work". The gate in
+    `Section.importTraces` is `not complete_match and last_shared_index >= 0`,
+    so two identical non-empty logs skip the history block as well, and this
+    function stays silent there. Covering that would mean warning on every
+    import of two copies whose logs match, which is a false alarm when they
+    genuinely have not diverged; the logs alone do not separate that from two
+    sides trimmed to the same prefix. Deliberately left, and pinned in
+    `test_no_warning_when_the_two_logs_are_identical`.
+
+    "Check history" compares the two series' logs, keeps their longest matching
+    opening run, and treats everything after it as work done since the copies
+    diverged. That is what lets the import honor a deletion or a rename instead
+    of treating the missing object as something the other person has not drawn
+    yet. When the logs have no matching opening run at all, `last_shared_index`
+    is -1, there is no divergence point to measure anything against, and
+    `Section.importTraces` skips the whole history block: the import goes ahead
+    as a plain union of the two series.
+
+    That skip is the thing worth saying out loud. It cannot be inferred from the
+    result (the import reports success either way), it undoes the reason the box
+    was checked, and the checkbox itself stays checked. Measured on the series
+    that ships with this repository, whose log is empty: copy it, delete an
+    object in the copy, import the original back with the history check on, and
+    the deleted object is present again afterwards.
+
+    A -1 needs only one of the two logs to start differently from the other, so
+    an empty log on either side is enough. Series converted from another format
+    start with no log, and `LogSet.exportLogHistory` moves old entries out to a
+    CSV, so trimming one side and not the other guarantees it.
+
+    This returns the text rather than showing it so that the caller owns the
+    dialog. `MainWindow` binds `notifyConfirm`, which is guarded by
+    `user_is_present()` and which the test fixtures already stand in for; a
+    modal opened from in here would be reachable by neither.
+
+        Params:
+            s_series (Series): the current series
+            o_series (Series): the series being imported from
+        Returns:
+            (str or None): the warning text, or None if the history is usable
+    """
+    from PyReconstruct.modules.datatypes.log import LogSetPair
+
+    s_logs = s_series.getFullHistory()
+    o_logs = o_series.getFullHistory()
+
+    if LogSetPair(s_logs, o_logs).last_shared_index >= 0:
+        return None
+
+    if not s_logs.all_logs and not o_logs.all_logs:
+        cause = "Neither series has a log of its edits."
+    elif not s_logs.all_logs:
+        cause = "The current series has no log of its edits."
+    elif not o_logs.all_logs:
+        cause = "The series being imported from has no log of its edits."
+    else:
+        cause = "The two series' logs have no shared starting point."
+
+    return (
+        "The history check cannot be used for this import.\n\n"
+        f"{cause} Checking history means comparing the two logs to find where "
+        "the series diverged, and there is nothing here to compare. A series "
+        "has no usable log if it was converted from another format, or if its "
+        "log was exported and trimmed on one side only.\n\n"
+        "The traces will still be imported, but as a plain merge of the two "
+        "series: an object deleted in one of them can come back, and an object "
+        "renamed in one of them can end up under both names. Nothing will be "
+        "deleted.\n\n"
+        "Continue with the import?"
+    )
+
+
 def get_menu_dict(attr_name: str, title: str, options: list):
     """Return a menu dictionary."""
 
