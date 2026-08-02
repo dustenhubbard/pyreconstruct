@@ -229,7 +229,7 @@ class MainWindow(QMainWindow):
 
         if self.menubar:
             
-            self.menubar.clear()
+            clearMenuBar(self, self.menubar)
             
         else:
             
