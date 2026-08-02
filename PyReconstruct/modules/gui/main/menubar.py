@@ -383,7 +383,7 @@ def return_view_menu(self):
             None,
             ("fillopacity_act", "Edit fill opacity...", "", self.setFillOpacity),
             None,
-            ("homeview_act", "Set view to image", "Home", self.field.home),
+            ("homeview_act", "Set view to image", self.series, self.field.home),
             ("viewmag_act", "View magnification...", "", self.field.setViewMagnification),
             ("findview_act", "Set zoom when finding contours...", "", self.setFindZoom),
             None,

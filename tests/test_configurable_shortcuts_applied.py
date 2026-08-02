@@ -26,10 +26,12 @@ rather than the shipped default is the point: a site that hardcodes the same
 string as its own default passes an equality check against the default and fails
 this one.
 
-Two names are grandfathered in ``KNOWN_UNAPPLIED``, with the reason and the open
-question for each. ``test_known_unapplied_registry_is_current`` fails if either
-one starts working, so the entry is deleted by whoever fixes it rather than
-rotting into a permanent exemption.
+One name is grandfathered in ``KNOWN_UNAPPLIED``, with the reason and the open
+question for it. ``test_known_unapplied_registry_is_current`` fails if it starts
+working, so the entry is deleted by whoever fixes it rather than rotting into a
+permanent exemption. ``homeview_act`` was the second entry and is retired here:
+its menu tuple in ``menubar.py`` now passes the series instead of the literal
+``"Home"``, so the sweep covers it like every other configurable key.
 
 Settings scoping, and why it is not optional. ``Series.getOption`` writes the
 default back into the settings store on a miss, and the production store is
@@ -47,7 +49,7 @@ pytestmark = pytest.mark.gui
 
 
 # --------------------------------------------------------------------------- #
-# the two known offenders
+# the known offender
 # --------------------------------------------------------------------------- #
 KNOWN_UNAPPLIED = {
     # Built once, in `get_context_menu_list_obj` in
@@ -57,17 +59,6 @@ KNOWN_UNAPPLIED = {
     # with a key that does nothing. The fix is to pass the series (one word), and
     # it is not in this PR because that file is being edited by another open PR.
     "sethosts_act": "no construction site passes a series (context_menu_list.py)",
-    # Built in `return_view_menu` in `PyReconstruct/modules/gui/main/menubar.py`
-    # with the literal `"Home"`. The key therefore works out of the box, and a
-    # rebind in the shortcuts dialog is stored but silently discarded on the next
-    # menubar rebuild. Which side is wrong is a decision, not a bug fix:
-    # `docs/USER_GUIDE.md` states that `Home` is one of four *fixed* menu
-    # shortcuts, but it is the only one of those four that also has a default in
-    # `default_settings.py` and an editable row in the shortcuts dialog. Either
-    # the literal goes (making it rebindable, as the settings and the dialog
-    # already promise) or the default and the dialog row go (making it fixed, as
-    # the guide says). Left alone until that is settled.
-    "homeview_act": "hardcoded 'Home' in menubar.py; docs call the key fixed",
 }
 
 
@@ -265,9 +256,10 @@ def test_menu_actions_honor_a_user_configured_shortcut(qapp, scoped_series, menu
 
     The sentinel keys are the mechanism of the test. Comparing against the
     shipped default would pass for an action whose menu tuple hardcodes a copy of
-    that default, which is precisely one of the two bugs in
-    ``KNOWN_UNAPPLIED``. Setting the option to something no source file contains
-    means only a real ``getOption`` lookup can produce the expected value.
+    that default, which is exactly how ``homeview_act`` hid for two years and
+    five months while carrying an editable dialog row that never bound anything.
+    Setting the option to something no source file contains means only a real
+    ``getOption`` lookup can produce the expected value.
     """
     names = _configurable()
     sentinels = _sentinels(names)
