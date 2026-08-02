@@ -109,6 +109,19 @@ class MainWindow(QMainWindow):
         ## Create status bar bottom of main window
         self.statusbar = self.statusBar()
 
+        ## The field's readout -- section, alignment, brightness/contrast
+        ## profile, cursor coordinates, closest trace -- is a continuous
+        ## display, so it gets a permanent widget rather than a temporary
+        ## message. Qt clears the temporary message on every status-tip event,
+        ## and hovering a QAction with no status tip sends an empty one, which
+        ## is what used to blank the readout on a trip to the menu bar.
+        ## Permanent widgets are laid out to the right of the temporary-message
+        ## area. stretch=0 keeps the label right-aligned and leaves the
+        ## temporary-message area at its natural width so showMessage notices
+        ## paint normally.
+        self.status_label = QLabel()
+        self.statusbar.addPermanentWidget(self.status_label, 0)
+
         ## Open series if requested thru CLI
         if filename and Path(filename).exists():
             

@@ -17,8 +17,9 @@ from PySide6.QtWidgets import (
     QWidget,
     QInputDialog, 
     QApplication,
-    QMessageBox, 
-    QMenu
+    QMessageBox,
+    QMenu,
+    QLabel
 )
 
 from PySide6.QtGui import (
