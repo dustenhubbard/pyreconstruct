@@ -24,6 +24,23 @@ from PyReconstruct.modules.backend.updater.install_info import install_kind
 
 WHATSNEW_KEY = "last_whatsnew_version"
 
+# How many releases the Help-menu re-open lists, as opposed to the default
+# ``cap`` the post-update path uses.
+#
+# The two paths want different amounts. Across an update the dialog is showing
+# what the reader missed, and the range between their last-seen version and this
+# one is however long it is. On the Help menu nobody missed anything: they went
+# looking for the notes for the version they are running. Renders of the shipped
+# 1.21.0-beta-7 notes: the post-update body is 15,816 characters, and the
+# on-demand body at the default cap of five was 23,456 -- a scroll long enough
+# that the release they opened it for is the only part most readers ever see.
+#
+# One release is the honest floor rather than a compromise: the builder marks a
+# capped body ``truncated``, which appends the line pointing at the full notes on
+# GitHub, and the dialog carries that link of its own besides. Nothing becomes
+# unreachable; it stops being pre-expanded.
+ON_DEMAND_CAP = 1
+
 # Provenance line shown below the notes in every framing of the What's-new dialog,
 # and near the footer of the GitHub release body. Maintainer-approved verbatim: it
 # names who maintains this build without naming any other repository, so a lab that
