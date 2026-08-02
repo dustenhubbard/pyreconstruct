@@ -16,6 +16,20 @@ from PyReconstruct.modules.datatypes_legacy import (
 )
 
 
+def normalizeObjectName(value : str) -> str:
+    """Return ``value`` with whitespace and commas collapsed to underscores.
+
+    Object names are written into the log as its fourth comma-space-delimited
+    field (``Log.__str__`` / ``Log.fromStr``), so a comma in a name shifts every
+    field after it and the entry no longer parses. That is what this exists to
+    prevent. ``Section.updateJSON`` applies the same rule to the contour keys of
+    a file written before the rule existed, so the two must agree; they are one
+    function so they cannot drift.
+    """
+    value = value.strip()
+    return "_".join(value.split()).replace(",", "_")
+
+
 class Trace():
 
     def __init__(self, name : str, color : tuple, closed=True):
@@ -46,10 +60,9 @@ class Trace():
         assert (value is None or type(value) is str)
 
         if value is not None:
-            
-            value = value.strip()
-            value = "_".join(value.split()).replace(",", "_")
-            
+
+            value = normalizeObjectName(value)
+
         self._name = value
     
     def copy(self):
