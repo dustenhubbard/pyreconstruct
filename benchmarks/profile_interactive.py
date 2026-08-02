@@ -39,17 +39,123 @@ Notes / hazards handled here (each was a real trap):
   * traces_in_view is only populated by generateTraceLayer; without a warmup
     generateView() the hover path silently falls back to tracesAsList(), a
     different and slower path.
-  * XDG_CONFIG_HOME is redirected to scratch so the real user QSettings is
-    never read or written. QSettingsStore is deliberately KEPT (not swapped for
-    DictSettingsStore) because the render loops were tuned around its ~60us
-    per-getOption cost; removing it would measure a program that does not ship.
+  * The real user QSettings must never be read or written, and this script used
+    to claim XDG_CONFIG_HOME did that. It does not. On macOS the two-argument
+    QSettings(org, app) constructor is NativeFormat and goes through
+    CFPreferences, which ignores XDG_CONFIG_HOME, HOME and QStandardPaths alike
+    and resolves ~/Library/Preferences/com.khlab.PyReconstruct.plist anyway
+    (measured: format() reports NativeFormat and fileName() is the real path).
+    Since Series.getOption writes the default back whenever a key is absent,
+    every profiling run on macOS was reading and writing the developer's own
+    preferences. The redirect is now by domain name instead, installed before
+    PySide6 is imported: see _redirect_qsettings below.
+  * QSettingsStore is deliberately KEPT (not swapped for DictSettingsStore)
+    because the render loops were tuned around its ~60us per-getOption cost;
+    removing it would measure a program that does not ship. Renaming the domain
+    preserves that cost exactly, since the format and the code path are
+    unchanged and only the file it lands in differs.
 """
-import argparse, math, os, shutil, sys, tempfile, time
+import argparse, atexit, math, os, shutil, sys, tempfile, time
 
 SCRATCH = tempfile.mkdtemp(prefix="pyrecon-prof-")
 os.environ["QT_QPA_PLATFORM"] = "offscreen"          # must precede PySide6 import
-os.environ["XDG_CONFIG_HOME"] = os.path.join(SCRATCH, "cfg")
-os.makedirs(os.environ["XDG_CONFIG_HOME"], exist_ok=True)
+
+#: The real domain, and the throwaway one every construction of it is rewritten
+#: to. The scratch name is fixed rather than per-process on purpose: the exit
+#: sweep below empties these domains but cannot reliably delete the files, so a
+#: per-run name would leave a new empty plist behind on every profile.
+REAL_ORG, REAL_APP = "KHLab", "PyReconstruct"
+SCRATCH_ORG = "PyReconProfilingScratch"
+SCRATCH_APP = "profile"
+
+
+def _redirect_qsettings():
+    """Point every QSettings("KHLab", "PyReconstruct") at a throwaway domain.
+
+    Rebinding the name in PySide6.QtCore covers the deferred imports the product
+    uses (QSettingsStore._settings imports QSettings inside the method) and every
+    module imported after this call, which is all of them: this runs at import
+    time, before any PyReconstruct module is loaded.
+
+    Only the organization and application are rewritten. The format stays
+    NativeFormat, so the per-getOption cost this script exists to measure is the
+    shipped one.
+    """
+    from PySide6 import QtCore
+
+    real = QtCore.QSettings
+
+    class ScratchQSettings(real):
+        def __init__(self, *args, **kwargs):
+            if len(args) >= 2 and args[0] == REAL_ORG and args[1] == REAL_APP:
+                args = (SCRATCH_ORG, SCRATCH_APP) + tuple(args[2:])
+            elif len(args) >= 2 and args[0] == REAL_ORG:
+                # per-series scope: "PyReconstruct-{code}"
+                args = (SCRATCH_ORG, "%s-%s" % (SCRATCH_APP, args[1])) + tuple(args[2:])
+            super().__init__(*args, **kwargs)
+
+    QtCore.QSettings = ScratchQSettings
+
+    probe = QtCore.QSettings(REAL_ORG, REAL_APP)
+    resolved = probe.fileName()
+    assert REAL_APP.lower() not in os.path.basename(resolved).lower(), (
+        "refusing to profile: QSettings still resolves the real domain at %s"
+        % resolved
+    )
+    return real
+
+
+_REAL_QSETTINGS = _redirect_qsettings()
+
+
+def _drop_scratch_settings():
+    """Empty every throwaway domain, per-series scopes included.
+
+    Both scopes are swept, not just the global one: a profiling run reads
+    per-series options too, and each lands in its own file.
+
+    Run at import as well as at exit, and the pairing is the point rather than
+    belt and braces. Cleanup at exit alone does not hold on macOS: the platform
+    store buffers, so it can flush a copy of the values back to disk after the
+    process has removed the file, and a `defaults delete` reports success while
+    leaving the file for the same reason. Measured, not assumed: a run that
+    cleared, synced and unlinked still left its keys on disk afterward. What
+    holds is the sweep at the start of the next run, which is why this is not
+    only an exit hook.
+
+    So the honest guarantee is narrow and worth stating: the real domain is
+    never addressed, and no scratch value is visible to a profiling run. A
+    scratch plist can survive between runs. The domain name is fixed rather than
+    per-process so those files are reused instead of accumulating.
+
+    clear() is safe here in a way it is not on the real domain: nothing but this
+    script ever writes these names.
+    """
+    global_path = _REAL_QSETTINGS(SCRATCH_ORG, SCRATCH_APP).fileName()
+    assert SCRATCH_ORG.lower() in global_path.lower(), global_path
+    directory = os.path.dirname(global_path)
+    marker = SCRATCH_APP.lower()
+
+    for name in os.listdir(directory):
+        if SCRATCH_ORG.lower() not in name.lower() or marker not in name.lower():
+            continue
+        path = os.path.join(directory, name)
+        # "com.<org>.<app>.plist" on macOS; recover <app> to address the domain.
+        app = name[:-len(".plist")] if name.endswith(".plist") else name
+        app = app.split(".")[-1]
+        settings = _REAL_QSETTINGS(SCRATCH_ORG, app)
+        if SCRATCH_ORG.lower() in settings.fileName().lower():
+            settings.clear()
+            settings.sync()
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+_drop_scratch_settings()            # anything a previous run left behind
+atexit.register(_drop_scratch_settings)
+
 
 W, H = 1600, 1000
 
