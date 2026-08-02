@@ -553,6 +553,56 @@ def unsavedNotify():
 
     return response == QMessageBox.Yes
 
+
+def linkedUndoNotify(redo=False):
+    """Ask how far a linked undo/redo should reach. Returns "all", "section" or
+    "cancel".
+
+    The action being undone touched more than one section, and the current
+    section's own undo state is part of it, so there are two defensible answers
+    and only the user knows which they meant.
+
+    This lives here rather than inline in `MainWindow.undo` for the reason every
+    other prompt in this module does: the call sites are slots, and a modal has
+    to have somewhere to go when there is no user. It was written inline as a
+    constructed `QMessageBox(self).exec()`, which is the one shape the test
+    fixture cannot reach. The fixture replaces the `QMessageBox` *statics* and
+    the helpers `main_window.py` imports by name; an instance built inside a
+    method is neither, so offscreen the `exec()` spun a modal event loop nothing
+    could dismiss and `undo()` never returned. That put every operation leaving
+    both a series undo and a section-only undo out of reach of the test suite.
+
+    With no user present the answer is "all". It is the complete inverse of the
+    action the user last took, it is what the dialog's Yes button does, and it
+    is not lossy: `SeriesStates.undoState` moves the state onto the redo stack
+    rather than discarding it. "cancel" would be safe in the same sense but
+    makes a headless `undo()` a silent no-op, which is worse to debug than an
+    undo that went one step further than intended.
+
+        Params:
+            redo (bool): True if the pending action is a redo
+    """
+    if not user_is_present():
+        return "all"
+
+    mbox = QMessageBox(mainwindow)
+    mbox.setWindowTitle("Redo" if redo else "Undo")
+    mbox.setText("This action is linked to multiple sections.\nPlease select how you would like to proceed.")
+    mbox.setStandardButtons(QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+    mbox.setButtonText(QMessageBox.Yes, "All sections")
+    mbox.setButtonText(QMessageBox.No, "Only this section")
+    mbox.setButtonText(QMessageBox.Cancel, "Cancel")
+
+    response = mbox.exec()
+
+    if response == QMessageBox.Yes:
+        return "all"
+    elif response == QMessageBox.No:
+        return "section"
+    else:
+        return "cancel"
+
+
 def drawOutlinedText(
         painter : QPainter, 
         x : int, y : int, 

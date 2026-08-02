@@ -3163,17 +3163,10 @@ class MainWindow(QMainWindow):
 
         # both 3D and 2D possible and they are linked
         if can_3D and can_2D and linked:
-            mbox = QMessageBox(self)
-            mbox.setWindowTitle("Redo" if redo else "Undo")
-            mbox.setText("This action is linked to multiple sections.\nPlease select how you would like to proceed.")
-            mbox.setStandardButtons(QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
-            mbox.setButtonText(QMessageBox.Yes, "All sections")
-            mbox.setButtonText(QMessageBox.No, "Only this section")
-            mbox.setButtonText(QMessageBox.Cancel, "Cancel")
-            response = mbox.exec()
-            if response == QMessageBox.Yes:
+            scope = linkedUndoNotify(redo=redo)
+            if scope == "all":
                 act3D()
-            elif response == QMessageBox.No:
+            elif scope == "section":
                 act2D()
         # both 3D and 2D possible but they are not linked
         elif can_3D and can_2D and not linked:

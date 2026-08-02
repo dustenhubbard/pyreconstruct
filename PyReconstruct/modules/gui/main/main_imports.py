@@ -80,6 +80,7 @@ from PyReconstruct.modules.gui.utils import (
     notifyConfirm,
     saveNotify,
     unsavedNotify,
+    linkedUndoNotify,
     setMainWindow,
     noUndoWarning,
     checkMag,

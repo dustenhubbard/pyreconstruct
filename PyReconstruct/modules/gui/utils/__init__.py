@@ -16,6 +16,7 @@ from .utils import (
     noUndoWarning,
     saveNotify,
     unsavedNotify,
+    linkedUndoNotify,
     mainwindow,
     drawOutlinedText,
     getProgbar,
