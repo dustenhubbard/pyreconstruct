@@ -1,7 +1,6 @@
 """Polygon operations."""
 
 from typing import Any, List
-import numpy as np
 
 from shapely.geometry import (
     Polygon,

@@ -14,7 +14,7 @@ from .trace import Trace, normalizeObjectName
 from .transform import Transform
 from .obj_group_dict import ObjGroupDict
 from .series_data import SeriesData
-from .objects import Objects, SeriesObject
+from .objects import Objects
 from .default_settings import default_settings, default_series_settings
 from .host_tree import HostTree
 
@@ -28,9 +28,9 @@ from PyReconstruct.modules.constants import (
     fast_dumps,
     dumps_jser,
     canon_keys_inplace,
-    SERIES_KEYS
+    SERIES_KEYS,
+    default_traces,
 )
-from PyReconstruct.modules.constants import welcome_series_dir, default_traces
 
 
 class SeriesOpenError(Exception):

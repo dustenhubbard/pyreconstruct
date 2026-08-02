@@ -5,7 +5,6 @@ from .context_menu_list import get_context_menu_list_trace
 from PySide6.QtWidgets import QInputDialog
 
 from PyReconstruct.modules.datatypes import Trace, Flag, Points
-from PyReconstruct.modules.calc import pixmapPointToField
 from PyReconstruct.modules.gui.dialog import (
     QuickDialog,
     FlagDialog,
@@ -25,7 +24,6 @@ from PyReconstruct.modules.calc import (
     uncuttable_closed_traces,
 )
 from PyReconstruct.modules.gui.table import (
-    CopyTableWidget,
     TraceTableWidget,
     ZtraceTableWidget
 )

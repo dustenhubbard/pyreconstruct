@@ -3,15 +3,12 @@
 # Kept in a standalone ruff.toml (rather than pyproject.toml) so linting stays
 # independent of the packaging metadata and can be read/changed on its own.
 #
-# The lint selection below is deliberately narrow: it is the canonical
-# "critical-error" set (syntax errors and undefined names) that the current
-# tree already passes clean, so CI gates on genuine bugs without forcing a
-# whole-repo reformat. Style and import-hygiene rules (E/W/F401/I001/...) are
-# NOT enforced: the full default set reports thousands of findings on this
-# tree, ~79% of them whitespace, unused imports and import order. Adopting
-# them now would mean a four-thousand-line diff across the package that would
-# conflict with every open feature branch. They can be adopted incrementally
-# later, once the in-flight UI stack has merged.
+# The lint selection below is deliberately narrow: the canonical "critical-error"
+# set (syntax errors and undefined names), plus the two import-hygiene rules that
+# catch real defects rather than formatting. Whitespace and import-order rules
+# (E/W/I001/...) are still NOT enforced: the full default set reports thousands of
+# findings on this tree, most of them whitespace, and adopting them now would mean
+# a four-thousand-line diff that conflicts with every open feature branch.
 
 target-version = "py311"   # matches the PySide6==6.5.2 pin (3.11-only wheels)
 
@@ -34,5 +31,38 @@ target-version = "py311"   # matches the PySide6==6.5.2 pin (3.11-only wheels)
 # F63 - invalid comparisons / assert on tuple, etc.
 # F7  - misplaced statements (break/continue/return outside function/loop, ...)
 # F82 - undefined name / undefined name in __all__
-# This is the same "must-not-merge" set flake8 users pin; it is bug-class only.
-select = ["E9", "F63", "F7", "F82"]
+# The four above are the same "must-not-merge" set flake8 users pin; bug-class only.
+# F401 - unused import
+# F811 - a name redefined before the first definition was ever used
+select = ["E9", "F63", "F7", "F82", "F401", "F811"]
+
+# F401 and F811 were added on top of that set once the tree was cleaned to pass
+# them. 484 findings became 0 as follows, and the split is the whole reason this
+# needed a pass rather than a `--fix`:
+#
+#   231  re-exports in `__init__.py`      ignored below, NOT deleted
+#   121  re-exports in `main_imports.py`  ignored below, NOT deleted
+#    70  dead module-level imports        deleted
+#    58  dead function-local imports      deleted
+#     4  F811 redefinitions               3 deleted, 1 is a defect (see below)
+#
+# The 352 re-exports are the trap. A module that exists to re-export imports names
+# it does not itself use, so pyflakes calls every one of them unused while runtime
+# depends on all of them. Checked before touching anything: all 231 of the
+# `__init__.py` names are imported by name from elsewhere in the tree, and 96 of
+# the 121 in `main_imports.py` are referenced by `main_window.py`, which reaches
+# them through `from .main_imports import *`. Deleting them would have left the
+# lint gate green and the application unable to start.
+
+[lint.per-file-ignores]
+# Package `__init__.py` files are the public surface of their package: the
+# imports are the export list. Ignoring F401 here is the ordinary convention and
+# is preferred to writing out `__all__` for 231 names, which would be a large
+# diff in exactly the files that open feature branches add to.
+"**/__init__.py" = ["F401"]
+
+# Not an `__init__.py`, but the same thing by another name. `main_imports.py` is
+# a pure import block that `main_window.py` consumes with `import *`; it has no
+# code of its own. `tests/test_shipped_python_is_linted.py` already documents it
+# as a re-export site.
+"PyReconstruct/modules/gui/main/main_imports.py" = ["F401"]

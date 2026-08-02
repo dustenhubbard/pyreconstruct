@@ -1,11 +1,10 @@
 import os
 import json
-import sys
 
 from PyReconstruct.modules.calc import reducePoints
 
 from PyReconstruct.modules.constants import blank_section, blank_series_no_contours
-from PyReconstruct.modules.gui.utils import getProgbar, notify
+from PyReconstruct.modules.gui.utils import getProgbar
 from PyReconstruct.modules.constants import createHiddenDir
 from PyReconstruct.modules.datatypes import (
     Series,

@@ -1,6 +1,4 @@
 import os
-import webbrowser
-from datetime import datetime
 
 from PySide6.QtWidgets import (
     QDialog, 
@@ -8,15 +6,11 @@ from PySide6.QtWidgets import (
     QLabel, 
     QLineEdit, 
     QVBoxLayout,
-    QHBoxLayout,
-    QCheckBox,
     QPushButton
 )
 
-from .helper import BrowseWidget, BorderedWidget
 
 from PyReconstruct.modules.datatypes import Series
-from PyReconstruct.modules.gui.utils import notify
 
 class BackupCommentDialog(QDialog):
 

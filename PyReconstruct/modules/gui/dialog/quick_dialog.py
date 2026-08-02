@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QTabWidget,
     QScrollArea,
-    QPushButton,
 )
 from PySide6.QtCore import Qt
 

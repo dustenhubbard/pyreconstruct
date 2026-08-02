@@ -17,7 +17,6 @@ from PyReconstruct.modules.gui.utils import (
 )
 from PyReconstruct.modules.gui.dialog import (
     QuickDialog,
-    ObjectGroupDialog,
 )
 
 class ZtraceTableWidget(DataTable):

@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
 from .helper import BrowseWidget, BorderedWidget
 
 from PyReconstruct.modules.datatypes import Series
-from PyReconstruct.modules.gui.utils import notify
 
 class BackupDialog(QDialog):
 

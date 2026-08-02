@@ -26,7 +26,6 @@ Jaccard index (10-dx)/(10+dx) once rasterised. dx=0.2 -> ~0.961 and dx=0.5 ->
 depends on, so a change in the overlap primitive fails loudly instead of
 quietly invalidating the premise.
 """
-import pytest
 
 from PyReconstruct.modules.datatypes.contour import Contour
 from PyReconstruct.modules.datatypes.trace import Trace

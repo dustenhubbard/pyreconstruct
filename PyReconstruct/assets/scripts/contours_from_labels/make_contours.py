@@ -6,7 +6,7 @@ Usage: ng-make-contours <zarr> <jser>
 
 from PyReconstruct.modules.datatypes.series import Series
 
-from PyReconstruct.modules.backend.autoseg.conversions import getLabelsToObjectsData, importSection
+from PyReconstruct.modules.backend.autoseg.conversions import getLabelsToObjectsData
 
 from PyReconstruct.assets.scripts.contours_from_labels.utils import (
     get_zarr_groups,

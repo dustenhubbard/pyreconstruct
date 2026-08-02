@@ -7,7 +7,6 @@ TypeError ("cannot unpack non-iterable NoneType") when a stray, non-zarr
 folder slips through importFromZarrLabels' listdir-based group list. Exercised
 with the module collaborators monkeypatched; no real zarr / threads.
 """
-import types
 
 from PyReconstruct.modules.backend.autoseg import conversions as conv
 
