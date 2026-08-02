@@ -306,7 +306,10 @@ class VPlotter(vedo.Plotter):
                     sc_obj.msh.scale(side_len / sc_obj.getSideLength())
                 if color:
                     sc_obj.setColor(color)
-                if alpha:
+                ## A blank opacity field is "no value chosen" and comes back as
+                ## None; 0.0 is a real choice (fully transparent) and must be
+                ## applied, the same way edit3D guards its 3D_opacity write.
+                if alpha is not None:
                     sc_obj.setAlpha(alpha, self.series)
                 if lw:
                     sc_obj.msh.lw(lw)
@@ -338,7 +341,7 @@ class VPlotter(vedo.Plotter):
             alpha = response[1]
             for obj in self.selected:
                 if color: obj.setColor(color)
-                if alpha: obj.setAlpha(alpha, self.series)
+                if alpha is not None: obj.setAlpha(alpha, self.series)
         
         self.updateSelected()
         self.render()
