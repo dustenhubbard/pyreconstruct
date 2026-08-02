@@ -127,6 +127,36 @@ class FieldWidgetObject(FieldWidgetTrace):
             notify("Please select only one object for this action.")
             return
 
+    def refuseLockedDestinations(self, names : list) -> bool:
+        """Refuse an operation that would write traces into a locked object.
+
+        `object_function` above checks the objects the user selected. Two of the
+        operations it wraps invent a second set of objects to write into:
+        `copyObjects` takes `<name>_copy` and `splitObject` takes
+        `<name>_1`..`<name>_N`. Neither generated name is selected, neither
+        generator looks for a free one, and either can already exist and be
+        locked, so the source-side check passes and traces land in a locked
+        object anyway.
+
+        `Series.copyObjects` and `Series.splitObject` refuse this themselves, so
+        scripts are covered too. This exists so that the refusal the user sees
+        is not a command that quietly does nothing: same message and same
+        all-or-nothing shape as `refuseLockedTraces`.
+
+            Params:
+                names (list): the object names the operation would write into
+            Returns:
+                (bool): True if the operation was refused
+        """
+        if self.series.lockedDestinations(names):
+            notify(
+                "Cannot modify locked objects.\n"
+                "Please unlock before modifying."
+            )
+            return True
+
+        return False
+
     @object_function(update_objects=True, reload_field=True)
     def editAttributes(self, obj_names : list):
         """Edit the name of object(s) in the entire series."""
@@ -771,6 +801,16 @@ class FieldWidgetObject(FieldWidgetTrace):
     def copyObjects(self, obj_names: list):
         """Make copies of object(s)."""
 
+        # `object_function` checked the objects the user selected. The copy goes
+        # into `<name>_copy`, which the user did not select and which may
+        # already exist and be locked (copy an object, lock the copy, copy the
+        # original again). `Series.copyObjects` refuses that on its own; this is
+        # here so the refusal is not silent.
+        if self.refuseLockedDestinations(
+            self.series.copyObjectNames(obj_names)
+        ):
+            return False
+
         self.series_states.addState()
 
         series_states = self.mainwindow.field.series_states
@@ -890,7 +930,15 @@ class FieldWidgetObject(FieldWidgetTrace):
         name = self.getSingleName(names)
         if not name:
             return False
-        
+
+        # The split's destinations are `<name>_1`..`<name>_N`, generated rather
+        # than chosen, and a series that already numbers objects that way can
+        # own one of them and have it locked.
+        if self.refuseLockedDestinations(
+            self.series.splitObjectNames(name)
+        ):
+            return False
+
         self.series_states.addState()
 
         series_states = self.mainwindow.field.series_states

@@ -1730,14 +1730,67 @@ class Series():
         
         self.modified = True
 
+    def copyObjectNames(self, obj_names : list) -> list:
+        """The object names `copyObjects` would write its traces into.
+
+        `copyObjects` invents its destination rather than asking for one, so the
+        destination is not visible to a caller until the copy has happened.
+        Split out so the lock check below, the return value, and the field can
+        all name the same objects from one place.
+
+            Params:
+                obj_names (list): the objects that would be copied
+            Returns:
+                (list): the destination name for each, in the same order
+        """
+        return [f"{obj_name}_copy" for obj_name in obj_names]
+
+    def lockedDestinations(self, names) -> list:
+        """The locked objects among the names an operation would write into.
+
+        The datatype counterpart to the field's lock checks. Those read the
+        objects a selection is in now, so they cover an operation that names its
+        destination. `copyObjects` and `splitObject` generate one instead, and a
+        generated name can land on an object that already exists: `_copy` on a
+        second copy of the same object, `_NN` on any series that already numbers
+        objects that way. Neither generator looks for a free name, so the traces
+        go into whatever is already there, and when that object is locked the
+        operation adds traces to it. Adding traces is precisely what lock
+        exists to prevent.
+
+        Keyed on the destination name alone, so it stays inside the rule that
+        locking guards quantitative data and never selection, color or
+        visibility.
+
+            Params:
+                names (iterable): the object names that would receive traces
+            Returns:
+                (list): those that are locked, in order, without duplicates
+        """
+        return [
+            name for name in dict.fromkeys(names)
+            if self.getAttr(name, "locked")
+        ]
+
     def copyObjects(self, obj_names: list, series_states=None, log_event=True) -> list:
         """Copy object(s) from the series
+
+        Refuses outright if any generated destination is locked, and refuses the
+        whole call rather than the offending object: one locked destination
+        stops everything, which is the all-or-nothing shape the field's
+        `refuseLockedTraces` and `object_function` already use, so a caller
+        cannot end up with half a copy applied.
 
             Params:
                 obj_names (list): the objects to delete
                 series_states (dict): for use with GUI states
-
+            Returns:
+                (list): the names of the copies, empty if the copy was refused
         """
+        copy_names = self.copyObjectNames(obj_names)
+
+        if self.lockedDestinations(copy_names):
+            return []
 
         if log_event:
 
@@ -1771,12 +1824,12 @@ class Series():
                 section.save()
 
         ## Assign object attrs to copies
-        for obj_name in obj_names:
-            self.objects.copyObjAttrs(obj_name, f"{obj_name}_copy")
+        for obj_name, copy_name in zip(obj_names, copy_names):
+            self.objects.copyObjAttrs(obj_name, copy_name)
 
         self.modified = True
 
-        return [f"{obj}_copy" for obj in obj_names]
+        return copy_names
 
     def copyTracesToSections(self, traces : list, section_numbers, series_states=None, log_event=True):
         """Copy traces into multiple sections at the same field (x, y) location.
@@ -4340,12 +4393,44 @@ class Series():
                     pts.append(pt)
             ztrace.points = pts
     
+    def splitObjectNames(self, name : str) -> list:
+        """The object names `splitObject` would write its traces into.
+
+        Numbered `_1`..`_N` over the object's trace count, zero-padded to that
+        count's width, which is exactly how the split loop below names them: it
+        reads the same `data.getCount(name)` for its padding and walks the same
+        1..N, so the two cannot drift apart.
+
+            Params:
+                name (str): the object that would be split
+            Returns:
+                (list): the destination names, empty if the object has no traces
+        """
+        count = self.data.getCount(name)
+
+        if not count:  # None for an unknown object, 0 for an empty one
+            return []
+
+        digits = len(str(count))
+
+        return [f"{name}_{n:0{digits}d}" for n in range(1, count + 1)]
+
     def splitObject(self, name : str, series_states=None, log_event=True):
         """Split an object into one object per trace.
-        
+
+        Refuses outright if any generated destination is locked. All-or-nothing
+        for the same reason as `copyObjects`: a split is one operation, and
+        splitting all of it but the traces that collide would be worse than not
+        splitting at all.
+
             Params:
                 name (str): the name of the object to split
+            Returns:
+                (set): the names of the new objects, empty if refused
         """
+        if self.lockedDestinations(self.splitObjectNames(name)):
+            return set()
+
         n = 1
         digits = len(str(self.data.getCount(name)))
         new_names = set()
