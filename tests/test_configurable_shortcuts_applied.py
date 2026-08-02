@@ -26,12 +26,15 @@ rather than the shipped default is the point: a site that hardcodes the same
 string as its own default passes an equality check against the default and fails
 this one.
 
-One name is grandfathered in ``KNOWN_UNAPPLIED``, with the reason and the open
-question for it. ``test_known_unapplied_registry_is_current`` fails if it starts
-working, so the entry is deleted by whoever fixes it rather than rotting into a
-permanent exemption. ``homeview_act`` was the second entry and is retired here:
-its menu tuple in ``menubar.py`` now passes the series instead of the literal
-``"Home"``, so the sweep covers it like every other configurable key.
+``KNOWN_UNAPPLIED`` grandfathers names the sweep cannot cover yet, and it is now
+**empty**. ``test_known_unapplied_registry_is_current`` fails if an entry starts
+working, so entries are deleted by whoever fixes them rather than rotting into
+permanent exemptions -- which is how both of the two left. ``sethosts_act`` went
+when its construction site in ``context_menu_list.py`` began passing the series;
+``homeview_act`` went when its menu tuple in ``menubar.py`` began passing the
+series instead of the literal ``"Home"``. The sweep now covers every configurable
+key with no exceptions, and an empty registry is the state this file is trying to
+reach rather than a gap in it.
 
 Settings scoping, and why it is not optional. ``Series.getOption`` writes the
 default back into the settings store on a miss, and the production store is
@@ -52,13 +55,21 @@ pytestmark = pytest.mark.gui
 # the known offender
 # --------------------------------------------------------------------------- #
 KNOWN_UNAPPLIED = {
-    # Built once, in `get_context_menu_list_obj` in
-    # `PyReconstruct/modules/gui/main/context_menu_list.py`, with `""` as its
-    # shortcut argument. There is no other construction site, so `Ctrl+Shift+H`
-    # has never bound anything: "Set hosts..." is listed in the shortcuts dialog
-    # with a key that does nothing. The fix is to pass the series (one word), and
-    # it is not in this PR because that file is being edited by another open PR.
-    "sethosts_act": "no construction site passes a series (context_menu_list.py)",
+    # Empty, and both departures are worth recording because each was a real
+    # unbound key rather than a bookkeeping change:
+    #
+    #   `sethosts_act`  -- built once in `get_context_menu_list_obj`
+    #     (`context_menu_list.py`) with `""` as its shortcut argument, so
+    #     `Ctrl+Shift+H` was listed in the shortcuts dialog and bound nothing.
+    #     It passes the series now, and
+    #     `test_a_cold_built_menu_fires_set_hosts_without_the_dialog` presses the
+    #     key to prove it.
+    #
+    #   `homeview_act`  -- built in `return_view_menu` (`menubar.py`) with the
+    #     literal `"Home"`, so the key worked out of the box but a rebind was
+    #     stored and then silently discarded on the next menubar rebuild. Settled
+    #     in favour of rebindable, which is what `default_settings.py` and the
+    #     shortcuts dialog already promised; the menu tuple passes the series now.
 }
 
 
@@ -356,29 +367,32 @@ def test_palette_mode_shortcuts_are_read_from_settings(qapp, scoped_series, menu
 
 
 # --------------------------------------------------------------------------- #
-# 4. why nobody reported it: the dialog papers over it, until the next rebuild
+# 4. the cold start, which is where this class of bug hides
 # --------------------------------------------------------------------------- #
-def test_the_shortcuts_dialog_temporarily_repairs_an_unapplied_key(qapp, scoped_series, menu_stub):
-    """Opening the shortcuts dialog and pressing OK makes a dead key fire.
+def test_a_cold_built_menu_fires_set_hosts_without_the_dialog(qapp, scoped_series, menu_stub):
+    """Ctrl+Shift+H invokes "Set hosts..." on a fresh install.
 
-    ``MainWindow.resetShortcuts`` walks the dialog's rows and calls
-    ``getattr(self, act_name).setShortcut(kbd)`` on the very QAction the menu
-    built, so it overwrites the ``""`` the menu tuple supplied. That is the whole
-    explanation for why an action listed with a key that does nothing was never
-    reported: anyone who went looking at the shortcuts list repaired it on the way
-    past, for as long as that menu object lived.
+    This is the end-to-end version of the sweep above: it does not read
+    ``QAction.shortcut()``, it presses the key and asserts the handler ran.
 
-    ``createContextMenus`` then rebuilds the menu from the same tuples, and
-    ``newAction`` re-applies the ``""``. Hence "temporarily".
+    The cold path is the whole point. ``sethosts_act`` was built with ``""``, so
+    the key was dead out of the box. But ``MainWindow.resetShortcuts`` walks
+    the dialog's rows and calls ``setShortcut`` on the very QAction the menu
+    built, so anyone who opened the shortcuts dialog and pressed OK repaired it
+    on the way past and could not reproduce the report afterwards. The repair
+    died at the next ``createContextMenus``, which re-applied the ``""``. So the
+    two things a regression test has to avoid are the dialog and a warm settings
+    store, and this test uses neither: an empty ``DictSettingsStore`` (via
+    ``scoped_series``) and one real menu build.
+
+    The rebuild at the end is the other half. That call is what used to undo the
+    dialog's repair, so it is where a half-fix (one that patched
+    ``resetShortcuts`` instead of the construction site) would show up.
     """
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
 
     from PyReconstruct.modules.gui.main.main_window import MainWindow
-
-    dead = "sethosts_act"
-    if dead not in KNOWN_UNAPPLIED:  # pragma: no cover - registry kept current
-        pytest.skip(f"{dead} has been fixed; this test has nothing to demonstrate")
 
     fired = []
     stub = menu_stub
@@ -387,10 +401,11 @@ def test_the_shortcuts_dialog_temporarily_repairs_an_unapplied_key(qapp, scoped_
     stub.show()
     qapp.processEvents()
 
-    key = scoped_series.getOption(dead)
-    assert key == "Ctrl+Shift+H", f"unexpected default for {dead}: {key!r}"
-    assert stub.sethosts_act.shortcut().toString() == "", (
-        "premise gone: the menu now binds a key for this action"
+    # nothing was stored for this key, so it resolves to the shipped default
+    assert scoped_series.getOption("sethosts_act") == "Ctrl+Shift+H"
+    assert stub.sethosts_act.shortcut().toString() == "Ctrl+Shift+H", (
+        "the cold-built action has no key; get_context_menu_list_obj is passing "
+        "'' instead of the series again"
     )
 
     def press():
@@ -399,19 +414,13 @@ def test_the_shortcuts_dialog_temporarily_repairs_an_unapplied_key(qapp, scoped_
         qapp.processEvents()
         return list(fired)
 
-    assert press() == [], "Ctrl+Shift+H fired before the dialog repaired it"
-
-    # what pressing OK does, for the rows the dialog offers
-    MainWindow.resetShortcuts(stub, {dead: key})
-    assert stub.sethosts_act.shortcut().toString() == "Ctrl+Shift+H"
     assert press() == ["setHosts"], (
-        "resetShortcuts did not make the key work, so the workaround this test "
-        "documents does not exist and the docstring is wrong"
+        "Ctrl+Shift+H did not reach setHosts from a cold start, which is exactly "
+        "what a user gets on a fresh install"
     )
 
-    # and what the next menu rebuild does to it
+    # the rebuild that used to wipe the shortcuts dialog's repair
     MainWindow.createContextMenus(stub)
-    assert stub.sethosts_act.shortcut().toString() == "", (
-        "the rebuilt action kept the repaired key; re-read newAction"
-    )
-    assert press() == [], "the repair survived a menu rebuild"
+
+    assert stub.sethosts_act.shortcut().toString() == "Ctrl+Shift+H"
+    assert press() == ["setHosts"], "the key did not survive a menu rebuild"

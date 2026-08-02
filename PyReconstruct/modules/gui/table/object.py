@@ -239,7 +239,14 @@ class ObjectTableWidget(DataTable):
             ("invertobjselection_act1", "Invert selection", "", self.invertSelection),
             ("copyobjrow_act", "Copy object values", "", self.table.copy),
         ]
-        context_menu_list = self.mainwindow.field.getObjMenu(list_ops=list_ops)
+        # is_in_field=False: this dock lives inside the main window, so a keyed
+        # row built here would be a second claimant on the same sequence in the
+        # same shortcut scope, and Qt fires neither of an ambiguous pair. The
+        # field's copy keeps the key and reaches this dock through it. Same rule
+        # the trace list already follows.
+        context_menu_list = self.mainwindow.field.getObjMenu(
+            list_ops=list_ops, is_in_field=False
+        )
         self.context_menu = QMenu(self)
         populateMenu(self, self.context_menu, context_menu_list)
 

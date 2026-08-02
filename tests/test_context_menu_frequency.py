@@ -85,8 +85,10 @@ class _FieldStub(_Anything):
             self, is_in_field, list_ops=list_ops, find_in_field=find_in_field
         )
 
-    def getObjMenu(self, list_ops=None):
-        return get_context_menu_list_obj(self, list_ops=list_ops)
+    def getObjMenu(self, list_ops=None, is_in_field=True):
+        return get_context_menu_list_obj(
+            self, list_ops=list_ops, is_in_field=is_in_field
+        )
 
     def getZtraceMenu(self, list_ops=None):
         from PyReconstruct.modules.gui.main.field_widget_2_trace import FieldWidgetTrace
