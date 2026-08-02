@@ -1,0 +1,47 @@
+# Server-side merge-evidence gate (postmortem-drain-2026-08-02, H3').
+#
+# Reports a check named `merge-evidence` that succeeds only when the PR carries the
+# `reviewed` label. Once this context is in branch protection's required checks, a merge
+# with no review evidence fails AT GITHUB -- no matter what issued it: a wrapper script,
+# an alias, a `gh pr merge` the command-text guard never saw. This is the transport-level
+# answer to the #209 bypass, per the repo's own precedent that command-text guards cannot
+# close that class (vcs-guard-hook.md, accepted gap 3).
+#
+# Deliberately label-only. The label is the durable evidence vcs-guard already requires
+# and merge_gate.py already applies for tier B/C; an approving review satisfies the
+# maintainer path by him adding the label, which is one click. Checking reviews here too
+# would need a second trigger (`pull_request_review`) whose check runs land on a separate
+# event and race the label runs for "latest" -- complexity that buys nothing the label
+# does not already give.
+#
+# No checkout, no code execution: the decision is read from the event payload alone, so a
+# malicious PR head cannot influence this check's result.
+#
+# Caveat (same mechanics as #209's docs-trigger note): `pull_request` workflows run from
+# the PR HEAD, so a branch cut before this file landed on main never runs it, and a
+# required-but-never-reported check blocks that PR as "expected". The queue was empty when
+# this landed; any older branch just needs a rebase or a merge from main.
+
+name: merge-evidence
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+permissions: {}
+
+jobs:
+  merge-evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - name: require the `reviewed` label
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          case ",$LABELS," in
+            *,reviewed,*) echo "reviewed label present -- evidence recorded" ;;
+            *) echo "::error::No 'reviewed' label. Apply it via scripts/merge_gate.py (tier B/C)"; \
+               echo "::error::or by the maintainer's hand (tier A). An unlabeled merge is refused"; \
+               echo "::error::server-side by design -- see specs/postmortem-drain-2026-08-02.md H3'."; \
+               exit 1 ;;
+          esac
