@@ -11,7 +11,6 @@ from PySide6.QtGui import (
     QColor,
     QPainter,
     QBrush,
-    QPainterPath,
     QFont
 )
 from PyReconstruct.modules.datatypes import (
@@ -27,11 +26,7 @@ from PyReconstruct.modules.calc import (
     pixmapPointToField,
     fieldPointToPixmap,
     getDistanceFromTrace,
-    getExterior, 
-    mergeTraces, 
-    reducePoints, 
-    cutTraces,
-    area
+    getExterior
 )
 from PyReconstruct.modules.gui.utils import drawOutlinedText
 

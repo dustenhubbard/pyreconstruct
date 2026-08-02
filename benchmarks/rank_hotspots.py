@@ -9,7 +9,7 @@ line, so lines belonging to one function are folded back together here.
 Usage:
     python rank_hotspots.py session.speedscope.json [--top 20] [--by-line]
 """
-import argparse, collections, json, os, sys
+import argparse, collections, json, sys
 
 
 def main():

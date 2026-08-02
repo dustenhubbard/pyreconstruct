@@ -1,6 +1,6 @@
 """Points class."""
 
-from typing import TypeAlias, List, Tuple, Union
+from typing import List, Tuple, Union
 
 from PyReconstruct.modules.calc import interpolate_points, rolling_average
 

@@ -6,7 +6,6 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QMenu,
     QApplication,
-    QMessageBox,
     QAbstractItemView,
 )
 from PySide6.QtGui import (
@@ -17,7 +16,6 @@ from PySide6.QtCore import Qt, QItemSelection, QItemSelectionModel
 
 from .data_table import DataTable
 from .object_model import ObjectTableModel, ObjectTableView
-from .history import HistoryTableWidget
 from PyReconstruct.modules.gui.utils import sortList
 
 from PyReconstruct.modules.datatypes import Series
@@ -25,17 +23,10 @@ from PyReconstruct.modules.gui.utils import (
     populateMenuBar,
     populateMenu,
     notify,
-    getUserColsMenu,
 )
 from PyReconstruct.modules.gui.dialog import (
-    ObjectGroupDialog,
-    TraceDialog,
-    ShapesDialog,
     QuickDialog,
     FileDialog
-)
-from PyReconstruct.modules.gui.popup import (
-    TextWidget,
 )
 
 

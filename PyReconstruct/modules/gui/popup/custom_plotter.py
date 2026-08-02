@@ -25,7 +25,6 @@ from PyReconstruct.modules.gui.utils import (
     populateMenuBar,
     notify,
     notifyConfirm,
-    rgb_norm_1,
     rgb_norm_256,
     is_light
 )

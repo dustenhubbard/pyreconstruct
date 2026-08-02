@@ -20,7 +20,6 @@ only cover its genuinely pure pieces:
 Expected values below are derived by hand, not echoed from the code.  See the
 module-level ``flags`` note returned by the harness for Section limitations.
 """
-import math
 
 import pytest
 

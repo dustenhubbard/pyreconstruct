@@ -11,7 +11,6 @@ Pins the fixes for:
 - L9: download URLs (and redirects) must be https on github-owned hosts.
 """
 import json
-import subprocess
 import sys
 import urllib.request
 from types import SimpleNamespace

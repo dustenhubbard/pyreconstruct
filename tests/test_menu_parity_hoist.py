@@ -20,7 +20,6 @@ Shape checks build the real menu definitions against light stubs (no Qt loop);
 the invert-selection mechanism is driven on a real offscreen QTableWidget; the
 dispatch + label logic are exercised as pure code.
 """
-import os
 import types
 from pathlib import Path
 

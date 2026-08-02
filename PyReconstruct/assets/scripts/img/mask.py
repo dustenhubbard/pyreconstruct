@@ -23,7 +23,6 @@ from pathlib import Path
 
 
 import cv2
-from numpy.lib.index_tricks import IndexExpression
 import zarr
 import numpy as np
 from colorama import Fore, Style

@@ -1,5 +1,4 @@
 from .trace import Trace
-from .flag import Flag
 
 class Contour():
 

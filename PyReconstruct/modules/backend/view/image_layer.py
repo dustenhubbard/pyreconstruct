@@ -1,10 +1,7 @@
 import os
-import math
 import zarr
-import subprocess
 import numpy as np
 
-from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import (
     Qt,
     QPoint,
@@ -26,7 +23,6 @@ from PyReconstruct.modules.datatypes import (
     Transform
 )
 from PyReconstruct.modules.calc import fieldPointToPixmap
-from PyReconstruct.modules.constants import assets_dir
 
 class ImageLayer():
 

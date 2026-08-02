@@ -20,14 +20,10 @@ from PyReconstruct.modules.datatypes import Flag, Trace
 from .field_widget_5_mouse import (
     FieldWidgetMouse,
     POINTER, 
-    PANZOOM, 
     KNIFE, 
-    SCISSORS, 
     CLOSEDTRACE, 
     OPENTRACE, 
     STAMP, 
-    GRID, 
-    FLAG, 
     HOST
 )
 

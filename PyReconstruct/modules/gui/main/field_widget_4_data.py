@@ -15,9 +15,6 @@ from PyReconstruct.modules.calc import (
     correlate
 )
 from PyReconstruct.modules.datatypes import Transform
-from PyReconstruct.modules.gui.dialog import (
-    QuickDialog,
-)
 from PyReconstruct.modules.gui.utils import (
     notify, 
     notifyLocked, 

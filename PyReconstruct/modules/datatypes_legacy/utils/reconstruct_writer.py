@@ -3,12 +3,6 @@ import os
 
 from lxml import etree
 
-from ..classes.series import Series
-from ..classes.section import Section
-from ..classes.contour import Contour
-from ..classes.image import Image
-from ..classes.transform import Transform
-from ..classes.zcontour import ZContour
 
 
 def image_to_contour_xml(image):

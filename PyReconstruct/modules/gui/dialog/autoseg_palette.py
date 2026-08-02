@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
     QApplication,
 )
 from PySide6.QtGui import QColor, QPixmap, QIcon, QPainter, QPalette
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize
 
 from .helper import resizeLineEdit
 from PyReconstruct.modules.backend.autoseg.palette import DEFAULT_AUTOSEG_PALETTE

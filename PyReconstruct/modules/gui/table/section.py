@@ -17,7 +17,7 @@ from PyReconstruct.modules.gui.utils import (
     notify,
     getProgbar
 )
-from PyReconstruct.modules.gui.dialog import QuickDialog, FileDialog
+from PyReconstruct.modules.gui.dialog import QuickDialog
 from PyReconstruct.modules.datatypes import Series
 
 class SectionTableWidget(DataTable):

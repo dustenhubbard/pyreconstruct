@@ -1,36 +1,16 @@
-import os
-import time
 
 from PySide6.QtWidgets import (
     QInputDialog, 
 )
-from PySide6.QtCore import (
-    Qt, 
-    QTimer,
-)
-from PySide6.QtGui import (
-    QCursor,
-)
 
-from PyReconstruct.modules.datatypes import Series, Trace, Ztrace
+from PyReconstruct.modules.datatypes import Trace, Ztrace
 from PyReconstruct.modules.calc import pixmapPointToField, distance
-from PyReconstruct.modules.backend.table import (
-    TableManager
-)
-from PyReconstruct.modules.gui.dialog import TraceDialog, QuickDialog
+from PyReconstruct.modules.gui.dialog import QuickDialog
 from PyReconstruct.modules.gui.utils import notify
 
 from .field_widget_5_mouse import (
-    POINTER, 
-    PANZOOM, 
-    KNIFE, 
-    SCISSORS, 
     CLOSEDTRACE, 
-    OPENTRACE, 
-    STAMP, 
-    GRID, 
-    FLAG, 
-    HOST
+    OPENTRACE
 )
 from .field_widget_6_paint import FieldWidgetPaint
 

@@ -1,4 +1,3 @@
-import os
 
 from PySide6.QtWidgets import (
     QWidget,

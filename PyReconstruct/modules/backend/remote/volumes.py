@@ -11,7 +11,6 @@ def get_remote_vol(address: str,
     """Get remotely hosted volume as a CloudVolume cutout."""
 
     from cloudvolume import CloudVolume
-    from cloudvolume.volumecutout import VolumeCutout
 
     vol = CloudVolume(address, mip=0, use_https=True)
 

@@ -18,7 +18,6 @@ test_affine_align_guard) plus the real `Transform`, `changeTform`, and
 """
 import types
 
-import pytest
 
 from PyReconstruct.modules.gui.main import field_widget_4_data as fw
 from PyReconstruct.modules.datatypes import Transform

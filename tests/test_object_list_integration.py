@@ -24,7 +24,6 @@ from unittest import mock
 import pytest
 from PySide6.QtWidgets import (
     QApplication,
-    QTableWidget,
     QTableWidgetItem,
     QAbstractItemView,
 )

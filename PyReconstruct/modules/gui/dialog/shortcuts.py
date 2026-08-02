@@ -9,8 +9,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QKeySequenceEdit,
 )
-from PySide6.QtGui import QKeySequence, QAction, QShortcut
-from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence, QAction
 
 from PyReconstruct.modules.datatypes import Series
 from PyReconstruct.modules.gui.utils import notify

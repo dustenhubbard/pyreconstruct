@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import QDockWidget, QTextEdit, QWidget
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import Qt
 
 class TextWidget(QDockWidget):
 

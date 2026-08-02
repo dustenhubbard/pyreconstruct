@@ -1,10 +1,8 @@
 import re
-import os
 
 from PySide6.QtWidgets import (
     QTableWidgetItem, 
     QWidget, 
-    QInputDialog, 
     QMenu
 )
 from PySide6.QtCore import Qt
@@ -22,8 +20,6 @@ from PyReconstruct.modules.gui.utils import (
     notify
 )
 from PyReconstruct.modules.gui.dialog import (
-    TraceDialog,
-    ShapesDialog,
     QuickDialog,
     FileDialog
 )

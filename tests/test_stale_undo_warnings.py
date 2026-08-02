@@ -29,7 +29,6 @@ What these tests hold in place:
 Not covered here: whether the dialogs look right on screen. That needs a click.
 """
 import ast
-import os
 import pathlib
 import shutil
 import types

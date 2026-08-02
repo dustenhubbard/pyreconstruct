@@ -17,7 +17,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar,
-    QPushButton, QWidget,
+    QPushButton,
 )
 from PySide6.QtCore import Qt
 

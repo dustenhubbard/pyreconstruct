@@ -5,7 +5,6 @@ These tests exercise its save path (accept -> set), reset-to-default, the
 minimum-color floor, and that what it persists is exactly what the import
 preview and shuffle consume -- without opening real Qt dialogs.
 """
-import types
 
 import pytest
 

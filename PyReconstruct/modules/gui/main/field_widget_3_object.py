@@ -5,7 +5,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 
-from PyReconstruct.modules.datatypes import Transform
 from PyReconstruct.modules.gui.dialog import (
     QuickDialog,
     TraceDialog,
