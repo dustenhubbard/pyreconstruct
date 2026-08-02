@@ -10,17 +10,21 @@ on:
       - docs/**
       - mkdocs.yml
       - .github/workflows/docs.yml
+  pull_request:
+    paths:
+      - docs/**
+      - mkdocs.yml
+      - .github/workflows/docs.yml
   workflow_dispatch:
 
+# Least privilege at the workflow level. `build` now runs on `pull_request`
+# too, and its `mkdocs build` step installs and executes third-party code from
+# docs/requirements.txt, so it must not hold a write grant. `pages: read` stays
+# because `actions/configure-pages` reads the Pages configuration on push runs.
+# The two write grants live on `deploy`, which is the only job that publishes.
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-# Allow one concurrent deployment; don't cancel an in-progress one.
-concurrency:
-  group: pages
-  cancel-in-progress: false
+  pages: read
 
 jobs:
   build:
@@ -33,14 +37,38 @@ jobs:
           cache-dependency-glob: docs/requirements.txt
       # --no-project: the docs build must not sync the app's own (heavy) env.
       - run: uv run --no-project --with-requirements docs/requirements.txt mkdocs build --strict
+      # Skipped on `pull_request` only. A `workflow_dispatch` still builds and
+      # uploads the artifact, because manual dispatch is the escape hatch for
+      # redeploying the site without a docs change.
       - uses: actions/configure-pages@v6
+        if: github.event_name != 'pull_request'
       - uses: actions/upload-pages-artifact@v5
+        if: github.event_name != 'pull_request'
         with:
           path: site
 
   deploy:
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    # The write grants are scoped to this job rather than the workflow, so the
+    # `build` job never holds them while running third-party docs tooling.
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    # Serialize deployments and let an in-progress one finish. The group is a
+    # bare literal on purpose: every deployment targets the one Pages site, so
+    # they must share a lane whatever the ref. It sits on this job rather than
+    # the workflow because a workflow-level `pages` group would also hold every
+    # `pull_request` build, and a newly queued PR run cancels a *pending*
+    # deploy (`cancel-in-progress: false` protects only an in-progress one).
+    # A cancelled run is not a failed run, so the site would go stale with no
+    # red check anywhere. Compare build-installers.yml, which records a real
+    # outage from the same class of under-scoped group.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
