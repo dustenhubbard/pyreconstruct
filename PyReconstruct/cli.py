@@ -43,6 +43,7 @@ def main():
 
     parser = argparse.ArgumentParser(description='Open a jser file in PyReconstruct')
 
+    parser.add_argument('path', nargs='?', metavar='file.jser', default=None, help='The jser file to open')
     parser.add_argument('-f', '--filename', type=str, required=False, default=None, help='The file path for the jser')
     parser.add_argument('-u', '--update', action='store_true', help='Update PyReconstruct')
     parser.add_argument('-b', '--branch', action='store_true', help='Show current branch')
@@ -74,9 +75,36 @@ def main():
 
     else:
 
-        open_file(args.filename)
+        open_file(resolve_jser_path(parser, args))
+
+def resolve_jser_path(parser, args):
+    """The jser to open, from the positional argument or from -f/--filename.
+
+    The positional form is what a shell user types and what a desktop entry's
+    %f produces, so it is the one the app should answer to. -f came first and
+    stays: the Linux installer writes a launcher that translates a single
+    non-flag argument into -f, and every already-installed copy of that
+    launcher keeps working until its owner re-runs the installer.
+
+    Naming the same file both ways is accepted. Naming two different files is a
+    mistake, and picking one of them silently would open the wrong series.
+    """
+    positional, flag = args.path, args.filename
+
+    if positional is not None and flag is not None and Path(positional) != Path(flag):
+        parser.error("give the jser path once, either positionally or with -f/--filename")
+
+    return positional if positional is not None else flag
 
 def open_file(filename):
+    # A path that does not exist reaches MainWindow, which falls back to the
+    # welcome series without a word (main_window.py: `if filename and
+    # Path(filename).exists()`). For a mistyped argument that means a launched
+    # app, no series, and no explanation of why. Say so here instead, while
+    # there is still a console to say it on and before Qt starts.
+    if filename is not None and not Path(filename).exists():
+        print(f"File not found: {filename}")
+        sys.exit(1)
     try:
         from PyReconstruct.run import runPyReconstruct
         runPyReconstruct(filename)
