@@ -13,6 +13,7 @@ QApplication exists.
 import os
 import sys
 import datetime
+import traceback
 from pathlib import Path
 
 LOG_FILENAME = "pyreconstruct.log"
@@ -139,6 +140,45 @@ def _version_str() -> str:
         return current_version_str()
     except Exception:
         return "?"
+
+
+def log_note(message: str) -> None:
+    """Write one timestamped line to the log (best-effort, never raises).
+
+    Goes through ``sys.stderr`` rather than reopening the log file, so it lands
+    in whatever ``install_file_logging`` teed the stream to. That is the log file
+    in the packaged app, the terminal in a source run, and pytest's capture under
+    test -- which is the property that lets startup code log without a test suite
+    appending to the developer's real log.
+
+    For the startup conveniences that deliberately swallow their own failures.
+    Something that only ever writes on failure cannot distinguish "it worked"
+    from "it never ran", and that is exactly the state the What's-new startup
+    hook left behind: no dialog, no traceback, and no way to tell which step
+    declined. One line per outcome makes the absence readable.
+    """
+    try:
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        stamp = "?"
+    try:
+        print(f"[{stamp}] {message}", file=sys.stderr)
+    except Exception:
+        pass
+
+
+def log_exception(context: str) -> None:
+    """Write ``context`` plus the current traceback to the log. Never raises.
+
+    Call from an ``except`` block that goes on to swallow the exception, so the
+    failure is recoverable from the log afterwards instead of only being
+    noticeable as an absence.
+    """
+    log_note(context)
+    try:
+        traceback.print_exc(file=sys.stderr)
+    except Exception:
+        pass
 
 
 def read_log_tail(max_bytes: int = 200_000) -> str:
