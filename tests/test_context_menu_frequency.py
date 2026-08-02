@@ -193,8 +193,11 @@ def _top_level(menu):
 # 1. field menu (2D field right-click)
 # --------------------------------------------------------------------------- #
 FIELD_TOP_LEVEL = [
-    # top strip: exactly the four shortcut-bearing trace actions
+    # top strip: the dynamic edit item, the object-attributes row added beside
+    # it 2026-08-01 (see test_edit_object_attributes_is_row_two_of_the_top_strip
+    # for the request it answers), then the three shortcut-bearing trace actions
     "Edit attributes...",
+    "Edit object attributes...",
     "Merge traces",
     "Merge attributes only",
     "Hide selected traces",
@@ -227,13 +230,17 @@ def test_field_menu_top_level_layout():
     assert _top_level(_field_menu()) == FIELD_TOP_LEVEL
 
 
-def test_field_top_strip_is_exactly_four_actions():
-    """Approved as four: the dynamic edit item plus merge / merge-attrs / hide.
-    Smooth and Make negative/positive were deliberately NOT hoisted."""
+def test_field_top_strip_is_exactly_five_actions():
+    """Four until 2026-08-01, when "Edit object attributes..." joined them.
+
+    The other four are unchanged and in their original order: the dynamic edit
+    item plus merge / merge-attrs / hide. Smooth and Make negative/positive were
+    deliberately NOT hoisted and still are not.
+    """
     rows = _top_level(_field_menu())
     strip = rows[: rows.index("-----")]
     assert strip == [
-        "Edit attributes...", "Merge traces",
+        "Edit attributes...", "Edit object attributes...", "Merge traces",
         "Merge attributes only", "Hide selected traces",
     ]
     # "Smooth traces" until 2026-07-31, when the label gained its scope; the
@@ -241,6 +248,61 @@ def test_field_top_strip_is_exactly_four_actions():
     assert "Smooth selected traces" not in strip
     assert "Make negative" not in strip
     assert "Make positive" not in strip
+
+
+def test_edit_object_attributes_is_row_two_of_the_top_strip():
+    """A beta-5 tester asked for "Edit object attributes..." at the top level
+    "beside Edit trace attributes...". Row 1 carries exactly that label whenever
+    traces are selected (checkActions relabels editselected_act), so beside it
+    means directly under it.
+    """
+    menu = _field_menu()
+    assert [e[0] for e in menu[:2] if isinstance(e, tuple)] == [
+        "editselected_act", "editobjattrs_act",
+    ]
+    assert menu[1][1] == "Edit object attributes..."
+
+
+def test_edit_object_attributes_calls_the_field_object_handler():
+    """It must fire the object-attributes handler on the FIELD, whose
+    object_function wrapper resolves the target objects from the selected traces
+    (or the focused object list). No new resolution rule is introduced here.
+    """
+    calls = []
+    field = _FieldStub()
+    field.editAttributes = lambda *a, **k: calls.append("editAttributes")
+    main_window = _Anything(series=field.series, field=field)
+
+    row = next(e for e in get_field_menu_list(main_window)
+               if isinstance(e, tuple) and e[0] == "editobjattrs_act")
+    row[3]()
+    assert calls == ["editAttributes"]
+
+    # the same handler the object menu's own copy is wired to
+    obj_row = next(e for e in field.getObjMenu()
+                   if isinstance(e, tuple) and e[0] == "editobjattribtues_act")
+    assert obj_row[3] is field.editAttributes
+
+
+def test_edit_object_attributes_carries_no_shortcut():
+    """Two actions sharing one key is an ambiguous binding, which Qt answers by
+    firing neither. Neither copy of this action has ever had one; keep it that
+    way."""
+    kbds = _kbds(_field_menu())
+    assert kbds["editobjattrs_act"] == ""
+    assert kbds["editobjattribtues_act"] == ""
+
+
+def test_edit_object_attributes_is_gated_by_the_trace_selection():
+    """The objects it edits are the ones owning the selected traces, so it needs
+    its own entry in MainWindow.trace_actions -- at top level nothing else
+    disables it (the "Object >" copy rides on objectmenu)."""
+    import inspect
+    from PyReconstruct.modules.gui.main.main_window import MainWindow
+
+    src = inspect.getsource(MainWindow.createContextMenus)
+    gating = src.split("self.trace_actions = [")[1].split("]")[0]
+    assert "self.editobjattrs_act" in gating
 
 
 def test_field_view_submenu_is_untouched():
