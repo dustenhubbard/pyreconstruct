@@ -128,9 +128,9 @@ def test_the_settings_store_seam_is_isolated():
 
 def test_the_default_store_helpers_are_isolated():
     """`constants.getdatetime` reads the global "utc" option through
-    `default_settings_store()`, a module-level cache separate from the one in
-    `datatypes/series.py`. Both have to be isolated, and neither is reached by
-    injecting a store into a `Series`.
+    `default_settings_store()`, and `Series.getOption` falls back on
+    `datatypes/series.py`'s `_default_settings_store()`. Both have to be
+    isolated, and neither is reached by injecting a store into a `Series`.
     """
     _require_isolated()
     from PyReconstruct.modules.backend.settings_store import default_settings_store
@@ -138,6 +138,86 @@ def test_the_default_store_helpers_are_isolated():
 
     for store in (default_settings_store(), _default_settings_store()):
         assert _under_root(store._settings(None).fileName())
+
+
+def test_overriding_the_default_store_reaches_getOption_too():
+    """One `set_default_settings_store()` call closes the whole seam.
+
+    Backlog item: "the undo harness's settings seam only closes one of two
+    stores". `datatypes/series.py` used to keep a second module-level cache of
+    its own, so `set_default_settings_store()` -- the documented way to redirect
+    settings -- reached `constants.getdatetime` and did *not* reach
+    `Series.getOption`, which is the route with 215 call sites. The measurement
+    harness that hit this closed the sanctioned seam, believed itself isolated,
+    and had every `getOption` still resolving the real
+    `QSettings("KHLab", "PyReconstruct")` store. It went unnoticed only because
+    it passed `log_event=False` everywhere and so never called `addLog` ->
+    `series.user` -> `getOption`.
+
+    Asserting on the store object rather than on a completed write, so this test
+    states the invariant without performing the write that would prove it the
+    unpleasant way. `getOption` writes the default back when a key is absent, so
+    a read through a missed seam is a write.
+    """
+    from PyReconstruct.modules.backend.settings_store import (
+        DictSettingsStore, default_settings_store, set_default_settings_store,
+    )
+    from PyReconstruct.modules.datatypes import Series
+    from PyReconstruct.modules.datatypes.series import _default_settings_store
+
+    original = default_settings_store()
+    injected = DictSettingsStore()
+
+    # No __init__: resolving the store must not need a series on disk, and this
+    # keeps the test from reading or writing anything at all.
+    series = Series.__new__(Series)
+    series.options = {}
+    series.code = "seamprobe"
+
+    try:
+        set_default_settings_store(injected)
+        assert _default_settings_store() is injected
+        assert series._settingsStore() is injected, (
+            "Series.getOption still resolves a store that "
+            "set_default_settings_store() did not close"
+        )
+    finally:
+        set_default_settings_store(original)
+
+    assert _default_settings_store() is original
+    assert series._settingsStore() is original
+
+
+def test_a_series_injected_store_still_wins_over_the_default():
+    """Closing the seam must not flatten the two scopes into one.
+
+    `setSettingsStore` is per-series and has to keep taking precedence over the
+    process-wide default; `local_series_settings` and a dozen tests depend on
+    it. A fix that made `getOption` read the global default unconditionally
+    would pass the test above and break every one of those.
+    """
+    from PyReconstruct.modules.backend.settings_store import (
+        DictSettingsStore, default_settings_store, set_default_settings_store,
+    )
+    from PyReconstruct.modules.datatypes import Series
+
+    original = default_settings_store()
+    process_wide = DictSettingsStore()
+    per_series = DictSettingsStore()
+
+    series = Series.__new__(Series)
+    series.options = {}
+    series.code = "seamprobe"
+
+    try:
+        set_default_settings_store(process_wide)
+        series.setSettingsStore(per_series)
+        assert series._settingsStore() is per_series
+
+        series.setSettingsStore(None)   # documented way back to the default
+        assert series._settingsStore() is process_wide
+    finally:
+        set_default_settings_store(original)
 
 
 def test_the_series_user_setter_is_isolated():
