@@ -20,8 +20,8 @@ The University of Texas at Austin) and the in-app **Help ▸ Shortcuts list**.
 
 > **Shortcuts.** Key combinations shown here are the **defaults**. Almost all of
 > them are rebindable under **Help ▸ Shortcuts list** (press `?`). A few menu
-> shortcuts are fixed: `PgUp`/`PgDown` (section navigation), `Home` (fit view),
-> `Ctrl+\` (align by correlation), and `?` (the shortcuts list itself).
+> shortcuts are fixed: `PgUp`/`PgDown` (section navigation), `Ctrl+\` (align by
+> correlation), and `?` (the shortcuts list itself).
 
 ---
 
