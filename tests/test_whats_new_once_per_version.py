@@ -280,6 +280,35 @@ def test_startup_shows_the_notes_once_per_version_in_the_real_window(
     assert main_window._whatsnew_dialog is None
 
 
+def test_the_main_window_fixture_closes_the_gate_before_the_startup_timer(
+    main_window
+):
+    """No test gets this dialog by accident, whatever the 750 ms timer does.
+
+    `MainWindow.__init__` schedules `showWhatsNewStartup` on a 750 ms timer, and
+    the session's redirected settings store starts empty, so on an unprepared
+    window that handler is due. Teardown only calls `deleteLater()`, so the
+    timer outlives the test that built the window often enough to matter, and
+    the modeless dialog it opens then becomes `QApplication.activeWindow()` in
+    the middle of some later test: `Qt::WindowShortcut` stops resolving to the
+    `MainWindow` and any popup showing at that moment is dismissed. That cost
+    `tests/test_menu_stays_open_on_toggle.py` 15 of 30 full-file runs, in three
+    different tests, none of which reproduced in isolation.
+
+    The fixture records the running version as already seen, so this asserts on
+    the gate rather than on the timer: due-ness is deterministic, the timer is
+    not.
+    """
+    from PySide6.QtCore import QSettings
+
+    settings = QSettings(W.ORG, W.APP)
+
+    assert settings.value(F.WHATSNEW_KEY) == W.current_version_str()
+    assert W.whats_new_due(settings.value(F.WHATSNEW_KEY), W.current_version_str()) is False
+
+    main_window._whatsnew_dialog = None
+    main_window.showWhatsNewStartup()
+    assert main_window._whatsnew_dialog is None
 # ---- the log line that makes an absence readable -----------------------------
 #
 # The startup hook swallows its own failures on purpose, so nothing must be able

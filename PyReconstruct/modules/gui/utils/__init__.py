@@ -1,6 +1,8 @@
 from .utils import (
     get_screen_info,
     MenuShortcutSpacingStyle,
+    KeepMenuOpenOnToggle,
+    keepMenuOpenOnToggle,
     newMenu,
     newAction,
     newQAction,

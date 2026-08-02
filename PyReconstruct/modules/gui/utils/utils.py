@@ -25,7 +25,7 @@ from PySide6.QtGui import (
     QFont,
     QScreen
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QEvent, QObject
 
 from PyReconstruct.modules.constants import welcome_series_dir
 
@@ -175,6 +175,98 @@ class MenuShortcutSpacingStyle(QProxyStyle):
         return size
 
 
+class KeepMenuOpenOnToggle(QObject):
+    """Keep a menu on screen when one of its checkable rows is toggled.
+
+    Qt closes a menu on any activation: QMenu's mouse release handler calls
+    QMenuPrivate::activateAction, which calls hideUpToMenuBar() before the
+    action is triggered, and it makes no distinction between a command ("Save
+    as...", which is finished once it has run) and a toggle ("Hide image", which
+    is one of a set the user is usually setting together). Setting three of the
+    four View > Palette > Visibility boxes therefore cost twelve interactions:
+    three menus to walk down, one click, and the whole descent again. In the
+    field's right-click menu it is worse, because reopening a context menu means
+    finding somewhere safe to right-click again.
+
+    So the release is intercepted before QMenu sees it, and a checkable action
+    is triggered by hand instead. QAction.trigger() on a checkable action flips
+    checked and emits triggered(checked), which is exactly what activateAction
+    would have produced -- the handlers are connected to `triggered`, so they
+    run unchanged and with the same argument -- minus the hide.
+
+    Everything else is deliberately left to Qt by returning False:
+
+      * a non-checkable row still closes the menu, because it is a command;
+      * a *disabled* checkable row is ignored, matching Qt (it never becomes the
+        current action, so a click on it does nothing and closes nothing);
+      * a click that is not on a row (the frame, a separator, outside the menu)
+        falls through, so clicking away still dismisses;
+      * every key event falls through, so Esc still closes, arrow keys still
+        navigate, and a keyboard shortcut still reaches its handler by the
+        ordinary route (no menu is open in that case anyway);
+      * a non-left button falls through, which keeps the platform rules for
+        which buttons activate a menu row where Qt put them.
+
+    The filter is stateless and holds no reference to anything, so one instance
+    is installed on every menu that needs it (see keepMenuOpenOnToggle).
+
+    The alternative -- wrapping each toggle in a QWidgetAction holding a
+    QCheckBox -- was rejected: it swaps the platform's own menu-item painting
+    for an embedded widget, which changes how these rows look and how they
+    highlight, and this change is meant to be behavior-only.
+    """
+
+    def eventFilter(self, watched, event):
+        if event.type() != QEvent.Type.MouseButtonRelease:
+            return False
+
+        if not isinstance(watched, QMenu):
+            return False
+
+        if event.button() != Qt.MouseButton.LeftButton:
+            return False
+
+        action = watched.actionAt(event.position().toPoint())
+
+        if action is None or not action.isCheckable() or not action.isEnabled():
+            return False
+
+        action.trigger()
+
+        return True
+
+
+_keep_menu_open_filter = None
+
+
+def keepMenuOpenOnToggle(menu):
+    """Make `menu` keep itself open when a checkable row in it is toggled.
+
+    Called by newAction the moment it makes an action checkable, so every menu
+    built through the shared builder gets this for free and no individual menu
+    definition has to opt in. That is the whole point: the toggles the user
+    complained about live in two different files (the View > Palette >
+    Visibility group in `main/menubar.py` and the field right-click menu's
+    visibility group in `main/context_menu_list.py`), and one change in the
+    builder covers both, plus every other toggle the builder makes.
+
+    Idempotent by construction. Installing the same filter object twice is
+    harmless (Qt moves it to the front of the list rather than adding a second
+    entry), so a menu with four checkable rows needs no bookkeeping. Qt also
+    removes a destroyed menu from the filter's watch list on its own, which is
+    why the single module-level instance can outlive any number of menus.
+    """
+    global _keep_menu_open_filter
+
+    if not isinstance(menu, QMenu):
+        return
+
+    if _keep_menu_open_filter is None:
+        _keep_menu_open_filter = KeepMenuOpenOnToggle()
+
+    menu.installEventFilter(_keep_menu_open_filter)
+
+
 def newMenu(widget : QWidget, container, menu_dict : dict):
     """Create a menu.
     
@@ -236,6 +328,13 @@ def newAction(widget : QWidget, container : QMenu, action_tuple : tuple):
     else:  # assume series was passed in
         action.setShortcut(kbd.getOption(act_name))
 
+    # A checkable row is a persistent on/off state, and states get set in
+    # groups, so toggling one must not dismiss the menu the next one is in.
+    # Asked of the action rather than of the kbd argument, so both spellings of
+    # "checkbox" above are covered by the one question.
+    if action.isCheckable():
+        keepMenuOpenOnToggle(container)
+
     # remove previous action
     if act_name in dir(widget):
         widget.removeAction(getattr(widget, act_name))
@@ -254,6 +353,12 @@ def newQAction(widget : QWidget, container : QMenu, action : QAction):
             action (QAction): the action to add to the menu
     """
     container.addAction(action)
+
+    # same rule as newAction: a toggle keeps its menu open. Nothing in the app
+    # currently reaches this branch with a checkable action, but the rule is a
+    # property of checkable menu rows, not of one of the two ways to make one.
+    if action.isCheckable():
+        keepMenuOpenOnToggle(container)
 
 
 def addItem(widget : QWidget, container, item):
