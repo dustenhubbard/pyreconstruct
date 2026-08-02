@@ -194,6 +194,11 @@ class DialogRecorder:
             successive ``QuickDialog.get()`` callers. Empty means "the user
             cancelled", which is the safe default -- a test that forgets to
             script a dialog gets a no-op, not an exception and not a hang.
+        linked_undo_responses (list): queue of ``"all"`` / ``"section"`` /
+            ``"cancel"`` answers handed to successive ``linkedUndoNotify()``
+            callers, following the same pattern as ``responses``. Empty means
+            "cancel", so an undo that unexpectedly reaches the prompt is a
+            no-op a test can assert on rather than a silent scope change.
         undo_warning_accepted (bool): what ``noUndoWarning()`` returns.
     """
 
@@ -210,6 +215,8 @@ class DialogRecorder:
         self.unsaved_prompts = 0
         self.message_boxes = []
         self.message_box_response = None
+        self.linked_undo_responses = []
+        self.linked_undo_prompts = 0
 
     def notify(self, message, *args, **kwargs):
         self.notices.append(message)
@@ -242,6 +249,13 @@ class DialogRecorder:
     def unsavedNotify(self, *args, **kwargs):
         self.unsaved_prompts += 1
         return False
+
+    def linkedUndoNotify(self, *args, **kwargs):
+        """Stand-in for the "all sections or only this one?" undo prompt."""
+        self.linked_undo_prompts += 1
+        if self.linked_undo_responses:
+            return self.linked_undo_responses.pop(0)
+        return "cancel"
 
     def messageBox(self, *args, **kwargs):
         """Stand-in for the QMessageBox statics. Records (title, text)."""
@@ -555,15 +569,24 @@ def main_window_dialogs(monkeypatch):
 
     The construction path no longer needs this (see the note above), but a test
     that *drives* a menu action does: `main_window.py` binds `notify`,
-    `notifyConfirm`, `saveNotify`, `unsavedNotify`, `noUndoWarning` and
-    `getProgbar` into its own namespace, and calls `QMessageBox`, `QInputDialog`,
-    `QuickDialog` and `FileDialog` directly.
+    `notifyConfirm`, `saveNotify`, `unsavedNotify`, `linkedUndoNotify`,
+    `noUndoWarning` and `getProgbar` into its own namespace, and calls
+    `QMessageBox`, `QInputDialog`, `QuickDialog` and `FileDialog` directly.
 
     Offscreen, `notify` and `notifyConfirm` now fall through to their console
     branch, whose `input()` raises under pytest's capture and *hangs* under
     `-s`. The rest are raw modals with no offscreen branch at all
     (`saveNotify` and `unsavedNotify` included) and stall outright. Recording
     what would have been shown is also more useful to assert on.
+
+    Note what patching by name can and cannot reach. Everything in the loop
+    below is a module-level name `main_window.py` imported, so rebinding it on
+    `mw` reaches every call. A `QMessageBox` *constructed inside a method* is
+    neither that nor a static, and no entry here touches it: the linked-undo
+    prompt used to be one, which is why it stalled offscreen no matter what
+    this fixture replaced. It is now `linkedUndoNotify` in `gui/utils/utils.py`
+    for that reason, and a test scripts it through
+    `recorder.linked_undo_responses`.
     """
     from PySide6.QtWidgets import QInputDialog, QMessageBox
 
@@ -577,6 +600,7 @@ def main_window_dialogs(monkeypatch):
         ("notifyConfirm", recorder.notifyConfirm),
         ("saveNotify", recorder.saveNotify),
         ("unsavedNotify", recorder.unsavedNotify),
+        ("linkedUndoNotify", recorder.linkedUndoNotify),
         ("noUndoWarning", recorder.noUndoWarning),
         ("getProgbar", recorder.progbar),
     ):
