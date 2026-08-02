@@ -705,3 +705,48 @@ def test_isolation_needs_the_suite_conftest_to_be_active():
     assert result.returncode == 0, result.stderr
     assert "CLASSNAME QSettings" in result.stdout, result.stdout
     assert "Isolated" not in result.stdout
+
+
+def test_the_interactive_profiler_redirects_qsettings_by_domain():
+    """`benchmarks/profile_interactive.py` runs outside pytest, so nothing in
+    this directory protects it. It has to redirect on its own.
+
+    It used to set `XDG_CONFIG_HOME` and state in its docstring that the real
+    user settings were "never read or written". That is false on macOS for the
+    same measured reason `HOME=` is: the two-argument `QSettings(org, app)`
+    constructor stays `NativeFormat` and goes through the platform store, which
+    ignores `XDG_CONFIG_HOME` entirely. The script drives the real render loop,
+    `Series.getOption` writes the default back on a miss, so every profiling run
+    on macOS wrote the developer's own preferences.
+
+    Source-level rather than behavioral: importing the module builds a scratch
+    directory and pulls in Qt, and the property worth pinning is that the
+    redirect is still there at all. A profiler that quietly loses it looks
+    exactly like one that still has it.
+    """
+    profiler = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "benchmarks", "profile_interactive.py",
+    )
+    with open(profiler) as f:
+        source = f.read()
+
+    assert "QtCore.QSettings = " in source, (
+        "profile_interactive.py no longer rebinds QSettings; it has no other "
+        "protection, since tests/qsettings_isolation.py never loads for it"
+    )
+    assert "SCRATCH_ORG" in source and "SCRATCH_APP" in source
+
+    # The old mechanism must not come back. Matched as an assignment, not as the
+    # bare name: the module explains at length why the name does not work, and a
+    # test that forbids the word would forbid the explanation.
+    for setter in ('os.environ["XDG_CONFIG_HOME"] =',
+                   "os.environ['XDG_CONFIG_HOME'] =",
+                   'os.environ.setdefault("XDG_CONFIG_HOME"',
+                   'os.environ["HOME"] =',
+                   "setDefaultFormat("):
+        assert setter not in source, (
+            f"{setter} is back in profile_interactive.py. It does not redirect "
+            "QSettings on macOS; it is on the list of scoping that looks like "
+            "it worked and did not."
+        )
