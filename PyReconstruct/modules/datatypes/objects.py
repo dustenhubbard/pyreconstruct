@@ -154,7 +154,7 @@ class SeriesObject():
     @property
     def opacity_3D(self):
         return self.series.getAttr(self.name, "3D_opacity")
-    @mode_3D.setter
+    @opacity_3D.setter
     def opacity_3D(self, value):
         return self.series.setAttr(self.name, "3D_opacity", value)
     
@@ -164,28 +164,28 @@ class SeriesObject():
         return self.series.getAttr(self.name, "last_user")
     @last_user.setter
     def last_user(self, value):
-        self.series.getAttr(self.name, "last_user", value)
+        self.series.setAttr(self.name, "last_user", value)
     
     @property
     def curation(self):
         return self.series.getAttr(self.name, "curation")
     @curation.setter
     def curation(self, value):
-        self.series.getAttr(self.name, "curation", value)
+        self.series.setAttr(self.name, "curation", value)
     
     @property
     def comment(self):
         return self.series.getAttr(self.name, "comment")
     @comment.setter
     def comment(self, value):
-        self.series.getAttr(self.name, "comment", value)
+        self.series.setAttr(self.name, "comment", value)
     
     @property
     def alignment(self):
         return self.series.getAttr(self.name, "alignment")
     @alignment.setter
     def alignment(self, value):
-        self.series.getAttr(self.name, "alignment", value)
+        self.series.setAttr(self.name, "alignment", value)
         self.series.data.refresh()  # refresh the series data
     
     @property
