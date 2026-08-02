@@ -170,7 +170,7 @@ class AllOptionsDialog(QDialog):
         self.addOptionWidget("pointer", structure, setOption)
 
         # trace
-        trace_mode = self.series.getOption("trace_mode")
+        trace_mode = self.series.getOption("trace_mode", use_defaults)
         structure = [
             ["Mode:"],
             [("radio",
@@ -198,7 +198,7 @@ class AllOptionsDialog(QDialog):
             ["Element size:", ("float", w), ("float", h)],
             ["Distance:", ("float", dx), ("float", dy)],
             ["Number", ("int", nx), ("int", ny)],
-            [("check", ("Sampling frame", self.series.getOption("sampling_frame_grid")))]
+            [("check", ("Sampling frame", self.series.getOption("sampling_frame_grid", use_defaults)))]
         ]
         def setOption(response):
             self.series.setOption("grid", response[:6])
@@ -268,8 +268,8 @@ class AllOptionsDialog(QDialog):
                 ("Mutable Diffusion Laplacian", opt == "mut_dif_laplacian"),
                 ("Taubin", opt == "taubin"),
                 ("None (least smooth)", opt == "none"))],
-            ["Smoothing iterations:", ("int", self.series.getOption("smoothing_iterations"))],
-            ["Screenshot resolution (dpi):", ("int", self.series.getOption("screenshot_res"))],
+            ["Smoothing iterations:", ("int", self.series.getOption("smoothing_iterations", use_defaults))],
+            ["Screenshot resolution (dpi):", ("int", self.series.getOption("screenshot_res", use_defaults))],
             [("check", ("Auto-refresh edited objects", self.series.getOption("3D_auto_refresh", use_defaults)))]
         ]
 
@@ -290,8 +290,8 @@ class AllOptionsDialog(QDialog):
         self.addOptionWidget("smoothing_3D", structure, setOption)
 
         ## Theme opts
-        
-        theme = self.series.getOption("theme")
+
+        theme = self.series.getOption("theme", use_defaults)
         
         structure = [
             ["Theme:"],
@@ -396,7 +396,7 @@ class AllOptionsDialog(QDialog):
         # series_code
         structure = [
             ["Series code:", ("text", self.series.code)],
-            ["Default series code regex: ", ("text", self.series.getOption("series_code_pattern"))]
+            ["Default series code regex: ", ("text", self.series.getOption("series_code_pattern", use_defaults))]
         ]
         def setOption(response):
             self.series.code = response[0]
