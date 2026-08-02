@@ -818,7 +818,32 @@ class Series():
             progress += 1
             reporter.set_progress(progress/final_value * 100)
 
-            # continue saving the existing log file
+            # The series history: this session's entries appended to everything
+            # the file already carried, written as one string under "log".
+            #
+            # The .jser audit filed this as "one unbounded escaped string ...
+            # growing monotonically until exported". It does grow monotonically,
+            # and that is DELIBERATELY LEFT AS IS, for two measured reasons.
+            #
+            # It is slow. On a real 276-section series, one simulated hour of
+            # dense tracing (600 edits, the same workload as the undo-stack
+            # measurement) adds 25.0-46.3 KB, the range spanning full LogSet
+            # coalescing to none. Per hour that is ~1/85th of what the undo
+            # stacks take in memory over the same hour, and the corpus's own
+            # four months of real work by a real user amount to 60,379 B -- one
+            # eighth of one percent of the 51 MB file.
+            #
+            # And it is already rotatable. LogSet.exportLogHistory offloads
+            # entries older than N days to an external CSV and rewrites
+            # existing_log.csv with the remainder; the GUI exposes it as
+            # MainWindow.exportLog. So the audit's own "until exported" names a
+            # feature, not a gap.
+            #
+            # Truncating it here instead would discard user history, which is
+            # the one thing this string must not do: LogSet is the series-level
+            # record and a superset of the per-trace history field. If the rate
+            # ever needs revisiting, measure it -- do not cap it silently.
+            # See measurements/log_string_growth.py in the notes repo.
             existing_log_fp = os.path.join(self.hidden_dir, "existing_log.csv")
             if os.path.isfile(existing_log_fp):
                 with open(existing_log_fp, "r", encoding="utf-8", errors="replace") as f:
