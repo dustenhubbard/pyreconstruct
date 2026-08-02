@@ -331,11 +331,21 @@ class TraceTableWidget(DataTable):
     
     def createTable(self, section : Section):
         """Create the table.
-        
+
+        ``self.rows`` is indexed by table row and is discarded here for the
+        same reason ``FlagTableWidget.displayed_flags`` is: the rebuild sizes a
+        brand-new table to the filtered traces and ``setRow`` only overwrites
+        rows 0..N-1, so a rebuild that shrinks the table (a filter, or a
+        section change through ``TableManager.changeSection``) left the entries
+        past N pointing at rows that no longer exist. They were unreachable --
+        every read indexes a live row -- but they held TraceData alive for
+        traces the list no longer shows.
+
             Params:
                 section (Section): the section the table is displaying data for
         """
         self.section = section
+        self.rows = []
         super().createTable()
     
     def itemChanged(self, item : QTableWidgetItem):

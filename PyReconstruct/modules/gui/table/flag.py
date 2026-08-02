@@ -151,9 +151,25 @@ class FlagTableWidget(DataTable):
             items.append(QTableWidgetItem(comment))
         return items
     
+    def createTable(self):
+        """Rebuild the table, discarding the previous row -> flag map.
+
+        ``displayed_flags`` is indexed by table row. ``DataTable.createTable``
+        builds a brand-new table sized to the filtered flags and then calls
+        ``setRow`` for rows 0..N-1 only, so a rebuild that SHRINKS the table
+        (any of the filters, or turning "Display resolved flags" back off) used
+        to overwrite the first N entries and leave the rest in place. Every
+        read is an indexed lookup at a live row, so the stale tail was
+        unreachable, but it kept Flag objects -- including ones since deleted
+        -- alive for as long as the list stayed open, and the list only ever
+        grew. Clearing here ties its lifetime to the table's.
+        """
+        self.displayed_flags = []
+        super().createTable()
+
     def setRow(self, flag : Flag, row : int, resize=True):
         """Set the data for a row of the table.
-        
+
             Params:
                 name (str): the name of the object
                 row (int): the row to enter this data into
