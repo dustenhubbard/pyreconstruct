@@ -221,5 +221,11 @@ def customExcepthook(exctype, value, tb):
     except Exception:
         pass
 
-    lead = f"<b>An error occurred:</b><br><br>{html.escape(str(value))}"
+    # Line breaks are kept, the way show_save_error keeps them: an exception
+    # whose message is several lines (the malformed-option errors from
+    # Series.getOption spell out the expected shape and the fix on their own
+    # lines) otherwise arrives as one run-on paragraph, because the summary is
+    # rich text and a bare newline is whitespace there.
+    message = html.escape(str(value)).replace("\n", "<br>")
+    lead = f"<b>An error occurred:</b><br><br>{message}"
     show_error_report(_standard_summary(lead), report)

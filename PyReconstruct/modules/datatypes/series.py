@@ -45,6 +45,60 @@ class SeriesSaveError(Exception):
     """
 
 
+class SeriesOptionError(Exception):
+    """Raised when an option read from the series file has the wrong shape."""
+
+
+def _checkColumnsOption(option_name : str, value):
+    """Raise if a ``*_columns`` option is not a list of (name, shown) pairs.
+
+    The table widgets do ``dict(columns)`` and ``for name, shown in columns``
+    straight off the stored value, so a malformed one does not fail here: it
+    fails several frames later with ``dictionary update sequence element #0 has
+    length 1; 2 is required`` or ``'dict' object has no attribute 'append'``,
+    neither of which names the option, the file, or the fix. These options are
+    written verbatim into the .jser, and the .jser is meant to be hand-editable,
+    so a typo in one is a shape a user can actually produce.
+
+    Checking the shape rather than only the type is the point. A flat
+    ``["Thickness", "Locked"]`` passes ``type(value) is list`` and still crashes
+    ``dict(columns)``, so a type-only check would move the error message without
+    covering the case.
+
+    Pairs are compared loosely: in memory they are tuples, and a jser round-trip
+    turns every one of them into a list.
+
+        Params:
+            option_name (str): the name of the option being read
+            value: the stored value to check
+        Raises:
+            SeriesOptionError: if `value` is not a list of (name, shown) pairs
+    """
+    def _bad(problem : str):
+        shown = repr(value)
+        if len(shown) > 200:
+            shown = shown[:200] + "..."
+        raise SeriesOptionError(
+            f'The series option "{option_name}" is malformed, so the list that '
+            f"uses it cannot be built.\n\n"
+            f"Expected a list of [column name, shown] pairs, for example "
+            f'[["Thickness", true], ["Locked", false]].\n'
+            f"Problem: {problem}.\n"
+            f"Value: {shown}\n\n"
+            f'Fix or delete the "{option_name}" entry under "options" in the '
+            f"series file. Deleting it restores the built-in default."
+        )
+
+    if not isinstance(value, list):
+        _bad(f"the value is a {type(value).__name__}, not a list")
+    for i, pair in enumerate(value):
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            _bad(f"entry {i} is not a [column name, shown] pair")
+        if not isinstance(pair[0], str):
+            _bad(
+                f"entry {i} has a {type(pair[0]).__name__} where the column "
+                f"name should be"
+            )
 def contourNameCollisions(jser_data : dict) -> dict:
     """Find the object names a load would fold together, without loading.
 
@@ -1124,8 +1178,34 @@ class Series():
             "small_dist"       : 0.01,  # MFO
             "med_dist"         : 0.1,  # MFO
             "big_dist"         : 1,  # MFO
+
+            # Last-used autosegmentation job parameters, kept so the train,
+            # predict and segment dialogs open on the values the previous run
+            # used. Audited twice for "stale parameters are never pruned" and
+            # left alone both times, so the reasoning is recorded here rather
+            # than re-derived a third time, and pinned by
+            # tests/test_autoseg_options_retained.py:
+            #
+            #  - Reuse is the feature, not the defect. The three dialogs read
+            #    this bag only to prefill their fields.
+            #  - It cannot grow without bound. The three writers set a fixed
+            #    17 keys between them, all scalars or short lists, so a fully
+            #    populated bag is about 400 bytes and stays that size.
+            #  - Nothing writes it today. Every caller has been commented out
+            #    since 2024 ("AUTOSEG FUNCTIONS TEMPORARILY REMOVED" in
+            #    gui/main/main_window.py), so a current session adds nothing.
+            #
+            # Pruning it would therefore save a few hundred bytes in old files
+            # and throw away the parameters the dialogs want back on the day
+            # autosegmentation is restored.
+            #
+            # One note for whoever restores it: the commented callers mutate
+            # `series.options["autoseg"]` in place rather than going through
+            # `setOption`. That only works while `getOption` hands back the
+            # stored dict itself, which is exactly the aliasing the copy-on-read
+            # work is closing, so restore it with a `setOption` call.
             "autoseg"          : {},
-            
+
         }
 
         series_data["obj_attrs"] = {}
@@ -3749,9 +3829,19 @@ class Series():
             else:
                 raw = self.options[option_name]
                 opt = copy(raw) if isinstance(raw, (list, dict)) else raw
+                if "_columns" in option_name:
+                    # All five *_columns options live here, so the check at the
+                    # bottom of this method never ran for any of them: this
+                    # branch returns first. Kept in both places so that an option
+                    # moved to the settings store later stays covered.
+                    #
+                    # The check reads `opt`, the copy, not `self.options[...]`.
+                    # Same shape either way today, but the copy is what the caller
+                    # receives, so it is the thing worth validating.
+                    _checkColumnsOption(option_name, opt)
 
             return opt
-        
+
         ## Get sane settings and defaults
         if option_name in Series.qsettings_series_defaults:
 
@@ -3797,9 +3887,8 @@ class Series():
 
         ## Check for tables
         if "_columns" in option_name:
-            if type(option) is not list:
-                raise Exception("boo")
-        
+            _checkColumnsOption(option_name, option)
+
         return option
                     
     def setOption(self, option_name : str, value):
