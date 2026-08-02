@@ -278,3 +278,85 @@ def test_startup_shows_the_notes_once_per_version_in_the_real_window(
     # relaunching the same version: the gate holds, nothing opens
     main_window.showWhatsNewStartup()
     assert main_window._whatsnew_dialog is None
+
+
+# ---- the log line that makes an absence readable -----------------------------
+#
+# The startup hook swallows its own failures on purpose, so nothing must be able
+# to escape it. That is exactly what made a real 1.21.0-beta-7 launch
+# undiagnosable: the dialog did not reach the user, and the only trace left
+# anywhere was the stored version having moved. Nothing raised, so an
+# exception-only log would still have said nothing -- hence a line on every
+# branch, not just the failing one. `capsys` reads it because the helpers write
+# through `sys.stderr`, which is what `install_file_logging` tees.
+
+def test_startup_logs_that_it_showed_the_dialog(main_window, monkeypatch, capsys):
+    from PySide6.QtCore import QSettings
+
+    settings = QSettings(W.ORG, W.APP)              # redirected by the suite
+    settings.setValue(F.WHATSNEW_KEY, "1.20.3")
+    monkeypatch.setattr(W, "current_version_str", lambda: "1.21.0")
+
+    main_window._whatsnew_dialog = None
+    main_window.showWhatsNewStartup()
+    err = capsys.readouterr().err
+    assert "What's new (startup): dialog shown" in err
+    main_window._whatsnew_dialog.close()
+
+
+def test_startup_logs_that_the_gate_declined(main_window, monkeypatch, capsys):
+    """The branch that leaves no dialog behind is the one worth naming: without
+    this line, "not due" and "it crashed" look identical from the outside."""
+    from PySide6.QtCore import QSettings
+
+    settings = QSettings(W.ORG, W.APP)
+    settings.setValue(F.WHATSNEW_KEY, "1.21.0")     # already seen
+    monkeypatch.setattr(W, "current_version_str", lambda: "1.21.0")
+
+    main_window._whatsnew_dialog = None
+    main_window.showWhatsNewStartup()
+    err = capsys.readouterr().err
+    assert "What's new (startup): not due for this version" in err
+    assert main_window._whatsnew_dialog is None
+
+
+def test_startup_logs_a_failure_and_still_swallows_it(main_window, monkeypatch, capsys):
+    def boom(*a, **k):
+        raise RuntimeError("the injected cause")
+
+    monkeypatch.setattr(W, "maybe_show_whats_new", boom)
+    main_window._whatsnew_dialog = None
+    main_window.showWhatsNewStartup()               # must not raise: startup goes on
+    err = capsys.readouterr().err
+    assert "What's new (startup) failed; continuing without it" in err
+    assert "RuntimeError: the injected cause" in err
+    assert "Traceback (most recent call last)" in err
+    assert main_window._whatsnew_dialog is None
+
+
+def test_help_menu_reopen_logs_a_failure_and_still_swallows_it(
+        main_window, monkeypatch, capsys):
+    def boom(*a, **k):
+        raise RuntimeError("the injected cause")
+
+    monkeypatch.setattr(W, "show_whats_new", boom)
+    main_window.showWhatsNew()                      # a menu click must not raise
+    err = capsys.readouterr().err
+    assert "What's new (Help menu) failed" in err
+    assert "RuntimeError: the injected cause" in err
+
+
+def test_startup_never_writes_the_developers_own_log(main_window, monkeypatch, tmp_path):
+    """The breadcrumbs go through `sys.stderr`, so a suite run cannot append to
+    `~/Library/Logs/PyReconstruct`. Pinned because routing them through
+    `log_file_path()` instead would pass every test above and quietly grow the
+    real log by one line per test."""
+    import PyReconstruct.modules.backend.func.logging_setup as ls
+
+    called = []
+    monkeypatch.setattr(ls, "log_file_path", lambda: called.append(1) or tmp_path / "x")
+    main_window._whatsnew_dialog = None
+    main_window.showWhatsNewStartup()
+    if main_window._whatsnew_dialog is not None:
+        main_window._whatsnew_dialog.close()
+    assert called == []
