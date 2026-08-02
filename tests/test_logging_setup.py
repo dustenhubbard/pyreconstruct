@@ -88,3 +88,62 @@ def test_install_never_raises_when_dir_unwritable(monkeypatch, tmp_path):
         assert path == tmp_path / "nope" / "x.log"
     finally:
         sys.stdout = saved_out
+
+
+# ---- the swallowed-failure breadcrumbs ---------------------------------------
+#
+# `log_note`/`log_exception` write through `sys.stderr` rather than reopening the
+# log file, which is what lets startup code log without this suite appending to
+# the developer's own `~/Library/Logs`. These pin that routing as well as the
+# content, because a helper that wrote the file directly would pass a
+# content-only test and quietly pollute every run.
+
+def test_log_note_writes_one_timestamped_line_to_stderr(capsys):
+    ls.log_note("What's new (startup): not due for this version")
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1
+    assert "What's new (startup): not due for this version" in err
+    assert err.startswith("[") and "] " in err          # timestamp, then the note
+
+
+def test_log_note_goes_through_the_tee_not_the_file(monkeypatch, tmp_path):
+    """Routed through the stream, so whatever `install_file_logging` teed wins."""
+    mod = _fresh_module(monkeypatch, tmp_path)
+    saved_out, saved_err = sys.stdout, sys.stderr
+    try:
+        path = mod.install_file_logging()
+        mod.log_note("teed-note-marker")
+        sys.stderr.flush()
+    finally:
+        sys.stdout, sys.stderr = saved_out, saved_err
+    assert "teed-note-marker" in path.read_text(encoding="utf-8")
+
+
+def test_log_exception_records_the_context_and_the_traceback(capsys):
+    try:
+        raise ValueError("the injected cause")
+    except ValueError:
+        ls.log_exception("What's new (startup) failed; continuing without it")
+    err = capsys.readouterr().err
+    assert "What's new (startup) failed; continuing without it" in err
+    assert "Traceback (most recent call last)" in err
+    assert "ValueError: the injected cause" in err
+
+
+def test_log_exception_outside_an_except_block_never_raises(capsys):
+    ls.log_exception("no exception is in flight")      # must not raise
+    assert "no exception is in flight" in capsys.readouterr().err
+
+
+def test_log_note_never_raises_when_the_stream_is_broken(monkeypatch, capsys):
+    """A logging failure must not propagate into the caller's except block."""
+    class Broken:
+        def write(self, *a, **k):
+            raise OSError("stream gone")
+
+        def flush(self, *a, **k):
+            raise OSError("stream gone")
+
+    monkeypatch.setattr(sys, "stderr", Broken())
+    ls.log_note("swallowed")                            # must not raise
+    ls.log_exception("also swallowed")                  # must not raise

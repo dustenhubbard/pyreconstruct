@@ -21,6 +21,7 @@ from PySide6.QtCore import Qt, QSettings
 from PyReconstruct.modules.backend.updater.install_info import current_version_str
 from PyReconstruct.modules.gui.main.first_launch import (
     whats_new_due, whats_new_content, github_release_url, WHATSNEW_KEY,
+    ON_DEMAND_CAP,
 )
 
 ORG, APP = "KHLab", "PyReconstruct"
@@ -171,11 +172,14 @@ def show_whats_new(parent, current=None, show=None):
 
     Unlike ``maybe_show_whats_new`` there is no once-per-version gate and the
     stored last-seen version is neither consulted nor updated: the dialog always
-    opens, framing the recent release history (the current version plus the few
-    before it, newest first) rather than a fresh-install welcome. ``current`` /
-    ``show`` are injectable for headless testing. Returns the dialog.
+    opens on the running version's notes rather than a fresh-install welcome.
+    Earlier releases are reached through the truncation line and the "Full
+    release notes on GitHub" link rather than being listed in full; see
+    ``ON_DEMAND_CAP`` for why this path is capped tighter than the post-update
+    one. ``current`` / ``show`` are injectable for headless testing. Returns the
+    dialog.
     """
     if current is None:
         current = current_version_str()
-    content = whats_new_content(current, on_demand=True)
+    content = whats_new_content(current, on_demand=True, cap=ON_DEMAND_CAP)
     return (show or _default_show)(parent, current, content=content)
