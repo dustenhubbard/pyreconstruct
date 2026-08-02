@@ -404,6 +404,54 @@ def populateMenuBar(widget : QWidget, menu : QMenuBar, menubar_list : list):
         newMenu(widget, menu, menu_dict)
 
 
+def clearMenuBar(widget : QWidget, menubar : QMenuBar):
+    """Clear a menubar and let go of the generation of objects it owned.
+
+    Use this instead of a bare `menubar.clear()` anywhere a menubar is rebuilt
+    in place, because clearing it is not the whole teardown.
+
+    `newAction` leaves two references to every action it builds: the action is
+    added to `widget` (for the shortcut), and it is stored as a `<name>_act`
+    attribute on `widget`. Both outlive `menubar.clear()`, which invalidates
+    the wrappers for that generation of menus and actions -- clearing drops the
+    menubar's claim on them while `widget` is still pointing at them. The next
+    build's "remove previous action" step in `newAction` then calls
+    `removeAction` on a dead wrapper and raises `RuntimeError: Internal C++
+    object (PySide6.QtGui.QAction) already deleted`, halfway through
+    repopulating the menubar. Whatever triggered the rebuild -- a checkable row
+    in one of these menus, typically -- is left with an error dialog and a
+    half-built menubar.
+
+    So drop `widget`'s references first, while the objects are still alive, and
+    only then clear. Menus and actions are matched by identity against what the
+    menubar actually holds, so attributes belonging to other surfaces (context
+    menus in particular, which are rebuilt separately) are left alone.
+    """
+    # walk the menubar for everything this generation owns
+    doomed_actions = []
+    doomed_menus = []
+    stack = list(menubar.actions())
+    while stack:
+        action = stack.pop()
+        doomed_actions.append(action)
+        submenu = action.menu()
+        if submenu is not None:
+            doomed_menus.append(submenu)
+            stack.extend(submenu.actions())
+
+    # detach the actions from the widget while they are still valid
+    for action in doomed_actions:
+        widget.removeAction(action)
+
+    # forget the attributes pointing into this generation
+    doomed_ids = set(map(id, doomed_actions + doomed_menus))
+    for attr_name, value in list(vars(widget).items()):
+        if id(value) in doomed_ids:
+            delattr(widget, attr_name)
+
+    menubar.clear()
+
+
 def setMainWindow(mw):
     """Set the main window for the gui functions."""
     global mainwindow

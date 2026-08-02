@@ -12,6 +12,7 @@ from .data_table import DataTable
 
 from PyReconstruct.modules.gui.utils import (
     populateMenuBar,
+    clearMenuBar,
     populateMenu,
     noUndoWarning,
     notify,
@@ -62,7 +63,7 @@ class SectionTableWidget(DataTable):
         ]
         # create the menubar object
         self.menubar = self.main_widget.menuBar()
-        self.menubar.clear()
+        clearMenuBar(self, self.menubar)
         self.menubar.setNativeMenuBar(False) # attach menu to the window
         # fill in the menu bar object
         populateMenuBar(self, self.menubar, menubar_list)
