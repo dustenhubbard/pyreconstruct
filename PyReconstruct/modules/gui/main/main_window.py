@@ -6,7 +6,20 @@ import shutil
 from .main_imports import *
 
 from PyReconstruct.modules.datatypes.series import SeriesOpenError
-from PyReconstruct.modules.backend.func.window_geometry import window_geometry_is_usable
+from PyReconstruct.modules.backend.func.window_geometry import (
+    default_window_rect,
+    window_geometry_is_usable,
+)
+
+
+def windowGeometrySettings():
+    """The global settings object the window geometry is saved in.
+
+    One place rather than three inline constructors, so a test can redirect the
+    geometry read/write to a scratch file without going near the developer's
+    real `KHLab/PyReconstruct` domain.
+    """
+    return QSettings("KHLab", "PyReconstruct")
 
 
 def remappedBCProfile(current : str, profiles_dict : dict) -> str:
@@ -67,7 +80,7 @@ class MainWindow(QMainWindow):
         screen = QApplication.primaryScreen()
         self.screen_info = get_screen_info(screen)
 
-        geometry = QSettings("KHLab", "PyReconstruct").value("window/geometry")
+        geometry = windowGeometrySettings().value("window/geometry")
         restored = False
         if geometry is not None:
             restored = self.restoreGeometry(geometry)
@@ -76,16 +89,9 @@ class MainWindow(QMainWindow):
             # First launch, OR a restored geometry that no longer fits the
             # current displays -- classically after moving between a 1x external
             # monitor and a 2x (Retina) internal panel, which can restore a
-            # tiny or off-screen window. Fall back to ~50% of the primary
-            # screen, centered (not near-maximized).
-            w = int(self.screen_info["width"] * 0.5)
-            h = int(self.screen_info["height"] * 0.5)
-            self.setGeometry(
-                (self.screen_info["width"] - w) // 2,   # x
-                (self.screen_info["height"] - h) // 2,  # y
-                w,                                       # width
-                h,                                       # height
-            )
+            # tiny or off-screen window. Fall back to DEFAULT_SCREEN_FRACTION of
+            # the primary screen, centered (not near-maximized).
+            self.setGeometry(*self.defaultWindowGeometry())
 
         self.series                 =  None
         self.series_data            =  None
@@ -170,6 +176,38 @@ class MainWindow(QMainWindow):
             for a in (screen.availableGeometry() for screen in QApplication.screens())
         ]
         return window_geometry_is_usable(window_rect, screen_rects)
+
+    def defaultWindowGeometry(self) -> tuple:
+        """The centered fallback window rect, as ``(x, y, w, h)``.
+
+        The primary screen is re-read here rather than taken from
+        ``self.screen_info``, which is captured once in ``__init__``: a reset
+        asked for after the displays changed has to size against the screen
+        that exists now. ``self.screen_info`` is left alone because
+        ``custom_plotter`` reads its dpi.
+        """
+        screen = QApplication.primaryScreen()
+        info = get_screen_info(screen) if screen is not None else self.screen_info
+        return default_window_rect(info["width"], info["height"])
+
+    def resetWindowGeometry(self):
+        """Restore the main window to the centered default size and position.
+
+        For the window that cannot be fixed by hand: parked off every screen, or
+        shrunk too small to grab. Nothing here reads the current geometry, so a
+        garbage rect is replaced rather than adjusted. A maximized or fullscreen
+        window is taken out of that state first, because ``setGeometry`` on one
+        changes only the stored normal geometry and nothing visibly moves.
+
+        The saved setting is overwritten too, so the reset survives a restart
+        even if the app never reaches ``closeEvent``.
+        """
+        if self.isFullScreen() or self.isMaximized():
+            self.showNormal()
+
+        self.setGeometry(*self.defaultWindowGeometry())
+
+        windowGeometrySettings().setValue("window/geometry", self.saveGeometry())
 
     def openWelcomeSeries(self):
         """Open a welcome series."""
@@ -3924,7 +3962,7 @@ class MainWindow(QMainWindow):
                 self._pending_update_dir = None
             return
         # persist window geometry so size/position survive a restart
-        QSettings("KHLab", "PyReconstruct").setValue("window/geometry", self.saveGeometry())
+        windowGeometrySettings().setValue("window/geometry", self.saveGeometry())
         if self.viewer and not self.viewer.is_closed:
             self.viewer.close()
         # launch a pending update installer now that the close is committed
