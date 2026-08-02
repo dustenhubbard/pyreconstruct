@@ -22,6 +22,13 @@ purpose is to decide the plan's Phase 2 (Rust) gate.
 > which were measurements, and what the delivered work actually did.
 > **The report's two headline conclusions are unaffected:** the ~3.3-3.6×
 > open+refresh speedup and the "cut the Rust workstream" verdict both survive.
+>
+> **2026-08-01: the replacement proposed in that §5.3 correction, skipping
+> geometry for sections whose file is unchanged and keying it on mtime/size,
+> is withdrawn as well**, this time before being built. Geometry depends on the
+> resolved alignment, which is series state, so the section file is the wrong
+> key: an alignment change rewrites no file and invalidates almost everything.
+> Annotated inline at §5.3 and in §7a.
 
 **Which commit measured what** (these differ; they are not mixed):
 
@@ -373,10 +380,81 @@ Three refinements to the audit's framing:
    >   cleared, **silently dropping every other object from the object list**.
    >   Missing, not merely stale.
    >
-   > **The real prize in this area is different work:** skip *geometry* for
+   > ~~**The real prize in this area is different work:** skip *geometry* for
    > sections whose file is unchanged (mtime/size keyed) in
    > `SeriesData.refresh()`. That needs no extra memory, because `SeriesData`
-   > already retains that data between refreshes. Not yet implemented.
+   > already retains that data between refreshes. Not yet implemented.~~
+   >
+   > > **CORRECTION 2026-08-01: the replacement proposal is withdrawn too. It
+   > > was measured before being built, and the key does not work.**
+   > >
+   > > Two of its three premises are false, and the geometry is not the input
+   > > it was assumed to be:
+   > >
+   > > - **`SeriesData` does not retain that data between refreshes.** The
+   > >   first statement of `refresh()` (`series_data.py:214-218`) is
+   > >   `self.data = {"sections": {}, "objects": {}}`. It discards the
+   > >   previous pass before the loop begins, so "no extra memory, because it
+   > >   already retains it" has no basis. Retention would have to be built,
+   > >   and it is retention that the four objections above were about;
+   > > - **the section file is not what the geometry depends on.** `TraceData`
+   > >   maps points through `section.tforms[alignment]`, and the alignment is
+   > >   resolved from *series* state: `series.alignment`, or the per-object
+   > >   `series.getAttr(name, "alignment")` (`series_data.py:148-159`). Change
+   > >   the alignment and every trace's length, area, centroid and radius
+   > >   change while every section file on disk stays byte-identical.
+   > >   Measured on `rhhks276`: switching `d001` to `default` modifies
+   > >   **0 of 276 section files**, and changes the geometry of
+   > >   `RH276.refresh.stalerows` (94.6%, 118,479 of 125,218 trace rows). An
+   > >   (mtime,size) key would have skipped all 276 sections;
+   > >   `RH276.refresh.falseskip` (272) of them needed recomputation;
+   > > - **that is not an edge case, it is the main path.** Three of the four
+   > >   production callers of `refresh()` fire *only* on an alignment change:
+   > >   `state_manager.py:548-550` is guarded by `alignmentPreferencesChanged`
+   > >   and explicitly comments "no sections modified"; `objects.py:189` is
+   > >   the per-object `alignment` setter; and
+   > >   `field_widget_4_data.py:267-281` (`changeAlignment`) reaches
+   > >   `manager.py:184`. The fourth, `series.py:204`, runs against an empty
+   > >   `self.data` at open, where there is nothing to reuse.
+   > >
+   > >   `manager.py:184` is a shared site rather than an alignment site. It is
+   > >   inside `recreateTables`, which by its own comment serves "series-wide
+   > >   operations (alignment changes, imports, series undo)", and six call
+   > >   sites reach it with `refresh_data=True`. Only `changeAlignment`
+   > >   (`field_widget_4_data.py:281`) is an alignment change. Series
+   > >   magnification (`field_widget_4_data.py:492`) calls `setMag` and `save`
+   > >   on every section, so it rewrites every section file and the key would
+   > >   be correct there; `deleteSections`, `reorderSections` and
+   > >   `insertSection` (`section.py:463`, `:557`, `:597`) are the paths
+   > >   treated below; and `TableManager.refresh` (`manager.py:213`) depends on
+   > >   its caller. So the key is inverted on the alignment paths, not on every
+   > >   path that reaches this refresh.
+   > >
+   > > The prize itself is real. Geometry is `RH276.refresh.geomshare` (62.5%)
+   > > of a refresh, against 32.0% for the parse, which is why the cache
+   > > recovered so little of the 24.7 s. A correct key has to include the
+   > > resolved alignment, and how much that costs depends on which alignment
+   > > path fired. Measured on the checked-in `class_series` fixture, 8 objects
+   > > and 232 trace rows: a global `series.alignment` switch moves 232 of 232
+   > > rows, so an alignment-aware key hits 0% there and does invalidate every
+   > > entry by construction. The per-object override does not. It changes the
+   > > resolved alignment of one object, and every other object's entries stay
+   > > valid: 1 of 232 rows move for the smallest object (`Test1DenShaft`) and
+   > > 187 of 232 for the largest (`d03`), leaving that key hitting between
+   > > 19.4% and 99.6% depending on which object is pinned. None of the three
+   > > writes a section file, which is what disqualifies the (mtime, size) key
+   > > on all of them and is the finding this correction rests on. Whether an
+   > > alignment-aware key is worth building is a separate question, and it is
+   > > open.
+   > >
+   > > What is left beyond the alignment paths is `deleteSections` /
+   > > `insertSection` / `reorderSections`, which are rare, and the latter two
+   > > `os.rename` the section files (`series.py:3239-3252`); rename preserves
+   > > mtime and size exactly, so the key is blind to a renumbering that changes
+   > > which section a file *is*.
+   > >
+   > > **Not dispatched again without a different key.** Skipping geometry is
+   > > still worth having; keying it on the file is not the way to get it.
 
 **Bottom line for the format decision:** restructuring serialization addresses at
 most ~28% of cold-open time and none of the steady-state memory regression in §4.
@@ -636,6 +714,7 @@ measured on the real path or on a script.**
 | "caching Sections is worth that 24.7 s" (§5.3) | **projection** (inference from the decomposition) | nothing (no cache existed) | **REJECTED**: a perfect cache saves 8.21 s at +2217 MB (`WVHJM_407`), plus a data-loss landmine |
 | `isAnchorPoint` 22.8× (§7) | **projection** (micro-benchmark) | `cv2.filter2D` vs the scalar loop, in isolation | **held up**: 13.7× measured end-to-end on a lasso sweep (#97) |
 | `cv2.polylines` 22-26× (§7) | **projection** (micro-benchmark) | one polylines call, all traces, single color, no opacity | **REJECTED**: real per-trace loop is 1814 ms vs QPainter's 155 ms (~12× slower) |
+| "skip geometry for sections whose file is unchanged, mtime/size keyed" (§5.3 correction) | **projection** (inference from the cache rejection) | nothing (never built) | **REJECTED**: geometry depends on `series.alignment`, not the file. On `rhhks276` an alignment change modifies 0/276 section files and 94.6% of trace geometry; the key would falsely skip 272 sections. `SeriesData` also does not retain the data, contrary to the premise |
 
 Delivered so far, with measured end-to-end figures:
 
