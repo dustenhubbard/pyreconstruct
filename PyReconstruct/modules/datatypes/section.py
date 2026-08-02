@@ -143,7 +143,12 @@ class Section():
             
             for trace_data in section_data["contours"][name]:
                 trace = Trace.fromList(trace_data, name)
-                # screen for defective traces
+                # screen for defective traces. `updateJSON` above now applies
+                # both screens to the stored data as well, so on this path the
+                # two lines below are a no-op; they are kept because callers
+                # that build a Section from data that has not been through
+                # `updateJSON` still need them, and because the in-memory value
+                # is the one the rest of the program reads.
                 l = len(trace.points)
                 if l == 2:
                     trace.closed = False
@@ -327,6 +332,26 @@ class Section():
                 # check for empty/defective traces
                 if len(trace[0]) < 2:
                     flagged_traces.append(i)
+                # Two points enclose no area, so every reader forces such a
+                # trace open in memory (`Section.__init__` below, the undo
+                # baseline in `state_manager.getContours`, and `addTrace`).
+                # Correct the stored flag as well, for the same reason the tag
+                # sort above lives here: `saveJser` copies the hidden dir
+                # verbatim, so the in-memory coercion reached the file only for
+                # sections the user happened to open AND save. That is the
+                # worst of the three possible behaviors -- the flag flipped
+                # from true to false at some unpredictable later save rather
+                # than never, so byte-diffing a .jser showed a change no edit
+                # accounts for. Doing it here makes the correction happen once,
+                # on unpack, for every section alike.
+                #
+                # The divergent row is not hypothetical and does not require a
+                # hand-edited file: a Reconstruct XML import writes
+                # `trace.getList()` straight into the section file with no
+                # arity check (`xml_json_conversions.py`), so a two-point
+                # closed contour keeps `closed: true` across the import.
+                elif len(trace[0]) == 2:
+                    trace[3] = False
             # remove the flagged defective traces
             for i in sorted(flagged_traces, reverse=True):
                 section_data["contours"][cname].pop(i)
