@@ -417,13 +417,6 @@ class SeriesData():
         
         return v
 
-    def getSurfaceArea(self, obj_name: str) -> float:
-        """Get the surface area of an object."""
-
-        from PyReconstruct.modules.backend.volume.export_volumes import get_3D_mesh
-
-        pass
-
     def getConfiguration(self, obj_name: str) -> Union[str, None]:
         """Get the configuration of the object.
 
