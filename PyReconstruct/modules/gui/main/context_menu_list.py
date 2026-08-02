@@ -234,7 +234,7 @@ def get_field_menu_list(self):
     ]
 
 
-def get_context_menu_list_obj(self, list_ops=None):
+def get_context_menu_list_obj(self, list_ops=None, is_in_field=True):
     """Build the object context menu (field ``Object >`` and the object list).
 
     Frequency-first layout: the everyday actions are top-level, the long tail
@@ -274,7 +274,29 @@ def get_context_menu_list_obj(self, list_ops=None):
             list_ops (list): list-only table utilities ("Invert selection",
                 "Copy object values") to mount in the standard bottom utility
                 slot. The object list passes them; the field passes nothing.
+            is_in_field (bool): True for the field submenu variant, False for
+                the object list's right-click menu
     """
+    # Only the field's copy carries the configurable keys, the rule
+    # `get_context_menu_list_trace` already follows for the trace list.
+    #
+    # This menu is built twice into one top-level window: once onto the
+    # MainWindow by `createContextMenus`, and once onto `ObjectTableWidget`,
+    # which is a QDockWidget inside that same window. `newAction` calls
+    # `widget.addAction` on whichever widget it is given, so a keyed row builds
+    # two QActions with the same sequence and the default `WindowShortcut`
+    # context. Qt answers that pair with `Ambiguous shortcut overload` and fires
+    # NEITHER, so passing the series on both sides makes the key dead exactly
+    # while the list is open. Passing `""` on the list side leaves one claimant
+    # in the window, and `WindowShortcut` on the field's copy already covers the
+    # dock, so the key keeps working with the list open and focused.
+    #
+    # A per-widget shortcut context is not an alternative here:
+    # `WidgetWithChildrenShortcut` on the dock's copy is active whenever focus
+    # is inside the dock, which is precisely when the window-scoped copy is
+    # active too, so the ambiguous pair survives.
+    sc = self.series if is_in_field else ""
+
     return [
         # Top strip: the two actions the maintainer named as deserving the
         # frequently used top spots, plus the 3D submenu they lead into.
@@ -294,7 +316,7 @@ def get_context_menu_list_obj(self, list_ops=None):
         # is an ambiguous binding, and Qt answers an ambiguous shortcut by firing
         # NEITHER action -- the exact trap that made Ctrl+Shift+C unusable for
         # copy-to-sections.
-        ("addobjto3D_act", "Add to 3D scene", self.series, self.addTo3D),
+        ("addobjto3D_act", "Add to 3D scene", sc, self.addTo3D),
         {
             "attr_name": "menu_3D",
             "text": "3D",
@@ -417,7 +439,16 @@ def get_context_menu_list_obj(self, list_ops=None):
             "text": "Object attributes",
             "opts":
             [
-                ("sethosts_act", "Set hosts...", "", self.setHosts),
+                # The series form binds the user-configurable key looked up by
+                # act_name (default Ctrl+Shift+H). This passed `""` until now,
+                # so the default and the shortcuts-dialog row it has always had
+                # bound nothing. Nobody reported it because `resetShortcuts`
+                # writes onto the built QAction, repairing the key for anyone
+                # who opened that dialog until the next `createContextMenus`
+                # re-applied the `""`. Same form as `addobjto3D_act` above,
+                # this menu's other keyed action, and `sc` for the same reason:
+                # the object list's copy must not claim the key a second time.
+                ("sethosts_act", "Set hosts...", sc, self.setHosts),
                 ("clearhosts_act", "Clear hosts", "", self.clearHosts),
                 ("displayhosts_act", "Show host tree", "", self.displayHostTree),
                 ("displayinhabitants_act", "Show inhabitant tree", "", lambda : self.displayHostTree(False)),

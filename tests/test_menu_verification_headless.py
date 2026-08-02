@@ -55,6 +55,7 @@ from collections import defaultdict
 import pytest
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QWidget
 
 from conftest import menu_action, menu_leaf_paths, same_action, submenu_at
 
@@ -220,12 +221,11 @@ def test_the_field_object_menu_keeps_add_and_remove_reachable(main_window):
     assert _cpp(paths["3D > Remove from scene"]) == wanted_remove
 
 
-# `sethosts_act` has a default of `Ctrl+Shift+H` in `default_settings.py` and an
-# editable row in the shortcuts dialog, but `get_context_menu_list_trace` builds
-# it with `""` instead of `self.series`, so the action ships with no shortcut and
-# the key does nothing. Pinned by its own test below rather than fixed here:
-# giving it the key it was configured for is a user-visible change.
-KNOWN_UNAPPLIED_SHORTCUTS = {"sethosts_act"}
+# Every option-backed action now applies the key its option holds. `sethosts_act`
+# was the last exemption: it was built with `""` in `get_context_menu_list_obj`,
+# so its `Ctrl+Shift+H` default and its shortcuts-dialog row bound nothing. It
+# passes the series now, and the test below covers it from a cold store.
+KNOWN_UNAPPLIED_SHORTCUTS = set()
 
 
 def _configurable_actions(window):
@@ -273,30 +273,139 @@ def test_every_configurable_action_carries_the_shortcut_its_option_holds(
     assert mismatched == {}
 
 
-def test_set_hosts_ships_without_the_shortcut_it_is_configured_for(
+def test_set_hosts_carries_its_shortcut_from_a_cold_settings_store(
     main_window, local_series_settings
 ):
-    """`Set hosts...` has a configured key that the menu never applies.
+    """`Set hosts...` binds `Ctrl+Shift+H` with nothing stored and no dialog.
 
-    Found by the test above, and the exact shape of the affordance problem: the
-    option exists (`Ctrl+Shift+H`), the shortcuts dialog offers an editable row
-    for it, and the action is built with `""`, so the key does nothing until the
-    user opens that dialog and presses OK. `resetShortcuts` is what repairs it,
-    which is why the second half here passes.
+    The regression this pins is specifically a COLD one. `sethosts_act` was
+    built with `""`, so its key was dead on a fresh install. But
+    `resetShortcuts` writes straight onto the built QAction, so anyone who
+    opened the shortcuts dialog and pressed OK repaired it in passing and could
+    never reproduce the report. The repair lasted until the next
+    `createContextMenus`, which re-applied the `""`.
 
-    Recorded rather than fixed: making a configured key start working is a
-    user-visible change and this is a test change. `Ctrl+Shift+H` is unclaimed
-    elsewhere in this window (the 3D scene popup hardcodes it for
-    `organize_act`, a different window), so nothing collides.
+    So this asserts the state a new user actually gets: an empty
+    `DictSettingsStore` (the option resolves to its default, nothing stored),
+    menus built by the real `createContextMenus`, and no dialog anywhere in the
+    path. Reverting the one-word fix fails the first assertion, not the second.
+
+    No other action in this window claims `Ctrl+Shift+H` (the 3D scene popup
+    hardcodes it for `organize_act`, but that is a different top-level window,
+    and the object list's copy of this row is built without the key on purpose).
+    The two tests below are what hold that second half up: this one builds no
+    dock, so on its own it cannot see an ambiguous pair.
     """
-    series = local_series_settings(main_window)
+    series = local_series_settings(main_window)  # cold store + real menu rebuild
 
+    assert main_window.sethosts_act.shortcut() == QKeySequence("Ctrl+Shift+H"), (
+        "Set hosts... does not carry its default key from a cold store; the "
+        "construction site in get_context_menu_list_obj is passing '' again"
+    )
     assert series.getOption("sethosts_act") == "Ctrl+Shift+H"
-    assert main_window.sethosts_act.shortcut().toString() == ""
 
-    main_window.resetShortcuts()
+    # and it survives the rebuild that used to wipe the dialog's repair
+    main_window.createContextMenus()
 
     assert main_window.sethosts_act.shortcut() == QKeySequence("Ctrl+Shift+H")
+
+
+# --- the object list is a dock in this window, so it shares its shortcut scope -
+#
+# `ObjectTableWidget` is a `QDockWidget` parented to `MainWindow`, and it builds
+# its right-click menu from the same `get_context_menu_list_obj` the field uses.
+# `newAction` adds every action it builds to the widget it is handed, so a row
+# that carries a key produces two QActions with the same sequence and the default
+# `Qt.WindowShortcut` context inside one top-level window. Qt calls that pair
+# ambiguous and fires NEITHER, so a key that works with the list closed goes dead
+# the moment the list is opened. That is invisible to every test above, all of
+# which build no dock.
+#
+# Both tests below open the list, because that is the only state the defect
+# exists in.
+
+
+def _window_shortcut_counts(window):
+    """How many actions in `window` claim each non-empty key sequence."""
+    counts = defaultdict(list)
+    seen = set()
+    for widget in [window] + window.findChildren(QWidget):
+        for action in widget.actions():
+            if id(action) in seen:
+                continue
+            seen.add(id(action))
+            sequence = action.shortcut().toString()
+            if sequence:
+                counts[sequence].append(action.text())
+    return counts
+
+
+def test_the_open_object_list_adds_no_second_claimant_to_any_shortcut(main_window):
+    """Opening the object list leaves every key sequence with one owner.
+
+    The structural half of the claim. The list's menu is the field's menu built
+    a second time onto a dock in the same window, so any row that carries a key
+    on the list side is a duplicate claim by construction. Asserted over the
+    whole window rather than over the two known rows, so a keyed row added to
+    this menu later is caught by the same test.
+    """
+    before = {
+        sequence: texts
+        for sequence, texts in _window_shortcut_counts(main_window).items()
+        if len(texts) > 1
+    }
+    assert before == {}, f"the window is already ambiguous before any list: {before}"
+
+    main_window.field.openList("object")
+
+    after = {
+        sequence: texts
+        for sequence, texts in _window_shortcut_counts(main_window).items()
+        if len(texts) > 1
+    }
+    assert after == {}, (
+        "the open object list claims a key the main window already owns, so Qt "
+        f"will fire neither action: {after}"
+    )
+
+
+def test_the_object_menu_keys_still_fire_with_the_object_list_open(main_window):
+    """`Ctrl+Shift+H` and `Ctrl+Shift+D` reach their slots with the list docked.
+
+    The behavioral half, and the reason the fix is a dropped key on one side
+    rather than a shortcut context on the other: the surviving copy is on the
+    main window with `Qt.WindowShortcut`, so it is in scope for the dock too.
+    Pressed twice, once with focus on the window and once with focus inside the
+    list's own view, because a per-widget context would pass the first and fail
+    the second.
+
+    Both handlers are replaced before the menus are built. `setHosts` opens a
+    dialog and `addTo3D` opens the 3D scene, and neither is what is under test.
+    """
+    fired = []
+    main_window.field.setHosts = lambda *a, **k: fired.append("setHosts")
+    main_window.field.addTo3D = lambda *a, **k: fired.append("addTo3D")
+    main_window.createContextMenus()
+
+    main_window.field.openList("object")
+    table = main_window.field.table_manager.tables["object"][0]
+
+    def press(target):
+        fired.clear()
+        QTest.keySequence(target, QKeySequence("Ctrl+Shift+H"))
+        QTest.keySequence(target, QKeySequence("Ctrl+Shift+D"))
+        return list(fired)
+
+    main_window.setFocus()
+    assert press(main_window) == ["setHosts", "addTo3D"], (
+        "an object menu key did not fire with the object list open; the list is "
+        "claiming it too and Qt is refusing the ambiguous pair"
+    )
+
+    table.table.setFocus()
+    assert press(table.table) == ["setHosts", "addTo3D"], (
+        "an object menu key did not fire while the object list held focus"
+    )
 
 
 # --- GATING: enabled state, no modal loop needed ------------------------------
