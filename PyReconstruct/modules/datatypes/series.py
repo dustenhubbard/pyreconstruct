@@ -3837,6 +3837,24 @@ class Series():
         # headless: don't block on a dialog/input -- just report it
         print(message)
 
+    @staticmethod
+    def _fromDefaults(defaults : dict, option_name : str):
+        """Return a value out of a class-level defaults dict, never by reference.
+
+        `qsettings_defaults` and `qsettings_series_defaults` are shallow copies
+        of the dicts in `default_settings.py`, so a list or dict value in one of
+        them is a single object shared by every Series in the process. Five
+        entries are mutable containers (`pointer`, `grid`, `flag_color`,
+        `autoseg_color_palette`, `recently_opened_series`), and a caller that
+        mutates what it was handed rewrites the shipped default for everyone
+        else: `addToRecentSeries` does exactly that, with `remove`, `insert` and
+        `pop` on the list it got back.
+
+        Shallow is enough. Every mutable default is a flat list of scalars.
+        """
+        value = defaults[option_name]
+        return copy(value) if isinstance(value, (list, dict)) else value
+
     def getOption(self, option_name : str, get_default=False):
         """Get an option from the series (or computer)
 
@@ -3869,7 +3887,9 @@ class Series():
         if option_name in Series.qsettings_series_defaults:
 
             if self.isWelcomeSeries():  # return defaults if accessing series setting
-                return Series.qsettings_series_defaults[option_name]
+                return Series._fromDefaults(
+                    Series.qsettings_series_defaults, option_name
+                )
 
             scope_code = self.code
             defaults = Series.qsettings_series_defaults
@@ -3887,7 +3907,7 @@ class Series():
 
         ## Get the option
         if get_default:
-            return defaults[option_name]
+            return Series._fromDefaults(defaults, option_name)
         elif store.contains(scope_code, option_name):
             option_type = type(defaults[option_name])
             option = store.value(
@@ -3898,7 +3918,7 @@ class Series():
             if option_type in (dict, list, tuple):
                 option = json.loads(option)
         else:
-            option = defaults[option_name]
+            option = Series._fromDefaults(defaults, option_name)
             self.setOption(option_name, option)
         
         ## CHECKS FOR UPDATES
