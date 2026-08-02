@@ -88,7 +88,7 @@ class _Palette:
 
 
 def build_stub_mainwindow():
-    from PySide6.QtWidgets import QMainWindow
+    from PySide6.QtWidgets import QLabel, QMainWindow
 
     class StubMW(QMainWindow):
         """A real MainWindow cannot be used: its openSeries falls into
@@ -109,6 +109,12 @@ def build_stub_mainwindow():
             self.is_zooming = False
             self.zoom_factor = 1.0
             self.statusbar = self.statusBar()
+            # the real MainWindow's permanent readout widget. Carried here so
+            # the profiled paint path is the one that ships: without it,
+            # updateStatusBar falls back to showMessage and measures a
+            # different write.
+            self.status_label = QLabel()
+            self.statusbar.addPermanentWidget(self.status_label, 0)
 
         def checkActions(self, *a, **k):
             pass
