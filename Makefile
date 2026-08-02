@@ -28,6 +28,13 @@ UV := uv run --frozen --no-default-groups --extra test
 # .github/workflows/test.yml installs, so local and CI cannot disagree.
 RUFF := uvx ruff@0.15.20
 
+# mypy is pinned for the same reason, and more sharply: an unpinned type checker
+# changes its findings under you, so the baseline count written into mypy.ini
+# would stop meaning anything. Same version the `type` job in
+# .github/workflows/test.yml installs. Added per-run with `--with` rather than
+# declared as a project extra, so it costs nothing in pyproject.toml or uv.lock.
+MYPY := mypy==2.3.0
+
 # Hoisted here as well as in tests/conftest.py so that non-pytest targets and
 # any future scripted target inherit it too.
 export QT_QPA_PLATFORM = offscreen
@@ -57,12 +64,18 @@ lint:
 	$(RUFF) check .
 
 # Reporting only, and prefixed with `-` so a nonzero exit does not stop `make`.
-# Scoped to the Qt-free core (`modules/datatypes`), which is where the geometry
-# and serialisation invariants live and is the layer that already has a
-# Qt-independence test. A whole-tree strict run reports thousands of errors,
-# most of them missing annotations, and is not a gate anyone can act on.
-# Deliberately absent from `check` for that reason.
+# No paths and no flags here on purpose: scope, strictness and the measured
+# baseline all live in `mypy.ini`, so this target, the `type` CI job and a bare
+# `mypy` run in a checkout cannot disagree about what is being checked. Passing
+# paths on the command line would silently override the config's `files`.
+#
+# Scoped there to the Qt-free core -- modules/datatypes, modules/calc,
+# modules/constants -- which is where the geometry and serialization invariants
+# live and is the layer that already has a Qt-independence test. A whole-tree
+# strict run reports thousands of errors, most of them missing annotations, and
+# is not a gate anyone can act on. Deliberately absent from `check` for that
+# reason.
 type:
-	-$(UV) --with mypy python -m mypy --ignore-missing-imports PyReconstruct/modules/datatypes
+	-$(UV) --with $(MYPY) python -m mypy
 
 check: lint fast
