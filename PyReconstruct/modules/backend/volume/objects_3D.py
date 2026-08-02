@@ -220,7 +220,7 @@ class Surface(Object3D):
             "name": self.name,
             "type": "object",
             "color": self.color if self.color else self.default_color,
-            "alpha": self.alpha if self.alpha else self.series.getAttr(self.name, "3D_opacity"),
+            "alpha": self.alpha if self.alpha is not None else self.series.getAttr(self.name, "3D_opacity"),
             "vertices": tm.vertices,
             "faces": tm.faces,
             "tform": self.tform
@@ -287,7 +287,7 @@ class Spheres(Object3D):
             "name": self.name,
             "type": "object",
             "color": self.color if self.color else self.colors[0],
-            "alpha": self.alpha if self.alpha else self.series.getAttr(self.name, "3D_opacity"),
+            "alpha": self.alpha if self.alpha is not None else self.series.getAttr(self.name, "3D_opacity"),
             "vertices": np.array(tm.vertices),
             "faces": np.array(tm.faces),
             "tform": self.tform
@@ -350,7 +350,7 @@ class Contours(Object3D):
             "name": self.name,
             "type": "object",
             "color": self.color if self.color else self.default_color,
-            "alpha": self.alpha if self.alpha else self.series.getAttr(self.name, "3D_opacity"),
+            "alpha": self.alpha if self.alpha is not None else self.series.getAttr(self.name, "3D_opacity"),
             "vertices": np.array(verts),
             "faces": np.array(faces),
             "tform": self.tform
@@ -393,11 +393,15 @@ class Ztrace3D(Object3D):
 
         verts, faces = createTube(pts, d/1000)
 
+        ## The literal 1 fallback is not a stored value the way the object
+        ## paths' is: SceneObject.setAlpha only writes 3D_opacity for
+        ## type == "object", so a ztrace never has one, and Series.getAttr
+        ## would return 1 for it anyway.
         mesh_data = {
             "name": self.name,
             "type": "ztrace",
             "color": self.color if self.color else color,
-            "alpha": self.alpha if self.alpha else 1,
+            "alpha": self.alpha if self.alpha is not None else 1,
             "vertices": verts,
             "faces": faces,
             "tform": self.tform
