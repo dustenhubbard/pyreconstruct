@@ -466,6 +466,45 @@ class FieldWidgetTrace(FieldWidgetBase):
 
         return False
 
+    def refuseLockedDestination(self, name : str) -> bool:
+        """Refuse a rename that would move traces INTO a locked object.
+
+        The other half of `refuseLockedTraces`, which only ever looks at the
+        objects the selected traces are in right now. A rename has a second
+        object: the one the traces land in. Renaming an unlocked object's trace
+        to a locked object's name passes every source-side check and still adds
+        a trace to the locked object, which is exactly the mutation lock exists
+        to prevent.
+
+        Scoped to the destination NAME and nothing else, because the lock rule
+        is narrow: locking guards quantitative data (traces added, deleted or
+        modified) and never selection, color or visibility. A rename that leaves
+        the name alone is a color/tag edit and is not this function's business,
+        so callers pass `None` through untouched.
+
+        Same message and same all-or-nothing shape as `refuseLockedTraces`: one
+        locked destination refuses the whole operation rather than renaming part
+        of the selection, and the user is told why. A silent refusal reads as a
+        broken command.
+
+            Params:
+                name (str): the name the traces would be renamed to (None or ""
+                    when the operation is not renaming anything)
+            Returns:
+                (bool): True if the operation was refused
+        """
+        if not name:
+            return False
+
+        if self.series.getAttr(name, "locked"):
+            notify(
+                "Cannot modify locked objects.\n"
+                "Please unlock before modifying."
+            )
+            return True
+
+        return False
+
     ############################################################################
     ## Interactions only accessible through the field ##########################
     ############################################################################
@@ -923,6 +962,12 @@ class FieldWidgetTrace(FieldWidgetBase):
         trace = self.clipboard[0]
         name, color, tags, mode = trace.name, trace.color, trace.tags, trace.fill_mode
 
+        # ...and the object it would move them INTO. Copy is deliberately
+        # allowed on a locked object (it changes nothing), so the clipboard can
+        # hold a locked object's trace with no refusal anywhere upstream.
+        if self.refuseLockedDestination(name):
+            return False
+
         self.section.editTraceAttributes(
             traces=self.section.selected_traces.copy(),
             name=name,
@@ -1091,6 +1136,12 @@ class FieldWidgetTrace(FieldWidgetBase):
         name, color, tags, mode = (
             t.name, t.color, t.tags, t.fill_mode
         )
+
+        # `trace_function` cleared the objects these traces are in; the name the
+        # user typed is a second object and nothing has checked it yet.
+        if self.refuseLockedDestination(name):
+            return
+
         self.section.editTraceAttributes(
             traces=traces.copy(),
             name=name,
