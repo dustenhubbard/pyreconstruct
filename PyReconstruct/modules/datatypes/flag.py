@@ -1,4 +1,6 @@
 from datetime import datetime
+import hashlib
+import json
 import random
 
 from PyReconstruct.modules.constants import getDateTime
@@ -126,6 +128,56 @@ class Flag():
         id = ""
         for _ in range(6): id += random.choice(possible_chars)
         return id
+
+    @staticmethod
+    def deriveID(content, taken=()):
+        """Derive a flag ID from the flag's own content.
+
+        Used only by the legacy migration in ``Section.updateJSON``, for a flag
+        stored before flags carried an ID. ``generateID`` is random, and the
+        migration runs on **every** unpack of a .jser whose flags predate the
+        ID field, so the same flag came out of two opens with two different
+        IDs. That is not cosmetic: ``Flag.equals`` compares IDs and nothing
+        else, so ``Series.importFlags`` deduplicates purely by ID. Two people
+        who each opened the same legacy .jser and saved it hold the same flag
+        under two IDs, and importing one into the other stacks a duplicate on
+        top of every legacy flag instead of merging it.
+
+        Deriving rather than assigning-and-persisting is the point: a random ID
+        would be stable only once the file is saved, and only within that one
+        copy. A file opened read-only never gets one, and two independently
+        opened copies of one source file never agree. A hash of the content
+        agrees everywhere, with no save required.
+
+        The result is six characters from the same alphabet ``generateID``
+        uses, so a migrated ID is indistinguishable from a generated one and
+        nothing downstream needs to know which it got.
+
+            Params:
+                content: the flag's stored content, any JSON-serializable value
+                taken (iterable): IDs already spoken for in this section, so a
+                    derived ID never displaces one
+            Returns:
+                (str): the derived six-character ID
+        """
+        taken = set(taken)
+        payload = json.dumps(content, sort_keys=True, default=str)
+        # Salted on collision rather than given up on: two legacy flags can
+        # legitimately share a section, a name and a position.
+        for salt in range(1000):
+            digest = hashlib.blake2b(
+                f"{salt}\x00{payload}".encode("utf-8"), digest_size=16
+            ).digest()
+            n = int.from_bytes(digest, "big")
+            id = ""
+            for _ in range(6):
+                n, i = divmod(n, len(possible_chars))
+                id += possible_chars[i]
+            if id not in taken:
+                return id
+        # Unreachable short of a deliberate attack on blake2b; fall back rather
+        # than return a duplicate.
+        return Flag.generateID()
 
     def magScale(self, prev_mag : float, new_mag : float):
         """Adjust the flag position to a new magnification.

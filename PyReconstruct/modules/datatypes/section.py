@@ -341,13 +341,26 @@ class Section():
         if "no-alignment" in section_data["tforms"]:
             del(section_data["tforms"]["no-alignment"])
         
-        # iterate through flags and add resolved status or section number and ID
+        # iterate through flags and add resolved status or section number and ID.
+        # The ID is DERIVED from the flag's own content, not generated: this
+        # migration runs on every unpack of a .jser whose flags predate the ID
+        # field, and a random ID there gave the same flag a different identity
+        # on every open. Flag.equals compares IDs and nothing else, so
+        # Series.importFlags deduplicated on an identity that did not survive
+        # the trip and duplicated every legacy flag it was asked to merge.
+        # See Flag.deriveID.
+        taken = set(
+            flag[0] for flag in section_data["flags"]
+            if len(flag) == 7 and isinstance(flag[0], str)
+        )
         for flag in section_data["flags"]:
             if len(flag) == 5:
                 flag.append(False)
             if len(flag) == 6:
-                flag.insert(0, Flag.generateID())
-        
+                id = Flag.deriveID([n] + flag, taken)
+                taken.add(id)
+                flag.insert(0, id)
+
         # iterate through contours and remove whitespace
         for cname in tuple(section_data["contours"].keys()):
 
