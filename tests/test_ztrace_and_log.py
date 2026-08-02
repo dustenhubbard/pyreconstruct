@@ -20,6 +20,14 @@ functions under test:
     a tautology. The padded moving-average values are computed by hand.
   * Ztrace.magScale multiplies x,y by new_mag/prev_mag for points on the named
     section only.
+  * Ztrace.getDict writes points at FULL precision -- unlike Trace.getList,
+    which rounds to 7 decimals. The .jser audit filed that asymmetry; it was
+    measured and accepted rather than "fixed", and the reasoning lives in
+    Ztrace.getDict's docstring. The test here pins the decision.
+  * LogSet.exportLogHistory splits existing_log.csv on an age cutoff: entries
+    older than N days go to an external CSV, the rest are written back. This is
+    the rotation that bounds the .jser's log string, so it is exercised against
+    real files in tmp_path with dates computed from today.
   * Log.__str__/fromStr round-trip; ints, lists and None for ``section``; ranges
     rendered "a" when a==b else "a-b"; events containing ", " are rejoined.
   * Log.containsSection is inclusive on both ends (range(n1, n2+1)) and False for
@@ -33,14 +41,16 @@ trimSectionRange is covered elsewhere and is intentionally not retested here.
 Headless: Transform is a real dependency and is now Qt-free (a plain NumPy
 affine), as is Log's getDateTime (it reads the "utc" preference through the
 settings seam), so neither needs a Qt platform -- see tests/test_qt_free_core.py.
-No network or file I/O (LogSet.exportLogHistory, which needs real CSV files, is
-not exercised).
+No network I/O. The only file I/O is LogSet.exportLogHistory's, confined to
+pytest's tmp_path.
 """
 import math
 import types
+from datetime import timedelta
 
 import pytest
 
+from PyReconstruct.modules.constants import get_now
 from PyReconstruct.modules.datatypes.ztrace import Ztrace
 from PyReconstruct.modules.datatypes.transform import Transform
 from PyReconstruct.modules.datatypes.log import Log, LogSet, LogSetPair
@@ -68,6 +78,34 @@ def _make_series(tform_list, zvals, align="align", ztrace_align="align"):
     stub.getZValues = lambda: dict(zvals)
     stub.getAttr = lambda name, key, ztrace=False: ztrace_align
     return stub
+
+
+def test_ztrace_getdict_preserves_full_precision():
+    """Ztrace coordinates are NOT rounded on the way out, on purpose.
+
+    Trace.getList rounds to 7 decimals; Ztrace.getDict does not. The .jser
+    audit filed the asymmetry and it was accepted rather than fixed -- see the
+    reasoning and the measurements in Ztrace.getDict's docstring. This pins the
+    decision so that "make it symmetric with traces" fails here, with a pointer
+    to why, instead of silently rewriting every stored ztrace on the next save.
+
+    The values below are real coordinates lifted from the checker fixture; each
+    needs more than 7 decimals to survive, so a round(.., 7) anywhere on this
+    path changes them.
+    """
+    pts = [
+        (3.9026394499999997, 0.82584395, 0),
+        (1.5454268500000001, 0.66891965, 1),
+    ]
+    d = Ztrace("z", [255, 0, 0], list(pts)).getDict()
+
+    assert d["points"] == pts
+    for (x, y, _), (px, py, _) in zip(d["points"], pts):
+        assert repr(x) == repr(px) and repr(y) == repr(py)
+        # and the guard against this test going vacuous: if a future fixture
+        # change left only short values here, it would pass while proving
+        # nothing about precision
+        assert len(repr(px).split(".")[1]) > 7, "value does not exercise rounding"
 
 
 def test_copy_returns_new_list_with_equal_contents():
@@ -556,6 +594,102 @@ def test_logset_get_last_index_none_range_matches_any_section():
 
     # section_ranges is None -> matches regardless of requested section number
     assert ls.getLastIndex(123, "A") == 0
+
+
+# --------------------------------------------------------------------------- #
+# LogSet.exportLogHistory -- the log's rotation mechanism
+# --------------------------------------------------------------------------- #
+
+def _write_existing_log(hidden_dir, ages_in_days):
+    """An existing_log.csv with one entry per requested age, header first.
+
+    Dates are written in the "%y-%m-%d" form the product parses, computed from
+    today so the test does not drift into passing (or failing) with the calendar.
+    """
+    header = "Date, Time, User, Obj, Sections, Event\n"
+    lines = [header]
+    for i, age in enumerate(ages_in_days):
+        d = (get_now().date() - timedelta(days=age)).strftime("%y-%m-%d")
+        lines.append(f"{d}, 12:00, u, obj{i}, {i}, Modify trace(s)\n")
+    fp = hidden_dir / "existing_log.csv"
+    fp.write_text("".join(lines), encoding="utf-8")
+    return fp
+
+
+def test_export_log_history_splits_on_age_and_shrinks_the_working_log(tmp_path):
+    """Offloading old entries is what keeps the .jser's log string bounded.
+
+    The .jser audit filed the log as "unbounded ... growing monotonically until
+    exported"; growth was measured and accepted (see the comment in
+    Series.saveJser) precisely because this rotation exists and the GUI exposes
+    it as MainWindow.exportLog. That reasoning is only worth anything if the
+    mechanism works, and this file previously did not exercise it at all.
+
+    Entries strictly older than the cutoff go to the external CSV; newer ones
+    stay. Both files keep the header, so each is independently readable.
+    """
+    hidden = tmp_path / "hidden"
+    hidden.mkdir()
+    # two well clear of a 30-day cutoff, two well inside it
+    _write_existing_log(hidden, [365, 90, 5, 0])
+    out_fp = tmp_path / "offloaded.csv"
+
+    LogSet.exportLogHistory(str(hidden), str(out_fp), 30)
+
+    exported = out_fp.read_text(encoding="utf-8").splitlines()
+    remaining = (hidden / "existing_log.csv").read_text(encoding="utf-8").splitlines()
+
+    assert exported[0].startswith("Date, Time")
+    assert remaining[0].startswith("Date, Time")
+    # obj0 (365d) and obj1 (90d) offloaded; obj2 (5d) and obj3 (0d) retained
+    assert [ln.split(", ")[3] for ln in exported[1:]] == ["obj0", "obj1"]
+    assert [ln.split(", ")[3] for ln in remaining[1:]] == ["obj2", "obj3"]
+    # the point of the exercise: the working log actually got smaller
+    assert len(remaining) < 5
+    # nothing was lost -- every original entry is in exactly one of the two
+    assert len(exported[1:]) + len(remaining[1:]) == 4
+
+
+def test_export_log_history_keeps_nothing_back_when_everything_is_old(tmp_path):
+    """The bounding case: a cutoff that catches every entry empties the log.
+
+    The working log is left as a bare header rather than an empty file, so the
+    next save still writes a parseable log.
+    """
+    hidden = tmp_path / "hidden"
+    hidden.mkdir()
+    _write_existing_log(hidden, [400, 300, 200])
+    out_fp = tmp_path / "all.csv"
+
+    LogSet.exportLogHistory(str(hidden), str(out_fp), 1)
+
+    remaining = (hidden / "existing_log.csv").read_text(encoding="utf-8").splitlines()
+    exported = out_fp.read_text(encoding="utf-8").splitlines()
+    assert remaining == ["Date, Time, User, Obj, Sections, Event"]
+    assert len(exported) == 4
+
+
+def test_export_log_history_overwrites_a_previous_export(tmp_path):
+    """Exporting twice to the same path must not append to a stale file.
+
+    ``exportLogHistory`` unlinks the destination first; without that the second
+    export would concatenate onto the first and double-count the history.
+    """
+    hidden = tmp_path / "hidden"
+    hidden.mkdir()
+    _write_existing_log(hidden, [400, 5])
+    out_fp = tmp_path / "twice.csv"
+    out_fp.write_text("stale, content, that, must, not, survive\n", encoding="utf-8")
+
+    LogSet.exportLogHistory(str(hidden), str(out_fp), 30)
+
+    text = out_fp.read_text(encoding="utf-8")
+    assert "stale" not in text
+    assert text.splitlines() == [
+        "Date, Time, User, Obj, Sections, Event",
+        text.splitlines()[1],
+    ]
+    assert "obj0" in text and "obj1" not in text
 
 
 # --------------------------------------------------------------------------- #

@@ -452,6 +452,17 @@ def _assert_actually_rich(doc):
     for key in ("editors", "object_groups", "ztrace_groups", "host_tree",
                 "obj_attrs", "user_columns"):
         assert ser.get(key), f"source {key} is empty: its preservation is untested"
+    # Ztrace coordinates are written at full precision while trace coordinates
+    # are rounded to 7 decimals -- a deliberate asymmetry (see Ztrace.getDict).
+    # Losslessness there is only tested if the source actually carries a value
+    # that 7-decimal rounding would change, so require one.
+    zt_points = [p for z in ser.get("ztraces", {}).values() for p in z["points"]]
+    assert zt_points, "source has no ztrace points"
+    assert any(round(v, 7) != v for p in zt_points for v in p[:2]), (
+        "no ztrace coordinate needs more than 7 decimals: the round trip would "
+        "pass even if ztrace points were being rounded"
+    )
+
     n_flags = sum(len(s["flags"]) for s in c["sections"].values())
     n_traces = sum(len(rows) for s in c["sections"].values()
                    for rows in s["contours"].values())
