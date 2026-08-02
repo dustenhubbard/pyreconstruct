@@ -504,9 +504,10 @@ Notes that apply to both arities:
   encodes only selected and unselected.
 - `fill_mode` must be a JSON array. Any other type (including the legacy integer mode
   from Reconstruct XML) is replaced with `["none","none"]` on read.
-- A trace with exactly two points is treated as `closed = false` in memory regardless of
-  the stored flag. The stored flag is not corrected, so this is a silent reader-only
-  normalization. See [section 9](#9-reader-and-writer-divergences).
+- A trace with exactly two points is `closed = false`, regardless of the stored flag: two
+  points enclose no area. The flag is corrected on unpack as well as in memory, so a
+  `.jser` written by this build never carries `closed: true` on a two-point row. See
+  [section 9](#9-reader-and-writer-divergences).
 - A 9-element row inside `contours` and a 10-element row inside `palette_traces` are
   legacy shapes carrying a trailing per-trace history object. The extra element is
   dropped on read.
@@ -1099,10 +1100,19 @@ of view. The forcing lives in the unpack loop only, so resuming from an existing
 directory preserves whatever the section file holds. That is the one path on which the
 stored value is honored, and it is also the path on which the `.jser` is never read.
 
-**4. A two-point trace's `closed` flag is not corrected on disk.**
-The reader forces `closed = false` in memory for any trace with exactly two points, but
-does not write the correction back. On-disk `closed: true` therefore persists on rows the
-application treats as open. Two readers can legitimately disagree about such a trace.
+**4. A two-point trace's `closed` flag was not corrected on disk (FIXED).**
+The reader forces `closed = false` in memory for any trace with exactly two points. It
+used not to write that correction back, so on-disk `closed: true` persisted on rows the
+application treated as open, and two readers could legitimately disagree about such a
+trace. The correction now happens on unpack, in `Section.updateJSON`, alongside the
+removal of traces with fewer than two points.
+
+The old behavior was not stable, which is why it was worth changing. A `.jser` opened and
+saved without touching the section round-tripped the stale `true` byte for byte, but the
+first save that took the section back through the model wrote `false`. The flag therefore
+flipped at an unpredictable later save rather than never, and a byte-level diff showed a
+change no edit accounts for. A generator writing `closed: true` on a two-point row should
+expect it to come back as `false`.
 
 **5. `log_set` is emitted when empty and removed when populated.**
 The series writer always includes a `log_set` key. The `.jser` assembler deletes it only
