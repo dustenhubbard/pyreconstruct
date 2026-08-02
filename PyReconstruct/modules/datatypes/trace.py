@@ -414,7 +414,7 @@ class Trace():
         # `default_traces` constant and would otherwise destroy it on first
         # use, permanently, for the rest of the process. Parsing a row is a
         # read; callers should not have to know that it wasn't.
-        if not name or len(l) == 9:
+        if name is None or len(l) == 9:
             name, *fields = l
         else:
             fields = l

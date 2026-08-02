@@ -187,6 +187,40 @@ def test_fromlist_strips_name_whitespace():
     assert rebuilt.name == "spaced"
 
 
+def test_round_trip_empty_name_via_key():
+    """A contour keyed on '' must survive a getList/fromList round-trip.
+
+    Section.py stores contours as {name: [8-field rows]} and re-reads them
+    as Trace.fromList(row, name=key). When key is '' the old condition
+    `if not name` treated the empty string as falsy, entered the 9-field
+    branch, tried to unpack x as the name, and raised ValueError because
+    the remaining 7 fields could not fill 8 variables.
+    """
+    orig = make_square_trace(name="", color=(0, 128, 255))
+
+    row = orig.getList(include_name=False)
+    assert len(row) == 8, "getList(include_name=False) must produce 8 fields"
+
+    # This is exactly how Section.__init__ calls fromList when the contour
+    # key is ''. Before the fix it raised:
+    #   ValueError: not enough values to unpack (expected 8, got 7)
+    rebuilt = Trace.fromList(row, name="")
+
+    assert rebuilt.name == ""
+    assert rebuilt.color == (0, 128, 255)
+    assert rebuilt.points == list(SQUARE)
+
+
+def test_round_trip_empty_name_9field():
+    """A 9-field row whose embedded name is '' also survives fromList."""
+    orig = make_square_trace(name="", color=(1, 2, 3))
+    row = orig.getList(include_name=True)
+    assert len(row) == 9
+    rebuilt = Trace.fromList(row)
+    assert rebuilt.name == ""
+    assert rebuilt.color == (1, 2, 3)
+
+
 # ---------------------------------------------------------------------------
 # copy()
 # ---------------------------------------------------------------------------
