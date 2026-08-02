@@ -421,6 +421,13 @@ def return_view_menu(self):
                     ("resetpalette_act", "Reset palette position", "", self.mouse_palette.resetPos),
                 ]
             },
+            # Sits directly under Palette because "Reset palette position" is
+            # the item it is a sibling of: both put a piece of the window
+            # furniture back where it started. Kept out of the Palette submenu,
+            # which is palette-scoped, and out of File/Help, which are neither
+            # about the view. No shortcut: the window it rescues is one the user
+            # can still reach the menubar of.
+            ("resetwindow_act", "Reset window", "", self.resetWindowGeometry),
             ("lefthanded_act", "Left handed", "checkbox", self.field.setLeftHanded),
             None,
             ("togglecuration_act", "Toggle curation in object lists", self.series, self.toggleCuration),

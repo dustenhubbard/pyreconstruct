@@ -319,8 +319,14 @@ MENUBAR_BASELINE = [
 #    Series > Import series data > From another series, which is the
 #    whole-series merge dialog, while Alignments > Import alignments offered
 #    only .txt and SWiFT. All three sources now sit together.
+# 3. "Reset window" in View, directly under the Palette submenu. Added because
+#    there was no way at all to recover a main window left off-screen or too
+#    small to grab, short of quitting and clearing `window/geometry` by hand.
+#    It lands after the submenu, next to "Reset palette position", not inside
+#    it: the palette submenu is palette-scoped and this is window-scoped.
 _CLEAR_RECENTS_ROW = (2, "act", "clearrecents_act")
 _IMPORT_JSER_ALIGNMENTS_ROW = (2, "act", "import_jser_alignments_act")
+_RESET_WINDOW_ROW = (1, "act", "resetwindow_act")
 MENUBAR_EXPECTED = list(MENUBAR_BASELINE)
 MENUBAR_EXPECTED.insert(
     MENUBAR_BASELINE.index((1, "menu", "openrecentmenu")) + 1, _CLEAR_RECENTS_ROW
@@ -328,6 +334,9 @@ MENUBAR_EXPECTED.insert(
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "menu", "importalignmentsmenu")) + 1,
     _IMPORT_JSER_ALIGNMENTS_ROW,
+)
+MENUBAR_EXPECTED.insert(
+    MENUBAR_EXPECTED.index((1, "act", "lefthanded_act")), _RESET_WINDOW_ROW
 )
 
 
@@ -349,9 +358,9 @@ def test_no_baseline_action_was_lost():
 
 
 def test_menubar_action_and_submenu_counts():
-    """113 actions at capture, 116 now (the additions); submenus unchanged."""
+    """113 actions at capture, 117 now (the additions); submenus unchanged."""
     rows = _rows()
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 116
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 117
     assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 32
 
 
