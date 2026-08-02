@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QRadioButton,
     QLabel,
     QApplication,
+    QSlider,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import (
@@ -185,6 +186,113 @@ class MultiInput(QWidget):
             t = w.currentText() if self.is_combo else w.text()
             if t: l.append(t)
         return l
+
+def defaultTickInterval(minimum : int, maximum : int) -> int:
+    """Pick a readable tick spacing for a slider range.
+
+    Aims for roughly ten ticks across the groove and then rounds up to a round
+    number, so an 0-100 slider ticks every 10 and a 20-100 slider every 10 as
+    well, rather than at some spacing nobody would choose by hand.
+    """
+    span = abs(maximum - minimum)
+    if span <= 0:
+        return 1
+    rough = span / 10
+    for candidate in (1, 2, 5, 10, 20, 25, 50, 100):
+        if rough <= candidate:
+            return candidate
+    return span
+
+
+class SliderWidget(QWidget):
+    """A horizontal slider that shows its tick marks and its current value.
+
+    A bare QSlider tells the user nothing: the handle sits somewhere along a
+    blank groove and the number actually being set is invisible. This pairs the
+    slider with tick marks and a live readout in the *caller's* units, updated on
+    every valueChanged, so what the handle means is on screen while it moves.
+
+    `value()` and `setValue()` mirror QSlider, so this is a drop-in for callers
+    that only ever asked the slider for its number.
+
+        Params:
+            parent (QWidget): the parent widget
+            value (int): the starting value, in the caller's own units
+            minimum (int): the smallest value the slider can take
+            maximum (int): the largest value the slider can take
+            tick_interval (int): spacing of the tick marks; computed from the
+                                 range when None
+            suffix (str): appended to the number in the readout (e.g. "%")
+            fmt (callable): given the value, returns the whole readout string.
+                            Overrides suffix; for units that are not a plain
+                            number, such as "50% (5 of 10 workers)".
+    """
+
+    def __init__(
+            self,
+            parent=None,
+            value : int = 0,
+            minimum : int = 0,
+            maximum : int = 100,
+            tick_interval : int = None,
+            suffix : str = "",
+            fmt=None,
+    ):
+        super().__init__(parent)
+
+        self.suffix = suffix
+        self.fmt = fmt
+
+        self.slider = QSlider(Qt.Horizontal, self)
+        self.slider.setMinimum(minimum)
+        self.slider.setMaximum(maximum)
+        self.slider.setTickPosition(QSlider.TicksBelow)
+        self.slider.setTickInterval(
+            tick_interval if tick_interval else defaultTickInterval(minimum, maximum)
+        )
+        self.slider.setValue(int(value) if value is not None else minimum)
+
+        self.readout = QLabel(self)
+        # reserve room for the longest readout the range can produce, so the
+        # slider does not shift sideways as the number grows a digit
+        widest = max(
+            (self.formatValue(v) for v in (minimum, maximum, self.slider.value())),
+            key=len,
+        )
+        self.readout.setMinimumWidth(
+            self.readout.fontMetrics().boundingRect(widest).width() + 10
+        )
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        layout.addWidget(self.slider)
+        layout.addWidget(self.readout)
+        self.setLayout(layout)
+
+        self.slider.valueChanged.connect(self.updateReadout)
+        self.updateReadout(self.slider.value())
+
+    def formatValue(self, value : int) -> str:
+        """Render a value the way the caller wants it read."""
+        if self.fmt:
+            return self.fmt(value)
+        return f"{value}{self.suffix}"
+
+    def updateReadout(self, value : int):
+        """Put the current value on screen."""
+        self.readout.setText(self.formatValue(value))
+
+    def text(self) -> str:
+        """The readout text currently displayed."""
+        return self.readout.text()
+
+    def value(self) -> int:
+        return self.slider.value()
+
+    def setValue(self, value : int):
+        self.slider.setValue(value)
+
 
 class BorderedWidget(QWidget):
 

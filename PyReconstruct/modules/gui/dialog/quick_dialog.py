@@ -15,11 +15,10 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QScrollArea,
     QPushButton,
-    QSlider
 )
 from PySide6.QtCore import Qt
 
-from .helper import resizeLineEdit, BrowseWidget, MultiInput
+from .helper import resizeLineEdit, BrowseWidget, MultiInput, SliderWidget
 from .color_button import ColorButton
 from .shape_button import ShapeButton
 from PyReconstruct.modules.gui.utils import notify, CompleterBox
@@ -371,18 +370,32 @@ def getLayout(parent, structure : list, grid : bool = False, spacing=1):
                         resizeLineEdit(w, "0.000000000")
                     inputs.append(InputField(widget_type, w, options, required=required))
                 elif widget_type == "slider":
-                    # Params: value (int, opt), tick_interval (int, opt)
-                    w = QSlider(Qt.Horizontal, parent)
-                    w.setMinimum(0)
-                    w.setMaximum(100)
-                    if params:
-                        w.setValue(params[0])
-                    else:
-                        w.setValue(0)
-                    # optional evenly spaced tick marks below the groove
-                    if len(params) > 1 and params[1]:
-                        w.setTickPosition(QSlider.TicksBelow)
-                        w.setTickInterval(params[1])
+                    # Params: value (int, opt), then in either order:
+                    #   tick_interval (int, opt) and an options dict (opt).
+                    # The dict is how a caller opts into a range other than
+                    # 0-100 and into units for the readout:
+                    #   "minimum" / "maximum" (int)  the slider's own range
+                    #   "suffix" (str)               appended to the number
+                    #   "fmt" (callable)             renders the whole readout
+                    # A caller that passes neither gets the old 0-100 slider,
+                    # now with ticks and a plain numeric readout.
+                    value = params[0] if params else 0
+                    tick_interval = None
+                    opts = {}
+                    for param in params[1:]:
+                        if isinstance(param, dict):
+                            opts = param
+                        elif param:
+                            tick_interval = param
+                    w = SliderWidget(
+                        parent,
+                        value=value,
+                        minimum=opts.get("minimum", 0),
+                        maximum=opts.get("maximum", 100),
+                        tick_interval=tick_interval,
+                        suffix=opts.get("suffix", ""),
+                        fmt=opts.get("fmt"),
+                    )
                     inputs.append(InputField(widget_type, w, required=required))
                 elif widget_type == "combo":
                     # Params structure: list[str], optional: str
