@@ -12,7 +12,7 @@ def make_unique_id() -> int:
 def determine_cpus(percent_usage: int) -> int:
     """Determine max numbers of cores to use."""
     
-    cpus = int(os.cpu_count() * (percent_usage / 100))
+    cpus = int((os.cpu_count() or 1) * (percent_usage / 100))
 
     return cpus or 1
 
