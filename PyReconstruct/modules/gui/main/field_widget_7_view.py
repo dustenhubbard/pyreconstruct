@@ -13,6 +13,7 @@ from .field_widget_5_mouse import (
     OPENTRACE
 )
 from .field_widget_6_paint import FieldWidgetPaint
+from .status_readout import SEPARATOR
 
 
 class FieldWidgetView(FieldWidgetPaint):
@@ -78,35 +79,36 @@ class FieldWidgetView(FieldWidgetPaint):
         `showMessage` (`MainWindow._onStartupCheck`) -- the two now sit side by
         side in the bar instead of overwriting each other.
 
+        The first three parts are handed to the readout separately from the
+        rest because each of them is its own clickable widget there; see
+        `gui/main/status_readout.py`. `status_list` still holds the whole
+        readout in order, because that is what `field_widget_1_base` builds
+        when it has nothing else yet.
+
             Params:
                 trace (Trace): optional trace to add to status bar
         """
-        self.status_list = []
-
         # display current section
         section = "Section: " + str(self.series.current_section)
-        self.status_list.append(section)
 
         # display the alignment setting
         alignment = "Alignment: " + self.series.alignment
-        self.status_list.append(alignment)
 
         # display the brightness/contrast setting
         bc_profile = "B/C Profile: " + self.series.bc_profile
-        self.status_list.append(bc_profile)
 
         # display mouse position in the field
         x, y = pixmapPointToField(
-            self.mouse_x, 
-            self.mouse_y, 
-            self.pixmap_dim, 
-            self.series.window, 
+            self.mouse_x,
+            self.mouse_y,
+            self.pixmap_dim,
+            self.series.window,
             self.section.mag
         )
         position = "x = " + str("{:.4f}".format(x)) + ", "
         position += "y = " + str("{:.4f}".format(y))
-        self.status_list.append(position)
-        
+        detail_list = [position]
+
         # display the distance between the current position and the last point if line tracing
         #
         # `self.current_trace` is checked as well as the flag: every caller that
@@ -120,28 +122,30 @@ class FieldWidgetView(FieldWidgetPaint):
             d = distance(last_x, last_y, self.mouse_x, self.mouse_y)
             d = d / self.scaling * self.section.mag
             dist = f"Line distance: {round(d, 5)}"
-            self.status_list.append(dist)
+            detail_list.append(dist)
         elif trace is not None:
             if type(trace) is Trace:
-                self.status_list.append(f"Closest trace: {trace.name}")
+                detail_list.append(f"Closest trace: {trace.name}")
             elif type(trace) is Ztrace:
-                self.status_list.append(f"Closest trace: {trace.name} (ztrace)")
-         
-        s = "  |  ".join(self.status_list)
+                detail_list.append(f"Closest trace: {trace.name} (ztrace)")
+
+        self.status_list = [section, alignment, bc_profile] + detail_list
 
         # `paintText` calls this from every paint event, so an unconditional
         # write meant a `setText` and a status-bar relayout per frame even when
-        # not one character had changed. Comparing against what is displayed
-        # confines the write to the events that actually move the readout: a
-        # mouse move over the field, a section change, and a change of
-        # alignment, brightness/contrast profile or closest trace.
-        label = getattr(self.mainwindow, "status_label", None)
-        if label is None:
+        # not one character had changed. `setReadout` compares each part
+        # against what is displayed, so the write is confined to the events
+        # that actually move the readout -- and a mouse move, which is the
+        # frequent one, now rewrites only the coordinates.
+        readout = getattr(self.mainwindow, "status_readout", None)
+        if readout is None:
             # a harness main window standing in for the real one, without the
             # permanent widget. Behave as the field always did.
-            self.mainwindow.statusbar.showMessage(s)
-        elif label.text() != s:
-            label.setText(s)
+            self.mainwindow.statusbar.showMessage(SEPARATOR.join(self.status_list))
+        else:
+            readout.setReadout(
+                section, alignment, bc_profile, SEPARATOR.join(detail_list)
+            )
 
     def ztraceDialog(self):
         """Opens a dialog to edit selected traces."""

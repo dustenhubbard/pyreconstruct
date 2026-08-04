@@ -1,0 +1,248 @@
+"""The status bar's three clickable segments.
+
+The readout names the section, the alignment and the brightness/contrast
+profile -- the three things a user switches most often -- and until now naming
+them was all it did: changing any of the three meant a trip to a menu at the
+opposite end of the window. Each is now its own widget and a left-click on it
+offers the switch in place.
+
+What these tests drive is the whole path, not the widgets' existence: a real
+``QTest`` mouse click on the segment, the popup that click produces, a real
+mouse click on an entry in that popup, and then the two things that must
+follow -- the series actually switched, and the readout says so.
+
+Nothing here reaches ``QMenu.exec()``, and that is a property of the code
+under test rather than of the test: ``MainWindow.statusQuickSwitch`` uses
+``popup()``, which shows the menu without spinning a nested modal event loop.
+An ``exec()`` here would hang offscreen exactly the way the dialogs described
+in ``conftest.DialogRecorder`` do.
+
+The section segment is the odd one out: it has no popup of its own, because
+"Go To Section" already exists as ``MainWindow.changeSection``'s
+``QInputDialog``. Reusing it is the point -- one dialog, one validation rule,
+one place to change. It is a blocking modal, so it is driven through the
+``QInputDialog.getText`` patch the ``main_window`` fixture already installs.
+"""
+import pytest
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QMenu
+
+pytestmark = pytest.mark.gui
+
+
+def click(qtbot, widget, button=Qt.LeftButton):
+    qtbot.mouseClick(widget, button)
+
+
+def popup_of(segment):
+    """The menu a click on ``segment`` left behind, or None."""
+    menus = segment.findChildren(QMenu)
+    assert len(menus) <= 1, "a segment must not accumulate menus"
+    return menus[0] if menus else None
+
+
+def entry_texts(menu):
+    return [action.text() for action in menu.actions()]
+
+
+def checked_texts(menu):
+    return [action.text() for action in menu.actions() if action.isChecked()]
+
+
+def choose(qtbot, menu, text):
+    """Click the entry reading ``text``, the way a user picks one.
+
+    ``QAction.trigger()`` would fire the same slot, but it would leave the menu
+    open and skip the hit-testing entirely. Clicking the action's own rectangle
+    inside the menu is what a user does and is what closes the menu.
+    """
+    action = next(a for a in menu.actions() if a.text() == text)
+    qtbot.mouseClick(menu, Qt.LeftButton, pos=menu.actionGeometry(action).center())
+
+
+# ---- section: the existing Go To Section dialog, reached from the bar -------
+
+def test_clicking_the_section_segment_opens_go_to_section(
+    qtbot, main_window, main_window_dialogs
+):
+    """The click must reach the app's one section-jump dialog, not a new one."""
+    click(qtbot, main_window.status_readout.section_segment)
+
+    assert "Go To Section" in main_window_dialogs.dialogs
+
+
+def test_choosing_a_section_number_moves_the_field_and_the_readout(
+    qtbot, main_window, monkeypatch
+):
+    """Click -> dialog -> a number -> the field is there and the bar says so."""
+    from PySide6.QtWidgets import QInputDialog
+
+    sections = sorted(main_window.series.sections.keys())
+    if len(sections) < 2:
+        pytest.skip("fixture series has a single section")
+    target = next(n for n in sections if n != main_window.series.current_section)
+
+    monkeypatch.setattr(
+        QInputDialog, "getText", staticmethod(lambda *a, **k: (str(target), True))
+    )
+
+    click(qtbot, main_window.status_readout.section_segment)
+
+    assert main_window.series.current_section == target
+    assert main_window.status_readout.section_segment.text() == f"Section: {target}"
+    assert main_window.status_readout.text().startswith(f"Section: {target}")
+
+
+def test_cancelling_the_section_dialog_changes_nothing(
+    qtbot, main_window, main_window_dialogs
+):
+    """The recorder's default answer is a cancel, which must be a no-op."""
+    before = main_window.series.current_section
+    readout_before = main_window.status_readout.text()
+
+    click(qtbot, main_window.status_readout.section_segment)
+
+    assert main_window.series.current_section == before
+    assert main_window.status_readout.text() == readout_before
+
+
+# ---- alignment -------------------------------------------------------------
+
+def test_clicking_the_alignment_segment_lists_the_series_alignments(
+    qtbot, main_window
+):
+    """Every alignment the series has, and the current one marked."""
+    expected = sorted(main_window.field.section.tforms.keys())
+    assert len(expected) > 1, "fixture series must have alignments to switch between"
+
+    click(qtbot, main_window.status_readout.alignment_segment)
+
+    menu = popup_of(main_window.status_readout.alignment_segment)
+    assert menu is not None and menu.isVisible()
+    assert entry_texts(menu) == expected
+    assert checked_texts(menu) == [main_window.series.alignment]
+
+
+def test_choosing_an_alignment_switches_it_and_updates_the_readout(
+    qtbot, main_window
+):
+    """The whole path: click, popup, click an entry, series and bar follow."""
+    current = main_window.series.alignment
+    target = next(
+        a for a in sorted(main_window.field.section.tforms.keys()) if a != current
+    )
+
+    click(qtbot, main_window.status_readout.alignment_segment)
+    choose(qtbot, popup_of(main_window.status_readout.alignment_segment), target)
+
+    assert main_window.series.alignment == target
+    assert (
+        main_window.status_readout.alignment_segment.text() == f"Alignment: {target}"
+    )
+    assert f"Alignment: {target}" in main_window.status_readout.text()
+
+
+def test_the_alignment_switch_keeps_the_menu_actions_in_step(qtbot, main_window):
+    """``MainWindow.changeAlignment`` also owns the context menu's checkboxes.
+
+    It is reached by a bare ``getattr(self, f"{name}_alignment_act")`` on both
+    the old and the new name, so a quick switch that bypassed it would leave
+    the "Series alignment" submenu ticking the wrong entry -- and would raise
+    ``AttributeError`` the next time either route was used. Going through
+    ``changeAlignment`` is what this pins.
+    """
+    current = main_window.series.alignment
+    target = next(
+        a for a in sorted(main_window.field.section.tforms.keys()) if a != current
+    )
+
+    click(qtbot, main_window.status_readout.alignment_segment)
+    choose(qtbot, popup_of(main_window.status_readout.alignment_segment), target)
+
+    assert getattr(main_window, f"{target}_alignment_act").isChecked()
+    assert not getattr(main_window, f"{current}_alignment_act").isChecked()
+
+
+# ---- brightness/contrast profile -------------------------------------------
+
+@pytest.fixture
+def second_bc_profile(main_window):
+    """Give the fixture series a second brightness/contrast profile.
+
+    Created through ``Series.modifyBCProfiles``, which is the app's own
+    creation path (``BCProfilesDialog`` hands it exactly this shape: the new
+    name mapped to the profile it was copied from). Writing the key straight
+    onto ``field.section`` would not survive the reload a profile switch does.
+    """
+    main_window.series.modifyBCProfiles(
+        {"default": "default", "dim": "default"}, log_event=False
+    )
+    main_window.field.reload()
+    return "dim"
+
+
+def test_clicking_the_bc_segment_lists_the_profiles(
+    qtbot, main_window, second_bc_profile
+):
+    expected = sorted(main_window.field.section.bc_profiles.keys())
+    assert second_bc_profile in expected
+
+    click(qtbot, main_window.status_readout.bc_profile_segment)
+
+    menu = popup_of(main_window.status_readout.bc_profile_segment)
+    assert menu is not None and menu.isVisible()
+    assert entry_texts(menu) == expected
+    assert checked_texts(menu) == [main_window.series.bc_profile]
+
+
+def test_choosing_a_bc_profile_switches_it_and_updates_the_readout(
+    qtbot, main_window, second_bc_profile
+):
+    assert main_window.series.bc_profile != second_bc_profile
+
+    click(qtbot, main_window.status_readout.bc_profile_segment)
+    choose(
+        qtbot,
+        popup_of(main_window.status_readout.bc_profile_segment),
+        second_bc_profile,
+    )
+
+    assert main_window.series.bc_profile == second_bc_profile
+    assert (
+        main_window.status_readout.bc_profile_segment.text()
+        == f"B/C Profile: {second_bc_profile}"
+    )
+    assert f"B/C Profile: {second_bc_profile}" in main_window.status_readout.text()
+
+
+# ---- the segments themselves -----------------------------------------------
+
+def test_a_right_click_on_a_segment_opens_nothing(qtbot, main_window):
+    """Only the left button is a click here; the right one is not swallowed."""
+    segment = main_window.status_readout.alignment_segment
+
+    click(qtbot, segment, Qt.RightButton)
+
+    assert popup_of(segment) is None
+
+
+def test_the_detail_part_of_the_readout_is_not_clickable(main_window):
+    """Coordinates and the closest trace name nothing to switch to."""
+    from PyReconstruct.modules.gui.main.status_readout import StatusSegment
+
+    assert not isinstance(main_window.status_readout.detail_label, StatusSegment)
+
+
+def test_a_second_click_does_not_leave_the_first_menu_behind(qtbot, main_window):
+    """Repeated clicks must not accumulate menus parented to the segment."""
+    segment = main_window.status_readout.alignment_segment
+
+    click(qtbot, segment)
+    first = popup_of(segment)
+    assert first is not None
+    choose(qtbot, first, main_window.series.alignment)
+    qtbot.waitUntil(lambda: popup_of(segment) is None, timeout=2000)
+
+    click(qtbot, segment)
+    assert popup_of(segment) is not None

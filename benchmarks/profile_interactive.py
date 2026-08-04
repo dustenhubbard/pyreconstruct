@@ -194,7 +194,9 @@ class _Palette:
 
 
 def build_stub_mainwindow():
-    from PySide6.QtWidgets import QLabel, QMainWindow
+    from PySide6.QtWidgets import QMainWindow
+
+    from PyReconstruct.modules.gui.main.status_readout import FieldStatusReadout
 
     class StubMW(QMainWindow):
         """A real MainWindow cannot be used: its openSeries falls into
@@ -219,8 +221,8 @@ def build_stub_mainwindow():
             # the profiled paint path is the one that ships: without it,
             # updateStatusBar falls back to showMessage and measures a
             # different write.
-            self.status_label = QLabel()
-            self.statusbar.addPermanentWidget(self.status_label, 0)
+            self.status_readout = FieldStatusReadout()
+            self.statusbar.addPermanentWidget(self.status_readout, 0)
 
         def checkActions(self, *a, **k):
             pass
