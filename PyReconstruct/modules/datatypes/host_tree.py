@@ -1,5 +1,6 @@
 import os
-import re
+
+from .filters import passesFilters
 
 class HostTree():
 
@@ -281,15 +282,6 @@ class HostTree():
                 tree_str += self.getASCII(obj, hosts, new_prefix, path)
         
         return tree_str
-
-
-def passesFilters(s, re_filters):
-    if not re_filters:
-        return True
-    for rf in re_filters:
-        if bool(re.fullmatch(rf, s)):
-            return True
-    return False
 
 
 def generate_directory_tree_string(path, prefix=""):

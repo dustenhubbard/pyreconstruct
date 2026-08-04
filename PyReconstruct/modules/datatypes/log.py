@@ -1,8 +1,9 @@
-import re
 from pathlib import Path
 from datetime import datetime
 
 from PyReconstruct.modules.constants import getDateTime, remove_days_from_today
+
+from .filters import passesFilters
 
 
 ## Log event prefixes that record a human deliberately removing annotation
@@ -467,11 +468,7 @@ class LogSetPair():
                 continue  # skip if not desired status
 
             # check filters
-            passes_filters = False if regex_filters else True
-            for rf in regex_filters:
-                if bool(re.fullmatch(rf, log.obj_name)):
-                    passes_filters = True
-            if not passes_filters: 
+            if not passesFilters(log.obj_name, regex_filters):
                 continue # skip if does not pass filters
 
             # trim section range and check if contains sections within range

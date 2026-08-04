@@ -1,4 +1,4 @@
-import re
+from .filters import passesFilters
 
 class ObjGroupDict():
 
@@ -168,13 +168,4 @@ class ObjGroupDict():
     def copy(self):
         """Return a copy of the two-way dict."""
         return ObjGroupDict(self.series, self.contain_type, self.groups.copy())
-
-
-def passesFilters(s, re_filters):
-    if not re_filters:
-        return True
-    for rf in re_filters:
-        if bool(re.fullmatch(rf, s)):
-            return True
-    return False
     
