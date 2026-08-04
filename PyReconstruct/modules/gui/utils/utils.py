@@ -33,6 +33,11 @@ from PyReconstruct.modules.constants import welcome_series_dir
 mainwindow = None
 qt_offscreen = os.getenv("QT_QPA_PLATFORM") == "offscreen"
 
+# Set to "1" by a caller that is driving the GUI with nobody at the keyboard: a
+# click-test harness, a screenshot script, a computer-use agent. See
+# `user_is_present`, the only reader.
+UNATTENDED_ENV_VAR = "PYRECON_UNATTENDED"
+
 
 def get_screen_info(screen: QScreen) -> dict:
     """Return screen information."""
@@ -470,9 +475,33 @@ def user_is_present() -> bool:
     a slow dialog, it is a permanent stall, which is why the callers below fall
     back to the console instead.
 
-    `qt_offscreen` is read at call time (module global, not a default argument)
-    so a test can flip it to exercise the interactive branch.
+    False as well when `PYRECON_UNATTENDED=1`, which is the same stall arriving
+    by the other road. Those first two conditions are about *how Qt is drawing*,
+    and that is only a proxy for the question actually being asked. A scripted
+    GUI session -- a click-test harness, a screenshot run, a computer-use agent
+    driving the app -- launches on a real platform with a real `QApplication`,
+    so both proxies say "a user is there" and the startup prompts in
+    `MainWindow.openSeries` fire into a window nothing will ever click. Opening
+    a series whose `src_dir` does not resolve hangs such a run indefinitely on
+    "Images Not Found", and `setSeriesCode`'s non-cancelable dialog and the
+    unscaled-zarr question sit right behind it. Nothing Qt can observe
+    distinguishes that session from a real user's, so the caller has to say so,
+    and this is where it says it: every prompt guarded by this predicate already
+    has a designed non-blocking answer for "nobody is there" (see `saveNotify`,
+    `unsavedNotify` and `linkedUndoNotify` below), and those answers are the
+    right ones here for the same reason.
+
+    Exactly `"1"`, matching `PYRECON_FORCE_FROZEN` and `PYRECON_JSER_PRETTY`, so
+    a stale `PYRECON_UNATTENDED=0` cannot quietly suppress a real user's
+    dialogs. Unset, which is every ordinary launch and the whole existing test
+    suite, this changes nothing.
+
+    Both `qt_offscreen` and the environment variable are read at call time (a
+    module global and an `os.environ` lookup, not default arguments) so a test
+    can flip either to exercise the other branch.
     """
+    if os.environ.get(UNATTENDED_ENV_VAR) == "1":
+        return False
     return bool(QApplication.instance()) and not qt_offscreen
 
 

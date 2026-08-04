@@ -96,6 +96,28 @@ uv run --no-default-groups PyReconstruct/run.py
 > `uv sync --no-default-groups --extra test` once) and pass the same flags to
 > every `uv run`.
 
+### Driving the GUI from a script (`PYRECON_UNATTENDED`)
+
+A launch that nobody is sitting in front of — a click-test harness, a screenshot
+run, a computer-use agent — should set this:
+
+```bash
+PYRECON_UNATTENDED=1 uv run PyReconstruct/run.py path/to/series.jser
+```
+
+Opening a series is allowed to ask questions: where the images went if the
+recorded `src_dir` no longer resolves, what the series code should be, whether
+to scale an unscaled zarr. Each is a modal, and a modal raised into a window no
+script will ever click is a permanent stall, not a slow dialog. The offscreen
+platform is already treated as "no user" for this reason, but a scripted run is
+on a *real* platform, so nothing Qt can observe tells it apart from a real
+user's session. This variable is how the caller says so; each prompt then takes
+the same deliberate no-user answer it already takes offscreen
+(`gui/utils/utils.py`, `user_is_present`).
+
+Exactly `1` enables it. Leave it unset for an ordinary launch — it suppresses
+dialogs a real user wants to see.
+
 ## 4. Run the tests
 
 The suite imports `gui.main` (PySide6), so it runs under the offscreen Qt

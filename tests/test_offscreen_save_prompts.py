@@ -48,7 +48,14 @@ class QuestionRecorder:
 
 
 def _interactive(monkeypatch, answer):
-    """Make `user_is_present()` true and script the next `question()` answer."""
+    """Make `user_is_present()` true and script the next `question()` answer.
+
+    Both halves of the predicate have to be cleared, not just the platform:
+    `PYRECON_UNATTENDED=1` also makes it False, and it is an environment
+    variable, so a developer who exported it for a scripted GUI run would
+    otherwise turn every interactive test below into a silent no-op.
+    """
+    monkeypatch.delenv(gui_utils.UNATTENDED_ENV_VAR, raising=False)
     monkeypatch.setattr(gui_utils, "qt_offscreen", False)
     recorder = QuestionRecorder(answer)
     monkeypatch.setattr(
