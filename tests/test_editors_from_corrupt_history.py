@@ -22,6 +22,11 @@ and ``getEditorsFromHistory`` asks for it. What is pinned here:
 
 * the regression itself -- a good row for one user survives a bad row for
   another (``test_one_bad_row_no_longer_costs_another_user_their_entry``);
+* both halves of the handler, not just one. The rows above fail in
+  ``Log.fromStr`` (``ValueError``); a row that stops partway through with
+  nothing after it fails in ``fromList``'s continuation join instead
+  (``IndexError``), and is recovered the same way
+  (``test_a_truncated_final_row_costs_only_itself``);
 * the loss is reported rather than swallowed: the dropped rows are on the
   returned set as ``skipped_rows`` and a count is printed;
 * the narrowing is real -- an error that is *not* a parse failure still
@@ -56,6 +61,15 @@ HEADER = "Date, Time, User, Obj, Sections, Event\n"
 # and the section range is read off the name's own tail.
 GOOD = "26-06-29, 1200, alice, obj_a, 5, Modify trace(s)"
 BAD = "26-06-30, 1300, bob, weird, name, 7, Modify trace(s)"
+
+# The other failing shape, and the only one that reaches the IndexError half of
+# the handler: a final row that stops partway through. fromList's continuation
+# join (which exists so a row holding a literal newline can be reassembled from
+# the physical lines it was split across) keeps pulling log_list[i+1] while the
+# row is short of six comma fields, so a short row with nothing after it runs
+# the index off the end. Position is what picks the arm: the same text with a
+# row after it gets joined to that row and fails in fromStr instead.
+TRUNCATED = "26-07-03, 1600, bob"
 
 
 @pytest.fixture
@@ -102,6 +116,60 @@ def test_the_bad_row_really_is_a_parse_failure():
     assert Log.fromStr(GOOD).user == "alice"
 
 
+def test_a_truncated_final_row_is_the_index_error_case():
+    """The handler names two exception types; this is the second one.
+
+    ``BAD`` above exercises ``ValueError``. Nothing exercised ``IndexError``,
+    which is not a hypothetical branch: it is the continuation join in
+    ``fromList`` running ``log_list[i+1]`` off the end of the list, which is
+    what a row that stops partway through and has no row after it does.
+
+    Asserted rather than assumed, because the two arms are reached by
+    *different* code and could not be swapped for one another:
+    """
+    # through fromStr alone the short row is an unpack failure -- ValueError.
+    # The IndexError is not fromStr's at all; it belongs to fromList's join.
+    with pytest.raises(ValueError):
+        Log.fromStr(TRUNCATED)
+
+    with pytest.raises(IndexError):
+        LogSet.fromList([GOOD, TRUNCATED])
+
+    # and it really is *lastness* that selects the arm: give the same text a
+    # row to join to and the join succeeds, so the failure lands in fromStr.
+    with pytest.raises(ValueError):
+        LogSet.fromList([GOOD, TRUNCATED, GOOD])
+
+
+def test_the_log_writer_itself_can_leave_a_short_last_line(series):
+    """The shape is not only hand-forgeable; ``Log.__str__`` writes it.
+
+    Reachability matters here, because a branch that no input can reach is not
+    worth a test. It is reached by an object name carrying both hazards this
+    parser already names: the ``", "`` ``fromStr`` splits on (see ``BAD``, and
+    ``tests/test_contour_name_collision.py`` for why such names exist) and a
+    literal newline -- the "return key in name" the continuation join exists
+    for. Two of the first and one of the second, and the row's own head already
+    has six comma fields, so the join never runs and the head is consumed
+    alone. That strands the text after the newline as a physical line of its
+    own, and if the row was last in the file there is nothing left to join it
+    to.
+
+    So a single real row can hit *both* arms: ValueError on its head, then
+    IndexError on its orphaned tail. Both are skipped, alice is kept.
+    """
+    row = str(Log("26-06-30", "1300", "bob", "a, b, c\nd", 7, "Modify trace(s)"))
+    assert "\n" in row, "the writer emits the name verbatim, newline included"
+    head, tail = row.split("\n")
+    assert len(head.split(",")) >= 6, "head is self-contained; the join never runs"
+    assert len(tail.split(",")) < 6, "tail is a short line with nothing after it"
+
+    write_log(series, GOOD, row)
+
+    assert series.getEditorsFromHistory() == {"alice"}
+    assert len(series.getFullHistory(skip_corrupt=True).skipped_rows) == 2
+
+
 # --------------------------------------------------------------------------- #
 # the regression
 # --------------------------------------------------------------------------- #
@@ -135,6 +203,49 @@ def test_several_bad_rows_cost_only_themselves(series):
     write_log(series, BAD, GOOD, other_bad)
 
     assert series.getEditorsFromHistory() == {"alice"}
+
+
+def test_a_truncated_final_row_costs_only_itself(series):
+    """The IndexError arm, through the real recovery path.
+
+    A history whose last row stops partway through is the shape that reaches
+    ``IndexError`` rather than ``ValueError`` (see
+    ``test_a_truncated_final_row_is_the_index_error_case``). It must behave the
+    same as any other unreadable row: alice keeps her entry, the truncated row
+    is recorded rather than swallowed, and -- the part that matters most --
+    ``getEditorsFromHistory`` returns instead of raising. Narrow the handler to
+    ``ValueError`` alone and this call raises ``IndexError`` out of
+    ``Series.__init__``, which is worse than the pre-fix behavior it replaced:
+    that at least opened the series with an empty set.
+    """
+    write_log(series, GOOD, TRUNCATED)
+
+    assert series.getEditorsFromHistory() == {"alice"}
+
+    ls = series.getFullHistory(skip_corrupt=True)
+    assert [l.user for l in ls.all_logs] == ["alice"]
+    assert len(ls.skipped_rows) == 1
+    assert ls.skipped_rows[0].strip() == TRUNCATED
+
+
+def test_a_truncated_final_row_does_not_break_opening_the_series(series):
+    """The blast radius of the arm, end to end.
+
+    ``Series.__init__`` calls ``getEditorsFromHistory`` whenever the stored
+    editors list is empty, and it does not guard the call. So an escaping
+    ``IndexError`` is not a wrong answer, it is a series that will not open at
+    all. The fixture's empty ``editors`` is asserted so this cannot pass by
+    never reaching the code it is about.
+    """
+    assert series.editors == set()
+    write_log(series, GOOD, TRUNCATED)
+
+    reopened = Series(series.filepath, dict(series.sections))
+    try:
+        assert reopened.editors == {"alice"}
+    finally:
+        reopened.leave_open = True  # the fixture owns the hidden dir
+        reopened.close()
 
 
 def test_a_clean_log_is_unchanged(series):
