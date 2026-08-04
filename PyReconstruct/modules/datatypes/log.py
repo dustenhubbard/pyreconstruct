@@ -195,7 +195,12 @@ class LogSet():
         """Create the log set."""
         self.dyn_logs = {}  # organized by name and event
         self.all_logs = []
-    
+        # the raw rows fromList() dropped because they would not parse. Only
+        # ever non-empty for a fromList(skip_corrupt=True) call; kept so the
+        # caller can say how much history it lost instead of silently showing
+        # a partial one.
+        self.skipped_rows = []
+
     def addLog(self, user : str, obj_name : str, snum : int, event : str):
         """Add a log to the set.
         
@@ -294,25 +299,53 @@ class LogSet():
         
         return log_list
     
-    def fromList(log_list : list):
+    def fromList(log_list : list, skip_corrupt : bool = False):
         """Get a log set from a list.
-        
+
             Params:
                 log_list (list): the list representation of the logs
+                skip_corrupt (bool): False (the default) to raise on the first
+                    row that will not parse. True to drop just that row, record
+                    it in skipped_rows, and keep every other row.
+            Returns:
+                (LogSet): the parsed log set
+
+        The parse is row-at-a-time, so a row that will not read says nothing
+        about the rows around it and need not cost them. Which of the two
+        behaviors is right is the caller's call, not this function's: a reader
+        that shows the history to a user would rather raise than quietly
+        present an incomplete one, while a reader that folds the rows into a
+        set (Series.getEditorsFromHistory) loses every OTHER user's entry if
+        one row costs the file. Hence the flag, defaulting to the historical
+        all-or-nothing so no existing caller changes.
         """
         log_set = LogSet()
         i = 0
         while i < len(log_list):
             log_str = log_list[i]
             if log_str.strip():
-                # check for corrupt log strings (return key in name)
-                while len(log_str.split(",")) < 6:
-                    log_str += log_list[i+1].strip()
+                try:
+                    # check for corrupt log strings (return key in name)
+                    while len(log_str.split(",")) < 6:
+                        log_str += log_list[i+1].strip()
+                        i += 1
+                    log = Log.fromStr(log_str)
+                except (ValueError, IndexError):
+                    # ValueError: the row does not have six fields, or the
+                    # section range does not read as one -- what a legacy
+                    # object name holding the ", " fromStr splits on produces,
+                    # since it shifts every field after it. IndexError: a
+                    # continuation join that runs off the end of the list.
+                    # Those two are the parse failures; anything else is not,
+                    # and still propagates whatever skip_corrupt says.
+                    if not skip_corrupt:
+                        raise
+                    log_set.skipped_rows.append(log_str)
                     i += 1
-                log = Log.fromStr(log_str)
+                    continue
                 log_set.addExistingLog(log)
             i += 1
-        
+
         return log_set
     
     def removeCuration(self, obj_name : str):
