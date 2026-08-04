@@ -307,6 +307,31 @@ class SectionColumns():
     tracking rather than replacing it.
     """
 
+    ## The object-dtype columns and the index, declared here rather than as
+    ## annotated assignments in `__init__`. The reason is convention, not speed:
+    ## none of the six has per-instance default logic for a type to hang off, so
+    ## declaring them together puts the shape of a row in one block instead of
+    ## scattering it down the constructor.
+    ##
+    ## An earlier version of this comment said the inline form pays an
+    ## annotation evaluation on every instantiation and put a percentage on it.
+    ## That was wrong. PEP 526 evaluates a complex-target annotation only in
+    ## module or class scope, so `self.x : T = v` inside `__init__` never
+    ## evaluates `T`; the two forms measure the same `SectionColumns(...)` cost.
+    ## See `Trace.fill_mode` in `trace.py` for the same note.
+    ##
+    ## `_fill_mode_overflow` is deliberately not `dict[int, tuple[str, str]]`:
+    ## the reason it exists is that the pair came out of a `.jser` unvalidated,
+    ## so naming its element type would claim a check nothing performs.
+    ## `_ids` is `None` where the store has no issuer, which is every section in
+    ## the shipped application today; `TraceIDIssuer.issue` returns `str`.
+    _names : list[str]
+    _fill_mode_overflow : dict[int, tuple]
+    _tags : list[frozenset[str]]
+    _ids : list[str | None]
+    _live : list[bool]
+    _index : dict[str, list[int]]
+
     def __init__(self, section_number: int, coordinates=None, id_issuer=None):
         """Create an empty store for one section.
 
@@ -328,6 +353,7 @@ class SectionColumns():
         self._colors = _NumericColumn(np.uint8, width=3)
         self._bools = {name: _NumericColumn(bool) for name in BOOL_ATTRIBUTES}
         self._fill_modes = _NumericColumn(np.uint8)
+        ## row -> the pair the file carried, for a pair outside FILL_MODE_CODES.
         self._fill_mode_overflow = {}
         self._tags = []
         self._ids = []

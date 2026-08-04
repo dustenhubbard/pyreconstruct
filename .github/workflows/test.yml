@@ -88,8 +88,9 @@ jobs:
   # Scope, strictness and the measured baseline all live in `mypy.ini` -- read
   # that file, not this job, for what is being checked and why. Summary: the
   # Qt-free core only (modules/datatypes, modules/calc, modules/constants),
-  # non-strict, 218 errors in 17 of 35 files at the pinned version. Whole-tree
-  # `--strict` was measured at 5,416 errors in 141 files and rejected.
+  # non-strict. Whole-tree `--strict` was measured at 5,416 errors in 141 files
+  # and rejected. No current count is quoted here on purpose: the one that used
+  # to be was wrong within the hour. The run summary measures it.
   #
   # Unlike the lint job above this one does need the project installed, and the
   # divergence is deliberate rather than an oversight: ruff's findings depend
@@ -103,7 +104,7 @@ jobs:
   # stubs and never imports it, so nothing here loads a Qt plugin.
   type:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20   # two checkouts and two mypy runs now: this ref and the merge base
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
@@ -146,22 +147,131 @@ jobs:
         # `--with` string and in the Makefile, never in `uv.lock`, so `--frozen`
         # does not cover it and it sits outside setup-uv's `uv.lock` cache key.
         # (An unreachable index exits 2 and was already caught.)
+        #
+        # WHAT THE SUMMARY COMPARES AGAINST, AND WHY IT IS NOT A LITERAL
+        #
+        # The headline used to end "Baseline when this job landed: 218 in 17."
+        # That literal was stale within an hour of landing -- the tree read 216
+        # in 16 the same day and 224 in 17 once the columnar store merged -- and
+        # a frozen number cannot answer the only question a reporting-only job
+        # exists to answer, which is what *this* pull request changed. So the
+        # count is measured on both sides instead: once on this ref, once on the
+        # pull request's own merge base, and the summary reports the delta. A
+        # literal cannot go stale if there is no literal.
+        #
+        # The base is checked out into its own worktree and run through its own
+        # `uv run --frozen`, so it resolves the environment its own `uv.lock`
+        # describes rather than borrowing the head's. mypy's findings depend on
+        # which packages are importable (see above), so a pull request that
+        # moves the lock would otherwise have that effect attributed to nothing.
+        #
+        # On a `push` to main the event carries no pull request and there is no
+        # merge base, so the summary reports the absolute count and says that no
+        # delta is being claimed rather than inventing a comparison. Same when
+        # the base commit cannot be fetched or its run does not complete: the
+        # absolute count is still true, the delta is simply withheld.
+        #
+        # Still reporting only. The delta is information, not a threshold; this
+        # step ends in the same unconditional `exit 0` it always did, and adding
+        # a failure condition is a separate decision that has to be made on
+        # purpose. See `mypy.ini` on why it reports before it gates.
+        env:
+          # Empty on a `push` event. That emptiness is the "no merge base"
+          # signal the script below reads; it is not an error.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           # `set +e` on purpose. Actions runs `run:` under `bash -eo pipefail`,
           # so without this the step would abort the instant mypy exits 1, which
           # is its normal exit here, and never reach the summary.
           set -u +e
-          uv run --frozen --no-default-groups --extra test --with mypy==2.3.0 \
-            python -m mypy --no-color-output --no-error-summary \
-            > mypy-report.txt 2>&1
-          status=$?
-          errors=$(grep -c ': error:' mypy-report.txt || true)
-          files=$(grep ': error:' mypy-report.txt | cut -d: -f1 | sort -u | wc -l | tr -d ' ')
-          if [ "$status" -ge 2 ] || { [ "$status" -eq 1 ] && [ "$errors" -eq 0 ]; }; then
-            headline="mypy did not run to completion (exit ${status}, ${errors} errors parsed). The counts below mean nothing."
-          else
-            headline="**${errors} errors in ${files} files.** Baseline when this job landed: 218 in 17."
+
+          # Run the pinned mypy in the checkout $1, writing its output to $2.
+          # Sets `status`, `errors` and `files` for the caller.
+          run_mypy() {
+            ( cd "$1" && uv run --frozen --no-default-groups --extra test \
+                --with mypy==2.3.0 \
+                python -m mypy --no-color-output --no-error-summary ) > "$2" 2>&1
+            status=$?
+            errors=$(grep -c ': error:' "$2" || true)
+            files=$(grep ': error:' "$2" | cut -d: -f1 | sort -u | wc -l | tr -d ' ')
+          }
+
+          # True when a run is a real mypy result rather than a non-run, by the
+          # exit-code reasoning above: 2+ is mypy failing, and exit 1 with zero
+          # `: error:` lines parsed is self-contradictory for a real run.
+          ran_to_completion() {
+            [ "$1" -lt 2 ] && ! { [ "$1" -eq 1 ] && [ "$2" -eq 0 ]; }
+          }
+
+          # One error per line, keyed on file and message with the source line
+          # number dropped from the prefix, so that code merely moving down a
+          # file does not read as a new error. Not perfect: a few mypy messages
+          # quote a line number inside the message text itself (`Name "x"
+          # already defined on line N`), and those still churn on a move.
+          normalize() {
+            grep ': error:' "$1" \
+              | sed -E 's/^([^:]+):[0-9]+(:[0-9]+)?: error: /\1: /' | sort
+          }
+
+          # "1 error" / "2 errors", so the headline reads as English.
+          plural() {
+            if [ "$1" -eq 1 ]; then echo "$1 $2"; else echo "$1 ${2}s"; fi
+          }
+
+          run_mypy . mypy-report.txt
+          head_status=$status
+          head_errors=$errors
+          head_files=$files
+
+          # none: no pull request, so no merge base to compare against.
+          # unavailable: there is one, but it could not be fetched or measured.
+          # ok: measured, and the delta below is real.
+          base_state=none
+          # `${BASE_SHA:-}` and not `$BASE_SHA`: Actions sets the variable to
+          # the empty string on a `push`, but `set -u` would abort the whole
+          # step rather than report if it ever arrived unset instead.
+          if [ -n "${BASE_SHA:-}" ]; then
+            base_state=unavailable
+            # The checkout is shallow, so the base commit is not in it. Fetching
+            # the single commit by SHA keeps it shallow rather than paying for
+            # the full history on every pull request.
+            if git fetch --no-tags --depth=1 origin "$BASE_SHA" \
+               && git worktree add --detach "${RUNNER_TEMP}/mypy-base" "$BASE_SHA"; then
+              run_mypy "${RUNNER_TEMP}/mypy-base" mypy-base-report.txt
+              base_status=$status
+              base_errors=$errors
+              base_files=$files
+              if ran_to_completion "$base_status" "$base_errors"; then
+                base_state=ok
+              fi
+            fi
           fi
+
+          if ! ran_to_completion "$head_status" "$head_errors"; then
+            headline="mypy did not run to completion (exit ${head_status}, ${head_errors} errors parsed). The counts below mean nothing."
+          elif [ "$base_state" = ok ]; then
+            delta=$((head_errors - base_errors))
+            if [ "$delta" -gt 0 ]; then
+              verdict="**This pull request adds $(plural "$delta" error).**"
+            elif [ "$delta" -lt 0 ]; then
+              verdict="**This pull request removes $(plural "$((0 - delta))" error).**"
+            else
+              verdict="**No change in the error count.**"
+            fi
+            headline="${verdict} Merge base \`${BASE_SHA:0:7}\`: ${base_errors} in ${base_files} files. This ref: ${head_errors} in ${head_files} files."
+          elif [ "$base_state" = unavailable ]; then
+            headline="**${head_errors} errors in ${head_files} files.** The merge base \`${BASE_SHA:0:7}\` could not be measured, so no delta is claimed."
+          else
+            headline="**${head_errors} errors in ${head_files} files.** A \`${GITHUB_EVENT_NAME}\` event has no merge base, so no delta is claimed."
+          fi
+
+          if [ "$base_state" = ok ]; then
+            normalize mypy-base-report.txt > mypy-base-normalized.txt
+            normalize mypy-report.txt > mypy-head-normalized.txt
+            added=$(comm -13 mypy-base-normalized.txt mypy-head-normalized.txt)
+            removed=$(comm -23 mypy-base-normalized.txt mypy-head-normalized.txt)
+          fi
+
           {
             echo "## mypy: Qt-free core (reporting only)"
             echo
@@ -169,6 +279,21 @@ jobs:
             echo
             echo 'Not a gate. See `mypy.ini` for the scope and why `--strict` over the whole tree was rejected.'
             echo
+            if [ "$base_state" = ok ]; then
+              echo '<details><summary>Which errors changed</summary>'
+              echo
+              echo 'Compared by file and message with source line numbers dropped, so code moving down a file does not read as new. A message that quotes a line number in its own text still churns on a move.'
+              echo
+              echo '```'
+              echo '--- added ---'
+              echo "${added:-(none)}"
+              echo '--- removed ---'
+              echo "${removed:-(none)}"
+              echo '```'
+              echo
+              echo '</details>'
+              echo
+            fi
             echo '<details><summary>Full report</summary>'
             echo
             echo '```'
