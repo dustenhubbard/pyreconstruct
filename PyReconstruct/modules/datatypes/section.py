@@ -1,9 +1,9 @@
 import os
-import re
 import json
 from typing import Dict, List, Union
 
 from .contour import Contour
+from .filters import passesFilters
 from .trace import Trace, normalizeObjectName
 from .flag import Flag
 from .transform import Transform
@@ -1320,18 +1320,9 @@ class Section():
         
         for cname in all_contour_names:
 
-            if regex_filters:
+            if not passesFilters(cname, regex_filters):
 
-                passes_filter = False
-
-                for rf in regex_filters:
-                
-                    if bool(re.fullmatch(rf, cname)):
-                        passes_filter = True
-
-                if not passes_filter:
-
-                    continue
+                continue
 
             if group_filters:
 

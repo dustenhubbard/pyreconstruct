@@ -1,5 +1,3 @@
-import re
-
 from PySide6.QtWidgets import (
     QTableWidgetItem, 
     QWidget, 
@@ -10,6 +8,7 @@ from .data_table import DataTable
 from PyReconstruct.modules.gui.utils import sortList
 
 from PyReconstruct.modules.datatypes import Series
+from PyReconstruct.modules.datatypes.filters import passesFilters
 from PyReconstruct.modules.gui.utils import (
     populateMenuBar,
     clearMenuBar,
@@ -141,11 +140,7 @@ class ZtraceTableWidget(DataTable):
                 return False
         
         # check regex
-        passes_filters = False if self.re_filters else True
-        for re_filter in self.re_filters:
-            if bool(re.fullmatch(re_filter, name)):
-                passes_filters = True
-        if not passes_filters:
+        if not passesFilters(name, self.re_filters):
             return False
 
         return True

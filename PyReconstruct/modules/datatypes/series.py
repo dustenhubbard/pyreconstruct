@@ -17,6 +17,7 @@ from .series_data import SeriesData
 from .objects import Objects
 from .default_settings import default_settings, default_series_settings
 from .host_tree import HostTree
+from .filters import passesFilters
 
 from PyReconstruct.modules.calc import traceGeometry
 
@@ -3066,11 +3067,7 @@ class Series():
                 continue
 
             # check regex filters
-            passes_filters = False if regex_filters else True
-            for rf in regex_filters:
-                if bool(re.fullmatch(rf, obj_name)):
-                    passes_filters = True
-            if not passes_filters:
+            if not passesFilters(obj_name, regex_filters):
                 continue
 
             if "user_columns" in obj_data:
@@ -3104,11 +3101,7 @@ class Series():
                 continue
 
             # check regex filters
-            passes_filters = False if regex_filters else True
-            for rf in regex_filters:
-                if bool(re.fullmatch(rf, obj_name)):
-                    passes_filters = True
-            if not passes_filters:
+            if not passesFilters(obj_name, regex_filters):
                 continue
 
             for attr_name, attr_value in obj_data.items():
@@ -3271,11 +3264,7 @@ class Series():
 
         
         for o_zname, o_ztrace in other.ztraces.items():
-            passes_filters = False if regex_filters else True
-            for rf in regex_filters:
-                if bool(re.fullmatch(rf, o_zname)):
-                    passes_filters = True
-            if not passes_filters:
+            if not passesFilters(o_zname, regex_filters):
                 continue
 
             # check to ensure all sections included
