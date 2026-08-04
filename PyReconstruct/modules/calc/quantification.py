@@ -140,11 +140,17 @@ def traceGeometry(points, closed=True):
     x = arr[:, 0]
     y = arr[:, 1]
 
+    # Consecutive-vertex pairs, built once. Every edge quantity below -- segment
+    # lengths, shoelace cross products, midpoint sums -- is a function of these
+    # same pairs, so the slices are hoisted instead of being rebuilt per use.
+    xa, xb = x[:-1], x[1:]
+    ya, yb = y[:-1], y[1:]
+
     # length (matches lineDistance)
     if n <= 1:
         length = 0.0
     else:
-        d = float(np.hypot(np.diff(x), np.diff(y)).sum())
+        d = float(np.hypot(xb - xa, yb - ya).sum())
         if closed:
             d += math.hypot(x[0] - x[-1], y[0] - y[-1])
         length = round(d, 7)
@@ -155,20 +161,32 @@ def traceGeometry(points, closed=True):
         cx = round(float(x.mean()), 6)
         cy = round(float(y.mean()), 6)
     else:
-        # close the ring only if not already closed (mirrors the scalar funcs)
-        if x[0] != x[-1] or y[0] != y[-1]:
-            xs = np.append(x, x[0])
-            ys = np.append(y, y[0])
-        else:
-            xs, ys = x, y
-        cross = xs[:-1] * ys[1:] - xs[1:] * ys[:-1]
+        # The ring is closed by writing its wrap edge -- the one from the last
+        # vertex back to the first -- straight into the last slot of the cross
+        # array, rather than by appending a copy of the first point to x and y
+        # and taking the cross products of the longer arrays. The two are the
+        # same n cross products in the same order: appending x[0]/y[0] makes the
+        # final pair (x[-1], y[-1]) -> (x[0], y[0]), whose cross product is
+        # exactly the term assigned below. Appending was also guarded by an
+        # "only if not already closed" test, which was vacuous: when the ring is
+        # already closed the wrap term is x[0]*y[0] - x[0]*y[0] == 0.0 exactly,
+        # so adding it unconditionally cannot change the sum.
+        cross = np.empty(n)
+        cross[:-1] = xa * yb - xb * ya
+        cross[-1] = x[-1] * y[0] - x[0] * y[-1]
         signed2 = float(cross.sum())          # == 2 * signed area
         a = abs(signed2) / 2.0
         if a > 1e-6:
             # centroid via the signed area (orientation-independent), so no
             # explicit CCW reversal is needed; 6*signed_area == 3*signed2.
-            cx = round(float(((xs[:-1] + xs[1:]) * cross).sum()) / (3.0 * signed2), 6)
-            cy = round(float(((ys[:-1] + ys[1:]) * cross).sum()) / (3.0 * signed2), 6)
+            sx = np.empty(n)
+            sx[:-1] = xa + xb
+            sx[-1] = x[-1] + x[0]
+            sy = np.empty(n)
+            sy[:-1] = ya + yb
+            sy[-1] = y[-1] + y[0]
+            cx = round(float((sx * cross).sum()) / (3.0 * signed2), 6)
+            cy = round(float((sy * cross).sum()) / (3.0 * signed2), 6)
         else:
             cx = round(float(x.mean()), 6)
             cy = round(float(y.mean()), 6)

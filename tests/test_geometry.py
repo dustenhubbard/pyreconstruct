@@ -71,3 +71,62 @@ def test_accepts_ndarray_input():
     a = traceGeometry(pts, True)
     b = traceGeometry(np.asarray(pts, dtype=float), True)
     assert a == b
+
+
+# --- the ring's closing edge -------------------------------------------------
+#
+# The shoelace sum runs over the closed ring, so it needs the wrap edge from the
+# last vertex back to the first. These pin the two ways that can go wrong: the
+# wrap edge being dropped, and a ring that already carries a duplicate closing
+# vertex being counted differently from the same ring given open.
+
+
+def test_wrap_edge_is_counted():
+    """Area is wrong if the last-to-first edge is left out of the sum.
+
+    Chosen so the wrap cross term is non-zero (4*1 - 1*7 == -3): the interior
+    edges alone sum to 24, giving 12.0, while the closed ring sums to 21,
+    giving the true 10.5.
+    """
+    pts = [(1.0, 1.0), (5.0, 2.0), (4.0, 7.0)]
+    assert traceGeometry(pts, True)[1] == pytest.approx(10.5, abs=1e-12)
+    assert traceGeometry(pts, True)[1] == pytest.approx(area(pts), rel=1e-12)
+
+
+@pytest.mark.parametrize("closed", [True, False])
+def test_already_closed_ring_matches_the_open_one(closed):
+    """A duplicated final vertex must not change area or centroid.
+
+    The wrap edge of an already-closed ring is x0*y0 - x0*y0, which is exactly
+    0.0, so the two spellings of the same polygon describe the same shape. Area
+    and centroid must agree; ``length`` legitimately differs, because the
+    duplicate vertex adds a zero-length segment only when the trace is open.
+    """
+    open_ring = [(1.0, 1.0), (5.0, 2.0), (4.0, 7.0), (0.5, 4.0)]
+    closed_ring = open_ring + [open_ring[0]]
+    _, oa, (ocx, ocy), _ = traceGeometry(open_ring, closed)
+    _, ca, (ccx, ccy), _ = traceGeometry(closed_ring, closed)
+    assert ca == pytest.approx(oa, rel=1e-12)
+    assert (ccx, ccy) == (ocx, ocy)
+
+
+def test_negative_zero_closing_vertex_is_still_a_closed_ring():
+    """-0.0 == 0.0, so a ring closed with signed zeros is still closed.
+
+    IEEE 754 equality, not bit identity, is what makes the wrap term vanish;
+    this is the input where the two part company.
+    """
+    ring = [(0.0, 0.0), (6.0, 0.5), (5.0, 9.0), (-0.0, -0.0)]
+    without_dup = ring[:-1]
+    assert traceGeometry(ring, True)[1] == pytest.approx(
+        traceGeometry(without_dup, True)[1], rel=1e-12
+    )
+
+
+@pytest.mark.parametrize("closed", [True, False])
+def test_clockwise_winding_gives_the_same_unsigned_area(closed):
+    """The shoelace sum is signed; the reported area is not."""
+    pts = [(1.0, 1.0), (5.0, 2.0), (4.0, 7.0), (0.5, 4.0)]
+    assert traceGeometry(pts, closed)[1] == pytest.approx(
+        traceGeometry(pts[::-1], closed)[1], rel=1e-12
+    )
