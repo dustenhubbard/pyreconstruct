@@ -2173,6 +2173,19 @@ class MainWindow(QMainWindow):
             attr = getattr(self, f"{current_alignment}_alignment_act")  # generated from createContextMenu
             attr.setChecked(False)
             self.field.changeAlignment(new_alignment)
+            # The readout names the alignment and `field.changeAlignment` does
+            # not repaint synchronously, so without this the bar is stale on
+            # return. Not a user-visible bug -- `reload()` ends in
+            # `generateView() -> self.update()`, so the next event-loop turn
+            # paints and `paintText` refreshes it; measured on a shown window,
+            # one `processEvents()` clears it. What this buys is the
+            # postcondition `changeSection` already has (line 1473): the bar
+            # agrees with `series.alignment` when the method returns, with no
+            # scheduled repaint in the trust chain. It goes here rather than at
+            # the callers because both routes in need it -- the "Series
+            # alignment" context submenu and "Edit alignments..." -- so a third
+            # route would otherwise be a third place to remember.
+            self.field.updateStatusBar()
 
     def statusQuickSwitch(self, segment, names, current, switch):
         """Pop a list of names up over a status-bar segment.
