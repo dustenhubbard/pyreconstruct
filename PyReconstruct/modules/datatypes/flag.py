@@ -12,15 +12,22 @@ possible_chars = (
 
 class Flag():
 
-    def __init__(self, name : str, x : int, y : int, section_number : int, color : tuple, comments=None, resolved=False, id=None):
+    def __init__(self, name : str, x : int, y : int, section_number : int, color : tuple[int, ...] | list[int], comments=None, resolved=False, id=None):
         """Create a flag object.
-        
+
+        ``color`` admits a ``list`` as well as a ``tuple``, for the same reason
+        as ``Trace.__init__``'s, and is spelled as that union rather than as
+        ``Sequence[int]`` for the same reason too -- ``bytes`` satisfies
+        ``Sequence[int]``. ``Flag.fromList`` assigns it verbatim from parsed
+        JSON, where it decodes to a ``list``, and ``Section.addFlag`` builds one
+        straight out of ``trace.color``.
+
             Params:
                 name (str): the name of the flag
                 x (int): the x-coord for the flag
                 y (int): the y-coord for the flag
                 section_number (int): the section number for the flag
-                color (tuple): the the color of the flag
+                color (tuple[int, ...] | list[int]): the the color of the flag
                 comments (list): the list of flag comments
                 resolved (bool): True if the flag is resolved
         """
