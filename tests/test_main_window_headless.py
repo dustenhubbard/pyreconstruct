@@ -50,8 +50,13 @@ def test_user_is_present_true_on_a_real_platform(qapp, monkeypatch):
     """The interactive branch is still reachable, so production still prompts.
 
     `qt_offscreen` is read at call time, which is what makes this checkable
-    without a display.
+    without a display. `PYRECON_UNATTENDED` is the other half of the predicate
+    and is cleared for the same reason: it is an environment variable, so a
+    developer who exported it for a scripted GUI run would otherwise see this
+    fail here rather than where they set it. See
+    `tests/test_unattended_gui_prompts.py`.
     """
+    monkeypatch.delenv(gui_utils.UNATTENDED_ENV_VAR, raising=False)
     monkeypatch.setattr(gui_utils, "qt_offscreen", False)
     assert gui_utils.user_is_present() is True
 
