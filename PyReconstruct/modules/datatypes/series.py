@@ -180,6 +180,20 @@ def applyContourRenames(series_data : dict, renames : dict, collisions : dict):
     not have are filled from the losers in sorted order: that never overrides
     the winner and it is strictly better than discarding them.
 
+    Three structures, not four: the top-level ``log`` is also keyed by object
+    name -- the fourth ``", "``-delimited field of every row -- and is
+    deliberately left pointing at the old name. So a renamed object's history
+    stays under its old name, and a legacy row whose name holds ``", "`` still
+    fails to parse on open, which is the very case the normalization exists to
+    prevent. Both were true before this function existed; it neither causes nor
+    worsens them. The reason it is not fixed here is that repointing rewrites
+    recorded *history* rather than metadata, and that the rows most in need of
+    it are exactly the ones ``Log.fromStr`` cannot find the object name in by
+    field index -- the shifted fields are why they fail -- so it wants a
+    substring reconstruction with its own ambiguity rules, not the field swap
+    below. Long form in ``tests/test_contour_name_collision.py``'s module
+    docstring.
+
     (Updates ``series_data`` in place.)
 
         Params:
@@ -631,7 +645,9 @@ class Series():
                 progress += 1
                 reporter.set_progress(progress/final_value * 100)
 
-            # extract the existing log
+            # Extract the existing log. Copied through byte for byte: the
+            # contour renames collected above are NOT applied to its object-name
+            # field, deliberately -- see `applyContourRenames` for why.
             log_str = jser_data["log"]
             existing_log_fp = os.path.join(hidden_dir, "existing_log.csv")
             with open(existing_log_fp, "w", encoding="utf-8") as f:
@@ -648,8 +664,9 @@ class Series():
             series_data["log_set"] = []
             Series.updateJSON(series_data)
             # Carry the contour renames above into everything the series keys by
-            # object name. Runs after updateJSON, which is what folds the legacy
-            # curation / last_user / 3D_modes maps into obj_attrs.
+            # object name except the log, above. Runs after updateJSON, which is
+            # what folds the legacy curation / last_user / 3D_modes maps into
+            # obj_attrs.
             applyContourRenames(series_data, renames, collisions)
             series_fp = os.path.join(hidden_dir, sname + ".ser")
             with open(series_fp, "wb") as f:
