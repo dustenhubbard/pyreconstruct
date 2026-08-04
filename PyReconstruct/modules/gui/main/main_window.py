@@ -10,6 +10,7 @@ from PyReconstruct.modules.backend.func.window_geometry import (
     default_window_rect,
     window_geometry_is_usable,
 )
+from .status_readout import FieldStatusReadout
 
 
 def windowGeometrySettings():
@@ -122,11 +123,20 @@ class MainWindow(QMainWindow):
         ## and hovering a QAction with no status tip sends an empty one, which
         ## is what used to blank the readout on a trip to the menu bar.
         ## Permanent widgets are laid out to the right of the temporary-message
-        ## area. stretch=0 keeps the label right-aligned and leaves the
+        ## area. stretch=0 keeps the readout right-aligned and leaves the
         ## temporary-message area at its natural width so showMessage notices
         ## paint normally.
-        self.status_label = QLabel()
-        self.statusbar.addPermanentWidget(self.status_label, 0)
+        ##
+        ## Its first three parts are clickable: section, alignment and
+        ## brightness/contrast profile are the three things a user switches
+        ## most often, and the readout is already naming the current one right
+        ## under the pointer. See gui/main/status_readout.py for why a segment
+        ## has to be its own widget.
+        self.status_readout = FieldStatusReadout()
+        self.status_readout.section_clicked.connect(self.changeSection)
+        self.status_readout.alignment_clicked.connect(self.quickSwitchAlignment)
+        self.status_readout.bc_profile_clicked.connect(self.quickSwitchBCProfile)
+        self.statusbar.addPermanentWidget(self.status_readout, 0)
 
         ## Open series if requested thru CLI
         if filename and Path(filename).exists():
@@ -2163,6 +2173,76 @@ class MainWindow(QMainWindow):
             attr = getattr(self, f"{current_alignment}_alignment_act")  # generated from createContextMenu
             attr.setChecked(False)
             self.field.changeAlignment(new_alignment)
+
+    def statusQuickSwitch(self, segment, names, current, switch):
+        """Pop a list of names up over a status-bar segment.
+
+        `popup()` rather than `exec()`: `exec()` spins a nested modal event
+        loop, which is a hang with no way out when there is no user to dismiss
+        it, and there is nothing to wait for here -- the menu's own `triggered`
+        does the work. The menu is parented to the segment so it outlives this
+        call, and is dropped when it hides so repeated clicks do not accumulate
+        menus on the segment. `deleteLater` is safe against the selection that
+        caused the hide: `aboutToHide` runs before `triggered`, and the
+        deletion it schedules cannot happen until control returns to the event
+        loop, by which time the switch has already run.
+
+            Params:
+                segment (QWidget): the status-bar segment that was clicked
+                names (list): the names to offer, in the order to show them
+                current (str): the name to mark as current
+                switch (callable): called with the chosen name
+            Returns:
+                (QMenu): the menu that was popped up
+        """
+        menu = QMenu(segment)
+        menu.aboutToHide.connect(menu.deleteLater)
+        for name in names:
+            act = menu.addAction(name)
+            act.setCheckable(True)
+            act.setChecked(name == current)
+            # default argument, not a closure over the loop variable
+            act.triggered.connect(lambda _checked=False, n=name: switch(n))
+
+        # above the segment: the status bar is at the bottom of the window, so
+        # a menu dropped below it would open off-screen
+        top_left = segment.mapToGlobal(segment.rect().topLeft())
+        menu.popup(top_left - QPoint(0, menu.sizeHint().height()))
+        return menu
+
+    def quickSwitchAlignment(self):
+        """Offer the series' alignments over the status bar's alignment segment.
+
+        Enumerated from the current section's transforms rather than from
+        `Series.alignments`, which raises when the sections disagree about
+        which alignments exist -- an exception out of a mouse press is the
+        worst place to learn that. `modifyAlignments` reads the same place.
+        """
+        return self.statusQuickSwitch(
+            self.status_readout.alignment_segment,
+            sorted(self.field.section.tforms.keys()),
+            self.series.alignment,
+            self.switchAlignmentFromStatusBar,
+        )
+
+    def switchAlignmentFromStatusBar(self, alignment : str):
+        """Switch alignment and repaint the readout."""
+        self.changeAlignment(alignment)
+        self.field.updateStatusBar()
+
+    def quickSwitchBCProfile(self):
+        """Offer the series' brightness/contrast profiles over its segment."""
+        return self.statusQuickSwitch(
+            self.status_readout.bc_profile_segment,
+            sorted(self.field.section.bc_profiles.keys()),
+            self.series.bc_profile,
+            self.switchBCProfileFromStatusBar,
+        )
+
+    def switchBCProfileFromStatusBar(self, profile : str):
+        """Switch brightness/contrast profile and repaint the readout."""
+        self.field.changeBCProfile(profile)
+        self.field.updateStatusBar()
 
     def refreshAlignmentActions(self, alignments_before):
         """Rebuild the context menus if the series' alignment names changed.

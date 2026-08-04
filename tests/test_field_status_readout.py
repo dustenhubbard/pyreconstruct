@@ -35,30 +35,41 @@ competing for the same slot.
 import pytest
 
 from PySide6.QtGui import QStatusTipEvent
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication
+
+from PyReconstruct.modules.gui.main.status_readout import FieldStatusReadout
 
 pytestmark = pytest.mark.gui
 
 
-class RecordingLabel(QLabel):
-    """A ``QLabel`` that remembers every ``setText`` call made from Python.
+def record_writes(monkeypatch, window):
+    """Record every ``setText`` the readout's own widgets receive.
 
-    ``updateStatusBar`` looks ``status_label`` up on the main window on every
-    call, so swapping the attribute is enough of a seam; the recorder does not
-    have to be the widget actually in the status bar's layout.
+    The readout is four widgets now, not one label, so the recorder wraps each
+    of them in place rather than standing in for the whole thing. That is
+    strictly closer to what ships: the writes counted are the writes Qt is
+    actually asked to make, on the widgets actually in the status bar.
+
+        Returns:
+            (list): ``(name, text)`` for each write, in order
     """
+    writes = []
+    readout_widget = window.status_readout
+    for name in ("section_segment", "alignment_segment", "bc_profile_segment",
+                 "detail_label"):
+        widget = getattr(readout_widget, name)
+        original = widget.setText
 
-    def __init__(self):
-        super().__init__()
-        self.writes = []
+        def record(text, name=name, original=original):
+            writes.append((name, text))
+            original(text)
 
-    def setText(self, text):
-        self.writes.append(text)
-        super().setText(text)
+        monkeypatch.setattr(widget, "setText", record)
+    return writes
 
 
 def readout(window):
-    return window.status_label.text()
+    return window.status_readout.text()
 
 
 def paint_the_field(window):
@@ -85,7 +96,8 @@ def test_the_readout_is_a_permanent_widget_not_a_temporary_message(main_window):
     """The structural claim the other tests rest on."""
     main_window.field.updateStatusBar()
 
-    assert isinstance(main_window.status_label, QLabel)
+    assert isinstance(main_window.status_readout, FieldStatusReadout)
+    assert main_window.status_readout.parent() is main_window.statusbar
     assert readout(main_window).startswith("Section: ")
     # nothing of the readout leaks into the temporary-message slot
     assert main_window.statusbar.currentMessage() == ""
@@ -147,31 +159,36 @@ def test_the_readout_follows_the_cursor_across_the_field(main_window):
     assert first != second
 
 
-def test_repainting_a_still_field_does_not_rewrite_the_readout(main_window):
-    """The label is written on change, not on every paint.
+def test_repainting_a_still_field_does_not_rewrite_the_readout(
+    main_window, monkeypatch
+):
+    """The readout is written on change, not on every paint.
 
     ``paintText`` is the real per-frame caller, so it is what drives this rather
     than ``updateStatusBar`` directly.
+
+    Splitting the readout into segments makes this claim finer than it was: a
+    mouse move must rewrite the coordinates and *only* the coordinates, leaving
+    the three clickable segments alone.
     """
     field = main_window.field
     field.mouse_x, field.mouse_y = 60, 60
     field.updateStatusBar()
 
-    recorder = RecordingLabel()
-    recorder.setText(readout(main_window))
-    recorder.writes.clear()
-    main_window.status_label = recorder
+    writes = record_writes(monkeypatch, main_window)
 
     for _ in range(5):
         paint_the_field(main_window)
 
-    assert recorder.writes == []
+    assert writes == []
 
     field.mouse_x, field.mouse_y = 200, 200
     paint_the_field(main_window)
 
-    assert len(recorder.writes) == 1
-    assert recorder.writes[0].startswith("Section: ")
+    assert len(writes) == 1
+    name, text = writes[0]
+    assert name == "detail_label"
+    assert text.startswith("x = ")
 
 
 def test_a_section_change_still_updates_the_readout(main_window):
