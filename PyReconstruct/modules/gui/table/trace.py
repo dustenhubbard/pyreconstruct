@@ -1,5 +1,3 @@
-import re
-
 from PySide6.QtWidgets import (
     QTableWidgetItem, 
     QWidget, 
@@ -14,6 +12,7 @@ from PyReconstruct.modules.datatypes import (
     Series,
     Section
 )
+from PyReconstruct.modules.datatypes.filters import passesFilters
 from PyReconstruct.modules.gui.utils import (
     populateMenuBar,
     clearMenuBar,
@@ -167,11 +166,7 @@ class TraceTableWidget(DataTable):
             return False
         
         # check regex
-        passes_filters = False if self.re_filters else True
-        for re_filter in self.re_filters:
-            if bool(re.fullmatch(re_filter, name)):
-                passes_filters = True
-        if not passes_filters:
+        if not passesFilters(name, self.re_filters):
             return False
         
         return True
