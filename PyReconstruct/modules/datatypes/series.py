@@ -3598,16 +3598,21 @@ class Series():
             self.setAttr(obj_name, "last_user", self.user)
             self.editors.add(self.user)
     
-    def getFullHistory(self) -> LogSet:
+    def getFullHistory(self, skip_corrupt : bool = False) -> LogSet:
         """Get all the logs for the series.
-        
+
+            Params:
+                skip_corrupt (bool): True to drop the rows that will not parse
+                    and keep the rest (the dropped rows land in the returned
+                    set's skipped_rows); False, the default, to raise on the
+                    first one. LogSet.fromList says which a caller wants.
             Returns:
                 (LogSet): the object containing the full history
         """
         csv_fp = os.path.join(self.hidden_dir, "existing_log.csv")
         with open(csv_fp, "r", encoding="utf-8", errors="replace") as f:
             log_list = f.readlines()[1:]
-        full_hist = LogSet.fromList(log_list)
+        full_hist = LogSet.fromList(log_list, skip_corrupt=skip_corrupt)
         for log in self.log_set.all_logs:
             full_hist.addExistingLog(log)
         
@@ -4212,13 +4217,34 @@ class Series():
             print(f"CSV exported to {str(output_fp)}")
 
     def getEditorsFromHistory(self):
-        """Get the set of editors from the history of the series."""
+        """Get the set of editors from the history of the series.
+
+            Returns:
+                (set): the usernames named by the rows that could be read
+
+        A row that will not parse costs only itself. This is a union over the
+        rows, so one bad row says nothing about the others, and abandoning the
+        file on it -- what the bare `except: return set()` here used to do --
+        took every OTHER user's well-formed entry with it and left the series
+        claiming they had never edited it. One legacy object name holding the
+        ", " Log.fromStr splits on is enough to trigger that, and __init__
+        calls this exactly when the stored editors list is empty, so the empty
+        set it returned was then stored as the answer.
+
+        Failing to read the file at all is the different case and still yields
+        an empty set: there are no other rows to keep.
+        """
         editors = set()
         try:
-            ls = self.getFullHistory()
-        except:
-            print("ERROR: corrupt history. Skipping editors update...")
+            ls = self.getFullHistory(skip_corrupt=True)
+        except OSError:
+            print("ERROR: cannot read history. Skipping editors update...")
             return set()
+        if ls.skipped_rows:
+            print(
+                f"WARNING: {len(ls.skipped_rows)} unreadable history row(s) "
+                "skipped; editors from the remaining rows were kept."
+            )
         for l in ls.all_logs:
             if l.user:
                 editors.add(l.user)
