@@ -34,24 +34,25 @@ Within-contour order is preserved, because it is semantically significant:
 at the first non-overlap, so a layout that reordered a contour would change
 import behavior on real data.
 
-**Whether coordinates live in one array per section or one array per trace is
-not decided here, and this module is written so that it does not have to be.**
-Both are implemented, both satisfy the same three-method backing interface, and
-the store does not know which it has:
-
-* `SegmentedCoordinates` -- one `(n, 2)` float64 array per row. Insert and
-  delete are O(1), a row's array is its own, and nothing aliases.
-* `PackedCoordinates` -- one `(N, 2)` float64 array per section with a per-row
-  extent, appended to and never inserted into. A row whose length changes is
-  appended fresh and its old extent tombstoned, so `addTrace` and a reshape are
-  both appends. `deadRows` and `deadPoints` report the slack a compaction pass
-  would reclaim, and there is no compaction pass here, because compaction
-  reorders rows and row order is load-bearing above.
-
-The default is `SegmentedCoordinates`, because it is the one that preserves
-today's complexity on every path. Choosing between them is a measurement that
-has not been taken. Nothing outside a backing depends on the answer, and the
-parity suite runs against both, which is what keeps the question open.
+**Coordinates live in one array per trace.** The backing is
+`SegmentedCoordinates` -- one `(n, 2)` float64 array per row, insert and delete
+O(1), a row's array is its own, and nothing aliases. It is the pole that
+preserves today's complexity on every path, and it is now the decided one
+rather than a default: the design's open question (one array per section
+versus one per trace) was settled after the paired undo-snapshot measurement
+found the per-section `PackedCoordinates` backing 0.32% dearer on the workload
+it was hypothesized to win (its per-row header amortization needs several rows
+per store, and ~90% of undo snapshots hold one), and after the A1 open-pass
+split (geometry 68%, construction 15.4%) came in on the side the design doc
+itself names for that shape. The losing backing was deleted rather than kept
+as an option -- carrying it was unreleased scope (review-246 F06) -- and the
+store stays layout-blind behind the same five-method backing interface
+(`append` / `get` / `set` / `release` / `freeze`), so a future whole-section
+layout, if a measurement ever earns one, arrives as a new backing rather than a
+rewrite. The interface was six methods until `totalPoints` went with the class
+that consumed it: `PackedCoordinates.deadPoints` was its only call site
+anywhere in the tree, and applying the unreleased-scope principle to one and
+not the other is the inconsistency review-248 F02 recorded.
 
 Coordinates are **float64**, not float32. float32 carries about 7 significant
 decimal digits in total while `getList` promises 7 decimal *places*, so a
@@ -183,7 +184,8 @@ class SegmentedCoordinates():
 
     Insert and delete are O(1) and a row's coordinates are its own, so nothing
     aliases and no caller can write into another row's memory. This is the
-    default backing.
+    decided backing; the module docstring records how it was decided and what
+    interface a future alternative would have to satisfy.
     """
 
     def __init__(self):
@@ -214,106 +216,9 @@ class SegmentedCoordinates():
         """Drop the row's coordinates. The row number is not reused."""
         self._arrays[row] = None
 
-    @property
-    def totalPoints(self) -> int:
-        return sum(len(a) for a in self._arrays if a is not None)
-
     def freeze(self):
         """Nothing to release: each row's array is allocated at its exact size."""
         return
-
-
-class PackedCoordinates():
-    """One `(N, 2)` float64 array per section, appended to and never inserted.
-
-    A row is an extent into the shared array. A row whose coordinates are
-    replaced at a different length gets a fresh extent at the end and its old one
-    is tombstoned, so every write is an append and `addTrace` never shifts
-    anything. `deadPoints` is the slack a compaction pass would reclaim; there is
-    no compaction pass, because compaction reorders rows and row order is
-    load-bearing.
-    """
-
-    ## Points the array grows by when it is full. Growth is amortized doubling
-    ## with this as a floor.
-    INITIAL_CAPACITY = 256
-
-    def __init__(self):
-        self._array = np.empty((self.INITIAL_CAPACITY, 2), dtype=np.float64)
-        self._used = 0
-        self._extents = []   # row -> (start, length), or None once released
-
-    def __len__(self):
-        return len(self._extents)
-
-    def _reserve(self, n: int) -> int:
-        if self._used + n > len(self._array):
-            capacity = max(len(self._array) * 2, self._used + n)
-            grown = np.empty((capacity, 2), dtype=np.float64)
-            grown[:self._used] = self._array[:self._used]
-            self._array = grown
-        start = self._used
-        self._used += n
-        return start
-
-    def append(self, points) -> int:
-        array = _asCoordinateArray(points)
-        start = self._reserve(len(array))
-        self._array[start:start + len(array)] = array
-        self._extents.append((start, len(array)))
-        return len(self._extents) - 1
-
-    def get(self, row: int) -> np.ndarray:
-        extent = self._extents[row]
-        if extent is None:
-            raise IndexError(f"row {row} has been removed")
-        start, length = extent
-        return self._array[start:start + length]
-
-    def set(self, row: int, points):
-        extent = self._extents[row]
-        if extent is None:
-            raise IndexError(f"row {row} has been removed")
-        array = _asCoordinateArray(points)
-        start, length = extent
-        if len(array) == length:
-            self._array[start:start + length] = array
-            return
-        # A different length: append a fresh extent rather than shift the array.
-        # The old extent is dead space until something compacts, which nothing
-        # here does.
-        new_start = self._reserve(len(array))
-        self._array[new_start:new_start + len(array)] = array
-        self._extents[row] = (new_start, len(array))
-
-    def release(self, row: int):
-        self._extents[row] = None
-
-    @property
-    def totalPoints(self) -> int:
-        return sum(length for e in self._extents if e for length in (e[1],))
-
-    @property
-    def deadRows(self) -> int:
-        """Rows whose extent has been released."""
-        return sum(1 for e in self._extents if e is None)
-
-    @property
-    def deadPoints(self) -> int:
-        """Points a compaction pass would reclaim: released rows plus stranded
-        extents left by a length-changing write."""
-        return self._used - self.totalPoints
-
-    def freeze(self):
-        """Release the capacity beyond `_used`. See `SectionColumns.freeze`.
-
-        Trims the tail only. Dead extents left inside `_used` by a length-changing
-        write are NOT reclaimed, because reclaiming them means moving rows and row
-        order is load-bearing. A store built by appends alone, which is what a
-        snapshot is, has none.
-        """
-        if self._used != len(self._array):
-            self._array = self._array[:self._used].copy()
 
 
 def _asCoordinateArray(points) -> np.ndarray:
@@ -397,9 +302,9 @@ class _NumericColumn():
 class SectionColumns():
     """One section's traces as append-only rows with a per-contour index.
 
-    Read the module docstring first: the layout choice this class does and does
-    not make, what parity means, and why the generation counter sits beside the
-    name tracking rather than replacing it.
+    Read the module docstring first: the layout decision and how it was made,
+    what parity means, and why the generation counter sits beside the name
+    tracking rather than replacing it.
     """
 
     def __init__(self, section_number: int, coordinates=None, id_issuer=None):
@@ -408,8 +313,8 @@ class SectionColumns():
             Params:
                 section_number (int): the section these rows sit on
                 coordinates: the coordinate backing. Defaults to
-                    `SegmentedCoordinates`; `PackedCoordinates` satisfies the
-                    same interface and the parity suite runs against both.
+                    `SegmentedCoordinates`, the decided backing; anything
+                    satisfying the same five-method interface may be injected.
                 id_issuer: anything with an `issue()` returning a fresh id.
                     `datatypes/trace_id.TraceIDIssuer` is the intended
                     production issuer. `None` means rows carry no id, which is
@@ -566,12 +471,11 @@ class SectionColumns():
         """Release every column's growth slack. For a store that will not grow.
 
         The columns grow by amortized doubling, so a store holding two rows can
-        hold buffers for sixty-four, and the coordinate backing's initial capacity
-        is larger still. That slack is the right trade while a store is being
-        built and the wrong one the moment a store is a **snapshot**: a snapshot is
-        immutable after construction, and an undo state that over-allocated its
-        columns five times over would be measured as costing five times what it
-        costs.
+        hold buffers for sixty-four. That slack is the right trade while a
+        store is being built and the wrong one the moment a store is a
+        **snapshot**: a snapshot is immutable after construction, and an undo
+        state that over-allocated its columns five times over would be
+        measured as costing five times what it costs.
 
         Found while adapting the undo-growth harness, where the slack would have
         dominated the figure the measurement exists to produce. Not a mutation: no

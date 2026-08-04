@@ -31,14 +31,28 @@ one trace, and
     `("solid", "unselected")`;
   * no coordinate needing more than 7 decimal places.
 
-Those gaps are covered by mutating real traces on real sections rather than by
-building a synthetic series, so the material under test stays real and the
-attribute domain gets covered. Where a test does that, it says so.
+Those gaps are covered twice, deliberately. Tests below mutate real traces on
+real sections, so the mutation entry points get covered against real material.
+And `tests/fixtures/parity_series.jser` -- a checked-in synthetic series added
+because review-246 found the real fixture cannot distinguish the parity
+definitions that matter -- carries the missing domains in the *file itself*:
+positional (list) contour rows, coordinates inexact at 7 decimal places,
+tagged/negative/hidden traces, and single-point traces the load path screens.
+The synthetic tests say which gap they close; a raw-file census pins that the
+fixture keeps carrying all of them.
 
-Both coordinate backings are parametrized over every test that touches
-coordinates. The choice between them is an open measurement, and running the
-suite against both is what keeps it open.
+The coordinate backing is `SegmentedCoordinates`, and it is the decided one:
+the paired undo-snapshot measurement found the per-section packed alternative
+0.32% dearer on the workload it was hypothesized to win, the A1 open-pass
+split leans the same way, and the losing backing was deleted rather than kept
+as an option. The store still reaches its backing only through the five-method
+interface, so these tests exercise the seam a future layout would arrive
+behind.
 """
+import json
+import shutil
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -47,16 +61,9 @@ from PyReconstruct.modules.datatypes.columnar_store import (
     BOOL_ATTRIBUTES,
     FILL_MODE_CODES,
     FILL_MODE_OVERFLOW,
-    PackedCoordinates,
     SectionColumns,
     SegmentedCoordinates,
 )
-
-BACKINGS = pytest.mark.parametrize(
-    "backing", [SegmentedCoordinates, PackedCoordinates],
-    ids=["segmented", "packed"],
-)
-
 
 class StubIssuer():
     """A deterministic stand-in for `trace_id.TraceIDIssuer`.
@@ -91,6 +98,33 @@ def loaded_sections(real_series):
     return sections
 
 
+## The checked-in synthetic series. It exists because the real fixture cannot
+## prove the parity this suite claims (review-246): every one of its 40,210
+## coordinate values is exact at 7 dp, none of its traces is tagged, negative
+## or hidden, and its contour rows are legacy dicts. This file carries, in the
+## raw bytes rather than through an in-test mutation: positional (list) contour
+## rows, coordinates inexact at 7 dp, tagged/negative/hidden traces, and
+## single-point traces (which the load path screens out).
+SYNTHETIC_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "parity_series.jser"
+
+
+@pytest.fixture
+def synthetic_sections(tmp_path):
+    """Every populated section of the synthetic series, from a writable copy.
+
+    A copy for the same reason `series_jser` copies: `Series.openJser` builds
+    a hidden working directory beside the file it is given.
+    """
+    from PyReconstruct.modules.datatypes import Series
+
+    destination = tmp_path / "parity_series.jser"
+    shutil.copy(SYNTHETIC_FIXTURE, destination)
+    series = Series.openJser(str(destination))
+    sections = [series.loadSection(n) for n in sorted(series.sections)]
+    yield [section for section in sections if section.contours]
+    series.close()
+
+
 def _assert_trace_parity(store, row, trace):
     """Every column of one row against every attribute of one trace."""
     assert store.getName(row) == trace.name
@@ -112,18 +146,17 @@ def _assert_trace_parity(store, row, trace):
     assert store.getTags(row) == trace.tags
 
 
-# --- the whole fixture series, both backings ---------------------------------
+# --- the whole fixture series -------------------------------------------------
 
 
-@BACKINGS
-def test_every_trace_of_every_real_section_round_trips(loaded_sections, backing):
+def test_every_trace_of_every_real_section_round_trips(loaded_sections):
     """The headline parity assertion, over all 232 traces of the real series.
 
     Contour names, within-contour order, and every column of every row.
     """
     n_traces = 0
     for section in loaded_sections:
-        store = SectionColumns.fromSection(section, coordinates=backing())
+        store = SectionColumns.fromSection(section)
         ## Non-empty contours only, which is the set `Section.getDict` writes:
         ## an empty `Contour` holds no rows, so it has no index entry. On this
         ## fixture the two sets are identical, because `Section.updateJSON`
@@ -142,8 +175,7 @@ def test_every_trace_of_every_real_section_round_trips(loaded_sections, backing)
     assert n_traces > 200, f"expected the fixture's ~232 traces, walked {n_traces}"
 
 
-@BACKINGS
-def test_materializing_rebuilds_traces_equal_to_the_originals(loaded_sections, backing):
+def test_materializing_rebuilds_traces_equal_to_the_originals(loaded_sections):
     """`materializeTrace` against `Trace.isSameTrace`, which compares name, color
     and points, plus the four attributes it does not compare.
 
@@ -153,7 +185,7 @@ def test_materializing_rebuilds_traces_equal_to_the_originals(loaded_sections, b
     already uses.
     """
     for section in loaded_sections:
-        store = SectionColumns.fromSection(section, coordinates=backing())
+        store = SectionColumns.fromSection(section)
         for name in store.contourNames():
             for row, original in zip(store.rowsForContour(name),
                                      section.contours[name]):
@@ -166,8 +198,7 @@ def test_materializing_rebuilds_traces_equal_to_the_originals(loaded_sections, b
                 assert rebuilt.tags == original.tags
 
 
-@BACKINGS
-def test_materialized_contours_match_the_sections_own_dict(loaded_sections, backing):
+def test_materialized_contours_match_the_sections_own_dict(loaded_sections):
     """`materializeContours` against `Section.contours`, contour by contour.
 
     Built through `Contour(name, traces)`, the checking constructor, so a name
@@ -175,7 +206,7 @@ def test_materialized_contours_match_the_sections_own_dict(loaded_sections, back
     producing a quietly mismatched contour.
     """
     for section in loaded_sections:
-        store = SectionColumns.fromSection(section, coordinates=backing())
+        store = SectionColumns.fromSection(section)
         rebuilt = store.materializeContours()
         assert sorted(rebuilt, key=str) == sorted(section.contours, key=str)
         for name, contour in rebuilt.items():
@@ -185,8 +216,7 @@ def test_materialized_contours_match_the_sections_own_dict(loaded_sections, back
                 assert a.isSameTrace(b)
 
 
-@BACKINGS
-def test_the_stored_row_reserializes_to_the_same_bytes(loaded_sections, backing):
+def test_the_stored_row_reserializes_to_the_same_bytes(loaded_sections):
     """A second, independent parity check: `getList` of a materialized trace
     equals `getList` of the original.
 
@@ -197,7 +227,7 @@ def test_the_stored_row_reserializes_to_the_same_bytes(loaded_sections, backing)
     that rounded to 7 dp on the way in.
     """
     for section in loaded_sections:
-        store = SectionColumns.fromSection(section, coordinates=backing())
+        store = SectionColumns.fromSection(section)
         for name in store.contourNames():
             for row, original in zip(store.rowsForContour(name),
                                      section.contours[name]):
@@ -208,9 +238,7 @@ def test_the_stored_row_reserializes_to_the_same_bytes(loaded_sections, backing)
 # --- the rounding seam -------------------------------------------------------
 
 
-@BACKINGS
-def test_the_store_is_on_the_unrounded_side_of_the_seven_dp_rounding(
-        loaded_sections, backing):
+def test_the_store_is_on_the_unrounded_side_of_the_seven_dp_rounding(loaded_sections):
     """The store keeps a coordinate that `getList` would throw away.
 
     Written because the real material cannot show this: every one of the 20,105
@@ -227,7 +255,7 @@ def test_the_store_is_on_the_unrounded_side_of_the_seven_dp_rounding(
     assert round(precise, 7) != precise, "pick a value the rounding actually moves"
     trace.points = [(precise, 6.0987654321098)] + list(trace.points[1:])
 
-    store = SectionColumns.fromSection(section, coordinates=backing())
+    store = SectionColumns.fromSection(section)
     row = store.rowsForContour(name)[0]
 
     ## The store kept the full value.
@@ -244,11 +272,150 @@ def test_the_store_is_on_the_unrounded_side_of_the_seven_dp_rounding(
     assert store.materializeTrace(row).points[0][0] == precise
 
 
+# --- the synthetic series: the domains the real fixture cannot carry ---------
+
+
+def _synthetic_rows():
+    """Every 8-field contour row of the checked-in synthetic file, raw."""
+    data = json.loads(SYNTHETIC_FIXTURE.read_text())
+    return [
+        row
+        for section in data["sections"] if section
+        for contour in section["contours"].values()
+        for row in contour
+    ]
+
+
+def test_the_synthetic_file_itself_carries_what_the_real_series_cannot():
+    """The raw-file census, so the fixture cannot silently lose its point.
+
+    Asserted against the bytes on disk, not against anything loaded: the rows
+    are positional lists (the current format, so no legacy dict migration runs
+    over them), at least one coordinate is inexact at 7 decimal places, and
+    tagged, negative, hidden and single-point traces are all present, and more
+    than one fill mode is used. If an edit to the fixture drops any of these,
+    the parity tests below quietly stop discriminating, and this census is what
+    makes that loud instead.
+    """
+    rows = _synthetic_rows()
+    assert rows
+    assert all(type(row) is list and len(row) == 8 for row in rows)
+
+    coordinates = [value for row in rows for value in row[0] + row[1]]
+    assert any(round(value, 7) != value for value in coordinates)
+
+    assert any(row[7] for row in rows), "no tagged trace in the fixture"
+    assert any(row[4] for row in rows), "no negative trace in the fixture"
+    assert any(row[5] for row in rows), "no hidden trace in the fixture"
+    assert any(len(row[0]) == 1 for row in rows), "no single-point trace"
+
+    ## The fill mode is a (mode, condition) pair and the parity walk compares it
+    ## column by column, so a fixture that carried one pair everywhere would let
+    ## a store that dropped the column entirely still pass. Three pairs are
+    ## checked in (none/none x6, solid/unselected, transparent/selected), which
+    ## is the number the PR body claims, so the count is asserted rather than
+    ## the exact pairs: a re-cut is free to change which three, not free to
+    ## flatten the variety (review-248 N01).
+    fill_modes = {tuple(row[6]) for row in rows}
+    assert len(fill_modes) >= 3, (
+        f"the fixture carries only {len(fill_modes)} fill-mode pair(s), "
+        f"{sorted(fill_modes)}; the parity walk stops discriminating on that "
+        "column when they are all the same"
+    )
+
+
+def test_every_trace_of_every_synthetic_section_round_trips(synthetic_sections):
+    """The headline parity walk, over material the real series cannot supply.
+
+    Same assertions as the real-series walk -- every column of every row,
+    within-contour order, materialization equality and `getList` byte
+    equality -- but here the tagged/negative/hidden values and the inexact
+    coordinates arrived from a checked-in file, not from an in-test mutation,
+    so this is the walk that can actually prove object-model parity.
+    """
+    tagged = negative = hidden = 0
+    for section in synthetic_sections:
+        store = SectionColumns.fromSection(section)
+        assert store.contourNames() == sorted(
+            (n for n, c in section.contours.items() if len(c)), key=str
+        )
+        for name in store.contourNames():
+            rows = store.rowsForContour(name)
+            traces = list(section.contours[name])
+            assert len(rows) == len(traces)
+            for row, trace in zip(rows, traces):
+                _assert_trace_parity(store, row, trace)
+                rebuilt = store.materializeTrace(row)
+                assert rebuilt.isSameTrace(trace)
+                assert (rebuilt.getList(include_name=False)
+                        == trace.getList(include_name=False))
+                tagged += bool(trace.tags)
+                negative += trace.negative
+                hidden += trace.hidden
+    assert tagged and negative and hidden, (
+        "the synthetic material lost the attribute domain it exists to carry"
+    )
+
+
+def test_synthetic_coordinates_stay_unrounded_from_file_to_store(synthetic_sections):
+    """The two parity definitions, distinguished on checked-in material.
+
+    The real series cannot tell a silently rounding store from a faithful one
+    (all 40,210 values exact at 7 dp), which is review-246's finding against
+    this suite's own fixture. Here coordinates that a `getList` round trip
+    would move arrive from the file, survive `Trace.fromList` verbatim, and
+    must come back out of the store bit-identical -- so a store that rounded
+    on the way in fails on the fixture alone, with nothing mutated in-test.
+    """
+    inexact = 0
+    for section in synthetic_sections:
+        store = SectionColumns.fromSection(section)
+        for name in store.contourNames():
+            for row, trace in zip(store.rowsForContour(name),
+                                  section.contours[name]):
+                for stored, held in zip(store.getPoints(row), trace.points):
+                    for stored_value, held_value in zip(stored, held):
+                        if round(held_value, 7) != held_value:
+                            inexact += 1
+                        assert stored_value == held_value
+    assert inexact >= 4, (
+        f"only {inexact} coordinates discriminate the rounding seam; the "
+        f"fixture is supposed to carry them in quantity"
+    )
+
+
+def test_single_point_traces_are_screened_and_the_store_matches_the_model(
+        synthetic_sections):
+    """Parity is with the object model, not with the file.
+
+    The fixture carries two single-point rows: one beside a valid trace in
+    `spine01` (section 0), and one as the only row of `lone` (section 1).
+    `Section.updateJSON`/`Section.__init__` screen both out, taking the `lone`
+    contour with them, so a store built from the section must hold the
+    screened counts and never resurrect what the load path dropped.
+    """
+    raw = json.loads(SYNTHETIC_FIXTURE.read_text())
+    assert len(raw["sections"][0]["contours"]["spine01"]) == 2
+    assert len(raw["sections"][1]["contours"]["lone"]) == 1
+
+    by_number = {section.n: section for section in synthetic_sections}
+
+    store = SectionColumns.fromSection(by_number[0])
+    assert len(store.rowsForContour("spine01")) == 1
+    assert len(by_number[0].contours["spine01"]) == 1
+
+    store = SectionColumns.fromSection(by_number[1])
+    assert "lone" not in store.contourNames()
+    assert "lone" not in by_number[1].contours
+    assert all(len(store.getPoints(row)) > 1
+               for name in store.contourNames()
+               for row in store.rowsForContour(name))
+
+
 # --- the attribute domain the fixture does not reach -------------------------
 
 
-@BACKINGS
-def test_tags_negative_and_hidden_round_trip_on_a_real_trace(loaded_sections, backing):
+def test_tags_negative_and_hidden_round_trip_on_a_real_trace(loaded_sections):
     """The fixture series has no tagged, negative or hidden trace.
 
     Measured, not assumed: 0 of 232 for each. So real traces on a real section
@@ -262,7 +429,7 @@ def test_tags_negative_and_hidden_round_trip_on_a_real_trace(loaded_sections, ba
     trace.negative = True
     trace.hidden = True
 
-    store = SectionColumns.fromSection(section, coordinates=backing())
+    store = SectionColumns.fromSection(section)
     row = store.rowsForContour(name)[0]
     assert store.getTags(row) == {"alpha", "beta", "checked"}
     assert store.getFlag(row, "negative") is True
@@ -270,9 +437,7 @@ def test_tags_negative_and_hidden_round_trip_on_a_real_trace(loaded_sections, ba
     _assert_trace_parity(store, row, trace)
 
 
-@BACKINGS
-def test_the_tags_column_cannot_be_mutated_through_a_value_it_handed_out(
-        loaded_sections, backing):
+def test_the_tags_column_cannot_be_mutated_through_a_value_it_handed_out(loaded_sections):
     """`getTags` returns a fresh set, so a caller cannot reach into the column.
 
     `Contour.copy()` gives each copied trace its own `tags` set for the same
@@ -282,7 +447,7 @@ def test_the_tags_column_cannot_be_mutated_through_a_value_it_handed_out(
     section = loaded_sections[0]
     name = sorted(section.contours, key=str)[0]
     section.contours[name][0].tags = {"alpha"}
-    store = SectionColumns.fromSection(section, coordinates=backing())
+    store = SectionColumns.fromSection(section)
     row = store.rowsForContour(name)[0]
 
     handed_out = store.getTags(row)
@@ -332,8 +497,6 @@ def test_materialized_attributes_are_native_python_types():
     that handed them out would pass a value comparison and fail at the point of
     writing the file. Checked by type, and then by actually serializing.
     """
-    import json
-
     store = SectionColumns(1)
     row = store.appendRow(
         name="axon", points=[(0.0, 0.0), (1.0, 1.0)], color=[10, 20, 30],
@@ -348,18 +511,17 @@ def test_materialized_attributes_are_native_python_types():
     json.dumps(trace.getList(include_name=False))
 
 
-@BACKINGS
-def test_freeze_releases_the_growth_slack_without_changing_a_value(backing):
+def test_freeze_releases_the_growth_slack_without_changing_a_value():
     """A snapshot must not be measured as costing its allocator slack.
 
-    The columns grow by amortized doubling, so a store holding two rows can hold
-    buffers for sixty-four and the packed backing's initial capacity is 256
-    points. That is the right trade while a store is being built and the wrong one
-    for a snapshot, which is immutable after construction. Found while adapting
+    The columns grow by amortized doubling, so a store holding two rows can
+    hold buffers for sixty-four. That is the right trade while a store is
+    being built and the wrong one for a snapshot, which is immutable after
+    construction. Found while adapting
     the undo-growth harness, where the slack would have dominated the figure the
     measurement exists to produce.
     """
-    store = SectionColumns(1, coordinates=backing())
+    store = SectionColumns(1)
     rows = [store.appendRow(name="axon",
                             points=[(float(i), 0.0), (float(i), 1.0)],
                             color=[i, i, i], tags={"t"})
@@ -394,10 +556,7 @@ def _allocated_bytes(store):
     total = store._colors._array.nbytes + store._fill_modes._array.nbytes
     total += sum(c._array.nbytes for c in store._bools.values())
     backing = store.coordinateBacking
-    if isinstance(backing, PackedCoordinates):
-        total += backing._array.nbytes
-    else:
-        total += sum(a.nbytes for a in backing._arrays if a is not None)
+    total += sum(a.nbytes for a in backing._arrays if a is not None)
     return total
 
 
@@ -414,15 +573,140 @@ def test_the_columns_are_the_dtypes_the_layout_claims():
 # --- layout invariants -------------------------------------------------------
 
 
-@BACKINGS
-def test_rows_are_append_only_and_row_numbers_are_never_reused(backing):
+## The method surface a coordinate backing has, in the order the module docstring
+## lists it. `SectionColumns` calls exactly these five on whatever it is handed
+## (`get` at columnar_store.py:414, `freeze` 490, `append` 570, `release` 599,
+## `set` 606), so a class carrying them is a backing whatever it is called.
+##
+## `totalPoints` was a sixth member of this tuple and is not one any more. Its
+## only consumer anywhere in the tree was `PackedCoordinates.deadPoints`, which
+## this PR deleted, so pinning it here would have made the regression net defend
+## dead code -- against this PR's own stated principle that code nobody consumes
+## is unreleased scope (review-246 F06). The property went with the tuple entry,
+## in this commit (review-248 F02).
+COORDINATE_BACKING_SURFACE = ("append", "get", "set", "release", "freeze")
+
+## How much of that surface makes a class a backing for the purpose of the pin
+## below. Not all five, because a partial reimplementation is still a second
+## backing and would walk straight through an all-five bar. Three, because the
+## namespace has a wide gap to sit in: measured over `vars(columnar_store)`, an
+## exhaustive census of all five classes it holds -- `SegmentedCoordinates`
+## carries 5, `_NumericColumn` 2 (`append`, `freeze`), `SectionColumns` 1
+## (`freeze`), the imported `Contour` 1 (`append`) and `Trace` 0. So the bar is
+## in open space, not on a boundary, and `test_the_backing_scan_sits_in_a_gap`
+## pins that.
+BACKING_SURFACE_THRESHOLD = 3
+
+
+def _backingsInNamespace(module) -> list:
+    """Every class reachable in `module`'s namespace shaped like a backing.
+
+    By surface, deliberately not by name -- see the test below for why.
+
+    Deduplicated on identity first. One class bound under two names -- a
+    deprecation alias such as `LegacyCoordinates = SegmentedCoordinates` --
+    introduces no second backing, but a plain scan of `vars()` would return it
+    twice and fail the pin below with a message asserting a second backing
+    exists when it does not (review-248 F03). Names are not the unit here; the
+    objects are.
+    """
+    unique = {
+        id(obj): obj for obj in vars(module).values()
+        if isinstance(obj, type)
+        and sum(hasattr(obj, m) for m in COORDINATE_BACKING_SURFACE)
+        >= BACKING_SURFACE_THRESHOLD
+    }
+    return sorted(unique.values(), key=lambda cls: cls.__name__)
+
+
+def test_the_decided_backing_is_segmented_and_the_module_carries_no_other():
+    """The backing decision, pinned so reverting it is loud.
+
+    Design question 1 (one coordinate array per section versus one per trace)
+    was decided for the segmented pole after the paired undo-snapshot
+    measurement found `PackedCoordinates` 0.32% dearer on the workload it was
+    hypothesized to win, with A1's open-pass split leaning the same way. The
+    loser was deleted, not parked: a second backing nobody consumes is
+    unreleased scope (review-246 F06), and this test is what makes
+    reintroducing it a decision rather than a drift.
+
+    PINNED ON THE SURFACE, NOT ON THE NAME
+    --------------------------------------
+    The `hasattr` line below is a tripwire for the one drift it can see: a
+    revert, or the old class cherry-picked back under its old name. It is not
+    the property. On its own it enforced a *name* -- the identical deleted
+    class re-inserted as `ArenaCoordinates` passed this module 35/35
+    (review-wave-b F01) -- while this test's own name promises the module
+    carries no other backing at all. So the property is asserted directly: no
+    class reachable in the module's namespace but `SegmentedCoordinates` has a
+    coordinate backing's shape.
+
+    Scanning the namespace rather than the classes defined here is deliberate:
+    a backing defined elsewhere and imported in is still a second backing this
+    module carries, and the scan sees it. What it does not reach is a backing
+    that is never named in this module and is injected through
+    `SectionColumns(coordinates=...)`; the first assertion below pins what the
+    store constructs when nobody injects anything, and injection is what that
+    parameter is for.
+    """
+    import PyReconstruct.modules.datatypes.columnar_store as columnar_store
+
+    assert type(SectionColumns(1).coordinateBacking) is SegmentedCoordinates
+    assert not hasattr(columnar_store, "PackedCoordinates")
+    assert _backingsInNamespace(columnar_store) == [SegmentedCoordinates], (
+        "the module's namespace carries a class other than SegmentedCoordinates "
+        "with a coordinate backing's shape; one backing was the decision, so a "
+        "second one is a decision to re-open and not a refactor"
+    )
+
+
+def test_the_backing_scan_sits_in_a_gap():
+    """What the scan above counts, so its threshold is a measurement.
+
+    A surface scan is only as good as its bar, and a bar nobody can see the
+    margin around is a bar the next person will not trust. This records the
+    margin: the decided backing carries the whole surface, and nothing else in
+    the namespace carries even the threshold. If a future class lands between
+    these two facts, one of these assertions breaks and the bar gets re-decided
+    on purpose rather than drifting.
+    """
+    import PyReconstruct.modules.datatypes.columnar_store as columnar_store
+
+    counted = {
+        cls.__name__: sum(hasattr(cls, m) for m in COORDINATE_BACKING_SURFACE)
+        for cls in vars(columnar_store).values()
+        if isinstance(cls, type)
+    }
+    assert counted["SegmentedCoordinates"] == len(COORDINATE_BACKING_SURFACE)
+    others = {name: n for name, n in counted.items() if name != "SegmentedCoordinates"}
+    assert others, "the scan found no other class at all, so it proves nothing"
+    assert max(others.values()) < BACKING_SURFACE_THRESHOLD, (
+        f"a class now sits at the scan's threshold: {others}"
+    )
+
+
+def test_the_store_is_exported_through_the_datatypes_package():
+    """The deferred `datatypes/__init__.py` export, taken in this PR.
+
+    Neither wave-B PR could take it without colliding with the other, so it
+    was parked for the PR that decides the backing (2026-08-03 realign, Part
+    2, wave B, order 1). Identity is asserted, not just importability: the
+    package must hand out the same objects this suite tests.
+    """
+    from PyReconstruct.modules import datatypes
+
+    assert datatypes.SectionColumns is SectionColumns
+    assert datatypes.SegmentedCoordinates is SegmentedCoordinates
+
+
+def test_rows_are_append_only_and_row_numbers_are_never_reused():
     """A removed row's number retires with it.
 
     This is what lets the per-contour index and any later operation log refer to
     a row by number without a generation of its own. It is also why nothing here
     ever performs a mid-array insert.
     """
-    store = SectionColumns(1, coordinates=backing())
+    store = SectionColumns(1)
     first = store.appendRow(name="axon", points=[(0.0, 0.0), (1.0, 1.0)], color=[1, 2, 3])
     second = store.appendRow(name="axon", points=[(2.0, 2.0), (3.0, 3.0)], color=[1, 2, 3])
     assert [first, second] == [0, 1]
@@ -437,8 +721,7 @@ def test_rows_are_append_only_and_row_numbers_are_never_reused(backing):
         store.getCoordinates(first)
 
 
-@BACKINGS
-def test_within_contour_order_survives_every_operation(backing):
+def test_within_contour_order_survives_every_operation():
     """Within-contour trace order is semantically significant.
 
     `Contour.importTraces` walks `self[i]` against `other[i]` positionally and
@@ -446,7 +729,7 @@ def test_within_contour_order_survives_every_operation(backing):
     change import behavior on real data. Appends land at the end and a removal
     closes the gap without disturbing the survivors.
     """
-    store = SectionColumns(1, coordinates=backing())
+    store = SectionColumns(1)
     rows = [store.appendRow(name="axon", points=[(float(i), 0.0), (float(i), 1.0)],
                             color=[1, 2, 3]) for i in range(5)]
     assert store.rowsForContour("axon") == rows
@@ -486,35 +769,7 @@ def test_a_rename_moves_the_row_between_contour_indices():
     assert store.getAllModifiedNames() >= {"axon", "dendrite01"}
 
 
-def test_packed_coordinates_never_insert_and_report_their_own_slack():
-    """A length-changing write appends and tombstones rather than shifting.
-
-    `addTrace` is an append today and must stay one, so the packed backing has no
-    mid-array insert at all. The cost of that is dead space, and the backing
-    reports it rather than hiding it, because deciding whether to compact needs a
-    number and compaction reorders rows, which nothing here is allowed to do.
-    """
-    backing = PackedCoordinates()
-    store = SectionColumns(1, coordinates=backing)
-    row = store.appendRow(name="axon", points=[(0.0, 0.0), (1.0, 1.0)], color=[1, 2, 3])
-    assert backing.deadPoints == 0
-
-    ## Same length: written in place, no slack.
-    store.setCoordinates(row, [(2.0, 2.0), (3.0, 3.0)])
-    assert backing.deadPoints == 0
-    assert store.getPoints(row) == [(2.0, 2.0), (3.0, 3.0)]
-
-    ## Longer: a fresh extent, and the old two points become slack.
-    store.setCoordinates(row, [(4.0, 4.0), (5.0, 5.0), (6.0, 6.0)])
-    assert backing.deadPoints == 2
-    assert store.getPoints(row) == [(4.0, 4.0), (5.0, 5.0), (6.0, 6.0)]
-
-    store.removeRow(row)
-    assert backing.deadRows == 1
-
-
-@BACKINGS
-def test_a_copied_row_does_not_share_coordinate_memory_with_its_source(backing):
+def test_a_copied_row_does_not_share_coordinate_memory_with_its_source():
     """The aliasing class the coordinate coercion exists to close.
 
     `np.asarray` of an existing float64 array returns the same memory, so a row
@@ -522,12 +777,12 @@ def test_a_copied_row_does_not_share_coordinate_memory_with_its_source(backing):
     write to one would silently change the other. That is a data-loss shape, not
     a slowness shape.
     """
-    store = SectionColumns(1, coordinates=backing())
+    store = SectionColumns(1)
     source = store.appendRow(name="axon", points=[(0.0, 0.0), (1.0, 1.0)], color=[1, 2, 3])
     copied = store.duplicateRow(source)
 
     ## Checked immediately, before any write. Checking it after a write does NOT
-    ## discriminate: both backings replace a row's array on a length-changing
+    ## discriminate: the backing replaces a row's array on a length-changing
     ## write, so two rows that started out sharing memory look independent
     ## afterward. The invariant is that they never shared it.
     assert not np.shares_memory(store.getCoordinates(source),
@@ -540,8 +795,7 @@ def test_a_copied_row_does_not_share_coordinate_memory_with_its_source(backing):
     assert store.getPoints(copied) == [(7.0, 7.0), (8.0, 8.0)]
 
 
-@BACKINGS
-def test_a_store_does_not_alias_the_arrays_of_a_store_built_beside_it(backing):
+def test_a_store_does_not_alias_the_arrays_of_a_store_built_beside_it():
     """Two stores built from one section hold independent coordinates.
 
     The same coercion invariant, reached by the path a caller is most likely to
@@ -554,14 +808,62 @@ def test_a_store_does_not_alias_the_arrays_of_a_store_built_beside_it(backing):
         n = 3
         contours = {"axon": [trace]}
 
-    first = SectionColumns.fromSection(StubSection(), coordinates=backing())
-    second = SectionColumns.fromSection(StubSection(), coordinates=backing())
+    first = SectionColumns.fromSection(StubSection())
+    second = SectionColumns.fromSection(StubSection())
     assert not np.shares_memory(first.getCoordinates(0), second.getCoordinates(0))
 
     ## And neither of them aliases the live trace's own point list.
     first.getCoordinates(0)[0, 0] = 99.0
     assert trace.points[0] == (0.0, 0.0)
     assert second.getPoints(0)[0] == (0.0, 0.0)
+
+
+# --- the transform key set, across a rebuild from a file ---------------------
+
+
+def test_a_section_rebuilt_from_a_files_key_set_still_carries_no_alignment(
+        loaded_sections):
+    """The `TransformsDict` hazard a coordinates-and-attributes suite cannot see.
+
+    The object model always carries the `no-alignment` transform because
+    `TransformsDict.__init__` seeds it unconditionally (`section.py`), while
+    the file's key set never carries it: `Section.getDict` drops it on save
+    and `Section.updateJSON` deletes it on unpack. So a consumer that rebuilt
+    a section's transforms from the file's key set through a plain dict would
+    lose `no-alignment` on every section, and every other test in this file
+    would pass clean over the loss -- which is why the 2026-08-03 realign
+    requires this pin before any consumer parity claim is accepted (Part 2,
+    wave B, order 2).
+
+    Every section here IS a rebuild from a file's key set: `Section.__init__`
+    walks `section_data["tforms"]` into a fresh `TransformsDict`. Both halves
+    are asserted -- the file side carries no `no-alignment` key (so the test
+    cannot pass vacuously) and the rebuilt side carries it on every section,
+    as the identity, through the exact walk the load path runs.
+    """
+    from PyReconstruct.modules.datatypes import Transform
+    from PyReconstruct.modules.datatypes.section import TransformsDict
+
+    identity = Transform.identity()
+    for section in loaded_sections:
+        serialized = section.getDict()["tforms"]
+
+        ## The file's key set does not carry it, and a plain-dict rebuild of
+        ## that key set loses it. This is the half that makes the pin real.
+        assert "no-alignment" not in serialized
+        assert "no-alignment" not in dict(serialized)
+
+        ## The load path's exact walk over the file's key set.
+        rebuilt = TransformsDict()
+        for alignment in serialized:
+            rebuilt[alignment] = Transform(serialized[alignment])
+        assert "no-alignment" in rebuilt
+        assert rebuilt["no-alignment"].equals(identity)
+
+        ## And the section this test was handed, itself rebuilt from a file,
+        ## carries it on every alignment surface a consumer would read.
+        assert "no-alignment" in section.tforms
+        assert section.tforms["no-alignment"].equals(identity)
 
 
 # --- the generation counter, beside the name tracking ------------------------
@@ -748,12 +1050,11 @@ def test_an_explicit_id_is_carried_in_rather_than_reissued():
     assert issuer.count == 0
 
 
-@BACKINGS
-def test_ids_are_issued_once_per_row_over_a_whole_real_section(loaded_sections, backing):
+def test_ids_are_issued_once_per_row_over_a_whole_real_section(loaded_sections):
     """One id per trace across a real section, and no repeats."""
     section = max(loaded_sections, key=lambda s: sum(len(c) for c in s.contours.values()))
     issuer = StubIssuer()
-    store = SectionColumns.fromSection(section, coordinates=backing(), id_issuer=issuer)
+    store = SectionColumns.fromSection(section, id_issuer=issuer)
 
     ids = [store.getID(row) for name in store.contourNames()
            for row in store.rowsForContour(name)]
