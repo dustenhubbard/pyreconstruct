@@ -7,6 +7,8 @@ from .ztrace import Ztrace
 from .flag import Flag
 from .points import Points
 
+from .columnar_store import SectionColumns, SegmentedCoordinates
+
 from .obj_group_dict import ObjGroupDict
 
 from .series_data import SeriesData, ObjectData, TraceData
