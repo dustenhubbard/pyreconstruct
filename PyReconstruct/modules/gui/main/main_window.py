@@ -65,6 +65,21 @@ def remappedBCProfile(current : str, profiles_dict : dict) -> str:
         return current
 
 
+## Returned by the openSeries helpers below in place of every `return` the
+## single 200-line version used to make from inside the open sequence. A
+## sentinel rather than None because None is a legitimate "nothing was
+## recovered, fall through to the .jser" answer from _recoverUnsavedSeries,
+## and the two must not collapse into one another.
+_OPEN_ABORTED = object()
+
+## How fresh a timer file in a hidden series dir has to be for the series to
+## count as open in another window. The open window rewrites that file every 5
+## seconds (FieldWidget.markTime), so this has to stay comfortably above 5 or a
+## live window stops looking live between beats. Was an unexplained literal 7
+## buried in the middle of openSeries.
+_SERIES_LOCK_HEARTBEAT = 7
+
+
 class MainWindow(QMainWindow):
 
     def __init__(self, filename):
@@ -810,139 +825,235 @@ class MainWindow(QMainWindow):
 
     def openSeries(self, series_obj=None, jser_fp=None, query_prev=True):
         """Open an existing series and create the field.
-        
+
             Params:
                 series_obj (Series): the series object (optional)
                 query_prev (bool): True if query user about saving data
         """
 
         if self.series:  # series open and save yes
-            
+
             first_open = False
 
             if query_prev:
-                
+
                 response = self.saveToJser(notify=True, close=True)
-                
+
                 if response == "cancel":
                     return
             else:
 
                 self.series.close()
-                    
+
         else:
 
             first_open = True
-        
-        if not series_obj:  # if series is not provided            
-            # get the new series
-            new_series = None
-            if not jser_fp:
-                jser_fp = FileDialog.get("file", self, "Open Series", filter="*.jser")
-                if not jser_fp: return  # exit function if user does not provide series
 
-            # check for a hidden series folder
-            sdir = os.path.dirname(jser_fp)
-            sname = os.path.basename(jser_fp)
-            sname = sname[:sname.rfind(".")]
-            hidden_series_dir = os.path.join(sdir, f".{sname}")
-
-            if os.path.isdir(hidden_series_dir):
-                # find the series and timer files
-                new_series_fp = ""
-                sections = {}
-                for f in os.listdir(hidden_series_dir):
-                    if os.path.isdir(os.path.join(hidden_series_dir, f)):
-                        continue
-                    # check if the series is currently being modified
-                    if "." not in f:
-                        if not f.isdigit():
-                            continue  # not a timer file (e.g. stray editor/OS file)
-                        current_time = round(time.time())
-                        time_diff = current_time - int(f)
-                        if time_diff <= 7:  # the series is currently being operated on
-                            QMessageBox.information(
-                                self,
-                                "Series In Use",
-                                "This series is already open in another window.",
-                                QMessageBox.Ok
-                            )
-                            if not self.series:
-                                # aborting the very first open (no series, still
-                                # inside __init__, before the event loop) --
-                                # sys.exit is a real function even in frozen
-                                # builds, unlike site's exit()
-                                sys.exit()
-                            else:
-                                return
-                    else:
-                        ext = f[f.rfind(".")+1:]
-                        if ext.isnumeric():
-                            sections[int(ext)] = f
-                        elif ext == "ser":
-                            new_series_fp = os.path.join(hidden_series_dir, f)                    
-
-                # if a series file has been found
-                if new_series_fp:
-                    # ask the user if they want to open a previously unsaved series
-                    open_unsaved = unsavedNotify()
-                    if open_unsaved:
-                        new_series = Series(new_series_fp, sections)
-                        new_series.modified = True
-                        new_series.jser_fp = jser_fp
-                    else:
-                        # remove the folder if not needed
-                        for f in os.listdir(hidden_series_dir):
-                            os.remove(os.path.join(hidden_series_dir, f))
-                        os.rmdir(hidden_series_dir)
-                else:
-                    # remove the folder if no series file detected
-                    for f in os.listdir(hidden_series_dir):
-                        os.remove(os.path.join(hidden_series_dir, f))
-                    os.rmdir(hidden_series_dir)
-
-            # open the JSER file if no unsaved series was opened
-            if not new_series:
-                try:
-                    new_series = Series.openJser(jser_fp)
-                except SeriesOpenError as e:
-                    notify(str(e))
-                    if self.series is None:
-                        # aborting the very first open (see sys.exit note above)
-                        sys.exit()
-                    else:
-                        return
-                # user pressed cancel
-                if new_series is None:
-                    if self.series is None:
-                        # aborting the very first open (see sys.exit note above)
-                        sys.exit()
-                    else:
-                        return
-            
-            # clear the series
-            if self.series and not self.series.isWelcomeSeries():
-                self.series.close()
-
-            self.series = new_series
-
+        if not series_obj:  # if series is not provided
+            new_series = self._acquireSeries(jser_fp)
+            if new_series is _OPEN_ABORTED:
+                return
         # else series already provided
         else:
-            # clear current series
-            if self.series and not self.series.isWelcomeSeries():
-                self.series.close()
-                
-            # set new series
-            self.series = series_obj
-        
+            new_series = series_obj
+
+        # clear the series
+        if self.series and not self.series.isWelcomeSeries():
+            self.series.close()
+
+        # set new series
+        self.series = new_series
+
         # set the title of the main window
         self.seriesModified(self.series.modified)
 
+        self._rememberSeriesFolder()
+        self._buildFieldAndPalette()
+        self._ensureImagesAvailable()
+        self._ensureSeriesCode()
+
+        # notify new users of any warnings
+        if not first_open:
+            self.notifyNewEditor()
+
+        # create the menus
+        self.createMenuBar()
+        self.createContextMenus()
+        if not self.actions_initialized:
+            self.createShortcuts()
+        self.actions_initialized = True
+
+        # add the series to recently opened
+        self.addToRecentSeries()
+
+    # ------------------------------------------------------------------
+    # openSeries steps.
+    #
+    # These are the concerns openSeries used to interleave in one 200-line
+    # body: getting a Series (crash recovery, the concurrent-open lock, the
+    # .jser read) and then dressing the window around it (field, palette,
+    # images, series code). Split out so each can be read and changed on its
+    # own; the sequence and every branch inside them is unchanged.
+    #
+    # The three that can abort the open return _OPEN_ABORTED where the old
+    # body said `return`. `sys.exit()` stays exactly where it was: it aborts
+    # the very first open, which happens inside __init__ before the event
+    # loop, and SystemExit propagates through these helpers untouched.
+    # ------------------------------------------------------------------
+
+    def _acquireSeries(self, jser_fp):
+        """Get the Series to open, from crash recovery or from the .jser.
+
+            Params:
+                jser_fp (str): the .jser filepath, or None to ask the user
+            Returns:
+                (Series): the series to open, or _OPEN_ABORTED if the open
+                    should be abandoned (the caller must return)
+        """
+        if not jser_fp:
+            jser_fp = FileDialog.get("file", self, "Open Series", filter="*.jser")
+            if not jser_fp:
+                return _OPEN_ABORTED  # exit function if user does not provide series
+
+        new_series = self._recoverUnsavedSeries(jser_fp)
+        if new_series is _OPEN_ABORTED:
+            return _OPEN_ABORTED
+
+        # open the JSER file if no unsaved series was opened
+        if not new_series:
+            try:
+                new_series = Series.openJser(jser_fp)
+            except SeriesOpenError as e:
+                notify(str(e))
+                if self.series is None:
+                    # aborting the very first open (no series, still inside
+                    # __init__, before the event loop) -- sys.exit is a real
+                    # function even in frozen builds, unlike site's exit()
+                    sys.exit()
+                else:
+                    return _OPEN_ABORTED
+            # user pressed cancel
+            if new_series is None:
+                if self.series is None:
+                    # aborting the very first open (see sys.exit note above)
+                    sys.exit()
+                else:
+                    return _OPEN_ABORTED
+
+        return new_series
+
+    def _recoverUnsavedSeries(self, jser_fp):
+        """Offer the unsaved work in the hidden series dir, if there is any.
+
+        The hidden dir is left behind by a crash (or a still-running second
+        window). Either the user takes it, or it is cleared so the .jser can
+        be opened normally.
+
+            Params:
+                jser_fp (str): the .jser filepath being opened
+            Returns:
+                (Series): the recovered series; None if there was nothing to
+                    recover or the user declined it; _OPEN_ABORTED if the
+                    series is open in another window
+        """
+        # check for a hidden series folder
+        sdir = os.path.dirname(jser_fp)
+        sname = os.path.basename(jser_fp)
+        sname = sname[:sname.rfind(".")]
+        hidden_series_dir = os.path.join(sdir, f".{sname}")
+
+        if not os.path.isdir(hidden_series_dir):
+            return None
+
+        scan = self._scanHiddenSeriesDir(hidden_series_dir)
+        if scan is _OPEN_ABORTED:
+            return _OPEN_ABORTED
+        new_series_fp, sections = scan
+
+        # if a series file has been found
+        if new_series_fp:
+            # ask the user if they want to open a previously unsaved series
+            open_unsaved = unsavedNotify()
+            if open_unsaved:
+                new_series = Series(new_series_fp, sections)
+                new_series.modified = True
+                new_series.jser_fp = jser_fp
+                return new_series
+            # remove the folder if not needed
+            self._clearHiddenSeriesDir(hidden_series_dir)
+        else:
+            # remove the folder if no series file detected
+            self._clearHiddenSeriesDir(hidden_series_dir)
+
+        return None
+
+    def _scanHiddenSeriesDir(self, hidden_series_dir):
+        """Find the series and section files in a hidden series dir.
+
+        Also enforces the concurrent-open lock: the open window rewrites a
+        timer file named for the current epoch second every
+        `_SERIES_LOCK_HEARTBEAT` seconds (FieldWidget.markTime), so a timer
+        file younger than that means another window has the series.
+
+            Params:
+                hidden_series_dir (str): the hidden dir to scan
+            Returns:
+                (tuple): the .ser filepath ("" if none) and the {number:
+                    filename} section map; _OPEN_ABORTED if the series is
+                    already open in another window
+        """
+        new_series_fp = ""
+        sections = {}
+        for f in os.listdir(hidden_series_dir):
+            if os.path.isdir(os.path.join(hidden_series_dir, f)):
+                continue
+            # check if the series is currently being modified
+            if "." not in f:
+                if not f.isdigit():
+                    continue  # not a timer file (e.g. stray editor/OS file)
+                current_time = round(time.time())
+                time_diff = current_time - int(f)
+                if time_diff <= _SERIES_LOCK_HEARTBEAT:  # currently being operated on
+                    QMessageBox.information(
+                        self,
+                        "Series In Use",
+                        "This series is already open in another window.",
+                        QMessageBox.Ok
+                    )
+                    if not self.series:
+                        # aborting the very first open (see sys.exit note above)
+                        sys.exit()
+                    else:
+                        return _OPEN_ABORTED
+            else:
+                ext = f[f.rfind(".")+1:]
+                if ext.isnumeric():
+                    sections[int(ext)] = f
+                elif ext == "ser":
+                    new_series_fp = os.path.join(hidden_series_dir, f)
+
+        return new_series_fp, sections
+
+    @staticmethod
+    def _clearHiddenSeriesDir(hidden_series_dir):
+        """Delete a hidden series dir and the files directly inside it.
+
+            Params:
+                hidden_series_dir (str): the hidden dir to remove
+        """
+        for f in os.listdir(hidden_series_dir):
+            os.remove(os.path.join(hidden_series_dir, f))
+        os.rmdir(hidden_series_dir)
+
+    def _rememberSeriesFolder(self):
+        """Point the file explorer at the folder the series was opened from."""
         # set explorer filepath
         if not self.series.isWelcomeSeries() and self.series.jser_fp:
             settings = QSettings("KHLab", "PyReconstruct")
             settings.setValue("last_folder", os.path.dirname(self.series.jser_fp))
 
+    def _buildFieldAndPalette(self):
+        """Create (or reset) the field widget and the mouse palette."""
         # create field
         if self.field is not None:  # close previous field widget
             self.field.createField(self.series)
@@ -961,6 +1072,8 @@ class MainWindow(QMainWindow):
             self.series.palette_traces[palette_group][index]
         ) # set the current trace
 
+    def _ensureImagesAvailable(self):
+        """Locate the section images, and offer to scale unscaled zarrs."""
         # ensure that images are found
         if not self.field.section_layer.image_found:
             # images usually sit beside the jser; try there before asking
@@ -981,6 +1094,8 @@ class MainWindow(QMainWindow):
             if reply == QMessageBox.Yes:
                 self.srcToZarr(create_new=False)
 
+    def _ensureSeriesCode(self):
+        """Derive the series code from the name, or ask the user for one."""
         # get the series code from the user if needed
         if not self.series.isWelcomeSeries() and not self.series.code:
             detected_code = re.search(
@@ -994,21 +1109,7 @@ class MainWindow(QMainWindow):
             if user_is_present():
                 self.setSeriesCode(cancelable=False)
             self.seriesModified()
-        
-        # notify new users of any warnings
-        if not first_open:
-            self.notifyNewEditor()
-        
-        # create the menus
-        self.createMenuBar()
-        self.createContextMenus()
-        if not self.actions_initialized:
-            self.createShortcuts()
-        self.actions_initialized = True
 
-        # add the series to recently opened
-        self.addToRecentSeries()
-        
     def newSeries(
         self,
         image_locations : list = None,

@@ -158,20 +158,40 @@ def test_unloadable_candidate_reports_failure(tmp_path, monkeypatch):
 # openSeries wiring: failure must reach the interactive prompt.
 # --------------------------------------------------------------------------
 def test_openSeries_prompts_when_auto_recovery_fails(monkeypatch):
-    """The user must be asked to locate images rather than told nothing."""
+    """The user must be asked to locate images rather than told nothing.
+
+    The image block moved out of ``openSeries`` into
+    ``_ensureImagesAvailable`` when the 200-line method was decomposed, so
+    read the step and check ``openSeries`` still calls it. Both halves are
+    asserted: neither the step existing unwired nor ``openSeries`` calling a
+    step that lost the recovery is enough on its own.
+
+    The negative assertion deliberately reads the whole ``MainWindow`` class
+    rather than one method. A negative assertion's power is exactly the size
+    of the text it reads: scoped to ``_ensureImagesAvailable`` it would let
+    the buggy call reappear anywhere else in the open sequence - including
+    back in ``openSeries`` itself, where it used to live - without failing.
+    Reading the class is also refactor-proof in a way that reading one
+    method's source is not.
+    """
     import inspect
 
-    src = inspect.getsource(mw.MainWindow.openSeries)
+    assert "self._ensureImagesAvailable()" in inspect.getsource(
+        mw.MainWindow.openSeries
+    ), "openSeries must still run the images step"
+
+    src = inspect.getsource(mw.MainWindow._ensureImagesAvailable)
     assert "findImagesBesideJser()" in src, (
         "openSeries should route missing images through the recovery helper"
     )
     assert "self.changeSrcDir(notify=True)" in src, (
         "a failed auto-recovery must fall through to the interactive prompt"
     )
-    # and the old file-path call must be gone
-    assert "self.changeSrcDir(src_path)" not in src, (
-        "openSeries must not hand changeSrcDir a file path"
-    )
+    # and the old file-path call must be gone - from anywhere in the class,
+    # not merely from the step the image block was decomposed into
+    assert "self.changeSrcDir(src_path)" not in inspect.getsource(
+        mw.MainWindow
+    ), "MainWindow must not hand changeSrcDir a file path"
 
 
 # --------------------------------------------------------------------------
