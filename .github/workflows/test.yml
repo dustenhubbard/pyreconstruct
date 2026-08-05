@@ -91,15 +91,22 @@ jobs:
           enable-cache: true        # cache uv's download/build cache across runs
           cache-dependency-glob: uv.lock
 
-      - name: Install headless Qt system libs
+      - name: Install headless Qt + Cairo system libs
         # PySide6 6.5 needs these even under the offscreen platform. libglib2.0-0t64,
         # libX11, libfreetype6 and zlib are already present on the ubuntu-latest image.
+        #
+        # libcairo2 is for cairosvg, which PNG export calls. cairosvg reaches Cairo
+        # through cairocffi's runtime dlopen rather than through a wheel, so the pip
+        # side of the dependency installing tells you nothing about whether `import
+        # cairosvg` works. Named explicitly rather than relied on as a preinstalled
+        # image package, so that the PNG assertion in tests/test_export_svg_png.py
+        # runs here instead of skipping the day the runner image slims down.
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           for i in 1 2 3; do sudo apt-get update && break || sleep 5; done
           sudo apt-get install -y --no-install-recommends \
-            libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+            libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libcairo2
 
       - name: Install project + test deps (frozen against uv.lock)
         # --frozen: use the committed lock exactly, fail if it drifted from pyproject.toml.

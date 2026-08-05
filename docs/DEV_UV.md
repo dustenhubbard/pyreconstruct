@@ -39,10 +39,33 @@ On a fresh Debian/Ubuntu box (these match the CI `tests` job):
 
 ```bash
 sudo apt-get install -y --no-install-recommends \
-  libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+  libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libcairo2
 ```
 
 A machine that already runs the conda env (`pyrecon_dev`) has these already.
+
+### Native Cairo, on every platform
+
+`libcairo2` above is not a Qt library and not Linux-only. PNG section export
+(`File > Export > PNG`) goes through `cairosvg`, which is a declared Python
+dependency but does **not** bundle Cairo: it imports `cairocffi`, which
+`dlopen`s the native library at import time. So `uv sync` succeeding tells you
+nothing about whether PNG export works -- the wheel installs on a machine with
+no Cairo at all, and the failure arrives only when a user exports, as
+`OSError: no library called "cairo-2" was found`.
+
+| Platform | What you need |
+| --- | --- |
+| Debian / Ubuntu | `sudo apt-get install libcairo2` (already in the line above) |
+| macOS | `brew install cairo`, **plus** `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` -- `ctypes.util.find_library` does not search Homebrew's prefix, so an installed Cairo is still invisible without it |
+| Windows | a Cairo DLL (`libcairo-2.dll`) on `PATH`; the GTK runtime installer is the usual source |
+
+SVG export (`File > Export > SVG`) needs only `svgwrite` and has no native
+requirement, so it works anywhere the Python dependencies are installed.
+
+`tests/test_export_svg_png.py` asserts SVG export unconditionally and skips only
+the PNG raster, naming this requirement in the skip message. CI installs
+`libcairo2`, so the PNG assertion runs on the gate.
 
 ## 2. Create the environment with `uv sync`
 
