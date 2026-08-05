@@ -252,8 +252,8 @@ def test_focus_split_refuses_when_the_split_name_is_locked(
     field.selected_type = "trace"
     field.is_moving_trace = False
     field.is_selecting_traces = False
-    # Ctrl, not Shift: the shipped default of `focus_edit_modifier`. The option
-    # itself is covered in `test_focus_edit_modifier_option.py`.
+    # Ctrl, not Shift: Ctrl is the focus-mode edit click as of 1.21.0. The
+    # binding itself is covered in `test_focus_edit_click_ctrl.py`.
     field.pointerRelease(FakeMouseEvent(0, 0, ctrl=True))
 
     assert _count(field, split_name) == before_split

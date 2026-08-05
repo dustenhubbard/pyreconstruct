@@ -373,10 +373,10 @@ def test_pointer_drag_moves_an_unlocked_trace(
 def _focus_edit_click_release(field, trace, clicked_type="trace"):
     """Drive `pointerRelease` as a focus-mode edit click on `trace`.
 
-    The modifier is Ctrl rather than Shift because that is the shipped default
-    of `focus_edit_modifier`; the option itself is covered in
-    `test_focus_edit_modifier_option.py`. These tests are about the lock
-    guards, so they take whatever binding is current.
+    The modifier is Ctrl rather than Shift because Ctrl is the focus-mode edit
+    click as of 1.21.0; the binding itself is covered in
+    `test_focus_edit_click_ctrl.py`. These tests are about the lock guards, so
+    they take whatever binding is current.
 
     `pointerPress` would have set `selected_trace`/`selected_type` from the
     click position; set directly so the test does not depend on hit testing.
