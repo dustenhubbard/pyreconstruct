@@ -399,6 +399,13 @@ def test_nothing_outside_section_py_knows_the_harness_exists():
     module imports the mismatch exception, calls a hook, or reaches for the
     store hung off a section. Scanned by name because each of these names is
     distinctive enough that a hit is a real reference rather than a coincidence.
+
+    `self._columns` is deliberately not in this list. It collided with an
+    unrelated `TraceView._columns` (`columnar_store.py`, Phase 1 slices 4/6) the
+    first time both landed on the same tree: the name is common enough that two
+    independent classes picked it for unrelated fields. The other six names are
+    confirmed harness-specific (grepped repo-wide, zero hits outside this file)
+    and carry the actual leak-detection weight.
     """
     names = (
         "_dualWrite",
@@ -407,7 +414,6 @@ def test_nothing_outside_section_py_knows_the_harness_exists():
         "_column_rows",
         "DUAL_WRITE_ENV_VAR",
         "dualWriteRequested",
-        "self._columns",
     )
     offenders = {}
     for path in sorted(PACKAGE_ROOT.rglob("*.py")):
