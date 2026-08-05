@@ -48,12 +48,12 @@ class FakeMouseEvent:
     warning per call for no gain. Nothing here touches the event beyond these.
     """
 
-    def __init__(self, x, y, shift=False):
+    def __init__(self, x, y, ctrl=False):
         from PySide6.QtCore import Qt
 
         self._x = x
         self._y = y
-        self._modifiers = Qt.ShiftModifier if shift else Qt.NoModifier
+        self._modifiers = Qt.ControlModifier if ctrl else Qt.NoModifier
 
     def x(self):
         return self._x
@@ -366,8 +366,13 @@ def test_pointer_drag_moves_an_unlocked_trace(
     assert field_notices == []
 
 
-def _shift_click_release(field, trace, clicked_type="trace"):
-    """Drive `pointerRelease` as a shift single-click on `trace`.
+def _focus_edit_click_release(field, trace, clicked_type="trace"):
+    """Drive `pointerRelease` as a focus-mode edit click on `trace`.
+
+    The modifier is Ctrl rather than Shift because Ctrl is the focus-mode edit
+    click as of 1.21.0; the binding itself is covered in
+    `test_focus_edit_click_ctrl.py`. These tests are about the lock guards, so
+    they take whatever binding is current.
 
     `pointerPress` would have set `selected_trace`/`selected_type` from the
     click position; set directly so the test does not depend on hit testing.
@@ -378,11 +383,11 @@ def _shift_click_release(field, trace, clicked_type="trace"):
     field.is_selecting_traces = False
     field.selected_trace = trace
     field.selected_type = clicked_type
-    field.pointerRelease(FakeMouseEvent(120, 120, shift=True))
+    field.pointerRelease(FakeMouseEvent(120, 120, ctrl=True))
 
 
 def test_focus_mode_split_refuses_a_locked_trace(locked_selection):
-    """Shift-click on a trace of the focused object renames it to <obj>_split.
+    """An edit click on a trace of the focused object renames it to <obj>_split.
 
     A rename moves the trace out of the object, which is a deletion as far as
     that object's quantitative data is concerned. `obj_locked` was computed a
@@ -392,7 +397,7 @@ def test_focus_mode_split_refuses_a_locked_trace(locked_selection):
     field = window.field
     field.focus_mode = LOCKED
 
-    _shift_click_release(field, trace)
+    _focus_edit_click_release(field, trace)
 
     assert trace.name == LOCKED
     assert f"{LOCKED}_split" not in field.section.contours
@@ -400,7 +405,7 @@ def test_focus_mode_split_refuses_a_locked_trace(locked_selection):
 
 
 def test_focus_mode_incorporate_refuses_a_locked_trace(locked_selection):
-    """Shift-click on a trace of a *different* object incorporates it.
+    """An edit click on a trace of a *different* object incorporates it.
 
     Renames the clicked trace into the focused object, so the clicked object
     loses a trace. Locking the clicked object has to stop it.
@@ -413,7 +418,7 @@ def test_focus_mode_incorporate_refuses_a_locked_trace(locked_selection):
     clicked = field.section.contours[LOCKED][0]
     field.clipboard = [field.section.contours[OTHER][0].copy()]
 
-    _shift_click_release(field, clicked)
+    _focus_edit_click_release(field, clicked)
 
     assert clicked.name == LOCKED
     assert notices == [REFUSAL]
