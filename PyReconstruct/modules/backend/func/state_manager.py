@@ -347,7 +347,17 @@ class SectionStates():
         section.modified_contours = section.modified_contours.union(modified_contours)
         # add modified ztrace names to the series object
         series.modified_ztraces = series.modified_ztraces.union(modified_ztraces)
-    
+
+        # An undo replaces the section's contours from outside `Section`, either
+        # the whole dict at once or one key at a time, so there is no sequence
+        # of row operations for the columnar store's mutation hooks to have
+        # mirrored: the store is left describing exactly the traces this restore
+        # just discarded, and its row map is keyed on them. Rebuild it from the
+        # result. Not optional -- every `Section` carries a store as of
+        # 2026-08-05, and without this the first edit after an undo raises
+        # `ColumnarDualWriteMismatch` in the user's face.
+        section.resyncColumnarStore()
+
     def redoState(self, section : Section, series : Series) -> set:
         """Restore a redo state on the section.
         
@@ -402,6 +412,10 @@ class SectionStates():
         section.modified_contours = section.modified_contours.union(modified_contours)
         # add modified ztrace names to the series object
         series.modified_ztraces = series.modified_ztraces.union(modified_ztraces)
+
+        # Same as `undoState`: the contours were replaced from outside `Section`
+        # and the columnar store has to be rebuilt from the result.
+        section.resyncColumnarStore()
 
 def restoreZtraceOnSection(orig_ztrace : Ztrace, new_ztrace : Ztrace, snum : int) -> Ztrace:
     """Restore the ztrace for a specific section.
