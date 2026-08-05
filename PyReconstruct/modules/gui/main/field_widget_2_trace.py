@@ -248,13 +248,14 @@ class FieldWidgetTrace(FieldWidgetBase):
             # `hidden` is written on the trace in place, from outside
             # `Section`, so no dual-write hook saw it and the columnar store
             # still holds the old flags. Rebuild from the result. Not optional
-            # -- every `Section` carries a store, `hidden` is one of the eight
-            # columns it compares, and `Section.save()` checks the two against
-            # each other. Without this, clicking an import-conflict flag drifts
-            # the store on an ordinary user path (import traces -> conflict
-            # flags -> click one) and the next save raises
-            # `ColumnarDualWriteMismatch` at the user. See `series.py`'s
-            # `hideObjects` for the same shape.
+            # -- every `Section` carries a store and `hidden` is one of the
+            # eight columns it mirrors. Without this, clicking an
+            # import-conflict flag drifts the store on an ordinary user path
+            # (import traces -> conflict flags -> click one), and the next edit
+            # to one of these traces raises `ColumnarDualWriteMismatch` at the
+            # user. The next SAVE no longer does -- it rebuilds the store and
+            # logs the drift instead (D11) -- but the edit usually comes first.
+            # See `series.py`'s `hideObjects` for the same shape.
             self.section.resyncColumnarStore()
 
         # set the selected flags
@@ -679,10 +680,13 @@ class FieldWidgetTrace(FieldWidgetBase):
         # these traces' rows, but three refusal paths return between here and
         # there (uncuttable self-crossing trace, and two failures of the cut
         # itself). On any of them the section keeps a trace whose tags no longer
-        # match its row, and the next `Section.save()` -- an autosave, a section
-        # change, anything -- raises `ColumnarDualWriteMismatch` at the user for
-        # an action they already saw refused. Repair as soon as the drift exists
-        # rather than relying on every exit path below staying the way it is.
+        # match its row, and the next edit to that trace raises
+        # `ColumnarDualWriteMismatch` at the user for an action they already saw
+        # refused. (The next `Section.save()` rebuilds the store and logs the
+        # drift rather than raising, since D11, which is why this is now a
+        # crash-on-next-edit rather than an unsaveable section.) Repair as soon
+        # as the drift exists rather than relying on every exit path below
+        # staying the way it is.
         merged_any = False
         for trace in traces[1:]:
             for tag in trace.tags:
@@ -1310,9 +1314,11 @@ class FieldWidgetTrace(FieldWidgetBase):
             # `Trace.smooth` has just rewritten `points` in place on traces the
             # section holds -- from outside `Section`, where no dual-write hook
             # sees it. `field_interaction` calls `saveState()` and
-            # `generateView()` and neither repairs the store, so without this the
-            # drift survives to whichever later `Section.save()` happens first
-            # and raises `ColumnarDualWriteMismatch` on an unrelated action.
+            # `generateView()` and neither repairs the store, so without this
+            # the drift survives to whichever later edit touches one of these
+            # traces and raises `ColumnarDualWriteMismatch` on an unrelated
+            # action. A save in between now rebuilds and logs it (D11) rather
+            # than raising, which narrows the failure without closing it.
             self.section.resyncColumnarStore()
 
         return True

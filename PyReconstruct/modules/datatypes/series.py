@@ -2232,9 +2232,11 @@ class Series():
                 # `Trace.smooth` rewrote `points` in place on traces the section
                 # already holds, from outside `Section`, so no dual-write hook
                 # saw it and the store still carries the unsmoothed points.
-                # Without this rebuild the `section.save()` on the very next line
-                # raises `ColumnarDualWriteMismatch` at the user, aborting a
-                # multi-section smoothing pass partway through. Once per section
+                # Without this rebuild the drifted rows survive until
+                # something notices: the `section.save()` on the next line
+                # rebuilds the store and writes the drift to the log (D11), and
+                # the user's next edit to one of these traces raises
+                # `ColumnarDualWriteMismatch` in their face. Once per section
                 # rather than once per contour: `resyncColumnarStore` rebuilds
                 # the whole section's store either way, and `section_modified` is
                 # true exactly when some contour set `smoothed_any`.
@@ -2971,8 +2973,9 @@ class Series():
                 # `setHidden` writes the trace in place, from outside `Section`,
                 # so no dual-write hook saw it and the columnar store still
                 # holds the old flag. Rebuild from the result. Not optional --
-                # `Section.save()` checks the two against each other and would
-                # raise `ColumnarDualWriteMismatch` at the user.
+                # `Section.save()` would rebuild the store anyway and log the
+                # drift (D11), but the user's next edit to one of these traces
+                # raises `ColumnarDualWriteMismatch` in their face first.
                 section.resyncColumnarStore()
             return modified
 
@@ -3631,7 +3634,9 @@ class Series():
                 # `Section`, so nothing repaired trace1's row. It only diverges
                 # when the two duplicates carry different tags, which is exactly
                 # the messy series this clean-up is run on. Without the rebuild
-                # the save below raises `ColumnarDualWriteMismatch`.
+                # the save below logs the drift instead of absorbing it silently
+                # (D11), and the user's next edit to trace1 raises
+                # `ColumnarDualWriteMismatch`.
                 section.resyncColumnarStore()
                 section.save()
 

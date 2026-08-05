@@ -1,6 +1,9 @@
 import os
+import sys
 import json
 from typing import Dict, List, Union
+
+import numpy as np
 
 from .contour import Contour
 from .filters import passesFilters
@@ -53,8 +56,10 @@ from PyReconstruct.modules.backend.exports import export_svg, export_png
 ##   * **The store is still never the source of a user-visible value.** A
 ##     consumer that reads it (Track C) is reading a copy that this class has
 ##     just checked against the thing that owns the value.
-##   * **Divergence is still loud.** `ColumnarDualWriteMismatch` is raised, never
-##     logged and never swallowed.
+##   * **Divergence at a mutation is still loud.** Every dual-write hook still
+##     raises `ColumnarDualWriteMismatch`, never logged and never swallowed.
+##     What is no longer a raise is the WHOLE-SECTION check at `save()`; see
+##     "REBUILD AT SAVE, NOT COMPARE" below, which is D11.
 ##
 ## WHAT THE CHECK COSTS, AND WHY ITS SCOPE NARROWED
 ## ------------------------------------------------
@@ -80,10 +85,11 @@ from PyReconstruct.modules.backend.exports import export_svg, export_png
 ##     routing bug -- a dropped write, a write that landed on the wrong value, a
 ##     write that carried seven of the eight columns -- at the mutation that
 ##     caused it, which is what the harness existed to do.
-##   * **Whole section**: unchanged in what it compares, and run at `save()`,
-##     which is already O(section) and is not a per-frame path. That is the net
-##     that catches drift no per-row check can see: drift caused by something
-##     mutating a section's traces or contours from OUTSIDE this class.
+##   * **Whole section**: run at `save()`, which is already O(section) and is
+##     not a per-frame path. That is where drift no per-row check can see is
+##     dealt with: drift caused by something mutating a section's traces or
+##     contours from OUTSIDE this class. `save()` no longer COMPARES there --
+##     it REBUILDS; see the next section.
 ##
 ## `resyncColumnarStore()` is the public repair for that last case, and it is not
 ## hypothetical. Always-on turned every out-of-class mutation in the tree into a
@@ -143,18 +149,85 @@ from PyReconstruct.modules.backend.exports import export_svg, export_png
 ## of them after the enumeration had been mechanised specifically to prevent
 ## that. Nothing about "twelve" is more trustworthy than "eight" was.
 ##
-## The alternative that removes the category rather than policing it is to
-## REBUILD the store at `save()` instead of comparing it, which was measured
-## 2-3.3x cheaper than the comparison and deletes the allow-list, the scan, the
-## `REPAIR_SITES` pin and every one of the twelve repair calls above. That is a
-## design decision for the maintainer, tracked as D11 in
-## `specs/phase1-rewiring-slices-2026-08-04.md`; the PR body sets out the
-## evidence. It is not implemented here.
+## REBUILD AT SAVE, NOT COMPARE -- D11, DECIDED, AND EXACTLY WHAT IT BUYS
+## ----------------------------------------------------------------------
+## Because the count kept being wrong, `save()` stopped asking whether the store
+## already agrees with the object model and now simply REBUILDS it from the
+## object model instead (`_rebuildColumnarStoreForSave`, called where the
+## comparison used to run). The object model is authoritative; the store is
+## derived from it; so there is nothing left to compare, and the store cannot be
+## stale at `save()` time whenever a store can be built from the section at all.
 ##
-## One other thing changed as a result of `findFlag`, and it is the reason the
-## crashes above are now loud rather than destructive: `save()`'s comparison
-## runs AFTER the write, so a stale shadow copy can never cost a user their
-## valid data again (see `save`).
+## **What that removes, precisely:** an out-of-class edit can no longer leave a
+## section unsaveable, and can no longer abort a multi-section operation partway
+## through (`smoothObject` and `deleteDuplicateTraces` both call `save()` inside
+## their own loop). The thirteenth site, whenever it is found, is not a crash in
+## a user's session and not a data-loss risk. It is also cheaper: rebuilding the
+## busiest section of `autoseg745` costs about half what comparing it did.
+##
+## **And that sentence needed a second pass to be true, which is worth keeping
+## here because the first version of it read as settled.** Review of this change
+## found a shape where the rebuild itself raised: the build indexes its rows by
+## `trace.name` (`SectionColumns.fromSection`) and reads them back by contour
+## key, so an out-of-class RENAME -- which leaves `Section.contours`'s key and
+## `trace.name` disagreeing -- made the build fail its own arity check before
+## any drift was computed. `save()` raised, exactly as before D11; and because
+## the build assigns `self._columns` before filling `self._column_rows`, the
+## failed save left the section with an empty row map, so every later hooked
+## edit raised "holds no row for" as well. The save-time rebuild now restores
+## the outgoing store and map on any failure and REPORTS rather than raises, so
+## the claim above holds for that shape too. What it is NOT is a repair of the
+## underlying disagreement: `resyncColumnarStore()` still raises on the same
+## shape, because there the caller is asking for a store to be built and there
+## is none to build. The claim is about `save()`, and only about `save()`.
+##
+## **What it does NOT remove, and this is the part it would be easy to overclaim
+## -- the twelve repair calls above are still load-bearing and still there.**
+## Rebuilding at `save()` fixes the store *at* `save()`. It does nothing for the
+## window BETWEEN the out-of-class edit and the next save, and that window is
+## where most of the twelve actually bit:
+##
+##   * a REBIND (undo, redo, `deleteObjects`, autoseg's group delete) leaves
+##     `_column_rows` keyed on discarded `Trace` objects, so the next hooked
+##     mutation touching a surviving trace goes through `_rowFor` and raises
+##     "holds no row for" -- before any save runs.
+##   * an IN-PLACE write (the eight `setHidden` / `smooth` / `mergeTags` /
+##     `tags.add` sites) leaves one row's value stale, so the next hooked
+##     mutation of that same trace runs `_assertRowMatchesTrace`, which compares
+##     the whole row, and raises on the column that drifted.
+##
+## So the rule stands unchanged: **a trace or contour mutated outside `Section`
+## owes a `resyncColumnarStore()`**, and the static scan that enforces it stays.
+## What changed is the consequence of forgetting: it used to be an unsaveable
+## section, and it is now a warning in the log plus a possible raise on the next
+## edit. That is a strictly smaller blast radius, not an empty one.
+##
+## THE DISCIPLINE SIGNAL, KEPT AS A WARNING RATHER THAN LOST
+## ---------------------------------------------------------
+## A pure rebuild silently absorbs an out-of-class edit, and that signal is
+## exactly how five of the twelve sites were found. So the rebuild is compared
+## against the store it replaces -- store against store, not store against
+## object model -- and any difference is PRINTED, never raised. `print` reaches
+## a real place: `backend/func/logging_setup.py` tees stdout and stderr to a
+## per-user log file the user can pull up from Help > View log file and paste
+## into a bug report.
+##
+## The comparison is affordable because it is store-to-store: the four numeric
+## columns compare as whole `numpy` arrays under one fancy index each, and only
+## names, tags and coordinates need a per-row pass. Materializing a `Trace` per
+## row -- what comparing against the object model requires -- is the expensive
+## part, and it now runs only when something actually drifted, to write the
+## message.
+##
+## It also pays for itself in a second way. A rebuild produces a NEW store with
+## a higher generation, and a save happens on every section change; adopting one
+## unconditionally would invalidate every generation-keyed cache on every
+## mouse-wheel scroll. Because the comparison says when nothing moved, the
+## common case keeps the store it already had, untouched, generation included.
+##
+## One thing that has NOT changed: the rebuild runs AFTER the write, for the
+## same reason the comparison did. A fault in a shadow copy must never cost a
+## user their valid bytes (see `save`).
 
 
 class ColumnarDualWriteMismatch(AssertionError):
@@ -237,6 +310,185 @@ def _traceDifferences(stored : Trace, obj : Trace) -> list:
         )
 
     return differences
+
+
+## How many drift complaints a single save is allowed to print. A whole-section
+## drift -- an alignment change applied from outside this class, say -- produces
+## one per trace, and the busiest section of the production corpus on record
+## holds 1,291 of them. The log file this print lands in rotates at 2 MB, so an
+## unbounded report would evict the history somebody is reading it for.
+DRIFT_REPORT_LIMIT = 20
+
+
+def _rowsAgree(before, before_rows, after, after_rows) -> bool:
+    """Whether the paired rows carry the same eight columns. The fast path.
+
+    Store against store, not store against object model, and that is what makes
+    reporting drift affordable at all. Comparing against the object model means
+    `materializeTrace` per row -- a whole `Trace` built, its coordinates
+    rebuilt as a list of tuples, its tags rebuilt as a set -- which is the bulk
+    of the 2.42x this change exists to remove. Two stores hold the same columns
+    in the same encodings, so the four numeric ones compare as whole `numpy`
+    arrays under one fancy index each, and only names, tags and coordinates
+    need a Python-level pass.
+
+    Answers yes/no and nothing else. When it says no, `_storeDrift` pays for
+    the expensive per-row materialization once, to say what moved -- which is
+    the right place for that cost, because drift is the rare case.
+
+        Params:
+            before: the store the section held
+            before_rows (list): its row numbers, in canonical order
+            after: the store just rebuilt from the object model
+            after_rows (list): its row numbers, in the same canonical order
+        Returns:
+            (bool): True when every paired row agrees in all eight columns
+    """
+    from .columnar_store import FILL_MODE_OVERFLOW
+
+    if not before_rows:
+        return True
+
+    count = len(before_rows)
+    old = np.fromiter(before_rows, dtype=np.intp, count=count)
+    new = np.fromiter(after_rows, dtype=np.intp, count=count)
+
+    if not np.array_equal(before.colorColumn[old], after.colorColumn[new]):
+        return False
+    for attribute in ("closed", "negative", "hidden"):
+        if not np.array_equal(
+            before.flagColumn(attribute)[old], after.flagColumn(attribute)[new]
+        ):
+            return False
+
+    old_fill = before.fillModeColumn[old]
+    if not np.array_equal(old_fill, after.fillModeColumn[new]):
+        return False
+    ## Equal codes are equal pairs except for the overflow code, which means
+    ## "this row's pair was outside the vocabulary and lives in a side map", so
+    ## two overflow rows can carry different pairs under the same code. Rare
+    ## enough to be worth a second pass only when one is actually present.
+    if bool((old_fill == FILL_MODE_OVERFLOW).any()):
+        for old_row, new_row in zip(before_rows, after_rows):
+            if before.getFillMode(old_row) != after.getFillMode(new_row):
+                return False
+
+    for old_row, new_row in zip(before_rows, after_rows):
+        if before.getName(old_row) != after.getName(new_row):
+            return False
+        if before.getTags(old_row) != after.getTags(new_row):
+            return False
+        old_points = before.getCoordinates(old_row)
+        new_points = after.getCoordinates(new_row)
+        if old_points.shape != new_points.shape:
+            return False
+        if not np.array_equal(old_points, new_points):
+            return False
+
+    return True
+
+
+def _storeDrift(before, before_map, after, after_map) -> list:
+    """Everything a save-time rebuild changed, as human-readable complaints.
+
+    An empty list means the store the section already had was already correct,
+    which is the case on every save that follows only hooked mutations. A
+    non-empty one means something edited this section's traces or contours from
+    outside `Section` without calling `resyncColumnarStore()`, and names what.
+
+    Reported, never raised. The rebuild has already made the store correct by
+    the time this runs, so there is nothing left to refuse; what is left is the
+    discipline signal that the edit happened at all, which is how five of the
+    twelve known out-of-class sites were found and is the one thing D11
+    knowingly put at risk.
+
+        Params:
+            before: the store the section held before the rebuild
+            before_map (dict): its `Trace` -> row map
+            after: the store just rebuilt from the object model
+            after_map (dict): its `Trace` -> row map
+        Returns:
+            (list): one complaint per difference, capped at
+                `DRIFT_REPORT_LIMIT` plus a count of the rest
+    """
+    complaints = []
+
+    stored_names = before.contourNames()
+    object_names = after.contourNames()
+    only_store = sorted(set(stored_names) - set(object_names), key=str)
+    if only_store:
+        complaints.append(f"contours only in the store: {only_store!r}")
+    only_object = sorted(set(object_names) - set(stored_names), key=str)
+    if only_object:
+        complaints.append(f"contours only in the object model: {only_object!r}")
+
+    ## Paired up across every shared contour first, so the numeric columns can
+    ## be compared in one indexed pass over the whole section rather than one
+    ## per contour.
+    pairs = []
+    before_rows = []
+    after_rows = []
+    for name in sorted(set(stored_names) & set(object_names), key=str):
+        stored_contour = before.rowsForContour(name)
+        object_contour = after.rowsForContour(name)
+        if len(stored_contour) != len(object_contour):
+            complaints.append(
+                f"contour {name!r}: the store holds {len(stored_contour)} "
+                f"traces, the object model holds {len(object_contour)}"
+            )
+            continue
+        for index, (old_row, new_row) in enumerate(
+            zip(stored_contour, object_contour)
+        ):
+            pairs.append((name, index, old_row, new_row))
+            before_rows.append(old_row)
+            after_rows.append(new_row)
+
+    if not _rowsAgree(before, before_rows, after, after_rows):
+        ## Only now, and only once: the expensive comparison, which exists to
+        ## write the message rather than to reach the verdict.
+        before_detail = len(complaints)
+        for name, index, old_row, new_row in pairs:
+            for difference in _traceDifferences(
+                before.materializeTrace(old_row), after.materializeTrace(new_row)
+            ):
+                complaints.append(f"contour {name!r} trace {index}: {difference}")
+            if len(complaints) > DRIFT_REPORT_LIMIT:
+                break
+        ## The two comparisons must not be able to disagree about WHETHER
+        ## anything moved, only about how to describe it -- because the caller
+        ## keeps the old store when this list comes back empty, and keeping a
+        ## store the fast path has just called different would be the one way
+        ## this mechanism could leave a section stale. They compare the same
+        ## eight columns through different readers, so a disagreement is a bug
+        ## in one of them; say so rather than resolving it silently.
+        if len(complaints) == before_detail:
+            complaints.append(
+                "the columns differ but the field-by-field comparison found "
+                "nothing to name, which means _rowsAgree and _traceDifferences "
+                "disagree about the same eight columns; the rebuild was kept"
+            )
+
+    ## The identity half, which no value comparison can see: an undo restore
+    ## rebinds `Section.contours` to equal-valued copies, so every column above
+    ## matches while the old row map is keyed on `Trace` objects no contour
+    ## holds any more. `after_map` is keyed on exactly the section's live
+    ## traces, because the rebuild just built it from them.
+    live = {id(trace) for trace in after_map}
+    mapped = {id(trace) for trace in before_map}
+    if live != mapped:
+        complaints.append(
+            f"the row map was stale: it held {len(mapped - live)} trace(s) no "
+            f"contour on this section holds any more, and was missing "
+            f"{len(live - mapped)} that it does"
+        )
+
+    if len(complaints) > DRIFT_REPORT_LIMIT:
+        extra = len(complaints) - DRIFT_REPORT_LIMIT
+        complaints = complaints[:DRIFT_REPORT_LIMIT]
+        complaints.append(f"... and at least {extra} more")
+
+    return complaints
 
 
 def tracesWithoutCounterpart(donor : Contour, keeper : Contour) -> list:
@@ -815,36 +1067,51 @@ class Section():
                 pass
             raise
 
-        # The whole-section consistency check, at the one non-per-frame point
-        # that is already O(section). Per-mutation checking is targeted at the
-        # row that moved (see `_assertRowMatchesTrace`), which cannot see drift
-        # caused by something replacing contours from outside this class; this
-        # is where that is caught, one save cycle after it happened at worst.
+        # The whole-section reconciliation, at the one non-per-frame point that
+        # is already O(section). Per-mutation checking is targeted at the row
+        # that moved (see `_assertRowMatchesTrace`), which cannot see drift
+        # caused by something replacing contours from outside this class.
         #
-        # AFTER THE WRITE, NOT BEFORE, AND THAT ORDERING IS THE WHOLE POINT
+        # REBUILT, NOT COMPARED -- D11
+        # -----------------------------
+        # This used to be `_assertColumnsMatchObjectModel("save")`, which asked
+        # whether the store already agreed with the object model and raised at
+        # the user when it did not. The enumeration of edit sites that check
+        # existed to police was wrong four review rounds running, so the
+        # question is no longer asked: the store is rebuilt from the object
+        # model, which owns every value, and cannot then be stale whenever a
+        # store can be built from the section at all. The module header sets
+        # out what that removes, what it does not, and the one shape (an
+        # out-of-class rename) where no store can be built and the section
+        # keeps the one it had with a warning in the log instead.
+        #
+        # AFTER THE WRITE, NOT BEFORE, AND THAT ORDERING IS STILL THE POINT
         # ------------------------------------------------------------------
-        # This ran before the write until review, on the reasoning that a
-        # section whose store disagrees with its object model should raise
-        # rather than be written and then raise. That is exactly backwards for
-        # what the two representations are. The object model is authoritative
-        # and `getDict()` above serialized it; the store is a shadow copy that
-        # NOTHING reads. So a fault in the shadow copy's bookkeeping was
-        # vetoing the persistence of the model that owns every value: the
-        # user's edits were valid, would have serialized correctly, and were
-        # refused anyway -- and because nothing on the failing path repairs the
-        # store, the refusal recurred on every subsequent save, leaving the
-        # section unsaveable for the rest of the session. There is no integrity
-        # reason to withhold correct bytes because a copy of them is stale.
+        # The comparison ran before the write until review, on the reasoning
+        # that a section whose store disagrees with its object model should
+        # raise rather than be written and then raise. That is exactly
+        # backwards for what the two representations are. The object model is
+        # authoritative and `getDict()` above serialized it; the store is a
+        # shadow copy that NOTHING reads. So a fault in the shadow copy's
+        # bookkeeping was vetoing the persistence of the model that owns every
+        # value, and the refusal recurred on every later save, leaving the
+        # section unsaveable for the rest of the session.
         #
-        # Moving the call changes only WHEN the user's valid data reaches disk
-        # relative to the mismatch report, not what the check compares or
-        # whether it is reported: the comparison is the same call on the same
-        # two representations, it still raises `ColumnarDualWriteMismatch`, it
-        # is still never logged or swallowed, and it still reaches
-        # `customExcepthook`. Divergence stays loud; it just no longer costs a
-        # save. `test_a_shadow_mismatch_no_longer_costs_the_save` pins both
-        # halves of that.
-        self._assertColumnsMatchObjectModel("save")
+        # The rebuild inherits that ordering rather than making it unnecessary.
+        # It reports by printing rather than raising -- both drift and a
+        # rebuild that could not be built at all -- so it cannot veto a save.
+        # `resyncColumnarStore` CAN still raise on the build's arity check, and
+        # the first version of this comment called that "a genuine
+        # store-construction bug"; review showed the attribution was wrong. The
+        # check also fires on a healthy store when the OBJECT MODEL is
+        # self-contradictory -- an out-of-class rename leaves the contour key
+        # and `trace.name` disagreeing -- which is why the save path reports it
+        # instead of raising, and why the ordering still matters: the bytes
+        # above were written from the object model and were already correct.
+        # `test_a_shadow_mismatch_no_longer_costs_the_save` and
+        # `test_a_rebuild_that_cannot_be_built_leaves_the_section_usable`
+        # pin the two halves.
+        self._rebuildColumnarStoreForSave()
 
     def tracesAsList(self) -> list[Trace]:
         """Return the trace dictionary as a list. Does NOT copy traces.
@@ -965,16 +1232,31 @@ class Section():
     # carries two -- and the last eight rows are in-place writes.
     #
     # That is a real limit on this design, not a fixed bug: a thirteenth such site
-    # added later fails the same way. It fails loudly and at the first save
-    # after the edit rather than silently, and the message names the remedy.
+    # added later fails the same way. What it costs is smaller since D11, and
+    # the smaller amount is the honest number rather than zero. It used to make
+    # the section UNSAVEABLE for the rest of the session, because `save()`
+    # compared and raised and nothing on that path repaired anything. `save()`
+    # now rebuilds, so it does not raise -- not for drift, and not for a
+    # rebuild that cannot be built at all -- and reports in the log instead.
+    # (The second half of that is the review fix: an out-of-class RENAME makes
+    # the build fail its own arity check, and the first version of this change
+    # both raised and emptied the row map on that path. See the module header.)
+    # But the window BETWEEN the out-of-class edit and that save is
+    # untouched, and it is where these sites actually bit: a rebind sends the
+    # next mutation of a surviving trace through `_rowFor`, which raises "holds
+    # no row for", and an in-place write sends it through
+    # `_assertRowMatchesTrace`, which raises on the drifted column. Both still
+    # happen, both before any save.
+    #
+    # So the repair calls are still load-bearing and the scan that finds sites
+    # needing them is still worth running.
     # `tests/test_section_columnar_dual_write.py` scans the source for the edit
     # shape so that such a site is a red test rather than a user's crash -- but
     # see the header of this module before trusting that: the scan was added
     # after `findFlag` was missed, and then missed two live sites itself. It is
     # much stronger now (its `Trace` setter list is derived by AST, and it knows
     # four write routes and three reach routes), and it is still a scan for
-    # shapes somebody thought of. Rebuilding at `save()` instead of comparing
-    # removes the category; that is the maintainer's call, D11.
+    # shapes somebody thought of.
     #
     # Forgetting the resync used to fail SILENTLY. It no longer does. An
     # undo restore rebinds `self.contours` to `Contour.copy()` products, which
@@ -982,18 +1264,27 @@ class Section():
     # value comparison in `_assertColumnsMatchObjectModel` saw nothing wrong,
     # while `_column_rows` stayed keyed on the traces that had just been thrown
     # away. The run then died several mutations later on a "holds no row for"
-    # naming a trace that was plainly still in its contour. The whole-section
-    # check compares the row map's identity domain against the section's live
-    # traces as well as the columns' values, and the per-mutation check compares
-    # their sizes, so a rebind is named where it happened.
+    # naming a trace that was plainly still in its contour. Both whole-section
+    # mechanisms -- `_assertColumnsMatchObjectModel` and the drift report the
+    # save-time rebuild writes -- compare the row map's identity domain against
+    # the section's live traces as well as the columns' values, and the
+    # per-mutation check compares their sizes, so a rebind is named where it
+    # happened.
 
     def resyncColumnarStore(self):
         """Build (or rebuild) the parallel store from the object model.
 
         The public repair for a section whose traces or contours were edited
         from outside this class, and the only way a store is ever created.
-        `__init__` calls it once per section; the import path and the twelve
-        out-of-class edit sites call it after they are done.
+        `__init__` calls it once per section, and the import path and the
+        twelve out-of-class edit sites call it after they are done.
+
+        The work itself is `_rebuildColumnarStore`, which this delegates to and
+        which `save()` reaches independently since D11. The split is not
+        decoration: this name means "an out-of-class edit happened and is being
+        repaired", and `save()`'s rebuild does not mean that. Anything that
+        intercepts the repair -- the tests that revert one call site to show it
+        is load-bearing -- must not silently disable `save()` as well.
 
         THE GENERATION COUNTER IS CARRIED FORWARD, NOT RESET
         ----------------------------------------------------
@@ -1018,6 +1309,17 @@ class Section():
         reachable through the row map until the next resync, which is a real
         cost of the row map being an identity map and is why the out-of-class
         sites resync rather than being left to leak.
+        """
+        self._rebuildColumnarStore()
+
+    def _rebuildColumnarStore(self):
+        """Throw the store away and build a new one from the object model.
+
+        The work behind `resyncColumnarStore` (the public repair) and behind
+        `_rebuildColumnarStoreForSave` (D11's save-time rebuild). Read
+        `resyncColumnarStore`'s docstring for the generation-counter and
+        identity-map reasoning, which belongs to this method and is documented
+        there because that is the name callers use.
         """
         from .columnar_store import SectionColumns
 
@@ -1082,8 +1384,169 @@ class Section():
         ## construction order ever stops matching the object model's, which would
         ## silently mis-map every trace on the section.
         ##
-        ## The whole-section value comparison still runs at `save()`, so the
-        ## first time a section is written it is compared in full.
+        ## `save()` no longer compares in full either, since D11: it calls this
+        ## method and then checks the result against the store it replaced,
+        ## store to store, which is the same set of columns without a `Trace`
+        ## rebuilt per row. `_storeDrift` is that comparison.
+
+    def _rebuildColumnarStoreForSave(self):
+        """Make the store correct at `save()` by rebuilding it, and report drift.
+
+        D11. This replaced `_assertColumnsMatchObjectModel("save")`, and the
+        difference is the whole point: the old call asked whether the store
+        already agreed with the object model and raised at the user when it did
+        not, which made a missed out-of-class edit site into an unsaveable
+        section. This one does not ask. The object model owns every value, the
+        store is derived from it, so rebuilding makes the store correct
+        whenever a store can be built -- and a thirteenth edit site, whenever
+        it turns up, cannot cost anybody a save.
+
+        **"Cannot cost a save" is a claim about this method not raising, and
+        it took two goes to be true.** Review of this change found the shape
+        that falsified the first version: an out-of-class rename leaves
+        `Section.contours`'s key and `trace.name` disagreeing, and the rebuild
+        then raised out of its own arity check before any drift was computed --
+        so the save still raised, and worse, the half-built row map it left
+        behind made every later hooked edit raise too. Both halves are handled
+        below, and pinned by
+        `test_a_rebuild_that_cannot_be_built_leaves_the_section_usable`. So the
+        sentence above is now about the rebuild being tolerant of BOTH
+        outcomes, not only of drift.
+
+        **THE REBUILD IS DISCARDED WHEN IT CHANGES NOTHING, AND THAT IS NOT AN
+        OPTIMIZATION.** A rebuild produces a new store with a higher generation
+        counter, and a save fires on every section change -- a mouse-wheel
+        scroll included. Adopting a new store unconditionally would therefore
+        hand every generation-keyed cache a fresh number several times a second
+        and make the counter useless for the thing it exists for. So the
+        rebuild is compared against the store it would replace, and when they
+        agree the section keeps the store it already had, generation, tracking
+        and row numbers untouched. The cost is the build, which is paid either
+        way; what is saved is the churn.
+
+        It has a third consequence, worth naming because it is load-bearing for
+        work in flight: `SectionColumns` carries an `id` column, and
+        `fromSection` issues rather than carries ids. Nothing in the
+        application injects an id issuer today, so every id is `None` and there
+        is nothing to lose -- but the day one is wired, a save that adopted a
+        rebuild unconditionally would re-identify every trace on the section.
+        Keeping the existing store when nothing drifted means an ordinary save
+        does not, and `test_a_save_does_not_re_identify_the_traces_it_saves`
+        pins that. A save that DOES find drift adopts the rebuild and loses the
+        ids with it, exactly as the fourteen existing `resyncColumnarStore()`
+        call sites already do; that is the rebuild-carries-ids scope call in
+        `specs/phase1-foreign-trace-id-acquisition-2026-08-05.md` §5, not this
+        change's to make, and it is pinned as a known limitation rather than
+        left to be discovered.
+
+        Drift is PRINTED, never raised. See `_storeDrift`. So is a rebuild that
+        cannot be built at all: see the `except` below, which is the reason
+        this method can honestly say `save()` does not raise for an
+        out-of-class edit. It is not enough for the rebuild to be tolerant of
+        drift, because the build has an arity check of its own that an
+        out-of-class RENAME trips before any drift is computed.
+
+        **WHAT IT STILL DOES NOT FIX, and the honest limit on the sentence
+        above.** When the rebuild cannot be built, the section keeps the store
+        it had rather than getting a corrected one, so the underlying
+        disagreement is reported and survives. `resyncColumnarStore()`, the
+        documented public repair, still raises on the same shape -- it is the
+        caller asking for a store to be built, and there is no store to build.
+        The claim this method makes is about `save()` alone: an out-of-class
+        edit cannot cost a save and cannot cost the session, not that every
+        out-of-class edit is repairable.
+        """
+        if self._columns is None:
+            return
+
+        before = self._columns
+        before_map = self._column_rows
+        ## `_rebuildColumnarStore`, not `resyncColumnarStore`, and the
+        ## difference matters to more than style. `resyncColumnarStore` is the
+        ## PUBLIC REPAIR, the thing an out-of-class edit site owes; this is
+        ## internal machinery that happens to do the same work. Routing through
+        ## the public name would make the two indistinguishable to anything
+        ## that intercepts it -- including the tests that revert one repair
+        ## call to show it is load-bearing, which would silently disable
+        ## `save()`'s rebuild as well and report no drift for the wrong reason.
+        ##
+        ## THE REBUILD CAN FAIL, AND FAILING MUST NOT COST THE SECTION ITS ROW
+        ## MAP. `_rebuildColumnarStore` assigns `self._columns` first and then
+        ## fills `self._column_rows` contour by contour, so a raise partway
+        ## through leaves the section holding a new store and a half-built map
+        ## -- and since it raises on the FIRST contour whose arity disagrees,
+        ## "half-built" is usually "empty". Every later hooked mutation then
+        ## goes through `_rowFor` and raises "holds no row for", which turns a
+        ## save that could not rebuild into a section nobody can edit for the
+        ## rest of the session. That is strictly worse than what this method
+        ## replaced, and it lands on the one path D11 exists to make safe, so
+        ## the outgoing store and map are put back whatever happens.
+        try:
+            self._rebuildColumnarStore()
+        except ColumnarDualWriteMismatch as unbuildable:
+            ## The store the section already had is intact and is what
+            ## `getDict()` just wrote from, so keeping it is not a fallback so
+            ## much as declining to trade it for a store that does not exist.
+            self._columns = before
+            self._column_rows = before_map
+            ## REPORTED, NOT RAISED -- the same rule as drift, for the same
+            ## reason, and this is the case that used to break it. The build's
+            ## arity check is a statement about the object model as much as
+            ## about the store: an out-of-class RENAME leaves
+            ## `Section.contours`'s key and `trace.name` disagreeing, and since
+            ## `SectionColumns.fromSection` indexes rows by `trace.name` while
+            ## the readback asks for them by contour key, a perfectly healthy
+            ## store cannot be rebuilt at all. Raising here would refuse
+            ## nothing (the bytes are already on disk, written from the object
+            ## model, under the contour key -- which is the name the file
+            ## round-trips) while costing the user the rest of the session.
+            ##
+            ## The check itself is NOT weakened: `resyncColumnarStore`, the
+            ## import path and every section load still raise on it, and
+            ## `test_building_a_store_still_checks_the_row_arity` still pins
+            ## that. What changed is only that `save()` stopped being one of
+            ## the places it can crash.
+            self._warnAboutTheStore(
+                f"the columnar store for section {self.n} could not be rebuilt "
+                f"at save and the store it already had was kept. No data was "
+                f"lost -- the object model is authoritative and it is what was "
+                f"written -- but something has left this section's traces or "
+                f"contours in a shape a store cannot be built from, most "
+                f"likely an edit made outside Section:\n  {unbuildable}"
+            )
+            return
+        except BaseException:
+            ## Anything else is unexpected and still deserves to reach the
+            ## caller; it just must not reach them through a bricked section.
+            self._columns = before
+            self._column_rows = before_map
+            raise
+
+        drift = _storeDrift(before, before_map, self._columns, self._column_rows)
+        if not drift:
+            self._columns = before
+            self._column_rows = before_map
+            return
+
+        self._warnAboutTheStore(
+            f"the columnar store for section {self.n} had drifted "
+            f"from the object model and was rebuilt at save. No data was lost "
+            f"-- the object model is authoritative and it is what was written "
+            f"-- but something edited this section's traces or contours "
+            f"outside Section without calling resyncColumnarStore():\n  "
+            + "\n  ".join(drift)
+        )
+
+    def _warnAboutTheStore(self, message : str):
+        """Report a save-time store problem where a user can retrieve it.
+
+        stderr rather than stdout, and `print` rather than a logger because
+        this tree has no logging framework: `backend/func/logging_setup.py`
+        tees both standard streams into a per-user log file, which is what
+        Help > View log file shows and what a bug report carries. A warning
+        nobody can retrieve would not be a signal.
+        """
+        print(f"WARNING: {message}", file=sys.stderr)
 
     def _dualWriteResync(self):
         """Rebuild the store, if there is one.
@@ -1251,30 +1714,34 @@ class Section():
         single mutation that went wrong usually goes wrong in more than one
         column and the second one is the informative one.
 
-        **WHERE THIS RUNS, AND WHY NOT AFTER EVERY MUTATION ANY MORE.** It is
-        O(section): it rebuilds every trace on the section and compares every
-        field. Under the test-only gate it ran after every single mutation,
-        which was the right trade for a harness. Measured on `autoseg745` it
-        costs about 81 ms on that series' median section (503 traces) and 127 ms
-        on its busiest (1,291), against a 0.002 ms `addTrace` -- so keeping it
-        per-mutation would have made dragging a selection unusable, and a
-        selection drag runs a remove/add pair per selected trace per frame.
+        **THIS NO LONGER RUNS ON THE PRODUCTION PATH AT ALL. D11.** It is
+        O(section) with a large constant: it rebuilds every trace on the
+        section and compares every field. Under the test-only gate it ran after
+        every single mutation, which was the right trade for a harness; when
+        the store went always-on it was narrowed to `save()` alone, at a
+        measured **2.42x on the busiest section of `autoseg745` (90.6 ms ->
+        219.6 ms)** and 2.29x on the median (60.9 -> 139.6). D11 then removed
+        it from `save()` as well, in favor of rebuilding the store there --
+        because the point of comparing was to catch out-of-class edit sites,
+        the enumeration of those was wrong four review rounds running, and a
+        rebuild does not need the enumeration to be right.
 
-        It runs at exactly one place on the production path: **`save()`**, which
-        already serializes every trace on the section, so this is a constant
-        factor rather than a new complexity class, on a path that is not
-        per-frame. It is not a small constant, and the PR says so rather than
-        rounding it away: **`save()` on the busiest section goes 90.6 ms ->
-        219.6 ms, 2.42x**, and on the median section 60.9 ms -> 139.6 ms,
-        2.29x. That is where drift caused from outside this class is caught --
-        one save cycle after it happened at worst, rather than never.
+        What survives is this method, unchanged in scope and still exact, kept
+        for two consumers:
 
-        It runs **after** the write, not before; see `save()` for why that
-        ordering is deliberate.
+          * **the tests**, which call it directly throughout
+            `test_section_columnar_dual_write.py` -- it is the precise
+            instrument for "did this operation leave the two representations
+            in agreement", and answering that is most of that file, and
+          * **any future caller** that wants the question asked rather than the
+            answer imposed.
 
-        Everything in between is covered by `_assertRowMatchesTrace` and
-        `_assertLiveCountMatches`. Tests call this one directly, which is the
-        other reason it keeps its full scope.
+        `save()` reaches `_rebuildColumnarStoreForSave` instead, which rebuilds
+        and then compares the new store against the old one -- store to store,
+        which needs no `materializeTrace` per row and is where the cost went.
+
+        The per-mutation net is unchanged: `_assertRowMatchesTrace` and
+        `_assertLiveCountMatches` still raise, still on every hooked mutation.
 
         **Empty contours are skipped on the object side.** `Section.contours`
         keeps a key whose `Contour` has been emptied -- `removeTrace` never

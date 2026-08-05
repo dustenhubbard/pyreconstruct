@@ -13,11 +13,13 @@
 
   **The cost you are most likely to feel is at save.** Measured on a 745 MB
   autosegmentation series (636 sections, 323,534 traces), saving its busiest
-  section goes from 90.6 ms to 219.6 ms, 2.4x, and its median section from
-  60.9 ms to 139.6 ms. A section is saved on every section change, a mouse-wheel
-  scroll included, so a section change on a series that size goes from about
-  100 ms to about 250 ms. The added time is the full store-against-model
-  comparison that now runs once per save.
+  section goes from 90.6 ms to 131.3 ms and its median section from 60.9 ms to
+  84.4 ms. A section is saved on every section change, a mouse-wheel scroll
+  included, so a section change on a series that size goes from about 100 ms to
+  about 160 ms. The added time is the rebuild of the store that runs once per
+  save, covered by its own entry below; the first version of this change
+  compared the store against the object model there instead, at 219.6 ms and
+  139.6 ms, and those are the numbers for a build between the two.
 
   The other measured costs, on the same series: loading one section goes from
   0.0111 s to 0.0319 s (2.9x) and a whole-series pass from 11.6 s to 25.1 s
@@ -38,8 +40,9 @@
   The check that compares the two representations moved from "the whole section,
   after every mutation" — which measured 81 to 127 ms per edit and would have
   made dragging a selection unusable — to a targeted per-row comparison at each
-  mutation plus one full comparison at each save. Twelve places in the
-  application edited traces or contours without going through `Section` and now
+  mutation, plus the whole-section work at each save that its own entry below
+  describes. Twelve places in the application edited traces or contours without
+  going through `Section` and now
   rebuild the store afterwards: undo, redo, deleting an object, importing a
   segmentation, hiding objects, hiding all traces, restoring previous
   visibility, smoothing an object, deleting duplicate traces, smoothing the
@@ -50,7 +53,7 @@
   session; smoothing an object failed partway through a multi-section pass and
   left the remaining sections un-smoothed.
 
-  The full comparison runs *after* a section is written rather than before, so a
-  disagreement between the store and its object model is still reported loudly
-  and never costs you a save: the object model is what is serialized, and a
-  stale shadow copy of it is not a reason to withhold your work from disk.
+  The whole-section work runs *after* a section is written rather than before,
+  so a disagreement between the store and its object model is still reported and
+  never costs you a save: the object model is what is serialized, and a stale
+  shadow copy of it is not a reason to withhold your work from disk.
