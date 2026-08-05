@@ -48,16 +48,12 @@ class FakeMouseEvent:
     warning per call for no gain. Nothing here touches the event beyond these.
     """
 
-    def __init__(self, x, y, shift=False, ctrl=False):
+    def __init__(self, x, y, ctrl=False):
         from PySide6.QtCore import Qt
 
         self._x = x
         self._y = y
-        self._modifiers = Qt.NoModifier
-        if shift:
-            self._modifiers |= Qt.ShiftModifier
-        if ctrl:
-            self._modifiers |= Qt.ControlModifier
+        self._modifiers = Qt.ControlModifier if ctrl else Qt.NoModifier
 
     def x(self):
         return self._x
