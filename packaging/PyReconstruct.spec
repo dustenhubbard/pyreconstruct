@@ -113,21 +113,124 @@ hiddenimports += [
 datas += collect_data_files("vedo")
 
 # --- scipy / scikit-image: lazily-imported submodules + data files ---
-hiddenimports += collect_submodules("scipy")
-hiddenimports += collect_submodules("skimage")
-datas += collect_data_files("skimage")
+#
+# Both packages load their subpackages lazily -- scipy through a module-level
+# __getattr__, skimage through lazy_loader stubs -- so PyInstaller's static
+# analysis cannot see them and they have to be named. Naming them by collecting
+# EVERY submodule (972 for scipy, 410 for skimage) is the blunt way to do that,
+# and it bundles whole subpackages the app never reaches.
+#
+# The two lists below are the measured runtime closure, not a reading of the
+# import statements: every scipy/skimage call site in PyReconstruct was
+# exercised in a real interpreter and sys.modules read back afterwards. That is
+# deliberate, because these packages cross-import each other internally --
+# skimage.filters pulls scipy.ndimage, skimage.registration pulls
+# skimage.restoration, scipy.interpolate pulls scipy.linalg/special/sparse --
+# and none of that shows up in a grep of the application. Unlisted, because
+# nothing reached them: scipy.io, scipy.signal, scipy.stats, scipy.integrate,
+# scipy.odr, skimage.feature, skimage.graph, skimage.io, skimage.metrics.
+#
+# Adding a call to a scipy/skimage subpackage that is not listed here means
+# adding it here too. It will not fail at launch: the frozen self-test imports
+# only scipy.interpolate and skimage.draw, so a missing subpackage surfaces
+# when the feature runs. Re-derive the lists by running the call sites, the
+# same way these were derived, rather than by reading the imports.
+#
+# What this does NOT remove, and why: scipy.signal, and behind it scipy.stats
+# and scipy.integrate, stay in the bundle even though the app calls none of
+# them. Four skimage modules import scipy.signal at module level --
+# measure/_polygon.py, filters/_window.py, restoration/deconvolution.py,
+# feature/template.py -- and those sit inside subpackages the app does use, so
+# the only way to drop scipy.signal would be to exclude individual skimage
+# modules and leave skimage.measure.approximate_polygon, skimage.filters.window
+# and skimage.restoration.richardson_lucy raising on attribute access. That is
+# the hand-enumerated-transitive-dependency trap; it is not worth ~6 MB.
+_SCIPY_USED = (
+    "scipy._lib",         # shared helpers, imported by every subpackage below
+    "scipy.cluster",      # via scipy.spatial
+    "scipy.constants",    # via scipy.interpolate / skimage
+    "scipy.fft",          # via scipy.fftpack and skimage.registration
+    "scipy.fftpack",      # modules/calc/correlation.py (alignment correlation)
+    "scipy.interpolate",  # imagej_roi.py (splprep/splev), quantification.py
+    "scipy.linalg",       # via scipy.interpolate, skimage.transform
+    "scipy.ndimage",      # via skimage.filters / segmentation / transform
+    "scipy.optimize",     # via skimage.registration, scipy.interpolate
+    "scipy.sparse",       # via scipy.interpolate, skimage.segmentation
+    "scipy.spatial",      # via skimage.measure / segmentation
+    "scipy.special",      # via scipy.interpolate, skimage.filters
+)
+_SKIMAGE_USED = (
+    "skimage._shared",     # shared helpers, imported by every subpackage below
+    "skimage._vendored",   # via skimage.restoration
+    "skimage.color",       # autoseg palette (rgb2lab / deltaE_ciede2000)
+    "skimage.data",        # imported by the subpackages below (payload trimmed)
+    "skimage.draw",        # trace_layer.py, objects_3D.py, trace.py (polygon)
+    "skimage.exposure",    # via skimage.filters
+    "skimage.filters",     # snap_trace.py (gaussian)
+    "skimage.measure",     # large_datasets.py (block_reduce)
+    "skimage.morphology",  # via skimage.filters / segmentation
+    "skimage.registration",# field_widget_4_data.py (phase_cross_correlation)
+    "skimage.restoration", # via skimage.registration
+    "skimage.segmentation",# snap_trace.py (active_contour)
+    "skimage.transform",   # large_datasets.py (rescale), transform.py
+    "skimage.util",        # via skimage.filters / measure / transform
+)
+
+# Neither package's own test suite is reachable from the app, but
+# collect_submodules() names every test module in the subpackages above and
+# PyInstaller then follows what THEY import. That is not cosmetic:
+# scipy/sparse/csgraph/tests is the only thing in the entire graph that reaches
+# scipy.io, and scipy.special._precompute -- a coefficient-generation helper
+# that only ever runs in scipy's own development -- is one of the two things
+# that reach scipy.integrate. Dropping them from hiddenimports is not enough;
+# they have to be named in Analysis(excludes=...) below, which is what stops
+# the static graph walk from pulling them back in.
+_sci_excludes = []
+for _sub in _SCIPY_USED + _SKIMAGE_USED:
+    for _mod in collect_submodules(_sub):
+        _parts = _mod.split(".")
+        if "tests" in _parts or "_precompute" in _parts:
+            if _parts[-1] in ("tests", "_precompute"):
+                _sci_excludes.append(_mod)
+            continue
+        hiddenimports.append(_mod)
+
+# skimage's data files are two different things under one call: the
+# __init__.pyi stubs that lazy_loader reads to resolve `skimage.filters.x` at
+# runtime (load-bearing -- dropping them breaks the lazy import), and ~7.5 MB of
+# sample images under skimage/data/ that only skimage.data.camera() and friends
+# ever open. The app calls none of those loaders, so the images are dead weight
+# in every installer. Keep the stubs and the small decomposition tables
+# (morphology/*.npy), drop the sample-image payload.
+_SKIMAGE_SAMPLE_EXTS = {".png", ".jpg", ".jpeg", ".npy", ".npz", ".tif", ".gif", ".xml"}
+for _src, _dst in collect_data_files("skimage"):
+    if Path(_dst).name == "data" and Path(_src).suffix.lower() in _SKIMAGE_SAMPLE_EXTS:
+        continue
+    datas.append((_src, _dst))
 
 # --- cloud-volume and its compiled codecs (best-effort; import names vary and
 #     not all expose data/hooks). Failures here only affect remote-volume use.
+#
+#     include_py_files=False: collect_all defaults it to True, which copies each
+#     package's .py sources into the bundle as loose data files on top of the
+#     compiled copies already in the PYZ archive -- ~1.8 MB of duplicated source
+#     across cloudvolume, numcodecs and zarr alone. Nothing in these packages
+#     reads its own source at runtime; the hiddenimports and the compiled
+#     binaries, which this still collects, are what the codecs actually need.
 for _pkg in (
     "cloudvolume", "DracoPy", "compressed_segmentation", "fpzip",
     "compresso", "crackle", "zfpc", "numcodecs", "zarr", "fastremap",
 ):
     try:
-        _d, _b, _h = collect_all(_pkg)
+        _d, _b, _h = collect_all(_pkg, include_py_files=False)
         datas += _d
         binaries += _b
-        hiddenimports += _h
+        for _mod in _h:                       # same test-suite skip as above
+            if "tests" in _mod.split("."):
+                if _mod.split(".")[-1] == "tests":
+                    _sci_excludes.append(_mod)
+                continue
+            hiddenimports.append(_mod)
     except Exception:
         pass
 
@@ -182,6 +285,9 @@ a = Analysis(
         "tkinter",
         "matplotlib.tests",
         "cv2.qt",                       # belt-and-suspenders (we ship cv2 headless)
+        # scipy/skimage/codec test suites and scipy's dev-only precompute
+        # helpers, gathered above. See the comment on _sci_excludes.
+        *sorted(set(_sci_excludes)),
     ],
     cipher=block_cipher,
     noarchive=False,
