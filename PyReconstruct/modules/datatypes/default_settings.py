@@ -69,12 +69,16 @@ default_settings = {
     "trace_mode": "combo",  # combo, poly, scribble  # MFO
     "knife_del_threshold": 1.0,  # MFO
     "knife_ignore_secondary_click": True,  # MFO
-    # No entry here for focus mode's edit-click modifier, deliberately. It is Ctrl,
-    # fixed, in `gui/main/focus_mode.py`. A three-way ctrl/shift/both option lived
-    # here briefly and was cut before shipping: three presets are not a remapping,
-    # which is what was actually wanted. The remapping, a picker accepting whatever
-    # modifier combination the user holds, is scheduled for the next beta and is
-    # what will add a key here.
+    # Focus mode's edit-click modifier, remappable to whatever combination the
+    # user holds. Read by `focus_edit_p` in `gui/main/focus_mode.py` and edited in
+    # the shortcuts dialog, not here on the Mouse Tools tab: a three-way
+    # ctrl/shift/both radio group lived here briefly and was cut before shipping,
+    # because three presets are not a remapping. Stored as canonical lowercase
+    # names joined by `+`, in the order ctrl, shift, alt, meta (see
+    # `gui/modifiers.py`); empty means the edit click is off. `meta` is not
+    # offered on macOS, where it is the physical Control key and the click never
+    # survives to be tested.
+    "focus_edit_modifier": "ctrl",
     "grid": [1, 1, 1, 1, 1, 1],  # MFO
     "sampling_frame_grid": True,  # MFO
     "flag_name": "",  # MFO

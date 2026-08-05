@@ -3636,7 +3636,12 @@ class MainWindow(QMainWindow):
                     shortcuts_dict[k] = self.series.getOption(k)
         
         for act_name, kbd in shortcuts_dict.items():
-            getattr(self, act_name).setShortcut(kbd)
+            # The dialog also edits bindings that are not QActions at all, such
+            # as focus mode's edit-click modifier, which is a held modifier
+            # rather than a key sequence. Those are stored the same way and have
+            # nothing to apply to a menu entry.
+            if act_name.endswith("_act"):
+                getattr(self, act_name).setShortcut(kbd)
             self.series.setOption(act_name, kbd)
     
     def displayAbout(self):

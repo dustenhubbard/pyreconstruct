@@ -315,7 +315,7 @@ class FieldWidgetMouse(FieldWidgetData):
                     # guards edits, not selection, and this branch used to be
                     # the reason a click on a locked object's trace did nothing.
                     if (
-                        self.focus_mode and focus_edit_p(event) and
+                        self.focus_mode and focus_edit_p(event, self.series) and
                         not self.refuseLockedTraces([self.selected_trace])
                     ):
 
