@@ -569,9 +569,9 @@ object it belongs to: clicking a trace of the focused object splits that trace o
 into a new `<object>_split` contour, and clicking a trace of any *other* object
 incorporates it into the focused one. Both are undoable. The modifier is Ctrl so
 that it sits on the same key as **Merge traces** (`Ctrl+M`), which is the other
-half of a proofreading pass. If you learned this as Shift-click, set it back, or
-accept either, under **Series ▸ Options ▸ Mouse Tools ▸ Focus Mode**. Clicking a
-trace *without* a modifier does nothing in focus mode. The ordinary
+half of a proofreading pass. **This was Shift-click before 1.21.0**, and Shift no
+longer performs the edit; the modifier is fixed for now, and being able to remap it
+is planned. Clicking a trace *without* a modifier does nothing in focus mode. The ordinary
 click-to-select is suppressed outright while focus mode is on, so an unmodified
 click neither selects another object's trace nor deselects one of the focused
 object's own.

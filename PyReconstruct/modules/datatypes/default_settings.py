@@ -69,15 +69,12 @@ default_settings = {
     "trace_mode": "combo",  # combo, poly, scribble  # MFO
     "knife_del_threshold": 1.0,  # MFO
     "knife_ignore_secondary_click": True,  # MFO
-    # Which modifier turns a click in focus mode into an edit: split the clicked
-    # trace out of the focused object, or incorporate it into that object.
-    # "ctrl", "shift", or "both". Ctrl is the default because the other half of
-    # a proofreading pass is Ctrl+M (mergetraces_act, below), and a proofreader
-    # reported alternating Shift and Ctrl for that one pair; Qt reads Ctrl as
-    # Command on macOS, so "the same key as merge" holds on either platform.
-    # Shift-only and not configurable through 1.21.0-beta-7, hence the option:
-    # the old binding stays available to anyone with the habit.
-    "focus_edit_modifier": "ctrl",  # ctrl, shift, both  # MFO
+    # No entry here for focus mode's edit-click modifier, deliberately. It is Ctrl,
+    # fixed, in `gui/main/focus_mode.py`. A three-way ctrl/shift/both option lived
+    # here briefly and was cut before shipping: three presets are not a remapping,
+    # which is what was actually wanted. The remapping, a picker accepting whatever
+    # modifier combination the user holds, is scheduled for the next beta and is
+    # what will add a key here.
     "grid": [1, 1, 1, 1, 1, 1],  # MFO
     "sampling_frame_grid": True,  # MFO
     "flag_name": "",  # MFO
