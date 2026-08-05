@@ -95,7 +95,11 @@ def mkHistories(self_events, other_events, shared=1):
     """
     def fmt(obj_name, section, event):
         snum = "-" if section is None else str(section)
-        return f"26-01-01, 0900, u, {obj_name}, {snum}, {event}"
+    # 09:00 and not the 0900 this used to say: fromList anchors a row on the
+    # "YY-MM-DD, HH:MM, " stamp Log.__str__ writes, and getDateTime has used
+    # "%H:%M" since the log was created, so a colon-less time was never a
+    # shape this app could produce.
+        return f"26-01-01, 09:00, u, {obj_name}, {snum}, {event}"
 
     prefix = [fmt("seed", 1, f"Modify trace(s) {i}") for i in range(shared)]
     ls0 = LogSet.fromList(prefix + [fmt(*e) for e in self_events])
@@ -389,10 +393,10 @@ def test_modified_since_diverge_matches_the_definition_it_replaced():
         ("C", "7", "Modify ztrace"),          # ztrace logs are not trace edits
         ("D", "9", "Create trace(s)"),
     ]
-    logs = [f"26-01-01, 0900, u, {o}, {s}, {e}" for o, s, e in entries]
+    logs = [f"26-01-01, 09:00, u, {o}, {s}, {e}" for o, s, e in entries]
 
     for split in range(len(logs) + 1):
-        ls0 = LogSet.fromList(logs[:split] + ["26-01-01, 0900, u, Z, 1, Modify trace(s)"])
+        ls0 = LogSet.fromList(logs[:split] + ["26-01-01, 09:00, u, Z, 1, Modify trace(s)"])
         ls1 = LogSet.fromList(logs)
         pair = LogSetPair(ls0, ls1)
 
@@ -411,11 +415,11 @@ def test_removal_events_are_recognised_per_section():
     """getRemovedSinceDiverge must distinguish a recorded removal from any other
     edit, and must respect section ranges."""
     ls0 = LogSet.fromList([
-        "26-01-01, 0900, u, A, 1, Modify trace(s)",       # an edit, not a removal
-        "26-01-01, 0900, u, B, 2, Delete trace(s)",       # a removal, section 2 only
-        "26-01-01, 0900, u, C, -, Rename object to D",    # a removal, every section
+        "26-01-01, 09:00, u, A, 1, Modify trace(s)",       # an edit, not a removal
+        "26-01-01, 09:00, u, B, 2, Delete trace(s)",       # a removal, section 2 only
+        "26-01-01, 09:00, u, C, -, Rename object to D",    # a removal, every section
     ])
-    ls1 = LogSet.fromList(["26-01-01, 0900, u, Z, 1, Modify trace(s)"])
+    ls1 = LogSet.fromList(["26-01-01, 09:00, u, Z, 1, Modify trace(s)"])
     pair = LogSetPair(ls0, ls1)
     assert pair.last_shared_index == -1, "premise: the two logs diverge at index 0"
 
@@ -445,7 +449,7 @@ def test_a_failed_import_restores_logging():
     class _Boom(Exception):
         pass
 
-    log_set = LogSet.fromList(["26-01-01, 0900, u, seed, 1, Modify trace(s)"])
+    log_set = LogSet.fromList(["26-01-01, 09:00, u, seed, 1, Modify trace(s)"])
     stub = types.SimpleNamespace(
         data=types.SimpleNamespace(supress_logging=False),
         getFullHistory=lambda: log_set,

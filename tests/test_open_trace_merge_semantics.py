@@ -225,7 +225,11 @@ def mkSection(contours, snum=2, mag=MAG):
 def mkHistories(self_events, other_events, shared=1):
     def fmt(obj_name, section, event):
         snum = "-" if section is None else str(section)
-        return f"26-01-01, 0900, u, {obj_name}, {snum}, {event}"
+    # 09:00 and not the 0900 this used to say: fromList anchors a row on the
+    # "YY-MM-DD, HH:MM, " stamp Log.__str__ writes, and getDateTime has used
+    # "%H:%M" since the log was created, so a colon-less time was never a
+    # shape this app could produce.
+        return f"26-01-01, 09:00, u, {obj_name}, {snum}, {event}"
 
     prefix = [fmt("seed", 1, f"Modify trace(s) {i}") for i in range(shared)]
     ls0 = LogSet.fromList(prefix + [fmt(*e) for e in self_events])

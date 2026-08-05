@@ -535,12 +535,17 @@ def test_logset_getloglist_str_vs_list():
     assert str(ls) == str(log)
 
 
+# The times below are "12:00" and not the "1200" they used to be. fromList
+# now anchors a row on the "YY-MM-DD, HH:MM, " stamp Log.__str__ writes, so a
+# colon-less time is no longer a row -- and it never was one this app wrote:
+# getDateTime has used "%H:%M" since the commit that created the log. The other
+# tests in this module keep "1200" because they never go through fromList.
 def test_logset_fromlist_roundtrip():
     ls = LogSet()
     ls.addExistingLog(
-        Log("26-06-29", "1200", "u", "A", [(1, 3), (7, 9)], "event, with comma")
+        Log("26-06-29", "12:00", "u", "A", [(1, 3), (7, 9)], "event, with comma")
     )
-    ls.addExistingLog(Log("26-06-29", "1201", "u", None, None, "static"))
+    ls.addExistingLog(Log("26-06-29", "12:01", "u", None, None, "static"))
 
     rebuilt = LogSet.fromList(ls.getList())
 
@@ -549,7 +554,7 @@ def test_logset_fromlist_roundtrip():
 
 def test_logset_fromlist_skips_blank_lines():
     rebuilt = LogSet.fromList(
-        ["26-06-29, 1200, u, A, 5, E", "", "   "]
+        ["26-06-29, 12:00, u, A, 5, E", "", "   "]
     )
     assert len(rebuilt.all_logs) == 1
     assert rebuilt.all_logs[0].obj_name == "A"
