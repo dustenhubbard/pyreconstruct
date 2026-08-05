@@ -147,16 +147,61 @@ def pick_release(releases, channel):
     """
     channel = normalize_channel(channel)
     rels = [r for r in (releases or []) if not r.get("draft")]
+    newest_stable = next((r for r in rels if not r.get("prerelease")), None)
     if channel == "prerelease":
-        for r in rels:
-            if r.get("prerelease") and r.get("tag_name") != ROLLING_TAG:
-                return r
-        return None
+        newest_pre = next(
+            (r for r in rels
+             if r.get("prerelease") and r.get("tag_name") != ROLLING_TAG),
+            None,
+        )
+        return _newer_of(newest_pre, newest_stable)
     # release (stable)
-    for r in rels:
-        if not r.get("prerelease"):
-            return r
-    return None
+    return newest_stable
+
+
+def _tag_version(release):
+    """The release's tag parsed as a version, or None if it is not one.
+
+    Tags in this project are `vX.Y.Z` and `vX.Y.Z-beta-N` / `-alpha.N` / `rcN`,
+    all of which `packaging` parses once the leading `v` is dropped. A tag that
+    is not a version at all (the retired rolling `prerelease` tag, or anything
+    hand-made) yields None, and the caller treats that as "cannot compare"
+    rather than as "older".
+    """
+    if not release:
+        return None
+    tag = (release.get("tag_name") or "").lstrip("vV")
+    try:
+        return Version(tag)
+    except InvalidVersion:
+        return None
+
+
+def _newer_of(pre, stable):
+    """The newer of a pre-release and a stable release, preferring `pre` on ties.
+
+    This is what makes the Beta channel a SUPERSET of Stable rather than a set
+    disjoint from it. A tester on Beta wants the newest thing that exists; when
+    a stable release is the newest thing, withholding it strands them.
+
+    That is not hypothetical. v1.21.0 shipped as a stable cut from a release
+    branch, its superseded betas were retired at publish, and every Beta-channel
+    user was then offered NOTHING: `pick_release` returned None, so there was no
+    prompt and no error either. The bug is invisible from the inside, which is why
+    it wants a test rather than a comment.
+
+    Ties go to the pre-release deliberately. When a pre-release and a stable
+    release carry the same version, the pre-release is the one with the narrower
+    audience, and a Beta user asked for that audience.
+    """
+    if pre is None:
+        return stable
+    if stable is None:
+        return pre
+    pv, sv = _tag_version(pre), _tag_version(stable)
+    if pv is None or sv is None:
+        return pre
+    return stable if sv > pv else pre
 
 
 def pick_asset(release, platform_tag):
