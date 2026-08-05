@@ -685,6 +685,10 @@ for snum in sorted(series.sections):
     trace.tags = {"zzz_edit", "aaa_edit", "mmm_edit"}
     series.editors = {"zoe", "adam", "mia"}
     series.object_groups.groups["grp"] = {"d02", "d01", "d03"}
+    # An out-of-class trace write: the columnar store every Section carries saw
+    # no mutator, and save() refuses a store that disagrees with the object
+    # model, so rebuild it here the way production code has to.
+    section.resyncColumnarStore()
     section.save()
     break
 

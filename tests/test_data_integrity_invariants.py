@@ -164,6 +164,11 @@ def enrich(series):
         for name, contour in section.contours.items():
             for trace in contour.getTraces():
                 trace.tags = {f"tag_{name}", "shared"}
+        # Writing `trace.tags` directly is an out-of-class mutation: no
+        # `Section` mutator ran, so the columnar store every section now carries
+        # still holds the old tags and `save()` refuses the divergence.
+        # Production code that touches a trace this way owes the same call.
+        section.resyncColumnarStore()
         section.save()
     series.object_groups.add("shapes", "star")
     series.object_groups.add("shapes", "square")
@@ -503,6 +508,7 @@ def test_snapshot_notices_a_single_changed_tag(rich_series):
     section = rich_series.loadSection(2)
     trace = section.contours["star"].getTraces()[0]
     trace.tags = trace.tags | {"a_new_tag"}
+    section.resyncColumnarStore()  # out-of-class trace write; see `enrich`
     section.save()
 
     differences = state_diff(before, snapshot(rich_series))

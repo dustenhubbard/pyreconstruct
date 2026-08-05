@@ -1,20 +1,68 @@
-"""The test-only dual write from `Section` into the columnar store.
+"""The dual write from `Section` into the columnar store.
 
-Slice 3 of the Phase 1 rewiring. A `Section` can carry a `SectionColumns` beside
-its `self.contours`, mirror every mutation into it, and check the two against
-each other after every single mutation. Nothing reads the store; this exists so
-that the store gets driven by real code on real data before one call site
-anywhere is flipped to read from it.
+Slice 3 of the Phase 1 rewiring. Every `Section` carries a `SectionColumns`
+beside its `self.contours`, mirrors every mutation into it, and checks the two
+against each other. Nothing reads the store yet; this exists so that the store
+is driven by real code on real data before one call site is flipped to read
+from it.
 
-TWO THINGS THIS FILE HAS TO PROVE, AND THE SECOND IS THE ONE THAT IS EASY TO FAKE
----------------------------------------------------------------------------------
-**That the gate is genuinely unreachable from a normal launch.** This is the
-maintainer's stated condition for the slice existing at all, so it is checked
-structurally rather than by assertion-about-intent: the environment variable's
-name appears in exactly one shipped file, that file never writes an environment
-variable, and no launcher, workflow, packaging spec or script in the repository
-mentions it. `test_no_shipped_file_anywhere_in_the_repository_mentions_the_gate`
-is the one that would catch somebody wiring it to a settings toggle later.
+WHAT CHANGED ON 2026-08-05, AND WHAT THIS FILE NOW HAS TO PROVE
+---------------------------------------------------------------
+This landed as a **test-only** harness behind `PYRECON_TEST_ONLY_COLUMNAR_DUAL_
+WRITE`, and half of this file existed to prove the gate was unreachable from a
+real launch. That property was deliberately removed: with the store built only
+under the gate, `Section._columns` was `None` forever in production and there
+was nothing for a consumer to read at all. The store is now built in every
+session.
+
+So the invisibility tests are **not deleted, and not left asserting something
+that is now false**. Each one is replaced by the property that took its place:
+
+  * "no shipped file may name the gate" became **the gate does not exist**, in
+    any file, and no environment variable decides whether the store is built
+    (`test_no_environment_variable_anywhere_decides_whether_the_store_exists`,
+    `test_section_py_neither_reads_nor_writes_the_environment`). The same
+    repository-wide deny-list walk is kept; only the question it asks changed.
+  * "a section without the gate carries no store" became **every section
+    carries a store**, whatever the environment says
+    (`test_every_section_carries_a_store_whatever_the_environment_says`).
+  * "mutating an ungated section stays storeless" became **mutating a section
+    keeps the store in step** (`test_mutating_a_section_keeps_the_store_in_
+    step`).
+  * "nothing outside `Section` knows the harness exists" became **nothing
+    outside `Section` writes to the store**, with the three modules that call
+    the public *repair* enumerated by name so a fourth is a visible act
+    (`test_only_section_py_writes_the_store_and_the_repair_sites_are_pinned`).
+
+What did NOT change is the property the object model still has: **it is still
+authoritative.** Nothing here reads a value out of the store to answer a
+question, `getDict`/`save` serialize `self.contours`, and the store is a shadow
+copy that is written and checked. `test_the_object_model_is_still_authoritative`
+pins that directly.
+
+THE CHECK'S SCOPE NARROWED IN TWO PLACES, ON PURPOSE, AND BOTH ARE TESTED
+--------------------------------------------------------------------------
+Under the gate the whole-section comparison ran after every mutation AND at
+every build. Always-on made both impossible -- measured on `autoseg745`, a
+whole-section comparison is ~81 ms on the median section and ~127 ms on the
+busiest against a 0.002 ms `addTrace`, and a store is built at every section
+load. So:
+
+  * the per-mutation check is targeted at the row that moved
+    (`test_a_mutation_does_not_materialize_the_whole_section`),
+  * the build checks row arity and not values
+    (`test_building_a_store_does_not_run_the_whole_section_comparison`,
+    `test_building_a_store_still_checks_the_row_arity`),
+  * the whole-section comparison runs at `save()`
+    (`test_the_whole_section_check_runs_on_save`).
+
+Both narrowings are asserted rather than described, so restoring the old scope
+turns those tests red and reopens the cost question with a reviewer present.
+What did NOT narrow is what the comparison compares: the `test_a_dropped_*`
+family still drives real `Section` methods with a store entry point silently
+broken and still requires the raise, and
+`test_addTrace_alone_no_longer_detects_a_stale_row_map` pins the one detection
+that was genuinely lost.
 
 **That the consistency check actually catches divergence.** A safety net that is
 written and trusted is worth nothing; a safety net that has been fired at is
@@ -46,9 +94,18 @@ from PyReconstruct.modules.datatypes.columnar_store import SectionColumns
 from PyReconstruct.modules.datatypes.section import ColumnarDualWriteMismatch
 
 
-GATE = section_module.DUAL_WRITE_ENV_VAR
+## The environment variable that used to gate this. Kept as a literal, and only
+## here, because two tests below assert it appears nowhere else: a gate that was
+## removed by deleting its `if` and left named in a launcher is a gate somebody
+## rewires.
+RETIRED_GATE = "PYRECON_TEST_ONLY_COLUMNAR_DUAL_WRITE"
 
 SECTION_SOURCE = Path(section_module.__file__).resolve()
+## `Trace`'s source, parsed rather than introspected: the set of methods that
+## mutate a store-backed column is derived from it (see `_traceColumnSetters`),
+## and a source walk sees `self.points[i] = ...` where `inspect` would only see
+## a function object.
+TRACE_SOURCE = SECTION_SOURCE.parent / "trace.py"
 PACKAGE_ROOT = SECTION_SOURCE.parents[2]
 REPO_ROOT = PACKAGE_ROOT.parent
 
@@ -57,18 +114,6 @@ SYNTHETIC_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "parity_serie
 
 # --- fixtures ----------------------------------------------------------------
 
-@pytest.fixture
-def gate_on(monkeypatch):
-    """Turn the dual-write gate on for the rest of the test.
-
-    `monkeypatch.setenv` and not `os.environ[...] = `, so the variable is gone
-    again at teardown whatever the test does. The gate is read in
-    `Section.__init__`, so this has to be in place before a section is loaded.
-    """
-    monkeypatch.setenv(GATE, "1")
-    return GATE
-
-
 def _busiest(sections):
     populated = [s for s in sections if s.contours]
     assert populated, "the fixture series has no populated section"
@@ -76,8 +121,12 @@ def _busiest(sections):
 
 
 @pytest.fixture
-def real_section(real_series, gate_on):
-    """The busiest section of the real fixture series, with a live store."""
+def real_section(real_series):
+    """The busiest section of the real fixture series.
+
+    No gate fixture any more, and that absence is the point: a section loaded by
+    ordinary means has a store.
+    """
     section = _busiest(
         [real_series.loadSection(n) for n in sorted(real_series.sections)]
     )
@@ -86,8 +135,8 @@ def real_section(real_series, gate_on):
 
 
 @pytest.fixture
-def synthetic_section(tmp_path, gate_on):
-    """The busiest section of the synthetic series, with a live store.
+def synthetic_series(tmp_path):
+    """The synthetic series, opened from a copy.
 
     A copy for the same reason the parity suite copies: `Series.openJser` builds
     a hidden working directory beside the file it is handed.
@@ -97,12 +146,18 @@ def synthetic_section(tmp_path, gate_on):
     destination = tmp_path / "parity_series.jser"
     shutil.copy(SYNTHETIC_FIXTURE, destination)
     series = Series.openJser(str(destination))
+    yield series
+    series.close()
+
+
+@pytest.fixture
+def synthetic_section(synthetic_series):
+    """The busiest section of the synthetic series."""
     section = _busiest(
-        [series.loadSection(n) for n in sorted(series.sections)]
+        [synthetic_series.loadSection(n) for n in sorted(synthetic_series.sections)]
     )
     assert section._columns is not None
-    yield section
-    series.close()
+    return section
 
 
 def _aTrace(section, name="dual_write_probe", points=None):
@@ -121,63 +176,45 @@ def _anyTrace(section):
 
 
 # =============================================================================
-# The gate: that a normal launch cannot reach it
+# The safety properties that replaced invisibility
 # =============================================================================
 
-def test_the_variable_is_named_what_the_documentation_says():
-    """The literal spelling is the contract, so pin it once here.
-
-    Every other test addresses the gate through the constant, which would keep
-    passing if the constant were renamed. A reviewer checking that this is not
-    reachable from a real session is reading for the literal string.
-    """
-    assert GATE == "PYRECON_TEST_ONLY_COLUMNAR_DUAL_WRITE"
-    assert "TEST_ONLY" in GATE, "the name has to say what it is on sight"
-
-
-@pytest.mark.parametrize("value", ["0", "", "true", "yes", "on", "2", "1 "])
-def test_only_an_explicit_1_turns_the_gate_on(monkeypatch, value):
-    """Anything other than exactly `1` leaves the harness off.
-
-    The same spelling `PYRECON_UNATTENDED`, `PYRECON_FORCE_FROZEN` and
-    `PYRECON_JSER_PRETTY` use. A stale `...=0` in a shell profile is off, not a
-    third state, and no truthy-looking value opens the door by accident.
-    """
-    monkeypatch.setenv(GATE, value)
-    assert section_module.dualWriteRequested() is False
-
-
-def test_an_unset_variable_is_off(monkeypatch):
-    monkeypatch.delenv(GATE, raising=False)
-    assert section_module.dualWriteRequested() is False
-    monkeypatch.setenv(GATE, "1")
-    assert section_module.dualWriteRequested() is True
-
-
-def test_a_section_loaded_without_the_gate_carries_no_store(
+def test_every_section_carries_a_store_whatever_the_environment_says(
     real_series, monkeypatch
 ):
-    """The invisibility claim, at the object.
+    """The decision, at the object, and the thing Track C needs to be true.
 
-    No store, no row map, and -- the part that matters for memory -- nothing
-    built and nothing to keep alive.
+    Replaces `test_a_section_loaded_without_the_gate_carries_no_store`, whose
+    assertion is now false by design. Every value the retired gate could have
+    held -- unset, "0", "1", nonsense -- produces the same section, because
+    nothing reads it any more.
     """
-    monkeypatch.delenv(GATE, raising=False)
-    section = _busiest(
-        [real_series.loadSection(n) for n in sorted(real_series.sections)]
-    )
-    assert section._columns is None
-    assert section._column_rows == {}
+    snum = sorted(real_series.sections)[0]
+
+    for value in (None, "0", "", "1", "true", "2"):
+        if value is None:
+            monkeypatch.delenv(RETIRED_GATE, raising=False)
+        else:
+            monkeypatch.setenv(RETIRED_GATE, value)
+
+        section = real_series.loadSection(snum)
+        assert section._columns is not None, (
+            f"no store with {RETIRED_GATE}={value!r}; the environment must not "
+            "decide this any more"
+        )
+        assert len(section._columns) == len(section.tracesAsList())
+        assert set(map(id, section._column_rows)) == {
+            id(t) for t in section.tracesAsList()
+        }
 
 
-def test_mutating_an_ungated_section_stays_storeless(real_series, monkeypatch):
-    """Every hook is a one-line return when there is no store.
+def test_mutating_a_section_keeps_the_store_in_step(real_series):
+    """The runtime half, driving the same mutations the old ungated test drove.
 
-    Drives the same mutations the gated tests below drive, and asserts nothing
-    came into existence. This is what "invisible with the gate off" means at
-    runtime, as opposed to at load.
+    Replaces `test_mutating_an_ungated_section_stays_storeless`. Same sequence,
+    opposite expectation: every hook does real work now, and the two
+    representations agree at the end of it.
     """
-    monkeypatch.delenv(GATE, raising=False)
     section = _busiest(
         [real_series.loadSection(n) for n in sorted(real_series.sections)]
     )
@@ -189,14 +226,39 @@ def test_mutating_an_ungated_section_stays_storeless(real_series, monkeypatch):
     section.setMag(section.mag * 2)
     section.removeTrace(trace)
 
-    assert section._columns is None
-    assert section._column_rows == {}
+    section._assertColumnsMatchObjectModel("the whole mutation sequence")
+    assert len(section._columns) == len(section.tracesAsList())
     assert section_module.Section._column_rows == {}, (
         "the class-level default row map was written to"
     )
 
 
-def test_a_section_that_never_ran_its_constructor_is_unaffected(monkeypatch):
+def test_the_object_model_is_still_authoritative(real_section):
+    """The property that did NOT change, pinned so it cannot erode quietly.
+
+    Always-on removed invisibility. It did not make the store a source of truth:
+    `self.contours` still owns every value, and `getDict` -- what `save` writes
+    -- is built from the object model alone. Corrupt the store and the section
+    still serializes correctly, because nothing reads the store to answer a
+    question.
+    """
+    trace = _anyTrace(real_section)
+    row = real_section._column_rows[trace]
+    expected = real_section.getDict()
+
+    _corruptName(real_section._columns, row)
+    _corruptColor(real_section._columns, row)
+
+    assert real_section.getDict() == expected, (
+        "getDict changed when only the store was corrupted, so something is "
+        "reading the store as if it were authoritative"
+    )
+    ## And the divergence is still loud when the section is asked to check.
+    with pytest.raises(ColumnarDualWriteMismatch):
+        real_section._assertColumnsMatchObjectModel("a corrupted shadow copy")
+
+
+def test_a_section_that_never_ran_its_constructor_is_unaffected():
     """`Section.__new__` with a handful of hand-set attributes, still working.
 
     A dozen test modules in this suite drive one `Section` method against a bare
@@ -207,11 +269,11 @@ def test_a_section_that_never_ran_its_constructor_is_unaffected(monkeypatch):
     on the first draft of this change, and is why `_columns` and `_column_rows`
     are class-level defaults as well as instance ones.
 
-    The gate is set here on purpose: even asked for a store, a section that
-    never ran `__init__` has none, because that is the only place one is built.
+    KEPT UNCHANGED except for dropping the gate it used to set. It matters more
+    now than it did: `_columns is None` used to be the shipped state and is now
+    the ONLY remaining one, so this is the whole of what still has to tolerate
+    it.
     """
-    monkeypatch.setenv(GATE, "1")
-
     bare = section_module.Section.__new__(section_module.Section)
     bare.n = 1
     bare.contours = {}
@@ -228,46 +290,29 @@ def test_a_section_that_never_ran_its_constructor_is_unaffected(monkeypatch):
     assert section_module.Section._column_rows == {}
 
 
-def test_the_gate_is_read_per_section_not_cached_at_import(
-    real_series, monkeypatch
-):
-    """One process, two sections, two answers.
-
-    `dualWriteRequested()` is called from `Section.__init__` rather than
-    evaluated once at import, so a test that turns the gate on cannot leak a
-    store into a section another test loads afterwards.
-    """
-    snum = sorted(real_series.sections)[0]
-
-    monkeypatch.setenv(GATE, "1")
-    gated = real_series.loadSection(snum)
-    monkeypatch.delenv(GATE)
-    ungated = real_series.loadSection(snum)
-
-    assert gated._columns is not None
-    assert ungated._columns is None
-
-
-## Files allowed to name the gate: the one module that defines and reads it, and
-## the tests and changelog that describe it. Anything else is a shipped file
-## that could put the harness into a user's session.
+## Files allowed to name the retired gate: the tests and changelog that record
+## that it was removed. Anything else is a live reference to a gate that no
+## longer exists.
 def _mentionsAllowed(path : Path) -> bool:
     relative = path.relative_to(REPO_ROOT)
-    if path == SECTION_SOURCE:
-        return True
     if relative.parts[0] in ("tests", "changelog.d", "CHANGELOG.md"):
         return True
     return False
 
 
-def test_no_shipped_file_anywhere_in_the_repository_mentions_the_gate():
-    """The safety condition, checked structurally rather than asserted.
+def test_no_environment_variable_anywhere_decides_whether_the_store_exists():
+    """The successor to the invisibility scan, asking the inverted question.
 
-    Reads every file in the repository that could carry text. If the gate's name
-    ever appears in a launcher, a `.spec`, a CI workflow, an installer script or
-    any module other than the one that defines it, this fails -- which is the
-    failure a reviewer wants when somebody later tries to wire the harness to a
-    settings toggle or export it from a launch script.
+    This test used to prove the gate's name appeared in exactly one shipped
+    file, so that no launcher could turn the harness on. The gate is gone, so
+    the property worth protecting inverted with it: **the name must appear in NO
+    shipped file at all**. A gate removed by deleting its `if` and left named in
+    a launcher, a workflow or a settings module is a gate somebody rewires, and
+    the failure mode of a half-removed gate is worse than the gate -- a store
+    that exists on one machine and not another, with a consumer reading it.
+
+    The scan machinery is kept exactly as it was, because it was hardened for a
+    reason and the reason still applies; only the assertion changed.
 
     THE SELECTION IS A DENY-LIST, AND THAT IS THE POINT
     ---------------------------------------------------
@@ -302,7 +347,7 @@ def test_no_shipped_file_anywhere_in_the_repository_mentions_the_gate():
     }
     ## Any hidden directory except `.github`, plus the two build/vendor trees.
     ## `.github` is deliberately NOT skipped: a CI workflow exporting the gate
-    ## into a job is one of the ways this could become reachable.
+    ## into a job is one of the ways a half-removed gate comes back.
     skip_dirs = {"__pycache__", "node_modules", "build", "dist"}
 
     def skipped(relative) -> bool:
@@ -332,7 +377,7 @@ def test_no_shipped_file_anywhere_in_the_repository_mentions_the_gate():
         except (UnicodeDecodeError, OSError, ValueError):
             continue
         scanned += 1
-        if GATE in text:
+        if RETIRED_GATE in text:
             offenders.append(str(relative))
 
     ## A selection bug that silently emptied the walk would otherwise leave this
@@ -357,81 +402,1124 @@ def test_no_shipped_file_anywhere_in_the_repository_mentions_the_gate():
         )
 
     assert offenders == [], (
-        "the test-only dual-write gate is named outside the module that "
-        f"defines it, so a real session could reach it: {offenders}"
+        "the retired dual-write gate is still named in a shipped file, so the "
+        "removal is half done and somebody can rewire it: "
+        f"{offenders}"
     )
 
 
-def test_the_module_that_owns_the_gate_never_writes_an_environment_variable():
-    """`section.py` reads the environment and never writes it.
+def test_section_py_neither_reads_nor_writes_the_environment():
+    """`section.py` has no environment dependency left at all.
 
-    The previous test proves nothing else names the gate. This one proves the
-    one file that does cannot set it either -- no `os.environ[...] = `, no
-    `setdefault`, no `putenv`, no `environ.update` -- so the harness cannot turn
-    itself on from inside the application under any code path at all.
+    This used to prove only that the module could not *write* the gate. It now
+    proves the stronger thing the removal is supposed to have achieved: the
+    module does not consult the environment either, so there is no value any
+    launcher, profile or CI job can set that changes whether a section carries a
+    store. `os` is still imported and still used for paths; only `os.environ`
+    and the `getenv`/`putenv` family are banned.
     """
     tree = ast.parse(SECTION_SOURCE.read_text(encoding="utf-8"))
 
-    writes = []
+    reaches = []
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Assign, ast.AugAssign)):
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            for target in targets:
-                if (
-                    isinstance(target, ast.Subscript)
-                    and "environ" in ast.dump(target.value)
-                ):
-                    writes.append(ast.dump(target))
+        if isinstance(node, ast.Attribute) and node.attr == "environ":
+            reaches.append("os.environ")
+        if isinstance(node, ast.Name) and node.id == "environ":
+            reaches.append("bare environ")
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            dumped = ast.dump(node.func)
-            if node.func.attr in ("setdefault", "update", "pop", "clear") and "environ" in dumped:
-                writes.append(dumped)
-            if node.func.attr in ("putenv", "unsetenv"):
-                writes.append(dumped)
+            if node.func.attr in ("getenv", "putenv", "unsetenv"):
+                reaches.append(node.func.attr)
 
-    assert writes == [], f"section.py writes the environment: {writes}"
-
-
-def test_nothing_outside_section_py_knows_the_harness_exists():
-    """No call site outside `Section` was changed, and none can be.
-
-    The dual write is meant to be invisible to the rest of the application: no
-    module imports the mismatch exception, calls a hook, or reaches for the
-    store hung off a section. Scanned by name because each of these names is
-    distinctive enough that a hit is a real reference rather than a coincidence.
-
-    `self._columns` is deliberately not in this list. It collided with an
-    unrelated `TraceView._columns` (`columnar_store.py`, Phase 1 slices 4/6) the
-    first time both landed on the same tree: the name is common enough that two
-    independent classes picked it for unrelated fields. The other six names are
-    confirmed harness-specific (grepped repo-wide, zero hits outside this file)
-    and carry the actual leak-detection weight.
-    """
-    names = (
-        "_dualWrite",
-        "resyncColumnarStore",
-        "ColumnarDualWriteMismatch",
-        "_column_rows",
-        "DUAL_WRITE_ENV_VAR",
-        "dualWriteRequested",
+    assert reaches == [], (
+        f"section.py still consults or edits the environment: {reaches}"
     )
+
+
+## The modules allowed to call `resyncColumnarStore`, and what each is
+## repairing. Enumerated rather than counted so that adding a fifth is a
+## visible edit to this list with a reviewer looking at it. Every one of these
+## edits a section's traces or contours WITHOUT going through a `Section`
+## mutator, so no dual-write hook sees it -- and every one of them was a
+## `ColumnarDualWriteMismatch` raised in a real session before it called the
+## repair. There are TWELVE sites across the four modules -- eleven rows below,
+## and the `state_manager.py` row carries two:
+##
+##   state_manager.py         undoState, redoState        whole-dict / per-key rebind
+##   series.py                deleteObjects               contour key deleted
+##   series.py                hideObjects                 trace.setHidden in place
+##   series.py                hideAllTraces               trace.setHidden in place
+##   series.py                restoreObjectVisibility     trace.setHidden in place
+##   series.py                smoothObject                trace.smooth in place
+##   series.py                deleteDuplicateTraces       trace.mergeTags in place
+##   conversions.py           seriesToLabels group delete contour keys deleted
+##   field_widget_2_trace.py  findFlag import-conflict    trace.hidden in place
+##   field_widget_2_trace.py  smoothTraces                trace.smooth in place
+##   field_widget_2_trace.py  cutTrace tag merge          trace.tags.add in place
+##
+## READ THE COUNT ABOVE AS A WARNING, NOT AS A RESULT. It has been "five, six,
+## seven" (the original PR), then "eight" (a reviewer read `findFlag`), then
+## "nine and ten" (a reviewer read `smoothObject` and `deleteDuplicateTraces` --
+## AFTER the static scan below had been built specifically to make that
+## impossible), and now twelve (`smoothTraces` and `cutTrace`, found by widening
+## the scan three ways at once). Four consecutive "complete" sets have been
+## wrong. Nothing about the number twelve is more trustworthy than eight was; what
+## has changed is that the scan below now derives its inputs instead of
+## enumerating them, so the next one has fewer places to hide. See the F6
+## discussion in the PR body for the argument that this is the wrong strategy.
+##
+## This allow-list pins which modules may call the REPAIR; it cannot enumerate
+## which modules perform an out-of-class EDIT, and the edit is the thing that
+## goes wrong.
+REPAIR_SITES = {
+    "modules/backend/func/state_manager.py": "undoState / redoState",
+    "modules/datatypes/series.py": (
+        "deleteObjects / hideObjects / hideAllTraces / "
+        "restoreObjectVisibility / smoothObject / deleteDuplicateTraces"
+    ),
+    "modules/backend/autoseg/conversions.py": "seriesToLabels group deletion",
+    "modules/gui/main/field_widget_2_trace.py": (
+        "findFlag's import-conflict hide / smoothTraces / cutTrace's tag merge"
+    ),
+}
+
+
+def test_only_section_py_writes_the_store_and_the_repair_sites_are_pinned():
+    """`Section` still owns every write to the store. The repair is public.
+
+    Replaces `test_nothing_outside_section_py_knows_the_harness_exists`, whose
+    assertion is now false: three modules legitimately name
+    `resyncColumnarStore`, because always-on made their out-of-class trace and
+    contour edits into crashes that only a rebuild can fix.
+
+    What survives, and is the property that actually protects the design, is
+    narrower and sharper than "nobody has heard of it": **nothing outside
+    `section.py` performs a store write.** No module calls a `_dualWrite` hook,
+    reaches into `_column_rows`, or drives `SectionColumns`' six mutation entry
+    points against a section's store. The single exception is
+    `resyncColumnarStore`, the public repair, and it is allowed only at the
+    sites named in `REPAIR_SITES`.
+
+    `self._columns` is deliberately not scanned. It collided with an unrelated
+    `TraceView._columns` (`columnar_store.py`, Phase 1 slices 4/6) the first
+    time both landed on the same tree: the name is common enough that two
+    independent classes picked it for unrelated fields.
+    """
+    ## Scanned through the AST rather than by substring, which is the difference
+    ## between "this file references the name" and "this file mentions the name
+    ## in a comment saying why it calls the repair". The repair sites explain
+    ## themselves in prose, and prose is not a call.
+    private_names = ("_column_rows", "ColumnarDualWriteMismatch")
+
+    def identifiers(tree):
+        found = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name):
+                found.add(node.id)
+            elif isinstance(node, ast.Attribute):
+                found.add(node.attr)
+        return found
+
+    private_offenders = {}
+    repair_callers = {}
+    for path in sorted(PACKAGE_ROOT.rglob("*.py")):
+        if path.resolve() == SECTION_SOURCE:
+            continue
+        relative = str(path.relative_to(PACKAGE_ROOT))
+        names = identifiers(ast.parse(path.read_text(encoding="utf-8")))
+
+        hits = sorted(
+            name for name in names
+            if name in private_names or name.startswith("_dualWrite")
+        )
+        if hits:
+            private_offenders[relative] = hits
+
+        if "resyncColumnarStore" in names:
+            repair_callers[relative] = True
+
+    assert private_offenders == {}, (
+        "the dual write's private surface leaked out of Section: "
+        f"{private_offenders}"
+    )
+    assert set(repair_callers) == set(REPAIR_SITES), (
+        "the set of out-of-class sites calling resyncColumnarStore() changed. "
+        "Every one of these replaces Section.contours from outside Section and "
+        "is a ColumnarDualWriteMismatch in a real session without the repair, "
+        f"so adding or losing one is a design change: {sorted(repair_callers)} "
+        f"against {sorted(REPAIR_SITES)}"
+    )
+
+
+# =============================================================================
+# The EDIT class, scanned rather than enumerated
+# =============================================================================
+#
+# `REPAIR_SITES` above pins which modules may call the repair. That is not the
+# same property and it never was: it says nothing about which modules perform an
+# out-of-class EDIT, and the edit is the thing that breaks. The only mechanism
+# that had ever found such a site was a test happening to exercise it at
+# runtime, which is why the "complete set" claim has now been wrong twice --
+# seven when the store went always-on, then eight when a reviewer read
+# `findFlag`. Both times the missing site was reachable by an ordinary user
+# click and both times it would have raised in that user's session.
+#
+# So the class gets a static scan, which is what turns "the ones the suite
+# happened to reach" into a property that holds over code nothing executes.
+
+## The eight columns the store mirrors, and therefore the eight attributes
+## `_assertColumnsMatchObjectModel` compares. A write to any of them on a trace
+## the section already holds is invisible to every dual-write hook.
+STORE_BACKED_COLUMNS = (
+    "closed", "color", "fill_mode", "hidden", "name", "negative", "points",
+    "tags",
+)
+
+## `Trace`'s own mutating methods: the same eight columns reached through a call
+## instead of an assignment, and `hideObjects` and its two siblings are exactly
+## this shape.
+##
+## DERIVED FROM `trace.py` BY AST, NOT HAND-LISTED. The hand-written version of
+## this tuple named two of the nine, and that single fact is what let
+## `Series.smoothObject` (`Trace.smooth`) and `Series.deleteDuplicateTraces`
+## (`Trace.mergeTags`) walk straight through the scan built to make exactly that
+## impossible. A hand-maintained list of mutators is the same "we enumerated it
+## and believe we are done" claim that has now been wrong three review rounds
+## running; deriving it means a new `Trace` mutator widens the scan on the commit
+## that adds it, instead of silently widening the hole.
+##
+## `_traceColumnSetters` is the derivation; `TRACE_COLUMN_SETTERS_EXPECTED`
+## below pins its result so that a change to `Trace` is a visible, reviewed edit
+## rather than a silent one. Note the difference in failure direction: if the
+## derivation and the pin disagree, the *scan* has already widened (fail-safe)
+## and only the pin complains.
+
+
+def _mutatingSubcalls():
+    """Container methods that mutate the receiver in place.
+
+    `self.points.append(...)` and `self.tags.add(...)` write a store-backed
+    column just as surely as `self.points = ...` does, and `Trace.add` and
+    `Trace.addTag` are respectively those two calls and nothing else.
+    """
+    return (
+        "append", "extend", "insert", "pop", "remove", "clear", "sort",
+        "reverse", "add", "update", "discard", "difference_update",
+        "intersection_update", "symmetric_difference_update",
+    )
+
+
+def _traceColumnSetters():
+    """Every `Trace` method that mutates one of the eight store-backed columns.
+
+    Walks `Trace`'s body and reports a method when it, or anything it calls on
+    `self`, writes a store-backed column by any of the four routes a Python
+    method has:
+
+      1. `self.<column> = ...`          -- setHidden, mergeTags, centerAtOrigin,
+                                          resize, reshape, smooth
+      2. `self.<column>[i] = ...`       -- magScale, and ONLY magScale. This is
+                                          the route a plain `ast.Attribute`
+                                          target test misses, because the
+                                          assignment target is an `ast.Subscript`
+                                          whose `.value` is the attribute. A
+                                          reviewer enumerating `Trace` by hand
+                                          missed `magScale` for precisely this
+                                          reason and recorded it as "not a
+                                          mutator"; it is one.
+      3. `self.<column>.<mutator>()`    -- add (points.append), addTag (tags.add)
+      4. calling another such method on `self` -- transitive, so a future thin
+                                          wrapper cannot launder a mutation
+
+    Excluded, each for a stated reason rather than by omission:
+
+      * `__init__` and other dunders. A `Trace` under construction is not in any
+        section, so there is no store to drift; and `Section` builds its rows
+        from the finished object. Naming `__init__` here would add no coverage
+        and would flag every explicit `.__init__(...)` chain-up in the codebase.
+      * `name`, the property setter. `trace.name = value` routes through it, but
+        that is an *assignment* at the call site, and the assignment arm of
+        `_storeBackedColumnWrites` already catches it by attribute name. Listing
+        the setter as a method name would instead make every `.name(...)` call
+        anywhere -- on any object at all -- look like a trace mutation.
+    """
+    tree = ast.parse(TRACE_SOURCE.read_text(encoding="utf-8"))
+    trace_class = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef) and node.name == "Trace"
+    )
+
+    subcalls = _mutatingSubcalls()
+    direct = set()
+    self_calls = {}
+
+    def selfColumn(node):
+        """`self.<store-backed column>` as the column name, else None."""
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "self"
+            and node.attr in STORE_BACKED_COLUMNS
+        ):
+            return node.attr
+        return None
+
+    def targets(node):
+        """Assignment targets, flattened through tuple/list unpacking."""
+        if isinstance(node, ast.Assign):
+            pending = list(node.targets)
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+            pending = [node.target]
+        else:
+            return
+        while pending:
+            target = pending.pop()
+            if isinstance(target, (ast.Tuple, ast.List)):
+                pending.extend(target.elts)
+            else:
+                yield target
+
+    for method in trace_class.body:
+        if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if method.name.startswith("__"):
+            continue
+        ## Properties and their setters: see the docstring.
+        decorators = {ast.unparse(d) for d in method.decorator_list}
+        if "property" in decorators or any(
+            d.endswith(".setter") for d in decorators
+        ):
+            continue
+
+        called = set()
+        for node in ast.walk(method):
+            for target in targets(node):
+                ## Route 1: self.<column> = ...
+                if selfColumn(target):
+                    direct.add(method.name)
+                ## Route 2: self.<column>[...] = ...
+                if isinstance(target, ast.Subscript) and selfColumn(
+                    target.value
+                ):
+                    direct.add(method.name)
+
+            if isinstance(node, ast.Call) and isinstance(
+                node.func, ast.Attribute
+            ):
+                ## Route 3: self.<column>.append(...) and friends
+                if node.func.attr in subcalls and selfColumn(node.func.value):
+                    direct.add(method.name)
+                ## Route 4 edge: self.<other method>(...)
+                if (
+                    isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "self"
+                ):
+                    called.add(node.func.attr)
+
+        self_calls[method.name] = called
+
+    ## Route 4: transitive closure over calls on `self`.
+    mutators = set(direct)
+    changed = True
+    while changed:
+        changed = False
+        for method, called in self_calls.items():
+            if method not in mutators and called & mutators:
+                mutators.add(method)
+                changed = True
+
+    return tuple(sorted(mutators))
+
+
+TRACE_COLUMN_SETTERS = _traceColumnSetters()
+
+## The derivation's result, pinned. Nine methods, and every one of them is a
+## live way to change what `Section.save()` will write:
+##
+##   add             points.append(point)          -- appends a point in place
+##   addTag          tags.add(tag)                 -- was in the old two
+##   centerAtOrigin  points = <recentred>          -- whole-list replacement
+##   magScale        points[i] = (x, y)            -- per-point, subscript form
+##   mergeTags       tags = tags.union(other.tags) -- deleteDuplicateTraces' call
+##   reshape         points = <reshaped>           -- also calls resize
+##   resize          points = <resized>            -- whole-list replacement
+##   setHidden       hidden = hidden               -- was in the old two
+##   smooth          points = <smoothed>           -- smoothObject's call
+##
+## If `Trace` grows a tenth, the scan picks it up immediately and THIS assertion
+## is what tells a reviewer it happened.
+TRACE_COLUMN_SETTERS_EXPECTED = (
+    "add", "addTag", "centerAtOrigin", "magScale", "mergeTags", "reshape",
+    "resize", "setHidden", "smooth",
+)
+
+
+def test_the_trace_setter_list_is_derived_from_trace_and_still_matches():
+    """`Trace`'s mutators, derived, and pinned against a reviewed list.
+
+    The hand-written list this replaces named `addTag` and `setHidden` and
+    stopped there -- two of nine. `smooth` and `mergeTags` were missing, and
+    `Series.smoothObject` and `Series.deleteDuplicateTraces` were live crashes
+    behind that gap for as long as the list was believed complete.
+
+    So the list is now derived, and this test is the pin. A new `Trace` mutator
+    fails here by name, having *already* widened the scan -- which is the safe
+    order: the property tightens first and the reviewer is told second.
+    """
+    assert TRACE_COLUMN_SETTERS == TRACE_COLUMN_SETTERS_EXPECTED, (
+        "the set of Trace methods that mutate a store-backed column changed. "
+        "The scan has already widened to match (it derives this list), so "
+        "nothing is unguarded -- but a new mutator means new out-of-class edit "
+        "sites may now be reported, and a lost one means an entry in "
+        f"OUT_OF_CLASS_TRACE_EDITS may be stale: {TRACE_COLUMN_SETTERS} "
+        f"against {TRACE_COLUMN_SETTERS_EXPECTED}"
+    )
+
+    ## And the derivation is not vacuously agreeing with a stale pin: the four
+    ## routes it exists to cover are each represented by a method that is only
+    ## reachable through that route.
+    assert "setHidden" in TRACE_COLUMN_SETTERS   # self.hidden = ...
+    assert "magScale" in TRACE_COLUMN_SETTERS    # self.points[i] = ...
+    assert "add" in TRACE_COLUMN_SETTERS         # self.points.append(...)
+    assert "reshape" in TRACE_COLUMN_SETTERS     # self.resize(...) transitively
+
+## Every function outside `section.py` that both reaches traces through a
+## section AND writes a store-backed column, with the reason each one is safe.
+## Keyed on `module::qualified.function`, so a nested helper is its own entry
+## and a second function of the same name cannot silently take another's slot.
+##
+## Three kinds of entry, and the distinction is the whole value of the list:
+##
+##   REPAIRED   -- edits a trace the section holds, and calls
+##                 `resyncColumnarStore()` afterwards. These are the sites the
+##                 always-on change had to find.
+##   DETACHED   -- edits a `Trace` that is not in any section at the moment of
+##                 the write: freshly built, `.copy()`d, or removed first and
+##                 added after. No store mirrors it, so there is nothing to
+##                 drift.
+##   NOT A SECTION -- the `.contours` it reaches is not a `Section.contours`.
+##
+## Adding an entry is a design decision and belongs in review. Adding a
+## REPAIRED one without the repair call is the bug this test exists to stop.
+## A fourth kind of entry appears below, and it is the one this round added:
+##
+##   NOT A TRACE -- the object written is a `Ztrace`, `Transform` or `Flag`.
+##                  These share method names with `Trace` (`magScale`) but the
+##                  store shadows none of them.
+OUT_OF_CLASS_TRACE_EDITS = {
+    "modules/backend/autoseg/conversions.py::exportTraces":
+        "DETACHED: setHidden on traces held aside, before addTrace puts them "
+        "back; the store learns the value at insertion",
+    "modules/backend/func/state_manager.py::FieldState.getContours":
+        "NOT A SECTION: writes .closed on a Trace.fromList product while "
+        "rebuilding a saved FieldState; no Section and no store exist yet",
+    "modules/backend/func/xml_json_conversions.py::sectionXMLtoJSON":
+        "NOT A SECTION: `contours` is a plain dict in the section JSON being "
+        "built from XML; the trace is never in a Section",
+    "modules/backend/view/trace_layer.py::TraceLayer.getCopiedTraces":
+        "DETACHED: `trace = trace.copy()` rebinds the loop name to a copy "
+        "before .points is rewritten; the section's own trace is only read",
+    "modules/datatypes/contour.py::Contour.importTraces.addDuplicate":
+        "REPAIRED by its only caller: `Section.importTraces` is the sole "
+        "caller of `Contour.importTraces`, and it ends in `_dualWriteResync()` "
+        "on both sections precisely because the merge rebinds trace lists and "
+        "mergeTags edits tags in place",
+    "modules/datatypes/series.py::Series.copyObjects":
+        "DETACHED: renames `trace.copy()`, then addTrace",
+    "modules/datatypes/series.py::Series.copyTracesToSections":
+        "DETACHED: `new_trace = trace.copy()`, re-projected, then addTrace",
+    "modules/datatypes/series.py::Series.deleteDuplicateTraces":
+        "REPAIRED: `trace1.mergeTags(trace2)` rewrites tags in place on a "
+        "trace the section keeps, then resyncColumnarStore(). The TENTH site, "
+        "found by a reviewer, and invisible to this scan while mergeTags was "
+        "missing from TRACE_COLUMN_SETTERS",
+    "modules/datatypes/series.py::Series.hideAllTraces":
+        "REPAIRED: setHidden in place, then resyncColumnarStore()",
+    "modules/datatypes/series.py::Series.hideObjects.edit":
+        "REPAIRED: setHidden in place, then resyncColumnarStore()",
+    "modules/datatypes/series.py::Series.importFlags":
+        "NOT A TRACE: `o_flag.magScale(...)` is a Flag; the store does not "
+        "shadow flags",
+    "modules/datatypes/series.py::Series.importTransforms":
+        "NOT A TRACE: `o_section.tforms[alignment].magScale(...)` is a "
+        "Transform; the store does not shadow transforms",
+    "modules/datatypes/series.py::Series.importZtraces":
+        "NOT A TRACE: `o_ztrace.magScale(...)` is a Ztrace; the store does not "
+        "shadow ztraces",
+    "modules/datatypes/series.py::Series.restoreObjectVisibility":
+        "REPAIRED: setHidden in place, then resyncColumnarStore()",
+    "modules/datatypes/series.py::Series.smoothObject":
+        "REPAIRED: `Trace.smooth` rewrites points in place on traces the "
+        "section holds, then resyncColumnarStore() before its own save(). The "
+        "NINTH site, and a crash on a shipped menu action -- it passed the "
+        "scan because `smooth` was not in TRACE_COLUMN_SETTERS",
+    "modules/datatypes/series.py::Series.splitObject":
+        "DETACHED: removeTrace, then renames `trace.copy()`, then addTrace",
+    "modules/gui/dialog/trace.py::TraceDialog.__init__":
+        "DETACHED: `ct = trace.copy()` then ct.resize(1), to render the shape "
+        "preview; the caller's trace is only read",
+    "modules/gui/dialog/trace_palette.py::TracePaletteDialog.getStructure":
+        "DETACHED: `t_copy = t.copy()` then t_copy.resize(1), same shape "
+        "preview as TraceDialog",
+    "modules/gui/main/field_widget_2_trace.py::FieldWidgetTrace.copyTracesToSections":
+        "DETACHED: `field_trace = trace.copy()` before .points is re-projected",
+    "modules/gui/main/field_widget_2_trace.py::FieldWidgetTrace.cutTrace":
+        "REPAIRED: `example_trace.tags.add(tag)` merges tags in place on "
+        "`section.selected_traces[0]` -- the list is copied, the traces are "
+        "not -- then resyncColumnarStore(). The TWELFTH site. It survived "
+        "even the widened scan until two further gaps were closed: the write "
+        "is an in-place mutation of the column's own container (not an "
+        "assignment and not a Trace method), and the reach is "
+        "`selected_traces`, not `.contours`",
+    "modules/gui/main/field_widget_2_trace.py::FieldWidgetTrace.findFlag":
+        "REPAIRED: writes .hidden in place on the import-conflict path, then "
+        "resyncColumnarStore(). This is the eighth site, and the one this scan "
+        "exists because nothing structural caught",
+    "modules/gui/main/field_widget_2_trace.py::FieldWidgetTrace.newTrace":
+        "DETACHED: `new_trace = base_trace.copy()`; .points, .closed, add() "
+        "and smooth() all run before addTrace puts it in the section",
+    "modules/gui/main/field_widget_2_trace.py::FieldWidgetTrace.placeGrid":
+        "DETACHED: `exc_trace`/`inc_trace` are `ref_trace.copy()` products "
+        "used as grid stamps; nothing written is in a section yet",
+    "modules/gui/main/field_widget_2_trace.py::FieldWidgetTrace.smoothTraces":
+        "REPAIRED: `trace.smooth()` in place on the section's own selection, "
+        "then resyncColumnarStore(). The ELEVENTH site, found by a reviewer as "
+        "a SCAN GAP rather than as a crash: it takes its traces as a parameter "
+        "and named no section at all, so the reach predicate could not see it",
+    "modules/gui/main/field_widget_7_view.py::FieldWidgetView.setTracingTrace":
+        "DETACHED: `t = trace.copy()` before .name is stripped of increment "
+        "characters; the copy becomes the tracing template",
+    "modules/gui/main/main_window.py::MainWindow.setPaletteButtonFromObj":
+        "DETACHED: the trace written is a palette trace out of "
+        "series.palette_traces; the section's trace is .copy()d and only read",
+    "modules/gui/palette/mouse_palette.py::MousePalette.pasteAttributesToButton":
+        "DETACHED: both branches write a `.copy()` (of the pasted trace or of "
+        "the button's own trace) before it becomes a palette button",
+}
+
+_FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+
+def _qualifiedFunctions(tree):
+    """Every function in `tree` as `(qualified.name, node)`, however nested."""
+    found = []
+
+    def descend(node, prefix):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, _FUNCTION_NODES):
+                qualified = f"{prefix}{child.name}"
+                found.append((qualified, child))
+                descend(child, f"{qualified}.")
+            elif isinstance(child, ast.ClassDef):
+                descend(child, f"{prefix}{child.name}.")
+            else:
+                descend(child, prefix)
+
+    descend(tree, "")
+    return found
+
+
+def _nodesOwnedBy(function):
+    """`function`'s own nodes, excluding any function nested inside it.
+
+    Attribution is to the INNERMOST enclosing function, so `hideObjects.edit`
+    answers for its own `setHidden` and `hideObjects` does not answer twice.
+    """
+    owned = []
+    pending = list(function.body) + list(function.decorator_list)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, _FUNCTION_NODES + (ast.Lambda,)):
+            continue
+        owned.append(node)
+        pending.extend(ast.iter_child_nodes(node))
+    return owned
+
+
+def _rootName(node):
+    """The leftmost `Name` of an attribute/subscript/call chain, or None.
+
+    `self.section.contours[n][0].hidden` roots at `self`; `trace.hidden` roots
+    at `trace`. This is what says whose trace is being written.
+    """
+    while True:
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            node = node.value
+        elif isinstance(node, ast.Subscript):
+            node = node.value
+        elif isinstance(node, ast.Call):
+            node = node.func
+        else:
+            return None
+
+
+## Every `Section` attribute that holds `Trace` objects the section owns, and
+## therefore every attribute through which an out-of-class function can get a
+## live trace without ever naming `.contours`. Read off `Section.__init__`:
+##
+##   selected_traces     the current selection -- what every field-widget verb
+##                       operates on, and the route `cutTrace` takes
+##   temp_hide           traces hidden for this view
+##   traces_group_hide   traces hidden by group visibility
+##   added_traces        this save cycle's additions, still in the contours
+##   removed_traces      this save cycle's deletions (detached, but scanning
+##                       them costs an allow-list line and missing them costs a
+##                       session -- the same trade the rest of this scan makes)
+##
+## `.contours` is handled separately because it is a dict and reaches traces one
+## level deeper. This tuple is the flat lists.
+SECTION_TRACE_ATTRIBUTES = (
+    "added_traces", "removed_traces", "selected_traces", "temp_hide",
+    "traces_group_hide",
+)
+
+## Setter names `Trace` shares with ordinary containers, where the name alone
+## does not establish that the receiver is a trace. `Trace.add` appends a point;
+## `set.add` adds an element, and this codebase calls the latter 55 times and
+## the former not once. Naming `add` unconditionally would put ten pure-noise
+## entries in `OUT_OF_CLASS_TRACE_EDITS` -- `section.modified_contours.add(...)`,
+## `dwg.add(...)`, `seen.add(...)` -- and an allow-list a reviewer skims is an
+## allow-list that stops working, which is the failure this whole scan is a
+## response to. So an ambiguous setter is only counted when its receiver is a
+## name the function actually obtained from a section or a parameter, which is
+## what a real `trace.add(point)` looks like and what none of the 55 sets do.
+AMBIGUOUS_TRACE_SETTERS = ("add",)
+
+
+def _namesDerivedFromParameters(function, nodes):
+    """Local names that hold something handed in as a parameter.
+
+    Seeds with the function's own parameters (minus `self`/`cls`) and grows to a
+    fixpoint through the two ways a parameter's contents get a local name:
+    `for trace in traces:` and `t = traces[0]`. So in
+
+        def smoothTraces(self, traces: list):
+            for trace in traces:
+                trace.smooth(window, spacing=0.004)
+
+    `trace` is parameter-derived, and the write to `points` it performs is a
+    write to somebody else's trace.
+    """
+    args = function.args
+    derived = {
+        arg.arg
+        for arg in (
+            list(getattr(args, "posonlyargs", []))
+            + list(args.args)
+            + list(args.kwonlyargs)
+        )
+        if arg.arg not in ("self", "cls")
+    }
+    for extra in (args.vararg, args.kwarg):
+        if extra is not None:
+            derived.add(extra.arg)
+
+    return _grownThroughBindings(derived, nodes)
+
+
+def _namesDerivedFromSectionTraces(nodes):
+    """Local names that hold traces taken off a section's trace lists.
+
+    `FieldWidgetTrace.cutTrace` does
+
+        traces = self.section.selected_traces.copy()
+        example_trace = traces[0]
+        example_trace.tags.add(tag)
+
+    and `selected_traces` holds the section's own `Trace` objects -- `.copy()`
+    copies the list, not the traces. The function never names `.contours`,
+    `.tracesAsList()` or `.getTraces()`, and it takes no traces as parameters,
+    so neither of the other two reach arms sees it. It is reached through
+    `SECTION_TRACE_ATTRIBUTES`, and that is a third route.
+    """
+    seeds = set()
+    bindings = _bindingsIn(nodes)
+    for target, source in bindings:
+        ## `x = <anything>.selected_traces...` seeds `x`.
+        walker = source
+        found = False
+        while isinstance(walker, (ast.Attribute, ast.Subscript, ast.Call)):
+            if (
+                isinstance(walker, ast.Attribute)
+                and walker.attr in SECTION_TRACE_ATTRIBUTES
+            ):
+                found = True
+                break
+            walker = (
+                walker.func if isinstance(walker, ast.Call) else walker.value
+            )
+        if not found:
+            continue
+        pending = [target]
+        while pending:
+            bound = pending.pop()
+            if isinstance(bound, (ast.Tuple, ast.List)):
+                pending.extend(bound.elts)
+            elif isinstance(bound, ast.Name):
+                seeds.add(bound.id)
+
+    return _grownThroughBindings(seeds, nodes)
+
+
+def _bindingsIn(nodes):
+    """`(bound target, source expression)` for every binding in `nodes`."""
+    bindings = []
+    for node in nodes:
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            bindings.append((node.target, node.iter))
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                bindings.append((target, node.value))
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            bindings.append((node.target, node.value))
+        elif isinstance(node, ast.comprehension):
+            bindings.append((node.target, node.iter))
+    return bindings
+
+
+def _grownThroughBindings(seeds, nodes):
+    """`seeds`, grown to a fixpoint through local rebinding.
+
+    `for trace in traces:` and `t = traces[0]` both put a seeded object under a
+    new name. Without this, aliasing through one intermediate variable is enough
+    to leave the scan behind -- and `cutTrace` aliases twice.
+    """
+    derived = set(seeds)
+    bindings = _bindingsIn(nodes)
+
+    changed = True
+    while changed:
+        changed = False
+        for target, source in bindings:
+            if _rootName(source) not in derived:
+                continue
+            pending = [target]
+            while pending:
+                bound = pending.pop()
+                if isinstance(bound, (ast.Tuple, ast.List)):
+                    pending.extend(bound.elts)
+                elif isinstance(bound, ast.Name) and bound.id not in derived:
+                    derived.add(bound.id)
+                    changed = True
+
+    return derived
+
+
+def _traceDerivedNames(function, nodes):
+    """Every local name that may hold a trace the function did not build."""
+    return _namesDerivedFromParameters(
+        function, nodes
+    ) | _namesDerivedFromSectionTraces(nodes)
+
+
+def _reachesTracesThroughASection(nodes, function=None, writes=None):
+    """How this function gets its hands on traces, or None.
+
+    Three routes. The original predicate had only the first, and each of the
+    other two was a live crash hiding behind its absence.
+
+    **Through a section's contours**, the original test: the function itself
+    names `.contours`, `.tracesAsList()` or `.getTraces()`.
+
+    **Through its own parameters**: the function is *handed* traces already
+    resolved, and writes a store-backed column on one of them. A function of
+    that shape names none of the first route's markers, so under the original
+    predicate it was invisible no matter what it wrote --
+    `FieldWidgetTrace.smoothTraces(self, traces)` is exactly it, mutating
+    `points` in place on the section's own selected traces and matching nothing.
+    Callers pass section-held traces routinely (that is what a selection is), so
+    "received as a parameter" has to count as reach.
+
+    **Through a section's trace lists** (`SECTION_TRACE_ATTRIBUTES`): the
+    selection, the temp-hide list, the group-hide list. `cutTrace` merges tags
+    in place on `self.section.selected_traces` and satisfies neither of the
+    other two arms. Same class, third hiding place.
+
+    The last two arms are deliberately conditioned on the function actually
+    writing a store-backed column through such a name -- otherwise every
+    function in the codebase with a parameter would "reach traces". They
+    over-report in the other direction instead (a caller that only ever passes
+    detached traces looks the same as one that passes held ones), and the
+    allow-list carries that distinction in prose, as it already does for the
+    `.contours` arm.
+    """
+    for node in nodes:
+        if isinstance(node, ast.Attribute) and node.attr == "contours":
+            return ".contours"
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in ("tracesAsList", "getTraces"):
+                return f".{node.func.attr}()"
+
+    if function is None or not writes:
+        return None
+    roots = {root for _, root in writes}
+    if roots & _namesDerivedFromParameters(function, nodes):
+        return "parameter"
+    if roots & _namesDerivedFromSectionTraces(nodes):
+        return ".selected_traces / .temp_hide / ..."
+    return None
+
+
+def _storeBackedColumnWrites(nodes, function=None):
+    """Writes to a store-backed column on something other than `self`.
+
+    Returns `(description, root name)` pairs -- the root name being who is
+    written, which is what the parameter arm of the reach predicate needs.
+
+    Four routes, because there are four ways to change what `save()` will
+    serialise, and the first version of this scan knew two:
+
+        trace.hidden = True            assignment to the column
+        trace.setHidden(True)          a `Trace` method (TRACE_COLUMN_SETTERS)
+        trace.tags.add(tag)            in-place mutation of the column itself
+        trace.points[i] = (x, y)       assignment through a subscript
+
+    `self.<column> = ...` is excluded because that is a class writing its own
+    field -- `Trace.setHidden` doing `self.hidden = hidden` is the definition of
+    the setter, not an out-of-class edit of somebody else's trace.
+
+    `function` is optional and only affects `AMBIGUOUS_TRACE_SETTERS`: without
+    it, `add` is skipped entirely rather than guessed at.
+    """
+    hits = []
+    derived = (
+        _traceDerivedNames(function, nodes) if function is not None else set()
+    )
+    for node in nodes:
+        targets = []
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+            targets = [node.target]
+
+        for target in targets:
+            if not isinstance(target, ast.Attribute):
+                continue
+            if target.attr not in STORE_BACKED_COLUMNS:
+                continue
+            if isinstance(target.value, ast.Name) and target.value.id == "self":
+                continue
+            hits.append((
+                f"line {target.lineno}: .{target.attr} = ...",
+                _rootName(target.value),
+            ))
+
+        ## Route three, and the one that hid a twelfth site: mutating the
+        ## column's own container in place. `trace.tags.add(tag)` writes `tags`
+        ## exactly as `trace.addTag(tag)` does, but it is neither an assignment
+        ## to a column nor a call to a `Trace` method, so both of the arms above
+        ## look straight past it. `FieldWidgetTrace.cutTrace` is this shape.
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            container = node.func.value
+            if (
+                node.func.attr in _mutatingSubcalls()
+                and isinstance(container, ast.Attribute)
+                and container.attr in STORE_BACKED_COLUMNS
+                and not (
+                    isinstance(container.value, ast.Name)
+                    and container.value.id == "self"
+                )
+            ):
+                hits.append((
+                    f"line {node.lineno}: "
+                    f".{container.attr}.{node.func.attr}(...)",
+                    _rootName(container.value),
+                ))
+
+        ## Route four: `trace.points[i] = ...`, the subscript form. `magScale`
+        ## is `Trace`'s own instance of it.
+        for target in targets:
+            if not isinstance(target, ast.Subscript):
+                continue
+            column = target.value
+            if not isinstance(column, ast.Attribute):
+                continue
+            if column.attr not in STORE_BACKED_COLUMNS:
+                continue
+            if isinstance(column.value, ast.Name) and column.value.id == "self":
+                continue
+            hits.append((
+                f"line {target.lineno}: .{column.attr}[...] = ...",
+                _rootName(column.value),
+            ))
+
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr not in TRACE_COLUMN_SETTERS:
+                continue
+            receiver = node.func.value
+            if isinstance(receiver, ast.Name) and receiver.id == "self":
+                continue
+            ## `trace.tags.add(tag)` is the container route above, already
+            ## reported there; without this it is also reported here as
+            ## `Trace.add` on a receiver that happens to be trace-derived.
+            if (
+                isinstance(receiver, ast.Attribute)
+                and receiver.attr in STORE_BACKED_COLUMNS
+            ):
+                continue
+            ## `add` is `Trace.add` only when the receiver is something the
+            ## function got from a section or a caller; otherwise it is one of
+            ## the codebase's 55 `set.add` calls. See AMBIGUOUS_TRACE_SETTERS.
+            if node.func.attr in AMBIGUOUS_TRACE_SETTERS and not (
+                isinstance(receiver, ast.Name) and receiver.id in derived
+            ):
+                continue
+            hits.append((
+                f"line {node.lineno}: .{node.func.attr}(...)",
+                _rootName(receiver),
+            ))
+
+    return sorted(hits)
+
+
+def _writeDescriptions(writes):
+    """Just the human-readable half of `_storeBackedColumnWrites`' pairs."""
+    return [description for description, _ in writes]
+
+
+def test_no_module_outside_section_py_edits_a_store_backed_trace_column():
+    """The out-of-class EDIT class, as a property rather than a body count.
+
+    `REPAIR_SITES` pins which modules may call the repair; it cannot enumerate
+    the modules that perform an out-of-class *edit*, and that is the class that
+    actually costs a user their session. Seven such sites were found by running
+    the suite and watching it raise; the other five (`findFlag`, `smoothObject`,
+    `deleteDuplicateTraces`, `smoothTraces` and `cutTrace`) were found only by
+    reviewers reading the source, on paths an ordinary click reaches. A
+    thirteenth would be found the same way, or by a user.
+
+    So this scans for the shape instead of counting instances: a function
+    outside `section.py` that reaches traces through a section
+    (`.contours`, `.tracesAsList()`, `.getTraces()`) **and** writes one of the
+    eight store-backed columns, either by assignment or through `Trace`'s own
+    setters. Every such function must be in `OUT_OF_CLASS_TRACE_EDITS` with a
+    stated reason it is safe.
+
+    A new one fails here, at review time, with the file and line in the message
+    -- instead of in a user's session on whatever path the suite happens not to
+    cover. That is the difference between "we found the ones the suite reached"
+    and a property.
+
+    This is deliberately a shape scan and not dataflow. It over-reports (a
+    trace edited before it is ever added to a section looks the same as one
+    edited after) and the allow-list carries that distinction in prose. The
+    over-report is the safe direction: a new entry costs a reviewer one line of
+    reasoning, a missed one costs a user their unsaved work.
+    """
     offenders = {}
     for path in sorted(PACKAGE_ROOT.rglob("*.py")):
         if path.resolve() == SECTION_SOURCE:
             continue
-        text = path.read_text(encoding="utf-8")
-        hits = [name for name in names if name in text]
-        if hits:
-            offenders[str(path.relative_to(PACKAGE_ROOT))] = hits
+        relative = str(path.relative_to(PACKAGE_ROOT))
+        tree = ast.parse(path.read_text(encoding="utf-8"))
 
-    assert offenders == {}, f"the harness leaked out of Section: {offenders}"
+        for qualified, function in _qualifiedFunctions(tree):
+            owned = _nodesOwnedBy(function)
+            writes = _storeBackedColumnWrites(owned, function)
+            if not writes:
+                continue
+            ## Writes are computed first now: the parameter arm of the reach
+            ## predicate asks *whose* trace is written, so it needs them.
+            reached = _reachesTracesThroughASection(owned, function, writes)
+            if reached is None:
+                continue
+            offenders[f"{relative}::{qualified}"] = (
+                reached, _writeDescriptions(writes)
+            )
+
+    unlisted = {
+        site: detail for site, detail in offenders.items()
+        if site not in OUT_OF_CLASS_TRACE_EDITS
+    }
+    assert unlisted == {}, (
+        "a function outside section.py reaches a section's traces and writes a "
+        "store-backed column, and is not in OUT_OF_CLASS_TRACE_EDITS. If it "
+        "edits a trace the section already holds, it owes a "
+        "resyncColumnarStore() afterwards -- without one, Section.save() "
+        "raises ColumnarDualWriteMismatch in the user's session. If the trace "
+        "is detached or is not a section's, add it to the list with that "
+        f"reason: {unlisted}"
+    )
+
+    ## And the list does not outlive the code it describes: an entry whose site
+    ## has been deleted or renamed is a stale exemption, and a stale exemption
+    ## is how the next one gets in.
+    stale = sorted(set(OUT_OF_CLASS_TRACE_EDITS) - set(offenders))
+    assert stale == [], (
+        "OUT_OF_CLASS_TRACE_EDITS exempts sites that no longer match the scan. "
+        f"Delete them so the list keeps meaning what it says: {stale}"
+    )
+
+
+def test_the_edit_scan_catches_a_planted_out_of_class_write(tmp_path):
+    """The scan above is only worth having if it actually fires.
+
+    A structural test that has never been shown to fail is a structural test
+    nobody knows the shape of. This plants `findFlag`'s exact shape -- iterate
+    `section.contours`, write `.hidden` in place -- in a module the scan has
+    never seen, and requires it to be reported.
+    """
+    planted = tmp_path / "planted_leak.py"
+    planted.write_text(
+        "def hideEverything(section):\n"
+        "    for cname, contour in section.contours.items():\n"
+        "        for trace in contour:\n"
+        "            trace.hidden = True\n",
+        encoding="utf-8",
+    )
+
+    tree = ast.parse(planted.read_text(encoding="utf-8"))
+    reported = []
+    for qualified, function in _qualifiedFunctions(tree):
+        owned = _nodesOwnedBy(function)
+        writes = _storeBackedColumnWrites(owned, function)
+        if not writes:
+            continue
+        if _reachesTracesThroughASection(owned, function, writes) is None:
+            continue
+        reported.append((qualified, _writeDescriptions(writes)))
+
+    assert reported == [("hideEverything", ["line 4: .hidden = ..."])], (
+        f"the edit scan did not catch a planted in-place write: {reported}"
+    )
+
+    ## And the setter form, which is what series.py's three sites use.
+    planted.write_text(
+        "def hideEverything(section):\n"
+        "    for trace in section.tracesAsList():\n"
+        "        trace.setHidden(True)\n",
+        encoding="utf-8",
+    )
+    tree = ast.parse(planted.read_text(encoding="utf-8"))
+    qualified, function = _qualifiedFunctions(tree)[0]
+    owned = _nodesOwnedBy(function)
+    writes = _storeBackedColumnWrites(owned, function)
+    assert (
+        _reachesTracesThroughASection(owned, function, writes)
+        == ".tracesAsList()"
+    )
+    assert _writeDescriptions(writes) == ["line 3: .setHidden(...)"]
+
+
+def test_the_edit_scan_catches_the_two_shapes_that_slipped_past_it(tmp_path):
+    """The two gaps that let `smoothObject` and `smoothTraces` through.
+
+    Both were live, both were found by a reviewer reading source, and both are
+    reproduced here as the smallest code that has each shape -- so a later
+    "simplification" of the scan that reopens either gap fails here rather than
+    in a user's session.
+
+    Gap one, the setter list (`Trace.smooth` was not in it). Gap two, the reach
+    predicate (a function *handed* traces names no section at all).
+    """
+    planted = tmp_path / "planted_gap.py"
+
+    ## Gap one: `smoothObject`'s exact shape -- reach via `.contours`, write via
+    ## a `Trace` method the old two-name list did not know about.
+    planted.write_text(
+        "def smoothEverything(section, window):\n"
+        "    for name, contour in section.contours.items():\n"
+        "        for trace in contour.traces:\n"
+        "            trace.smooth(window=window, spacing=0.004)\n",
+        encoding="utf-8",
+    )
+    tree = ast.parse(planted.read_text(encoding="utf-8"))
+    qualified, function = _qualifiedFunctions(tree)[0]
+    owned = _nodesOwnedBy(function)
+    writes = _storeBackedColumnWrites(owned, function)
+    assert _writeDescriptions(writes) == ["line 4: .smooth(...)"], (
+        "Trace.smooth is not being recognised as a store-backed column write; "
+        "this is the gap Series.smoothObject crashed through"
+    )
+    assert _reachesTracesThroughASection(owned, function, writes) == ".contours"
+
+    ## And `mergeTags`, the same gap, `deleteDuplicateTraces`' call.
+    planted.write_text(
+        "def mergeEverything(section, other):\n"
+        "    for name, contour in section.contours.items():\n"
+        "        for trace in contour:\n"
+        "            trace.mergeTags(other)\n",
+        encoding="utf-8",
+    )
+    tree = ast.parse(planted.read_text(encoding="utf-8"))
+    qualified, function = _qualifiedFunctions(tree)[0]
+    owned = _nodesOwnedBy(function)
+    writes = _storeBackedColumnWrites(owned, function)
+    assert _writeDescriptions(writes) == ["line 4: .mergeTags(...)"]
+
+    ## Gap two: `FieldWidgetTrace.smoothTraces`' exact shape. No `.contours`, no
+    ## `.tracesAsList()`, no `.getTraces()` -- traces arrive as a parameter, and
+    ## under the old predicate this function was invisible whatever it wrote.
+    planted.write_text(
+        "def smoothTraces(self, traces: list):\n"
+        "    for trace in traces:\n"
+        "        self.section.modified_contours.add(trace.name)\n"
+        "        trace.smooth(10, spacing=0.004)\n",
+        encoding="utf-8",
+    )
+    tree = ast.parse(planted.read_text(encoding="utf-8"))
+    qualified, function = _qualifiedFunctions(tree)[0]
+    owned = _nodesOwnedBy(function)
+    writes = _storeBackedColumnWrites(owned, function)
+    assert _writeDescriptions(writes) == ["line 4: .smooth(...)"]
+    assert _reachesTracesThroughASection(owned, function, writes) == (
+        "parameter"
+    ), (
+        "a function handed traces as a parameter is invisible to the reach "
+        "predicate again; this is the gap FieldWidgetTrace.smoothTraces sits in"
+    )
+
+    ## Aliasing through an intermediate name still counts as parameter-derived.
+    planted.write_text(
+        "def recolour(traces, color):\n"
+        "    chosen = traces[0]\n"
+        "    chosen.color = color\n",
+        encoding="utf-8",
+    )
+    tree = ast.parse(planted.read_text(encoding="utf-8"))
+    qualified, function = _qualifiedFunctions(tree)[0]
+    owned = _nodesOwnedBy(function)
+    writes = _storeBackedColumnWrites(owned, function)
+    assert _reachesTracesThroughASection(owned, function, writes) == "parameter"
+
+    ## And the arm does not fire on a function that merely has parameters: the
+    ## write has to land on something the caller handed in.
+    planted.write_text(
+        "def buildOne(name, color):\n"
+        "    trace = Trace(name)\n"
+        "    trace.color = color\n"
+        "    return trace\n",
+        encoding="utf-8",
+    )
+    tree = ast.parse(planted.read_text(encoding="utf-8"))
+    qualified, function = _qualifiedFunctions(tree)[0]
+    owned = _nodesOwnedBy(function)
+    writes = _storeBackedColumnWrites(owned, function)
+    assert writes, "the local write should still be seen"
+    assert _reachesTracesThroughASection(owned, function, writes) is None, (
+        "the parameter arm fired on a trace the function built itself"
+    )
+
+
+def test_the_retired_gate_is_gone_from_the_module_that_defined_it():
+    """No constant, no predicate, no dormant branch.
+
+    A gate left as a constant nobody reads is a gate a later change re-wires by
+    adding one `if`. `section.py` must not carry the name, the predicate that
+    read it, or an exported symbol either could hang off.
+    """
+    source = SECTION_SOURCE.read_text(encoding="utf-8")
+    assert RETIRED_GATE not in source
+    assert not hasattr(section_module, "DUAL_WRITE_ENV_VAR")
+    assert not hasattr(section_module, "dualWriteRequested")
 
 
 # =============================================================================
 # The dual write itself, on real material
 # =============================================================================
 
-def test_a_freshly_loaded_gated_section_already_agrees(real_section):
+def test_a_freshly_loaded_section_already_agrees(real_section):
     """Construction alone puts the two representations in step.
 
     `Section.__init__` builds the store from the contours it just parsed, and
@@ -703,7 +1791,7 @@ def test_tags_negative_and_hidden_survive_a_mutation_on_synthetic_material(
     assert frozenset({"kept", "added"}) in stored_tags
 
 
-def test_importTraces_rebuilds_the_store_from_the_result(real_series, gate_on):
+def test_importTraces_rebuilds_the_store_from_the_result(real_series):
     """The one path that replaces contour lists wholesale instead of mutating.
 
     `Contour.importTraces` rebinds `self.traces` outright, so there is no
@@ -1017,20 +2105,69 @@ def test_an_out_of_class_rebind_is_caught_even_though_every_value_matches(
     assert "resyncColumnarStore" in message
 
 
-def test_the_stale_row_map_is_caught_by_a_real_mutation_not_only_a_bare_check(
-    real_section
+@pytest.mark.parametrize(
+    "drive",
+    [
+        pytest.param(lambda s: s.removeTrace(_anyTrace(s)), id="removeTrace"),
+        pytest.param(
+            lambda s: s.hideTraces([_anyTrace(s)], hide=True), id="hideTraces"
+        ),
+        pytest.param(
+            lambda s: s.closeTraces([_anyTrace(s)], closed=False), id="closeTraces"
+        ),
+        pytest.param(lambda s: s.setMag(s.mag * 2), id="setMag"),
+    ],
+)
+def test_a_mutation_touching_an_existing_trace_still_names_a_stale_row_map(
+    real_section, drive
 ):
     """Driven through a `Section` method, because that is how it would happen.
 
-    `_assertColumnsMatchObjectModel` called by hand proves the comparison works.
-    This proves the comparison is reached: the very next real mutation after the
-    rebind stops the run, whatever kind of mutation it is.
+    REWRITTEN, AND THE REWRITE IS THE HONEST PART
+    ----------------------------------------------
+    This used to drive `addTrace` and require the raise, on the strength of the
+    whole-section check running after every mutation. Always-on made that check
+    unaffordable per mutation (81-127 ms on `autoseg745`), so the per-mutation
+    check is targeted at the row that moved -- and `addTrace` after an
+    undo-style rebind writes a brand-new row that is perfectly correct, so
+    **`addTrace` no longer detects a stale row map.** That is a real narrowing,
+    it is pinned by `test_addTrace_alone_no_longer_detects_a_stale_row_map`
+    below rather than left for somebody to discover, and it is why the four
+    out-of-class rebind sites now call the repair instead of relying on
+    detection.
+
+    What survives is the case that matters more: any mutation that touches a
+    trace the section already held goes through `_rowFor`, which cannot find the
+    replaced object in the identity map and says so. That is every edit a user
+    performs on existing work.
     """
     _undoStyleRestore(real_section)
 
     with pytest.raises(ColumnarDualWriteMismatch) as caught:
-        real_section.addTrace(_aTrace(real_section))
+        drive(real_section)
 
+    assert "holds no row for" in str(caught.value)
+
+
+def test_addTrace_alone_no_longer_detects_a_stale_row_map(real_section):
+    """The gap the narrowed check leaves, pinned rather than left to be found.
+
+    A brand-new trace gets a brand-new row, and a targeted check compares that
+    row against that trace and finds them in agreement -- correctly, because
+    they are. Nothing about the append can see that every OTHER row is now keyed
+    on a discarded object. `save()` catches it, and the four out-of-class rebind
+    sites do not reach here at all because they repair first.
+
+    If a future change puts a whole-section comparison back on the mutation
+    path, this test fails, and that is the right outcome: it means the cost
+    trade was reopened and somebody should look at the measurement again.
+    """
+    _undoStyleRestore(real_section)
+
+    real_section.addTrace(_aTrace(real_section))  # does not raise
+
+    with pytest.raises(ColumnarDualWriteMismatch) as caught:
+        real_section._assertColumnsMatchObjectModel("the coarse net, by hand")
     assert "the row map is stale" in str(caught.value)
 
 
@@ -1067,3 +2204,1089 @@ def test_a_trace_removed_from_its_contour_from_outside_is_caught(real_section):
         real_section._assertColumnsMatchObjectModel("an out-of-class removal")
 
     assert "the row map is stale" in str(caught.value)
+
+
+# =============================================================================
+# The out-of-class repair sites: the paths always-on turned into crashes
+# =============================================================================
+#
+# Under the gate none of these could reach a section carrying a store, and the
+# source comment said only that they "owe the resync". Always-on made each one a
+# `ColumnarDualWriteMismatch` raised at the user on the next edit, which was the
+# single largest thing this change had to fix. Each is driven for real here --
+# not simulated with `_undoStyleRestore` -- because a repair call that is present
+# but unreachable, or placed before the rebind instead of after it, would pass
+# every simulated test and still crash a session.
+
+class _StubFieldForFindFlag():
+    """The smallest thing `FieldWidgetTrace.findFlag` will run against.
+
+    `findFlag` is a method on a `QWidget` subclass whose `__init__` builds a
+    scene, a pixmap and a table. None of that is what is under test and all of
+    it would drag a `QApplication` into a datatypes test, so the real, unbound
+    function is called against a stand-in carrying only the four attributes it
+    actually touches. That keeps this a test of the production function --
+    `FieldWidgetTrace.findFlag(field, flag)` is literally the shipped code --
+    rather than of a re-implementation of it, which is the distinction that
+    matters here: a re-implementation would have "passed" before the fix.
+    """
+
+    class _Layer():
+        image_found = False
+        base_corners = []
+
+    def __init__(self, series, section):
+        self.series = series
+        self.section = section
+        self.section_layer = self._Layer()
+        self.hide_trace_layer = False
+        self.generated = 0
+
+    def generateView(self):
+        self.generated += 1
+
+
+def test_clicking_an_import_conflict_flag_leaves_the_section_saveable(
+    real_section, real_series
+):
+    """The eighth out-of-class edit site, driven through the real `findFlag`.
+
+    THE USER PATH
+    -------------
+    Import traces from another series -> overlapping traces raise
+    `import-conflict_<name>` flags (`Section.importTraces`) -> the user clicks
+    one to jump to it (`MainWindow` -> `field.findFlag`) -> `findFlag` hides
+    every contour except the conflicting one by writing `trace.hidden` **in
+    place**, from outside `Section`, with no hook watching and no repair.
+
+    Every one of those is a store-backed column, so the store kept the old
+    flags while the object model took the new ones. The next `save()` -- which
+    `Section.save`'s own comment says runs on every section change, a
+    mouse-wheel scroll included -- compared the two and raised
+    `ColumnarDualWriteMismatch` in the user's face. Nothing on that path
+    repaired the store, so it raised again on every later save too, and the
+    section stayed unsaveable for the rest of the session.
+
+    This was the PR's own stated largest residual risk ("that seven out-of-class
+    sites is the complete set"), realised. No structural test could have found
+    it, which is why `test_no_module_outside_section_py_edits_a_store_backed_
+    trace_column` now exists beside it.
+    """
+    from PyReconstruct.modules.datatypes.flag import Flag
+    from PyReconstruct.modules.gui.main.field_widget_2_trace import (
+        FieldWidgetTrace
+    )
+
+    ## The flag `importTraces` raises, spelled the way it spells it:
+    ## `f"import-conflict_{trace.name}"`.
+    conflicted = sorted(real_section.contours, key=str)[0]
+    assert len(real_section.contours) > 1, (
+        "the fixture section has one contour, so findFlag's else-branch -- the "
+        "branch that hides everything -- would never run"
+    )
+    flag = Flag(
+        f"import-conflict_{conflicted}", 0, 0, real_section.n, (255, 0, 0)
+    )
+    real_section.flags.append(flag)
+
+    field = _StubFieldForFindFlag(real_series, real_section)
+
+    ## The real, shipped function.
+    FieldWidgetTrace.findFlag(field, flag)
+
+    ## It did what it is supposed to do to the object model.
+    assert field.generated == 1, "findFlag did not run to completion"
+    for name, contour in real_section.contours.items():
+        expected = name != conflicted
+        for trace in contour:
+            assert trace.hidden is expected, (
+                f"findFlag left {name!r} at hidden={trace.hidden}"
+            )
+
+    ## And the store came with it. Before the fix this raised, and kept raising.
+    real_section._assertColumnsMatchObjectModel("after findFlag")
+    real_section.save()
+
+    ## The user's next edit, which is what actually used to blow up: the raise
+    ## did not arrive at the click, it arrived at the scroll after it.
+    real_section.addTrace(_aTrace(real_section))
+    real_section.save()
+
+
+def test_findFlag_without_the_repair_really_would_have_drifted(
+    real_section, real_series, monkeypatch
+):
+    """The fix is load-bearing, not decorative.
+
+    A repair call is only worth a line if removing it breaks something. With
+    `resyncColumnarStore` neutered for this section alone -- after its store is
+    built, so the section is in exactly the state a real one is in -- the same
+    click drifts the store and `save()` names the drifted column. This is the
+    failure a user would have hit.
+
+    Neutering the method wholesale would ALSO disable `__init__`'s build, which
+    leaves the section storeless and makes every check return on its first line
+    -- a false pass that looks like a fix. The store is already built here, so
+    patching the bound method on this one instance reverts exactly the call
+    this fixup added and nothing else.
+    """
+    from PyReconstruct.modules.datatypes.flag import Flag
+    from PyReconstruct.modules.gui.main.field_widget_2_trace import (
+        FieldWidgetTrace
+    )
+
+    assert real_section._columns is not None, "the store was never built"
+    monkeypatch.setattr(real_section, "resyncColumnarStore", lambda: None)
+
+    conflicted = sorted(real_section.contours, key=str)[0]
+    flag = Flag(
+        f"import-conflict_{conflicted}", 0, 0, real_section.n, (255, 0, 0)
+    )
+    real_section.flags.append(flag)
+
+    FieldWidgetTrace.findFlag(_StubFieldForFindFlag(real_series, real_section), flag)
+
+    with pytest.raises(ColumnarDualWriteMismatch) as caught:
+        real_section.save()
+
+    message = str(caught.value)
+    assert "hidden:" in message, (
+        f"the drift was caught but not attributed to `hidden`: {message}"
+    )
+
+
+def _aSmoothableObject(series):
+    """An object name whose traces all have enough points to smooth.
+
+    `Trace.smooth` returns False without touching `points` below three points,
+    so a contour of "pixel dust" would make this test pass while proving
+    nothing -- the same false-negative-from-a-bad-fixture trap that let
+    `mergeTags` look clean to a reviewer on a single-trace contour.
+    """
+    for number in sorted(series.sections):
+        section = series.loadSection(number)
+        for name, contour in section.contours.items():
+            if contour.traces and all(
+                len(trace.points) >= 3 for trace in contour.traces
+            ):
+                return name
+    raise AssertionError("no smoothable object in the fixture series")
+
+
+def test_smoothing_an_object_leaves_every_touched_section_saveable(real_series):
+    """`Series.smoothObject` -- the NINTH out-of-class edit site.
+
+    "Smooth object traces" is a shipped menu action on the object list.
+    `smoothObject` reaches traces through `section.contours`, rewrites `points`
+    in place with `Trace.smooth`, and then calls `section.save()` itself -- so
+    the mismatch used to raise inside the operation's own save, aborting a
+    multi-section pass partway through and leaving every later section
+    un-smoothed.
+
+    It survived the static scan that was built to end this whole class, because
+    the scan's setter list named two of the nine `Trace` methods that write a
+    store-backed column and `smooth` was not one of them. This drives the real
+    function.
+    """
+    name = _aSmoothableObject(real_series)
+
+    ## The real, shipped entry point -- not a re-implementation of its loop.
+    real_series.smoothObject([name], log_event=False)
+
+    ## Every section it touched must still be saveable, which is the property
+    ## the crash violated. Reload from disk so this is the bytes, not the
+    ## in-memory objects the operation just held.
+    touched = real_series.getObjectSections([name])
+    assert touched, "the fixture object appears on no section"
+    for number in sorted(touched):
+        real_series.loadSection(number).save()
+
+
+def test_smoothObject_without_the_repair_really_would_have_drifted(
+    real_series, monkeypatch
+):
+    """The `smoothObject` repair is load-bearing.
+
+    `smoothObject` loads its own sections through `enumerateSections`, so the
+    sections it edits are not ones this test can get hold of and prepare first.
+    Neutering the method wholesale would therefore also disable `__init__`'s
+    build, leave every section storeless, and make every check return on its
+    first line -- a false pass shaped exactly like a fix. Written that way, this
+    test reported no drift at all.
+
+    So the patch reverts the REPAIR and not the BUILD: a section's first call --
+    `__init__`'s -- is passed through, and every later one, which is what this
+    fixup added, is dropped.
+    """
+    from PyReconstruct.modules.datatypes.section import Section
+
+    name = _aSmoothableObject(real_series)
+    original = Section.resyncColumnarStore
+    built = []
+
+    def onlyTheBuild(self):
+        if self._columns is None:   # __init__'s call: the store must exist
+            original(self)
+            built.append(self.n)
+            return
+        return                      # the repair this fixup added: reverted
+
+    monkeypatch.setattr(Section, "resyncColumnarStore", onlyTheBuild)
+
+    with pytest.raises(ColumnarDualWriteMismatch) as caught:
+        real_series.smoothObject([name], log_event=False)
+
+    assert built, (
+        "no section ever built a store, so the check never ran and this would "
+        "have passed for the wrong reason"
+    )
+    assert "points:" in str(caught.value), (
+        "the drift was caught but not attributed to `points`: "
+        f"{caught.value}"
+    )
+
+
+def test_deleting_duplicate_traces_leaves_the_section_saveable(real_section):
+    """`Series.deleteDuplicateTraces` -- the TENTH site, via `mergeTags`.
+
+    `trace1.mergeTags(trace2)` rewrites `tags` in place on a trace the section
+    keeps; `section.removeTrace(trace2)` is hooked and repairs `trace2`'s row,
+    but nothing repaired `trace1`'s. It only drifts when the two duplicates
+    carry different tags -- rare, and exactly the messy series this clean-up
+    operation is run on.
+
+    Driven at the mechanism: the call, the receiver and the ordering are the
+    operation's own, and this is the test that attributes the drift to `tags`.
+    It does NOT pin the production repair -- deleting
+    `series.py`'s `resyncColumnarStore()` call leaves it green, because it never
+    calls `deleteDuplicateTraces`. `test_a_planted_duplicate_pair_is_merged_and_
+    persisted_by_the_real_operation` below is the one that goes red for that,
+    and it is what the "pinned by a test that reverts the repair" claim rests
+    on.
+    """
+    name = next(
+        c for c in sorted(real_section.contours, key=str)
+        if len(real_section.contours[c]) >= 2
+    )
+    first, second = (
+        real_section.contours[name][0], real_section.contours[name][1]
+    )
+    second.tags = {"a_regression_tag"}
+    real_section.resyncColumnarStore()   # start from a store that agrees
+
+    first.mergeTags(second)              # deleteDuplicateTraces' exact call
+    real_section.resyncColumnarStore()   # ...and its repair
+    real_section.save()
+
+    assert "a_regression_tag" in real_section.contours[name][0].tags
+
+
+def test_mergeTags_on_a_held_trace_without_the_repair_really_drifts(
+    real_section
+):
+    """Without the repair, the same two calls raise -- naming `tags`."""
+    name = next(
+        c for c in sorted(real_section.contours, key=str)
+        if len(real_section.contours[c]) >= 2
+    )
+    first, second = (
+        real_section.contours[name][0], real_section.contours[name][1]
+    )
+    second.tags = {"a_regression_tag"}
+    real_section.resyncColumnarStore()
+
+    first.mergeTags(second)
+
+    with pytest.raises(ColumnarDualWriteMismatch) as caught:
+        real_section.save()
+
+    assert "tags:" in str(caught.value), (
+        f"the drift was caught but not attributed to `tags`: {caught.value}"
+    )
+
+
+def _plantADuplicatePair(section, name="a_planted_duplicate", tags=("one", "two")):
+    """Two identical closed traces under one name, carrying different tags.
+
+    `deleteDuplicateTraces` only reaches `mergeTags` when it finds a pair that
+    `Trace.overlaps` accepts, and it only *drifts* when the two carry different
+    tags. The fixture series offers no such pair, and the earlier version of
+    this file took that as a reason to drop down to the mechanism -- which is
+    exactly how the production repair came to be unguarded. Planting the pair is
+    eight lines and keeps the real function in the loop.
+
+    Identical point lists rather than merely overlapping ones, because
+    `Trace.overlaps` short-circuits on `pointsMatch` before it ever needs
+    `getOverlapRatio`, so the pair is a duplicate at any threshold and the test
+    does not depend on a ratio computation it is not about.
+
+    Both traces go in through `Section.addTrace`, which is hooked, so the store
+    agrees before the operation starts: a test that began from a drifted store
+    would raise for the wrong reason.
+    """
+    points = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+    for tag in tags:
+        trace = Trace(name, (255, 0, 0), closed=True)
+        trace.points = list(points)
+        trace.tags = {tag}
+        section.addTrace(trace, log_event=False)
+    section.save()
+    return name
+
+
+def test_a_planted_duplicate_pair_is_merged_and_persisted_by_the_real_operation(
+    real_series
+):
+    """`Series.deleteDuplicateTraces`, driven -- the pin for the TENTH site.
+
+    "Delete duplicate traces" is a shipped series-wide clean-up. The real
+    function loads its own sections through `enumerateSections` and calls
+    `section.save()` itself, so with the repair gone the mismatch raises *inside
+    the operation*: the clean-up dies partway through and every later section
+    goes unprocessed. That is what makes this test go red rather than merely
+    fail an assertion at the end.
+
+    Written this way on purpose. The two tests above reproduce
+    `mergeTags`-then-`save` inline and pass whatever `deleteDuplicateTraces`
+    does, so no revert of the production repair can make them red -- which a
+    reviewer established by deleting the call and running the whole suite green.
+    This one calls the shipped function with nothing patched.
+
+    The survivors are read back **off disk after a reload**, so the merged tags
+    asserted here are the persisted bytes and not the in-memory objects the
+    operation happened to be holding.
+    """
+    number = sorted(real_series.sections)[0]
+    name = _plantADuplicatePair(real_series.loadSection(number))
+
+    ## The real, shipped entry point. Its own `section.save()` is what raises
+    ## when the repair is missing.
+    removed = real_series.deleteDuplicateTraces(0.95, log_event=False)
+
+    assert removed.get(number) and name in removed[number], (
+        f"the operation did not report removing a duplicate of {name!r}: "
+        f"{removed}"
+    )
+
+    survivors = real_series.loadSection(number).contours[name]
+    assert len(survivors) == 1, (
+        f"expected one survivor of the planted pair, found {len(survivors)}"
+    )
+    assert survivors[0].tags == {"one", "two"}, (
+        "the surviving trace's merged tags did not reach the disk: "
+        f"{sorted(survivors[0].tags)}"
+    )
+
+
+# --- the two sites that need a live field ------------------------------------
+#
+# `cutTrace` and `smoothTraces` are methods on `FieldWidget`, and both reach the
+# section's own traces through the field's selection. Neither is drivable
+# against a stand-in the way `findFlag` is: `cutTrace` needs
+# `section_layer.traceToPix` and a real `Series.getOption`, and `smoothTraces`
+# is wrapped in `trace_function`, which reads the table manager and calls
+# `mainwindow.saveAllData()` before the method body runs.
+#
+# So these two use the same live-`main_window` harness `tests/test_knife_cut_
+# guards.py` uses, marked `gui` per test rather than per module because the rest
+# of this file must keep running under `-m "not gui"`.
+#
+# `local_series_settings` is not optional in either. `cutTrace` reads
+# `knife_del_threshold` and `smoothTraces` reads `roll_window`, both global-scope
+# options, and `Series.getOption` writes the default back when a key is absent --
+# so without the injected store a run of this file would leave keys in the
+# developer's real `QSettings`.
+
+
+@pytest.fixture
+def field_notices(monkeypatch):
+    """Record what `notify` would have shown from `field_widget_2_trace`.
+
+    That module does `from ... import notify`, binding the function in its own
+    namespace, so patching the helper at its source has no effect. Required
+    rather than convenient: offscreen, `notify` falls through to a console branch
+    ending in `input()`, which raises under pytest's capture and hangs under
+    `-s`, and the refusal below trips it on purpose.
+    """
+    from PyReconstruct.modules.gui.main import field_widget_2_trace
+
+    notices = []
+    monkeypatch.setattr(
+        field_widget_2_trace,
+        "notify",
+        lambda message, *a, **kw: notices.append(message),
+    )
+    return notices
+
+
+def _aReferenceContour(section):
+    """A contour with points, to size the planted traces against.
+
+    Only so the planted geometry lands where the field is actually looking and
+    `traceToPix` returns something sane; nothing here depends on which contour it
+    is.
+    """
+    for name in sorted(section.contours, key=str):
+        if section.contours[name] and len(section.contours[name][0].points) >= 3:
+            return section.contours[name][0]
+    raise AssertionError("the fixture section the window opens on has no traces")
+
+
+def _plantASelectedBowtiePair(field, name="a_planted_bowtie"):
+    """Two same-named self-crossing closed traces, selected, tagged differently.
+
+    Every element is one `cutTrace` needs to reach its tag merge and then refuse:
+
+      * **two of them**, or the `for trace in traces[1:]` loop is empty and
+        nothing is merged;
+      * **the same name**, or `cutTrace` refuses at "Select a single object to
+        cut at a time" before the merge;
+      * **different tags**, or `merged_any` stays False and the store never
+        drifts -- the false-negative-from-a-bad-fixture trap that let `mergeTags`
+        look clean to a reviewer on a single-trace contour;
+      * **self-crossing and closed**, so `uncuttable_closed_traces` refuses the
+        cut *after* the merge, which is the whole point: the drift outlives an
+        operation the user was told did nothing.
+
+    The two diagonals of an existing object's bounding box, taken in an order
+    that crosses in the middle -- the shape freehand tracing makes when a stroke
+    doubles back over itself. Asserted invalid rather than assumed, because a
+    fixture that quietly stopped being a bowtie would make this test pass while
+    proving nothing.
+    """
+    reference = [tuple(p) for p in _aReferenceContour(field.section).points]
+    xs = [p[0] for p in reference]
+    ys = [p[1] for p in reference]
+    x0, x1 = min(xs), max(xs)
+    y0, y1 = min(ys), max(ys)
+    points = [(x0, y0), (x1, y1), (x1, y0), (x0, y1)]
+
+    from shapely.geometry import Polygon
+
+    assert not Polygon(points).is_valid, "the planted trace is not a bowtie"
+
+    planted = []
+    for tag in ("tag_from_first", "tag_from_second"):
+        trace = Trace(name, (0, 255, 0), closed=True)
+        trace.points = list(points)
+        trace.tags = {tag}
+        field.section.addTrace(trace, log_event=False)   # hooked: store agrees
+        planted.append(trace)
+
+    field.section.selected_traces = list(planted)
+    return name, planted
+
+
+def _aScalpelAcross(field, trace):
+    """A knife stroke, in pixel coordinates, that crosses `trace`.
+
+    Lifted from `tests/test_knife_cut_guards.py`. `cutTrace` refuses a
+    self-crossing trace before it looks at the stroke at all, so this only has to
+    be a well-formed argument -- but it is the real shape a real cut arrives as,
+    and passing a degenerate one would be testing a different early return.
+    """
+    pix = field.section_layer.traceToPix(trace)
+    xs = [p[0] for p in pix]
+    ys = [p[1] for p in pix]
+    mid_y = (min(ys) + max(ys)) / 2
+    left, right = min(xs) - 10, max(xs) + 10
+    steps = 20
+    return [(left + (right - left) * i / steps, mid_y) for i in range(steps + 1)]
+
+
+@pytest.mark.gui
+def test_a_refused_scalpel_cut_leaves_the_section_saveable(
+    main_window, local_series_settings, field_notices
+):
+    """`FieldWidgetTrace.cutTrace`, driven -- the pin for the TWELFTH site.
+
+    THE USER PATH
+    -------------
+    Select two traces of one object -> scalpel across them -> one of them
+    crosses itself, so the cut is refused and the user is told the object was
+    left unchanged -> but the tag merge above the refusal already ran, in place,
+    on a trace the section still holds. The next `Section.save()` -- an autosave,
+    a section change, a mouse-wheel scroll -- then raises
+    `ColumnarDualWriteMismatch` at the user for an action they already watched
+    get refused, and keeps raising.
+
+    `test_merging_tags_across_a_selection_leaves_the_section_saveable` above
+    reproduces that merge inline and therefore passes whatever `cutTrace` does;
+    deleting the production repair leaves it green. This calls the real method
+    with nothing patched but `notify`, so the repair is what keeps the final
+    `save()` from raising.
+    """
+    local_series_settings(main_window)
+    field = main_window.field
+    name, planted = _plantASelectedBowtiePair(field)
+    first = planted[0]
+
+    ## Baseline: the store agrees before the cut, so a raise below is the cut's.
+    field.section.save()
+
+    refused = field.cutTrace(_aScalpelAcross(field, first))
+
+    ## It refused, visibly, and left the object alone -- the guarantee the user
+    ## was given.
+    assert refused is False
+    assert field_notices == [
+        "A selected trace crosses itself and cannot be cut.\n"
+        "The object was left unchanged."
+    ]
+    assert len(field.section.contours[name]) == 2
+    assert field.section.contours[name][0] is first, "the trace was replaced"
+
+    ## And it merged the tags on its way to that refusal, in place, on a trace
+    ## the section still holds. This is the drift.
+    assert first.tags == {"tag_from_first", "tag_from_second"}
+
+    ## The store came with it. Before the repair this raised, and kept raising.
+    field.section.save()
+
+    ## The user's next edit, which is where the raise actually used to arrive.
+    field.section.addTrace(_aTrace(field.section))
+    field.section.save()
+
+
+@pytest.mark.gui
+def test_smoothing_the_selection_leaves_the_section_saveable(
+    main_window, local_series_settings
+):
+    """`FieldWidgetTrace.smoothTraces`, driven -- the pin for the ELEVENTH site.
+
+    "Smooth traces" is a shipped field action on the selection. `traces` is the
+    section's own selection, not copies, so `Trace.smooth` rewrites `points` in
+    place on traces the section holds, from outside `Section`, where no
+    dual-write hook sees it. `field_interaction` then calls `saveState()` and
+    `generateView()`, neither of which repairs the store, so the drift survives
+    to whichever later `Section.save()` happens first.
+
+    This is the sibling of `Series.smoothObject` and it had no test of any kind
+    until now -- deleting its repair left all 5,939 tests green.
+
+    Called with no arguments: `trace_function` reads the selection off the
+    section (or the trace table) and inserts it as the first parameter, and the
+    wrapper returns None, so the assertion that the method did something has to
+    be that `points` actually moved. A contour whose traces are all too short to
+    smooth would leave `points` untouched and make this pass while proving
+    nothing, so the contour is chosen for having enough points.
+    """
+    local_series_settings(main_window)
+    field = main_window.field
+    name = next(
+        c for c in sorted(field.section.contours, key=str)
+        if field.section.contours[c]
+        and all(len(t.points) >= 3 for t in field.section.contours[c])
+    )
+    traces = list(field.section.contours[name])
+    before = [[tuple(p) for p in trace.points] for trace in traces]
+
+    ## Baseline: the store agrees before the smooth.
+    field.section.save()
+    field.section.selected_traces = list(traces)
+
+    ## The real, shipped method.
+    field.smoothTraces()
+
+    after = [[tuple(p) for p in trace.points] for trace in traces]
+    assert after != before, (
+        f"`smooth` left {name!r} untouched, so no drift was possible and this "
+        "would have passed for the wrong reason"
+    )
+
+    ## The store came with it.
+    field.section.save()
+
+
+@pytest.mark.gui
+def test_smoothTraces_without_the_repair_really_would_have_drifted(
+    main_window, local_series_settings, monkeypatch
+):
+    """The `smoothTraces` repair is load-bearing, and the drift is in `points`.
+
+    Same shape as `test_smoothObject_without_the_repair_really_would_have_
+    drifted`: the patch reverts the REPAIR and not the BUILD. Neutering
+    `resyncColumnarStore` wholesale would also disable `__init__`'s call, leave
+    the section storeless and make every check return on its first line -- a
+    false pass shaped exactly like a fix. The store is already built by the time
+    the window is up, so patching the bound method on this one section reverts
+    exactly the call this fixup added and nothing else.
+
+    The section is repaired again at the end. Left drifted, it takes the
+    `main_window` fixture's own teardown down with it, which reports as an error
+    beside the pass and buries the result.
+    """
+    local_series_settings(main_window)
+    field = main_window.field
+    section = field.section
+    name = next(
+        c for c in sorted(section.contours, key=str)
+        if section.contours[c]
+        and all(len(t.points) >= 3 for t in section.contours[c])
+    )
+    section.save()
+
+    assert section._columns is not None, "the store was never built"
+    original = type(section).resyncColumnarStore
+    monkeypatch.setattr(section, "resyncColumnarStore", lambda: None)
+
+    section.selected_traces = list(section.contours[name])
+    field.smoothTraces()
+
+    with pytest.raises(ColumnarDualWriteMismatch) as caught:
+        section.save()
+
+    assert "points:" in str(caught.value), (
+        f"the drift was caught but not attributed to `points`: {caught.value}"
+    )
+
+    ## Hand the section back consistent, or teardown's save raises too.
+    original(section)
+
+
+def test_merging_tags_across_a_selection_leaves_the_section_saveable(
+    real_section
+):
+    """`FieldWidgetTrace.cutTrace`'s tag merge -- the TWELFTH site.
+
+    `traces = self.section.selected_traces.copy()` copies the LIST; the traces
+    in it are the section's own. `example_trace.tags.add(tag)` then writes a
+    store-backed column in place, and three refusal paths return before
+    `deleteTraces` would have dropped the drifted rows.
+
+    Doubly invisible before this round: the write is an in-place mutation of the
+    column's own container -- neither an assignment to a column nor a call to a
+    `Trace` method -- and the reach is `selected_traces`, which the predicate
+    did not know was a route to a section's traces.
+
+    Driven at the mechanism: the selection, the receiver and the in-place
+    `tags.add` are the widget's own, and this is the test that shows the same
+    state both raises without the repair and saves with it. It does NOT pin the
+    production repair -- it never calls `cutTrace`, so deleting the call in
+    `field_widget_2_trace.py` leaves it green.
+    `test_a_refused_scalpel_cut_leaves_the_section_saveable` above is the one
+    that goes red for that.
+    """
+    name = next(
+        c for c in sorted(real_section.contours, key=str)
+        if len(real_section.contours[c]) >= 2
+    )
+    real_section.selected_traces = list(real_section.contours[name][:2])
+    real_section.selected_traces[1].tags = {"a_cut_tag"}
+    real_section.resyncColumnarStore()
+
+    traces = real_section.selected_traces.copy()
+    example_trace = traces[0]
+    for trace in traces[1:]:
+        for tag in trace.tags:
+            example_trace.tags.add(tag)
+
+    ## Without the repair this raises, naming `tags`.
+    with pytest.raises(ColumnarDualWriteMismatch) as caught:
+        real_section.save()
+    assert "tags:" in str(caught.value)
+
+    ## With it, the same state saves.
+    real_section.resyncColumnarStore()
+    real_section.save()
+    assert "a_cut_tag" in real_section.contours[name][0].tags
+
+
+def test_deleting_an_object_leaves_every_touched_section_consistent(real_series):
+    """`Series.deleteObjects` drops a contour key from outside `Section`.
+
+    It also removes from a list it is iterating, so `removeTrace` is not reached
+    for every trace of a multi-trace contour. Either alone leaves rows in the
+    store for traces the object model no longer has.
+    """
+    name = sorted(real_series.data["objects"])[0]
+
+    touched = [
+        snum for snum, section in real_series.enumerateSections(show_progress=False)
+        if name in section.contours and len(section.contours[name])
+    ]
+    assert touched, "the fixture object is on no section"
+
+    real_series.deleteObjects([name])
+
+    for snum in touched:
+        section = real_series.loadSection(snum)
+        assert name not in section.contours or section.contours[name].isEmpty()
+        section._assertColumnsMatchObjectModel("after deleteObjects")
+        ## And the section takes another edit without raising, which is what the
+        ## user does next and what used to fail.
+        section.addTrace(_aTrace(section))
+        section.save()
+
+
+def test_a_section_edited_after_an_undo_does_not_raise(real_section, real_series):
+    """The undo restore, driven through `SectionStates` itself.
+
+    `undoState` replaces `section.contours` from outside `Section` -- the whole
+    dict on the single-state branch, one key at a time on the multi-state one --
+    and both branches end in the repair. Without it the `addTrace` at the bottom
+    of this test raises `ColumnarDualWriteMismatch`, which is a crash in the
+    user's face on the first stroke after Ctrl+Z.
+    """
+    from PyReconstruct.modules.backend.func.state_manager import SectionStates
+
+    states = SectionStates(real_section, real_series)
+
+    before = len(real_section.tracesAsList())
+    states.addState(real_section, real_series)
+    real_section.addTrace(_aTrace(real_section, name="undone_by_the_dual_write_test"))
+    assert len(real_section.tracesAsList()) == before + 1
+
+    states.undoState(real_section, real_series)
+    assert len(real_section.tracesAsList()) == before, (
+        "the undo restored nothing, so this test is not exercising the rebind"
+    )
+
+    ## The rebind really did replace the trace objects: this is the state that
+    ## used to leave `_column_rows` keyed on discarded traces.
+    real_section._assertColumnsMatchObjectModel("after an undo")
+    assert set(map(id, real_section._column_rows)) == {
+        id(t) for t in real_section.tracesAsList()
+    }
+
+    ## The next real edit, which is what actually broke.
+    real_section.addTrace(_aTrace(real_section, name="the_stroke_after_the_undo"))
+    real_section.save()
+
+
+def test_a_section_edited_after_a_redo_does_not_raise(real_section, real_series):
+    """Same for `redoState`, which restores contour keys one at a time.
+
+    Asserted on the store rather than on how much the redo restored: what this
+    test owns is that the rebind leaves a consistent store and a section that
+    accepts another edit. The fixture's redo happens to restore the pre-edit
+    contours here, and pinning that number would make this test fail for
+    reasons that have nothing to do with the dual write.
+    """
+    from PyReconstruct.modules.backend.func.state_manager import SectionStates
+
+    states = SectionStates(real_section, real_series)
+
+    states.addState(real_section, real_series)
+    real_section.addTrace(_aTrace(real_section, name="redone_by_the_dual_write_test"))
+    states.undoState(real_section, real_series)
+    assert states.redo_states, "nothing to redo, so this test proves nothing"
+
+    states.redoState(real_section, real_series)
+
+    real_section._assertColumnsMatchObjectModel("after a redo")
+    assert set(map(id, real_section._column_rows)) == {
+        id(t) for t in real_section.tracesAsList()
+    }
+    real_section.addTrace(_aTrace(real_section, name="the_stroke_after_the_redo"))
+    real_section.save()
+
+
+def test_the_generation_counter_survives_a_rebuild(real_section):
+    """A resync must not restart the counter at 0.
+
+    `SectionColumns`' own docstring says the generation "is monotonic and is
+    never reset by anything", because a cache stores the value it was built at
+    and compares. A rebuild makes a NEW store, so without carrying the count
+    forward an undo would hand every cache a generation below the one it holds
+    and every cache would conclude it was current -- the stale-render bug class
+    the counter exists to prevent, arriving through the repair. Unreachable
+    under the gate, because nothing outside a test rebuilt a store; live now.
+    """
+    for _ in range(5):
+        real_section.addTrace(_aTrace(real_section))
+    before = real_section._columns.generation
+    assert before > 0, "the setup did not move the counter at all"
+
+    real_section.resyncColumnarStore()
+
+    ## `>`, not `>=`. Equality is the failure this counter exists to prevent:
+    ## a cache holding `before` and reading `before` back off a store that was
+    ## thrown away and rebuilt underneath it concludes it is current. The
+    ## rebuild itself has to be the advance.
+    assert real_section._columns.generation > before, (
+        f"the rebuilt store came back at generation "
+        f"{real_section._columns.generation}, not above the {before} a cache "
+        "may already hold"
+    )
+    ## And it keeps moving from there.
+    moved = real_section._columns.generation
+    real_section.addTrace(_aTrace(real_section))
+    assert real_section._columns.generation > moved
+
+
+def test_the_generation_advances_even_when_the_resync_empties_the_section(
+    real_section
+):
+    """The case that seeding with `previous` rather than `previous + 1` missed.
+
+    `fromSection` bumps once per appended row, so a rebuild seeded with the
+    outgoing count only moves past it if it has at least one row to append. A
+    resync that produces ZERO rows would not advance at all -- and this is not
+    a contrived shape: `Series.deleteObjects` deletes every contour key on a
+    section and then calls the repair, so deleting the last object on a section
+    resyncs an empty one. A cache holding the old generation would then read
+    the same value back off a store that had just been emptied and conclude it
+    was current, which is exactly the stale-render class the counter exists to
+    prevent, arriving through the repair rather than the fault.
+    """
+    for _ in range(5):
+        real_section.addTrace(_aTrace(real_section))
+    before = real_section._columns.generation
+    assert before > 0, "the setup did not move the counter at all"
+
+    ## `Series.deleteObjects`' own sequence: drop every contour key from
+    ## outside `Section`, then repair.
+    for name in list(real_section.contours):
+        del real_section.contours[name]
+    real_section.resyncColumnarStore()
+
+    assert len(real_section._columns) == 0, "the setup did not empty the store"
+    assert real_section._columns.generation > before, (
+        f"an emptying resync left the generation at "
+        f"{real_section._columns.generation}, so a cache holding {before} "
+        "would conclude it was current against a store that now has no rows"
+    )
+
+
+def test_the_whole_section_check_runs_on_save(real_section):
+    """The coarse net's new home.
+
+    Per-mutation checking is targeted at the row that moved and cannot see drift
+    caused from outside the class. `save()` is the one non-per-frame path that
+    is already O(section), so the whole-section comparison runs there -- one
+    save cycle after any such drift at worst, rather than never.
+    """
+    trace = _anyTrace(real_section)
+    real_section.contours[trace.name].remove(trace)  # out of class, no hook
+
+    with pytest.raises(ColumnarDualWriteMismatch) as caught:
+        real_section.save()
+
+    assert "save" in str(caught.value)
+
+
+def test_a_shadow_mismatch_no_longer_costs_the_save(real_section):
+    """Divergence is still loud, but it no longer vetoes the user's data.
+
+    THE ORDERING, AND WHY IT CHANGED
+    --------------------------------
+    The whole-section comparison used to run BEFORE the write, so a section
+    whose store disagreed with its object model raised instead of being
+    written. That inverted what the two representations are. The object model
+    is authoritative and nothing reads the store, so a bookkeeping fault in a
+    shadow copy was refusing to persist the model that owns every value: the
+    user's edits were valid and `getDict()` would have serialized them
+    correctly. Worse, it was not transient -- nothing on the failing path
+    repairs the store, so the refusal recurred on every later save and the
+    section stayed unsaveable for the rest of the session. F1's `findFlag` was
+    severe precisely because of this.
+
+    So the comparison moved to after the write. This pins both halves of what
+    that is supposed to mean, because either alone would be the wrong change:
+
+      1. the valid data DOES reach disk, and
+      2. the mismatch is STILL raised, naming the divergent column.
+
+    What the check compares is untouched. Only when the user's data lands
+    relative to the report changed.
+    """
+    import json
+
+    ## A legitimate edit through the normal path, so the object model is valid
+    ## and `getDict()` would serialize it correctly.
+    added = _aTrace(real_section, name="reaches_disk_probe")
+    real_section.addTrace(added, log_event=False)
+
+    ## And an out-of-class in-place write, the `findFlag`/`hideObjects` shape,
+    ## which drifts the shadow copy without touching the object model's
+    ## correctness.
+    victim = _anyTrace(real_section)
+    victim.setHidden(not victim.hidden)
+
+    with pytest.raises(ColumnarDualWriteMismatch) as caught:
+        real_section.save()
+
+    ## (2) still loud, and still attributed.
+    message = str(caught.value)
+    assert "hidden:" in message, (
+        f"the divergence was not reported as a `hidden` mismatch: {message}"
+    )
+    assert "save" in message
+
+    ## (1) and the user's work is on disk anyway.
+    with open(real_section.filepath, "rb") as f:
+        written = json.loads(f.read().decode())
+
+    assert "reaches_disk_probe" in written["contours"], (
+        "a shadow-copy mismatch still vetoed the write, so the user's valid "
+        "edit did not reach disk"
+    )
+    ## Including the out-of-class edit itself, which the object model owns and
+    ## which is exactly what the old ordering discarded.
+    on_disk = written["contours"][victim.name]
+    assert any(
+        Trace.fromList(list(entry), victim.name).hidden == victim.hidden
+        for entry in on_disk
+    ), "the in-place `hidden` edit did not reach disk"
+
+    ## And the section is not poisoned for the session: the repair works and
+    ## the very next save is clean, rather than raising forever.
+    real_section.resyncColumnarStore()
+    real_section.save()
+
+
+# =============================================================================
+# Track C: a normal consumer can reach the store
+# =============================================================================
+
+def test_a_normal_consumer_reaches_a_live_store_on_every_section(real_series):
+    """What the decision was made to unblock, checked as a consumer would.
+
+    No environment set, no gate, nothing test-only: load the series the way any
+    code in the application does and every section answers with a store that
+    agrees with its contours. This is the precondition the first consumer flip
+    (`svg_conversion.py`) found missing, and the whole reason D2 was reopened.
+
+    Deliberately NOT flipping a consumer here -- that is separate work, and it
+    is separately blocked on `SectionColumns.contourNames()` being sorted-only
+    where `Section.contours` is insertion-ordered, which this change does not
+    address and does not claim to.
+    """
+    from PyReconstruct.modules.datatypes.columnar_store import ContourView
+
+    checked = 0
+    for snum, section in real_series.enumerateSections(show_progress=False):
+        store = section._columns
+        assert store is not None, f"section {snum} has no store"
+        assert len(store) == len(section.tracesAsList())
+
+        for name in store.contourNames():
+            view = ContourView(store, name)
+            assert len(view) == len(section.contours[name])
+
+            ## Actually READ through the view, not only measure it. Taking the
+            ## view's length proves the store is arity-consistent; it does not
+            ## prove a consumer can get a value out, which is the thing Track C
+            ## needs and the thing the `svg_conversion.py` flip attempt found
+            ## missing. So read a row's name and its coordinates back through
+            ## the view and require them to agree with the object model.
+            for index, trace in enumerate(section.contours[name]):
+                row = view[index]
+                assert row.name == trace.name
+                assert len(row.points) == len(trace.points)
+                checked += 1
+
+    assert checked > 0, "the fixture series produced no trace to read"
+
+
+def test_the_store_ordering_mismatch_is_still_open_and_still_reproduces(
+    real_section
+):
+    """The known, deliberately unfixed difference, pinned so it stays visible.
+
+    `SectionColumns.contourNames()` is sorted; `Section.contours` is insertion
+    ordered. The first attempted consumer flip found this and it is his call,
+    not this change's -- so it is recorded as a live difference rather than
+    quietly worked around. If somebody fixes it, this test fails and says why.
+    """
+    real_section.addTrace(_aTrace(real_section, name="aaa_added_last"))
+
+    object_order = list(real_section.contours)
+    store_order = real_section._columns.contourNames()
+
+    assert object_order[-1] == "aaa_added_last"
+    assert store_order[0] == "aaa_added_last"
+    assert object_order != store_order, (
+        "the store's contour ordering now matches the object model's, so the "
+        "open ordering question was answered somewhere -- update the rewiring "
+        "spec and delete this test"
+    )
+
+
+# =============================================================================
+# The narrowing itself, pinned so that putting it back is a visible act
+# =============================================================================
+#
+# Two places gave up whole-section checking when this became a production path,
+# both because of the same measurement (`autoseg745`: a whole-section check is
+# ~81 ms on the median section, ~127 ms on the busiest, against a 0.002 ms
+# `addTrace`). Neither is a quiet loss: each is asserted here, so a change that
+# restores the old scope turns these red and reopens the cost question with a
+# reviewer looking at it.
+
+def test_a_mutation_does_not_materialize_the_whole_section(real_section, monkeypatch):
+    """The per-mutation check touches one row, not every row.
+
+    `materializeContours` is the O(section) read; a single-row mutation must not
+    reach it. This is the assertion that makes the per-mutation cost a property
+    of the code rather than a claim in a comment.
+    """
+    calls = []
+    real = SectionColumns.materializeContours
+
+    def counted(self):
+        calls.append(1)
+        return real(self)
+
+    monkeypatch.setattr(SectionColumns, "materializeContours", counted)
+
+    trace = _aTrace(real_section)
+    real_section.addTrace(trace)
+    real_section.hideTraces([trace], hide=True)
+    real_section.closeTraces([trace], closed=False)
+    real_section.removeTrace(trace)
+
+    assert calls == [], (
+        f"{len(calls)} whole-section materializations for four single-row "
+        "mutations; the per-mutation check went back to O(section)"
+    )
+
+
+def test_building_a_store_does_not_run_the_whole_section_comparison(
+    real_series, monkeypatch
+):
+    """A store is built at every section load, so the build cannot be O(section)
+    twice.
+
+    `fromSection` copies values straight out of the object model, so the only
+    divergence a build-time value comparison can find is a bug in the store's own
+    encode/decode -- which does not vary section to section and which
+    `test_columnar_store_parity.py` covers directly. Running it per load cost a
+    measured 11x on section load and 8.2x on a full-series pass.
+    """
+    calls = []
+    real = SectionColumns.materializeContours
+
+    def counted(self):
+        calls.append(1)
+        return real(self)
+
+    monkeypatch.setattr(SectionColumns, "materializeContours", counted)
+
+    section = real_series.loadSection(sorted(real_series.sections)[0])
+    assert section._columns is not None
+    assert calls == [], "building a store materialized the whole section"
+
+
+def test_building_a_store_still_checks_the_row_arity(real_section, monkeypatch):
+    """What the build DOES still check, and why it is worth its O(contours).
+
+    The row map is built by zipping each contour's traces against the rows the
+    store reports for that contour. If those ever stop lining up -- a change to
+    `fromSection`'s walk order, a contour index that drops a row -- every trace
+    on the section is silently mapped to the wrong row, and every later check
+    then compares the wrong pair. That is a per-section question, so it stays.
+    """
+    real = SectionColumns.rowsForContour
+
+    def short(self, name):
+        rows = real(self, name)
+        return rows[:-1] if len(rows) > 1 else rows
+
+    monkeypatch.setattr(SectionColumns, "rowsForContour", short)
+
+    with pytest.raises(ColumnarDualWriteMismatch) as caught:
+        real_section.resyncColumnarStore()
+
+    assert "building the store" in str(caught.value)

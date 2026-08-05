@@ -354,7 +354,8 @@ class SectionColumns():
     _live : list[bool]
     _index : dict[str, list[int]]
 
-    def __init__(self, section_number: int, coordinates=None, id_issuer=None):
+    def __init__(self, section_number: int, coordinates=None, id_issuer=None,
+                 generation: int = 0):
         """Create an empty store for one section.
 
             Params:
@@ -366,6 +367,20 @@ class SectionColumns():
                     `datatypes/trace_id.TraceIDIssuer` is the intended
                     production issuer. `None` means rows carry no id, which is
                     the state of every section in the shipped application.
+                generation (int): the count this store's monotonic generation
+                    resumes from. Defaults to 0, a store with no history. The
+                    one caller that passes anything else is
+                    `Section.resyncColumnarStore`, which throws a store away and
+                    builds a replacement -- an undo, a redo, an import, an
+                    object deletion. The counter is documented above as
+                    monotonic and never reset by anything, and a replacement
+                    restarting at 0 would hand every cache a generation below
+                    the one it already holds, so every cache would conclude it
+                    was current: the stale-render bug class the counter exists
+                    to prevent, arriving through the repair rather than the
+                    fault. Under the test-only gate nothing rebuilt a store
+                    outside a test and nothing read the counter at all, so this
+                    could not bite; always-on plus a consumer makes it live.
         """
         self.section_number = section_number
         self._coordinates = coordinates if coordinates is not None else SegmentedCoordinates()
@@ -385,13 +400,14 @@ class SectionColumns():
         ## The per-contour index: name -> [row, ...] in within-contour order.
         self._index = {}
 
-        self._generation = 0
+        self._generation = generation
         self.clearTracking()
 
     # --- construction from the object model ---------------------------------
 
     @classmethod
-    def fromSection(cls, section, coordinates=None, id_issuer=None):
+    def fromSection(cls, section, coordinates=None, id_issuer=None,
+                    generation: int = 0):
         """Build a store from a `Section`, in the section's own contour order.
 
         Duck-typed on `.n` and `.contours` rather than importing `Section`, which
@@ -403,10 +419,13 @@ class SectionColumns():
             Params:
                 section: anything with `.n` and `.contours` (name -> iterable of
                     traces)
+                generation (int): forwarded to `__init__`; see the note there on
+                    why a rebuilt store must not restart the counter at 0
             Returns:
                 (SectionColumns): a store holding every trace of the section
         """
-        store = cls(section.n, coordinates=coordinates, id_issuer=id_issuer)
+        store = cls(section.n, coordinates=coordinates, id_issuer=id_issuer,
+                    generation=generation)
         for name in sorted(section.contours, key=str):
             for trace in section.contours[name]:
                 store.appendRow(

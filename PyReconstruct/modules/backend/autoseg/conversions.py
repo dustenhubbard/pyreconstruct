@@ -649,9 +649,18 @@ def exportTraces(data_zg,
     # delete group if requested
     if not is_group:
         if del_group:
+            deleted = False
             for cname in series.object_groups.getGroupObjects(del_group):
                 if cname in section.contours:
                     del(section.contours[cname])
+                    deleted = True
+            if deleted:
+                # Contours dropped from outside `Section`, so the columnar store
+                # still holds their rows and its row map still keys on their
+                # traces. Rebuild before the addTrace loop below, whose own
+                # consistency check would otherwise raise on drift this deletion
+                # caused rather than on anything the loop did.
+                section.resyncColumnarStore()
             # add the traces of interest back in
             for trace in traces:
                 trace.setHidden(True)
