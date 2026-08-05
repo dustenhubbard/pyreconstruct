@@ -355,7 +355,8 @@ class SectionStates():
         # just discarded, and its row map is keyed on them. Rebuild it from the
         # result. Not optional -- every `Section` carries a store as of
         # 2026-08-05, and without this the first edit after an undo raises
-        # `ColumnarDualWriteMismatch` in the user's face.
+        # `ColumnarDualWriteMismatch` in the user's face. D11's rebuild at
+        # `save()` does not cover this: the edit comes before the save.
         section.resyncColumnarStore()
 
     def redoState(self, section : Section, series : Series) -> set:
