@@ -276,6 +276,138 @@ def test_copy_scalar_flag_reassignment_is_independent():
     assert orig.hidden is False
 
 
+def test_copy_carries_every_field():
+    """copy() names every field, so none may be dropped as fields are added.
+
+    ``copy()`` used to be ``copy_trace.__dict__ = self.__dict__.copy()``, which
+    could not drop a field because it never named one. Now that it names them,
+    a field added to ``__init__`` and not to ``copy`` would silently come back
+    as the constructor default instead of the original's value. Comparing the
+    instance dicts catches that without this test having to list the fields
+    itself.
+
+    Comparing the dicts is necessary but *not sufficient*, which is why the
+    fixture check below exists. ``copy()`` builds its result from
+    ``Trace("", [0, 0, 0])``, so a dropped field arrives on the copy holding
+    that trace's value for it. If ``orig`` also happens to hold that value --
+    which is exactly what happens to a field this test was never updated to
+    poke -- then both sides agree and the comparison passes while the field is
+    being silently dropped. A ninth field added to ``__init__`` with a constant
+    default and left out of ``copy()`` was confirmed to slip through the two
+    ``vars()`` assertions alone.
+
+    So the fixture is checked before it is used: every field ``orig`` carries
+    must differ from what ``copy()``'s throwaway constructor call produces for
+    it. A new field turns this test red until somebody gives it a
+    distinguishing value here, at which point the dict comparison can see it.
+    That is what makes the forward guarantee in the first paragraph real rather
+    than conditional on the new field's default being an interesting one.
+    """
+    orig = make_square_trace(name="orig", color=(1, 2, 3), closed=False)
+    orig.negative = True
+    orig.hidden = True
+    orig.tags = {"a", "b"}
+    orig.fill_mode = ("solid", "unselected")
+
+    # The same throwaway `copy()` starts from, so its values are precisely the
+    # ones a dropped field would come back holding.
+    default = Trace("", [0, 0, 0])
+    for field, value in vars(orig).items():
+        assert field in vars(default), (
+            f"{field} is not a field a Trace constructor produces; this test "
+            f"compares against Trace(\"\", [0, 0, 0]) and cannot vouch for it"
+        )
+        assert value != vars(default)[field], (
+            f"{field} sits at its constructor default in this fixture, so a "
+            f"copy() that dropped it would still compare equal and this test "
+            f"would not notice -- give {field} a distinct value above"
+        )
+
+    c = orig.copy()
+
+    # every attribute the original carries, and no others
+    assert vars(c).keys() == vars(orig).keys()
+    # and the same value under each
+    assert vars(c) == vars(orig)
+
+
+def test_copy_does_not_carry_foreign_attributes():
+    """A copy holds a trace's fields, not whatever was stuck on the object.
+
+    This is the one deliberate difference from the old
+    ``copy_trace.__dict__ = self.__dict__.copy()``, and it is the point of
+    naming the fields: an attribute nothing in ``Trace`` declares is not part of
+    a trace, and cloning it made the copy depend on ``Trace`` having an instance
+    dict shaped exactly like its fields. Nothing in the codebase attaches such
+    an attribute to a ``Trace`` (the Phase 1 call-site audit swept for it), so
+    this pins the new behavior rather than protecting a caller.
+    """
+    orig = make_square_trace()
+    orig.some_caller_attribute = "should not survive the copy"
+
+    c = orig.copy()
+
+    assert not hasattr(c, "some_caller_attribute")
+    assert orig.some_caller_attribute == "should not survive the copy"
+
+
+def test_copy_shares_color_and_fill_mode_by_reference():
+    """color and fill_mode are shared, not copied -- as they always were.
+
+    Both are tuples for a trace built in memory but lists for one read off disk
+    (JSON has no tuple), so both can be mutable. The dict copy shared them and
+    the explicit copy shares them too; deepening either one here would be a
+    behavior change wearing a refactor's clothes.
+    """
+    orig = make_square_trace(color=[1, 2, 3])
+    orig.fill_mode = ["solid", "selected"]
+
+    c = orig.copy()
+
+    assert c.color is orig.color
+    assert c.fill_mode is orig.fill_mode
+
+
+def test_copy_shares_point_tuples_inside_its_own_list():
+    """points is a shallow copy: new list, same point objects inside it."""
+    shared_point = (4, 5)
+    orig = make_square_trace()
+    orig.points = [shared_point]
+
+    c = orig.copy()
+
+    assert c.points is not orig.points
+    assert c.points[0] is orig.points[0]
+
+
+def test_copy_preserves_a_name_the_setter_would_change():
+    """The copy reproduces the stored name rather than re-normalizing it.
+
+    ``copy()`` assigns ``_name`` directly. Were it to assign through the ``name``
+    property, the setter's ``normalizeObjectName`` would run a second time on a
+    value that has already been through it once. That is a no-op for every name
+    the setter can produce, so this pokes ``_name`` to hold a value the setter
+    would rewrite, which is exactly what the old dict copy would have carried
+    through untouched.
+    """
+    orig = make_square_trace()
+    orig._name = "not, normalized"
+
+    c = orig.copy()
+
+    assert c.name == "not, normalized"
+
+
+def test_copy_of_unnamed_trace():
+    """A None name survives the copy (the setter admits None; so must copy)."""
+    orig = make_square_trace()
+    orig.name = None
+
+    c = orig.copy()
+
+    assert c.name is None
+
+
 # ---------------------------------------------------------------------------
 # getBounds()  (hand-derived expected values)
 # ---------------------------------------------------------------------------
