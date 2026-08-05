@@ -5,7 +5,7 @@ SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd $SCRIPT_DIR
 
 # Git clone repo
-git clone https://github.com/SynapseWeb/PyReconstruct
+git clone https://github.com/dustenhubbard/PyReconstruct
 
 # Switch to neu466g branch
 cd ./PyReconstruct
@@ -16,7 +16,7 @@ chmod u+x ./launch/mac/run.command
 # Make virtual environment and install dependencies
 python -m venv env
 source ./env/bin/activate
-pip install -r ./PyReconstruct/requirements.txt
+pip install -r ./requirements.txt
 deactivate
 
 echo "Installation complete. Please close this window."
