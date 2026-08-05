@@ -1,8 +1,10 @@
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QLabel, 
-    QWidget, 
-    QDialog, 
-    QGridLayout, 
+    QLabel,
+    QWidget,
+    QDialog,
+    QGridLayout,
+    QLineEdit,
     QPushButton,
     QDialogButtonBox,
     QVBoxLayout,
@@ -12,7 +14,79 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QKeySequence, QAction
 
 from PyReconstruct.modules.datatypes import Series
+from PyReconstruct.modules.gui.modifiers import (
+    MODIFIER_KEYS,
+    canonical,
+    display_label,
+    modifiers_to_string,
+    resolve,
+    usable_modifiers,
+)
 from PyReconstruct.modules.gui.utils import notify
+
+
+#: Rows whose binding is a held modifier combination rather than a key sequence.
+#: Keyed by the option name, valued by the placeholder shown when it is unbound.
+MODIFIER_ROWS = {"focus_edit_modifier": "(no modifier: click alone edits nothing)"}
+
+
+class ModifierEdit(QLineEdit):
+    """Capture whatever modifier combination the user holds.
+
+    `QKeySequenceEdit` cannot do this. It drops a modifier-only key press on the
+    floor and waits for a real key, and the strings that look like bare modifiers
+    parse to *key codes* rather than modifier flags. `gui/modifiers.py` records
+    both measurements. So the capture is written out here: accumulate the flags
+    while modifier keys go down, commit the accumulation when one comes back up.
+
+    Read-only, so the box cannot be typed into; it is filled by holding keys.
+    """
+
+    def __init__(self, value, parent=None, placeholder=""):
+        super().__init__(parent)
+        self.setReadOnly(True)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setPlaceholderText(placeholder)
+        self._held = Qt.NoModifier
+        self.setModifierString(value)
+
+    def modifierString(self) -> str:
+        """The canonical stored form of the current binding."""
+        return self._value
+
+    def setModifierString(self, value):
+        """Set the binding, dropping anything this platform cannot reach."""
+        self._value = canonical(value)
+        self.setText(display_label(self._value))
+
+    def keyPressEvent(self, event):
+        """Accumulate. A non-modifier key is not a binding here, so it passes."""
+        flag = MODIFIER_KEYS.get(event.key())
+        if flag is None:
+            event.ignore()
+            return
+
+        # `usable_modifiers()` is what makes Meta unavailable on macOS rather
+        # than merely discouraged: the flag never enters the accumulation, so
+        # holding physical Control there leaves the existing binding alone.
+        held = (flag | event.modifiers()) & usable_modifiers()
+        if not held:
+            event.ignore()
+            return
+
+        self._held |= held
+        self.setText(display_label(modifiers_to_string(self._held)))
+        event.accept()
+
+    def keyReleaseEvent(self, event):
+        """Commit what was accumulated, once the user starts letting go."""
+        if event.key() not in MODIFIER_KEYS or not self._held:
+            event.ignore()
+            return
+
+        self.setModifierString(modifiers_to_string(self._held))
+        self._held = Qt.NoModifier
+        event.accept()
 
 
 class ShortcutsDialog(QDialog):
@@ -29,6 +103,7 @@ class ShortcutsDialog(QDialog):
 
         grid = QGridLayout()
         self.act_widgets = {}
+        self.modifier_widgets = {}
 
         for row, item in enumerate(help_shortcuts):
             if item is None:  # spacer
@@ -41,7 +116,12 @@ class ShortcutsDialog(QDialog):
                 grid.addWidget(l, row, 0)
             else:  # shortcut item
                 sc, desc = tuple(item)
-                if sc.endswith("_act") and getattr(self.mainwindow, sc):
+                if sc in MODIFIER_ROWS:
+                    w = ModifierEdit(
+                        self.effectiveBinding(sc), self, MODIFIER_ROWS[sc]
+                    )
+                    self.modifier_widgets[sc] = w
+                elif sc.endswith("_act") and getattr(self.mainwindow, sc):
                     w = QKeySequenceEdit(self.series.getOption(sc), self)
                     w.setClearButtonEnabled(True)
                     self.act_widgets[sc] = w
@@ -70,11 +150,44 @@ class ShortcutsDialog(QDialog):
         vlayout.addWidget(buttonbox)
 
         self.setLayout(vlayout)
-    
+
+    def effectiveBinding(self, name) -> str:
+        """The modifier binding the user is actually getting, canonical form.
+
+        Deliberately not the raw stored value. `resolve` is what `focus_edit_p`
+        tests the click against, and it treats a binding that cannot fire on
+        *this* platform as unreachable-so-fall-back rather than as off; only a
+        deliberately empty binding means off. Seeding the row from the raw value
+        instead breaks that distinction twice over, because `canonical` drops an
+        unreachable flag rather than falling back:
+
+        1. the row displays empty while the edit click is still working, so the
+           dialog misreports the live state; and
+        2. `exec` harvests every row whether or not the user touched it, so
+           pressing OK on that untouched empty row persists `""` — which
+           `resolve` then correctly reads as a deliberate, permanent unbinding.
+           A stored `"meta"`, which on macOS is merely unreachable, becomes a
+           silently dead edit click.
+
+        Seeding from `resolve` fixes both: the row shows the fallback the user
+        is really getting, and an untouched OK writes that same binding back.
+        """
+        return modifiers_to_string(
+            resolve(
+                self.series.getOption(name),
+                self.series.getOption(name, get_default=True),
+            )
+        )
+
     def resetDefaults(self):
         """Reset the defaults for all fields."""
         for act, w in self.act_widgets.items():
             w.setKeySequence(self.series.getOption(act))
+        for name, w in self.modifier_widgets.items():
+            # `effectiveBinding`, not the raw option, for the same reason the
+            # constructor uses it: this button is a second way to land an
+            # unreachable stored value in the row, and the row is harvested on OK.
+            w.setModifierString(self.effectiveBinding(name))
     
     def accept(self):
         """Called when user accepts the dialog."""
@@ -109,6 +222,12 @@ class ShortcutsDialog(QDialog):
             shortcuts_dict = {}
             for act_name, keyseq in self.act_widgets.items():
                 shortcuts_dict[act_name] = keyseq.keySequence().toString()
+            # Modifier rows ride the same dict, and `resetShortcuts` stores them
+            # without trying to hang them off a QAction. They are deliberately
+            # not checked for collisions above: a held modifier is not a key
+            # sequence and cannot duplicate one.
+            for name, w in self.modifier_widgets.items():
+                shortcuts_dict[name] = w.modifierString()
             return shortcuts_dict, True
         else:
             return None, False
@@ -146,6 +265,7 @@ help_shortcuts = [
     None,
     "View",
     ("focus_act", "Focus mode"),
+    ("focus_edit_modifier", "Hold and click in focus mode to split or incorporate a trace"),
     ("hideall_act", "Hide trace layer"),
     ("showall_act", "Show all traces (ignore hidden)"),
     ("hideimage_act", "Hide image"),
