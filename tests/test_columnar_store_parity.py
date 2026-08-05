@@ -52,6 +52,7 @@ behind.
 import ast
 import inspect
 import json
+import random
 import shutil
 from pathlib import Path
 
@@ -2340,14 +2341,16 @@ def test_membership_is_object_identity_on_a_contour_and_row_identity_on_a_view()
 #      `overlaps` (the geometry family, deferred to the batched coordinate pass)
 #      and `mergeTags` (outside the eight-field surface).
 #
-#   3. `importTraces` ends by rebinding `self.traces` to a REORDERED list. The
-#      store has no PURPOSE-BUILT insert, reorder or move -- but it can express
-#      one anyway: `setAttribute(row, "name", ...)` appends the row at the end
-#      of its destination contour, so a rename away and back is a move-to-end,
-#      and n-1 of those realize any permutation with no renumbering and no held
-#      view invalidated. The cost is that the temporary name leaks into
-#      `modified_contours`. Both routes are measured side by side, and D9 asks
-#      about the leak rather than about a missing capability.
+#   3. LIFTED. `importTraces` ends by rebinding `self.traces` to a REORDERED
+#      list, and the store now has a purpose-built way to say so:
+#      `reorderContour(name, rows)`, built for D9. What it replaces is a rename
+#      round-trip -- `setAttribute(row, "name", ...)` appends the row at the end
+#      of its destination contour, so a rename away and back was a move-to-end,
+#      and n-1 of those realized any permutation with no renumbering and no held
+#      view invalidated -- whose one cost was that the scratch name leaked into
+#      `modified_contours`, and so into the scope of an undo snapshot. The round
+#      trip is retired: the tests below keep it only to measure that the two
+#      routes reach the same order and that only one of them stays quiet.
 #
 #   4. That rebound list may hold traces belonging to the OTHER contour, which
 #      is a contour of a different section of a different series with a
@@ -2839,33 +2842,41 @@ def _entryPointsThatReorderCleanly():
     return found
 
 
-def test_no_entry_point_reorders_a_contour_cleanly():
-    """Blocker 3's tripwire, at the level of capability rather than of naming.
+def test_exactly_one_entry_point_reorders_a_contour_cleanly():
+    """Blocker 3's tripwire, inverted by D9's answer. It now names the API.
 
-    The first pass asserted this by grepping `dir(SectionColumns)` for the
-    substrings "insert", "reorder", "move" and "swap". That is a pin on names,
-    not on what the store can do: a genuine within-contour reorder planted under
-    the name `reindexContour` passed it, and the whole suite stayed green
-    (review-274 F3). The two tests directly below plant exactly that mutation,
-    and two more that escape by *signature* rather than by name (review-274 N3),
-    and prove this probe fires on all three -- so "behavioral" is demonstrated
-    here rather than asserted.
+    This assertion used to be `found == []`, with the message "SectionColumns
+    can now reorder a contour cleanly ... D9 has been answered by an
+    implementation". D9 has been answered by an implementation, so the tripwire
+    becomes the acceptance test for it -- and it is a good one precisely because
+    it was not written for `reorderContour`: it was written to catch a reorder
+    *whatever it was named and whatever its signature*, so what it certifies
+    here is capability, not spelling. "Cleanly" is still `_entryPointsThatReorder
+    Cleanly`'s own definition, unchanged: after ONE call the contour holds the
+    same rows in a different order, every one of them is still live, and nothing
+    foreign has entered the tracking sets.
 
-    What the probe cannot reach, and deliberately: the two reorder routes that
-    already exist. Destroy-and-rebuild takes many calls and renumbers, and the
-    `setAttribute` rename round-trip takes two calls and leaks a name. Each has
-    its own test below, measuring its own cost. This one is about a *clean,
-    single-call* reorder, which is the thing that does not exist and whose
-    arrival would lift blocker 3.
+    Exactly one, and that is the second half of the assertion. The decision was
+    to build a reorder entry point and retire the round trip, not to grow a
+    family of them; a second clean reorder arriving under some other name would
+    mean the store had two ways to say one thing, which is what the probe
+    catches for free.
+
+    What the probe still cannot reach, and deliberately: the two routes that
+    predate the entry point. Destroy-and-rebuild takes many calls and renumbers;
+    the `setAttribute` rename round-trip takes two calls and leaks a name. Each
+    keeps its own test below, because their costs are what the new entry point
+    is measured against.
     """
     found = _entryPointsThatReorderCleanly()
-    assert found == [], (
-        f"SectionColumns can now reorder a contour cleanly, via {found} -- 7b's "
-        f"third blocker is lifted and D9 has been answered by an implementation"
+    assert sorted({entry[0] for entry in found}) == ["reorderContour"], (
+        f"the clean single-call reorder is not (only) reorderContour: {found}"
     )
+    assert all(entry[2] == [2, 1, 0] for entry in found), found
 
-    ## The two docstring pins the first pass relied on. Kept, but demoted to
-    ## what they are: prose pins, which is why the probe above exists.
+    ## The two docstring pins the first pass relied on. Still true, and still
+    ## the reason the entry point had to be built rather than assembled out of
+    ## these two: an append cannot insert and a removal cannot come back.
     assert "An append, never an insert" in SectionColumns.appendRow.__doc__
     assert "is not reused" in SectionColumns.removeRow.__doc__
 
@@ -2890,18 +2901,25 @@ def test_the_reorder_tripwire_fires_on_a_reorder_added_under_an_unguessed_name(
     monkeypatch.setattr(SectionColumns, "reindexContour", reindexContour,
                         raising=False)
 
-    ## The old assertion, verbatim, on the mutated class: it passes.
+    ## The old check, on the mutated class: `reindexContour` is invisible to
+    ## it. Asserted as a membership rather than as the old literal list, because
+    ## `reorderContour` now answers that substring search legitimately and the
+    ## property being demonstrated was never about how many names matched -- it
+    ## is that a real reorder can carry a name that matches none of them.
     named = [m for m in dir(SectionColumns)
              if any(k in m.lower() for k in ("insert", "reorder", "move", "swap"))]
-    assert named == ["removeRow", "removed_rows"], (
+    assert "reindexContour" not in named, (
         "the old name-substring check no longer passes on `reindexContour`, so "
         "this test is no longer demonstrating what it claims"
     )
 
     ## The new one, on the same class: it fires. Deduplicated by name, because
     ## the widened matrix reaches this signature by three spellings.
+    ## `reorderContour` is found alongside it and that is the point of the
+    ## test above; what this one adds is that the planted twin is found too.
     found = _entryPointsThatReorderCleanly()
-    assert sorted({entry[0] for entry in found}) == ["reindexContour"], found
+    assert sorted({entry[0] for entry in found}) == ["reindexContour",
+                                                     "reorderContour"], found
     assert all(entry[2] == [2, 1, 0] for entry in found), found
 
 
@@ -2939,13 +2957,22 @@ def test_the_reorder_tripwire_fires_on_reorders_whose_SIGNATURE_is_unguessed(
         ## method (`arrangeContour` answers both the keyword-only spelling and
         ## the all-keywords one), and what is being asserted is that it is
         ## reached at all.
-        assert sorted({entry[0] for entry in found}) == [reorder.__name__], found
+        assert sorted({entry[0] for entry in found}) == sorted(
+            [reorder.__name__, "reorderContour"]), found
         assert all(entry[2] == [2, 1, 0] for entry in found), found
         monkeypatch.delattr(SectionColumns, reorder.__name__)
 
 
 def test_the_setAttribute_round_trip_reorders_without_renumbering_but_pollutes():
-    """Blocker 3, corrected: the store CAN reorder a contour, dirtily.
+    """The RETIRED route, kept as the measurement D9 was decided on.
+
+    Nothing calls this pattern any more -- `reorderContour` is the entry point,
+    and the tests below are what exercise it. What this one holds is the
+    evidence: the round trip really does reorder without renumbering, so the
+    entry point replaces a working mechanism rather than a broken one, and its
+    justification is the last three assertions here and nothing else. If those
+    ever stop firing, the reason `reorderContour` exists has changed and the
+    decision behind it wants re-reading.
 
     The first pass claimed "there is no reorder, insert, move or swap" and that
     "the only reorder available is destroy-and-rebuild, which renumbers every
@@ -2995,19 +3022,21 @@ def test_the_setAttribute_round_trip_reorders_without_renumbering_but_pollutes()
     assert store.getAllModifiedNames() == {"axon", "__reorder_tmp__"}
 
 
-def test_the_only_clean_reorder_is_destroy_and_rebuild_and_it_costs_the_row_numbers():
-    """Blocker 3's other half: what the *clean* reorder costs.
+def test_destroy_and_rebuild_reorders_quietly_and_costs_the_row_numbers():
+    """The other retired route, and the other half of what D9 chose between.
 
     `Contour.importTraces` ends with `self.traces = traces`, and `traces` is
     built as [matched duplicates, in positional order] + rem_s + rem_o -- a
-    different order from the one the contour had. Two routes reach that order.
-    The round-trip above leaves the tracking sets dirty; this one leaves them
-    clean and pays in row numbers instead: every row is renumbered and every
-    `TraceView` anyone was holding is dead.
+    different order from the one the contour had. Three routes now reach that
+    order. The round-trip above leaves the tracking sets dirty; this one leaves
+    them clean and pays in row numbers instead: every row is renumbered and
+    every `TraceView` anyone was holding is dead. `reorderContour` pays neither,
+    which is the whole of why it was built, and this test is one of the two
+    prices it is measured against.
 
-    Neither cost is one a shim may impose silently, which is why the port waits
-    on D9 -- but D9 is now the narrow question of which cost is acceptable, not
-    the broad one of whether the store can express a reorder at all.
+    The name of this test used to begin "the only clean reorder is". It was not
+    the only one even then -- the round trip above renumbers nothing -- and it
+    is now not the clean one either.
     """
     store, rows = _threeRowContour()
     held = [TraceView(store, row) for row in rows]
@@ -3030,6 +3059,403 @@ def test_the_only_clean_reorder_is_destroy_and_rebuild_and_it_costs_the_row_numb
     ## The price it does NOT pay, which is the whole of the contrast with the
     ## round-trip above: no name that is not a real contour enters the tracking.
     assert store.getAllModifiedNames() == {"axon"}
+
+
+# =============================================================================
+# `reorderContour`: D9's answer, and what it is required to cost
+# =============================================================================
+#
+# The two tests above are the two routes that existed before it, each measured
+# with its own price attached: the rename round trip renumbers nothing and leaks
+# a scratch name into the undo scope, and destroy-and-rebuild keeps the tracking
+# honest and renumbers every row. D9 decided that neither price is one a shim
+# may impose silently and that the store should grow an entry point that pays
+# neither. These tests are that entry point's acceptance: they assert each half
+# of both prices is *not* paid, rather than asserting the method exists.
+
+
+def _rowStateForComparison(store):
+    """Everything observable about a store's rows, EXCEPT the generation.
+
+    Used to compare two routes to the same reorder. The generation is
+    deliberately outside this: the routes differ in how many mutations they
+    take, so a comparison including it would compare bookkeeping rather than
+    outcome, and the difference is asserted separately where it is the point.
+    """
+    return {
+        "contours": store.contourNames(),
+        "rows": {name: store.rowsForContour(name) for name in store.contourNames()},
+        "live": [row for row in range(store.rowCount) if store.isLive(row)],
+        "row_count": store.rowCount,
+        "names": [store.getName(row) for row in range(store.rowCount)],
+        "points": {row: store.getPoints(row)
+                   for row in range(store.rowCount) if store.isLive(row)},
+        "colors": {row: store.getColor(row)
+                   for row in range(store.rowCount) if store.isLive(row)},
+        "tags": {row: store.getTags(row)
+                 for row in range(store.rowCount) if store.isLive(row)},
+    }
+
+
+def test_reorderContour_reorders_without_renumbering_or_invalidating_a_view():
+    """The first two prices, neither paid: no row moves and no view dies.
+
+    The same reversal the round-trip test performs, in one call. Every
+    assertion here has a counterpart in one of the two tests above, which is why
+    they are worth reading side by side: `[view.row for view in held] == rows`
+    is the round trip's promise kept, and `view.points` not raising is
+    destroy-and-rebuild's failure avoided.
+    """
+    store, rows = _threeRowContour()
+    held = [TraceView(store, row) for row in rows]
+    before = [view.points for view in held]
+    ## Not zero: the counter is monotonic and `clearTracking` deliberately does
+    ## not reset it, so the three appends are already in it.
+    generation = store.generation
+
+    store.reorderContour("axon", [2, 1, 0])
+
+    ## The order `importTraces` would have wanted, in one call.
+    assert store.rowsForContour("axon") == [2, 1, 0]
+
+    ## Nothing was renumbered and nothing was tombstoned: the live rows are the
+    ## rows that were there, under the numbers they had.
+    assert [row for row in range(store.rowCount) if store.isLive(row)] == rows
+    assert store.rowCount == len(rows), "a row was appended by a reorder"
+    assert len(store) == len(rows)
+
+    ## Every held view still reads its own row's own values.
+    assert [view.row for view in held] == rows, "a row was renumbered"
+    assert [view.points for view in held] == before, "a held view was invalidated"
+    assert [view.name for view in held] == ["axon"] * 3
+
+    ## And the contour view sees the new order, which is the property the
+    ## `importTraces` port would consume.
+    view = ContourView(store, "axon")
+    assert [element.row for element in view] == [2, 1, 0]
+    assert [view.index(element) for element in held] == [2, 1, 0]
+
+    ## One mutation, so one bump.
+    assert store.generation == generation + 1
+
+
+def test_reorderContour_marks_the_contour_and_leaks_no_scratch_name():
+    """The third price, not paid: the review's own finding, closed.
+
+    review-274 F2 reproduced `modified_contours == {'axon', '__tmp__'}` after a
+    round-trip reorder, with `'__tmp__' not in contourNames()` -- a name in the
+    scope of an undo snapshot that names no contour. That is the finding D9 was
+    raised by, and this is the test that it cannot happen through the entry
+    point: the tracking sets hold the reordered contour and nothing else, and
+    every name in them is a real contour.
+
+    Marking the contour at all is a decision rather than an oversight, and it is
+    the second assertion here. A reorder changes no trace, but within-contour
+    order is serialized, so a reordered contour is a different section file that
+    dirty/save detection has to see; and `SectionStates.addState` takes
+    `getAllModifiedNames()` as the scope of the undo snapshot, so a reorder
+    outside that scope would be a change the user could not undo.
+    """
+    store, rows = _threeRowContour()
+    store.reorderContour("axon", [2, 1, 0])
+
+    assert store.modified_contours == {"axon"}
+    assert store.getAllModifiedNames() == {"axon"}
+    assert store.added_rows == [] and store.removed_rows == []
+
+    ## The F2 assertion, inverted: every tracked name is a contour that exists.
+    assert store.getAllModifiedNames() <= set(store.contourNames())
+
+
+def test_reorderContour_and_the_round_trip_reach_the_same_state():
+    """Equivalence: the mechanism changed, the observable outcome did not.
+
+    Both routes run on two independently built stores from the same starting
+    point, and every row-level observable is compared -- the index, the live
+    rows, the row count, the names, and each row's points, color and tags. They
+    agree, which is what makes this a change of mechanism rather than of
+    behavior.
+
+    The two places they do NOT agree are asserted too, because a test that only
+    checked the agreement would be hiding the reason for the change. The round
+    trip takes four mutations to the entry point's one, and it ends with a name
+    in the undo scope that names nothing.
+    """
+    clean, rows = _threeRowContour()
+    dirty, dirty_rows = _threeRowContour()
+    assert rows == dirty_rows
+    assert _rowStateForComparison(clean) == _rowStateForComparison(dirty)
+    assert clean.generation == dirty.generation
+    started_at = clean.generation
+
+    clean.reorderContour("axon", [2, 1, 0])
+    for row in (1, 0):
+        dirty.setAttribute(row, "name", "__reorder_tmp__")
+        dirty.setAttribute(row, "name", "axon")
+
+    assert _rowStateForComparison(clean) == _rowStateForComparison(dirty)
+    assert clean.rowsForContour("axon") == dirty.rowsForContour("axon") == [2, 1, 0]
+
+    ## Where they part. The leak is the reason D9 was asked.
+    assert clean.getAllModifiedNames() == {"axon"}
+    assert dirty.getAllModifiedNames() == {"axon", "__reorder_tmp__"}
+    assert clean.generation - started_at == 1
+    assert dirty.generation - started_at == 4
+
+
+def test_reorderContour_realizes_an_arbitrary_permutation_on_real_contours(
+        loaded_sections):
+    """Not just a reversal, and not just on invented geometry.
+
+    review-274 F2 reproduced the round trip one notch harder than the PR did, on
+    a NON-reversal permutation, because a reversal is the one permutation a
+    buggy implementation can reach by accident. The same standard applies to the
+    replacement, and it is applied here on every multi-row contour of the real
+    fixture series rather than on a three-row fixture.
+
+    WHAT THIS MATERIAL CAN AND CANNOT DELIVER (review-277 F04)
+    ----------------------------------------------------------
+    An earlier form of this test rotated every contour by one and claimed that
+    as "no fixed point and no symmetry to hide behind". That claim was false on
+    most of what it ran against. The fixture series' contour row-count
+    distribution is `{1: 212, 2: 7, 3: 2}`: of the nine multi-row contours here,
+    SEVEN hold exactly two rows, and for a two-row contour rotate-by-one *is*
+    the reversal -- the exact permutation the docstring said it was avoiding.
+    Only two contours hold three rows.
+
+    So the two sizes are exercised differently and counted separately, rather
+    than being described with one claim that is only true of two of them:
+
+    * **Three rows or more** -- a seeded shuffle, rejected and redrawn until it
+      is neither the identity nor the reversal. This is the honest form of the
+      original claim, and `checked_nontrivial` below asserts it was actually
+      reached rather than skipped past.
+    * **Exactly two rows** -- the swap, which is the *only* non-identity
+      permutation a two-row contour has. There is no non-trivial permutation to
+      exercise at this size and no amount of shuffling invents one; what these
+      seven contours cover is that a reorder of a real contour preserves row
+      numbers, held views and tracking, not that it survives an arbitrary
+      permutation.
+
+    Seeded rather than free-running: a permutation test that draws differently
+    on every run either flakes or hides, and the seed makes a failure something
+    that can be reproduced from the failure message alone.
+
+    The views are built BEFORE the reorder and read after it, so this also says
+    on real material what the fixture test says on invented material: a held
+    view survives a reorder of the contour under it. And the new order is
+    checked through `materializeContours` as well as through the index, because
+    within-contour order being *serialized* is the whole justification for a
+    reorder marking the contour modified.
+    """
+    rng = random.Random(20260805)
+    checked_nontrivial = 0
+    checked_two_row = 0
+    for section in loaded_sections:
+        store = SectionColumns.fromSection(section)
+        store.clearTracking()
+        for name in store.contourNames():
+            original = store.rowsForContour(name)
+            if len(original) < 2:
+                continue
+            held = {row: TraceView(store, row) for row in original}
+            points = {row: view.points for row, view in held.items()}
+
+            if len(original) >= 3:
+                ## Redrawn until it is neither the identity nor the reversal.
+                ## Both exist among the draws and both are the cases a buggy
+                ## implementation reaches by accident.
+                for _ in range(100):
+                    permuted = rng.sample(original, len(original))
+                    if permuted != original and permuted != original[::-1]:
+                        break
+                else:  # pragma: no cover - 1/3! odds per draw, 100 draws
+                    raise AssertionError(f"no non-trivial draw for {name}")
+                assert permuted != original
+                assert permuted != original[::-1]
+                checked_nontrivial += 1
+            else:
+                ## The only non-identity permutation two rows have. Not a
+                ## non-trivial permutation, and not claimed as one.
+                permuted = original[::-1]
+                checked_two_row += 1
+
+            store.reorderContour(name, permuted)
+            assert store.rowsForContour(name) == permuted, (
+                f"{name} did not take the order {permuted} (seeded shuffle)"
+            )
+            assert all(view.points == points[row] for row, view in held.items())
+            assert store.getAllModifiedNames() <= set(store.contourNames())
+
+            ## The order reaches the serialized form, not just the index.
+            materialized = store.materializeContours()
+            assert [trace.points for trace in materialized[name]] == [
+                points[row] for row in permuted
+            ], f"{name}'s materialized order is not the order it was given"
+
+            store.reorderContour(name, original)
+            assert store.rowsForContour(name) == original
+            assert all(view.points == points[row] for row, view in held.items())
+
+        ## Whatever was reordered, nothing that is not a contour was tracked --
+        ## the property the round trip could not have held on this material.
+        assert store.getAllModifiedNames() <= set(store.contourNames())
+        ## And the store still materializes into the section it came from.
+        materialized = store.materializeContours()
+        assert sorted(materialized) == sorted(store.contourNames())
+
+    ## Both counted, and the strong half asserted separately: if the fixture
+    ## ever loses its three-row contours, this test must fail rather than
+    ## quietly fall back to seven reversals and keep claiming "arbitrary".
+    assert checked_two_row > 0, "the fixture offered no two-row contour"
+    assert checked_nontrivial > 0, (
+        "the fixture offered no contour of three or more rows, so no "
+        "non-trivial permutation was exercised at all"
+    )
+
+
+def test_reorderContour_refuses_anything_that_is_not_a_permutation():
+    """The check that keeps a reorder from becoming a corruption.
+
+    Each of these four is a silent corruption if it goes through, and none of
+    them is loud afterwards: a dropped row stays live and named for a contour
+    that no longer lists it, a foreign row is indexed under one name while
+    `getName` answers another (and `removeRow` then looks in the wrong index for
+    it), a duplicate makes one row appear twice in a contour holding it once,
+    and a row number that was never issued indexes nothing at all. The store is
+    asserted unchanged after each refusal, because a validator that raised
+    halfway through its own rebind would be worse than none.
+    """
+    store, rows = _threeRowContour()
+    store.appendRow(name="dendrite", points=[(9.0, 9.0)], color=[4, 5, 6])
+    store.clearTracking()
+    before = _rowStateForComparison(store)
+
+    for bad in ([2, 1], [2, 1, 0, 3], [2, 1, 3], [0, 0, 2], [0, 1, 99], []):
+        with pytest.raises(ValueError) as caught:
+            store.reorderContour("axon", bad)
+        assert "permutation" in str(caught.value)
+        assert _rowStateForComparison(store) == before, (
+            f"the store changed while refusing {bad}"
+        )
+        assert store.getAllModifiedNames() == set(), (
+            f"a refused reorder tracked a name: {bad}"
+        )
+
+    ## The refusal is not a name check: the right rows in a new order pass.
+    store.reorderContour("axon", [1, 0, 2])
+    assert store.rowsForContour("axon") == [1, 0, 2]
+
+
+def test_reorderContour_refuses_non_integral_row_numbers_but_keeps_numpy_ints():
+    """review-277 F01: the corruption a *value* comparison cannot see.
+
+    `sorted(ordered) != sorted(current)` compares values, and `2.0 == 2`, so a
+    `rows` holding `float` or `numpy.float64` elements was a valid permutation
+    by value: it passed the guard, was written into the index verbatim, and
+    marked the contour modified. The store then read as healthy and the damage
+    surfaced somewhere else entirely -- `materializeContours()` subscripting a
+    list with a float, raising a bare `TypeError` that named neither the contour
+    nor the call that broke it. That is a fourth silent-corruption mode in a
+    validator whose own docstring says it catches all of them.
+
+    The fix is `operator.index` per element rather than a type check, and the
+    second half of this test is why: `isinstance(row, int)` would also reject
+    `numpy.int64`, which every other row-number path in this store accepts
+    today. numpy is a hard dependency and an order computed through it arrives
+    with a numpy dtype either way -- `int64` must keep working for the same
+    reason `float64` must not.
+    """
+    store, rows = _threeRowContour()
+    store.clearTracking()
+    before = _rowStateForComparison(store)
+
+    ## Each of these is a permutation by value and only by value.
+    refused = [
+        [2.0, 1, 0],
+        [2, 1.0, 0],
+        list(np.array([2.0, 1.0, 0.0])),
+        [np.float64(2), 1, 0],
+    ]
+    for bad in refused:
+        with pytest.raises(ValueError) as caught:
+            store.reorderContour("axon", bad)
+        ## The message names the offending value and its type, so the caller is
+        ## not left to find it -- which is the whole complaint against the
+        ## `TypeError` this replaces.
+        message = str(caught.value)
+        assert "integer row numbers" in message, message
+        assert "float" in message, message
+        assert _rowStateForComparison(store) == before, (
+            f"the store changed while refusing {bad}"
+        )
+        assert store.getAllModifiedNames() == set(), (
+            f"a refused reorder tracked a name: {bad}"
+        )
+
+    ## Non-numeric elements reach the same documented `ValueError` rather than
+    ## the `TypeError` that `sorted()` used to raise from inside the guard.
+    for bad in ([0, 1, None], [0, 1, "2"], [0, 1, (2,)]):
+        with pytest.raises(ValueError):
+            store.reorderContour("axon", bad)
+        assert _rowStateForComparison(store) == before
+
+    ## And the half that must NOT change: numpy integers are row numbers.
+    store.reorderContour("axon", [np.int64(2), np.int64(1), np.int64(0)])
+    assert store.rowsForContour("axon") == [2, 1, 0]
+    assert store.getAllModifiedNames() == {"axon"}
+
+    ## Coerced to exact `int` on the way in, not merely accepted: what the index
+    ## holds is a plain Python int whatever integral dtype the caller used.
+    assert all(type(row) is int for row in store.rowsForContour("axon"))
+
+    ## The proof that this is the corruption that was reachable before: the
+    ## store still materializes, in the requested order.
+    materialized = store.materializeContours()
+    assert [trace.points for trace in materialized["axon"]] == [
+        store.getPoints(row) for row in [2, 1, 0]
+    ]
+
+
+def test_reorderContour_normalizes_its_name_and_no_ops_on_the_current_order():
+    """Two smaller contracts, both inherited rather than invented.
+
+    The name is normalized through `normalizeObjectName`, the same function
+    `appendRow` and `rowsForContour` run, so a caller cannot reorder `"a b"`
+    while the rows are indexed under `"a_b"` -- the trap `ContourView.__init__`
+    closes for the same reason.
+
+    A reorder to the order the contour already holds bumps the generation and
+    tracks nothing, which is `setAttribute`'s own precedent for a rename to the
+    name a row already has: the caller reached a mutation entry point, so the
+    counter moves, but nothing entered the undo scope because nothing changed.
+    An unknown contour with an empty order is the same no-op, and does not
+    create an index entry for a contour that does not exist.
+    """
+    store = SectionColumns(1)
+    rows = [store.appendRow(name="a b", points=[(float(i), 0.0)], color=[1, 2, 3])
+            for i in range(2)]
+    assert store.contourNames() == ["a_b"]
+    store.clearTracking()
+
+    ## The un-normalized spelling reaches the same contour.
+    store.reorderContour("a b", list(reversed(rows)))
+    assert store.rowsForContour("a_b") == list(reversed(rows))
+    assert store.getAllModifiedNames() == {"a_b"}
+
+    ## The no-op: a bump, and nothing tracked.
+    store.clearTracking()
+    generation = store.generation
+    store.reorderContour("a_b", list(reversed(rows)))
+    assert store.generation == generation + 1
+    assert store.getAllModifiedNames() == set()
+    assert store.rowsForContour("a_b") == list(reversed(rows))
+
+    ## An empty order on a contour that does not exist: also a no-op, and it
+    ## does not invent the contour.
+    store.reorderContour("no_such_contour", [])
+    assert "no_such_contour" not in store.contourNames()
+    assert store.getAllModifiedNames() == set()
 
 
 def test_importTraces_hands_back_the_contours_own_objects_and_may_hand_back_the_others(

@@ -104,7 +104,7 @@ move on it would reproduce a measured bug class in a new place.
 MUTATION ENTRY POINTS
 ---------------------
 Enumerated here so that an operation log can be attached at these points later
-without a second call-site sweep. There are six, and they are the only methods
+without a second call-site sweep. There are seven, and they are the only methods
 that bump the generation:
 
     appendRow(...)              a trace enters the section
@@ -112,7 +112,20 @@ that bump the generation:
     setCoordinates(row, points) its geometry is replaced
     setAttribute(row, ...)      one of its scalar attributes is replaced
     setTags(row, tags)          its tag set is replaced
+    reorderContour(name, rows)  one contour's rows are put in a new order
     noteTransformChange()       the section's alignment moved
+
+The seventh is the newest and is the only one that changes **no row at all**.
+It exists because the order it rearranges was already rearrangeable, and by an
+accident rather than by a decision: `setAttribute(row, "name", ...)` appends the
+row at the end of its destination contour, so renaming a row away to a scratch
+name and back is a move-to-end primitive, and n-1 of those realize any
+permutation with no row renumbered, no row tombstoned and no held `TraceView`
+invalidated. What that round trip could not do is stay quiet: the scratch name
+landed in `_modified_contours` and came back out of `getAllModifiedNames()`,
+which is the scope of an undo snapshot and, since the dual write went always-on,
+is read in production. `reorderContour` is the same capability expressed
+directly, so the tracking sets see one real contour name and nothing else.
 
 IDENTITY, AND THE TWO CARRY RULES THAT ARE NOT IMPLEMENTED
 ----------------------------------------------------------
@@ -169,6 +182,8 @@ all, are semantics rather than mechanics. They are held for the maintainer, and
 `copyRow` / `duplicateRow` do not cover them: a caller reaching for either case
 finds nothing here rather than an invented answer.
 """
+
+import operator
 
 import numpy as np
 
@@ -714,6 +729,127 @@ class SectionColumns():
         self._modified_contours.add(self._names[row])
         self._bump()
 
+    def reorderContour(self, name: str, rows):
+        """Put one contour's rows in a new within-contour order.
+
+        The clean reorder entry point (D9). Nothing is renumbered, nothing is
+        tombstoned, no coordinate array moves and no held `TraceView` is
+        touched: this rebinds one list of row numbers in the index, which is
+        the only place within-contour order is held.
+
+            Params:
+                name (str): the contour to reorder. Normalized on the way in,
+                    through the same `normalizeObjectName` `appendRow` and
+                    `rowsForContour` run, so a caller cannot reorder `"a b"`
+                    while the rows are indexed under `"a_b"`.
+                rows: the contour's row numbers in the order it should now hold
+                    them. Must be a permutation of exactly the rows it holds
+                    now -- see below.
+            Raises:
+                ValueError: `rows` is not a permutation of the contour's
+                    current rows, or holds an element that is not an integer
+                    row number.
+
+        WHY A WHOLE-ORDER ARGUMENT RATHER THAN A MOVE OR A SWAP
+        -------------------------------------------------------
+        The shape follows the consumer that asks for this. `Contour.importTraces`
+        ends with `self.traces = traces`, where `traces` is built as [matched
+        duplicates, positionally] + rem_s + rem_o -- a whole new order, computed
+        in one pass and rebound in one statement. A `moveRowWithinContour(name,
+        row, position)` would make that caller drive a loop of moves to
+        reconstruct an order it already had in its hand, and each move would
+        bump the generation, so the port's cost would scale with the
+        permutation's distance from the identity rather than with the contour.
+        The whole-order form is also the one the index can satisfy in a single
+        rebind, because the index *is* a list of row numbers per contour: the
+        argument and the representation are the same shape. A move or a swap
+        remains one line on top of this for a caller that wants one, and neither
+        is built here, because building the convenience before its caller exists
+        is the unreleased scope this module has removed twice already.
+
+        THE PERMUTATION CHECK IS NOT DEFENSIVE PADDING
+        ----------------------------------------------
+        Four ways to get it wrong, and each corrupts silently rather than
+        loudly. A `rows` missing one of the contour's rows drops that row out of
+        the index while leaving it **live** and named for this contour, so it
+        vanishes from `contourNames()`'s contour and from every view, while
+        `len(store)` still counts it and `save()` still holds it. A `rows`
+        holding a row of a *different* contour puts that row in this contour's
+        index without changing `_names[row]`, so the row would answer one name
+        and be indexed under another -- and `removeRow`, which looks the row's
+        name up to find the index to take it out of, would then fail to find it.
+        A `rows` with a duplicate makes one row appear twice in a contour that
+        holds it once. Those three are caught by comparing sorted row lists,
+        which also settles liveness for free: `removeRow` takes a row out of the
+        index as it tombstones it, so a row that is in the index is live, and a
+        permutation of the index is a list of live rows.
+
+        The fourth is the one a sorted comparison cannot catch, because it is a
+        comparison of *values*: `2.0 == 2`, so a `rows` holding `float` or
+        `numpy.float64` elements is a valid permutation by value and is stored
+        verbatim. Nothing complains -- the contour is marked modified and the
+        store reads as healthy -- until `materializeContours()` subscripts a
+        list with a float and raises a bare `TypeError` naming neither this
+        contour nor this call. numpy is a hard dependency here and an order
+        computed through it can carry float dtype, so this is a reachable input
+        rather than a contrived one. Each element is therefore coerced
+        through `operator.index`, the integer-index protocol itself, which is
+        the discriminator that gets this exactly right: `isinstance(row, int)`
+        would reject `numpy.int64`, which every other row-number path in this
+        store accepts and which must keep working.
+
+        WHAT THE TRACKING DOES, AND WHY IT IS ONE NAME AND NOT NONE
+        -----------------------------------------------------------
+        A reorder marks the contour modified, and marks nothing else. It is
+        tempting to argue that it should mark nothing at all, since no trace's
+        attributes and no trace's geometry change, and every derived per-trace
+        quantity is exactly what it was. That argument is wrong on the two
+        consumers that matter. Within-contour order is **serialized**: a
+        contour's traces are written in list order, so a reordered contour is a
+        different section file and dirty/save detection has to see it. And
+        `SectionStates.addState` takes `getAllModifiedNames()` as the **scope of
+        the undo snapshot**, so a reorder outside that scope would be a change
+        the user could not undo.
+
+        The no-op case follows `setAttribute`'s own precedent rather than
+        inventing a rule: a rename to the name a row already has bumps the
+        generation and adds nothing to the tracking sets. So does a reorder to
+        the order the contour already holds. The bump is unconditional because a
+        caller reached a mutation entry point and a generation is cheap; the
+        tracking is conditional because a name in the undo scope is not.
+        """
+        name = normalizeObjectName(name)
+        current = self._index.get(name, [])
+        ## Every element through the integer-index protocol, not a value or a
+        ## type check. `operator.index` is the same discriminator a list
+        ## subscript runs, so it accepts exactly what the index can hold --
+        ## `int`, `bool` and `numpy.int64`/`numpy.uint8` -- and rejects `float`
+        ## and `numpy.float64`, which a value comparison cannot do because
+        ## `2.0 == 2`. It also normalizes: what lands in `_index` is an exact
+        ## `int` whatever integral type the caller computed its order in.
+        ordered = []
+        for row in rows:
+            try:
+                ordered.append(operator.index(row))
+            except TypeError as error:
+                raise ValueError(
+                    f"reorderContour needs integer row numbers for contour "
+                    f"{name!r}: {row!r} is a {type(row).__name__}, which cannot "
+                    f"index a contour's row list"
+                ) from error
+        if sorted(ordered) != sorted(current):
+            raise ValueError(
+                f"reorderContour needs a permutation of contour {name!r}'s own "
+                f"rows: it holds {list(current)} and was given {ordered}"
+            )
+        ## A copy, not the caller's list: an index aliased to a list the caller
+        ## still holds could be reordered again later without passing through
+        ## this method at all, which is the entry point's whole point.
+        if ordered != current:
+            self._index[name] = ordered
+            self._modified_contours.add(name)
+        self._bump()
+
     def noteTransformChange(self):
         """Record that the section's alignment moved.
 
@@ -1234,24 +1370,25 @@ class ContourView():
          coordinate pass, and `mergeTags` is outside the eight fields
          `Trace.__init__` assigns.
 
-      3. *The store can express the reordered list `importTraces` rebinds, but
-         not cleanly.* That method ends `self.traces = traces`, where `traces`
-         is in a **different order** from the contour it replaces. There is no
-         purpose-built reorder, insert, move or swap: `appendRow` is "an append,
-         never an insert" and `removeRow` retires the row number for good. But
-         "no reorder is expressible" would be false, and saying it would put the
-         wrong question to the maintainer. `setAttribute(row, "name", ...)`
-         moves a row to the **end** of its destination contour, so renaming a
-         row away and back is a move-to-end primitive, and n−1 of those realize
-         any permutation -- with no row renumbered, no row tombstoned and no
-         held `TraceView` invalidated. Both routes are measured side by side in
-         the parity suite. The real residue is smaller and dirtier than a
-         capability gap: the temporary name **leaks into `modified_contours` and
+      3. ~~*The store can express the reordered list `importTraces` rebinds,
+         but not cleanly.*~~ **No longer a blocker. Answered by D9 and built:
+         `SectionColumns.reorderContour(name, rows)`.** `importTraces` ends
+         `self.traces = traces`, where `traces` is in a **different order** from
+         the contour it replaces, and the store had no purpose-built way to say
+         so: `appendRow` is "an append, never an insert" and `removeRow` retires
+         the row number for good. It could nonetheless express the reorder, by
+         an accident of `setAttribute(row, "name", ...)` appending a renamed row
+         at the **end** of its destination -- so a rename away to a scratch name
+         and back was a move-to-end primitive, and n−1 of those realized any
+         permutation, with no row renumbered, no row tombstoned and no held
+         `TraceView` invalidated. The residue was smaller and dirtier than a
+         capability gap: the scratch name **leaked into `modified_contours` and
          `getAllModifiedNames`**, which the dual write consumes as the scope of
-         an undo snapshot. So the decision this raises (D9) is not "does the
-         store need a reorder entry point at all" but "is the rename round-trip
-         an acceptable reorder given that pollution, or should the store grow a
-         clean one".
+         an undo snapshot. D9 answered that with an entry point rather than with
+         a tolerance, and **the round trip is retired rather than kept beside
+         it**: it survives in the parity suite only as the measurement that says
+         the two routes reach the same order and only one of them stays quiet.
+         What still blocks the port is 2 and 4 below, not the rebind.
 
       4. *The rebound list may hold the other contour's own `Trace` objects*,
          and in production `other` is a contour of a different section of a
