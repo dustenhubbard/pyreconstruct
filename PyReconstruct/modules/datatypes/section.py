@@ -1320,6 +1320,30 @@ class Section():
         `resyncColumnarStore`'s docstring for the generation-counter and
         identity-map reasoning, which belongs to this method and is documented
         there because that is the name callers use.
+
+        THE REBUILD CARRIES THE IDS AND THE ISSUER. D10.
+        -------------------------------------------------
+        This method used to call `SectionColumns.fromSection(self, ...)` with
+        neither, and both halves of that were lossy. Dropping the ISSUER meant
+        the replacement store had none, so every row's id came back `None` and
+        the series' id index went with the store it was attached to. Dropping
+        the IDS -- which is what happened at the `fromSection` layer whenever
+        an issuer WAS passed -- meant every trace on the section was
+        re-identified. Either way a birth certificate was reissued for a trace
+        that had not changed, and this method is reached from all fourteen
+        `resyncColumnarStore()` call sites plus, since D11, every `save()`.
+
+        The correlation is the outgoing row map, and it has to be, because
+        `Trace` carries no id attribute of any kind: there is no id to read off
+        the object being re-appended. The only place a trace's existing id
+        lives is the OUTGOING store, found by the row the OUTGOING map holds
+        for that `Trace`. So both are read before either is replaced.
+
+        A trace the outgoing map does not hold is a trace this store has never
+        seen -- genuinely new, or arrived through an import -- and it falls
+        through to the issuer, which is the pre-D10 behavior and stays right.
+        A section with no outgoing store at all (`Section.__init__`, the first
+        build) has nothing to carry and passes nothing.
         """
         from .columnar_store import SectionColumns
 
@@ -1333,8 +1357,28 @@ class Section():
         ## had just been emptied, which is the stale-render bug the counter
         ## exists to prevent. Seeding one above the outgoing count makes the
         ## rebuild itself the advance, whatever it rebuilds into.
-        previous = self._columns.generation if self._columns is not None else 0
-        self._columns = SectionColumns.fromSection(self, generation=previous + 1)
+        outgoing = self._columns
+        previous = outgoing.generation if outgoing is not None else 0
+
+        ## Read the outgoing ids BEFORE `self._columns` is rebound, through the
+        ## outgoing row map, which is the only correlation between a `Trace`
+        ## and an id. `getID` is deliberately not liveness-checked, so a map
+        ## entry left pointing at a tombstoned row still answers; such a trace
+        ## is not in `self.contours` any more, so `fromSection` never asks for
+        ## it and the entry is simply dropped with the map.
+        carried_ids = None
+        issuer = outgoing.id_issuer if outgoing is not None else None
+        if issuer is not None:
+            carried_ids = {}
+            for trace, row in self._column_rows.items():
+                trace_id = outgoing.getID(row)
+                if trace_id is not None:
+                    carried_ids[trace] = trace_id
+
+        self._columns = SectionColumns.fromSection(
+            self, id_issuer=issuer, generation=previous + 1,
+            carried_ids=carried_ids,
+        )
         self._column_rows = {}
 
         ## `fromSection` walks `sorted(contours, key=str)` and each contour's
@@ -1425,19 +1469,27 @@ class Section():
         way; what is saved is the churn.
 
         It has a third consequence, worth naming because it is load-bearing for
-        work in flight: `SectionColumns` carries an `id` column, and
-        `fromSection` issues rather than carries ids. Nothing in the
+        work in flight: `SectionColumns` carries an `id` column, and until D10
+        `fromSection` issued rather than carried ids. Nothing in the
         application injects an id issuer today, so every id is `None` and there
         is nothing to lose -- but the day one is wired, a save that adopted a
-        rebuild unconditionally would re-identify every trace on the section.
-        Keeping the existing store when nothing drifted means an ordinary save
-        does not, and `test_a_save_does_not_re_identify_the_traces_it_saves`
-        pins that. A save that DOES find drift adopts the rebuild and loses the
-        ids with it, exactly as the fourteen existing `resyncColumnarStore()`
-        call sites already do; that is the rebuild-carries-ids scope call in
-        `specs/phase1-foreign-trace-id-acquisition-2026-08-05.md` §5, not this
-        change's to make, and it is pinned as a known limitation rather than
-        left to be discovered.
+        rebuild unconditionally would have re-identified every trace on the
+        section. Keeping the existing store when nothing drifted means an
+        ordinary save does not, and
+        `test_a_save_does_not_re_identify_the_traces_it_saves` pins that.
+
+        **The residue this paragraph used to record is closed.** A save that
+        DOES find drift adopts the rebuild, and that used to lose the ids with
+        it -- exactly as the fourteen `resyncColumnarStore()` call sites did --
+        which was left as the rebuild-carries-ids scope call in
+        `specs/phase1-foreign-trace-id-acquisition-2026-08-05.md` §5. D10 made
+        that call: `_rebuildColumnarStore` now carries both the issuer and the
+        outgoing ids into the replacement, so a drifted save keeps every id it
+        can correlate through the outgoing row map. The two mechanisms are
+        complementary rather than redundant, and both are still wanted: this
+        one avoids the rebuild entirely when nothing drifted, which also
+        spares the generation counter, while D10's carry is what makes the
+        rebuild non-destructive on the occasions it IS adopted.
 
         Drift is PRINTED, never raised. See `_storeDrift`. So is a rebuild that
         cannot be built at all: see the `except` below, which is the reason
