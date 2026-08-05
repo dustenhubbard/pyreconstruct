@@ -564,6 +564,16 @@ On the field (right-click empty space, or use the shortcuts):
     compare them.
   - **Hide image** (`I`), **Focus mode** (`X`).
 
+In **Focus mode**, a **Ctrl-click** (`Cmd`-click on macOS) on a trace edits which
+object it belongs to: clicking a trace of the focused object splits that trace out
+into a new `<object>_split` contour, and clicking a trace of any *other* object
+incorporates it into the focused one. Both are undoable. The modifier is Ctrl so
+that it sits on the same key as **Merge traces** (`Ctrl+M`), which is the other
+half of a proofreading pass. If you learned this as Shift-click, set it back, or
+accept either, under **Series ▸ Options ▸ Mouse Tools ▸ Focus Mode**. Clicking a
+trace *without* a modifier does nothing in focus mode: focus mode holds the
+object's traces selected, so an ordinary click has no selection left to make.
+
 **Undo** (`Ctrl+Z`) / **Redo** (`Ctrl+Y`) cover actions on the field and actions
 taken through the lists, including series-wide edits such as renaming, recoloring,
 or changing the radius or shape of an object across every section. When an action

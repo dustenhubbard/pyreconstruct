@@ -80,6 +80,7 @@ class AllOptionsDialog(QDialog):
         tab_structure = {
             "Mouse Tools": [
                 ["pointer"],
+                ["focus_mode"],
                 ["trace"],
                 ["knife"],
                 ["grid"],
@@ -151,6 +152,34 @@ class AllOptionsDialog(QDialog):
             self.series.setOption("pointer", [s, t])
             self.series.setOption("display_closest", response[2][0][1])
         self.addOptionWidget("pointer", structure, setOption)
+
+        # focus mode
+        focus_mod = self.series.getOption("focus_edit_modifier", use_defaults)
+        structure = [
+            ["In focus mode, a click with this modifier held splits the clicked"],
+            ["trace out of the focused object, or incorporates it into that"],
+            ["object. Ctrl is Command on macOS, where it is also the merge key."],
+            None,
+            [("radio",
+                ("Ctrl-click", focus_mod == "ctrl"),
+                ("Shift-click", focus_mod == "shift"),
+                ("Either one", focus_mod == "both"),
+            )],
+        ]
+
+        def setOption(response):
+            # Falls through to "ctrl", the shipped default, the way the trace
+            # widget below falls through to "combo": the radio group is
+            # exclusive, so the last branch is the first button.
+            if response[0][1][1]:
+                new_mod = "shift"
+            elif response[0][2][1]:
+                new_mod = "both"
+            else:
+                new_mod = "ctrl"
+            self.series.setOption("focus_edit_modifier", new_mod)
+
+        self.addOptionWidget("focus_mode", structure, setOption)
 
         # trace
         trace_mode = self.series.getOption("trace_mode")

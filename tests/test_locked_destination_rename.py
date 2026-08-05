@@ -58,12 +58,16 @@ class FakeMouseEvent:
     `test_locked_object_field_guards.py`.
     """
 
-    def __init__(self, x, y, shift=False):
+    def __init__(self, x, y, shift=False, ctrl=False):
         from PySide6.QtCore import Qt
 
         self._x = x
         self._y = y
-        self._modifiers = Qt.ShiftModifier if shift else Qt.NoModifier
+        self._modifiers = Qt.NoModifier
+        if shift:
+            self._modifiers |= Qt.ShiftModifier
+        if ctrl:
+            self._modifiers |= Qt.ControlModifier
 
     def x(self):
         return self._x
@@ -248,7 +252,9 @@ def test_focus_split_refuses_when_the_split_name_is_locked(
     field.selected_type = "trace"
     field.is_moving_trace = False
     field.is_selecting_traces = False
-    field.pointerRelease(FakeMouseEvent(0, 0, shift=True))
+    # Ctrl, not Shift: the shipped default of `focus_edit_modifier`. The option
+    # itself is covered in `test_focus_edit_modifier_option.py`.
+    field.pointerRelease(FakeMouseEvent(0, 0, ctrl=True))
 
     assert _count(field, split_name) == before_split
     assert _count(field, OTHER) == before_other
