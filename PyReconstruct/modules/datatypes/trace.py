@@ -100,15 +100,52 @@ class Trace():
     
     def copy(self):
         """Create a copy of the trace object.
-        
+
+        Every field is named here. This used to be ``copy_trace.__dict__ =
+        self.__dict__.copy()`` followed by the two container copies below, which
+        meant the method knew nothing about what a trace holds: it cloned
+        whatever happened to be in the instance dict. That works only for as
+        long as a trace *has* an instance dict holding exactly its fields, and it
+        silently carried across any attribute something else had stuck on the
+        object. Naming the fields makes the copy state what it copies, and makes
+        adding a field to ``__init__`` without extending ``copy`` a visible
+        omission rather than something that keeps working by accident.
+
+        The depth per field is exactly what the dict copy gave, field for field,
+        because this is a refactor and nothing should be able to observe a
+        difference:
+
+          * ``color`` and ``fill_mode`` are shared by reference. Both are tuples
+            when a trace is built in memory but both come back off disk as lists
+            (see ``__init__``), so both can be mutable and neither was ever
+            copied.
+          * ``points`` and ``tags`` get their own list and set -- the two
+            explicit ``.copy()`` calls that were already here. The copy owns its
+            containers; the point tuples inside the list and the tag strings
+            inside the set are shared, as before. A trace owning its own tags set
+            is an invariant the rest of the codebase relies on; see
+            ``tests/test_trace_tags_aliasing.py``.
+
             Returns:
                 (Trace): a copy of the object
         """
-        
+
         copy_trace = Trace("", [0,0,0])
-        copy_trace.__dict__ = self.__dict__.copy()
-        copy_trace.points = self.points.copy()
-        copy_trace.tags = self.tags.copy()
+
+        ## _name rather than name: the property setter normalizes the value and
+        ## asserts its type, and ``self._name`` has already been through both.
+        ## Assigning through the property would re-run them on the way out of a
+        ## copy, which the dict copy never did.
+        copy_trace._name     = self._name
+
+        copy_trace.color     = self.color
+        copy_trace.closed    = self.closed
+        copy_trace.negative  = self.negative
+        copy_trace.hidden    = self.hidden
+        copy_trace.fill_mode = self.fill_mode
+
+        copy_trace.points    = self.points.copy()
+        copy_trace.tags      = self.tags.copy()
 
         return copy_trace
     
