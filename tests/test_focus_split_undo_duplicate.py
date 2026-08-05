@@ -150,10 +150,10 @@ class _Field:
 def _focus_edit_click(field, trace):
     """Edit-click ``trace`` in the field, in pointer mode.
 
-    Ctrl rather than Shift because Ctrl is the shipped default of
-    ``focus_edit_modifier``. The binding itself is covered in
-    ``test_focus_edit_modifier_option.py``; this file is about the undo state,
-    so it uses whatever binding ships.
+    Ctrl rather than Shift because Ctrl is the focus-mode edit click as of
+    1.21.0. The binding itself is covered in
+    ``test_focus_edit_click_ctrl.py``; this file is about the undo state, so it
+    uses whatever binding ships.
     """
     field.selected_trace = trace
     field.selected_type = "trace"
