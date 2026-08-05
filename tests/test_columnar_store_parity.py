@@ -1113,17 +1113,27 @@ def test_the_view_carries_exactly_the_fields_a_trace_constructor_produces():
     for field in TRACE_FIELDS:
         attribute = getattr(TraceView, field, None)
         assert isinstance(attribute, property), (
-            f"TraceView.{field} is not a read-only property"
+            f"TraceView.{field} is not a property"
         )
-        assert attribute.fset is None, (
-            f"TraceView.{field} has a setter; this slice is read-only and the "
-            f"write path belongs to the store's six mutation entry points"
+        assert attribute.fget is not None, f"TraceView.{field} cannot be read"
+        assert attribute.fset is not None, (
+            f"TraceView.{field} has no setter; every one of the eight fields "
+            f"writes through, and one that did not would be a field a consumer "
+            f"could read but not assign -- which is not the `Trace` surface"
         )
+        ## No deleter, on any of them. `del trace.color` is not a thing a
+        ## `Trace` supports and the store has no entry point for removing an
+        ## attribute from a row -- only for removing the whole row.
         assert attribute.fdel is None, f"TraceView.{field} has a deleter"
 
-    ## And no other `Trace` field arrived by accident. `row` is deliberately
-    ## not a `Trace` field: it names the thing being viewed, which a view with
-    ## no way to say what it views cannot be debugged without.
+    ## `row` is deliberately not a `Trace` field and deliberately not writable:
+    ## it names the thing being viewed, which a view with no way to say what it
+    ## views cannot be debugged without, and a view that could be repointed at
+    ## another row would be a different object rather than a written one.
+    assert TraceView.row.fget is not None
+    assert TraceView.row.fset is None, "a view must not be repointable"
+
+    ## And no other `Trace` field arrived by accident.
     properties = {name for name, value in vars(TraceView).items()
                   if isinstance(value, property)}
     assert properties == set(TRACE_FIELDS) | {"row"}, (
@@ -1310,15 +1320,17 @@ def test_a_view_hands_out_fresh_containers_it_does_not_remember():
     assert other.name == view.name and other.points == view.points
 
 
-def test_a_view_refuses_every_write_including_ones_it_has_no_property_for():
-    """No write path, and no way to fake one by shadowing a column.
+def test_a_view_refuses_the_writes_it_has_no_property_for():
+    """The eight fields write through; nothing else does.
 
-    Each of the eight is a getter with no setter, so an assignment raises
-    rather than landing as an instance attribute that would shadow the column
-    and read back convincingly. `__slots__` extends that to a name the class has
-    no property for, which is the hole a plain read-only class leaves open.
-    Write-through is a later slice and belongs to the store's own mutation
-    entry points.
+    `__slots__` is what closes the hole a plain class leaves open, and it
+    matters more now that the eight accept writes, not less: under a plain
+    class `view.colour = ...` would silently create an instance attribute and
+    then read back convincingly, which is exactly the failure a write-through
+    view must not have. A misspelt field has to raise, not appear to work.
+
+    `row` is refused for a different reason: a view that could be repointed at
+    another row is a different object, not a written one.
     """
     store = SectionColumns(1)
     row = store.appendRow(name="axon", points=[(0.0, 0.0), (1.0, 1.0)],
@@ -1326,18 +1338,480 @@ def test_a_view_refuses_every_write_including_ones_it_has_no_property_for():
     view = TraceView(store, row)
     generation = store.generation
 
-    for field in TRACE_FIELDS:
-        with pytest.raises(AttributeError):
-            setattr(view, field, "written")
     with pytest.raises(AttributeError):
         view.row = 7
     with pytest.raises(AttributeError):
         view.not_a_field = "written"
+    ## The near-miss that motivates `__slots__`: one letter off a real field.
+    with pytest.raises(AttributeError):
+        view.colour = [9, 9, 9]
+    ## And a `Trace` method name, which is the other way a consumer ported from
+    ## the object model could land on a name the view has no column for.
+    with pytest.raises(AttributeError):
+        view.fill_modes = ("solid", "unselected")
 
     assert store.generation == generation, "a refused write moved the store"
     assert view.name == "axon"
     assert view.points == [(0.0, 0.0), (1.0, 1.0)]
     assert view.color == [1, 2, 3]
+
+
+# --- TraceView: the write path ------------------------------------------------
+#
+# Slice 6. Each of the eight properties grows a setter that is one call into a
+# mutation entry point `SectionColumns` already had -- `setAttribute` for the
+# six scalars, `setTags` for `tags`, `setCoordinates` for `points` -- and does
+# nothing else. No cache is added, no identity map, and no consumer: the view
+# still has exactly one caller, this file.
+#
+# The bar for "it wrote through" is deliberately NOT "read it back off the
+# view". The view and the setter are the same object, so a view that quietly
+# kept the written value in a slot would pass that check while the column still
+# held the old bytes. Every assertion below reads the result back through
+# `SectionColumns`' OWN getters, and the fresh-view test reads it through a
+# second view object that never saw the write.
+
+
+## One write per field: the value assigned, the store reader that must show it,
+## and what that reader must return. Keyed by field so the guard below can
+## assert the table covers all eight rather than however many are listed.
+##
+## The expected values are not always the written ones, and that is the point of
+## writing them out: `fill_mode` is written as a tuple and read back as a list,
+## and `tags` is written as a set and read back as a fresh set, because those
+## are the shapes the store's readers promise.
+WRITE_THROUGH_CASES = {
+    "name": ("dendrite01", lambda s, r: s.getName(r), "dendrite01"),
+    "color": ([9, 8, 7], lambda s, r: s.getColor(r), [9, 8, 7]),
+    "closed": (False, lambda s, r: s.getFlag(r, "closed"), False),
+    "negative": (True, lambda s, r: s.getFlag(r, "negative"), True),
+    "points": ([(4.0, 5.0), (6.0, 7.0), (8.0, 9.0)],
+               lambda s, r: s.getPoints(r),
+               [(4.0, 5.0), (6.0, 7.0), (8.0, 9.0)]),
+    "hidden": (True, lambda s, r: s.getFlag(r, "hidden"), True),
+    "tags": ({"beta", "alpha"}, lambda s, r: s.getTags(r), {"alpha", "beta"}),
+    "fill_mode": (("solid", "unselected"), lambda s, r: s.getFillMode(r),
+                  ["solid", "unselected"]),
+}
+
+
+def _aStoredRow():
+    """A store holding one row whose every field differs from every value
+    `WRITE_THROUGH_CASES` writes.
+
+    So that no case can pass by writing back what was already there -- the
+    before/after assertions below check that the store's own reader *moved*,
+    not merely that it ends up equal to the expectation.
+    """
+    store = SectionColumns(1)
+    row = store.appendRow(
+        name="axon", points=[(0.0, 0.0), (1.0, 1.0)], color=[1, 2, 3],
+        closed=True, negative=False, hidden=False,
+        fill_mode=("none", "none"), tags={"before"},
+    )
+    return store, row
+
+
+def test_the_write_through_table_covers_every_field_the_view_carries():
+    """The coverage guard for the table, so a ninth field cannot be untested.
+
+    Same derivation as the completeness guard above: `TRACE_FIELDS` is itself
+    checked against `vars(Trace(...))`, so this chains a new `Trace` field
+    through to a missing write-through case rather than letting the
+    parametrization quietly shrink.
+    """
+    assert set(WRITE_THROUGH_CASES) == set(TRACE_FIELDS), (
+        f"the write-through table and the view's field list have diverged: "
+        f"{set(WRITE_THROUGH_CASES) ^ set(TRACE_FIELDS)}"
+    )
+
+
+@pytest.mark.parametrize("field", TRACE_FIELDS)
+def test_a_setter_moves_the_underlying_column_and_bumps_the_generation(field):
+    """Each setter, individually: the store's own reader changes, once.
+
+    Read back through `SectionColumns`, not through the view, because the view
+    is the thing under test -- one that memoized the assignment would satisfy a
+    read through itself while the column still held the old value.
+
+    The counter delta is asserted as exactly one, not merely as an increase. A
+    setter that both wrote through *and* bumped a counter of its own, or that
+    routed through two entry points, would show up as two, and "the store bumps
+    it because the store is what bumps it" is the property this slice claims.
+    """
+    written, readStore, expected = WRITE_THROUGH_CASES[field]
+    store, row = _aStoredRow()
+    view = TraceView(store, row)
+
+    before = readStore(store, row)
+    generation = store.generation
+    assert before != expected, (
+        f"the {field} case writes the value the row already held, so it cannot "
+        f"tell a working setter from one that does nothing"
+    )
+
+    setattr(view, field, written)
+
+    after = readStore(store, row)
+    assert after == expected, (
+        f"the store's own reader still reports {after!r} after view.{field} "
+        f"was assigned {written!r}"
+    )
+    assert after != before
+    assert store.generation == generation + 1, (
+        f"view.{field} = ... moved the generation by "
+        f"{store.generation - generation}, not by one"
+    )
+    ## And the view agrees with the column, which is the weaker of the two.
+    assert getattr(view, field) == expected
+
+
+@pytest.mark.parametrize("field", TRACE_FIELDS)
+def test_a_write_through_one_view_is_visible_to_a_view_built_afterwards(field):
+    """Slice 4's no-cache property, continuing to hold across a write.
+
+    A view built *after* the write has never touched the row and holds no
+    state, so it can only be reading the column. This is the assertion that a
+    per-instance cache -- the thing this slice is explicitly not allowed to
+    build -- would fail, and it is the write-direction counterpart of
+    `test_a_view_holds_no_value_and_so_cannot_go_stale`.
+
+    Both directions are covered: the writing view still reports the new value
+    (so the write did not leave it stale), and a third view built *before* the
+    write reports it too (so visibility is not a property of construction
+    order).
+    """
+    written, _, expected = WRITE_THROUGH_CASES[field]
+    store, row = _aStoredRow()
+
+    writer = TraceView(store, row)
+    earlier = TraceView(store, row)
+
+    setattr(writer, field, written)
+
+    later = TraceView(store, row)
+    assert later is not writer and later is not earlier
+    assert getattr(later, field) == expected, (
+        f"a view built after the write does not see {field}; the write did not "
+        f"reach the column, or something is caching"
+    )
+    assert getattr(earlier, field) == expected
+    assert getattr(writer, field) == expected
+
+
+@pytest.mark.parametrize("field", TRACE_FIELDS)
+def test_a_setter_writes_its_own_row_and_leaves_its_neighbours_alone(field):
+    """The row number is the view's only state, so writing the wrong one is its
+    characteristic bug.
+
+    Every other test in this section builds a store with a single row, where an
+    off-by-one is invisible: `row - 1` clamps back onto the row being tested and
+    a broken setter passes. Measured, not assumed -- planting exactly that
+    mutation survived the rest of this file. So here there are three rows, the
+    view sits on the middle one, and both neighbours are read back afterwards.
+
+    The neighbours are given values distinct from the middle row's *and* from
+    what the case writes, so a setter that wrote all three rows, or the row
+    before, or the row after, moves something this can see.
+    """
+    written, readStore, expected = WRITE_THROUGH_CASES[field]
+
+    store = SectionColumns(1)
+    rows = []
+    for i in range(3):
+        rows.append(store.appendRow(
+            name=f"axon{i}", points=[(float(i), 0.0), (float(i), 1.0)],
+            color=[i, i, i], closed=True, negative=False, hidden=False,
+            fill_mode=("none", "none"), tags={f"before{i}"},
+        ))
+    before = [readStore(store, row) for row in rows]
+    assert before[1] != expected, "the case writes what the middle row held"
+
+    TraceView(store, rows[1]).__setattr__(field, written)
+
+    assert readStore(store, rows[1]) == expected
+    assert readStore(store, rows[0]) == before[0], (
+        f"view.{field} = ... also wrote the row before it"
+    )
+    assert readStore(store, rows[2]) == before[2], (
+        f"view.{field} = ... also wrote the row after it"
+    )
+
+
+def test_a_write_through_a_view_is_recorded_by_the_stores_own_tracking():
+    """The view adds no entry point, so the store's bookkeeping just happens.
+
+    `_modified_contours`, the added/removed lists and the rename reindex are
+    all `setAttribute`/`setTags`/`setCoordinates`' work. A setter that reached
+    past them into a column directly would leave every one of these empty while
+    the value still changed -- a store that reported no modification for a
+    modification, which is the shape of the existing stale-render bug family.
+    """
+    store, row = _aStoredRow()
+    view = TraceView(store, row)
+    store.clearTracking()
+
+    view.color = [4, 4, 4]
+    assert store.modified_contours == {"axon"}
+    assert store.getAllModifiedNames() == {"axon"}
+
+    view.tags = {"tagged"}
+    view.points = [(3.0, 3.0), (4.0, 4.0)]
+    assert store.getAllModifiedNames() == {"axon"}
+
+    ## A rename is the case with a visible structural consequence: the row moves
+    ## between contour indices and both names are reported.
+    view.name = "dendrite01"
+    assert store.rowsForContour("axon") == []
+    assert store.rowsForContour("dendrite01") == [row]
+    assert store.contourNames() == ["dendrite01"]
+    assert store.getAllModifiedNames() == {"axon", "dendrite01"}
+
+    ## And the view followed the row, not the name.
+    assert view.row == row
+    assert view.name == "dendrite01"
+
+    ## Nothing was added or removed: an attribute edit through a view is an edit
+    ## in place, not the remove/copy/add shape `editTraceAttributes` uses.
+    assert store.added_rows == []
+    assert store.removed_rows == []
+    assert len(store) == 1
+
+
+def test_a_written_value_survives_materialization_and_a_save():
+    """The write lands in the column the rest of the store reads from.
+
+    `materializeTrace` is the independent second reader of a row -- it existed
+    before the view and shares no code with it -- so a value written through
+    the view appearing there is evidence the write reached the actual column
+    rather than some parallel place only the view consults. Serializing closes
+    it: a write that put a `numpy` scalar or a tuple where the column expects
+    its own type would pass a value comparison and fail at `json.dump`.
+    """
+    store, row = _aStoredRow()
+    view = TraceView(store, row)
+
+    view.name = "dendrite01"
+    view.color = [9, 8, 7]
+    view.closed = False
+    view.negative = True
+    view.hidden = True
+    view.points = [(4.0, 5.0), (6.0, 7.0)]
+    view.tags = {"alpha", "beta"}
+    view.fill_mode = ("solid", "unselected")
+
+    rebuilt = store.materializeTrace(row)
+    assert rebuilt.name == "dendrite01"
+    assert rebuilt.color == [9, 8, 7]
+    assert rebuilt.closed is False
+    assert rebuilt.negative is True
+    assert rebuilt.hidden is True
+    assert rebuilt.points == [(4.0, 5.0), (6.0, 7.0)]
+    assert rebuilt.tags == {"alpha", "beta"}
+    assert rebuilt.fill_mode == ["solid", "unselected"]
+
+    ## Native Python types throughout, or the save breaks rather than the read.
+    assert type(rebuilt.closed) is bool and type(rebuilt.negative) is bool
+    assert all(type(v) is int for v in rebuilt.color)
+    assert all(type(v) is float for p in rebuilt.points for v in p)
+    json.dumps(rebuilt.getList(include_name=False))
+
+
+def test_a_write_through_a_view_does_not_alias_what_it_was_handed():
+    """The column must not end up sharing memory with the caller's containers.
+
+    `getTags` handing out a fresh set is already pinned; this is the same
+    invariant on the way in, which the write path newly makes reachable. A
+    caller that assigns a list of points and then mutates its own list must not
+    thereby edit the row.
+    """
+    store, row = _aStoredRow()
+    view = TraceView(store, row)
+
+    points = [(4.0, 5.0), (6.0, 7.0)]
+    tags = {"alpha"}
+    color = [9, 8, 7]
+    view.points = points
+    view.tags = tags
+    view.color = color
+
+    points.append((8.0, 9.0))
+    tags.add("injected")
+    color[0] = 200
+
+    assert store.getPoints(row) == [(4.0, 5.0), (6.0, 7.0)]
+    assert store.getTags(row) == {"alpha"}
+    assert store.getColor(row) == [9, 8, 7]
+
+    ## The list case above cannot show the aliasing hazard, because coercing a
+    ## list allocates regardless. The one that can is a float64 array, which is
+    ## what `np.asarray` would hand straight back: `_asCoordinateArray` copies
+    ## it anyway, and this is the write-path reach to that guarantee.
+    array = np.array([(1.5, 2.5), (3.5, 4.5)], dtype=np.float64)
+    view.points = array
+    assert not np.shares_memory(store.getCoordinates(row), array)
+    array[0, 0] = 99.0
+    assert store.getPoints(row) == [(1.5, 2.5), (3.5, 4.5)]
+
+
+def test_a_write_to_a_removed_row_raises_through_the_stores_liveness_check():
+    """Liveness stays the store's on the way in, as it is on the way out.
+
+    Every one of the three entry points calls `_requireLive` first, so a write
+    to a tombstoned row raises `IndexError` without the view carrying a
+    liveness rule of its own. Note this is *not* the asymmetric case the read
+    side has: `getName` answers for a dead row, but `setAttribute(row, "name",
+    ...)` does not, so the write path is uniform where the read path is not.
+    """
+    store, row = _aStoredRow()
+    view = TraceView(store, row)
+    store.removeRow(row)
+    generation = store.generation
+
+    for field in TRACE_FIELDS:
+        written, _, _ = WRITE_THROUGH_CASES[field]
+        with pytest.raises(IndexError):
+            setattr(view, field, written)
+
+    assert store.generation == generation, (
+        "a refused write moved the store's generation counter"
+    )
+
+
+# --- the name-validation split between Trace and the store -------------------
+
+
+## `Trace.name`'s setter does two things: `assert (value is None or type(value)
+## is str)`, then `normalizeObjectName(value)`. `SectionColumns.setAttribute`
+## does the second and not the first, and `TraceView.name`'s setter delegates
+## rather than replicating the assertion -- so these four rows are the whole
+## observable difference between assigning a name to a `Trace` and assigning
+## one to a view.
+##
+## Each row is (value, what `Trace` does, what the view does), where a `type`
+## means "raises that" and anything else means "stores that".
+##
+## The decision this pins: normalization is the half with a correctness
+## consequence (a comma in a name shifts every field of the log entry carrying
+## it and the entry stops parsing), the store runs it, and the two sides agree
+## on it. The `assert` is a debug-time type guard that `python -O` strips, so a
+## view replicating it would match `Trace` in some runs and not others; and
+## `None` is not the view's to accept in any case, because `_names` is a list of
+## `str` that `_index` keys on and the store has no representation for a
+## nameless row.
+class _StrSubclass(str):
+    pass
+
+
+NAME_VALIDATION_SPLIT = [
+    ## The row that matters, and the two sides agree on it.
+    (" a,b ", "a_b", "a_b"),
+    ("two words,and a comma", "two_words_and_a_comma", "two_words_and_a_comma"),
+    ## `Trace` accepts `None`; the store has nowhere to put it.
+    (None, None, AttributeError),
+    ## Both refuse a non-string, by different mechanisms.
+    (5, AssertionError, AttributeError),
+    ## And the store is the more permissive of the two on a `str` subclass,
+    ## which it normalizes down to a plain `str`.
+    (_StrSubclass("a b"), AssertionError, "a_b"),
+]
+
+
+@pytest.mark.parametrize("value,on_trace,on_view", NAME_VALIDATION_SPLIT)
+def test_name_validation_is_the_stores_and_the_divergence_is_pinned(
+        value, on_trace, on_view):
+    """Both sides of the table, measured rather than described.
+
+    This test exists so the delegation is a recorded decision with a known
+    blast radius, not an oversight. If a consumer ever needs `Trace`'s exact
+    type-error behavior through a view, this is the list of what it would be
+    asking for.
+    """
+    trace = Trace("axon", [1, 2, 3])
+    if isinstance(on_trace, type) and issubclass(on_trace, BaseException):
+        with pytest.raises(on_trace):
+            trace.name = value
+    else:
+        trace.name = value
+        assert trace.name == on_trace
+        assert trace.name is None or type(trace.name) is str
+
+    store, row = _aStoredRow()
+    view = TraceView(store, row)
+    generation = store.generation
+    if isinstance(on_view, type) and issubclass(on_view, BaseException):
+        with pytest.raises(on_view):
+            view.name = value
+        assert store.generation == generation, "a refused write moved the store"
+        assert store.getName(row) == "axon"
+    else:
+        view.name = value
+        assert store.getName(row) == on_view
+        ## Normalized to a plain `str`, whatever went in.
+        assert type(store.getName(row)) is str
+        assert store.rowsForContour(on_view) == [row]
+
+
+def test_the_normalization_a_name_gets_is_the_same_one_a_trace_name_gets():
+    """The half of the validation the two sides DO share, on one function.
+
+    `test_a_name_entering_the_store_is_normalized_the_way_a_trace_name_is`
+    pins this for `appendRow`. This is the same pin for the write path, where
+    the risk is newly reachable: a view setter that normalized on its own
+    before calling the store would double-normalize (harmlessly, since the
+    function is idempotent) and would then be a second place to keep in step
+    with `Trace.name` when the rule changes.
+    """
+    messy = "  two words,and a comma  "
+    store, row = _aStoredRow()
+    view = TraceView(store, row)
+    view.name = messy
+
+    assert store.getName(row) == Trace(messy, (1, 2, 3)).name
+    assert view.name == Trace(messy, (1, 2, 3)).name
+    assert store.rowsForContour(messy) == [row]
+    assert store.contourNames() == [Trace(messy, (1, 2, 3)).name]
+
+
+def test_a_write_through_a_view_over_a_real_section_reaches_the_column(
+        loaded_sections):
+    """The write path on real material, not only on hand-built rows.
+
+    Every test above builds its store with `appendRow`. This one builds it
+    from a real section of the fixture series, writes every field of every row
+    through a view, and checks the store's own readers -- so the write path is
+    exercised against the same rows the read parity walk covers.
+    """
+    section = max(loaded_sections, key=lambda s: sum(len(c) for c in s.contours.values()))
+    store = SectionColumns.fromSection(section)
+    rows = [row for name in store.contourNames() for row in store.rowsForContour(name)]
+    assert rows, "the busiest section of the fixture series holds no rows"
+
+    generation = store.generation
+    was_closed = {row: store.getFlag(row, "closed") for row in rows}
+    for row in rows:
+        view = TraceView(store, row)
+        view.color = [7, 7, 7]
+        view.closed = not view.closed
+        view.negative = True
+        view.hidden = True
+        view.tags = {f"row{row}"}
+        view.fill_mode = ("transparent", "selected")
+        view.points = [(float(row), 0.0), (float(row), 1.0)]
+
+    ## Seven writes per row, each one entry point, each one bump.
+    assert store.generation == generation + 7 * len(rows)
+
+    for row in rows:
+        assert store.getColor(row) == [7, 7, 7]
+        assert store.getFlag(row, "closed") is (not was_closed[row])
+        assert store.getFlag(row, "negative") is True
+        assert store.getFlag(row, "hidden") is True
+        assert store.getTags(row) == {f"row{row}"}
+        assert store.getFillMode(row) == ["transparent", "selected"]
+        assert store.getPoints(row) == [(float(row), 0.0), (float(row), 1.0)]
+        ## And a fresh view over the same row reads what the store reads.
+        assert TraceView(store, row).points == store.getPoints(row)
 
 
 def test_a_view_over_a_removed_row_answers_exactly_as_the_store_does():

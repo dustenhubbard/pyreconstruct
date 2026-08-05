@@ -142,12 +142,20 @@ merge cannot place and nothing detects.
 
 THE ONE VIEW IN THIS MODULE, AND WHAT IT DELIBERATELY IS NOT
 ------------------------------------------------------------
-`TraceView` reads one row through a `Trace`-shaped, read-only surface: the
-eight fields `Trace.__init__` assigns, each a direct call into the row readers
-above. It is **not** §5(A)'s cached identity-stable shim. It has no identity
-map, no invalidation and no write path, because whether the shim should cache
-is still open and a view that quietly cached would answer it by accident. It
-lives here, beside the store, rather than in a module of its own so that it
+`TraceView` reads and writes one row through a `Trace`-shaped surface: the
+eight fields `Trace.__init__` assigns, each getter a direct call into the row
+readers above and each setter a direct call into one of the three per-row
+mutation entry points listed under MUTATION ENTRY POINTS. It adds no entry
+point of its own, so the counter, the modified-name tracking and the rename
+reindex all happen exactly once, in the store, on the path they already took.
+
+It is **not** §5(A)'s cached identity-stable shim. It has no identity map and
+no invalidation, because whether the shim should cache is still open and a view
+that quietly cached would answer it by accident. The write path does not change
+that: a view still holds no value, so a write through one view is visible to
+every other view of the row on the next read, with nothing to invalidate.
+
+It lives here, beside the store, rather than in a module of its own so that it
 carries no import of anything and stays inside the graph
 `test_datatypes_import_graph_is_qt_free` proves Qt-free -- which a module
 nothing imports would sit outside of, the gap `trace_id.py`'s export note
@@ -804,13 +812,14 @@ class SectionColumns():
 
 
 class TraceView():
-    """One row of a `SectionColumns`, read through a `Trace`-shaped surface.
+    """One row of a `SectionColumns`, read and written through a `Trace`-shaped
+    surface.
 
-    Read-only, uncached, and with no consumers. Each of the eight properties
-    below is a direct call into the store's existing row readers; nothing is
-    remembered between calls and nothing is written back. A `TraceView` is
-    therefore free to construct, free to discard, and free to construct again
-    for the same row.
+    Uncached, and with no consumers. Each of the eight properties below is a
+    direct call into the store's existing row readers on the way out and into
+    one of its existing mutation entry points on the way in; nothing is
+    remembered between calls. A `TraceView` is therefore free to construct,
+    free to discard, and free to construct again for the same row.
 
     THE EIGHT FIELDS, AND WHY EXACTLY EIGHT
     ---------------------------------------
@@ -835,15 +844,76 @@ class TraceView():
     holds no state that could go stale. Two views of one row are two objects
     that compare unequal under `is`, and no consumer exists to care. Whatever
     the caching question is decided to be, it is decided against a view that
-    already provably reads the right bytes.
+    already provably reads and writes the right bytes.
 
-    NO WRITE PATH
-    -------------
-    Every property is a getter with no setter, so an assignment raises
-    `AttributeError` rather than silently writing an instance attribute that
-    shadows the column; `__slots__` closes the same hole for a name that is not
-    a property at all. Write-through belongs to a later slice and to the store's
-    six mutation entry points, not here.
+    The write path is what makes that absence worth restating rather than
+    assuming. A *cached* view would have to answer "who invalidates the other
+    views of this row?" the moment one of them was written through. This one
+    does not have the question: a write lands in the column, and every other
+    view of that row reads the column on its next access. Write-invalidation is
+    therefore not deferred here, it is absent, in the same way and for the same
+    reason read-invalidation is.
+
+    THE WRITE PATH, AND WHY IT ADDS NO ENTRY POINT
+    ----------------------------------------------
+    Each of the eight setters is one call into a mutation entry point the store
+    already had -- `setAttribute` for the six scalars, `setTags` for `tags`,
+    `setCoordinates` for `points` -- and does nothing else. No validation, no
+    coercion, no counter arithmetic, no tracking. That is the whole design:
+
+      * the generation counter bumps exactly once per write, in the store,
+        because the store is what bumps it;
+      * `_modified_contours` records the write, because the store records it;
+      * a rename reindexes the row between contours, because `setAttribute`
+        reindexes it;
+      * a write to a tombstoned row raises `IndexError`, because
+        `_requireLive` raises it.
+
+    A setter that did any of those itself would be a second implementation of a
+    rule the store owns, and the two would drift. The same argument the liveness
+    note below makes, applied to the write direction.
+
+    Assignment is still the only way in. `__slots__` covers every name the eight
+    properties do not, so `view.colour = ...` raises rather than landing as an
+    instance attribute that would shadow the column and read back convincingly,
+    and `row` stays read-only because a view that could be repointed at another
+    row is a different object, not a written one.
+
+    NAME VALIDATION IS THE STORE'S TOO, AND THE DIVERGENCE IS DELIBERATE
+    -------------------------------------------------------------------
+    `Trace.name`'s setter does two things: `assert (value is None or
+    type(value) is str)`, then `normalizeObjectName(value)`. `setAttribute`
+    does the second and not the first, so `view.name = ...` inherits exactly
+    that. Measured, both sides:
+
+        value              Trace.name =        view.name =
+        " a,b "            "a_b"               "a_b"          <- agree
+        None               None                AttributeError
+        5                  AssertionError      AttributeError
+        str subclass       AssertionError      "a_b"
+
+    The row that matters agrees. Normalization is the half with a correctness
+    consequence -- a comma in a name shifts every field of the log entry that
+    carries it and the entry stops parsing -- and the store runs it, in
+    `setAttribute` and in `appendRow` alike, through the same function
+    `Trace.name` calls.
+
+    The three disagreements are all in the `assert`, and it is not replicated
+    here, for three reasons. It is a debug-time type guard that `python -O`
+    strips, so a view that copied it would match `Trace` in some runs and not
+    others -- a *conditionally* divergent answer, which is worse than a
+    consistently delegated one. `None` is the only value `Trace` accepts and
+    this refuses, and the refusal is not the view's to lift: `_names` is a list
+    of `str` that `_index` keys on and `contourNames()` sorts, so the store has
+    no representation for a nameless row, and an assert here permitting `None`
+    would hand it to the same `AttributeError` one frame later. And the store
+    being the sole authority on what a name may be is the property that keeps a
+    name written through the store from diverging from one written through a
+    `Trace`, which is what the whole normalization arrangement exists for.
+
+    Pinned as a table in the parity suite, so it reads as a decision to revisit
+    when a consumer needs `Trace`'s exact type-error behavior, not as an
+    oversight.
 
     LIVENESS IS THE STORE'S, NOT THIS CLASS'S
     -----------------------------------------
@@ -855,10 +925,12 @@ class TraceView():
     answer to a question the store already answers.
     """
 
-    ## Two slots, so `view.color = ...` cannot land as an instance attribute on
-    ## a class whose whole contract is that it does not hold values. The eight
-    ## properties already refuse assignment; `__slots__` extends that refusal to
-    ## every name they do not cover.
+    ## Two slots, so a name the class has no property for cannot land as an
+    ## instance attribute on a class whose whole contract is that it does not
+    ## hold values. This matters MORE now that the eight fields accept writes,
+    ## not less: `view.colour = ...` under a plain class would silently create
+    ## an attribute and then read back convincingly, which is precisely the
+    ## failure a write-through view must not have.
     __slots__ = ("_columns", "_row")
 
     def __init__(self, columns: SectionColumns, row: int):
@@ -889,38 +961,84 @@ class TraceView():
         return self._row
 
     # --- the eight fields ----------------------------------------------------
+    #
+    # Getter: one row reader. Setter: one mutation entry point. Six of the eight
+    # are `setAttribute` under their own name, which is why they read as
+    # repetition -- the store's dispatch is the single place that knows which
+    # column an attribute lives in, and a per-field mapping here would be a
+    # second copy of it.
 
     @property
     def name(self) -> str:
         return self._columns.getName(self._row)
 
+    @name.setter
+    def name(self, value):
+        ## Normalization and the rename reindex are `setAttribute`'s; see the
+        ## class docstring for why the `type(value) is str` assertion is not.
+        self._columns.setAttribute(self._row, "name", value)
+
     @property
     def color(self) -> list:
         return self._columns.getColor(self._row)
+
+    @color.setter
+    def color(self, value):
+        self._columns.setAttribute(self._row, "color", value)
 
     @property
     def closed(self) -> bool:
         return self._columns.getFlag(self._row, "closed")
 
+    @closed.setter
+    def closed(self, value):
+        self._columns.setAttribute(self._row, "closed", value)
+
     @property
     def negative(self) -> bool:
         return self._columns.getFlag(self._row, "negative")
+
+    @negative.setter
+    def negative(self, value):
+        self._columns.setAttribute(self._row, "negative", value)
 
     @property
     def points(self) -> list:
         return self._columns.getPoints(self._row)
 
+    @points.setter
+    def points(self, value):
+        ## The one field whose write is not `setAttribute`: coordinates are a
+        ## ragged backing, not a column, and `setCoordinates` is the entry point
+        ## that owns replacing a row's geometry at any length.
+        self._columns.setCoordinates(self._row, value)
+
     @property
     def hidden(self) -> bool:
         return self._columns.getFlag(self._row, "hidden")
+
+    @hidden.setter
+    def hidden(self, value):
+        self._columns.setAttribute(self._row, "hidden", value)
 
     @property
     def tags(self) -> set:
         return self._columns.getTags(self._row)
 
+    @tags.setter
+    def tags(self, value):
+        ## `setTags` and not `setAttribute`: the tag column holds a `frozenset`
+        ## per row and `setAttribute` refuses `"tags"` by design, so the store
+        ## has one place that does the freezing.
+        self._columns.setTags(self._row, value)
+
     @property
     def fill_mode(self) -> list:
         return self._columns.getFillMode(self._row)
+
+    @fill_mode.setter
+    def fill_mode(self, value):
+        self._columns.setAttribute(self._row, "fill_mode", value)
 
 
 def _asColorRow(color) -> np.ndarray:
