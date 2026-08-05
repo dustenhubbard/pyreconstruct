@@ -861,9 +861,12 @@ class TraceView():
     still open. Nothing here presupposes an answer: this class has no identity
     map, no weak-value table and no generation-counter invalidation, because it
     holds no state that could go stale. Two views of one row are two objects
-    that compare unequal under `is`, and no consumer exists to care. Whatever
-    the caching question is decided to be, it is decided against a view that
-    already provably reads and writes the right bytes.
+    that compare unequal under `is`. `ContourView.index` and `__contains__` ask
+    a different question of them -- `row`, which is equal -- and that is exactly
+    why they could be built without settling the caching one: a row number is
+    stable whether or not any object is. Whatever the caching question is
+    decided to be, it is decided against a view that already provably reads and
+    writes the right bytes.
 
     The write path is what makes that absence worth restating rather than
     assuming. A *cached* view would have to answer "who invalidates the other
@@ -1081,9 +1084,11 @@ class ContourView():
     `Contour` defines `__init__`, `__iter__`, `__getitem__`, `__len__`,
     `__add__`, and the methods `append`, `remove`, `index`, `isEmpty`,
     `getTraces`, `copy`, `getBounds`, `getMidpoint`, `importTraces`. Of those,
-    five are read-only *and* buildable out of what the store and `TraceView`
+    six are read-only *and* buildable out of what the store and `TraceView`
     already expose: `__iter__`, `__getitem__`, `__len__`, `isEmpty`,
-    `getTraces`. They are what this class carries, plus `name`.
+    `getTraces` and `index` -- the last of which arrived in 7b' and brought
+    `__contains__` with it, since they are one question. They are what this
+    class carries, plus `name`.
 
     `__getitem__` on a slice returns a **bare `list`**, exactly as
     `Contour.__getitem__` does -- it is `self.traces[index]` there, and
@@ -1101,22 +1106,78 @@ class ContourView():
     `IndexError` and `view["x"]` raises `TypeError` with the same messages
     `Contour` gives, without this class deciding what an index may be.
 
+    IDENTITY IS ANSWERED BY ROW, WHICH NEEDS NO CACHE AND NO `__eq__`
+    -----------------------------------------------------------------
+    `Contour` defines no `__contains__` and no `__eq__`, so `trace in contour`
+    and `contour.index(trace)` both fall through to `Trace`'s inherited `==`,
+    which is CPython object identity. Every route to an element of a view builds
+    a *fresh* `TraceView`, so no object a caller holds is ever `is`-equal to an
+    element -- measured over all six access routes on every contour of the real
+    fixture series, zero hits. Slice 7a read that as "identity has no answer
+    here" and left both methods absent.
+
+    That reading was too strong, and this is the correction. There is a third
+    route, and it is mechanical: **match on the row**. `TraceView.row` is
+    already public, already read-only, and is already the row's identity. Two
+    views of one row of one store name the same trace whether or not they are
+    `is`-equal, and that is what `index` and `__contains__` answer here. The
+    route caches nothing, so it is not design §5(A)'s identity-stable view, and
+    it defines no `__eq__` over trace ids, so it is not §5(B), which
+    `DECISIONS.md` records as **rejected**. It is observationally what a cached
+    view would give -- a cache handing out one object per row makes `is` mean
+    exactly "same row of the same store" -- but with no live-view map, which is
+    the cost D1 exists to weigh. **So this route needs no D1 answer: there is no
+    cache for D1 to be about.**
+
+    The divergence from `Contour` that this does *not* erase, and that the
+    parity suite pins so it stays visible: **a materialized `Trace` is still
+    never a member.** `materializeTrace` builds an object outside the store,
+    holding no row, so it has no answer here and gets `False` / `ValueError`
+    rather than a guess. Three more non-members, all deliberate and all pinned:
+    a `TraceView` over a *different store*, one over a *different contour* of
+    this store, and one over a row this contour has since removed.
+
+    The `ValueError` message is this class's own (`"... is not in contour
+    'axon'"`) rather than `list.index`'s `"... is not in list"`. Message parity
+    is unattainable here for a reason that is not a shortcut: the repr in it is
+    a `TraceView`'s, never the `Trace`'s that `Contour` would have printed, so a
+    string copied from `list` would be a more misleading answer, not a more
+    faithful one. `__getitem__`'s `IndexError` and `TypeError` still come from
+    the row list verbatim, because those *can* be identical.
+
     WHAT IS DELIBERATELY ABSENT, AND WHY EACH ONE IS ABSENT
     ------------------------------------------------------
     *Mutation*, so `append` and `remove` are not here: this is the read half by
     construction, and the store's own entry points (`appendRow`, `removeRow`)
     are what a write half would route to.
 
-    *Identity*, so `index` is not here and neither is `__contains__`. `Contour`
-    defines no `__contains__` and no `__eq__`, so `trace in contour` and
-    `contour.index(trace)` both fall through to `Trace`'s inherited `==`, which
-    is CPython object identity. A `TraceView` is not the `Trace` a caller holds
-    and two views of one row are not `is`-equal, so neither operation has an
-    answer here until the shim's identity question (design §5(A), D1) is
-    decided. That is the split between this slice and the next, and it is why
-    the split exists: `importTraces`' second loop is `rem_o_traces.remove(...)`
-    over exactly those semantics, which makes it a real port rather than a
-    mechanical one.
+    `remove` needs its own paragraph now, because the row route above makes it
+    *mechanically* buildable -- `removeRow(row)` once the row is known is three
+    lines -- and it is still not built. Two reasons, and the second is the
+    load-bearing one.
+
+    First, read-only is this class's shipped contract, not an accident of how
+    far the last slice got, and widening it is the write half's call.
+
+    Second, and independent of that: it would not be the same operation.
+    `Contour.remove(trace)` *detaches* an object that stays alive and is often
+    re-added a line later. Its only production callers are `Section.removeTrace`
+    and `Section.importTraces`, and six of `removeTrace`'s own eleven callers --
+    `Section.editTraceAttributes`, `Section.editTraceRadius`,
+    `Section.editTraceShape`, `Section.makeNegative`, `Section.translateTraces`
+    and `Series.splitObject` -- go on using the removed object afterwards
+    (remove / mutate / add it back, or remove / `.copy()` / add the copy, as
+    `splitObject` does). The other five mean the removal: `Section.deleteTraces`
+    and, in `series.py`, `deleteObjects`, `deleteAllTraces`,
+    `deleteMalformedTraces` and `deleteDuplicateTraces`. The count is
+    package-wide -- `section.py` and `series.py` both -- and an AST walk in the
+    tests holds it there. `removeRow` tombstones: the row number retires for
+    good and every `TraceView` over it raises from then on, so the *mutate* step
+    of that pattern would have nothing left to write through. A
+    `ContourView.remove` would therefore be a differently-shaped
+    operation wearing `Contour.remove`'s name, which is the failure this class
+    exists to avoid. That is a finding for the write half to answer, and it is
+    pinned by a test rather than left here as prose.
 
     *`__add__`*, because it builds a `Contour` holding both operands' trace
     lists, and a contour spanning two stores is not a thing the row index can
@@ -1142,6 +1203,82 @@ class ContourView():
     name would make `contour.traces.append(...)` a silent no-op. `getTraces()`,
     which returns a copy on a `Contour` too and is what the production readers
     actually call, is here instead.
+
+    SLICE 7b WAS ATTEMPTED. HALF OF IT SHIPPED; `importTraces` DID NOT
+    -------------------------------------------------------------------
+    7b was dispatched as "`importTraces` + identity ops on `ContourView`". The
+    identity ops are above and are built. The import is not, and the reasons are
+    each measured and each pinned by a test in
+    `tests/test_columnar_store_parity.py` that fails the day its blocker lifts.
+
+    A correction is recorded here rather than quietly dropped, because the
+    earlier draft of this docstring asserted the opposite and would have been
+    read as settled architecture. It claimed identity through a view "can never
+    match", that the only two ways out were D1's cached views and the rejected
+    equality-over-id, and that there was **no third option that is merely
+    mechanical**. That was wrong: the row route above is the third option, it
+    needs neither decision, and it was built and run against all 221 contours of
+    the real fixture series before this slice took it (review-274 F1). The blocker below is what survives of that claim.
+
+      1. *A `Trace` a caller holds is still not a member, and `remove` is still
+         absent.* Identity by row answers for `TraceView`s (above) and answers
+         `False` for everything else, which is the honest answer and is pinned
+         on every contour of the real series rather than assumed. What is not
+         built is `remove`, for the two reasons in the mutation paragraph above
+         -- the read-only contract, and the fact that `Contour.remove` detaches
+         while `removeRow` tombstones.
+
+      2. *`Contour.importTraces` calls `overlaps` and `mergeTags` on its
+         elements.* `TraceView` carries neither, each for a reason older than
+         this slice: `overlaps` is the geometry family, deferred to the batched
+         coordinate pass, and `mergeTags` is outside the eight fields
+         `Trace.__init__` assigns.
+
+      3. *The store can express the reordered list `importTraces` rebinds, but
+         not cleanly.* That method ends `self.traces = traces`, where `traces`
+         is in a **different order** from the contour it replaces. There is no
+         purpose-built reorder, insert, move or swap: `appendRow` is "an append,
+         never an insert" and `removeRow` retires the row number for good. But
+         "no reorder is expressible" would be false, and saying it would put the
+         wrong question to the maintainer. `setAttribute(row, "name", ...)`
+         moves a row to the **end** of its destination contour, so renaming a
+         row away and back is a move-to-end primitive, and n−1 of those realize
+         any permutation -- with no row renumbered, no row tombstoned and no
+         held `TraceView` invalidated. Both routes are measured side by side in
+         the parity suite. The real residue is smaller and dirtier than a
+         capability gap: the temporary name **leaks into `modified_contours` and
+         `getAllModifiedNames`**, which the dual write consumes as the scope of
+         an undo snapshot. So the decision this raises (D9) is not "does the
+         store need a reorder entry point at all" but "is the rename round-trip
+         an acceptable reorder given that pollution, or should the store grow a
+         clean one".
+
+      4. *The rebound list may hold the other contour's own `Trace` objects*,
+         and in production `other` is a contour of a different section of a
+         different series with a different store. `Section.importTraces` then
+         calls `Contour.remove` on exactly those objects, by identity. Adopting
+         a foreign trace into this store is design §10's id-carry question, not
+         an append: `_resolveID` takes a carried-in id verbatim **without
+         registering it with the issuer**, so a foreign id can later collide
+         with one the local issuer hands out.
+
+    ON D1, AND ONE INCONSISTENCY WORTH FLAGGING RATHER THAN INHERITING
+    ------------------------------------------------------------------
+    `specs/phase1-rewiring-slices-2026-08-04.md` heads Track B with "needs D1
+    confirmed", so citing D1 as a precondition for shim work is defensible. Two
+    things temper it, and neither is settled precedent. Slices 4, 6 and 7a all
+    shipped under the identical unconfirmed D1, so treating it as *blocking* is
+    new with 7b rather than established. And D1's own recorded text asks whether
+    the cache is permanent or scaffolded -- not whether identity may be
+    expressed at all. The row route above needs no answer to either question,
+    because it builds no cache; if D1 is worth splitting when it is answered,
+    the split is "is the cache permanent" from "may the shim express identity in
+    store terms", and only the first is still open.
+
+    What also ports is the container mechanics, and they are now pinned rather
+    than inherited from slice 7a's word: the bare `list` a slice returns, its
+    iterator type, and its `IndexError`/`TypeError` message strings, all
+    re-verified against real `Contour`s on the real series.
     """
 
     ## Same two-slot discipline as `TraceView`, and for the same reason: a
@@ -1211,6 +1348,58 @@ class ContourView():
     def __len__(self):
         """The number of rows the contour holds."""
         return len(self._columns.rowsForContour(self._name))
+
+    # --- identity, by row ----------------------------------------------------
+    #
+    # See the class docstring for why the row is the right question and why
+    # object identity is the wrong one. The two methods are one question asked
+    # twice, so they share `_rowOf` rather than one calling the other: `index`
+    # needs the row list it matched against anyway, and building it twice would
+    # be two `rowsForContour` calls where one is honest.
+
+    def __contains__(self, candidate) -> bool:
+        """True when `candidate` views a row this contour holds.
+
+        `Contour` has no `__contains__` at all, so `trace in contour` falls back
+        to `__iter__` plus `==` -- which, `Trace` defining no `__eq__`, is object
+        identity. This answers the same question the only way a view can: by row.
+        Anything that is not a `TraceView` over this store gets `False`,
+        including a `Trace` this store materialized.
+        """
+        rows = self._columns.rowsForContour(self._name)
+        return self._rowOf(candidate, rows) is not None
+
+    def index(self, candidate) -> int:
+        """The within-contour position of the row `candidate` views.
+
+        `Contour.index` is `list.index`, so it raises `ValueError` for a trace it
+        does not hold; so does this, with a message naming the contour rather
+        than "list" (the class docstring says why exact message parity is the
+        wrong target here, unlike for `__getitem__`).
+        """
+        rows = self._columns.rowsForContour(self._name)
+        row = self._rowOf(candidate, rows)
+        if row is None:
+            raise ValueError(
+                f"{candidate!r} is not in contour {self._name!r}"
+            )
+        return rows.index(row)
+
+    def _rowOf(self, candidate, rows):
+        """The row `candidate` names in THIS contour of THIS store, or `None`.
+
+        Four ways to get `None`, and each is a real case rather than defensive
+        padding: not a `TraceView` at all (a materialized `Trace`, most often),
+        a view over a different store, a view over a different contour of this
+        store, and a view over a row this contour no longer holds -- which
+        covers a removed row, since `removeRow` takes the row out of the index.
+        """
+        if not isinstance(candidate, TraceView):
+            return None
+        if candidate._columns is not self._columns:
+            return None
+        row = candidate.row
+        return row if row in rows else None
 
     def isEmpty(self) -> bool:
         """True when the contour holds no rows."""
