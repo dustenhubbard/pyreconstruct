@@ -140,6 +140,20 @@ an issuer's index can refuse and report, while the alternative (drop on copy,
 re-attach explicitly) makes a missed site produce a trace with **no** id, which a
 merge cannot place and nothing detects.
 
+THE ONE VIEW IN THIS MODULE, AND WHAT IT DELIBERATELY IS NOT
+------------------------------------------------------------
+`TraceView` reads one row through a `Trace`-shaped, read-only surface: the
+eight fields `Trace.__init__` assigns, each a direct call into the row readers
+above. It is **not** §5(A)'s cached identity-stable shim. It has no identity
+map, no invalidation and no write path, because whether the shim should cache
+is still open and a view that quietly cached would answer it by accident. It
+lives here, beside the store, rather than in a module of its own so that it
+carries no import of anything and stays inside the graph
+`test_datatypes_import_graph_is_qt_free` proves Qt-free -- which a module
+nothing imports would sit outside of, the gap `trace_id.py`'s export note
+records. Nothing in the application references it; the parity suite is its
+only caller.
+
 **Two rows of the carry table are not implemented, on purpose.** Split-object
 traces, where one drawn geometry is redistributed under new `_{n}` names, and
 palette traces, which are templates rather than annotations and may want no id at
@@ -787,6 +801,126 @@ class SectionColumns():
             return FILL_MODE_OVERFLOW
         self._fill_mode_overflow.pop(row, None)
         return code
+
+
+class TraceView():
+    """One row of a `SectionColumns`, read through a `Trace`-shaped surface.
+
+    Read-only, uncached, and with no consumers. Each of the eight properties
+    below is a direct call into the store's existing row readers; nothing is
+    remembered between calls and nothing is written back. A `TraceView` is
+    therefore free to construct, free to discard, and free to construct again
+    for the same row.
+
+    THE EIGHT FIELDS, AND WHY EXACTLY EIGHT
+    ---------------------------------------
+    `Trace.__init__` assigns eight attributes -- `name` (through the property
+    that runs `normalizeObjectName`), `color`, `closed`, `negative`, `points`,
+    `hidden`, `tags`, `fill_mode` -- and `SectionColumns` carries a column for
+    each. Those eight are the whole surface here.
+
+    `Trace`'s geometry methods (`getBounds`, `getMidpoint`, `getCentroid`,
+    `getRadius`, `getFeret`, ...) are deliberately absent. They are a separate
+    row of the rewiring plan's pattern table -- a batched whole-section pass
+    over the coordinate column, which is the thing the layout exists for -- and
+    reimplementing them one trace at a time here would prejudge that work by
+    shipping the per-trace shape it is meant to replace.
+
+    NO CACHE, AND THAT IS THE POINT RATHER THAN AN OMISSION
+    ------------------------------------------------------
+    The design's §5(A) shim is a *cached, identity-stable* view, and its own
+    cost note ("exactly the object-per-trace cost the phase is removing") is
+    still open. Nothing here presupposes an answer: this class has no identity
+    map, no weak-value table and no generation-counter invalidation, because it
+    holds no state that could go stale. Two views of one row are two objects
+    that compare unequal under `is`, and no consumer exists to care. Whatever
+    the caching question is decided to be, it is decided against a view that
+    already provably reads the right bytes.
+
+    NO WRITE PATH
+    -------------
+    Every property is a getter with no setter, so an assignment raises
+    `AttributeError` rather than silently writing an instance attribute that
+    shadows the column; `__slots__` closes the same hole for a name that is not
+    a property at all. Write-through belongs to a later slice and to the store's
+    six mutation entry points, not here.
+
+    LIVENESS IS THE STORE'S, NOT THIS CLASS'S
+    -----------------------------------------
+    A view over a tombstoned row behaves exactly as the store's own readers do,
+    which is not uniformly: `getName` answers for a dead row while the other
+    seven raise `IndexError` through `_requireLive`. That asymmetry is
+    `SectionColumns`', it is pinned by a test rather than papered over here, and
+    a view that added a liveness check of its own would be a second, divergent
+    answer to a question the store already answers.
+    """
+
+    ## Two slots, so `view.color = ...` cannot land as an instance attribute on
+    ## a class whose whole contract is that it does not hold values. The eight
+    ## properties already refuse assignment; `__slots__` extends that refusal to
+    ## every name they do not cover.
+    __slots__ = ("_columns", "_row")
+
+    def __init__(self, columns: SectionColumns, row: int):
+        """View one row of one store.
+
+        Neither argument is validated and the row is not required to be live:
+        construction touches no column, so a view is as cheap as a tuple, and
+        the store raises on the read rather than the constructor -- the same
+        moment it would for a direct `getColor(row)` call.
+
+            Params:
+                columns (SectionColumns): the store holding the row
+                row (int): the row number, which never changes and is never
+                    reused once its row is removed
+        """
+        self._columns = columns
+        self._row = row
+
+    def __repr__(self) -> str:
+        ## `getName` and not a live-row read: a repr that raised on a removed
+        ## row would break a debugger session at the moment it was most needed.
+        return f"<TraceView row {self._row} of {self._columns.getName(self._row)!r}>"
+
+    @property
+    def row(self) -> int:
+        """The row this view reads. Not a `Trace` field; here because a view
+        with no way to say which row it is cannot be usefully debugged."""
+        return self._row
+
+    # --- the eight fields ----------------------------------------------------
+
+    @property
+    def name(self) -> str:
+        return self._columns.getName(self._row)
+
+    @property
+    def color(self) -> list:
+        return self._columns.getColor(self._row)
+
+    @property
+    def closed(self) -> bool:
+        return self._columns.getFlag(self._row, "closed")
+
+    @property
+    def negative(self) -> bool:
+        return self._columns.getFlag(self._row, "negative")
+
+    @property
+    def points(self) -> list:
+        return self._columns.getPoints(self._row)
+
+    @property
+    def hidden(self) -> bool:
+        return self._columns.getFlag(self._row, "hidden")
+
+    @property
+    def tags(self) -> set:
+        return self._columns.getTags(self._row)
+
+    @property
+    def fill_mode(self) -> list:
+        return self._columns.getFillMode(self._row)
 
 
 def _asColorRow(color) -> np.ndarray:
