@@ -25,6 +25,141 @@ from PyReconstruct.modules.constants import (
 from PyReconstruct.modules.backend.exports import export_svg, export_png
 
 
+## --- the test-only columnar dual-write gate ---------------------------------
+##
+## Slice 3 of the Phase 1 rewiring. A `Section` can carry a `SectionColumns`
+## beside its own `self.contours` and mirror every mutation into it, so that the
+## columnar store gets driven by real code on real data -- and checked against
+## the object model after every single mutation -- before one call site anywhere
+## is flipped to *read* from it. Nothing reads the store. `Section` is the only
+## class in the tree that knows any of this exists.
+##
+## THIS IS A TEST HARNESS, NOT A FEATURE, AND THE GATE IS BUILT SO THAT A REAL
+## USER SESSION CANNOT REACH IT.
+##
+## `PYRECON_TEST_ONLY_COLUMNAR_DUAL_WRITE=1` in the process environment is the
+## only thing that turns it on. Specifically:
+##
+##   * **Nothing in `PyReconstruct/` sets it, reads it, or names it** other than
+##     the one constant below and the one `os.environ.get` it feeds.
+##     `tests/test_section_columnar_dual_write.py::test_nothing_in_the_shipped_
+##     package_can_turn_the_gate_on` walks the whole package and fails the moment
+##     that stops being true.
+##   * **It is not a setting.** Not a series option, not a QSettings key, not a
+##     command-line flag, not reachable from any dialog, so no sequence of clicks
+##     in a normal `uv run PyReconstruct` launch can produce it. There is
+##     deliberately no default-off-but-reachable toggle: the gate has to be put
+##     into the environment before the process starts, by something outside the
+##     application, which in practice means a test's `monkeypatch.setenv`.
+##   * **The spelling is `== "1"` exactly**, the rule `PYRECON_UNATTENDED`,
+##     `PYRECON_FORCE_FROZEN` and `PYRECON_JSER_PRETTY` already use, so a stale
+##     `...=0` left in a shell profile is off rather than a third state.
+##
+## With the gate unset -- which is every shipped launch -- `self._columns` is
+## `None`, every hook below returns on its first line, no store is built, no
+## memory is doubled and no assertion runs.
+##
+## The cost with the gate ON is deliberately not optimized: the consistency
+## check materializes the *whole* section and compares it field by field after
+## every mutation, which is O(section) per mutation. That is the wrong trade for
+## production and the right one for a harness whose only job is to catch
+## divergence as close to its cause as it can.
+DUAL_WRITE_ENV_VAR = "PYRECON_TEST_ONLY_COLUMNAR_DUAL_WRITE"
+
+
+def dualWriteRequested() -> bool:
+    """True when the test-only columnar dual-write gate is set to exactly "1".
+
+    Read at `Section.__init__` time, per section, rather than cached at import:
+    a test can turn the gate on and load a section and get a store, and the next
+    test can turn it off and load a section and get nothing, with no import-order
+    dependency between them.
+    """
+    return os.environ.get(DUAL_WRITE_ENV_VAR) == "1"
+
+
+class ColumnarDualWriteMismatch(AssertionError):
+    """The columnar store and the object model disagree after a mutation.
+
+    Raised, never logged and never swallowed. Catching store/object divergence
+    is the entire purpose of the dual-write slice: a mismatch a test run
+    survives is a mismatch that teaches nothing, and every later slice of the
+    rewiring rests on the claim that the two representations agree.
+    """
+
+
+def _traceDifferences(stored : Trace, obj : Trace) -> list:
+    """Every field on which a materialized row differs from a real trace.
+
+    Compared against the **in-memory** trace, never against `getList()`: the
+    store holds unrounded float64 while `getList` rounds to 7 decimal places, so
+    a comparison through serialization is two lossy things agreeing and proves
+    nothing about either. See the `columnar_store` module docstring, which puts
+    the store on the unrounded side of that rounding on purpose.
+
+    Container *types* are normalized on both sides before comparing, because
+    they legitimately differ and a difference there is not a divergence: a
+    file-loaded trace's `color` and `fill_mode` are `list`s while one built in
+    memory carries `tuple`s, and the store's readers hand back `list`s by
+    design.
+
+        Params:
+            stored (Trace): the trace `SectionColumns.materializeTrace` rebuilt
+            obj (Trace): the trace the object model actually holds
+        Returns:
+            (list): one human-readable string per differing field; empty when
+                the row and the trace agree
+    """
+    differences = []
+
+    if stored.name != obj.name:
+        differences.append(f"name: store {stored.name!r} != object {obj.name!r}")
+
+    stored_points = [(float(x), float(y)) for x, y in stored.points]
+    object_points = [(float(x), float(y)) for x, y in obj.points]
+    if stored_points != object_points:
+        if len(stored_points) != len(object_points):
+            differences.append(
+                f"points: store holds {len(stored_points)}, object holds "
+                f"{len(object_points)}"
+            )
+        else:
+            ## The first divergent point rather than both whole lists: a real
+            ## trace runs to hundreds of points and dumping two of them buries
+            ## the one pair that actually differs.
+            for i, (s, o) in enumerate(zip(stored_points, object_points)):
+                if s != o:
+                    differences.append(f"points[{i}]: store {s!r} != object {o!r}")
+                    break
+
+    if list(stored.color) != list(obj.color):
+        differences.append(
+            f"color: store {list(stored.color)!r} != object {list(obj.color)!r}"
+        )
+
+    for attribute in ("closed", "negative", "hidden"):
+        stored_flag = bool(getattr(stored, attribute))
+        object_flag = bool(getattr(obj, attribute))
+        if stored_flag != object_flag:
+            differences.append(
+                f"{attribute}: store {stored_flag!r} != object {object_flag!r}"
+            )
+
+    if list(stored.fill_mode) != list(obj.fill_mode):
+        differences.append(
+            f"fill_mode: store {list(stored.fill_mode)!r} != object "
+            f"{list(obj.fill_mode)!r}"
+        )
+
+    if set(stored.tags) != set(obj.tags):
+        differences.append(
+            f"tags: store {sorted(stored.tags, key=str)!r} != object "
+            f"{sorted(obj.tags, key=str)!r}"
+        )
+
+    return differences
+
+
 def tracesWithoutCounterpart(donor : Contour, keeper : Contour) -> list:
     """Return the traces in donor that overlap nothing at all in keeper.
 
@@ -97,6 +232,20 @@ def tracesWithoutCounterpart(donor : Contour, keeper : Contour) -> list:
 
 class Section():
 
+    ## Class-level defaults for the test-only dual-write harness. `__init__`
+    ## assigns instance attributes over both, so these exist for one case: a
+    ## `Section` built through `Section.__new__` without running `__init__`,
+    ## which a dozen test modules do to drive one method against a handful of
+    ## hand-set attributes. Without these, adding a hook to a mutator would
+    ## break every one of them -- which is the opposite of invisible.
+    ##
+    ## The shared dict is never written. Every path that puts a row into it
+    ## runs only when `_columns is not None`, and the only thing that sets
+    ## `_columns` is `resyncColumnarStore`, which rebinds an instance dict
+    ## first.
+    _columns = None
+    _column_rows : dict = {}
+
     def __init__(self, n : int, series):
         """Load the section file.
         
@@ -106,7 +255,15 @@ class Section():
         """
         self.n = n
         self.series = series
-        
+
+        ## The test-only columnar dual-write harness. Declared here, before
+        ## anything can fail, so that `self._columns is None` is true of a
+        ## half-constructed Section as well as of every shipped one. See
+        ## DUAL_WRITE_ENV_VAR above: `None` is what a normal launch gets, and it
+        ## makes every hook on this class a one-line return.
+        self._columns = None
+        self._column_rows : dict = {}
+
         self.filepath = os.path.join(  # hidden trace file
             self.series.getwdir(),
             self.series.sections[n]
@@ -160,6 +317,10 @@ class Section():
                 trace_list
             )
         
+        ## Build the parallel store, if and only if the test-only gate is set.
+        if dualWriteRequested():
+            self.resyncColumnarStore()
+
         self.flags = [Flag.fromList(l, self.n) for l in section_data["flags"]]
 
         self.calgrid = section_data["calgrid"]
@@ -177,7 +338,8 @@ class Section():
     def tform(self, new_tform):
         if self.series.alignment != "no-alignment":
             self.tforms[self.series.alignment] = new_tform
-    
+            self._dualWriteTransformChange()  # test-only
+
     @property
     def brightness(self):
         return self.bc_profiles[self.series.bc_profile][0]
@@ -594,7 +756,269 @@ class Section():
         self.modified_contours = set()
         self.tforms_values_copy = [t.copy() for t in self.tforms.values()]
         self.flags_modified = False
-    
+
+    # --- the test-only columnar dual-write harness ---------------------------
+    #
+    # Every method in this block returns on its first line unless
+    # DUAL_WRITE_ENV_VAR was set in the environment before this Section was
+    # constructed. Read the module-level comment on that constant first: it is
+    # why a shipped launch cannot get here.
+    #
+    # WHICH MUTATION PATHS ARE MODELLED, AND WHY THERE ARE FEWER HOOKS THAN
+    # THIS CLASS HAS MUTATORS
+    # -----------------------------------------------------------------------
+    # The design proposal named four paths to route: `addTrace`, `removeTrace`,
+    # `editTraceAttributes` and `translateTraces`. Reading the class says the
+    # last two are not separate paths at all. `editTraceAttributes`,
+    # `translateTraces`, `editTraceRadius`, `editTraceShape`, `makeNegative` and
+    # `deleteTraces` are each *composed* of `removeTrace` / mutate / `addTrace`,
+    # so hooking the two primitives covers all six and hooking them on their own
+    # account as well would double-write. That composition is load-bearing for
+    # this harness and is pinned by its tests rather than left as a reading.
+    #
+    # What the two primitives do NOT cover is the mutators that write a trace
+    # attribute in place and never leave the contour: `hideTraces`,
+    # `hideOtherTraces`, `unhideAllTraces` and `closeTraces` -- one
+    # `setAttribute` each -- and `setMag`, which rewrites every trace's
+    # coordinates through `Trace.magScale`, one `setCoordinates` each plus a
+    # transform change, checked once for the batch because a whole-section
+    # rewrite is one mutation. Those get their own hooks. The `tform` setter
+    # reports a transform change, which changes no row and only moves the
+    # generation counter; the store's own docstring says why that must not be
+    # skipped even though nothing this slice does reads the counter.
+    #
+    # `importTraces` is the one method here that replaces whole contour trace
+    # *lists* rather than going through any of the above: `Contour.importTraces`
+    # rebinds `self.traces` outright, and the history shortcut swaps one Contour
+    # object for another. There is no sequence of per-row mutations to mirror, so
+    # the store is rebuilt from the object model at the end of it instead of
+    # pretending to have tracked it. That is honest but limited, and the limit is
+    # worth stating plainly: the consistency check proves nothing about the
+    # inside of an import. Modelling an import as store operations is later work.
+    #
+    # Paths that replace `Section.contours` from OUTSIDE this class -- the undo
+    # restore in `backend/func/state_manager.py`, `Series.deleteObjects`,
+    # autoseg's contour deletion -- are deliberately untouched, because this
+    # slice is not allowed to change a call site outside `Section`. Something
+    # that does that with the gate on has to call `resyncColumnarStore()`
+    # afterwards. Nothing in the shipped application does either thing.
+    #
+    # Forgetting that resync used to fail SILENTLY. It no longer does. An
+    # undo restore rebinds `self.contours` to `Contour.copy()` products, which
+    # are equal field for field to the traces the store was built from -- so the
+    # value comparison in `_assertColumnsMatchObjectModel` saw nothing wrong,
+    # while `_column_rows` stayed keyed on the traces that had just been thrown
+    # away. The run then died several mutations later on a "holds no row for"
+    # naming a trace that was plainly still in its contour. The check now
+    # compares the row map's identity domain against the section's live traces
+    # as well as the columns' values, so the first hooked mutation after such a
+    # rebind names the rebind. That closes the detection gap; it does not make
+    # the out-of-class paths safe, and they still owe the resync.
+
+    def resyncColumnarStore(self):
+        """Build (or rebuild) the parallel store from the object model.
+
+        Unconditional: the caller decides whether a store is wanted. `__init__`
+        calls it once when the gate is set, and the import path calls it through
+        `_dualWriteResync`, which is the version that respects the gate.
+
+        The row map is keyed on the `Trace` object itself. `Trace` defines
+        neither `__eq__` nor `__hash__`, so that dict is an identity map -- the
+        same identity `Contour.remove` already runs on through `list.remove`, so
+        the store's notion of "this trace" and the object model's cannot come
+        apart. It is a strong reference and it keeps traces alive; that is
+        another reason this is not something to ship.
+        """
+        from .columnar_store import SectionColumns
+
+        self._columns = SectionColumns.fromSection(self)
+        self._column_rows = {}
+
+        ## `fromSection` walks `sorted(contours, key=str)` and each contour's
+        ## traces in list order, so the rows it appended for a contour line up
+        ## one-for-one with that contour's traces. Read back through the store's
+        ## public index rather than assuming row numbers, and check the arity, so
+        ## that a change in the store's construction order fails here instead of
+        ## silently mis-mapping every trace.
+        for name in sorted(self.contours, key=str):
+            traces = self.contours[name].getTraces()
+            rows = self._columns.rowsForContour(name)
+            if len(traces) != len(rows):
+                raise ColumnarDualWriteMismatch(
+                    f"building the store for section {self.n} gave "
+                    f"{len(rows)} rows for contour {name!r}, which holds "
+                    f"{len(traces)} traces"
+                )
+            for trace, row in zip(traces, rows):
+                self._column_rows[trace] = row
+
+        self._assertColumnsMatchObjectModel("building the store")
+
+    def _dualWriteResync(self):
+        """Rebuild the store, if there is one. The gate-respecting form."""
+        if self._columns is None:
+            return
+        self.resyncColumnarStore()
+
+    def _rowFor(self, trace : Trace, operation : str) -> int:
+        """The store row mirroring `trace`, or raise saying it has none."""
+        row = self._column_rows.get(trace)
+        if row is None:
+            raise ColumnarDualWriteMismatch(
+                f"{operation} on section {self.n} touched a trace the store "
+                f"holds no row for: {trace.name!r}, {len(trace.points)} points. "
+                f"Either it never entered the section through addTrace, or its "
+                f"row has already been retired by removeTrace."
+            )
+        return row
+
+    def _dualWriteAppend(self, trace : Trace):
+        """Mirror an `addTrace` into the store, then check the whole section."""
+        if self._columns is None:
+            return
+        self._column_rows[trace] = self._columns.appendRow(
+            name=trace.name,
+            points=trace.points,
+            color=trace.color,
+            closed=trace.closed,
+            negative=trace.negative,
+            hidden=trace.hidden,
+            fill_mode=trace.fill_mode,
+            tags=trace.tags,
+        )
+        self._assertColumnsMatchObjectModel("addTrace")
+
+    def _dualWriteRemove(self, trace : Trace):
+        """Mirror a `removeTrace` into the store, then check the whole section."""
+        if self._columns is None:
+            return
+        self._columns.removeRow(self._rowFor(trace, "removeTrace"))
+        del self._column_rows[trace]
+        self._assertColumnsMatchObjectModel("removeTrace")
+
+    def _dualWriteAttribute(self, trace : Trace, attribute : str, value):
+        """Mirror an in-place scalar attribute write into the store."""
+        if self._columns is None:
+            return
+        operation = f"a {attribute} write"
+        self._columns.setAttribute(self._rowFor(trace, operation), attribute, value)
+        self._assertColumnsMatchObjectModel(operation)
+
+    def _dualWriteAllCoordinates(self, operation : str):
+        """Mirror a geometry rewrite that touched every trace on the section.
+
+        One check after the whole batch and not one per trace, which is a
+        correctness requirement rather than an optimization: the check compares
+        the *whole* section, so a per-trace check inside a whole-section rewrite
+        would fire on the traces the batch has not reached yet. A batch mutation
+        is one mutation as far as the invariant is concerned.
+        """
+        if self._columns is None:
+            return
+        for trace in self.tracesAsList():
+            self._columns.setCoordinates(self._rowFor(trace, operation), trace.points)
+        self._assertColumnsMatchObjectModel(operation)
+
+    def _dualWriteTransformChange(self):
+        """Tell the store the section's alignment moved."""
+        if self._columns is None:
+            return
+        self._columns.noteTransformChange()
+        ## No row changes here, so there is nothing new for the check to catch.
+        ## Run it anyway: "the generation counter moved and nothing else did" is
+        ## exactly the claim, and an unchecked claim is the shape of defect the
+        ## store's docstring says the counter exists to prevent.
+        self._assertColumnsMatchObjectModel("a transform change")
+
+    def _assertColumnsMatchObjectModel(self, operation : str):
+        """Raise unless the store and `self.contours` hold the same thing.
+
+        Reads the store back through `materializeContours`, which exists for
+        exactly this comparison and is explicitly not a view, and compares it
+        contour by contour, trace by trace, field by field against the object
+        model. Every mismatch found is reported, not just the first, because a
+        single mutation that went wrong usually goes wrong in more than one
+        column and the second one is the informative one.
+
+        **Empty contours are skipped on the object side.** `Section.contours`
+        keeps a key whose `Contour` has been emptied -- `removeTrace` never
+        deletes the key, and `importTraces` creates empty ones outright --
+        while the store's `contourNames()` reports only names with live rows.
+        That is the same asymmetry `getDict()` already has, where an empty
+        contour is not written to the file, so it is a difference in how the two
+        represent nothing rather than a divergence.
+
+            Params:
+                operation (str): what was just done, for the message
+            Raises:
+                ColumnarDualWriteMismatch: on any difference at all
+        """
+        if self._columns is None:
+            return
+
+        materialized = self._columns.materializeContours()
+        expected = {
+            name: contour.getTraces()
+            for name, contour in self.contours.items()
+            if not contour.isEmpty()
+        }
+
+        complaints = []
+
+        only_store = sorted(set(materialized) - set(expected), key=str)
+        if only_store:
+            complaints.append(f"contours only in the store: {only_store!r}")
+        only_object = sorted(set(expected) - set(materialized), key=str)
+        if only_object:
+            complaints.append(f"contours only in the object model: {only_object!r}")
+
+        for name in sorted(set(materialized) & set(expected), key=str):
+            stored_traces = materialized[name].getTraces()
+            object_traces = expected[name]
+            if len(stored_traces) != len(object_traces):
+                complaints.append(
+                    f"contour {name!r}: the store holds {len(stored_traces)} "
+                    f"traces, the object model holds {len(object_traces)}"
+                )
+                continue
+            for i, (stored, obj) in enumerate(zip(stored_traces, object_traces)):
+                for difference in _traceDifferences(stored, obj):
+                    complaints.append(f"contour {name!r} trace {i}: {difference}")
+
+        ## The comparison above reads *values* out of the store, so it is
+        ## structurally incapable of seeing a stale row map. A whole-dict rebind
+        ## of `self.contours` to equal-valued copies -- which is exactly the
+        ## shape of an undo restore -- leaves every field matching and every key
+        ## in `_column_rows` pointing at a `Trace` no contour holds any more.
+        ## The check passed, and the next `removeTrace` then failed with "holds
+        ## no row for" naming a trace that is plainly in the contour. So compare
+        ## the map's identity domain too, and the failure lands here, on the
+        ## first hooked mutation after the rebind, saying what actually went
+        ## wrong instead of surfacing later as a puzzle.
+        ##
+        ## Identity and not equality, for the same reason the map itself is an
+        ## identity map: `Trace` defines no `__eq__`. Sets and not multisets, so
+        ## the same `Trace` object appended twice -- which no application path
+        ## does -- is left to the arity comparison above rather than newly
+        ## rejected here. Both hooks that write the map do so *after* the object
+        ## model has already been updated, so this holds at every call site.
+        live = {id(trace) for trace in self.tracesAsList()}
+        mapped = {id(trace) for trace in self._column_rows}
+        if live != mapped:
+            complaints.append(
+                f"the row map is stale: it holds {len(mapped - live)} trace(s) "
+                f"no contour on this section holds any more and is missing "
+                f"{len(live - mapped)} that it does. Something replaced this "
+                f"section's contours or traces from outside Section without "
+                f"calling resyncColumnarStore() afterwards"
+            )
+
+        if complaints:
+            raise ColumnarDualWriteMismatch(
+                f"the columnar store diverged from the object model after "
+                f"{operation} on section {self.n}:\n  " + "\n  ".join(complaints)
+            )
+
     def setMag(self, new_mag : float):
         """Set the magnification for the section.
         
@@ -616,9 +1040,14 @@ class Section():
         # modify the flags
         for flag in self.flags:
             flag.magScale(self.mag, new_mag)
-        
+
         self.mag = new_mag
-    
+
+        # mirror into the test-only store: every trace's geometry was rewritten
+        # in place above, and every tform with it
+        self._dualWriteAllCoordinates("setMag")
+        self._dualWriteTransformChange()
+
     def addTrace(self, trace : Trace, log_event=True):
         """Add a trace to the trace dictionary.
         
@@ -640,9 +1069,11 @@ class Section():
             self.contours[trace.name].append(trace)
         else:
             self.contours[trace.name] = Contour(trace.name, [trace])
-        
+
         self.added_traces.append(trace)
-    
+
+        self._dualWriteAppend(trace)  # test-only; a no-op in every shipped launch
+
     def removeTrace(self, trace : Trace, log_event=True):
         """Remove a trace from the trace dictionary.
         
@@ -653,6 +1084,7 @@ class Section():
         if trace.name in self.contours:
             self.contours[trace.name].remove(trace)
             self.removed_traces.append(trace)
+            self._dualWriteRemove(trace)  # test-only; see the harness block above
         if log_event:
             self.series.addLog(trace.name, self.n, "Delete trace(s)")
     
@@ -999,6 +1431,7 @@ class Section():
                 continue
             modified = True
             trace.setHidden(True)
+            self._dualWriteAttribute(trace, "hidden", True)  # test-only
             self.modified_contours.add(trace.name)
             if log_event:
                 self.series.addLog(trace.name, self.n, "Modify trace(s)")
@@ -1026,6 +1459,7 @@ class Section():
         for trace in traces:
             modified = True
             trace.setHidden(hide)
+            self._dualWriteAttribute(trace, "hidden", hide)  # test-only
             self.modified_contours.add(trace.name)
             if log_event:
                 self.series.addLog(trace.name, self.n, "Modify trace(s)")
@@ -1091,6 +1525,7 @@ class Section():
         for trace in traces:
             modified = True
             trace.closed = closed
+            self._dualWriteAttribute(trace, "closed", closed)  # test-only
             self.modified_contours.add(trace.name)
             if log_event:
                 self.series.addLog(trace.name, self.n, "Modify trace(s)")
@@ -1111,6 +1546,7 @@ class Section():
             if hidden:
                 modified = True
                 trace.setHidden(False)
+                self._dualWriteAttribute(trace, "hidden", False)  # test-only
                 self.modified_contours.add(trace.name)
                 if log_event:
                     self.series.addLog(trace.name, self.n, "Modify trace(s)")
@@ -1507,9 +1943,21 @@ class Section():
                     self.flags.append(Flag(f"import-conflict_{trace.name}", x, y, self.n, trace.color))
             
             if self.contours[cname].isEmpty(): del(self.contours[cname])  # remove contour from self if empty
-        
+
+        # An import rebinds whole contour trace lists rather than going through
+        # addTrace/removeTrace, so there is no sequence of row operations to
+        # mirror. Rebuild the test-only store from the result instead of
+        # pretending it was tracked. `other` is rebuilt too, because the mag
+        # loop above rewrote ITS traces' coordinates in place. Guarded on
+        # `self._columns` rather than left to `_dualWriteResync`'s own guard so
+        # that with the gate off -- every shipped launch -- `other` is not
+        # touched at all and need not be a real `Section`.
+        if self._columns is not None:
+            self._dualWriteResync()
+            other._dualWriteResync()
+
         self.save()
-    
+
     def addSelectedTrace(self, trace : Trace):
         """Add a trace to the selected trace list.
 
