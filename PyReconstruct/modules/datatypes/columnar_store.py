@@ -1041,6 +1041,172 @@ class TraceView():
         self._columns.setAttribute(self._row, "fill_mode", value)
 
 
+class ContourView():
+    """One contour of a `SectionColumns`, read through a `Contour`-shaped
+    surface. The **read half** only.
+
+    A `Contour` is a thin wrapper around `list[Trace]` plus the name every trace
+    in it shares. The store already holds both halves -- `rowsForContour(name)`
+    is that list, in within-contour order, and the name is the key it is
+    indexed under -- so this class is the container protocol over the index and
+    nothing more. Each element it hands back is a `TraceView` over the
+    corresponding row, so a walk over a contour is a walk over rows and no
+    `Trace` is built anywhere on the path.
+
+    Uncached and with no consumers, for the same reasons `TraceView` is: every
+    method below is a fresh `rowsForContour` call, nothing is remembered
+    between calls, and nothing in the application references this class.
+
+    WHAT IS HERE, AND THE ONE PROPERTY THAT IS LOAD-BEARING FOR A LATER SLICE
+    ------------------------------------------------------------------------
+    `Contour` defines `__init__`, `__iter__`, `__getitem__`, `__len__`,
+    `__add__`, and the methods `append`, `remove`, `index`, `isEmpty`,
+    `getTraces`, `copy`, `getBounds`, `getMidpoint`, `importTraces`. Of those,
+    five are read-only *and* buildable out of what the store and `TraceView`
+    already expose: `__iter__`, `__getitem__`, `__len__`, `isEmpty`,
+    `getTraces`. They are what this class carries, plus `name`.
+
+    `__getitem__` on a slice returns a **bare `list`**, exactly as
+    `Contour.__getitem__` does -- it is `self.traces[index]` there, and
+    `list.__getitem__` with a slice returns a `list`, never a `Contour` and
+    never a view. That is not an incidental detail. `Contour.importTraces`
+    takes `rem_s_traces = self[i:]` and then calls `.copy()`, `.pop(found_i)`
+    and `.remove(o_trace)` on it and finally `+`-concatenates it, all of which
+    require a real, mutable, independent `list`. A slice that returned another
+    view would break the slice that ports `importTraces` in a way no type
+    annotation would catch, so the parity suite pins `type(...) is list`
+    against a real `Contour` rather than asserting a shape.
+
+    Every index and type error is the row list's own: `__getitem__` indexes
+    `rowsForContour`'s list first and wraps afterwards, so `view[10]` raises
+    `IndexError` and `view["x"]` raises `TypeError` with the same messages
+    `Contour` gives, without this class deciding what an index may be.
+
+    WHAT IS DELIBERATELY ABSENT, AND WHY EACH ONE IS ABSENT
+    ------------------------------------------------------
+    *Mutation*, so `append` and `remove` are not here: this is the read half by
+    construction, and the store's own entry points (`appendRow`, `removeRow`)
+    are what a write half would route to.
+
+    *Identity*, so `index` is not here and neither is `__contains__`. `Contour`
+    defines no `__contains__` and no `__eq__`, so `trace in contour` and
+    `contour.index(trace)` both fall through to `Trace`'s inherited `==`, which
+    is CPython object identity. A `TraceView` is not the `Trace` a caller holds
+    and two views of one row are not `is`-equal, so neither operation has an
+    answer here until the shim's identity question (design §5(A), D1) is
+    decided. That is the split between this slice and the next, and it is why
+    the split exists: `importTraces`' second loop is `rem_o_traces.remove(...)`
+    over exactly those semantics, which makes it a real port rather than a
+    mechanical one.
+
+    *`__add__`*, because it builds a `Contour` holding both operands' trace
+    lists, and a contour spanning two stores is not a thing the row index can
+    represent. *`copy()`*, because it is the pattern table's separate
+    whole-object-clone row and its callers are the undo snapshots, which are a
+    later track's question.
+
+    *`getBounds` and `getMidpoint`*, and this one is a genuine gap rather than
+    a category exclusion. Both exist on `Contour` and both are called on real
+    contours in production (`autoseg/conversions.py` for the bounds,
+    `Series.createZtrace` for the midpoint). Both are implemented by delegating
+    to `trace.getBounds(tform)` once per trace -- and `TraceView` deliberately
+    does not carry `getBounds`, because the geometry family is a separate row
+    of the rewiring plan's pattern table (a batched whole-section pass over the
+    coordinate column) and reimplementing it one trace at a time would prejudge
+    that work. Building them here would mean either adding geometry to
+    `TraceView` or writing the same per-trace loop one class further out; both
+    prejudge the same decision, so both wait for the slice that owns it.
+
+    *The `traces` attribute itself*, because it is not a read-only surface. On a
+    `Contour` it is the live list, and code that holds it can append to it --
+    the census counts three rebinds of it. Handing out a fresh list under that
+    name would make `contour.traces.append(...)` a silent no-op. `getTraces()`,
+    which returns a copy on a `Contour` too and is what the production readers
+    actually call, is here instead.
+    """
+
+    ## Same two-slot discipline as `TraceView`, and for the same reason: a
+    ## class whose contract is that it holds no values must not let a
+    ## misspelled name land as an instance attribute and read back
+    ## convincingly.
+    __slots__ = ("_columns", "_name")
+
+    def __init__(self, columns: SectionColumns, name: str):
+        """View one contour of one store.
+
+        The name is normalized on the way in, through the same
+        `normalizeObjectName` that `appendRow` runs and that `Trace.name`'s
+        setter runs. Not validation -- normalization -- and it closes a trap
+        rather than adding a rule: `rowsForContour` normalizes its argument
+        anyway, so a view that kept the raw name would look up rows under
+        `"a_b"` while reporting its own name as `"a b"`. For the intended
+        construction, from a name `contourNames()` handed out, it is a no-op.
+
+        Nothing else is validated and the contour is not required to exist: a
+        name with no rows behaves exactly as an empty `Contour` does, which is
+        also what the store has to say about it, since a contour with no rows
+        has no entry in the index.
+
+            Params:
+                columns (SectionColumns): the store holding the rows
+                name (str): the contour's name, which is also its index key
+        """
+        self._columns = columns
+        self._name = normalizeObjectName(name)
+
+    def __repr__(self) -> str:
+        return f"<ContourView {self._name!r} of {len(self)} row(s)>"
+
+    @property
+    def name(self) -> str:
+        """The contour's name. Read-only: a view that could be renamed would be
+        pointed at a different contour, not a written one -- the same reason
+        `TraceView.row` is read-only."""
+        return self._name
+
+    def __iter__(self):
+        """Iterate the contour's rows, as `TraceView`s, in within-contour order.
+
+        A `list_iterator`, matching `Contour.__iter__`'s own return type
+        exactly, over a snapshot of the row list. The snapshot is not a choice
+        this class makes: `rowsForContour` already returns a fresh list, so
+        there is no live sequence to iterate lazily over.
+        """
+        return iter([TraceView(self._columns, row)
+                     for row in self._columns.rowsForContour(self._name)])
+
+    def __getitem__(self, index):
+        """Index or slice the contour.
+
+        An `int` gives one `TraceView`; a slice gives a **bare `list`** of them,
+        which is what `Contour.__getitem__` gives and what `importTraces` needs.
+        See the class docstring.
+        """
+        ## Index the row list first, so every IndexError and TypeError is the
+        ## list's own and this class decides nothing about what an index is.
+        selected = self._columns.rowsForContour(self._name)[index]
+        if isinstance(index, slice):
+            return [TraceView(self._columns, row) for row in selected]
+        return TraceView(self._columns, selected)
+
+    def __len__(self):
+        """The number of rows the contour holds."""
+        return len(self._columns.rowsForContour(self._name))
+
+    def isEmpty(self) -> bool:
+        """True when the contour holds no rows."""
+        return not self._columns.rowsForContour(self._name)
+
+    def getTraces(self) -> list:
+        """The contour's rows as a fresh `list` of `TraceView`s.
+
+        A copy, as `Contour.getTraces` returns `self.traces.copy()`, so a caller
+        that mutates the list it was handed does not reach the index behind it.
+        """
+        return [TraceView(self._columns, row)
+                for row in self._columns.rowsForContour(self._name)]
+
+
 def _asColorRow(color) -> np.ndarray:
     array = np.asarray(color, dtype=np.uint8)
     if array.shape != (3,):

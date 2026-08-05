@@ -56,15 +56,17 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from PyReconstruct.modules.datatypes import Trace
+from PyReconstruct.modules.datatypes import Contour, Trace
 from PyReconstruct.modules.datatypes.columnar_store import (
     BOOL_ATTRIBUTES,
+    ContourView,
     FILL_MODE_CODES,
     FILL_MODE_OVERFLOW,
     SectionColumns,
     SegmentedCoordinates,
     TraceView,
 )
+from PyReconstruct.modules.datatypes.trace import normalizeObjectName
 
 class StubIssuer():
     """A deterministic stand-in for `trace_id.TraceIDIssuer`.
@@ -1852,3 +1854,421 @@ def test_constructing_a_view_touches_no_column():
     assert store.generation == generation
     with pytest.raises(IndexError):
         view.points
+
+
+# --- ContourView: the read half of the container protocol ---------------------
+#
+# `ContourView` is slice 7a: the read-only half of a `Contour`-shaped surface
+# over the store's per-contour row index, mirroring the shape `TraceView` took
+# in slices 4 and 6. It caches nothing, it mutates nothing, it has no identity
+# semantics, and nothing in the application references it.
+#
+# The bar is the same as `TraceView`'s and for the same reason: every contour of
+# every populated section of both fixture series, every index, a battery of
+# slices, and each element compared against BOTH a materialized `Trace` and the
+# object-model `Trace` the section actually holds -- the second arm being what
+# keeps the first from being vacuous.
+
+
+## `Contour`'s whole defined surface, split three ways. Checked against
+## `vars(Contour)` below rather than trusted, so a method added to `Contour`
+## lands in no group and turns the split red instead of silently becoming a
+## thing the view is missing.
+CONTOUR_READ_ONLY_SURFACE = frozenset(
+    {"__iter__", "__getitem__", "__len__", "isEmpty", "getTraces"}
+)
+CONTOUR_IDENTITY_OR_MUTATION = frozenset(
+    {"append", "remove", "index", "importTraces", "__add__"}
+)
+CONTOUR_DEFERRED_ELSEWHERE = frozenset({"copy", "getBounds", "getMidpoint"})
+
+## What Python puts on every class, plus the constructor, which both classes
+## have and which is not part of the split.
+CONTOUR_NOISE = frozenset(
+    {"__dict__", "__doc__", "__module__", "__weakref__", "__init__"}
+)
+
+
+def test_contours_surface_is_split_exhaustively_between_this_slice_and_the_next():
+    """The scope boundary, derived from `Contour` rather than asserted about it.
+
+    Three groups, and their union must be exactly what `Contour` defines. A
+    fourth method arriving on `Contour` fails here rather than quietly becoming
+    a gap in the view, which is the same guard
+    `test_the_view_carries_exactly_the_fields_a_trace_constructor_produces`
+    gives `TraceView` against `Trace.__init__`.
+    """
+    defined = set(vars(Contour)) - CONTOUR_NOISE
+    accounted = (CONTOUR_READ_ONLY_SURFACE | CONTOUR_IDENTITY_OR_MUTATION
+                 | CONTOUR_DEFERRED_ELSEWHERE)
+    assert defined == accounted, (
+        f"Contour's surface and this suite's split have diverged: "
+        f"{defined ^ accounted}"
+    )
+
+    ## The read half is present.
+    for member in sorted(CONTOUR_READ_ONLY_SURFACE):
+        assert hasattr(ContourView, member), f"ContourView is missing {member}"
+
+    ## And nothing from the other two groups arrived with it. Each of these is
+    ## a slice of its own: mutation and identity are 7b's, `copy` is the
+    ## pattern table's whole-object-clone row, and the geometry pair waits on
+    ## the batched coordinate pass that `TraceView` deliberately has no
+    ## `getBounds` for.
+    for member in sorted(CONTOUR_IDENTITY_OR_MUTATION | CONTOUR_DEFERRED_ELSEWHERE):
+        assert not hasattr(ContourView, member), (
+            f"ContourView carries {member}, which is a later slice's"
+        )
+
+    ## `traces` is absent deliberately: on a `Contour` it is the live list, and
+    ## a fresh list handed out under that name would make an append to it a
+    ## silent no-op. `getTraces()` is the copy-returning read surface, and it
+    ## is what the production readers call.
+    assert not hasattr(ContourView, "traces")
+
+    ## Neither class defines `__contains__` or `__eq__`.
+    assert "__contains__" not in vars(Contour)
+    assert "__contains__" not in vars(ContourView)
+    assert "__eq__" not in vars(Contour)
+    assert "__eq__" not in vars(ContourView)
+
+    ## `name` is read-only, for the reason `TraceView.row` is: a view that could
+    ## be renamed would be pointed at a different contour, not a written one.
+    assert ContourView.name.fget is not None
+    assert ContourView.name.fset is None
+    assert ContourView.name.fdel is None
+
+
+def _assert_element_parity(store, view, trace):
+    """One `TraceView` from a contour against the `Trace` at the same position,
+    through the same two-armed comparison the row walk uses."""
+    _assert_view_parity(view, store.materializeTrace(view.row), trace)
+
+
+def _sliceBattery(n):
+    """The slices worth taking of a contour of length `n`.
+
+    `slice(i, None)` for every `i` in `0..n` is not padding: it is exactly the
+    shape `Contour.importTraces` takes (`self[i:]` / `other[i:]`, at whatever
+    index the optimistic positional walk stopped), which is the reason the
+    bare-`list` return is load-bearing at all.
+    """
+    battery = [slice(i, None) for i in range(n + 1)]
+    battery += [
+        slice(None), slice(0, n), slice(None, 1), slice(None, -1),
+        slice(-1, None), slice(0, 0), slice(n + 5, None), slice(-2, -1),
+        slice(None, None, 2), slice(None, None, -1), slice(1, n - 1),
+    ]
+    return battery
+
+
+def _assert_contour_parity(store, view, contour):
+    """Every read `ContourView` carries, against a real `Contour`, exhaustively."""
+    n = len(contour)
+
+    assert len(view) == n
+    assert view.name == contour.name
+    assert view.isEmpty() == contour.isEmpty()
+    assert type(view.isEmpty()) is bool
+
+    ## Iteration: same order, same length, same iterator type. `list_iterator`
+    ## on both sides -- `Contour.__iter__` returns `self.traces.__iter__()` and
+    ## a generator here would be distinguishable from it by type.
+    assert type(iter(view)) is type(iter(contour))
+    viewed = list(view)
+    assert len(viewed) == n
+    for element, trace in zip(viewed, contour):
+        _assert_element_parity(store, element, trace)
+
+    ## getTraces: a bare list on both sides, same order, fresh each call.
+    got = view.getTraces()
+    expected = contour.getTraces()
+    assert type(got) is list and type(expected) is list
+    assert len(got) == len(expected) == n
+    for element, trace in zip(got, expected):
+        _assert_element_parity(store, element, trace)
+    assert view.getTraces() is not got
+
+    ## Every position, from both ends.
+    for i in range(n):
+        _assert_element_parity(store, view[i], contour[i])
+        _assert_element_parity(store, view[i - n], contour[i - n])
+
+    ## Every slice in the battery, against the real contour's own slice.
+    for s in _sliceBattery(n):
+        sliced = view[s]
+        reference = contour[s]
+        assert type(reference) is list, (
+            f"Contour[{s}] stopped returning a bare list -- the premise this "
+            f"whole class mirrors"
+        )
+        assert type(sliced) is list, (
+            f"ContourView[{s}] returned {type(sliced).__name__}, not a bare "
+            f"list; importTraces (slice 7b) walks and mutates this result"
+        )
+        assert len(sliced) == len(reference)
+        for element, trace in zip(sliced, reference):
+            _assert_element_parity(store, element, trace)
+
+    ## Out of range and the wrong type raise what the underlying list raises,
+    ## on both sides.
+    for bad in (n, -n - 1):
+        with pytest.raises(IndexError):
+            contour[bad]
+        with pytest.raises(IndexError):
+            view[bad]
+    with pytest.raises(TypeError):
+        contour["not an index"]
+    with pytest.raises(TypeError):
+        view["not an index"]
+
+
+def _walkContourParity(sections):
+    """Every contour of every section, viewed against the real `Contour`."""
+    contours = traces = multi = 0
+    for section in sections:
+        store = SectionColumns.fromSection(section)
+        for name in store.contourNames():
+            contour = section.contours[name]
+            _assert_contour_parity(store, ContourView(store, name), contour)
+            contours += 1
+            traces += len(contour)
+            multi += len(contour) > 1
+    return contours, traces, multi
+
+
+def test_every_contour_view_over_the_real_series_matches_its_contour(
+        loaded_sections):
+    """The headline container parity, over all ~221 contours of the real series."""
+    contours, traces, multi = _walkContourParity(loaded_sections)
+    assert contours > 200, f"expected the fixture's ~221 contours, walked {contours}"
+    assert traces > 200, f"expected the fixture's ~232 traces, walked {traces}"
+    assert multi, (
+        "every contour walked held one trace, so indexing and slicing were "
+        "never exercised past position zero"
+    )
+
+
+def test_every_contour_view_over_the_synthetic_series_matches_its_contour(
+        synthetic_sections):
+    """The same walk over the attribute domain the real fixture cannot carry.
+
+    The elements are `TraceView`s, so a contour walk is also a field walk, and
+    the real series has no tagged, negative or hidden trace to compare four of
+    those fields against more than one value.
+    """
+    contours, traces, _ = _walkContourParity(synthetic_sections)
+    assert contours, "the synthetic contour walk covered no contours at all"
+    assert traces, "the synthetic contour walk covered no traces at all"
+
+
+def test_a_contour_view_slice_is_a_bare_list_and_takes_what_importTraces_does(
+        loaded_sections):
+    """The load-bearing property, stated directly rather than only in the walk.
+
+    `Contour.importTraces` -- slice 7b, not this one -- does this to the result
+    of `self[i:]`: iterates it with `enumerate`, calls `.copy()` on it, calls
+    `.pop(found_i)`, `+`-concatenates it, and takes `len()` of the contour it
+    came from. All of that is `list` mechanics and all of it is exercised here
+    on a `ContourView` slice, on a real multi-trace contour from the fixture.
+
+    The one operation NOT exercised is `rem_o_traces.remove(o_trace)`, which
+    resolves a trace to a position through `Trace`'s inherited `==` -- object
+    identity. That is precisely the line that makes 7b a port rather than a
+    mechanical translation, and it is out of this slice deliberately.
+    """
+    for section in loaded_sections:
+        store = SectionColumns.fromSection(section)
+        for name in store.contourNames():
+            if len(section.contours[name]) > 2:
+                break
+        else:
+            continue
+        break
+    else:
+        pytest.fail("the fixture has no contour with more than two traces")
+
+    contour = section.contours[name]
+    view = ContourView(store, name)
+    n = len(contour)
+
+    remainder = view[1:]
+    assert type(remainder) is list
+    assert type(contour[1:]) is list
+    assert len(remainder) == n - 1
+
+    ## The exact operations importTraces performs on it.
+    copied = remainder.copy()
+    assert type(copied) is list and copied == remainder and copied is not remainder
+    popped = remainder.pop(0)
+    assert popped.row == store.rowsForContour(name)[1]
+    assert len(remainder) == n - 2
+    joined = remainder + view[:1]
+    assert type(joined) is list and len(joined) == n - 1
+
+    ## And the slice is in the contour's own order, positionally.
+    rows = store.rowsForContour(name)
+    assert [element.row for element in copied] == rows[1:]
+    assert [index for index, _ in enumerate(copied)] == list(range(n - 1))
+    assert [element.row for element in joined] == rows[2:] + rows[:1]
+
+    ## Mutating the slice reached nothing behind it: the contour is unchanged.
+    assert len(view) == n == len(contour)
+    assert [element.row for element in view] == rows
+
+
+def test_a_contour_view_holds_no_value_and_so_cannot_go_stale():
+    """The no-cache property, asserted as behavior rather than as an absence.
+
+    One `ContourView` instance, held across an append, a removal and a rename,
+    reports the store's current answer every time. A view that memoized its row
+    list would fail this without needing an invalidation mechanism to be
+    reviewed, because it has no state to invalidate -- the same argument
+    `test_a_view_holds_no_value_and_so_cannot_go_stale` makes for `TraceView`.
+    """
+    store = SectionColumns(1)
+    first = store.appendRow(name="axon", points=[(0.0, 0.0), (1.0, 1.0)],
+                            color=[1, 2, 3])
+    view = ContourView(store, "axon")
+    assert len(view) == 1 and view.isEmpty() is False
+    assert [element.row for element in view] == [first]
+
+    second = store.appendRow(name="axon", points=[(2.0, 2.0), (3.0, 3.0)],
+                             color=[4, 5, 6])
+    assert len(view) == 2
+    assert [element.row for element in view] == [first, second]
+    assert view[1].points == [(2.0, 2.0), (3.0, 3.0)]
+
+    ## A removal retires the row out of the index, and the view shortens.
+    store.removeRow(first)
+    assert len(view) == 1
+    assert [element.row for element in view] == [second]
+
+    ## A rename moves the row between contour indices, and the view follows the
+    ## name, not the row -- the mirror image of `TraceView`, which follows the
+    ## row and not the name.
+    store.setAttribute(second, "name", "dendrite01")
+    assert len(view) == 0 and view.isEmpty() is True
+    assert list(view) == [] and view.getTraces() == []
+    assert len(ContourView(store, "dendrite01")) == 1
+
+
+def test_a_contour_view_over_an_unknown_name_is_an_empty_contour(loaded_sections):
+    """A name the store has no rows for behaves as an empty `Contour` does.
+
+    Which is also all the store can say about it: a contour with no rows has no
+    entry in the index, so "empty" and "absent" are the same state there --
+    exactly as `Section.contours` treats them, deleting the key the moment
+    `isEmpty()` goes true (`section.py`, three sites).
+    """
+    store = SectionColumns.fromSection(loaded_sections[0])
+    view = ContourView(store, "no_such_object")
+    empty = Contour("no_such_object")
+
+    assert len(view) == len(empty) == 0
+    assert view.isEmpty() is empty.isEmpty() is True
+    assert list(view) == list(empty) == []
+    assert view.getTraces() == empty.getTraces() == []
+    assert view[:] == empty[:] == []
+    assert type(view[:]) is type(empty[:]) is list
+    assert view[3:] == empty[3:] == []
+    for bad in (0, -1):
+        with pytest.raises(IndexError):
+            empty[bad]
+        with pytest.raises(IndexError):
+            view[bad]
+
+
+def test_a_contour_views_name_is_normalized_the_way_a_contour_key_is():
+    """The name a view reports and the name it looks rows up under are one.
+
+    `rowsForContour` normalizes its argument, so a view that kept the raw name
+    would find rows under `"a_b"` while reporting itself as `"a b"`. Normalizing
+    once in the constructor closes that rather than adding a rule: it is the
+    same `normalizeObjectName` the store runs in `appendRow` and that
+    `Trace.name`'s setter runs, which is why a real `Contour` holding traces
+    can only ever be keyed by the normalized form.
+    """
+    store = SectionColumns(1)
+    store.appendRow(name="a b, c", points=[(0.0, 0.0), (1.0, 1.0)], color=[1, 2, 3])
+    assert store.contourNames() == ["a_b__c"]
+
+    for raw in ("a b, c", "  a b, c  ", "a_b__c"):
+        view = ContourView(store, raw)
+        assert view.name == normalizeObjectName(raw) == "a_b__c"
+        assert len(view) == 1
+        assert view[0].name == view.name
+
+    ## And that is the form a real trace, and so a real contour key, takes.
+    assert Trace("  a b, c  ", [1, 2, 3]).name == "a_b__c"
+
+
+def test_a_contour_view_refuses_the_writes_it_has_no_property_for():
+    """`__slots__`, for the reason `TraceView` has it.
+
+    A view whose contract is that it holds no values must not let a misspelled
+    or invented name land as an instance attribute and then read back
+    convincingly. `name` is read-only for the same reason a `TraceView` cannot
+    be repointed at another row.
+    """
+    store = SectionColumns(1)
+    store.appendRow(name="axon", points=[(0.0, 0.0), (1.0, 1.0)], color=[1, 2, 3])
+    view = ContourView(store, "axon")
+
+    assert not hasattr(view, "__dict__")
+    for attribute in ("traces", "nmae", "isempty", "_rows"):
+        with pytest.raises(AttributeError):
+            setattr(view, attribute, object())
+    with pytest.raises(AttributeError):
+        view.name = "dendrite01"
+    assert view.name == "axon"
+
+
+def test_constructing_a_contour_view_touches_no_column():
+    """A contour view is as cheap as a tuple, like a row view.
+
+    Construction reads nothing, indexes nothing and bumps nothing -- the only
+    work it does is normalizing the name, which touches no column. Asserted on a
+    store with no rows at all.
+    """
+    store = SectionColumns(1)
+    generation = store.generation
+    view = ContourView(store, "never appended")
+    assert store.generation == generation
+    assert view.name == "never_appended"
+    assert len(view) == 0
+
+
+def test_membership_falls_through_to_identity_on_both_classes_and_diverges():
+    """The identity seam, pinned rather than papered over -- it is 7b's.
+
+    Neither `Contour` nor `ContourView` defines `__contains__`, so `in` falls
+    through to the `__iter__` protocol and compares with `==`, which `Trace`
+    does not define and so is CPython object identity. On a `Contour` that
+    answers True for the trace it holds. On a `ContourView` it answers False for
+    everything: the elements are freshly built `TraceView`s, so no object a
+    caller can hold is ever `is`-equal to one.
+
+    That divergence is the whole reason 7a and 7b are separate slices. It is
+    asserted here so the boundary is a measured fact rather than a claim, and so
+    the slice that decides view identity has a test to turn green.
+    """
+    store = SectionColumns(1)
+    row = store.appendRow(name="axon", points=[(0.0, 0.0), (1.0, 1.0)],
+                          color=[1, 2, 3])
+    view = ContourView(store, "axon")
+
+    trace = store.materializeTrace(row)
+    contour = Contour("axon", [trace])
+    assert trace in contour, "Contour's membership is identity, via __iter__"
+    assert trace not in view
+
+    ## Not even a view of the same row, and not even the very object the
+    ## container just handed out -- because the next iteration builds another.
+    assert TraceView(store, row) not in view
+    assert view[0] not in view
+
+    ## `index` is the same question and is absent from the view for the same
+    ## reason; `Contour` answers it through `list.index`, which is `==` again.
+    assert contour.index(trace) == 0
+    assert not hasattr(view, "index")
