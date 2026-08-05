@@ -77,10 +77,13 @@ def test_pick_release_stored_developer_channel_behaves_like_prerelease():
 
 def test_pick_release_stored_developer_never_returns_rolling_tag():
     # Belt-and-suspenders: even when the ONLY prerelease-flagged release is the
-    # rolling tag, a stored "developer" must offer nothing (like Beta), never the
-    # rolling build that the removed channel used to serve.
+    # rolling tag, a stored "developer" must never be served the rolling build
+    # that the removed channel used to serve. It gets what Beta gets, which since
+    # 2026-08-05 is the newest stable rather than nothing.
     rels = [_rel("prerelease", prerelease=True), _rel("v1.20.0")]
-    assert U.pick_release(rels, "developer") is None
+    picked = U.pick_release(rels, "developer")
+    assert picked["tag_name"] == "v1.20.0"
+    assert picked["tag_name"] != U.ROLLING_TAG
 
 def test_pick_release_prerelease_excludes_rolling_when_rolling_is_newest():
     # rolling 'prerelease' listed FIRST (newest); Beta must still skip it and
@@ -100,11 +103,19 @@ def test_pick_release_prerelease_excludes_rolling_when_rolling_is_oldest():
     ]
     assert U.pick_release(rels, "prerelease")["tag_name"] == "v1.20.4-rc.1"
 
-def test_pick_release_prerelease_none_when_only_rolling_prerelease():
-    # only the rolling build is flagged prerelease -> Beta offers nothing
-    # (it must NOT fall through to the rolling build).
+def test_pick_release_prerelease_falls_back_to_stable_never_to_rolling():
+    # The invariant this has always guarded: the rolling build must NOT be
+    # offered on Beta. That is unchanged.
+    #
+    # What changed on 2026-08-05: Beta now falls back to the newest STABLE
+    # release instead of returning None. This test asserted None until then, and
+    # that None was a live bug rather than a contract -- after v1.21.0 shipped
+    # and its betas were pruned, every Beta user was offered nothing, with no
+    # prompt and no error. See tests/test_beta_channel_offers_stable.py.
     rels = [_rel("prerelease", prerelease=True), _rel("v1.20.0")]
-    assert U.pick_release(rels, "prerelease") is None
+    picked = U.pick_release(rels, "prerelease")
+    assert picked["tag_name"] == "v1.20.0"
+    assert picked["tag_name"] != U.ROLLING_TAG
 
 
 # ---- channel value <-> radio helpers ----------------------------------------
@@ -159,8 +170,14 @@ def test_check_for_update_prerelease_offers_curated_prerelease(monkeypatch):
     assert info["release"]["tag_name"] == "v1.21.0rc1"   # NOT the rolling tag
     assert info["status"] == "newer"
 
-def test_check_for_update_no_asset_when_no_curated_prerelease(monkeypatch):
-    # Only the rolling tag is prerelease-flagged -> Beta offers nothing.
+def test_check_for_update_never_offers_the_rolling_build_on_beta(monkeypatch):
+    # The rolling tag carries a 9.9.9 asset on purpose: if it were ever offered,
+    # this test would see "newer" and a 9.9.9 asset. It must not be.
+    #
+    # Beta now resolves to the newest stable instead of to nothing (changed
+    # 2026-08-05, see test_beta_channel_offers_stable.py). Here that stable is
+    # the version already installed, so the user-visible outcome is what it
+    # always was: no update on offer.
     monkeypatch.setattr(II, "platform_asset_tag", lambda: "Windows-x86_64")
     monkeypatch.setattr(II, "current_version", lambda: Version("1.20.0"))
     rels = [
@@ -168,7 +185,9 @@ def test_check_for_update_no_asset_when_no_curated_prerelease(monkeypatch):
         _rel("v1.20.0", assets=["PyReconstruct-1.20.0-Windows-x86_64.exe"]),
     ]
     info = U.check_for_update("prerelease", releases=rels)
-    assert info["release"] is None and info["asset"] is None
+    assert info["release"]["tag_name"] == "v1.20.0"
+    assert info["remote_version"] == "1.20.0"
+    assert info["status"] == "same"
 
 
 # ---- pick_asset -------------------------------------------------------------
