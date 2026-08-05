@@ -147,11 +147,17 @@ class _Field:
         pass
 
 
-def _shift_click(field, trace):
-    """Shift-click ``trace`` in the field, in pointer mode."""
+def _focus_edit_click(field, trace):
+    """Edit-click ``trace`` in the field, in pointer mode.
+
+    Ctrl rather than Shift because Ctrl is the focus-mode edit click as of
+    1.21.0. The binding itself is covered in
+    ``test_focus_edit_click_ctrl.py``; this file is about the undo state, so it
+    uses whatever binding ships.
+    """
     field.selected_trace = trace
     field.selected_type = "trace"
-    event = types.SimpleNamespace(modifiers=lambda: Qt.ShiftModifier)
+    event = types.SimpleNamespace(modifiers=lambda: Qt.ControlModifier)
     FieldWidgetMouse.pointerRelease(field, event)
 
 
@@ -188,22 +194,22 @@ def field(real_series):
 
 def _merge_then_split(field):
     """The reported sequence: accidental merge into the focused object, then a
-    second shift-click that splits it back out under a `_split` name."""
+    second edit click that splits it back out under a `_split` name."""
     section = field.section
 
-    # 1. accidental merge: shift-click a trace of another object while focused
+    # 1. accidental merge: edit-click a trace of another object while focused
     #    on FOCUS_OBJ -> pointerRelease takes the "incorporate into obj" branch.
-    _shift_click(field, _one_trace(section, VICTIM_OBJ))
+    _focus_edit_click(field, _one_trace(section, VICTIM_OBJ))
     assert VICTIM_OBJ not in _counts(section), "merge did not move the trace"
     after_merge = _counts(section)
 
-    # 2. the correction: shift-click the same trace again. It now belongs to the
+    # 2. the correction: edit-click the same trace again. It now belongs to the
     #    focused object, so pointerRelease takes the split branch.
     split_me = [
         t for t in section.contours[FOCUS_OBJ].getTraces()
         if t in section.selected_traces
     ][-1]
-    _shift_click(field, split_me)
+    _focus_edit_click(field, split_me)
     assert SPLIT_OBJ in _counts(section), "split branch did not run"
 
     return after_merge
@@ -243,7 +249,7 @@ def test_focus_mode_split_records_an_undo_state(field):
     section = field.section
     states = field.series_states[SNUM]
 
-    _shift_click(field, _one_trace(section, VICTIM_OBJ))  # merge
+    _focus_edit_click(field, _one_trace(section, VICTIM_OBJ))  # merge
     undos_after_merge = len(states.undo_states)
     calls_after_merge = field.save_state_calls
 
@@ -251,7 +257,7 @@ def test_focus_mode_split_records_an_undo_state(field):
         t for t in section.contours[FOCUS_OBJ].getTraces()
         if t in section.selected_traces
     ][-1]
-    _shift_click(field, split_me)  # split
+    _focus_edit_click(field, split_me)  # split
 
     assert field.save_state_calls == calls_after_merge + 1, (
         "focus-mode split did not save an undo state"
@@ -280,7 +286,7 @@ def test_focus_mode_merge_branch_still_saves_one_state(field):
     section = field.section
     before = field.save_state_calls
 
-    _shift_click(field, _one_trace(section, VICTIM_OBJ))
+    _focus_edit_click(field, _one_trace(section, VICTIM_OBJ))
 
     assert field.save_state_calls == before + 1
     assert VICTIM_OBJ not in _counts(section)

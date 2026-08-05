@@ -69,6 +69,12 @@ default_settings = {
     "trace_mode": "combo",  # combo, poly, scribble  # MFO
     "knife_del_threshold": 1.0,  # MFO
     "knife_ignore_secondary_click": True,  # MFO
+    # No entry here for focus mode's edit-click modifier, deliberately. It is Ctrl,
+    # fixed, in `gui/main/focus_mode.py`. A three-way ctrl/shift/both option lived
+    # here briefly and was cut before shipping: three presets are not a remapping,
+    # which is what was actually wanted. The remapping, a picker accepting whatever
+    # modifier combination the user holds, is scheduled for the next beta and is
+    # what will add a key here.
     "grid": [1, 1, 1, 1, 1, 1],  # MFO
     "sampling_frame_grid": True,  # MFO
     "flag_name": "",  # MFO
