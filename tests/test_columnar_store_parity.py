@@ -63,6 +63,7 @@ from PyReconstruct.modules.datatypes.columnar_store import (
     FILL_MODE_OVERFLOW,
     SectionColumns,
     SegmentedCoordinates,
+    TraceView,
 )
 
 class StubIssuer():
@@ -1062,3 +1063,318 @@ def test_ids_are_issued_once_per_row_over_a_whole_real_section(loaded_sections):
     assert all(i is not None for i in ids)
     assert len(set(ids)) == len(ids)
     assert issuer.count == len(ids)
+
+
+# --- TraceView: the read-only row view ---------------------------------------
+#
+# `TraceView` is the first `Trace`-shaped surface over the columns. It is
+# read-only, it caches nothing, and nothing in the application references it --
+# the same shape wave B's other work took, built behind the seam and proved
+# against `materializeTrace` before a single call site is asked to trust it.
+#
+# The bar here is exhaustive rather than sampled: every row of every populated
+# section of both fixture series, every field, compared against both a
+# materialized `Trace` and the object-model trace the section actually holds.
+# The second comparison is what keeps the first from being vacuous -- the view
+# and `materializeTrace` both read the store, so on their own they could agree
+# perfectly about a value neither of them got right.
+
+
+## The fields a `Trace` constructor produces, in `__init__`'s own order, under
+## the names a reader uses. `_name` is the storage behind the `name` property,
+## and `name` is what any consumer touches, so the view carries `name`.
+TRACE_FIELDS = ("name", "color", "closed", "negative", "points", "hidden",
+                "tags", "fill_mode")
+
+## The single rename between `vars(Trace(...))` and the surface above.
+TRACE_FIELD_STORAGE = {"name": "_name"}
+
+
+def test_the_view_carries_exactly_the_fields_a_trace_constructor_produces():
+    """The completeness guard, derived rather than listed.
+
+    `TRACE_FIELDS` is checked against `vars()` of a real `Trace` instead of
+    being trusted, so a ninth field added to `Trace.__init__` turns this red
+    instead of leaving the view quietly short of the object model -- the same
+    failure mode `test_copy_carries_every_field` exists to close for `copy()`.
+
+    Both directions are asserted. A field on a `Trace` and not on the view is
+    an incomplete view; a `Trace`-field-shaped property on the view and not on
+    a `Trace` is the view inventing surface, which for a compatibility shim is
+    the more expensive mistake of the two.
+    """
+    constructed = set(vars(Trace("axon", [1, 2, 3])))
+    expected = {TRACE_FIELD_STORAGE.get(f, f) for f in TRACE_FIELDS}
+    assert constructed == expected, (
+        f"Trace.__init__ and this suite's field list have diverged: "
+        f"{constructed ^ expected}"
+    )
+
+    for field in TRACE_FIELDS:
+        attribute = getattr(TraceView, field, None)
+        assert isinstance(attribute, property), (
+            f"TraceView.{field} is not a read-only property"
+        )
+        assert attribute.fset is None, (
+            f"TraceView.{field} has a setter; this slice is read-only and the "
+            f"write path belongs to the store's six mutation entry points"
+        )
+        assert attribute.fdel is None, f"TraceView.{field} has a deleter"
+
+    ## And no other `Trace` field arrived by accident. `row` is deliberately
+    ## not a `Trace` field: it names the thing being viewed, which a view with
+    ## no way to say what it views cannot be debugged without.
+    properties = {name for name, value in vars(TraceView).items()
+                  if isinstance(value, property)}
+    assert properties == set(TRACE_FIELDS) | {"row"}, (
+        f"TraceView's property surface is not the eight fields plus row: "
+        f"{properties}"
+    )
+
+
+def _assert_view_parity(view, materialized, original):
+    """Every field of one view against a materialized `Trace` and the original.
+
+    Against `materializeTrace`'s output *exactly*, including type: the view and
+    the materialization are the two ways to read a row and they must not be
+    distinguishable by anything but identity. Against the object-model trace
+    the section holds by value, because the store hands out fresh containers
+    where a `Trace` holds its own.
+    """
+    assert view.name == materialized.name == original.name
+    assert type(view.name) is str
+
+    ## Coordinates, against the in-memory floats, exactly -- not approximately.
+    assert view.points == materialized.points
+    assert view.points == [tuple(p) for p in original.points]
+    assert all(type(v) is float for p in view.points for v in p)
+
+    assert view.color == materialized.color
+    assert list(view.color) == list(original.color)
+    assert all(type(v) is int for v in view.color)
+
+    for flag in ("closed", "negative", "hidden"):
+        assert getattr(view, flag) == getattr(materialized, flag)
+        assert getattr(view, flag) == getattr(original, flag)
+        assert type(getattr(view, flag)) is bool
+
+    assert view.fill_mode == materialized.fill_mode
+    assert list(view.fill_mode) == list(original.fill_mode)
+    assert all(type(v) is str for v in view.fill_mode)
+
+    assert view.tags == materialized.tags == original.tags
+    assert type(view.tags) is set
+
+
+def _walkViewParity(sections):
+    """Every row of every section, viewed and materialized. Returns the counts
+    the callers assert on, so neither can pass over an empty walk."""
+    rows = 0
+    tagged = negative = hidden = 0
+    for section in sections:
+        store = SectionColumns.fromSection(section)
+        for name in store.contourNames():
+            traces = list(section.contours[name])
+            row_numbers = store.rowsForContour(name)
+            assert len(row_numbers) == len(traces)
+            for row, original in zip(row_numbers, traces):
+                _assert_view_parity(
+                    TraceView(store, row), store.materializeTrace(row), original,
+                )
+                rows += 1
+                tagged += bool(original.tags)
+                negative += original.negative
+                hidden += original.hidden
+    return rows, tagged, negative, hidden
+
+
+def test_every_view_over_the_real_series_matches_its_materialized_trace(
+        loaded_sections):
+    """The headline view parity, over all ~232 traces of the real series."""
+    rows, _, _, _ = _walkViewParity(loaded_sections)
+    assert rows > 200, f"expected the fixture's ~232 traces, walked {rows}"
+
+
+def test_every_view_over_the_synthetic_series_matches_its_materialized_trace(
+        synthetic_sections):
+    """The same walk over the attribute domain the real fixture cannot carry.
+
+    The real series has no tagged, no negative and no hidden trace and no
+    coordinate inexact at 7 decimal places, so four of the eight fields are
+    compared there against a single value each. This walk is the one that can
+    actually discriminate them, and it asserts it reached them.
+    """
+    rows, tagged, negative, hidden = _walkViewParity(synthetic_sections)
+    assert rows, "the synthetic walk covered no rows at all"
+    assert tagged and negative and hidden, (
+        "the synthetic material lost the attribute domain it exists to carry, "
+        "so this walk stopped discriminating four of the eight fields"
+    )
+
+
+def test_a_view_reads_the_unrounded_coordinate_the_store_kept(loaded_sections):
+    """The view sits on the same side of the 7-dp seam the store does.
+
+    The store is on the in-memory side of `getList`'s rounding, and a view that
+    coerced or rounded on the way out would undo that silently. The real
+    fixture cannot show this -- every one of its coordinates is already exact at
+    7 dp -- so a real trace on a real section is given one that is not.
+    """
+    section = loaded_sections[0]
+    name = sorted(section.contours, key=str)[0]
+    trace = section.contours[name][0]
+
+    precise = 5.0123456789012
+    assert round(precise, 7) != precise, "pick a value the rounding actually moves"
+    trace.points = [(precise, 6.0987654321098)] + list(trace.points[1:])
+
+    store = SectionColumns.fromSection(section)
+    view = TraceView(store, store.rowsForContour(name)[0])
+    assert view.points[0][0] == precise
+    assert view.points[0][0] != round(precise, 7)
+
+
+def test_a_view_holds_no_value_and_so_cannot_go_stale():
+    """The no-cache property, asserted as behavior rather than as an absence.
+
+    This slice builds no identity cache, no weak-value map and no
+    generation-counter invalidation, because the shim's caching question is
+    still open and a view that cached would answer it by accident. What that
+    buys is asserted here directly: **one** view instance, held across every
+    mutation entry point the store has, reports the new value every time. A
+    view that had memoized anything would fail this without needing an
+    invalidation mechanism to be reviewed for correctness -- it has no state to
+    invalidate.
+    """
+    store = SectionColumns(1)
+    row = store.appendRow(name="axon", points=[(0.0, 0.0), (1.0, 1.0)],
+                          color=[1, 2, 3], closed=True, tags={"before"})
+    view = TraceView(store, row)
+    assert (view.name, view.points, view.color, view.closed, view.tags) == (
+        "axon", [(0.0, 0.0), (1.0, 1.0)], [1, 2, 3], True, {"before"}
+    )
+
+    store.setCoordinates(row, [(2.0, 2.0), (3.0, 3.0)])
+    store.setAttribute(row, "color", [9, 9, 9])
+    store.setAttribute(row, "closed", False)
+    store.setAttribute(row, "negative", True)
+    store.setAttribute(row, "hidden", True)
+    store.setAttribute(row, "fill_mode", ("solid", "unselected"))
+    store.setTags(row, {"after"})
+    store.setAttribute(row, "name", "dendrite01")
+
+    assert view.points == [(2.0, 2.0), (3.0, 3.0)]
+    assert view.color == [9, 9, 9]
+    assert view.closed is False
+    assert view.negative is True
+    assert view.hidden is True
+    assert view.fill_mode == ["solid", "unselected"]
+    assert view.tags == {"after"}
+    assert view.name == "dendrite01"
+
+    ## And it stays the same row throughout: a rename moves the row between
+    ## contour indices, and the view follows the row, not the name.
+    assert view.row == row
+    assert store.rowsForContour("dendrite01") == [row]
+
+
+def test_a_view_hands_out_fresh_containers_it_does_not_remember():
+    """Reading twice gives two containers, and writing into one reaches nothing.
+
+    `getPoints` and `getTags` build a fresh list and a fresh set per call, which
+    is what makes the view safe to hand out with no cache behind it: a caller
+    that mutates what it was given corrupts neither the column nor the next
+    read. A memoizing view would have to answer this question with an
+    invalidation rule instead.
+    """
+    store = SectionColumns(1)
+    row = store.appendRow(name="axon", points=[(0.0, 0.0), (1.0, 1.0)],
+                          color=[1, 2, 3], tags={"alpha"})
+    view = TraceView(store, row)
+
+    assert view.points is not view.points
+    assert view.tags is not view.tags
+    assert view.color is not view.color
+
+    view.points.append((5.0, 5.0))
+    view.tags.add("injected")
+    view.color[0] = 200
+    assert view.points == [(0.0, 0.0), (1.0, 1.0)]
+    assert view.tags == {"alpha"}
+    assert view.color == [1, 2, 3]
+
+    ## Two views of one row are two objects. Identity is explicitly not this
+    ## slice's subject: nothing consumes the view, so nothing depends on it.
+    other = TraceView(store, row)
+    assert other is not view
+    assert other.name == view.name and other.points == view.points
+
+
+def test_a_view_refuses_every_write_including_ones_it_has_no_property_for():
+    """No write path, and no way to fake one by shadowing a column.
+
+    Each of the eight is a getter with no setter, so an assignment raises
+    rather than landing as an instance attribute that would shadow the column
+    and read back convincingly. `__slots__` extends that to a name the class has
+    no property for, which is the hole a plain read-only class leaves open.
+    Write-through is a later slice and belongs to the store's own mutation
+    entry points.
+    """
+    store = SectionColumns(1)
+    row = store.appendRow(name="axon", points=[(0.0, 0.0), (1.0, 1.0)],
+                          color=[1, 2, 3])
+    view = TraceView(store, row)
+    generation = store.generation
+
+    for field in TRACE_FIELDS:
+        with pytest.raises(AttributeError):
+            setattr(view, field, "written")
+    with pytest.raises(AttributeError):
+        view.row = 7
+    with pytest.raises(AttributeError):
+        view.not_a_field = "written"
+
+    assert store.generation == generation, "a refused write moved the store"
+    assert view.name == "axon"
+    assert view.points == [(0.0, 0.0), (1.0, 1.0)]
+    assert view.color == [1, 2, 3]
+
+
+def test_a_view_over_a_removed_row_answers_exactly_as_the_store_does():
+    """The liveness asymmetry is the store's, and the view does not paper it.
+
+    `SectionColumns.getName` answers for a tombstoned row while the other seven
+    readers raise `IndexError` through `_requireLive`. Pinned here rather than
+    corrected in the view, because a view that added a liveness check of its own
+    would be a second, divergent answer to a question the store already answers
+    -- and deciding what a view over a dead row should do is the business of the
+    slice that gives the view a consumer, which this one deliberately does not.
+    """
+    store = SectionColumns(1)
+    row = store.appendRow(name="axon", points=[(0.0, 0.0), (1.0, 1.0)],
+                          color=[1, 2, 3])
+    view = TraceView(store, row)
+    store.removeRow(row)
+
+    assert view.name == store.getName(row) == "axon"
+    assert repr(view) == "<TraceView row 0 of 'axon'>"
+    for field in ("color", "closed", "negative", "points", "hidden",
+                  "tags", "fill_mode"):
+        with pytest.raises(IndexError):
+            getattr(view, field)
+
+
+def test_constructing_a_view_touches_no_column():
+    """A view is as cheap as a tuple, so nothing has to ration them.
+
+    Construction reads nothing, validates nothing and bumps nothing, which is
+    what makes "construct one per read and throw it away" a usable strategy for
+    a class with no identity cache. Asserted on a row that does not exist: a
+    constructor that read a column would raise here.
+    """
+    store = SectionColumns(1)
+    generation = store.generation
+    view = TraceView(store, 4_000_000)
+    assert store.generation == generation
+    with pytest.raises(IndexError):
+        view.points
