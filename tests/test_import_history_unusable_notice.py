@@ -43,7 +43,11 @@ from PyReconstruct.modules.datatypes.trace import Trace
 from PyReconstruct.modules.gui.utils import importHistoryWarning
 
 
-def logLine(obj_name, section, event, date="26-01-01", time="0900", user="u"):
+# 09:00 and not the 0900 this used to say: fromList anchors a row on the
+# "YY-MM-DD, HH:MM, " stamp Log.__str__ writes, and getDateTime has used
+# "%H:%M" since the log was created, so a colon-less time was never a
+# shape this app could produce.
+def logLine(obj_name, section, event, date="26-01-01", time="09:00", user="u"):
     snum = "-" if section is None else str(section)
     return f"{date}, {time}, {user}, {obj_name}, {snum}, {event}"
 
