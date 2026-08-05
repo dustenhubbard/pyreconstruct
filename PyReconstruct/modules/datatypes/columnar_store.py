@@ -153,6 +153,66 @@ an issuer's index can refuse and report, while the alternative (drop on copy,
 re-attach explicitly) makes a missed site produce a trace with **no** id, which a
 merge cannot place and nothing detects.
 
+THE THREE WAYS A ROW ACQUIRES AN ID, AND WHY THEY ARE THREE
+------------------------------------------------------------
+`appendRow` takes two mutually exclusive id parameters rather than one, and the
+distinction between them is the whole of D10. An id can arrive from three
+places, and conflating any two of them is a bug that looks like working code:
+
+* **nothing is passed** -- the row is a new annotation. The injected issuer
+  mints one (`issue()`), which registers it in the issuer's index on the way
+  out. No issuer means no id, which is every section in the shipped
+  application today.
+* **`trace_id=` -- this series already owns this id.** It is carried verbatim
+  and the issuer is not consulted, because consulting it would be asking
+  whether an id the issuer itself handed out is free, and the answer is
+  always no. Two callers are in this case: `copyRow`, where a remove/copy/
+  mutate/add attribute edit must come out the same annotation, and
+  `fromSection`'s `carried_ids`, where a rebuild re-appends a trace the
+  outgoing store already held a row for. **Running either through `adopt()`
+  would report a clash against itself** -- the id is in `_taken` precisely
+  because this series put it there -- and a spurious clash report is worse
+  than no report, because it trains a reader to ignore the real ones.
+* **`foreign_id=` -- this id came from outside this series.** Another series'
+  store, most sharply a sibling series that derived the identical id from a
+  shared ancestor file. This one goes through `TraceIDIssuer.adopt(id, name)`,
+  which is the operation `trace_id.py` documents for exactly this ("an id that
+  arrived from a file or from another series") and which had no production
+  caller before D10.
+
+`trace_id.py`'s recorded collision policy is "at load and at merge -- detect
+and report by name, never silently adopt and never silently reissue", and
+before D10 `_resolveID` did the first of the two forbidden things: it accepted
+a carried id verbatim, unregistered, so the issuer's index could later hand the
+same id out again. `foreign_id=` closes that. What `adopt()` cannot do is
+resolve the clash it detects -- it returns `False` and stops -- so the store
+must decide, and **the decision is the maintainer's, recorded as D10 Q2:
+issue a fresh local id for the clashing row only, and report it.** That is
+technically a reissue, which the policy names as forbidden; the policy forbids
+*silent* reissuing, and this one is reported through both channels below, so it
+satisfies the policy's intent rather than its letter. The three rejected
+answers and why, in
+`specs/phase1-foreign-trace-id-acquisition-2026-08-05.md` §4(b): raising turns
+a merge conflict into a mid-import exception, against the grain of an import
+path that flags conflicts and continues; keeping the duplicate leaves two live
+rows sharing one identity; storing `None` produces the trace this module's own
+docstring calls the worse failure, one a merge cannot place and nothing
+detects.
+
+**A reissue is reported twice, on purpose.** `foreign_id_reissues` is the
+complete machine-readable record, for a caller that wants to tell the user in
+its own vocabulary; and each reissue also prints to stderr, capped at
+`FOREIGN_ID_REPORT_LIMIT`. The print is not redundant with the record, and
+`issuer.collisions` is the evidence: it has been the designed by-name clash
+channel since wave B and has had **zero readers** for its entire life. A record
+nobody reads is the silent case the policy forbids, so the non-silence cannot
+be left to a future caller remembering to look. The cap is D11's precedent
+(`section.DRIFT_REPORT_LIMIT`) and exists for its reason: the report lands in
+the per-user log file through the stdout/stderr tee, that file rotates at 2 MB,
+and a common-ancestor merge clashes on every non-overlapping trace rather than
+on a rare one -- so an uncapped report would evict the history somebody opened
+the log to read.
+
 THE ONE VIEW IN THIS MODULE, AND WHAT IT DELIBERATELY IS NOT
 ------------------------------------------------------------
 `TraceView` reads and writes one row through a `Trace`-shaped surface: the
@@ -184,11 +244,21 @@ finds nothing here rather than an invented answer.
 """
 
 import operator
+import sys
 
 import numpy as np
 
 from .contour import Contour
 from .trace import Trace, normalizeObjectName
+
+
+## How many foreign-id clashes are printed for one store before the rest are
+## left to `foreign_id_reissues` alone. Matches `section.DRIFT_REPORT_LIMIT`
+## and exists for the same reason: the report is teed into a per-user log file
+## that rotates at 2 MB, and a common-ancestor merge clashes on every
+## non-overlapping trace, so an uncapped report evicts the log it is written
+## to. The RECORD is never capped -- only the printing is.
+FOREIGN_ID_REPORT_LIMIT = 20
 
 
 ## The nine `fill_mode` pairs `convertMode` produces, frozen as a code table so
@@ -382,6 +452,11 @@ class SectionColumns():
                     `datatypes/trace_id.TraceIDIssuer` is the intended
                     production issuer. `None` means rows carry no id, which is
                     the state of every section in the shipped application.
+                    An `adopt(id, name) -> bool` is required as well, but ONLY
+                    of an issuer whose store is passed a `foreign_id`; the
+                    duck type widens for the callers that use the new feature
+                    and not for the rest, which is why the parity suite's
+                    `issue`-only `StubIssuer` is still a valid stand-in.
                 generation (int): the count this store's monotonic generation
                     resumes from. Defaults to 0, a store with no history. The
                     one caller that passes anything else is
@@ -411,6 +486,9 @@ class SectionColumns():
         self._ids = []
         self._live = []
         self._live_count = 0
+        ## Every foreign id this store refused and replaced. See the module
+        ## docstring: complete and uncapped, unlike the printed report.
+        self._foreign_id_reissues = []
 
         ## The per-contour index: name -> [row, ...] in within-contour order.
         self._index = {}
@@ -422,7 +500,7 @@ class SectionColumns():
 
     @classmethod
     def fromSection(cls, section, coordinates=None, id_issuer=None,
-                    generation: int = 0):
+                    generation: int = 0, carried_ids=None):
         """Build a store from a `Section`, in the section's own contour order.
 
         Duck-typed on `.n` and `.contours` rather than importing `Section`, which
@@ -431,18 +509,65 @@ class SectionColumns():
         order `Section.getDict` writes, and each contour's traces in their own
         list order, which is semantically significant.
 
+        THIS METHOD IS EVERY REBUILD, WHICH IS WHY IT CARRIES IDS
+        ---------------------------------------------------------
+        Until D10 it appended every row with no id at all, so the issuer minted
+        a fresh one for each -- and since `Section.resyncColumnarStore` reaches
+        this from fourteen call sites and `save()` reaches it on every save
+        since D11, an id was re-minted for every trace on a section several
+        times a second. An id is a birth certificate: re-minting one turns "the
+        same trace, edited" into "a different trace" to anything that later
+        merges, which is the one property `trace_id.py` says a merge cannot
+        lose. It also leaked the outgoing id into the issuer's taken-set, so a
+        long session's index filled with ids no row held.
+
+        `carried_ids` is how a caller says which traces already have one. It is
+        keyed on the `Trace` OBJECT, not on a name or a row number, because
+        that is the only stable correlation available: `Trace` carries no id
+        attribute of its own, so the id lives in the outgoing store and is tied
+        to the trace through the outgoing row map. `Trace` defines neither
+        `__eq__` nor `__hash__`, so the dict is an identity map, the same
+        identity `Section._column_rows` already runs on.
+
             Params:
                 section: anything with `.n` and `.contours` (name -> iterable of
                     traces)
                 generation (int): forwarded to `__init__`; see the note there on
                     why a rebuilt store must not restart the counter at 0
+                carried_ids (dict): `{Trace: id}` for traces that already hold
+                    an id THIS series issued. A trace absent from it is a trace
+                    with no id yet -- genuinely new, or arriving from an import
+                    -- and the issuer mints one. These are carried verbatim and
+                    are deliberately NOT run through `adopt()`; see the module
+                    docstring on why re-adopting an id the issuer itself handed
+                    out reports a clash against itself.
             Returns:
                 (SectionColumns): a store holding every trace of the section
         """
         store = cls(section.n, coordinates=coordinates, id_issuer=id_issuer,
                     generation=generation)
+        ## One carried id can be spent once, and `spent` holds the ID rather
+        ## than the trace it came from, because the id is what must not be
+        ## handed out twice. Two ways one id reaches two rows: a `Trace` object
+        ## sitting in two contour lists at once, so an identity map is looked up
+        ## twice; or two DISTINCT traces mapped to the same id in `carried_ids`,
+        ## which a map keyed on trace identity cannot see at all. Both end in
+        ## two live rows sharing one id -- precisely the duplicate this whole
+        ## change exists to prevent, arriving through the fix rather than the
+        ## fault, and invisible to the issuer because a carried id is never
+        ## offered to `adopt()`. The second row falls through to the issuer
+        ## instead. (`None in spent` is False, so the `is not None` test is
+        ## needed only before adding.)
+        spent = set()
         for name in sorted(section.contours, key=str):
             for trace in section.contours[name]:
+                trace_id = None
+                if carried_ids is not None:
+                    trace_id = carried_ids.get(trace)
+                    if trace_id in spent:
+                        trace_id = None
+                    elif trace_id is not None:
+                        spent.add(trace_id)
                 store.appendRow(
                     name=trace.name,
                     points=trace.points,
@@ -452,6 +577,7 @@ class SectionColumns():
                     hidden=trace.hidden,
                     fill_mode=trace.fill_mode,
                     tags=trace.tags,
+                    trace_id=trace_id,
                 )
         store.clearTracking()
         return store
@@ -549,6 +675,40 @@ class SectionColumns():
         """The row's id, or `None` if the store was built without an issuer."""
         return self._ids[row]
 
+    @property
+    def id_issuer(self):
+        """The injected issuer, or `None`.
+
+        Public so that a rebuild can hand the replacement store the SAME
+        issuer rather than reaching into a private attribute. That matters
+        more than it reads: the issuer owns the series' id index, so a
+        replacement store built with a fresh one -- or with none, which is
+        what `Section._rebuildColumnarStore` did before D10 -- discards every
+        id on the section and every record of which ids are spoken for.
+        """
+        return self._id_issuer
+
+    @property
+    def foreign_id_reissues(self) -> tuple:
+        """Every foreign id this store refused, as (row, foreign, fresh, name).
+
+        Complete and never capped, unlike the printed report. This is the
+        channel a caller with its own user-facing conflict vocabulary should
+        read -- an import that wants to say "3 traces arrived under ids this
+        series already uses" says it from here.
+
+        SCOPED TO THIS STORE'S LIFETIME, so read it before the next
+        `resyncColumnarStore()` or `save()`. A rebuild replaces the store
+        wholesale and does not carry this record across -- deliberately, since
+        the tuple's row number is meaningless once rows have been renumbered.
+        That matters because the resync that erases it tends to sit on the last
+        line of the method that produced it. The channels that DO outlive a
+        rebuild are `id_issuer.collisions` (the issuer is carried across) and
+        the printed warning, which `backend/func/logging_setup.py` tees into the
+        per-user log file.
+        """
+        return tuple(self._foreign_id_reissues)
+
     def freeze(self):
         """Release every column's growth slack. For a store that will not grow.
 
@@ -634,20 +794,72 @@ class SectionColumns():
 
     def appendRow(self, name: str, points, color, closed=True, negative=False,
                   hidden=False, fill_mode=("none", "none"), tags=(),
-                  trace_id=None) -> int:
+                  trace_id=None, foreign_id=None) -> int:
         """Add a trace's row. An append, never an insert.
+
+        Read the module docstring's "THE THREE WAYS A ROW ACQUIRES AN ID"
+        before choosing between the two id parameters. They are not
+        interchangeable and passing the wrong one is silent.
 
             Params:
                 name (str): the trace's name, which is also its contour's key.
                     Written through `normalizeObjectName`, the same function
                     `Trace.name`'s setter runs, so a name entering the store
                     cannot diverge from one entering a `Trace`.
-                trace_id: an id to carry in. `None` asks the injected issuer for
-                    one, and means no id when there is no issuer.
+                trace_id: an id THIS series already owns, carried in verbatim.
+                    The issuer is not consulted, because it issued this id in
+                    the first place. `None` asks the injected issuer for a
+                    fresh one, and means no id when there is no issuer.
+                foreign_id: an id from OUTSIDE this series -- another series'
+                    store, or a file. Registered with the injected issuer
+                    through `adopt()` before it is accepted. If the issuer
+                    refuses it (the id is already spoken for here), a fresh
+                    local id is issued for this row instead and the clash is
+                    recorded in `foreign_id_reissues` and printed. Requires an
+                    issuer: an id cannot be registered with nothing, and
+                    accepting it unregistered is exactly the silent adoption
+                    D10 exists to remove.
             Returns:
                 (int): the new row number
         """
+        if trace_id is not None and foreign_id is not None:
+            raise ValueError(
+                "appendRow takes trace_id OR foreign_id, not both: "
+                f"{trace_id!r} and {foreign_id!r}. trace_id means this series "
+                "already owns the id and it is carried verbatim; foreign_id "
+                "means it arrived from another series and must be registered "
+                "with the local issuer first. Passing both asks for one id to "
+                "be two different things."
+            )
+        if foreign_id is not None and self._id_issuer is None:
+            raise ValueError(
+                f"a foreign id ({foreign_id!r}) was carried into a store with "
+                "no id issuer, so there is nothing to register it with and no "
+                "way to notice it clashing with an id this series already "
+                "holds. Storing it anyway is the silent adoption D10 removed; "
+                "pass trace_id instead if the id is genuinely this series' own."
+            )
         name = normalizeObjectName(name)
+        ## Resolved BEFORE the first column is written, and deliberately so.
+        ## `_resolveID`'s foreign arm reaches `adopt()`, whose first statement
+        ## rejects a malformed id by raising -- a third raising path, alongside
+        ## the two guards above, and the only one that can be reached with
+        ## untrusted input, since `foreign_id` exists to accept ids from outside
+        ## this series. Resolving after the columns were appended left the store
+        ## at mismatched arity: `_names` and the coordinate backing had advanced
+        ## while `_ids` had not, and because the assertion below compares the
+        ## two columns that BOTH advanced, the next append passed and every
+        ## later row's id was off by one. The prospective row number is
+        ## `len(self._names)`, which the assertion below then confirms is the
+        ## row the backing actually produced.
+        ##
+        ## The tradeoff, stated rather than left implicit: on the clash-and-
+        ## reissue path `_resolveID` appends to `_foreign_id_reissues` and
+        ## prints, so should a LATER line here raise, that record would describe
+        ## a row that was never appended. That is strictly narrower than what it
+        ## replaces -- a spurious entry in a report nobody reads yet, against
+        ## silent id corruption in every row of the store.
+        new_id = self._resolveID(trace_id, foreign_id, name, len(self._names))
         row = self._coordinates.append(points)
         assert row == len(self._names), (
             "the coordinate backing and the attribute columns have drifted out "
@@ -660,7 +872,7 @@ class SectionColumns():
             self._bools[attribute].append(bool(value))
         self._fill_modes.append(self._encodeFillMode(row, fill_mode))
         self._tags.append(frozenset(tags))
-        self._ids.append(self._resolveID(trace_id))
+        self._ids.append(new_id)
         self._live.append(True)
         self._live_count += 1
 
@@ -949,12 +1161,65 @@ class SectionColumns():
         if not self._live[row]:
             raise IndexError(f"row {row} has been removed")
 
-    def _resolveID(self, trace_id):
+    def _resolveID(self, trace_id, foreign_id, name, row):
+        """Decide the id for a row being appended. See the module docstring.
+
+        The three arms are the three ways a row acquires an id, and the middle
+        one is the one that took a maintainer decision (D10 Q1/Q2).
+        """
+        ## This series' own id, carried in. Not registered again: it is in the
+        ## issuer's index already, put there when it was first issued, so
+        ## `adopt` would report a clash against itself.
         if trace_id is not None:
             return trace_id
+
+        ## An id from another series. Registered, or replaced and reported.
+        if foreign_id is not None:
+            if self._id_issuer.adopt(foreign_id, name):
+                return foreign_id
+            fresh = self._id_issuer.issue()
+            self._foreign_id_reissues.append((row, foreign_id, fresh, name))
+            self._reportForeignIDReissue(row, foreign_id, fresh, name)
+            return fresh
+
         if self._id_issuer is None:
             return None
         return self._id_issuer.issue()
+
+    def _reportForeignIDReissue(self, row, foreign_id, fresh, name):
+        """Print one clash, or the line that says printing has stopped.
+
+        stderr and `print`, matching `Section._warnAboutTheStore`, and for its
+        reason: `backend/func/logging_setup.py` tees both standard streams into
+        the per-user log file that Help > View log file shows and that a bug
+        report carries, and this tree has no logging framework. A warning
+        nobody can retrieve would not be a signal.
+        """
+        seen = len(self._foreign_id_reissues)
+        if seen > FOREIGN_ID_REPORT_LIMIT:
+            return
+        if seen == FOREIGN_ID_REPORT_LIMIT:
+            print(
+                f"WARNING: section {self.section_number} has now had "
+                f"{FOREIGN_ID_REPORT_LIMIT} imported trace ids clash with ids "
+                f"it already holds. Further clashes on this section are "
+                f"recorded in the store's foreign_id_reissues but will not be "
+                f"printed, so that this report cannot evict the log it is "
+                f"written to.",
+                file=sys.stderr,
+            )
+            return
+        print(
+            f"WARNING: the imported trace {name!r} on section "
+            f"{self.section_number} carried the id {foreign_id!r}, which a "
+            f"trace already in this series holds. Both are being kept, so the "
+            f"imported one was given a new id {fresh!r} (row {row}) to tell "
+            f"them apart. This is the expected shape when two series descend "
+            f"from one original file and have both been edited since; the "
+            f"imported trace's link back to its original is what was lost, "
+            f"not the trace.",
+            file=sys.stderr,
+        )
 
     def _encodeFillMode(self, row: int, fill_mode) -> int:
         pair = tuple(fill_mode)
@@ -1390,14 +1655,20 @@ class ContourView():
          the two routes reach the same order and only one of them stays quiet.
          What still blocks the port is 2 and 4 below, not the rebind.
 
-      4. *The rebound list may hold the other contour's own `Trace` objects*,
-         and in production `other` is a contour of a different section of a
-         different series with a different store. `Section.importTraces` then
-         calls `Contour.remove` on exactly those objects, by identity. Adopting
-         a foreign trace into this store is design §10's id-carry question, not
-         an append: `_resolveID` takes a carried-in id verbatim **without
-         registering it with the issuer**, so a foreign id can later collide
-         with one the local issuer hands out.
+      4. PARTLY LIFTED. *The rebound list may hold the other contour's own
+         `Trace` objects*, and in production `other` is a contour of a
+         different section of a different series with a different store.
+         `Section.importTraces` then calls `Contour.remove` on exactly those
+         objects, by identity. Adopting a foreign trace into this store was
+         design §10's id-carry question, and D10 has since answered it:
+         `appendRow(foreign_id=...)` registers the id with the local issuer and
+         reissues-and-reports on a clash, so there is now a defined operation
+         for a foreign row's id where there was none. What that does NOT lift
+         is the rest of this item -- a port still has to decide which store the
+         adopted trace's row belongs to and what happens to its row in the
+         other store -- and nothing in the tree threads a foreign id through
+         yet, so the mechanism is reachable only by direct call. What still
+         blocks the port is 1 and 2 above, plus that unthreaded half.
 
     ON D1, AND ONE INCONSISTENCY WORTH FLAGGING RATHER THAN INHERITING
     ------------------------------------------------------------------

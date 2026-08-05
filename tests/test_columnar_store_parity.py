@@ -1070,6 +1070,392 @@ def test_ids_are_issued_once_per_row_over_a_whole_real_section(loaded_sections):
     assert issuer.count == len(ids)
 
 
+# --- D10: how a foreign trace's id enters this series' store -----------------
+#
+# `appendRow` takes two mutually exclusive id parameters, and the distinction
+# between them is the whole of D10. `trace_id=` is an id THIS series already
+# owns, carried verbatim without consulting the issuer -- it is in the issuer's
+# index already, put there when it was issued. `foreign_id=` is an id from
+# another series, registered through `TraceIDIssuer.adopt` before it is
+# accepted, and replaced-and-reported when the issuer refuses it.
+#
+# The maintainer's decision, recorded in DECISIONS.md 2026-08-05: Q1 register
+# via `adopt()`, Q2 on a clash issue a fresh local id for that row only and
+# report it. The investigation is
+# `specs/phase1-foreign-trace-id-acquisition-2026-08-05.md`.
+#
+# These use the REAL `TraceIDIssuer` rather than `StubIssuer`, because `adopt`
+# and its collision log are the subject. `StubIssuer` stays valid for every
+# test above it: the widened duck type applies only to a store that is passed a
+# `foreign_id`.
+
+def _aRow(store, name="axon", **kwargs):
+    """One plausible row, so these tests are about ids and nothing else."""
+    return store.appendRow(
+        name=name, points=[(0.0, 0.0), (1.0, 1.0)], color=[1, 2, 3], **kwargs
+    )
+
+
+def test_a_foreign_id_is_registered_with_the_local_issuer():
+    """D10 Q1. The gap was that `_resolveID` registered a carried id with
+    nothing.
+
+    `trace_id.py`'s recorded policy is "at load and at merge -- detect and
+    report by name, never silently adopt and never silently reissue", and
+    accepting a foreign id verbatim is the silent adoption half of that.
+    `TraceIDIssuer.adopt` has existed and been tested since wave B and had zero
+    production callers; what was missing was only the call.
+    """
+    from PyReconstruct.modules.datatypes.trace_id import (
+        TraceIDIssuer, encodeTraceID,
+    )
+
+    issuer = TraceIDIssuer()
+    store = SectionColumns(1, id_issuer=issuer)
+    foreign = encodeTraceID(4242)
+
+    row = _aRow(store, foreign_id=foreign)
+
+    assert store.getID(row) == foreign, "the foreign id was not kept"
+    assert foreign in issuer.taken, (
+        "the foreign id was accepted without being registered, so the issuer's "
+        "index -- the whole of its uniqueness guarantee -- cannot see it"
+    )
+    assert issuer.collisions == ()
+    assert store.foreign_id_reissues == ()
+
+
+def test_registering_a_foreign_id_stops_the_issuer_handing_it_out_again():
+    """R2 from the investigation, and the reason registration is the fix.
+
+    An unregistered foreign id is invisible to `issue()`'s refuse-and-reissue
+    loop, so the issuer can later mint the same id for a different trace. With
+    the identical bits source, registration lets that loop see the id and step
+    past it. The real `secrets.randbits(64)` source makes this ~4.1e-6 across
+    the largest corpus on record rather than a live data-loss risk, but it is a
+    hole in the issuer's stated contract either way, and unlike R1 it is closed
+    completely by registration alone.
+    """
+    from PyReconstruct.modules.datatypes.trace_id import (
+        TraceIDIssuer, encodeTraceID,
+    )
+
+    draws = iter([4242, 99])
+    issuer = TraceIDIssuer(bits_source=lambda: next(draws))
+    store = SectionColumns(1, id_issuer=issuer)
+    foreign = encodeTraceID(4242)
+
+    imported = _aRow(store, foreign_id=foreign)
+    later = _aRow(store, name="dendrite")   # no id: the issuer mints one
+
+    assert store.getID(imported) == foreign
+    assert store.getID(later) == encodeTraceID(99), (
+        "the issuer drew 4242 first and had to step past it; it did not"
+    )
+    assert store.getID(later) != store.getID(imported)
+
+
+def test_a_clashing_foreign_id_is_reissued_and_reported(capsys):
+    """D10 Q2, against R1 -- the CERTAIN case, not the rare one.
+
+    `deriveTraceID` is a pure function of the trace's own stored row, and that
+    is the property it exists for: two independent opens of one legacy file
+    agree on every id with no save. The same property means two sibling series
+    descended from one ancestor still hold the ancestor's id for two traces
+    that have since diverged. When the merge keeps both -- which it does,
+    correctly, whenever the overlap test fails -- both land in one store under
+    one id. The investigation reproduced two live rows sharing an id with the
+    issuer's collision log empty.
+
+    `adopt` detects it and resolves nothing; he chose b4, a fresh local id for
+    the clashing row only, reported rather than silent.
+    """
+    from PyReconstruct.modules.datatypes.trace_id import (
+        TraceIDIssuer, deriveTraceID,
+    )
+
+    ## The ancestor row both series migrated, in `Trace.getList` shape.
+    ancestor = [[0.0, 1.0], [0.0, 1.0], [1, 2, 3], True, False, False,
+                ["none", "none"], []]
+    a_id = deriveTraceID(5, "axon", ancestor)
+    b_id = deriveTraceID(5, "axon", ancestor)
+    assert a_id == b_id, (
+        "the derivation stopped agreeing across two independent derivations, "
+        "which is the property R1 depends on and tid-v1 is frozen to provide"
+    )
+
+    ## Series A holds it already; series B's copy arrives through an import.
+    issuer = TraceIDIssuer(taken=[a_id])
+    store = SectionColumns(5, id_issuer=issuer)
+    mine = _aRow(store, trace_id=a_id)
+    theirs = _aRow(store, foreign_id=b_id)
+
+    fresh = store.getID(theirs)
+    assert store.getID(mine) == a_id, "the trace this series owned lost its id"
+    assert fresh is not None, (
+        "the clashing row was given no id -- the store's own docstring calls "
+        "that the worse failure, one a merge cannot place and nothing detects"
+    )
+    assert fresh != a_id, "TWO LIVE ROWS SHARE ONE ID: the R1 failure itself"
+    assert fresh in issuer.taken
+
+    ## Reported through both channels, which is what makes the reissue
+    ## satisfy a policy whose wording forbids reissuing SILENTLY.
+    assert issuer.collisions == ((a_id, "axon"),)
+    assert store.foreign_id_reissues == ((theirs, b_id, fresh, "axon"),)
+    printed = capsys.readouterr().err
+    assert b_id in printed and fresh in printed, (
+        f"the clash was resolved without saying so:\n{printed}"
+    )
+
+
+def test_a_carried_id_is_not_offered_to_the_issuer_a_second_time():
+    """The load-bearing distinction, at the layer that has to keep it.
+
+    A rebuild and a `copyRow` both re-append a trace this series ALREADY has an
+    id for. That id is in the issuer's taken-set because this series put it
+    there, so routing either through `adopt()` would report a clash of the
+    trace against itself. A collision log that is wrong every time is worse
+    than no log, because it trains a reader to ignore the entry that is right.
+    """
+    from PyReconstruct.modules.datatypes.trace_id import TraceIDIssuer
+
+    issuer = TraceIDIssuer()
+    store = SectionColumns(1, id_issuer=issuer)
+
+    original = _aRow(store)
+    issued = store.getID(original)
+    copied = store.copyRow(original)                  # keeps the id by design
+    carried = _aRow(store, name="axon", trace_id=issued)   # a rebuild's arm
+
+    assert store.getID(copied) == issued
+    assert store.getID(carried) == issued
+    assert issuer.collisions == (), (
+        f"carrying this series' own id reported a clash against itself: "
+        f"{issuer.collisions}"
+    )
+    assert store.foreign_id_reissues == (), (
+        "a carried id was replaced as though it had arrived from elsewhere"
+    )
+
+
+def test_the_two_id_parameters_are_mutually_exclusive():
+    """They mean different things, so one id cannot be both."""
+    from PyReconstruct.modules.datatypes.trace_id import (
+        TraceIDIssuer, encodeTraceID,
+    )
+
+    store = SectionColumns(1, id_issuer=TraceIDIssuer())
+    with pytest.raises(ValueError, match="not both"):
+        _aRow(store, trace_id=encodeTraceID(1), foreign_id=encodeTraceID(2))
+
+
+def test_a_foreign_id_needs_an_issuer_to_register_with():
+    """An id cannot be registered with nothing.
+
+    Accepting it into an issuer-less store would store it unregistered, which
+    is precisely the silent adoption D10 removed, arriving through the fix. It
+    refuses instead: a caller holding a foreign id and no issuer has no way to
+    be correct, and a loud programming error at a boundary with no production
+    caller costs nothing.
+    """
+    from PyReconstruct.modules.datatypes.trace_id import encodeTraceID
+
+    store = SectionColumns(1)
+    with pytest.raises(ValueError, match="no id issuer"):
+        _aRow(store, foreign_id=encodeTraceID(7))
+    ## The carried-id arm is unaffected: it never needed an issuer.
+    assert store.getID(_aRow(store, trace_id="fromtheefile")) == "fromtheefile"
+
+
+def test_a_malformed_foreign_id_leaves_the_store_untouched():
+    """The refusal has to arrive before the first column is written.
+
+    `adopt()` rejects a malformed id by raising, and `foreign_id` is the one
+    parameter whose entire purpose is to accept an id from OUTSIDE this series,
+    which is by definition untrusted. Resolving the id after the columns had
+    been appended left `_names`, `_tags` and the coordinate backing advanced
+    while `_ids`, `_live` and `_live_count` were not -- and the arity assertion
+    on the NEXT append cannot catch that, because it compares `row` against
+    `len(self._names)` and the failed call advanced BOTH. So the next append
+    succeeded and `_ids` was off by one against the rows it described, for the
+    rest of the store's life. That is worse than the missing id the module
+    docstring already refuses: `getID` went on answering, with another row's id.
+    """
+    from PyReconstruct.modules.datatypes.trace_id import TraceIDIssuer
+
+    issuer = TraceIDIssuer()
+    store = SectionColumns(1, id_issuer=issuer)
+    kept = {row: store.getID(row)
+            for row in (_aRow(store), _aRow(store, name="dendrite"))}
+    assert all(kept.values())
+    before = len(store._names)
+    taken_before = len(issuer.taken)
+
+    with pytest.raises(ValueError, match="11 characters"):
+        _aRow(store, foreign_id="not-a-valid-id")
+
+    ## Nothing moved: no column, no id record, and not the issuer either --
+    ## `adopt` decodes before it registers, so the refused id is not in `taken`.
+    assert len(store._names) == before, "a column advanced past the refusal"
+    assert len(store._ids) == before
+    assert len(store._tags) == before
+    assert store.rowCount == before and len(store) == before
+    assert store.foreign_id_reissues == ()
+    assert len(issuer.taken) == taken_before, (
+        "the issuer registered the id it refused as malformed"
+    )
+    assert {row: store.getID(row) for row in kept} == kept
+
+    ## The shift itself: the next append must be the row the failed one was
+    ## going to be, and must not slide the existing rows' ids up by one.
+    fresh = _aRow(store, name="dendrite")
+    assert fresh == before, f"the failed append consumed row {before}"
+    assert {row: store.getID(row) for row in kept} == kept, (
+        "the existing rows' ids shifted under the row that failed to append"
+    )
+    assert store.getID(fresh) not in kept.values(), (
+        "the new row was handed an id another row already holds"
+    )
+
+
+def test_the_foreign_id_clash_report_is_capped_but_the_record_is_not(capsys):
+    """A common-ancestor merge clashes on every trace, not on a rare one.
+
+    The report is teed into the per-user log file, which rotates at 2 MB, so an
+    uncapped one would evict the history somebody opened the log to read --
+    D11's `DRIFT_REPORT_LIMIT` precedent, for its reason. The RECORD is not
+    capped, because a caller reporting in its own vocabulary needs all of it.
+    """
+    from PyReconstruct.modules.datatypes.columnar_store import (
+        FOREIGN_ID_REPORT_LIMIT,
+    )
+    from PyReconstruct.modules.datatypes.trace_id import (
+        TraceIDIssuer, encodeTraceID,
+    )
+
+    clashing = [encodeTraceID(n) for n in range(FOREIGN_ID_REPORT_LIMIT + 5)]
+    issuer = TraceIDIssuer(taken=clashing)
+    store = SectionColumns(1, id_issuer=issuer)
+
+    capsys.readouterr()
+    for foreign in clashing:
+        _aRow(store, foreign_id=foreign)
+
+    assert len(store.foreign_id_reissues) == len(clashing), (
+        "the record was capped; it is the printing that is capped"
+    )
+    printed = [line for line in capsys.readouterr().err.splitlines() if line.strip()]
+    assert len(printed) <= FOREIGN_ID_REPORT_LIMIT + 1, (
+        f"the cap did not hold: {len(printed)} lines for {len(clashing)} clashes"
+    )
+    assert "will not be printed" in "\n".join(printed), (
+        "printing stopped without saying that it had"
+    )
+
+
+def test_a_rebuild_carries_the_ids_it_is_given_and_issues_for_the_rest(
+    loaded_sections
+):
+    """`fromSection`'s `carried_ids`, over a real section.
+
+    The rebuild path. Until D10 this appended every row with no id, so the
+    issuer minted a fresh one for each -- and `Section.resyncColumnarStore`
+    reaches it from fourteen call sites, plus every `save()` since D11.
+
+    Keyed on the `Trace` object because that is the only correlation there is:
+    `Trace` carries no id attribute of any kind, so an id cannot be read off
+    the object being re-appended.
+    """
+    from PyReconstruct.modules.datatypes.trace_id import TraceIDIssuer
+
+    section = max(loaded_sections, key=lambda s: sum(len(c) for c in s.contours.values()))
+    issuer = TraceIDIssuer()
+    first = SectionColumns.fromSection(section, id_issuer=issuer)
+
+    carried = {}
+    for name in sorted(section.contours, key=str):
+        for trace, row in zip(section.contours[name].getTraces(),
+                              first.rowsForContour(name)):
+            carried[trace] = first.getID(row)
+    assert carried and all(carried.values())
+
+    ## One trace deliberately left out: the "never seen before" arm.
+    newcomer = next(iter(carried))
+    del carried[newcomer]
+    taken_before = len(issuer.taken)
+
+    second = SectionColumns.fromSection(
+        section, id_issuer=issuer, carried_ids=carried,
+    )
+
+    rebuilt = {}
+    for name in sorted(section.contours, key=str):
+        for trace, row in zip(section.contours[name].getTraces(),
+                              second.rowsForContour(name)):
+            rebuilt[trace] = second.getID(row)
+
+    assert {t: i for t, i in rebuilt.items() if t in carried} == carried, (
+        "the rebuild re-identified traces it was handed ids for"
+    )
+    assert rebuilt[newcomer] is not None
+    assert rebuilt[newcomer] not in carried.values(), (
+        "the trace with no carried id was handed one another trace holds"
+    )
+    assert len(set(rebuilt.values())) == len(rebuilt), (
+        "the rebuild produced two rows sharing one id"
+    )
+    assert len(issuer.taken) == taken_before + 1, (
+        "the rebuild leaked ids into the issuer's index: only the one trace "
+        "without a carried id should have drawn a new one"
+    )
+    assert issuer.collisions == (), "the carry reported a clash against itself"
+
+    ## Two DISTINCT traces mapped to ONE id -- the shape a guard keyed on trace
+    ## identity cannot see, because both lookups are of different objects. The
+    ## issuer cannot catch it either: a carried id is deliberately never offered
+    ## to `adopt()`, so its collision log stays empty while two live rows share
+    ## one id. That is the R1 duplicate this whole mechanism exists to prevent,
+    ## and the rebuild would otherwise propagate it forward on every save.
+    assert len(carried) >= 2
+    one, other = list(carried)[:2]
+    shared = carried[one]
+    doubled = dict(carried)
+    doubled[other] = shared          # `one` already holds it
+    taken_before_doubled = len(issuer.taken)
+
+    third = SectionColumns.fromSection(
+        section, id_issuer=issuer, carried_ids=doubled,
+    )
+    tripled = {}
+    for name in sorted(section.contours, key=str):
+        for trace, row in zip(section.contours[name].getTraces(),
+                              third.rowsForContour(name)):
+            tripled[trace] = third.getID(row)
+
+    pair = [tripled[one], tripled[other]]
+    assert pair.count(shared) == 1, (
+        f"one carried id was spent {pair.count(shared)} times, not once: {pair}"
+    )
+    fell_through = next(i for i in pair if i != shared)
+    assert fell_through is not None, "the second row was left with no id at all"
+    assert fell_through not in doubled.values(), (
+        "the trace whose carried id was already spent was handed an id another "
+        "trace holds, rather than a fresh one"
+    )
+    assert fell_through in issuer.taken, "the fresh id was not registered"
+    assert len(set(tripled.values())) == len(tripled), (
+        "TWO LIVE ROWS SHARE ONE ID: the R1 duplicate, arriving through the "
+        "rebuild's own carry"
+    )
+    ## Exactly two draws: the newcomer that has no carried id, and the trace
+    ## whose id was already spent. Nothing else re-identified.
+    assert len(issuer.taken) == taken_before_doubled + 2, (
+        "the rebuild drew more ids than the two traces that needed one"
+    )
+    assert issuer.collisions == (), "the carry reported a clash against itself"
+
+
 # --- TraceView: the read-only row view ---------------------------------------
 #
 # `TraceView` is the first `Trace`-shaped surface over the columns. It is
@@ -2352,11 +2738,15 @@ def test_membership_is_object_identity_on_a_contour_and_row_identity_on_a_view()
 #      trip is retired: the tests below keep it only to measure that the two
 #      routes reach the same order and that only one of them stays quiet.
 #
-#   4. That rebound list may hold traces belonging to the OTHER contour, which
-#      is a contour of a different section of a different series with a
-#      different store. `section.py` then calls `Contour.remove` on exactly
-#      those objects, by identity. Adopting a foreign trace into this store is
-#      an id-carry decision (design §10), not a mechanical append.
+#   4. PARTLY LIFTED. That rebound list may hold traces belonging to the OTHER
+#      contour, which is a contour of a different section of a different series
+#      with a different store. `section.py` then calls `Contour.remove` on
+#      exactly those objects, by identity. Adopting a foreign trace into this
+#      store was an id-carry decision (design §10), not a mechanical append --
+#      and D10 has since made it: `appendRow(foreign_id=...)` registers the id
+#      with the local issuer and reissues-and-reports on a clash. The id half
+#      is answered; which store the adopted row belongs to is not, and nothing
+#      threads a foreign id through yet.
 
 
 def _everyWayOfGettingAnElement(view):
@@ -3472,8 +3862,10 @@ def test_importTraces_hands_back_the_contours_own_objects_and_may_hand_back_the_
 
     A `ContourView.importTraces` would therefore have to adopt a foreign row
     into this store. That is design §10's id-carry question ("the id follows the
-    surviving `Trace`"), not an append -- and until it is answered there is
-    nothing for the port to do with `other`'s traces.
+    surviving `Trace`"), not an append. D10 answered the id half --
+    `appendRow(foreign_id=...)` exists and is tested above -- so what is left
+    for the port is which store the adopted row belongs to, and threading the
+    foreign id from `other`'s store to this one, which nothing does today.
 
     Built on two contours taken from the real fixture rather than on invented
     geometry, so the overlap arithmetic is the arithmetic production runs.

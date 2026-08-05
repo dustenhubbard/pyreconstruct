@@ -3181,12 +3181,12 @@ def test_a_clean_save_keeps_the_store_it_already_had(real_section, capsys):
 def _installAStoreCarryingIDs(section):
     """Rebuild the section's store with an id issuer wired in, and map the rows.
 
-    Nothing in the application injects one today -- `Section.resyncColumnarStore`
-    calls `SectionColumns.fromSection(self, generation=...)`, leaving
-    `id_issuer` at its `None` default, so every row's id is `None` and `Trace`
-    carries no id attribute at all. The two tests below are about what happens
-    on the day one IS wired, which is live work
-    (`specs/phase1-foreign-trace-id-acquisition-2026-08-05.md`), so they have to
+    Nothing in the application injects one today -- `Section.__init__` reaches
+    `resyncColumnarStore`, and a section with no outgoing store has no issuer
+    to carry into the new one, so every row's id is `None` and `Trace` carries
+    no id attribute at all. The tests below are about what happens on the day
+    one IS wired (D10,
+    `specs/phase1-foreign-trace-id-acquisition-2026-08-05.md`), so they have to
     build that state by hand.
 
     Mirrors `resyncColumnarStore`'s own row-map construction rather than
@@ -3256,36 +3256,161 @@ def test_a_save_does_not_re_identify_the_traces_it_saves(real_section):
     )
 
 
-def test_a_drifted_save_does_lose_the_ids_and_that_is_D10s_to_fix(real_section):
-    """The residue, pinned as a known limitation rather than left to be found.
+def _idsByTrace(section):
+    """`{Trace: id}` for the section's store, through its own row map.
 
-    A save that DOES find drift adopts the rebuild, and `fromSection` issues
-    fresh ids for every row it appends -- so the ids go with the store. That is
-    not new behavior and not this change's to fix: it is exactly what the
-    fourteen existing `resyncColumnarStore()` call sites already do, and
-    `specs/phase1-foreign-trace-id-acquisition-2026-08-05.md` §5 flags "the
-    rebuild must learn to carry ids" as a scope call for the maintainer.
-
-    What IS new is that `save()` is now one of those call sites, so this test
-    exists to make the boundary explicit: an ordinary save is safe (above), a
-    drifted save is not (here), and the day `fromSection` carries ids this test
-    goes red and should be deleted.
+    Keyed on the trace rather than on the row number because a rebuild is
+    entitled to renumber rows; what it is not entitled to do is change which id
+    belongs to which trace.
     """
-    before = _installAStoreCarryingIDs(real_section)
+    return {
+        trace: section._columns.getID(row)
+        for trace, row in section._column_rows.items()
+    }
+
+
+def test_a_drifted_save_keeps_the_ids_it_can_correlate(real_section):
+    """The residue D11 pinned as a known limitation. D10 closed it.
+
+    This test is the inversion of D11's `test_a_drifted_save_does_lose_the_ids
+    _and_that_is_D10s_to_fix`, which asserted the loss and said in its own body
+    that the day `fromSection` learned to carry ids it should be deleted. This
+    is that day, and the assertion is turned over rather than dropped, so the
+    property it was watching still has a test on it.
+
+    A save that finds drift adopts the rebuild -- that has not changed. What
+    changed is that the rebuild now carries every id it can correlate through
+    the outgoing row map, so adopting it is no longer destructive.
+    """
+    _installAStoreCarryingIDs(real_section)
+    before = _idsByTrace(real_section)
 
     victim = _anyTrace(real_section)
     victim.setHidden(not victim.hidden)   # out of class, unrepaired: drift
 
     real_section.save()
 
-    after = set(
-        real_section._columns.getID(row)
-        for row in real_section._column_rows.values()
+    after = _idsByTrace(real_section)
+    assert after == before, (
+        "a drifted save re-identified traces it had already identified: the "
+        f"rebuild was adopted without carrying the ids\n{before} -> {after}"
     )
-    assert not (after & set(before.values())), (
-        "the ids survived a drifted save, which would be good news and means "
-        "fromSection learned to carry them -- delete this test and the caveat "
-        "in _rebuildColumnarStoreForSave's docstring with it"
+    assert all(v is not None for v in after.values()), (
+        "every id came back None, so this passed by comparing nothing"
+    )
+
+
+def test_a_no_op_rebuild_does_not_re_identify_an_unchanged_trace(real_section):
+    """D10's part one, against the defect exactly as it was reproduced.
+
+    `specs/phase1-foreign-trace-id-acquisition-2026-08-05.md` §5 measured this
+    directly and recorded `PRESERVED: False`: a trace that nothing touched came
+    out of a rebuild under a new id. `resyncColumnarStore()` is reached from
+    fourteen call sites -- undo, redo, six in `series.py`, autoseg, three in
+    the field widget, `Section.__init__` and `_dualWriteResync` -- and since
+    D11 from `save()` as well, so this ran several times a second.
+
+    An id is a birth certificate. Re-minting one makes "the same trace,
+    edited" indistinguishable from "a different trace" to anything that later
+    merges, which `trace_id.py` names as the one property a merge cannot lose.
+    """
+    _installAStoreCarryingIDs(real_section)
+    before = _idsByTrace(real_section)
+    assert before and all(v is not None for v in before.values())
+
+    real_section.resyncColumnarStore()
+
+    after = _idsByTrace(real_section)
+    assert after == before, f"the rebuild re-identified traces\n{before} -> {after}"
+
+
+def test_a_rebuild_carries_the_issuer_and_does_not_leak_dead_ids(real_section):
+    """Two halves of the same loss, and the first was worse than §5 recorded.
+
+    §5 measured the `fromSection` layer, where an issuer IS passed and every
+    row takes the `issue()` arm -- so an id changed. At the `Section` layer it
+    was worse: `_rebuildColumnarStore` passed no `id_issuer` at all, so the
+    replacement store had none and every id came back `None`. The series' id
+    index went with the store it was attached to.
+
+    The leak is the other half. Every rebuild that re-issued left the outgoing
+    id in the issuer's taken-set with no row holding it, so a long session's
+    index filled with ids belonging to nothing.
+    """
+    _installAStoreCarryingIDs(real_section)
+    issuer = real_section._columns.id_issuer
+    assert issuer is not None
+    taken_before = len(issuer.taken)
+    trace_count = len(real_section._column_rows)
+
+    for _ in range(5):
+        real_section.resyncColumnarStore()
+
+    assert real_section._columns.id_issuer is issuer, (
+        "the rebuild dropped the issuer, so the series' id index was discarded "
+        "with the store it happened to be attached to"
+    )
+    assert all(v is not None for v in _idsByTrace(real_section).values())
+    assert len(issuer.taken) == taken_before == trace_count, (
+        f"five no-op rebuilds moved the taken-set {taken_before} -> "
+        f"{len(issuer.taken)} for {trace_count} traces: each one leaked the "
+        f"ids it replaced"
+    )
+
+
+def test_a_rebuild_issues_only_for_a_trace_the_store_has_not_seen(real_section):
+    """Carrying ids must not stop a genuinely new trace from getting one.
+
+    The fall-through arm: a trace the outgoing row map does not hold is a
+    trace this store has never seen -- just created, or arrived through an
+    import -- and it still takes the issuer's `issue()` arm.
+    """
+    _installAStoreCarryingIDs(real_section)
+    before = _idsByTrace(real_section)
+
+    ## Added out of class, straight onto the contour, which is exactly the
+    ## shape `resyncColumnarStore()` is the documented repair for.
+    name = sorted(real_section.contours, key=str)[0]
+    newcomer = _aTrace(real_section, name=name)
+    real_section.contours[name].append(newcomer)
+    real_section.resyncColumnarStore()
+
+    after = _idsByTrace(real_section)
+    assert {t: i for t, i in after.items() if t in before} == before, (
+        "adding one trace re-identified the traces already there"
+    )
+    assert newcomer in after and after[newcomer] is not None, (
+        "the new trace was not issued an id"
+    )
+    assert after[newcomer] not in before.values(), (
+        "the new trace was handed an id another trace already holds"
+    )
+
+
+def test_a_rebuild_reports_no_clash_against_the_sections_own_ids(real_section):
+    """The distinction D10 turns on, asserted at the layer that could break it.
+
+    A rebuild re-appends traces this series ALREADY issued ids for. Those ids
+    are in the issuer's taken-set precisely because this series put them there,
+    so routing the carry through `adopt()` would report a clash of every trace
+    against itself -- and a report that is wrong every time trains a reader to
+    ignore the one that is right. The carry therefore uses `appendRow`'s
+    `trace_id=` arm, which does not consult the issuer at all; `foreign_id=` is
+    the arm that adopts.
+    """
+    _installAStoreCarryingIDs(real_section)
+    issuer = real_section._columns.id_issuer
+
+    for _ in range(3):
+        real_section.resyncColumnarStore()
+        real_section.save()
+
+    assert issuer.collisions == (), (
+        "a rebuild of this section's own traces reported an id clash against "
+        f"itself: {issuer.collisions}"
+    )
+    assert real_section._columns.foreign_id_reissues == (), (
+        "a rebuild reissued an id as though it had arrived from another series"
     )
 
 
