@@ -9,8 +9,10 @@ def focus_edit_p(event) -> bool:
     Ctrl rather than Shift, changed 2026-08-05 on a proofreader's report: the
     other half of a proofreading pass is `mergetraces_act`, which defaults to
     `Ctrl+M`, so Shift here meant alternating two modifiers for two halves of one
-    job. Ctrl-click did nothing at all in focus mode beforehand, and Ctrl's only
-    binding anywhere in the field is Ctrl+wheel for zoom.
+    job. Ctrl-click did nothing at all in focus mode beforehand, and the only
+    other Ctrl-plus-mouse binding in the field is Ctrl+wheel for zoom. (Ctrl is of
+    course all over the keyboard shortcuts, `Ctrl+M` among them; it is the mouse
+    that had nothing on it.)
 
     Qt swaps Ctrl and Meta on macOS, so `Qt.ControlModifier` is the Command key
     there and the Ctrl key everywhere else. That is what makes this pair hold on

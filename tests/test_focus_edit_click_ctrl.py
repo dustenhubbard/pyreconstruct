@@ -9,9 +9,10 @@ Reported by a proofreader working in focus mode:
 
 Both halves of that were true. ``focus_edit_p`` was
 ``event.modifiers() & Qt.ShiftModifier``, and Ctrl was bound to nothing on any
-click anywhere in the field: its only field binding is Ctrl+wheel for zoom, in
-``MainWindow.wheelEvent``. The other half of the pass is ``mergetraces_act``,
-which defaults to ``Ctrl+M``.
+click anywhere in the field: the only Ctrl-plus-mouse binding there is Ctrl+wheel
+for zoom, in ``MainWindow.wheelEvent``. The other half of the pass is
+``mergetraces_act``, which defaults to ``Ctrl+M``, so Ctrl was busy on the
+keyboard and idle on the mouse.
 
 **Why there is no option here, which is the part worth reading.** A three-way
 ctrl/shift/both radio group on the Mouse Tools tab was built, reviewed and then

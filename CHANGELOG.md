@@ -413,8 +413,9 @@ the README's *From source (developers)* section).
   which object a trace belongs to while in focus mode (splitting a trace out of the
   focused object, or incorporating another object's trace into it) was Shift-click:
   `focus_edit_p` was `event.modifiers() & Qt.ShiftModifier`. Ctrl-click did nothing
-  at all in focus mode, and Ctrl's only binding anywhere in the field is Ctrl+wheel
-  for zoom. The other half of a proofreading pass is **Merge traces** (`Ctrl+M`), so
+  at all in focus mode, and the only Ctrl-plus-mouse binding in the field is
+  Ctrl+wheel for zoom. The other half of a proofreading pass is **Merge traces**
+  (`Ctrl+M`), so
   the hand had to move between two modifiers for two halves of the same job.
   Reported by Patrick Parker, who was doing exactly that, repeatedly.
 
