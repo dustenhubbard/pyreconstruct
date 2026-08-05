@@ -1612,16 +1612,25 @@ class Series():
             obj_name : str,
             cross_sectioned : bool = True,
             z_points : list = None,
-            ztrace_color : tuple = (0, 0, 0),
+            ztrace_color : tuple[int, ...] | list[int] = (0, 0, 0),
             log_event=True
     ):
         """Create a ztrace from an existing object in the series.
+
+        ``ztrace_color`` moves with ``Ztrace.__init__``'s ``color``, which it is
+        passed straight into below. The z-tracing path in
+        ``FieldWidgetMouse.ztoolRelease`` calls this with
+        ``ztrace_color=self.tracing_trace.color``, and a file-loaded trace's
+        colour is a ``list`` -- so a ``tuple``-only annotation here would go on
+        rejecting a live caller even after ``Ztrace`` itself was corrected. See
+        ``Ztrace.__init__`` for why the union names its two containers rather
+        than saying ``Sequence[int]``.
 
             Params:
                 obj_name (str): the name of the object to create the ztrace from
                 cross_sectioned (bool): True if one ztrace point per section, False if multiple per section
                 z_points (list): points provided if creating ztrace from field
-                ztrace_color (tuple): color of ztrace to display in field
+                ztrace_color (tuple[int, ...] | list[int]): color of ztrace to display in field
                 log_event (bool): True if event should be logged
         """
         # A fresh list per call: a shared mutable default would let the points
@@ -1702,13 +1711,22 @@ class Series():
 
         self.modified = True
     
-    def editZtraceAttributes(self, name : str, new_name : str, new_color : tuple, log_event=True):
+    def editZtraceAttributes(self, name : str, new_name : str, new_color : tuple[int, ...] | list[int], log_event=True):
         """Edit the name and color of a ztrace.
-        
+
+        ``new_color`` moves with ``Ztrace.__init__``'s ``color``, which it is
+        assigned to below. Its one caller, ``FieldWidgetTrace``'s method of the
+        same name, seeds a ``ColorButton`` with the ztrace's current colour and
+        reads the button back, and the button
+        returns that same object untouched unless the user actually picks a new
+        one -- so on a file-loaded ztrace, whose colour is a ``list``, the value
+        arriving here is a list. See ``Ztrace.__init__`` for why the union names
+        its two containers rather than saying ``Sequence[int]``.
+
             Params:
                 name (str): the original ztrace name
                 new_name (str): the new name
-                new_color (tuple): the new color
+                new_color (tuple[int, ...] | list[int]): the new color
                 log_event (bool): True if event should be logged
         """
         # modify the ztrace data
