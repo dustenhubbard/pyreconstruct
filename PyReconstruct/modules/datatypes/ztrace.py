@@ -4,12 +4,30 @@ from PyReconstruct.modules.datatypes_legacy import ZContour as XMLZContour
 
 class Ztrace():
 
-    def __init__(self, name : str, color : tuple, points : list = None):
+    def __init__(self, name : str, color : tuple[int, ...] | list[int], points : list = None):
         """Create a new ztrace.
+
+        ``color`` admits a ``list`` as well as a ``tuple``, for the same reason
+        as ``Trace.__init__``'s and ``Flag.__init__``'s: a list is not a mistake
+        here, it is the shape a file-loaded ztrace has. ``getDict`` writes the
+        colour straight out, a JSON array decodes to a ``list``, and
+        ``fromDict`` assigns it verbatim -- so every ztrace that has been
+        through a ``.jser`` save/load carries a list, and nothing normalizes it
+        afterwards. ``dictFromXMLObj`` builds one as a list too, scaling the
+        XML's 0-1 border to 0-255 in place. Annotating ``tuple`` alone called
+        that ordinary round trip a type error, which is the wrong way round --
+        the tuple literals in the tree are the special case, not the list.
+
+        Spelled as the two containers that occur rather than as
+        ``Sequence[int]``, because ``bytes`` satisfies ``Sequence[int]``: under
+        the wider annotation ``Ztrace(name, b"...")`` type-checks in silence,
+        which is a check the wrong ``tuple`` annotation had been performing and
+        is not one this needed to trade away.
+        ``tests/test_ztrace_color_type.py`` pins both halves.
 
             Params:
                 name (str): the name of the ztrace
-                color (tuple): the display color of the ztrace
+                color (tuple[int, ...] | list[int]): the display color of the ztrace
                 points (list): the points for the trace (x, y, section)
         """
         self.name = name
