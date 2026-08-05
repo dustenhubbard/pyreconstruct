@@ -38,6 +38,22 @@ dependencies = [
     "orjson==3.11.8",   # fast JSON on the hot jser load/save paths (stdlib fallback)
     "certifi",   # CA bundle for TLS verification in the frozen app (updater)
     "packaging",
+    # SVG/PNG section export (`modules/backend/exports/svg_conversion.py`, reached
+    # from File > Export > SVG/PNG). Both were imported by that module from the day
+    # it landed but were never declared anywhere, so `Section.exportAsSVG` raised
+    # ModuleNotFoundError in every correctly-installed environment.
+    "svgwrite==1.4.3",
+    # cairosvg is a *partial* fix on its own: it reaches native Cairo through
+    # cairocffi's runtime dlopen, so the wheel installs everywhere but `import
+    # cairosvg` still raises OSError("no library called \"cairo-2\" was found") on
+    # a machine with no libcairo on the loader path. pip/uv cannot supply that --
+    # it is `apt-get install libcairo2` / `brew install cairo` (plus, on macOS,
+    # Homebrew's /opt/homebrew/lib being reachable, since ctypes.util.find_library
+    # does not search it). SVG export needs only svgwrite and is unaffected; PNG
+    # export is the path with the system-level requirement. See
+    # tests/test_export_svg_png.py, which asserts the declaration unconditionally
+    # and skips only the native render.
+    "cairosvg==2.9.0",
 ]
 
 [project.urls]
