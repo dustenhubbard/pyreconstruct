@@ -436,8 +436,33 @@ class FieldWidgetObject(FieldWidgetTrace):
     @object_function(update_objects=True, reload_field=False)
     def editAlignment(self, obj_names : list):
         """Edit alignment for object(s)."""
+        alignment_names = list(self.mainwindow.field.section.tforms.keys())
+
+        ## Seed the combo with the selection's current alignment, computed the
+        ## same way edit3D computes its consensus: take the first object's
+        ## value and drop to None as soon as two of them disagree.
+        ##
+        ## Without a seed the combo opened on the blank entry, and because the
+        ## field is not required that blank came back from getResponse as a
+        ## valid "" -- so confirming an untouched dialog cleared the per-object
+        ## alignment of every selected object. That is not a rare override:
+        ## SeriesData sets one on each object as it is created.
+        consensus = self.series.getAttr(obj_names[0], "alignment")
+        for obj_name in obj_names[1:]:
+            if self.series.getAttr(obj_name, "alignment") != consensus:
+                consensus = None
+                break
+
+        ## An object can carry an alignment this section no longer defines
+        ## (addTraceData clears such a value, but only once it loads that
+        ## object's traces). Seeding a name the combo has no item for would
+        ## make OK unreachable, since InputField's combo check refuses any text
+        ## that findText cannot resolve. Covers consensus is None too.
+        if consensus not in alignment_names:
+            consensus = None
+
         structure = [
-            ["Alignment:", ("combo", list(self.mainwindow.field.section.tforms.keys()))]
+            ["Alignment:", ("combo", alignment_names, consensus)]
         ]
         response, confirmed = QuickDialog.get(self, structure, "Object Alignment")
         if not confirmed:
