@@ -1,8 +1,11 @@
 """Canonical ordering for the .jser writer, plus an opt-in structural pretty printer.
 
-Two writer behaviours live here, and nothing else. Neither changes the schema:
-every file this module produces is the same JSON document the compact writer
-produced, with the same keys and the same values.
+Two writer behaviours live here. Neither changes the schema: every file this
+module produces is the same JSON document the compact writer produced, with the
+same keys and the same values. Alongside them sits one schema-level constant,
+``JSER_SCHEMA_VERSION`` -- a value, not a behaviour; nothing in this module reads
+it and nothing in the reader dispatches on it. Read its own docstring before
+using it for anything, because what it cannot do is the interesting half.
 
 **The normative output form is minified** -- one line, no indentation -- **with
 canonical ordering always applied.** Pretty-printing is available on request and
@@ -104,7 +107,50 @@ SECTION_KEYS = (
     "calgrid",
 )
 
+#: The schema this build's writer emits, stamped into the series object as
+#: ``schema_version`` by ``Series.getDict``.
+#:
+#: **It is a hint for external consumers and it is never a reader's dispatch
+#: key.** Both halves of that sentence are load-bearing, and the second one is
+#: not a style preference -- the field cannot support dispatch, for two
+#: independent reasons:
+#:
+#: 1. **It evaporates.** The series object is rebuilt from the in-memory model on
+#:    every save (`docs/JSER_FORMAT.md` divergence 1: sections pass through
+#:    opaquely, the series object does not), and a build older than this one has
+#:    no ``schema_version`` in its ``Series.getDict``. So an older build opens a
+#:    file carrying this key, ignores it, and **silently deletes it on the first
+#:    save while leaving every row it wrote exactly as it found them**. That is
+#:    measured, not predicted: a round trip through the shipped ``v1.21.0``
+#:    reader is pinned in ``tests/test_jser_schema_version.py``. A file with no
+#:    ``schema_version`` is therefore not evidence of an old document -- it is
+#:    the ordinary state of any document that has been near an older build --
+#:    and a reader that treated absence as "legacy shape" would be wrong about a
+#:    file this build wrote ten minutes ago.
+#: 2. **It cannot describe the rows anyway.** Row shape is per row: every shipped
+#:    reader back to ``v1.19.0`` accepts a positional trace row and a keyed one
+#:    in the same contour, so one document can legitimately hold both. A single
+#:    document-level integer has nothing true to say about that mixture.
+#:
+#: **Per-row shape detection stays authoritative.** Anything that needs to know
+#: what a row is must look at the row.
+#:
+#: What the field is good for is the thing that survives its own unreliability:
+#: a third-party consumer -- a converter, an archive checker, a lab script
+#: reading `.jser` without PyReconstruct -- gets a positive statement of which
+#: schema the last writer intended, when there is one. Present means "written by
+#: a build that stamps this"; absent means "no claim", not "old".
+#:
+#: Bump it when the document schema changes in a way an external consumer would
+#: want to branch on, and record what changed in ``docs/JSER_FORMAT.md``. Version
+#: ``1`` is simply "the first versioned .jser document"; it does not assert a row
+#: shape, per reason 2 above.
+JSER_SCHEMA_VERSION = 1
+
 SERIES_KEYS = (
+    # First deliberately: a version marker is declared before the data it
+    # describes. Ordering here is what fixes its byte position; see canon_keys.
+    "schema_version",
     "current_section",
     "src_dir",
     "window",
