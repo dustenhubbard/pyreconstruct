@@ -21,15 +21,19 @@ caller's own units. These tests pin:
 The units are read from the code that consumes each option, not invented:
 ``3D_xy_res`` is ``vres_percent`` in ``objects_3D.generateTrimesh``;
 ``scale_bar_width`` is divided by 100 and multiplied by the field width in
-``mouse_palette``; ``cpu_max`` goes through ``determine_cpus``, which is a
-percentage of ``os.cpu_count()``.
+``mouse_palette``; ``cpu_max`` goes through ``zarr_worker_count`` -- a
+percentage of ``os.cpu_count()`` (``determine_cpus``), then clamped to
+``MAX_ZARR_WORKERS``, the measured ceiling the converter will not exceed.
 """
 import os
+import re
 import shutil
 
 import pytest
 
-from PyReconstruct.modules.backend.func.utils import determine_cpus
+from PyReconstruct.modules.backend.func.utils import (
+    determine_cpus, zarr_worker_count, MAX_ZARR_WORKERS,
+)
 from PyReconstruct.modules.backend.settings_store import DictSettingsStore
 from PyReconstruct.modules.datatypes.series import Series
 from PyReconstruct.modules.gui.dialog.all_options import (
@@ -211,17 +215,35 @@ def test_slider_response_is_still_the_number(qapp):
 
 def test_cpu_readout_names_workers_and_percentage():
     total = os.cpu_count() or 1
-    assert cpuSliderReadout(100) == f"100% ({determine_cpus(100)} of {total} workers)"
-    assert determine_cpus(100) == total          # the premise of the sentence
+    assert cpuSliderReadout(100) == f"100% ({zarr_worker_count(100)} of {total} workers)"
+    assert determine_cpus(100) == total          # 100% is still all the cores...
+    # ...but the workers that start are capped, so the top of the slider reads as
+    # a plateau on any machine with more cores than the cap.
+    assert zarr_worker_count(100) == min(total, MAX_ZARR_WORKERS)
 
 
 def test_cpu_readout_agrees_with_the_converter_for_every_setting():
-    """The number on screen must be the number the converter will launch."""
+    """The number on screen must be the number the converter will launch.
+
+    This is why the readout resolves through ``zarr_worker_count`` and not
+    ``determine_cpus``: the converter clamps to ``MAX_ZARR_WORKERS``, so on a
+    machine with more cores than the cap the raw share would name workers that
+    never start -- exactly the "believed four, ran eight" complaint the readout
+    exists to answer, pointing the other way.
+    """
     total = os.cpu_count() or 1
     for percent in range(0, 101):
         assert cpuSliderReadout(percent) == (
-            f"{percent}% ({determine_cpus(percent)} of {total} workers)"
+            f"{percent}% ({zarr_worker_count(percent)} of {total} workers)"
         )
+
+
+def test_cpu_readout_never_promises_more_than_the_cap():
+    """Behavioural, independent of the format string: no position on the groove
+    may name more workers than the converter's ceiling."""
+    for percent in range(0, 101):
+        workers = int(re.search(r"\((\d+) of ", cpuSliderReadout(percent)).group(1))
+        assert 1 <= workers <= MAX_ZARR_WORKERS, percent
 
 
 # --- what the three real callers pass ----------------------------------------

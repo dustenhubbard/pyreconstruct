@@ -24,7 +24,9 @@ from PyReconstruct.modules.constants import is_frozen
 from PyReconstruct.modules.backend.updater.updater import (
     channel_radio_index, radio_response_channel,
 )
-from PyReconstruct.modules.backend.func.utils import determine_cpus
+from PyReconstruct.modules.backend.func.utils import (
+    zarr_worker_count, MAX_ZARR_WORKERS,
+)
 
 
 def cpuSliderReadout(percent : int) -> str:
@@ -34,9 +36,12 @@ def cpuSliderReadout(percent : int) -> str:
     workers ran eight, with nothing on screen to check it against. The option is
     a share of the cores, so the share alone is not the answer to "how many
     workers"; both go in the readout, resolved the same way the converter
-    resolves them.
+    resolves them -- ``zarr_worker_count``, cap included. On a machine with more
+    cores than ``MAX_ZARR_WORKERS`` the top of the slider therefore reads as a
+    plateau (``100% (5 of 10 workers)``) rather than claiming workers that will
+    not start.
     """
-    workers = determine_cpus(percent)
+    workers = zarr_worker_count(percent)
     total = os.cpu_count() or 1
     return f"{percent}% ({workers} of {total} workers)"
 
@@ -429,6 +434,10 @@ class AllOptionsDialog(QDialog):
             ["of your CPU, not a fixed number of cores. Recommended: about half"],
             ["(the default). Lower it if the program or computer feels sluggish"],
             ["during conversion."],
+            ["The conversion is I/O bound, so raising this past"],
+            [f"{MAX_ZARR_WORKERS} workers makes it slower, not faster: 8 workers"],
+            [f"measured 8% slower than {MAX_ZARR_WORKERS} while using 19% more"],
+            [f"CPU. The slider will not start more than {MAX_ZARR_WORKERS}."],
         ]
         
         def setOption(response):

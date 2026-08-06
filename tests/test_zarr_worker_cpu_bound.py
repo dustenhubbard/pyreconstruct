@@ -14,9 +14,13 @@ These tests lock in the plumbing that keeps N workers costing ~N CPU threads:
     subprocess so the check mirrors a real worker and pollutes nothing);
   * the Pool is actually created with that initializer;
   * ``determine_cpus`` maps the percentage slider to a sane core count and the
-    default leaves headroom on limited hardware.
+    default leaves headroom on limited hardware;
+  * ``zarr_worker_count`` clamps that share to ``MAX_ZARR_WORKERS``, the
+    measured ceiling past which more workers make the conversion slower, and
+    the converter's own copy of the clamp agrees with it.
 """
 import os
+import re
 import sys
 import subprocess
 import textwrap
@@ -25,7 +29,9 @@ from pathlib import Path
 import pytest
 
 import PyReconstruct
-from PyReconstruct.modules.backend.func.utils import determine_cpus
+from PyReconstruct.modules.backend.func.utils import (
+    determine_cpus, zarr_worker_count, MAX_ZARR_WORKERS,
+)
 from PyReconstruct.modules.datatypes.default_settings import default_settings
 
 CONVERTER = (
@@ -150,3 +156,59 @@ def test_default_cpu_max_leaves_headroom():
     assert 0 < d < 100, d
     assert d == 50  # ~half the cores; documents the chosen default
     assert 1 <= determine_cpus(d) <= os.cpu_count()
+
+
+# --- the practical ceiling ---------------------------------------------------
+#
+# `determine_cpus` above is a pure share of the cores. The number of workers
+# that actually start is that share clamped to MAX_ZARR_WORKERS, because past
+# the clamp more workers make the conversion SLOWER (measured 2026-07-28 on a
+# 10-core M4: 8 workers 8% slower than 5, and 19% more CPU). These lock in that
+# no slider position anywhere on the groove can exceed it.
+
+def test_max_zarr_workers_is_the_measured_sweet_spot():
+    assert MAX_ZARR_WORKERS == 5
+
+
+def test_no_slider_position_exceeds_the_cap():
+    """The whole point: 0-100% cannot buy more than MAX_ZARR_WORKERS workers,
+    on a machine of any size."""
+    for percent in range(0, 101):
+        assert 1 <= zarr_worker_count(percent) <= MAX_ZARR_WORKERS, percent
+
+
+def test_cap_does_not_disturb_settings_below_it():
+    """Below the ceiling the slider is untouched -- still a share of cores."""
+    for percent in range(0, 101):
+        cores = determine_cpus(percent)
+        if cores <= MAX_ZARR_WORKERS:
+            assert zarr_worker_count(percent) == cores, percent
+
+
+def test_zarr_worker_count_floors_at_one():
+    assert zarr_worker_count(0) == 1
+    assert zarr_worker_count(1) >= 1
+
+
+def test_top_of_slider_is_the_cap_on_a_machine_big_enough_to_hit_it():
+    if os.cpu_count() is None or os.cpu_count() <= MAX_ZARR_WORKERS:
+        pytest.skip("machine has too few cores to reach the cap")
+    assert zarr_worker_count(100) == MAX_ZARR_WORKERS
+
+
+def test_converter_script_agrees_with_the_gui_cap():
+    """The script is launched as a subprocess and is also runnable directly, so
+    it carries its own copy of the clamp. It must be the same number, or the
+    Settings readout would promise workers the converter refuses to start."""
+    src = CONVERTER.read_text()
+    match = re.search(r"^MAX_WORKERS\s*=\s*(\d+)\s*$", src, re.MULTILINE)
+    assert match, "MAX_WORKERS assignment not found in the converter"
+    assert int(match.group(1)) == MAX_ZARR_WORKERS
+
+
+def test_converter_actually_applies_its_cap():
+    """Guard the wiring, not just the constant."""
+    src = CONVERTER.read_text()
+    assert "min(cores, MAX_WORKERS)" in src, (
+        "the converter must clamp the requested core count to MAX_WORKERS"
+    )
