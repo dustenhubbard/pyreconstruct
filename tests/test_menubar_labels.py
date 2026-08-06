@@ -339,6 +339,35 @@ MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "act", "lefthanded_act")), _RESET_WINDOW_ROW
 )
 
+# The one sanctioned MOVE, as opposed to the additions above, decided
+# 2026-08-06: the four palette visibility toggles come out of
+# View > Palette > Visibility and sit directly in View, next to "Show z-traces".
+# #205 had already stopped the menu closing on each toggle, but the three-level
+# descent per toggle remained, and that is the half of the report it did not
+# reach. Expressed as remove-then-insert rather than by rewriting the baseline,
+# so the baseline stays the frozen `51e9a85` capture and this deviation stays
+# visible: `test_no_baseline_action_was_lost` still sees all four actions, which
+# is the property that makes this a move and not a loss. The now-empty
+# "Visibility" submenu row goes with them -- it is the only row that genuinely
+# disappears, and a submenu with nothing in it is not a row worth keeping.
+_NESTED_VISIBILITY_ROWS = [
+    (2, "menu", "togglepalettemenu"),
+    (3, "act", "togglepalette_act"),
+    (3, "act", "toggleinc_act"),
+    (3, "act", "togglebc_act"),
+    (3, "act", "togglesb_act"),
+]
+_HOISTED_VISIBILITY_ROWS = [
+    (1, "act", "togglepalette_act"),
+    (1, "act", "toggleinc_act"),
+    (1, "act", "togglebc_act"),
+    (1, "act", "togglesb_act"),
+]
+for _row in _NESTED_VISIBILITY_ROWS:
+    MENUBAR_EXPECTED.remove(_row)
+_hoist_at = MENUBAR_EXPECTED.index((1, "act", "toggleztraces_act")) + 1
+MENUBAR_EXPECTED[_hoist_at:_hoist_at] = _HOISTED_VISIBILITY_ROWS
+
 
 def test_menubar_structure_matches_the_baseline_plus_additions():
     """Nothing moved, nothing dropped: the whole tree, row for row.
@@ -358,10 +387,17 @@ def test_no_baseline_action_was_lost():
 
 
 def test_menubar_action_and_submenu_counts():
-    """113 actions at capture, 117 now (the additions); submenus unchanged."""
+    """113 actions at capture, 117 now (the additions).
+
+    Submenus were 32 and are 31: the 2026-08-06 hoist emptied
+    View > Palette > Visibility and it was removed. The action count is
+    deliberately unchanged by that hoist -- moving four rows up two levels adds
+    and removes nothing, and an action count that moved here would mean the move
+    had dropped or duplicated one.
+    """
     rows = _rows()
     assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 117
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 32
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 31
 
 
 # --------------------------------------------------------------------------- #

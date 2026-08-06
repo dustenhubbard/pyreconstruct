@@ -197,6 +197,94 @@ def test_a_menubar_row_is_the_action_the_window_names(
     assert _cpp(row) == expected
 
 
+# --- the 2026-08-06 hoist: four toggles out of View > Palette > Visibility ----
+
+# (label under View, attribute name). These were at
+# "View > Palette > Visibility > <label>" until 2026-08-06.
+HOISTED_VISIBILITY_ROWS = (
+    ("Trace palette", "togglepalette_act"),
+    ("Section increment buttons", "toggleinc_act"),
+    ("Brightness/contrast sliders", "togglebc_act"),
+    ("Scale bar", "togglesb_act"),
+)
+
+
+@pytest.mark.parametrize("label,attr_name", HOISTED_VISIBILITY_ROWS)
+def test_a_hoisted_visibility_toggle_is_directly_under_view(
+    main_window, label, attr_name
+):
+    """The row is at "View > <label>" in the built widget tree, and is checkable.
+
+    Asserted against the real menubar rather than the menu definitions, because
+    the definitions are what `test_menubar_labels.py` already reads: a hoist that
+    edited the dict and never reached `populateMenu` would pass there and fail
+    here. Checkability is asserted with it because it is the reason these four
+    were worth hoisting -- a toggle is set in combination with its neighbours,
+    and `newAction` keys the keep-open filter off exactly this flag.
+    """
+    row = menu_action(main_window.menubar, f"View > {label}")
+
+    assert row is not None, f"no row at 'View > {label}'"
+    assert _cpp(row) == _cpp(getattr(main_window, attr_name))
+    assert row.isCheckable(), f"'View > {label}' stopped being a toggle"
+
+
+def test_the_visibility_submenu_is_gone_and_palette_kept_its_own_rows(main_window):
+    """The emptied submenu is removed; the Palette submenu around it survives.
+
+    Both halves matter. Leaving "Visibility" in place as an empty submenu would
+    satisfy the test above while still showing the user a dead row, and removing
+    "Palette" along with it would take out "Increment palette buttons" and
+    "Reset palette position", which the decision did not touch.
+    """
+    assert submenu_at(main_window.menubar, "View > Palette > Visibility") is None
+    assert submenu_at(main_window.menubar, "View > Palette") is not None
+
+    paths = menu_leaf_paths(main_window.menubar)
+    for label, _attr in HOISTED_VISIBILITY_ROWS:
+        assert f"View > Palette > Visibility > {label}" not in paths
+
+    assert "View > Palette > Increment palette buttons > Up" in paths
+    assert "View > Palette > Reset palette position" in paths
+
+
+def test_view_keeps_its_order_with_the_four_inserted_after_show_z_traces(
+    main_window,
+):
+    """The whole of View, in order, as the one guard that the hoist moved only
+    the four rows it was supposed to move.
+
+    Separators are not visible to `menu_leaf_paths`, so this is the clickable
+    order. The four land immediately after "Show z-traces" because that is the
+    same question -- what is currently visible -- and everything before and after
+    them is byte-identical to the pre-hoist order, which is what the standing
+    rule about not reordering View requires.
+    """
+    view = submenu_at(main_window.menubar, "View")
+    assert view is not None
+
+    order = [p for p in menu_leaf_paths(view) if " > " not in p]
+
+    assert order == [
+        "Copy view to clipboard",
+        "Save view to file",
+        "Change theme...",
+        "Edit fill opacity...",
+        "Set view to image",
+        "View magnification...",
+        "Set zoom when finding contours...",
+        "Show z-traces",
+        # the four hoisted rows, and the only change to this list
+        "Trace palette",
+        "Section increment buttons",
+        "Brightness/contrast sliders",
+        "Scale bar",
+        "Reset window",
+        "Left handed",
+        "Toggle curation in object lists",
+    ]
+
+
 def test_the_field_object_menu_keeps_add_and_remove_reachable(main_window):
     """`Add to 3D scene` and `Remove from scene` are both reachable.
 

@@ -392,23 +392,23 @@ def return_view_menu(self):
             # (series, "checkbox") form keeps it configurable-shortcut-capable
             # like the field View toggles; its option default is "" (no key).
             ("toggleztraces_act", "Show z-traces", (self.series, "checkbox"), self.toggleZtraces),
+            # Hoisted out of View > Palette > Visibility (2026-08-06 decision).
+            # These four were three levels deep, so setting up a workspace cost
+            # a fresh descent per toggle; #205's keep-menu-open filter removed
+            # the reopening but not the descent. They sit with "Show z-traces"
+            # because that is the same question -- what is currently visible --
+            # and the group stays contiguous and in its original relative order.
+            # The Palette submenu below keeps its palette-scoped items.
+            ("togglepalette_act", "Trace palette", "checkbox", self.mouse_palette.togglePalette),
+            ("toggleinc_act",  "Section increment buttons", "checkbox", self.mouse_palette.toggleIncrement),
+            ("togglebc_act", "Brightness/contrast sliders", "checkbox", self.mouse_palette.toggleBC),
+            ("togglesb_act", "Scale bar", "checkbox", self.mouse_palette.toggleSB),
             None,
             {
                 "attr_name": "palettemenu",
                 "text": "Palette",
                 "opts":
                 [
-                    {
-                        "attr_name": "togglepalettemenu",
-                        "text": "Visibility",
-                        "opts":
-                        [
-                            ("togglepalette_act", "Trace palette", "checkbox", self.mouse_palette.togglePalette),
-                            ("toggleinc_act",  "Section increment buttons", "checkbox", self.mouse_palette.toggleIncrement),
-                            ("togglebc_act", "Brightness/contrast sliders", "checkbox", self.mouse_palette.toggleBC),
-                            ("togglesb_act", "Scale bar", "checkbox", self.mouse_palette.toggleSB),
-                        ]
-                    },
                     {
                         "attr_name": "incpalettemenu",
                         "text": "Increment palette buttons",
