@@ -4,16 +4,44 @@ from tempfile import mkstemp
 from io import BytesIO
 import base64
 
-from PyReconstruct.modules.calc import getImgDims
+from PyReconstruct.modules.calc import getImgDims, point_list_2_pix
 
 
 def export_svg(section_data, svg_fp) -> Union[str, Path]:
-    """Export untransformed section with traces as an svg."""
+    """Export untransformed section with traces as an svg.
+
+    The traces are read from the section's columnar store
+    (`section_data._columns`, live on every loaded section since the dual
+    write went always-on) rather than from `section_data.contours` -- the
+    first consumer flipped onto the store. The read is byte-identical to the
+    object-model walk it replaces: `contourNamesInInsertionOrder()` is
+    exactly `Section.contours`' contour order with emptied contours skipped
+    (an emptied contour contributes no path either way), `ContourView`
+    iterates a contour's rows in its `Contour.traces` list order, and every
+    field read off a `TraceView` (`hidden`, `points`, `color`, `name`,
+    `closed`) answers with the object model's own value.
+    `tests/test_export_svg_png.py` pins the store walk against the object
+    model on a section whose insertion order and sorted order disagree.
+    """
 
     import svgwrite
     from svgwrite.extensions import Inkscape
     import zarr  # deferred: only needed for SVG/PNG export (pulls heavy I/O codecs)
     from PIL import Image
+
+    ## Deferred like the imports above, but for a different reason: this
+    ## module is imported by `datatypes/section.py` (for `Section.exportAsSVG`),
+    ## so a module-level import of anything under `datatypes` would be
+    ## circular during package initialization.
+    from PyReconstruct.modules.datatypes.columnar_store import ContourView
+
+    store = section_data._columns
+    if store is None:
+        ## Only a Section built through `Section.__new__` without `__init__`
+        ## has no store; no production caller of this function has one.
+        raise ValueError(
+            f"section {section_data.n} has no columnar store to export from"
+        )
 
     img_fp = section_data.src_fp
     mag = section_data.mag
@@ -62,14 +90,17 @@ def export_svg(section_data, svg_fp) -> Union[str, Path]:
     ## Make trace layer and add traces
     trace_layer = inkscape.layer(label="traces", locked=False)
 
-    for _, con_data in section_data.contours.items():
+    for con_name in store.contourNamesInInsertionOrder():
 
-        for trace in con_data.getTraces():
+        for trace in ContourView(store, con_name):
 
             if trace.hidden:  # don't render hidden traces
                 continue
 
-            points = trace.asPixels(mag, h)
+            ## `point_list_2_pix(points, mag, h)` is `Trace.asPixels`'
+            ## whole body; `TraceView` deliberately carries no geometry
+            ## methods, so the same function is called on the view's points.
+            points = point_list_2_pix(trace.points, mag, h)
             color = svgwrite.rgb(*trace.color)
 
             path_data = "M " + " L ".join(f"{x},{y}" for x, y in points)

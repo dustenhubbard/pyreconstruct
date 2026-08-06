@@ -313,3 +313,161 @@ def test_export_as_png_writes_a_real_png(exportable_series, tmp_path, monkeypatc
     assert not Path(tmp_svgs[0]).exists(), (
         f"export_png left its intermediate SVG behind at {tmp_svgs[0]}"
     )
+
+
+# --------------------------------------------------------------------------
+# 3. The export's content and ordering, against the object model.
+# --------------------------------------------------------------------------
+def test_export_svg_content_and_order_match_the_object_model(
+        exportable_series, tmp_path):
+    """Every visible trace, in ``Section.contours``' own order, geometry exact.
+
+    ``export_svg`` reads traces from the section's columnar store; this test
+    holds it to the object model's answer, path by path and in document order,
+    so a flip (or a future re-flip) that changes what is exported or the order
+    it is exported in fails here rather than in a viewer.
+
+    The export walks TWO enumerations -- contour order, and trace order within
+    a contour -- so the section is prepared so that a wrong answer on EITHER
+    axis is DISTINGUISHABLE:
+
+    * a trace whose contour name sorts FIRST is added LAST, so insertion order
+      and sorted order disagree maximally -- reading the store's sorted
+      ``contourNames()`` (or ``sorted(section.contours)``) fails the order
+      assertion;
+    * one contour is given THREE geometrically distinct traces, so reversing
+      (or otherwise disturbing) the within-contour walk fails the content
+      assertion. Every contour of the ``shapes1.jser`` fixture holds exactly
+      one trace, which is why this has to be built rather than found: without
+      it the inner axis has no way to be wrong in the test's material, and
+      reversing ``ContourView``'s iteration leaves the whole suite green;
+    * a hidden trace is added, so dropping the hidden filter fails the
+      membership assertion;
+    * the ``d`` attribute of every path is recomputed from the object model's
+      own ``Trace.asPixels``, so geometry read from the wrong place, rounded
+      differently, or pixel-mapped differently fails the content assertion.
+    """
+    section = exportable_series.loadSection(min(exportable_series.sections.keys()))
+
+    template = next(iter(next(iter(section.contours.values()))))
+
+    # A contour holding MULTIPLE traces, added first so that the two probes
+    # below still land last in insertion order.
+    #
+    # The traces have to differ GEOMETRICALLY, not just be several: they share
+    # a contour and therefore a trace name, so the id list cannot tell them
+    # apart and only the `d` comparison can. Each is shifted a whole number of
+    # pixels (`mag` is microns per pixel) further right than the last, which
+    # survives the `int()` truncation in `point_2_pix` intact.
+    #
+    # The middle of the first three is then deleted and a fourth appended, so
+    # the surviving order (first, third, fourth) is not creation order either:
+    # a walk that reconstructed the contour from creation order, or that put a
+    # deletion's survivors back in the wrong place, is visible here too.
+    MULTI = "zzz_multi_trace_contour"
+    created = []
+    for i in range(3):
+        multi_trace = template.copy()
+        multi_trace.name = MULTI
+        multi_trace.points = [
+            (x + i * 20 * section.mag, y) for x, y in multi_trace.points
+        ]
+        section.addTrace(multi_trace, log_event=False)
+        created.append(multi_trace)
+
+    section.removeTrace(created[1], log_event=False)
+
+    fourth = template.copy()
+    fourth.name = MULTI
+    fourth.points = [(x + 90 * section.mag, y) for x, y in fourth.points]
+    section.addTrace(fourth, log_event=False)
+    created.append(fourth)
+
+    # The prepared contour really does hold three visible, pairwise-distinct
+    # traces in the order the assertions below rely on. Without this the inner
+    # axis' teeth could go away silently -- a fixture whose traces coincide, a
+    # delete that reorders, a template that turns out hidden -- and the test
+    # would go back to pinning the contour axis alone while still looking like
+    # it pinned both.
+    survivors = section.contours[MULTI].getTraces()
+    assert [t.points for t in survivors] == [
+        created[0].points, created[2].points, created[3].points
+    ], "the multi-trace contour is not the three survivors in insertion order"
+    assert not any(t.hidden for t in survivors), (
+        "the multi-trace contour's traces are hidden, so they would be "
+        "filtered out of the comparison and prove nothing"
+    )
+    assert len({tuple(t.points) for t in survivors}) == 3, (
+        "the multi-trace contour's traces must differ geometrically, or a "
+        "reversed within-contour enumeration would still match path for path"
+    )
+
+    probe = template.copy()
+    probe.name = "aaa_sorts_first_added_last"
+    section.addTrace(probe, log_event=False)
+
+    hidden_probe = template.copy()
+    hidden_probe.name = "aaa_hidden_probe"
+    hidden_probe.setHidden(True)
+    section.addTrace(hidden_probe, log_event=False)
+
+    # The probes really did land at the END of the object model's iteration
+    # order while sorting FIRST; without this the order assertion below could
+    # pass under a sorted enumerator.
+    assert list(section.contours)[-2:] == [
+        "aaa_sorts_first_added_last", "aaa_hidden_probe"
+    ]
+    assert sorted(section.contours)[:2] == [
+        "aaa_hidden_probe", "aaa_sorts_first_added_last"
+    ]
+
+    # The object model's own answer: (name, path data) for every visible
+    # trace, contours in `section.contours` order, traces in list order.
+    height, _ = section.img_dims
+    mag = section.mag
+    expected = []
+    for contour in section.contours.values():
+        for trace in contour:
+            if trace.hidden:
+                continue
+            d = "M " + " L ".join(
+                f"{x},{y}" for x, y in trace.asPixels(mag, height)
+            )
+            if trace.closed:
+                d += " Z"
+            expected.append((trace.name, d))
+    assert expected, "fixture section has no visible traces; test proves nothing"
+
+    out = tmp_path / "order.svg"
+    section.exportAsSVG(str(out))
+
+    # ElementTree iterates in document order, which is SVG paint order.
+    root = ET.parse(out).getroot()
+    exported = [
+        (p.get("id"), p.get("d"))
+        for p in root.iter(f"{{{SVG_NS}}}path")
+        if p.get("id") != "scale_bar"
+    ]
+
+    assert [name for name, _ in exported] == [name for name, _ in expected], (
+        "the SVG's paths are not the object model's visible traces in the "
+        "object model's order"
+    )
+    # The within-contour axis, named separately from the whole-list comparison
+    # below so that reversing (or otherwise disturbing) the trace walk inside a
+    # contour reports as what it is rather than as a generic geometry mismatch.
+    # The name assertion above cannot see it: these three paths share an id.
+    multi_expected = [d for name, d in expected if name == MULTI]
+    multi_exported = [d for name, d in exported if name == MULTI]
+    assert len(multi_expected) == 3, (
+        "the prepared multi-trace contour is not in the object model's answer"
+    )
+    assert multi_exported == multi_expected, (
+        "the SVG's paths for the multi-trace contour are not in the object "
+        "model's within-contour trace order"
+    )
+
+    assert exported == expected, (
+        "a path's geometry differs from the object model's own asPixels answer"
+    )
+    assert "aaa_hidden_probe" not in {name for name, _ in exported}
