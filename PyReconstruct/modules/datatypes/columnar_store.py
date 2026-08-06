@@ -221,8 +221,9 @@ places, and conflating any two of them is a bug that looks like working code:
 
 * **nothing is passed** -- the row is a new annotation. The injected issuer
   mints one (`issue()`), which registers it in the issuer's index on the way
-  out. No issuer means no id, which is every section in the shipped
-  application today.
+  out. No issuer means no id, which since S1 is only a store built outside
+  `Section` (a test's hand-assembled one): every `Section` built from a file
+  injects its series' issuer.
 * **`trace_id=` -- this series already owns this id.** It is carried verbatim
   and the issuer is not consulted, because consulting it would be asking
   whether an id the issuer itself handed out is free, and the answer is
@@ -490,8 +491,9 @@ class SectionColumns():
     ## `_fill_mode_overflow` is deliberately not `dict[int, tuple[str, str]]`:
     ## the reason it exists is that the pair came out of a `.jser` unvalidated,
     ## so naming its element type would claim a check nothing performs.
-    ## `_ids` is `None` where the store has no issuer, which is every section in
-    ## the shipped application today; `TraceIDIssuer.issue` returns `str`.
+    ## `_ids` is `None` where the store has no issuer, which since S1 means
+    ## only a store built outside `Section`; `TraceIDIssuer.issue` returns
+    ## `str`.
     _names : list[str]
     _fill_mode_overflow : dict[int, tuple]
     _tags : list[frozenset[str]]
@@ -509,9 +511,10 @@ class SectionColumns():
                     `SegmentedCoordinates`, the decided backing; anything
                     satisfying the same five-method interface may be injected.
                 id_issuer: anything with an `issue()` returning a fresh id.
-                    `datatypes/trace_id.TraceIDIssuer` is the intended
-                    production issuer. `None` means rows carry no id, which is
-                    the state of every section in the shipped application.
+                    `datatypes/trace_id.TraceIDIssuer` is the production
+                    issuer, and since S1 every `Section` built from a file
+                    injects its series' own. `None` means rows carry no id,
+                    which is now only a store built outside `Section`.
                     An `adopt(id, name) -> bool` is required as well, but ONLY
                     of an issuer whose store is passed a `foreign_id`; the
                     duck type widens for the callers that use the new feature
