@@ -53,17 +53,22 @@ platforms).
 
 ### One-click installers (Windows, macOS, and Linux)
 
-Download the latest build from
-**[Releases](https://github.com/dustenhubbard/PyReconstruct/releases)**. No Python
-required.
+Download the build for your platform from the current stable release,
+**v1.21.0**. No Python required. Each link below downloads that platform's
+installer directly; every build, its SHA-256 checksum, and past versions are on
+the
+**[Releases page](https://github.com/dustenhubbard/PyReconstruct/releases/latest)**.
 
-- **Windows**: `PyReconstruct-<version>-Windows-x86_64-Setup.exe`. This is a
-  per-user installer (no administrator rights required). Builds are unsigned for
-  now, so Windows SmartScreen may warn that the publisher is unknown; choose
-  **More info ▸ Run anyway**. Re-running a newer installer upgrades the existing
-  installation in place.
-- **macOS (Apple Silicon or Intel)**: `PyReconstruct-<version>-macOS-arm64.dmg` on
-  Apple Silicon, or `PyReconstruct-<version>-macOS-x86_64.dmg` on an Intel Mac. Open
+- **Windows**:
+  [`PyReconstruct-1.21.0-Windows-x86_64-Setup.exe`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.21.0/PyReconstruct-1.21.0-Windows-x86_64-Setup.exe).
+  This is a per-user installer (no administrator rights required). Builds are
+  unsigned for now, so Windows SmartScreen may warn that the publisher is
+  unknown; choose **More info ▸ Run anyway**. Re-running a newer installer
+  upgrades the existing installation in place.
+- **macOS (Apple Silicon or Intel)**:
+  [`PyReconstruct-1.21.0-macOS-arm64.dmg`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.21.0/PyReconstruct-1.21.0-macOS-arm64.dmg) on
+  Apple Silicon, or
+  [`PyReconstruct-1.21.0-macOS-x86_64.dmg`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.21.0/PyReconstruct-1.21.0-macOS-x86_64.dmg) on an Intel Mac. Open
   the `.dmg` and drag **PyReconstruct** onto the **Applications** shortcut. Builds are
   unsigned for now, so the first launch of a browser-downloaded copy is blocked by
   Gatekeeper. Clear the quarantine flag once in Terminal:
@@ -80,10 +85,11 @@ required.
 Both macOS builds are native (arm64 and x86_64), and the in-app updater serves each
 Mac its matching architecture.
 
-- **Linux**: `PyReconstruct-<version>-Linux-installer.tar.gz`. Extract it and run
-  `bash install.sh`, a no-root `.sh` installer that builds an isolated virtual
-  environment, puts a `pyreconstruct` launcher on your PATH, and adds an
-  application-menu entry. It needs a system **Python 3.11** (`python3.11` + `venv`;
+- **Linux**:
+  [`PyReconstruct-1.21.0-Linux-installer.tar.gz`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.21.0/PyReconstruct-1.21.0-Linux-installer.tar.gz).
+  Extract it and run `bash install.sh`, a no-root `.sh` installer that builds an
+  isolated virtual environment, puts a `pyreconstruct` launcher on your PATH, and
+  adds an application-menu entry. It needs a system **Python 3.11** (`python3.11` + `venv`;
   on Debian/Ubuntu, `sudo apt install python3.11 python3.11-venv`) and targets
   x86_64. To update, re-run `install.sh`.
 
@@ -162,8 +168,8 @@ PyReconstruct offers two update channels, selected under **Series ▸ Options…
 (`Shift+O`) in the **Updates** section:
 
 - **Stable (recommended)**: stable builds, tagged `vX.Y.Z`.
-- **Beta (early features, may be unstable)**: the latest pre-release build (release
-  candidates, tagged like `vX.Y.ZrcN`); newer features, less testing.
+- **Beta (early features, may be unstable)**: the latest pre-release build, tagged
+  `vX.Y.Z-beta-N` (for example `v1.21.0-beta-7`); newer features, less testing.
 
 The default channel is **Stable**. (Developers who want the newest unreleased code
 run a source install instead of a frozen build; see

@@ -31,29 +31,36 @@ large autosegmented series with hundreds of thousands of traces.
 
 ### One-click installers (recommended)
 
-No Python required. Download the latest build from
-**[Releases](https://github.com/dustenhubbard/PyReconstruct/releases)**:
+No Python required. Direct downloads for the current stable release, **v1.21.0**:
 
-- **Windows**: `PyReconstruct-<version>-Windows-x86_64-Setup.exe`. Builds are
-  unsigned for now; if SmartScreen warns, choose **More info → Run anyway**.
-- **macOS**: `PyReconstruct-<version>-macOS-arm64.dmg` on Apple Silicon, or
-  `PyReconstruct-<version>-macOS-x86_64.dmg` on an Intel Mac; then drag
-  PyReconstruct to Applications. Builds are unsigned for now, so the first launch
-  is blocked by Gatekeeper. Clear the quarantine flag once in Terminal:
+| Platform | Download |
+| -------- | -------- |
+| Windows (x86_64) | [PyReconstruct-1.21.0-Windows-x86_64-Setup.exe](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.21.0/PyReconstruct-1.21.0-Windows-x86_64-Setup.exe) |
+| macOS (Apple Silicon) | [PyReconstruct-1.21.0-macOS-arm64.dmg](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.21.0/PyReconstruct-1.21.0-macOS-arm64.dmg) |
+| macOS (Intel) | [PyReconstruct-1.21.0-macOS-x86_64.dmg](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.21.0/PyReconstruct-1.21.0-macOS-x86_64.dmg) |
+| Linux (x86_64) | [PyReconstruct-1.21.0-Linux-installer.tar.gz](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.21.0/PyReconstruct-1.21.0-Linux-installer.tar.gz) |
+
+All builds, checksums, and past versions are on the
+**[Releases page](https://github.com/dustenhubbard/PyReconstruct/releases/latest)**.
+
+- **Windows**: builds are unsigned for now; if SmartScreen warns, choose
+  **More info → Run anyway**.
+- **macOS**: open the `.dmg` and drag PyReconstruct to Applications. Builds are
+  unsigned for now, so the first launch is blocked by Gatekeeper. Clear the
+  quarantine flag once in Terminal:
   ```
   xattr -dr com.apple.quarantine /Applications/PyReconstruct.app
   ```
-- **Linux**: `PyReconstruct-<version>-Linux-installer.tar.gz`. Extract it and run
-  `bash install.sh`; it builds an isolated virtual environment, drops a
-  `pyreconstruct` launcher on your PATH, and adds an application-menu entry. It
-  needs a system **Python 3.11** (`python3.11` + `venv`) and targets x86_64. To
-  update, re-run `install.sh` (the in-app updater below is for the frozen
-  Windows/macOS builds).
+- **Linux**: extract the tarball and run `bash install.sh`; it builds an isolated
+  virtual environment, drops a `pyreconstruct` launcher on your PATH, and adds an
+  application-menu entry. It needs a system **Python 3.11** (`python3.11` +
+  `venv`) and targets x86_64. To update, re-run `install.sh` (the in-app updater
+  below is for the frozen Windows/macOS builds).
 
 The frozen Windows and macOS builds can update themselves from within the app via
 **Help ▸ Check for updates**, on the **Stable** channel (stable, tagged
 `vX.Y.Z`) or the **Beta** channel (experimental; the latest pre-release build,
-e.g. release candidates like `vX.Y.ZrcN`). Updates are downloaded from
+tagged `vX.Y.Z-beta-N`, e.g. `v1.21.0-beta-7`). Updates are downloaded from
 GitHub Releases and verified against a published SHA-256 checksum before they are
 applied. An optional once-per-day check on startup is available too, off by
 default.
