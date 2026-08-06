@@ -23,7 +23,7 @@ from PySide6.QtGui import (
     QAction
 )
 
-from PyReconstruct.modules.gui.utils import get_clicked
+from PyReconstruct.modules.gui.utils import get_clicked, notify
 from PyReconstruct.modules.datatypes import Series
 from PyReconstruct.modules.constants import locations as loc
 
@@ -300,7 +300,10 @@ class FieldWidget(QWidget, FieldWidgetView):
             self.ztoolPress(event)
         
         elif self.usingLocked():
-            self.notifyLocked(self.tracing_trace.name)
+            notify(
+                "Cannot modify locked objects.\n"
+                "Please unlock before modifying."
+            )
 
         elif self.mouse_mode in (CLOSEDTRACE, OPENTRACE):
             self.tracePress(event)

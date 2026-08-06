@@ -458,10 +458,14 @@ class FieldWidgetTrace(FieldWidgetBase):
         refuses the whole operation rather than quietly performing it on the
         rest, so the user cannot end up with half an edit applied.
 
-        Not to be confused with `notifyLocked`, which asks whether to unlock and
-        is used at the *start* of a mouse gesture (`scissorsPress`, and the
-        tracing-mode gate in `mousePressEvent`). This one is the commit-time
-        refusal used by everything that acts on a selection.
+        Not to be confused with `notifyLocked`, which asks whether to unlock
+        and is used by the trace-list context-menu actions
+        (`TraceTableWidget.itemChanged`/`getSelected`) -- there, unlocking and
+        proceeding is the point, since the list is the only way to act on a
+        locked row. The mouse gestures (`scissorsPress`, and the tracing-mode
+        gate in `mousePressEvent`) use this same notify-and-stop idiom inline
+        rather than asking, since a gesture is not a considered "act on this
+        row" choice the way a list selection is.
 
             Params:
                 traces (list): the traces the operation would change

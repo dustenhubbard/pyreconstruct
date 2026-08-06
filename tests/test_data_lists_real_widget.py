@@ -133,11 +133,22 @@ class MenuStubField:
     entry references, so triggering one in a test is a no-op rather than a
     crash. Attributes that selection paths read for real (series, section,
     notifyLocked) are defined explicitly and are NOT no-ops.
+
+    ``notifyLocked`` is configurable rather than a bare stub: per the
+    2026-08-06 "split notifyLocked" decision, the trace list's
+    ``itemChanged``/``getSelected`` keep the ask-to-unlock idiom (unlike the
+    mouse/scissors gestures, which now notify-and-stop instead and no longer
+    call ``notifyLocked`` at all). ``notify_locked_response`` scripts the
+    user's answer and ``notify_locked_calls`` records every call, so a test
+    can pin both halves: the list asks, and it acts on what it's told.
     """
 
     def __init__(self, series, section):
         self.series = series
         self.section = section
+        self.notify_locked_response = False
+        self.notify_locked_calls = []
+        self.calls = {}
 
     def reload(self):
         pass
@@ -146,7 +157,8 @@ class MenuStubField:
         pass
 
     def notifyLocked(self, *args, **kwargs):
-        return False
+        self.notify_locked_calls.append(args[0] if args else kwargs)
+        return self.notify_locked_response
 
     def getTraceMenu(self, is_in_field=True, list_ops=None, find_in_field=None):
         from PyReconstruct.modules.gui.main.context_menu_list import (
@@ -176,7 +188,11 @@ class MenuStubField:
     def __getattr__(self, name):
         if name.startswith("_"):  # never fake dunders/privates
             raise AttributeError(name)
-        return lambda *args, **kwargs: None
+
+        def _record(*args, **kwargs):
+            self.calls.setdefault(name, []).append((args, kwargs))
+
+        return _record
 
 
 @pytest.fixture
@@ -256,6 +272,100 @@ def test_trace_single_still_rejects_two_rows(trace_table, gui_dialogs):
     assert gui_dialogs.notices == [
         "Please select only one trace for this option."
     ]
+
+
+# --------------------------------------------------------------------------
+# Locked rows: table/trace.py keeps the ask-to-unlock idiom (unlike the
+# mouse/scissors gestures -- see test_locked_object_field_guards.py and
+# test_locked_gesture_notify_and_stop.py, which now notify-and-stop and never
+# call notifyLocked at all). Corrected 2026-08-06 ("split notifyLocked",
+# DECISIONS.md): a dispatched fixup found notifyLocked has four real call
+# sites, not two, and the trace list's two (itemChanged, getSelected)
+# genuinely unlock-and-proceed on "Yes", by original design (73f54794). These
+# pin that half so a future change collapsing the two idioms into one
+# regresses loudly instead of silently.
+# --------------------------------------------------------------------------
+
+def test_trace_get_selected_proceeds_when_unlock_is_accepted(trace_table):
+    """getSelected() on a locked row must include it if the user says Yes."""
+    table = trace_table.table
+    field = trace_table.mainwindow.field
+    locked_name = table.item(0, 0).text()
+    trace_table.series.setAttr(locked_name, "locked", True)
+    field.notify_locked_response = True
+
+    table.clearSelection()
+    table.selectRow(0)
+
+    assert trace_table.getSelected() == expected_trace_items(trace_table, [0])
+    assert field.notify_locked_calls == [{locked_name}]
+
+
+def test_trace_get_selected_stops_when_unlock_is_refused(trace_table):
+    """The same locked row, but the user says No: selection must be refused."""
+    table = trace_table.table
+    field = trace_table.mainwindow.field
+    locked_name = table.item(0, 0).text()
+    trace_table.series.setAttr(locked_name, "locked", True)
+    field.notify_locked_response = False
+
+    table.clearSelection()
+    table.selectRow(0)
+
+    assert trace_table.getSelected() is None
+    assert field.notify_locked_calls == [{locked_name}]
+
+
+class _FakeCheckItem:
+    """The three accessors `itemChanged` reads off a `QTableWidgetItem`."""
+
+    def __init__(self, column, row, checked):
+        from PySide6.QtCore import Qt
+
+        self._column = column
+        self._row = row
+        self._state = (
+            Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        )
+
+    def column(self):
+        return self._column
+
+    def row(self):
+        return self._row
+
+    def checkState(self):
+        return self._state
+
+
+def test_trace_item_changed_proceeds_when_unlock_is_accepted(trace_table):
+    """Checking a locked row's Hidden box must act on it if the user says Yes."""
+    table = trace_table.table
+    field = trace_table.mainwindow.field
+    locked_name = table.item(0, 0).text()
+    trace_table.series.setAttr(locked_name, "locked", True)
+    field.notify_locked_response = True
+
+    col = trace_table.horizontal_headers.index("Hidden")
+    trace_table.itemChanged(_FakeCheckItem(col, 0, checked=True))
+
+    assert field.notify_locked_calls == [locked_name]
+    assert "hideTraces" in field.calls
+
+
+def test_trace_item_changed_stops_when_unlock_is_refused(trace_table):
+    """The same locked row's Hidden box, refused: nothing must be acted on."""
+    table = trace_table.table
+    field = trace_table.mainwindow.field
+    locked_name = table.item(0, 0).text()
+    trace_table.series.setAttr(locked_name, "locked", True)
+    field.notify_locked_response = False
+
+    col = trace_table.horizontal_headers.index("Hidden")
+    trace_table.itemChanged(_FakeCheckItem(col, 0, checked=True))
+
+    assert field.notify_locked_calls == [locked_name]
+    assert "hideTraces" not in field.calls
 
 
 # --------------------------------------------------------------------------
