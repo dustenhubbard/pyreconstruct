@@ -423,24 +423,48 @@ class FieldWidgetBase:
         if new_section_num == self.series.current_section:
             return
         
-        ## Move current section data to b section
-        self.swapABsections()
+        ## The requested section may already be loaded as the B section -- the
+        ## A/B flicker asks for exactly that. Swapping is then the whole change
+        ## and nothing is read from disk.
+        if self.b_section is not None and self.b_section.n == new_section_num:
+            self.swapABsections()
 
-        ## Load new section if necessary
-        if new_section_num != self.series.current_section:
-            # load section
-            self.section = self.series.loadSection(new_section_num)
-            # load section view
-            self.section_layer = SectionLayer(self.section, self.series)
-            # set new current section
+        else:
+            ## Read the section and build its view BEFORE any field state
+            ## moves, because these two lines are the only ones here that can
+            ## fail. Both touch the filesystem: the section file, which the OS
+            ## may not have finished releasing after the save that precedes
+            ## every jump from a list, and whatever image the layer opens.
+            ##
+            ## This used to run the other way round, swapping first and then
+            ## loading. The swap trades `section_layer` for `b_section_layer`,
+            ## which is None until the first section change of a session, so
+            ## the field spent the whole load with no section layer at all --
+            ## and if the load raised, it kept none. `paintText` reads
+            ## `section_layer` on every paint event, so from that moment on
+            ## every repaint raised `AttributeError: 'NoneType' object has no
+            ## attribute 'getTrace'`, each one opening an error window, and
+            ## painting is not something a user can stop asking for. Loading
+            ## first means a failure leaves the field displaying the section it
+            ## was already displaying.
+            new_section = self.series.loadSection(new_section_num)
+            new_section_layer = SectionLayer(new_section, self.series)
+
+            ## Nothing below this line can fail: the field moves from one whole
+            ## state to another.
+            self.b_section = self.section
+            self.b_section_layer = self.section_layer
+            self.section = new_section
+            self.section_layer = new_section_layer
             self.series.current_section = new_section_num
+
             # clear selected traces
             if self.focus_mode:
                 obj_traces = [t for t in self.section.tracesAsList() if t.name == self.focus_mode]
                 self.section.selected_traces = obj_traces
             else:
                 self.section.selected_traces = []
-        
+
         # create section undo/redo state object if needed
         states = self.series_states[new_section_num]
         if not states.initialized:
