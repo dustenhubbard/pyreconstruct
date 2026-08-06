@@ -828,7 +828,10 @@ class FieldWidgetMouse(FieldWidgetData):
             )
             if self.selected_type == "trace":
                 if self.series.getAttr(self.selected_trace.name, "locked"):
-                    self.notifyLocked(self.selected_trace.name)
+                    notify(
+                        "Cannot modify locked objects.\n"
+                        "Please unlock before modifying."
+                    )
                     return
                 self.is_scissoring = True
                 self.deselectAllTraces()
