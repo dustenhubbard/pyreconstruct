@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QScrollArea,
     QKeySequenceEdit,
+    QStyle,
 )
 from PySide6.QtGui import QKeySequence, QAction
 
@@ -29,6 +30,11 @@ from PyReconstruct.modules.gui.utils import notify
 #: Keyed by the option name, valued by the placeholder shown when it is unbound.
 MODIFIER_ROWS = {"focus_edit_modifier": "(no modifier: click alone edits nothing)"}
 
+#: Keys that explicitly unbind the row, i.e. choose the documented "off" state.
+#: A read-only `QLineEdit` swallows both and does nothing with them, so nothing
+#: is taken away by giving them a meaning here.
+UNBIND_KEYS = (Qt.Key_Backspace, Qt.Key_Delete)
+
 
 class ModifierEdit(QLineEdit):
     """Capture whatever modifier combination the user holds.
@@ -40,6 +46,28 @@ class ModifierEdit(QLineEdit):
     while modifier keys go down, commit the accumulation when one comes back up.
 
     Read-only, so the box cannot be typed into; it is filled by holding keys.
+
+    **Unbinding is a gesture too.** An empty binding is a documented choice —
+    `default_settings` says "empty means the edit click is off", `focus_edit_p`
+    honours it, and `MODIFIER_ROWS` supplies a placeholder advertising it — but
+    the accumulate/commit protocol above can only ever *add* flags, and
+    `keyReleaseEvent` refuses to commit an empty accumulation. So the state was
+    advertised with no gesture that reached it. Two are offered here, both
+    landing on `setModifierString("")`:
+
+    1. a trailing clear button, the affordance the key-sequence rows get from
+       `setClearButtonEnabled(True)`; and
+    2. `Backspace`/`Delete`, because that button cannot be reached from the
+       keyboard.
+
+    The button is built by hand rather than with `setClearButtonEnabled`, which
+    does not work on a read-only box: Qt disables the clear action it installs
+    (`clearAction->setEnabled(!isReadOnly())`) and disables an existing one when
+    `setReadOnly(True)` is called later, so the button renders greyed and dead.
+    Its action is also hardwired to `QLineEdit.clear`, which would blank the text
+    while leaving `_value` — and therefore what `exec` harvests — untouched.
+    `addAction(..., TrailingPosition)` is public API, is unaffected by
+    read-only, and lets the row clear its *binding* rather than its text.
     """
 
     def __init__(self, value, parent=None, placeholder=""):
@@ -48,6 +76,14 @@ class ModifierEdit(QLineEdit):
         self.setFocusPolicy(Qt.StrongFocus)
         self.setPlaceholderText(placeholder)
         self._held = Qt.NoModifier
+        self.clear_action = self.addAction(
+            self.style().standardIcon(QStyle.SP_LineEditClearButton),
+            QLineEdit.TrailingPosition,
+        )
+        self.clear_action.setToolTip(
+            "Unbind, so that clicking alone edits nothing (Backspace)"
+        )
+        self.clear_action.triggered.connect(self.unbind)
         self.setModifierString(value)
 
     def modifierString(self) -> str:
@@ -58,9 +94,26 @@ class ModifierEdit(QLineEdit):
         """Set the binding, dropping anything this platform cannot reach."""
         self._value = canonical(value)
         self.setText(display_label(self._value))
+        # Nothing to clear when the row is already unbound, which mirrors the
+        # key-sequence rows: Qt fades their clear button in with the text.
+        self.clear_action.setVisible(bool(self._value))
+
+    def unbind(self):
+        """Choose the documented "off" state: no modifier, so no edit click.
+
+        The accumulation is dropped along with the binding, so that letting go of
+        a modifier held while unbinding cannot commit it straight back.
+        """
+        self._held = Qt.NoModifier
+        self.setModifierString("")
 
     def keyPressEvent(self, event):
         """Accumulate. A non-modifier key is not a binding here, so it passes."""
+        if event.key() in UNBIND_KEYS:
+            self.unbind()
+            event.accept()
+            return
+
         flag = MODIFIER_KEYS.get(event.key())
         if flag is None:
             event.ignore()

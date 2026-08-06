@@ -210,6 +210,181 @@ def test_a_letter_typed_after_a_modifier_does_not_extend_the_binding(qapp):
 
 
 # ---------------------------------------------------------------------------
+# the documented "off" state is reachable from the picker
+# ---------------------------------------------------------------------------
+#
+# `default_settings` documents "empty means the edit click is off",
+# `focus_edit_p` honours it and `MODIFIER_ROWS` advertises it with a placeholder,
+# but no gesture produced it: `keyPressEvent` only ORs flags in, `keyReleaseEvent`
+# refuses to commit an empty accumulation, and the box is read-only so it cannot
+# be edited to empty. The only route in was the dialog bug fixed above.
+
+
+def test_the_clear_button_unbinds_the_row(qapp):
+    """The affordance the key-sequence rows have, on the row that lacked it."""
+    from PyReconstruct.modules.gui.dialog.shortcuts import ModifierEdit
+
+    w = ModifierEdit("ctrl")
+    w.clear_action.trigger()
+
+    assert w.modifierString() == ""
+    assert w.text() == ""
+
+
+@pytest.mark.parametrize("key", [Qt.Key_Backspace, Qt.Key_Delete])
+def test_backspace_or_delete_unbinds_the_row(qapp, key):
+    """The keyboard route to the same state.
+
+    Needed rather than merely convenient: a `QLineEdit` side button is
+    `Qt.NoFocus` (pinned below), so the clear button cannot be tabbed to, and
+    this widget is otherwise driven entirely from the keyboard.
+    """
+    from PyReconstruct.modules.gui.dialog.shortcuts import ModifierEdit
+
+    w = ModifierEdit("ctrl+shift")
+    w.keyPressEvent(QKeyEvent(QEvent.KeyPress, key, Qt.NoModifier))
+
+    assert w.modifierString() == ""
+    assert w.text() == ""
+
+
+def test_unbinding_while_a_modifier_is_held_does_not_rebind_on_release(qapp):
+    """Unbinding drops the accumulation too.
+
+    Backspace is reachable with a hand already on Ctrl. If `_held` survived, the
+    release that follows would commit `ctrl` straight back and the unbind would
+    look like it silently failed.
+    """
+    from PyReconstruct.modules.gui.dialog.shortcuts import ModifierEdit
+
+    w = ModifierEdit("shift")
+    w.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Control, Qt.NoModifier))
+    w.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Backspace, Qt.ControlModifier))
+    w.keyReleaseEvent(QKeyEvent(QEvent.KeyRelease, Qt.Key_Control, Qt.ControlModifier))
+
+    assert w.modifierString() == ""
+
+
+def test_the_row_can_be_bound_again_after_being_unbound(qapp):
+    """"Off" must be a state, not a trap: the picker still captures afterwards."""
+    from PyReconstruct.modules.gui.dialog.shortcuts import ModifierEdit
+
+    w = ModifierEdit("ctrl")
+    w.clear_action.trigger()
+
+    assert _hold(w, Qt.Key_Shift) == "shift"
+    assert w.clear_action.isVisible()
+
+
+def test_the_clear_affordance_is_offered_only_when_there_is_a_binding(qapp):
+    """Mirrors the key-sequence rows, whose clear button fades in with text."""
+    from PyReconstruct.modules.gui.dialog.shortcuts import ModifierEdit
+
+    bound, unbound = ModifierEdit("ctrl"), ModifierEdit("")
+
+    assert bound.clear_action.isVisible() is True
+    assert unbound.clear_action.isVisible() is False
+
+
+def test_setclearbuttonenabled_would_not_have_worked_on_a_read_only_row(qapp):
+    """Why the button is built by hand. Measured on the pinned PySide6 6.5.2.
+
+    The obvious fix is `setClearButtonEnabled(True)`, exactly as the `_act` rows
+    use. On a read-only box Qt installs the clear action *disabled*
+    (`clearAction->setEnabled(!isReadOnly())`) and disables an existing one when
+    `setReadOnly` is called afterwards, so the button renders greyed and dead.
+    If this ever starts failing, `ModifierEdit` can drop its hand-built action.
+    """
+    from PySide6.QtGui import QAction
+    from PySide6.QtWidgets import QLineEdit
+
+    ro = QLineEdit()
+    ro.setReadOnly(True)
+    ro.setClearButtonEnabled(True)
+
+    assert ro.findChild(QAction, "_q_qlineeditclearaction").isEnabled() is False
+
+    # the control: the same call on an editable box gives a live clear action,
+    # so the assertion above is about read-only rather than about the call
+    rw = QLineEdit()
+    rw.setClearButtonEnabled(True)
+
+    assert rw.findChild(QAction, "_q_qlineeditclearaction").isEnabled() is True
+
+    # and Qt disables it on the transition, so ordering the calls does not help
+    rw.setReadOnly(True)
+
+    assert rw.findChild(QAction, "_q_qlineeditclearaction").isEnabled() is False
+
+
+def test_a_line_edit_side_button_cannot_be_reached_from_the_keyboard(qapp):
+    """The measurement behind offering Backspace/Delete as well as the button."""
+    from PySide6.QtWidgets import QToolButton
+    from PyReconstruct.modules.gui.dialog.shortcuts import ModifierEdit
+
+    row = ModifierEdit("ctrl")   # kept alive: its children die with it
+    button = row.findChildren(QToolButton)[0]
+
+    assert button.focusPolicy() == Qt.NoFocus
+
+
+def test_unbinding_in_the_dialog_turns_the_edit_click_off_end_to_end(
+    main_window, local_series_settings, monkeypatch
+):
+    """The whole point, through the real dialog, `exec`, and `resetShortcuts`.
+
+    The widget clears its own `_value`, so `exec`'s existing harvest carries the
+    empty string out with no special case, `resolve` reads it as the deliberate
+    unbinding it now genuinely is, and the click stops editing.
+    """
+    from PySide6.QtWidgets import QDialog
+    from PyReconstruct.modules.gui.dialog import ShortcutsDialog
+
+    series = local_series_settings(main_window)
+    series.setOption(FOCUS_EDIT_OPTION, "ctrl")
+
+    assert focus_edit_p(_event(CTRL), series) is True   # on before the user acts
+
+    monkeypatch.setattr(QDialog, "exec", lambda self: 1)
+    dialog = ShortcutsDialog(main_window, series)
+    try:
+        dialog.modifier_widgets[FOCUS_EDIT_OPTION].clear_action.trigger()
+        response, confirmed = dialog.exec()
+    finally:
+        dialog.deleteLater()
+
+    assert confirmed
+    assert response[FOCUS_EDIT_OPTION] == ""
+
+    main_window.resetShortcuts(response)
+
+    assert series.getOption(FOCUS_EDIT_OPTION) == ""
+    assert focus_edit_p(_event(CTRL), series) is False
+    assert focus_edit_p(_event(CTRL | SHIFT), series) is False
+    assert focus_edit_p(_event(Qt.NoModifier), series) is False
+
+
+def test_a_picker_unbind_stops_a_real_edit_click(field, qapp):
+    """And the same through the real `pointerRelease`, not just the predicate.
+
+    `_incorporate_click` consumes the victim trace, so it is called once: the
+    bound control for it is the `("ctrl", CTRL, True)` row of
+    `test_the_predicate_follows_the_stored_binding`. Leaving `unbind` writing
+    anything but `""` leaves `"ctrl"` stored and the click still edits.
+    """
+    from PyReconstruct.modules.gui.dialog.shortcuts import ModifierEdit
+
+    field.series.setOption(FOCUS_EDIT_OPTION, "ctrl")
+
+    row = ModifierEdit(field.series.getOption(FOCUS_EDIT_OPTION))
+    row.clear_action.trigger()
+    field.series.setOption(FOCUS_EDIT_OPTION, row.modifierString())
+
+    assert field.series.getOption(FOCUS_EDIT_OPTION) == ""
+    assert _incorporate_click(field, CTRL) is False
+
+
+# ---------------------------------------------------------------------------
 # macOS: meta is excluded, not merely discouraged
 # ---------------------------------------------------------------------------
 
