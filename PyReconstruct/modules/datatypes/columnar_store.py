@@ -34,6 +34,66 @@ Within-contour order is preserved, because it is semantically significant:
 at the first non-overlap, so a layout that reordered a contour would change
 import behavior on real data.
 
+BETWEEN-CONTOUR ORDER: TWO ENUMERATORS, AND WHY BOTH
+-----------------------------------------------------
+Within-contour order is the paragraph above. *Between*-contour order is a
+second question and, until the ordering decision below, the store could only
+answer it one way.
+
+`contourNames()` answers in **canonical sorted order**, which is the order
+`Section.getDict` writes a section file in and the order `Section.updateJSON`
+canonicalizes a loaded one into. `Section.contours` -- the object model, a
+plain `dict` -- answers in **insertion order**: the order the contour names
+were first encountered. A freshly loaded section's two answers agree, because
+the load path sorts. They diverge the moment a session creates an object whose
+name does not sort last, which is one `addTrace` away, and the divergence is
+user-visible for anything paint- or display-order-sensitive: a consumer flipped
+onto `contourNames()` would silently repaint the section in a different order
+from the one the object model would have given it.
+
+That was measured against a real section, recorded as an open blocker on the
+first attempted consumer flip (`svg_conversion.py`), and **decided by the
+maintainer on 2026-08-06: add a second enumerator rather than change the
+first.** `contourNames()` keeps its sorted contract -- it is the file's order
+and callers may depend on it -- and `contourNamesInInsertionOrder()` answers
+the other question. The two enumerate exactly the same names; only the order
+differs.
+
+THE INDEX'S KEY ORDER IS THE INSERTION ORDER, AND THAT IS NOW LOAD-BEARING
+--------------------------------------------------------------------------
+No second structure holds it. `_index` is a `dict`, its keys are the contour
+names, and a `dict` preserves the order its keys were first inserted in -- the
+same language guarantee `Section.contours` itself runs on. Every live mutation
+path already kept the two in step, and it did so by accident of shape rather
+than by design, which is worth stating because it is the reason the fix is
+this small:
+
+  * `appendRow` reaches the index through `setdefault`, so a name new to the
+    store lands at the tail, exactly as `Section.addTrace`'s
+    `self.contours[trace.name] = Contour(...)` does;
+  * `removeRow` empties a name's row list and **does not delete the key**,
+    exactly as `Section.removeTrace`'s `Contour.remove` leaves an empty
+    `Contour` under its key -- so re-creating an object keeps its original
+    position on both sides rather than moving it to the tail;
+  * `setAttribute(row, "name", ...)` removes from the old key and
+    `setdefault`s the new one, so a rename into a name the section has never
+    held appends on both sides.
+
+The one path that did **not** keep them in step was `fromSection`, which walked
+`sorted(section.contours, key=str)` and therefore built every rebuilt store's
+index in sorted key order regardless of what the section's own order was. That
+mattered more than it sounds: since D11 every `save()` rebuilds, so a session's
+insertion order was erased several times a second. `fromSection` now seeds the
+index's keys from `section.contours` before it appends anything -- see the
+method -- which fixes the key ORDER without moving a single row NUMBER.
+
+The empty-name asymmetry that follows is deliberate and invisible: seeding
+creates a key for a contour the section holds empty, which `fromSection` would
+previously not have created at all. Both enumerators filter on `if rows`, so
+neither reports it, and every other reader of the index (`rowsForContour`,
+`materializeContours`, `removeRow`, `reorderContour`) already treats a missing
+key and an empty one identically.
+
 **Coordinates live in one array per trace.** The backing is
 `SegmentedCoordinates` -- one `(n, 2)` float64 array per row, insert and delete
 O(1), a row's array is its own, and nothing aliases. It is the pole that
@@ -491,6 +551,9 @@ class SectionColumns():
         self._foreign_id_reissues = []
 
         ## The per-contour index: name -> [row, ...] in within-contour order.
+        ## Its KEY order is the between-contour insertion order, and that is a
+        ## contract rather than an artifact -- `contourNamesInInsertionOrder`
+        ## reads it and nothing else holds it. See the module docstring.
         self._index = {}
 
         self._generation = generation
@@ -508,6 +571,34 @@ class SectionColumns():
         stand-in. Contours are walked in `sorted(..., key=str)`, the canonical
         order `Section.getDict` writes, and each contour's traces in their own
         list order, which is semantically significant.
+
+        THE ROWS ARE APPENDED SORTED; THE INDEX'S KEYS ARE SEEDED UNSORTED
+        ------------------------------------------------------------------
+        Those are two different orders and this method now sets both, because
+        the store answers two different questions with them.
+
+        The append walk stays `sorted(..., key=str)`. Row numbers come out of
+        that walk, `Section._rebuildColumnarStore` correlates every `Trace` to
+        a row through it, and the store's own arity check reads it back -- so
+        changing it would renumber every row on every section at every save to
+        buy an ordering that does not need renumbering at all.
+
+        What does need to change is the index's KEY order, which is the only
+        place between-contour order lives (module docstring). Sorting the
+        append walk sorted the keys with it, so every rebuild -- and since D11
+        that is every `save()` -- threw away the section's own contour order
+        and replaced it with the file's. Seeding the keys from
+        `section.contours` first, in the section's order, and then appending in
+        sorted order gives both: `setdefault` in `appendRow` finds every key
+        already present and appends to it rather than creating it, so the seed
+        order survives the walk and not one row number moves.
+
+        Seeded through `normalizeObjectName`, which is what `appendRow` writes
+        its keys through. Without it a section key that has not been normalized
+        would seed a phantom key the rows never land in, and the row-carrying
+        key would then be created by the walk in sorted position -- the exact
+        divergence the seeding exists to remove, reintroduced on the names most
+        likely to be mishandled elsewhere.
 
         THIS METHOD IS EVERY REBUILD, WHICH IS WHY IT CARRIES IDS
         ---------------------------------------------------------
@@ -546,6 +637,10 @@ class SectionColumns():
         """
         store = cls(section.n, coordinates=coordinates, id_issuer=id_issuer,
                     generation=generation)
+        ## Before the first row: fix the index's key order to the section's own
+        ## contour order. See this method's docstring for why this is separate
+        ## from, and does not disturb, the sorted append walk below.
+        store._seedContourOrder(section.contours)
         ## One carried id can be spent once, and `spent` holds the ID rather
         ## than the trace it came from, because the id is what must not be
         ## handed out twice. Two ways one id reaches two rows: a `Trace` object
@@ -603,10 +698,40 @@ class SectionColumns():
         return bool(self._live[row])
 
     def contourNames(self) -> list:
-        """Live contour names, in canonical sorted order."""
+        """Live contour names, in canonical sorted order.
+
+        The order `Section.getDict` writes a section file in. **Not** the order
+        `Section.contours` iterates in once a session has created an object;
+        `contourNamesInInsertionOrder` is that one, and the module docstring
+        says which question each answers.
+        """
         return sorted(
             (name for name, rows in self._index.items() if rows), key=str
         )
+
+    def contourNamesInInsertionOrder(self) -> list:
+        """Live contour names, in the order `Section.contours` iterates them.
+
+        The same names `contourNames()` returns -- exactly, as a set -- in the
+        order the contours were first created rather than sorted. This is the
+        enumerator for a consumer whose output depends on the order contours
+        come out in: paint order, display order, anything positional. Reading
+        `contourNames()` for those would repaint a section in a different order
+        from the one the object model gives it as soon as a session creates an
+        object whose name does not sort last.
+
+        It reads the index's key order and holds nothing of its own; the module
+        docstring is where that invariant is stated and where the mutation
+        paths that maintain it are enumerated.
+
+        A contour the section holds but has emptied is absent, exactly as it is
+        from `contourNames()`. `Section.contours` keeps such a key -- an empty
+        `Contour` -- so this is a subsequence of `list(section.contours)` rather
+        than an equal list whenever a section holds an emptied contour. The two
+        enumerators agreeing on membership is worth more here than either
+        agreeing with the object model on a contour with nothing to paint.
+        """
+        return [name for name, rows in self._index.items() if rows]
 
     def rowsForContour(self, name: str) -> list:
         """The contour's row numbers, in within-contour order."""
@@ -1163,6 +1288,28 @@ class SectionColumns():
 
     def _bump(self):
         self._generation += 1
+
+    def _seedContourOrder(self, names):
+        """Create the index's keys, in `names` order, holding no rows yet.
+
+        The one thing that fixes between-contour order without touching a row.
+        Called by `fromSection` before it appends anything, so that the sorted
+        append walk finds every key already present and `setdefault` extends it
+        instead of creating it in sorted position.
+
+        Idempotent and additive: `setdefault` never rebinds an existing key, so
+        a name already in the index keeps both its rows and its position, and a
+        name seeded here that no row ever lands in stays an empty list --
+        indistinguishable from the contour `removeRow` empties, which both
+        enumerators and every index reader already handle.
+
+            Params:
+                names: the contour names, in the order they should enumerate
+                    in. `Section.contours` itself is the intended argument;
+                    iterating a `dict` gives its keys in that order.
+        """
+        for name in names:
+            self._index.setdefault(normalizeObjectName(name), [])
 
     def _requireLive(self, row: int):
         if not self._live[row]:
