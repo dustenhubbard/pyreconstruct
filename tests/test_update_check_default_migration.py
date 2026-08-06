@@ -66,7 +66,7 @@ OPTION = M.UPDATE_CHECK_KEY
 MARKER = M.UPDATE_CHECK_DEFAULT_APPLIED_KEY
 
 FIXTURE = os.path.join(
-    os.path.dirname(__file__), "..", "PyReconstruct",
+    os.path.dirname(__file__), "..", "dev",
     "assets", "checker", "files", "shapes1.jser",
 )
 

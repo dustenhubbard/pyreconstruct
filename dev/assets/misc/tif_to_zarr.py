@@ -8,7 +8,7 @@ pre-scale layout; the app still accepts it, but only by migrating the store into
 
 Kept as a standalone fallback for a checkout. Run it from the repository root::
 
-    uv run python PyReconstruct/assets/misc/tif_to_zarr.py
+    uv run python dev/assets/misc/tif_to_zarr.py
 
 It prompts for the image folder and the store name, so it needs a terminal and a
 display. Two wrapper scripts used to sit beside it, ``tif_to_zarr.sh`` and

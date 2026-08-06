@@ -39,7 +39,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 PACKAGE_ROOT = REPO_ROOT / "PyReconstruct"
 MANUAL = REPO_ROOT / "manual" / "readme.md"
 
-FIXTURE = REPO_ROOT / "PyReconstruct" / "assets" / "checker" / "files" / "shapes1.jser"
+FIXTURE = REPO_ROOT / "dev" / "assets" / "checker" / "files" / "shapes1.jser"
 
 # The call sites the audit found, and the reason each one is right to keep.
 #

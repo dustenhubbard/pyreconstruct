@@ -8,7 +8,10 @@ from PyReconstruct.modules.datatypes.series import Series
 
 from PyReconstruct.modules.backend.autoseg.conversions import getLabelsToObjectsData
 
-from PyReconstruct.assets.scripts.contours_from_labels.utils import (
+# Sibling module, not a package import: this directory lives outside
+# PyReconstruct/, and make_contours.py is run as a script (see
+# dev/scripts/ng-make-contours), which puts this directory on sys.path[0].
+from utils import (
     get_zarr_groups,
     make_jser_copy,
     parallel_import_sections,

@@ -44,7 +44,7 @@ from PyReconstruct.modules.backend.volume.objects_3D import (
 )
 
 FIXTURE_DIR = os.path.join(
-    os.path.dirname(__file__), "..", "PyReconstruct", "assets", "checker", "files"
+    os.path.dirname(__file__), "..", "dev", "assets", "checker", "files"
 )
 
 TFORMS = {

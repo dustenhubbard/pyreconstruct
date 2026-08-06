@@ -30,7 +30,7 @@ from PyReconstruct.modules.gui.table.object_model import ObjectTableModel
 from PyReconstruct.modules.gui.utils import sortList
 
 FIXTURE = os.path.join(
-    os.path.dirname(__file__), "..", "PyReconstruct",
+    os.path.dirname(__file__), "..", "dev",
     "assets", "checker", "files", "shapes1.jser",
 )
 

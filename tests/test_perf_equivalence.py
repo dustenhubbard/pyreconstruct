@@ -309,7 +309,7 @@ def test_export_traces_csv_blank_feret_when_section_lacks_trace(tmp_path):
     ahead of them, the row is still written with its other measurements and the
     Feret fields left empty -- never filled in with a zero."""
     import shutil
-    src = os.path.join(os.path.dirname(__file__), "..", "PyReconstruct",
+    src = os.path.join(os.path.dirname(__file__), "..", "dev",
                        "assets", "checker", "files", "shapes1.jser")
     if not os.path.exists(src):
         pytest.skip("fixture shapes1.jser not found")
@@ -350,7 +350,7 @@ def test_export_traces_csv_order_and_feret(tmp_path):
     index-ascending rows, with the same Feret values a retained-points read
     would have produced."""
     import shutil
-    src = os.path.join(os.path.dirname(__file__), "..", "PyReconstruct",
+    src = os.path.join(os.path.dirname(__file__), "..", "dev",
                        "assets", "checker", "files", "shapes1.jser")
     if not os.path.exists(src):
         pytest.skip("fixture shapes1.jser not found")
@@ -413,7 +413,7 @@ def test_getObjectSections_matches_disk_truth(tmp_path):
     (getObjectSections). Pin that the index lists exactly the sections that
     actually contain each object, versus an independent full-scan disk truth."""
     import shutil
-    src = os.path.join(os.path.dirname(__file__), "..", "PyReconstruct",
+    src = os.path.join(os.path.dirname(__file__), "..", "dev",
                        "assets", "checker", "files", "shapes1.jser")
     if not os.path.exists(src):
         pytest.skip("fixture shapes1.jser not found")

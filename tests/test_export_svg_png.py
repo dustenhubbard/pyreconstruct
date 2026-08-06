@@ -67,7 +67,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CHECKER_FILES = REPO_ROOT / "PyReconstruct" / "assets" / "checker" / "files"
+CHECKER_FILES = REPO_ROOT / "dev" / "assets" / "checker" / "files"
 FIXTURE_JSER = CHECKER_FILES / "shapes1.jser"
 
 SVG_NS = "http://www.w3.org/2000/svg"

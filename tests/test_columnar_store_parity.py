@@ -21,7 +21,7 @@ wrong would still be green.
 
 WHAT THE FIXTURE SERIES CANNOT EXERCISE
 ---------------------------------------
-Measured on `PyReconstruct/assets/checker/files/class_series.jser` at
+Measured on `dev/assets/checker/files/class_series.jser` at
 `d92408d3`: 198 sections, 221 contours, 232 traces, 9 contours holding more than
 one trace, and
 

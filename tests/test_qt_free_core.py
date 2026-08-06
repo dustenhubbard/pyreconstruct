@@ -169,7 +169,7 @@ def test_real_series_opens_and_maps_with_no_qt(tmp_path):
     affine all run with any `PySide6` import raising and no Qt platform set.
     """
     fixture = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "PyReconstruct",
+        os.path.dirname(os.path.abspath(__file__)), "..", "dev",
         "assets", "checker", "files", "shapes1.jser",
     )
     if not os.path.exists(fixture):

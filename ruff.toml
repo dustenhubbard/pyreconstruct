@@ -19,12 +19,17 @@ target-version = "py311"   # matches the PySide6==6.5.2 pin (3.11-only wheels)
 #
 # Nothing had to be fixed to bring them in: the critical-error set below already
 # passes clean over the whole tree, assets included. If a bundled script really
-# is beyond repair, the answer is to stop shipping it (see
-# `[tool.setuptools.exclude-package-data]` in `pyproject.toml`), not to hide it
-# from the linter while continuing to ship it.
+# is beyond repair, the answer is to stop shipping it -- move it out of the
+# package root to `dev/assets/`, as the four dev-only directories were on
+# 2026-08-06 -- not to hide it from the linter while continuing to ship it.
 #
-# `tests/test_shipped_python_is_linted.py` pins the invariant: anything the
-# wheel ships must be in the linter's scope.
+# `dev/` is deliberately not excluded either. The retired asset scripts live in
+# `dev/assets/` and are still maintained code; keeping them linted is the stated
+# other half of moving them out of the distribution.
+#
+# `tests/test_shipped_python_is_linted.py` pins both invariants: anything the
+# wheel ships must be in the linter's scope, and so must anything retired out of
+# it.
 
 [lint]
 # E9  - syntax errors

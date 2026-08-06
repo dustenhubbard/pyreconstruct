@@ -105,7 +105,7 @@ from PyReconstruct.modules.datatypes import Series
 
 FIXTURE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "PyReconstruct", "assets", "checker", "files", "shapes1.jser",
+    "dev", "assets", "checker", "files", "shapes1.jser",
 )
 
 # The fixture ships with an empty obj_attrs, which is what makes it useful here:

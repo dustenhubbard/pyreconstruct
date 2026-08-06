@@ -26,6 +26,5 @@ else:
 
 assets_dir          =  os.path.join(src_dir, "assets")
 welcome_series_dir  =  os.path.join(assets_dir, "welcome_series", ".welcome")
-checker_dir         =  os.path.join(assets_dir, "checker")
 img_dir             =  os.path.join(assets_dir, "img")
 icon_path           =  os.path.join(img_dir, "PyReconstruct.ico")

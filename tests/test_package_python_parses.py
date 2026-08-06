@@ -14,10 +14,18 @@ workflow would have been the first to find out.
 
 The paren was the symptom. The absence of any gate over non-imported code was
 the defect, so the guard is deliberately wider than the one file that was
-broken: it walks the **entire** ``PyReconstruct`` package rather than just
-``assets/``. Scripts can appear anywhere, and "is this file on an import
-path?" is not a question the test should have to answer -- compiling
-everything makes the answer irrelevant.
+broken: it walks the **entire** ``PyReconstruct`` package, plus ``dev/assets/``,
+rather than just the directory the break was in. Scripts can appear anywhere,
+and "is this file on an import path?" is not a question the test should have to
+answer -- compiling everything makes the answer irrelevant.
+
+``dev/assets/`` is walked because the retired script directories moved there on
+2026-08-06, out of the package root, so that nothing can pull them into a wheel.
+That move took them out of the package walk, which is exactly the "moved out
+from under the package root" regression
+``test_bundled_scripts_are_covered_by_the_walk`` was written to catch. They are
+no longer shipped, but they are still maintained code in this repository, so the
+parse gate follows them rather than quietly dropping them.
 
 Two implementation notes:
 
@@ -34,8 +42,8 @@ Two implementation notes:
 
 Note what this does and does not claim. Parsing is not importing: a file that
 compiles may still fail at import or at run time (every script in
-``assets/misc/`` opens hardcoded local paths at module level, so none of them
-can be imported or executed whole here). Syntactic validity is the floor, and
+``dev/assets/misc/`` opens hardcoded local paths at module level, so none of
+them can be imported or executed whole here). Syntactic validity is the floor, and
 the floor is what was missing. A second gate goes one step higher for the
 directory that housed the broken file: each script's module-level import
 statements are extracted and actually executed -- see
@@ -47,15 +55,18 @@ import subprocess
 import sys
 from pathlib import Path
 
-PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "PyReconstruct"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+PACKAGE_ROOT = REPO_ROOT / "PyReconstruct"
+DEV_ASSETS = REPO_ROOT / "dev" / "assets"
 
 
 def test_every_package_python_file_parses():
-    """No ``.py`` file under ``PyReconstruct/`` may be a ``SyntaxError``."""
+    """No ``.py`` file under ``PyReconstruct/`` or ``dev/assets/`` may be a ``SyntaxError``."""
 
     assert PACKAGE_ROOT.is_dir(), f"package root not found: {PACKAGE_ROOT}"
+    assert DEV_ASSETS.is_dir(), f"dev assets not found: {DEV_ASSETS}"
 
-    sources = sorted(PACKAGE_ROOT.rglob("*.py"))
+    sources = sorted(PACKAGE_ROOT.rglob("*.py")) + sorted(DEV_ASSETS.rglob("*.py"))
 
     # Guard against the walk silently matching nothing (a moved package
     # directory would otherwise make this test vacuously pass forever).
@@ -66,7 +77,7 @@ def test_every_package_python_file_parses():
     failures = []
 
     for path in sources:
-        rel = path.relative_to(PACKAGE_ROOT.parent)
+        rel = path.relative_to(REPO_ROOT)
         try:
             source = path.read_text(encoding="utf-8")
         except UnicodeDecodeError as e:
@@ -86,25 +97,37 @@ def test_every_package_python_file_parses():
 def test_bundled_scripts_are_covered_by_the_walk():
     """The walk must reach the non-imported scripts, which are the point of it.
 
-    ``assets/`` holds standalone scripts that no module imports -- the blind
-    spot the broken file lived in. If a refactor moved them out from under
-    the package root, the test above would keep passing while covering
-    nothing that needs covering, so assert the blind spot is still in scope.
+    The asset trees hold standalone scripts that no module imports -- the blind
+    spot the broken file lived in. If a refactor moved them somewhere neither
+    walk reaches, the test above would keep passing while covering nothing that
+    needs covering, so assert the blind spot is still in scope.
+
+    The retired scripts moved to ``dev/assets/`` on 2026-08-06 and the live ones
+    stayed under the package, so both roots are asserted: the point is that
+    every non-imported script is under *some* walked root, not which one.
     """
 
-    covered = {p.relative_to(PACKAGE_ROOT).as_posix() for p in PACKAGE_ROOT.rglob("*.py")}
+    covered = {
+        p.relative_to(REPO_ROOT).as_posix()
+        for root in (PACKAGE_ROOT, DEV_ASSETS)
+        for p in root.rglob("*.py")
+    }
 
-    assert "assets/misc/jser_to_zarr_v2.py" in covered
-    assert "assets/misc/crop_zarr.py" in covered
+    assert "dev/assets/misc/jser_to_zarr_v2.py" in covered
+    assert "dev/assets/misc/crop_zarr.py" in covered
+    assert "PyReconstruct/assets/scripts/start_process.py" in covered
 
-    asset_scripts = {p for p in covered if p.startswith("assets/")}
+    asset_scripts = {
+        p for p in covered
+        if p.startswith("dev/assets/") or p.startswith("PyReconstruct/assets/")
+    }
     assert len(asset_scripts) > 5, (
         f"expected several bundled asset scripts in scope, found {sorted(asset_scripts)}"
     )
 
 
 def test_bundled_misc_script_imports_execute():
-    """Every ``assets/misc/`` script's module-level imports must actually resolve.
+    """Every ``dev/assets/misc/`` script's module-level imports must actually resolve.
 
     The file that hid a SyntaxError also carried an ``ImportError``:
     ``from PyReconstruct.modules.backend.func import reducePoints``, a name
@@ -118,15 +141,15 @@ def test_bundled_misc_script_imports_execute():
     modules) is part of this project's own environment, so a failure means a
     script names something that does not exist.
 
-    Scoped to ``assets/misc/`` rather than all of ``assets/``: the wider tree
-    holds scripts written against third-party tooling that is deliberately not a
-    dependency of this project (``assets/scripts/img/mask.py`` imports
+    Scoped to ``dev/assets/misc/`` rather than all of the asset trees: the wider
+    tree holds scripts written against third-party tooling that is deliberately
+    not a dependency of this project (``dev/assets/scripts/img/mask.py`` imports
     ``colorama``), so a repo-wide version of this gate would report absent
-    optional tooling as rot. ``assets/misc/`` is the set of scripts written
+    optional tooling as rot. ``dev/assets/misc/`` is the set of scripts written
     against *this* codebase's own API, which is the API that drifts under them.
     """
 
-    directory = PACKAGE_ROOT / "assets" / "misc"
+    directory = DEV_ASSETS / "misc"
     scripts = sorted(directory.glob("*.py"))
 
     # guard the glob: an empty directory would make this vacuously pass
@@ -147,11 +170,11 @@ def test_bundled_misc_script_imports_execute():
             [sys.executable, "-c", "\n".join(stmts)],
             capture_output=True,
             text=True,
-            cwd=str(PACKAGE_ROOT.parent),  # repo root, so `import PyReconstruct` resolves
+            cwd=str(REPO_ROOT),  # repo root, so `import PyReconstruct` resolves
             timeout=180,
         )
         if proc.returncode != 0:
-            rel = path.relative_to(PACKAGE_ROOT.parent).as_posix()
+            rel = path.relative_to(REPO_ROOT).as_posix()
             failures.append(f"{rel}:\n{proc.stderr.strip()}")
 
     assert not failures, (

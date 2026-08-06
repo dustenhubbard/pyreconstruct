@@ -54,7 +54,7 @@ from PyReconstruct.modules.datatypes import Series
 
 FIXTURE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "PyReconstruct", "assets", "checker", "files", "shapes1.jser",
+    "dev", "assets", "checker", "files", "shapes1.jser",
 )
 
 
@@ -98,7 +98,7 @@ def test_the_checked_in_fixtures_have_no_log_set():
     Without this the tests would only be pinning the writer against itself.
     """
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    checker = os.path.join(root, "PyReconstruct", "assets", "checker", "files")
+    checker = os.path.join(root, "dev", "assets", "checker", "files")
     found = [n for n in sorted(os.listdir(checker)) if n.endswith(".jser")]
     assert found, "no .jser fixtures to check"
     for name in found:

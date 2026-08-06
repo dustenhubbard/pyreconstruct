@@ -115,7 +115,7 @@ pytestmark = pytest.mark.gui
 
 FIXTURE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "PyReconstruct", "assets", "checker", "files", "shapes1.jser",
+    "dev", "assets", "checker", "files", "shapes1.jser",
 )
 
 # Provenance fields that an undo is not expected to restore, excluded from the
