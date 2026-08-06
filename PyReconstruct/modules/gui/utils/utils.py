@@ -188,10 +188,12 @@ class KeepMenuOpenOnToggle(QObject):
     action is triggered, and it makes no distinction between a command ("Save
     as...", which is finished once it has run) and a toggle ("Hide image", which
     is one of a set the user is usually setting together). Setting three of the
-    four View > Palette > Visibility boxes therefore cost twelve interactions:
-    three menus to walk down, one click, and the whole descent again. In the
-    field's right-click menu it is worse, because reopening a context menu means
-    finding somewhere safe to right-click again.
+    four palette visibility boxes therefore cost twelve interactions: three menus
+    to walk down, one click, and the whole descent again. (Those four have since
+    been hoisted to View itself, so the descent is gone as well as the reopening;
+    this filter is what removed the reopening, and it still covers them there.)
+    In the field's right-click menu it is worse, because reopening a context menu
+    means finding somewhere safe to right-click again.
 
     So the release is intercepted before QMenu sees it, and a checkable action
     is triggered by hand instead. QAction.trigger() on a checkable action flips
@@ -250,10 +252,12 @@ def keepMenuOpenOnToggle(menu):
     Called by newAction the moment it makes an action checkable, so every menu
     built through the shared builder gets this for free and no individual menu
     definition has to opt in. That is the whole point: the toggles the user
-    complained about live in two different files (the View > Palette >
-    Visibility group in `main/menubar.py` and the field right-click menu's
-    visibility group in `main/context_menu_list.py`), and one change in the
-    builder covers both, plus every other toggle the builder makes.
+    complained about live in two different files (the palette visibility group
+    in `main/menubar.py`, directly under View since the 2026-08-06 hoist, and the
+    field right-click menu's visibility group in `main/context_menu_list.py`),
+    and one change in the builder covers both, plus every other toggle the
+    builder makes. Because the filter is installed per action rather than per
+    menu, moving a row to another menu carries the behaviour with it.
 
     Idempotent by construction. Installing the same filter object twice is
     harmless (Qt moves it to the front of the list rather than adding a second

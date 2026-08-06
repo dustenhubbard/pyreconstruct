@@ -3,10 +3,12 @@
 Qt closes a menu on any activation, toggle or not. Nine rows in this app are
 toggles the user sets in combination, and they are spread over two files:
 
-  * ``View > Palette > Visibility`` in ``PyReconstruct/modules/gui/main/menubar.py``
-    -- trace palette, section increment buttons, brightness/contrast sliders,
-    scale bar. Three levels down, so setting three of them was twelve
-    interactions.
+  * the ``View`` menu in ``PyReconstruct/modules/gui/main/menubar.py`` -- trace
+    palette, section increment buttons, brightness/contrast sliders, scale bar.
+    These sat under ``View > Palette > Visibility`` when this file was written,
+    three levels down, so setting three of them was twelve interactions; the
+    keep-open filter here removed the reopening and the 2026-08-06 hoist removed
+    the descent.
   * the field right-click menu's ``View`` group in
     ``PyReconstruct/modules/gui/main/context_menu_list.py`` -- focus mode, hide
     trace layer, show all traces, hide image, section blend. Worse in practice:
@@ -101,9 +103,17 @@ def click(menu, action, qapp):
 
 
 def menubar_visibility_menu(main_window):
-    """The real `View > Palette > Visibility` submenu of the menubar."""
-    menu = submenu_at(main_window.menubar, "View > Palette > Visibility")
-    assert menu is not None, "View > Palette > Visibility is gone from the menubar"
+    """The real `View` menu of the menubar, which is where the four palette
+    visibility toggles live directly as of the 2026-08-06 hoist.
+
+    They were under `View > Palette > Visibility` when this file was written.
+    The move does not change what is being tested here: `newAction` installs the
+    keep-open filter on the action, not on one particular menu, so the behaviour
+    follows the rows to their new home. That is the same property the field
+    right-click half of this file exercises.
+    """
+    menu = submenu_at(main_window.menubar, "View")
+    assert menu is not None, "View is gone from the menubar"
     return menu
 
 
