@@ -513,13 +513,45 @@ def test_migration_takes_the_series_index_not_the_sections():
     Flags enforce uniqueness per section; traces do not, because a merge crosses
     sections. Two sections whose contours are identical must still produce
     disjoint id sets when they share one issuer.
+
+    The body used to pass section number 1 BOTH times, which pinned something
+    this docstring never claimed: that re-deriving the SAME section's content
+    hands out fresh ids. S1 falsified that as a desirable property --
+    `Series.loadSection` builds a fresh `Section` per call with no cache, so
+    salt-bumping on re-derivation would reissue every id on a section per
+    scroll and leak a section's worth of taken-set per load. Re-derivation is
+    now answered from the issuer's own record
+    (`test_rederiving_the_same_section_returns_the_same_ids`, below), and this
+    test says what it always meant: two DIFFERENT sections, disjoint ids.
     """
     contours = {"axon": [ROW8]}
     issuer = TraceIDIssuer()
     first = issuer.deriveForSection(1, contours)
-    second = issuer.deriveForSection(1, contours)
+    second = issuer.deriveForSection(2, contours)
     assert set(first.values()).isdisjoint(second.values())
     assert len(issuer.taken) == 2
+
+
+def test_rederiving_the_same_section_returns_the_same_ids():
+    """One issuer asked twice about one section's content answers the same.
+
+    The consumer is `Section.__init__` via `Series.loadSection`, which
+    constructs a fresh `Section` -- and re-derives -- on every call. Without
+    the issuer's derivation record the first load's ids sit in `taken`, the
+    second load salt-bumps past every one of them, and a mouse-wheel scroll
+    reissues the birth certificate of every trace on the section.
+    """
+    contours = {"axon": [ROW8, ROW8], "dendrite": [ROW8]}
+    issuer = TraceIDIssuer()
+    first = issuer.deriveForSection(9, contours)
+    second = issuer.deriveForSection(9, contours)
+    assert first == second, "re-derivation moved ids for unchanged content"
+    assert len(issuer.taken) == 3, (
+        "re-derivation leaked ids into the taken-set"
+    )
+    ## The record answers per occurrence: two byte-identical rows in one
+    ## contour are two traces and keep two distinct ids, in order.
+    assert first[("axon", 0)] != first[("axon", 1)]
 
 
 # --- the issuer --------------------------------------------------------------

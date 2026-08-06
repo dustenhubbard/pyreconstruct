@@ -11,6 +11,7 @@ from .log import LogSet, LogSetPair
 from .ztrace import Ztrace
 from .section import Section
 from .trace import Trace, normalizeObjectName
+from .trace_id import TraceIDIssuer
 from .transform import Transform
 from .obj_group_dict import ObjGroupDict
 from .series_data import SeriesData
@@ -389,6 +390,20 @@ class Series():
         self.filepath = filepath
         self.sections = sections
         self.name = os.path.basename(self.filepath)[:-4]
+
+        ## The series' one trace-id issuer. One per series because uniqueness
+        ## is series-global (`trace_id.py`), and it lives HERE rather than on
+        ## any store because a store's lifetime is one build: before this,
+        ## `Section._rebuildColumnarStore` took its issuer from the OUTGOING
+        ## store, and the first build has no outgoing store, so the chain was
+        ## never seeded and every trace in every shipped session carried no id
+        ## at all. Assigned before anything below can load a section --
+        ## `self.data.refresh()` walks every section on the `openJser` fast
+        ## path -- and both `openJser` entry paths (the hidden-directory fast
+        ## path and the full .jser unpack) construct their Series through this
+        ## method, so both are seeded. Ids reach memory only; no byte of any
+        ## .jser changes.
+        self.trace_id_issuer = TraceIDIssuer()
 
         with open(filepath, "rb") as f:
             series_data = fast_loads(f.read())

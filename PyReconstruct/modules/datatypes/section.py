@@ -581,6 +581,12 @@ class Section():
     ## first.
     _columns = None
     _column_rows : dict = {}
+    ## `{Trace: id}` for traces just built from the section file, alive only
+    ## between the derivation in `__init__` and the first store build, which
+    ## consumes it as `carried_ids`. `None` at every other moment, and `None`
+    ## on a bare `__new__` instance for the same reason the two defaults above
+    ## exist.
+    _loaded_trace_ids = None
 
     def __init__(self, n : int, series):
         """Load the section file.
@@ -629,11 +635,28 @@ class Section():
         self.thickness = section_data["thickness"]
         self.contours : dict[str, Contour] = {}
 
+        ## S1: every trace loaded from a file gets an id, DERIVED from its own
+        ## stored content (`tid-v1`) so that two independent opens of one file
+        ## agree on every id with no save between -- a random id minted at
+        ## load is the failure `Flag.deriveID`'s docstring records. The
+        ## derivation reads the stored rows exactly as `updateJSON` left them
+        ## (the same dict the loop below builds `Trace` objects from, so the
+        ## (contour, index) join cannot skew: `updateJSON` already applied the
+        ## defective-row screens to the stored data). Traces created later in
+        ## the session are not here and fall through to `issue()` in
+        ## `appendRow`, as before. In memory only; nothing here writes a byte.
+        issuer = getattr(series, "trace_id_issuer", None)
+        derived_ids = (
+            issuer.deriveForSection(n, section_data["contours"])
+            if issuer is not None else None
+        )
+        self._loaded_trace_ids = {} if derived_ids is not None else None
+
         for name in section_data["contours"]:
-            
+
             trace_list = []
-            
-            for trace_data in section_data["contours"][name]:
+
+            for i, trace_data in enumerate(section_data["contours"][name]):
                 trace = Trace.fromList(trace_data, name)
                 # screen for defective traces. `updateJSON` above now applies
                 # both screens to the stored data as well, so on this path the
@@ -646,7 +669,9 @@ class Section():
                     trace.closed = False
                 if l > 1:
                     trace_list.append(trace)
-                    
+                    if derived_ids is not None:
+                        self._loaded_trace_ids[trace] = derived_ids[(name, i)]
+
             self.contours[name] = Contour(
                 name,
                 trace_list
@@ -677,6 +702,10 @@ class Section():
         ## read, so the tax lands inside a render or an export instead of inside
         ## a load, where it is less predictable and harder to attribute.
         self.resyncColumnarStore()
+        ## Consumed by the build above; anything later that rebuilds carries
+        ## ids through the store itself, so keeping this map would only pin
+        ## a stale answer (and every Trace in it) alive.
+        self._loaded_trace_ids = None
 
         self.flags = [Flag.fromList(l, self.n) for l in section_data["flags"]]
 
@@ -1342,8 +1371,21 @@ class Section():
         A trace the outgoing map does not hold is a trace this store has never
         seen -- genuinely new, or arrived through an import -- and it falls
         through to the issuer, which is the pre-D10 behavior and stays right.
-        A section with no outgoing store at all (`Section.__init__`, the first
-        build) has nothing to carry and passes nothing.
+
+        THE FIRST BUILD TAKES THE ISSUER FROM THE SERIES, AND CARRIES THE
+        DERIVED IDS. S1.
+        ------------------------------------------------------------------
+        Until S1 the issuer came only from the outgoing store, and the first
+        build has no outgoing store -- so the chain was never seeded, and
+        every trace in every shipped session carried no id at all (the state
+        `_rebuildColumnarStoreForSave`'s docstring used to describe as
+        current). Now `Series` owns one issuer for the whole series, the first
+        build takes it from `self.series`, and the ids it carries are the ones
+        `Section.__init__` just DERIVED from the section file's own rows
+        (`self._loaded_trace_ids`). A rebuild with an outgoing store still
+        prefers the outgoing store's issuer -- in production that is the same
+        object as the series', and a store a test installed by hand keeps the
+        index it was built with rather than having it silently swapped.
         """
         from .columnar_store import SectionColumns
 
@@ -1366,14 +1408,30 @@ class Section():
         ## entry left pointing at a tombstoned row still answers; such a trace
         ## is not in `self.contours` any more, so `fromSection` never asks for
         ## it and the entry is simply dropped with the map.
-        carried_ids = None
         issuer = outgoing.id_issuer if outgoing is not None else None
+        if issuer is None:
+            ## S1: the first build (no outgoing store), and any store that was
+            ## built without an issuer, take the series' own. `getattr` twice
+            ## because a Section built through `__new__` has no `series` and a
+            ## test's stand-in series may have no issuer; both mean "no ids",
+            ## which is what they meant before.
+            issuer = getattr(
+                getattr(self, "series", None), "trace_id_issuer", None
+            )
+        carried_ids = None
         if issuer is not None:
-            carried_ids = {}
-            for trace, row in self._column_rows.items():
-                trace_id = outgoing.getID(row)
-                if trace_id is not None:
-                    carried_ids[trace] = trace_id
+            if outgoing is not None:
+                carried_ids = {}
+                for trace, row in self._column_rows.items():
+                    trace_id = outgoing.getID(row)
+                    if trace_id is not None:
+                        carried_ids[trace] = trace_id
+            else:
+                ## The first build: carry the ids `Section.__init__` derived
+                ## from the section file's rows. `None` for a section that was
+                ## not built from a file (a test's hand-assembled section),
+                ## and then every row falls through to `issue()`.
+                carried_ids = self._loaded_trace_ids
 
         self._columns = SectionColumns.fromSection(
             self, id_issuer=issuer, generation=previous + 1,
@@ -1468,15 +1526,15 @@ class Section():
         and row numbers untouched. The cost is the build, which is paid either
         way; what is saved is the churn.
 
-        It has a third consequence, worth naming because it is load-bearing for
-        work in flight: `SectionColumns` carries an `id` column, and until D10
-        `fromSection` issued rather than carried ids. Nothing in the
-        application injects an id issuer today, so every id is `None` and there
-        is nothing to lose -- but the day one is wired, a save that adopted a
-        rebuild unconditionally would have re-identified every trace on the
-        section. Keeping the existing store when nothing drifted means an
-        ordinary save does not, and
-        `test_a_save_does_not_re_identify_the_traces_it_saves` pins that.
+        It has a third consequence, worth naming because it is load-bearing:
+        `SectionColumns` carries an `id` column, and until D10 `fromSection`
+        issued rather than carried ids. Since S1 the issuer IS wired -- every
+        `Section` built from a file carries an id per trace, derived at load
+        from the series' issuer -- so a save that adopted a rebuild
+        unconditionally would re-identify every trace on the section. Keeping
+        the existing store when nothing drifted means an ordinary save does
+        not, and `test_a_save_does_not_re_identify_the_traces_it_saves` pins
+        that.
 
         **The residue this paragraph used to record is closed.** A save that
         DOES find drift adopts the rebuild, and that used to lose the ids with
