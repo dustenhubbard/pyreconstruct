@@ -1,3 +1,82 @@
+r"""Export a series and one set of contours to a zarr store.
+
+**This script does not run.** It is deliberately not repaired here, and it is
+not shipped: ``[tool.setuptools.exclude-package-data]`` in ``pyproject.toml``
+keeps ``assets/misc/*`` out of the wheel and the installers, so no installed
+copy of PyReconstruct contains this file. It is documented rather than fixed or
+deleted because no consumer of its output has been identified, and its output
+format is not the one the maintained exporter writes -- see the table below.
+
+Three independent failures, each reproduced by running this file against
+``main`` at ``d001c4e4``. Loci are given by symbol rather than by line, because
+line numbers drift and these two files drift independently:
+
+1. **The path is a placeholder.** ``jser_fp`` below is literally
+   ``r"C:\path\to\Series\DSNYJ_JSER\DSNYJ.jser"``. It sits under the
+   ``# user-entered info`` comment, so it is arguably meant to be edited, but it
+   means the file as committed cannot run anywhere. The ``Series.openJser(jser_fp)``
+   call below raises::
+
+       FileNotFoundError: [Errno 2] No such file or directory:
+       'C:\\path\\to\\Series\\DSNYJ_JSER\\DSNYJ.jser'
+
+2. **``generateLabelsArray`` has a different signature now.** The call below
+   passes ``contour_names``, a list of ``str``. ``TraceLayer.generateLabelsArray``
+   in ``PyReconstruct/modules/backend/view/trace_layer.py`` declares
+   ``(self, pixmap_dim, window, traces: list[Trace], tform: Transform = None)``
+   and its body reads ``trace.name`` off every element. That signature dates to
+   ``a391ebc5`` (2023-05-05, "Modify autoseg UI structure"), so the drift is at
+   least that old and the script has not run since. Fill the ``# user-entered info``
+   block in with a real series and the ``labels_zarr[z] = ...`` statement below
+   raises, inside ``generateLabelsArray``::
+
+       AttributeError: 'str' object has no attribute 'name'
+
+3. **Its return value is a 2-tuple, assigned straight into a zarr slot.**
+   ``generateLabelsArray`` returns ``(arr, id_lookup_table)`` -- an ndarray and a
+   dict -- and the ``labels_zarr[z] = ...`` statement below writes that return
+   value directly into the zarr. Step over failure 2 by passing real ``Trace``
+   objects and the same statement raises, this time from ``numpy`` under
+   ``zarr.core.Array.__setitem__``::
+
+       ValueError: setting an array element with a sequence. The requested array
+       has an inhomogeneous shape after 1 dimensions. The detected shape was
+       (2,) + inhomogeneous part.
+
+Everything else still resolves: that last run reached failure 3 through
+``Series.openJser``, ``Series.loadSection``, ``SectionLayer(section, series)``,
+``SectionLayer.generateImageArray`` and ``zarr.Group.zeros`` without complaint.
+
+**Where the maintained equivalent lives.**
+``PyReconstruct/modules/backend/autoseg/conversions.py`` has ``seriesToZarr``
+(raw) and ``seriesToLabels`` (labels), driven from the GUI, threaded, with a
+progress bar and group or tag selection, and covered by the test suite.
+``exportTraces`` in that file is the call pattern this script is missing: it
+gathers real ``Trace`` objects out of ``section.contours``, then unpacks the
+2-tuple into the array and a ``gt_lookup`` attribute.
+
+**That is a pointer, not a drop-in replacement.** The attribute vocabulary
+differs, so anything written to read a store this script produced will not read
+one the in-app exporter produces:
+
+    what this script writes    what ``conversions.py`` writes
+    ------------------------   --------------------------------
+    ``resolution``             ``voxel_size``
+    ``srange`` (a 2-tuple)     ``sections`` (an explicit list)
+    dataset ``labels``         dataset ``labels_<group_or_tag>``
+    (nothing)                  ``axis_names``, ``units``
+    labels dtype ``uint32``    labels dtype ``uint64``
+
+``offset``, ``window``, ``true_mag`` and ``alignment`` keep the same names in
+both, and ``get_resolution``/``get_thickness``/``get_true_mag`` in
+``conversions.py`` do read ``resolution`` first and fall back to ``voxel_size``,
+so a compatibility shim for the older name already exists on the read side.
+``srange`` has no such shim: nothing in this repository reads a zarr ``srange``
+attribute at all. The one in-tree reader that did, ``assets/misc/zarr_to_jser.py``,
+was deleted for that reason -- ``labelsToObjects`` in ``conversions.py``, reached
+from "Import labels", does its job.
+"""
+
 import os
 import sys
 import numpy as np
