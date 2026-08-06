@@ -41,7 +41,7 @@ from PyReconstruct.modules.gui.table.trace import TraceTableWidget
 
 
 FIXTURE = os.path.join(
-    os.path.dirname(__file__), "..", "PyReconstruct", "assets", "checker",
+    os.path.dirname(__file__), "..", "dev", "assets", "checker",
     "files", "shapes1.jser"
 )
 

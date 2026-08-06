@@ -91,82 +91,62 @@ dev = [
 [tool.uv.sources]
 "funlib.show.neuroglancer" = { git = "https://github.com/funkelab/funlib.show.neuroglancer" }
 
-# Retiring a bundled directory takes an entry in all three of the tables below.
-# Verified by building a wheel with each combination; anything less ships the
-# files anyway, because three separate mechanisms each reach them:
+# Retired asset directories are no longer subtracted here. They live outside the
+# package, in `dev/assets/`, which is exclusion by construction: `packages.find`
+# only looks inside `PyReconstruct*`, and every `package-data` glob resolves
+# relative to a package directory. That closes all three of the mechanisms that
+# previously each needed their own explicit exclusion:
 #
-#   1. `namespaces` defaults to true for `packages.find` in `pyproject.toml`, so
-#      every directory under `assets/` is discovered as a namespace package and
-#      its `.py` files are built as modules. The `exclude` below stops that.
+#   1. `namespaces` defaults to true for `packages.find`, so every directory
+#      under a package root is discovered as a namespace package and its `.py`
+#      files are built as modules. `dev/` is not under a package root.
 #   2. The `assets/**/*` glob in `[tool.setuptools.package-data]` sweeps the
-#      whole tree as data of the `PyReconstruct` package. The `PyReconstruct`
-#      key of `exclude-package-data` filters that pass.
+#      tree as data of the `PyReconstruct` package, resolved relative to
+#      `PyReconstruct/`, which `dev/` is not inside.
 #   3. `include-package-data` also defaults to true, and `setuptools-scm`
-#      contributes every tracked file to the manifest. Manifest files are
-#      attributed to the nearest enclosing package, which for a directory
-#      removed in step 1 is its parent, and each package's data is filtered only
-#      by its own `exclude-package-data` key. Hence the `PyReconstruct.assets`
-#      and `PyReconstruct.assets.scripts` keys.
+#      contributes every tracked file to the manifest, but a manifest file only
+#      ships when it can be attributed to a package. `dev/` has no enclosing
+#      package, so there is nothing to attribute it to.
 #
-# Excluded below: bundled script directories with no runtime consumer. Nothing
-# in the app imports or launches them and nothing in docs/ tells a user to run
-# them. They are developer tools, run from a source checkout through the
-# wrappers in `dev/scripts/` that `dev/link_shell.sh` puts on `PATH`, so the
-# copy inside an installed package was never reachable by any documented route.
+# Moved out rather than excluded (decided 2026-08-06): an exclusion has to be
+# kept correct against every mechanism that might reach the files, and a fourth
+# mechanism would need a fourth entry. A directory outside the package root
+# cannot be reached by a mechanism that only ever looks inside it.
 #
-#   assets/misc/           Standalone convert-a-zarr scripts, plus the two
-#                          `tif_to_zarr` launchers, which still `cd` to
-#                          `src/assets/misc/` -- a path that stopped existing in
-#                          2023 when the tree was reorganized for pip. Each
-#                          script runs `input()` or hand-edited constants at
-#                          module level, so none can even be imported. The
-#                          in-app converters and "Import labels" supersede them.
-#   assets/scripts/img/    `mask.py` imports `colorama`, deliberately not a
-#                          runtime dependency, so the shipped copy cannot run at
-#                          all in an end-user install.
-#   assets/scripts/contours_from_labels/
-#                          Reached only by `dev/scripts/ng-make-contours`.
+#   dev/assets/misc/          Standalone convert-a-zarr scripts, plus the two
+#                             `tif_to_zarr` launchers, which still `cd` to
+#                             `src/assets/misc/` -- a path that stopped existing
+#                             in 2023 when the tree was reorganized for pip.
+#                             Each runs `input()` or hand-edited constants at
+#                             module level, so none can even be imported. The
+#                             in-app converters and "Import labels" supersede
+#                             them.
+#   dev/assets/scripts/img/   `mask.py` imports `colorama`, deliberately not a
+#                             runtime dependency.
+#   dev/assets/scripts/contours_from_labels/
+#                             Reached only by `dev/scripts/ng-make-contours`.
+#   dev/assets/checker/       ~1.8 MB of fixtures for the source test suite. The
+#                             installers already skipped these; the wheel
+#                             shipped them until the move.
 #
-# Not excluded, and deliberately so: `assets/scripts/projects` (imported by
-# `modules/gui/main/main_imports.py`), `assets/scripts/convert_zarr` and
-# `assets/scripts/create_ng_zarr` (both launched by `start_process.py`), and
+# Still inside the package, and deliberately so: `assets/scripts/projects`
+# (imported by `modules/gui/main/main_imports.py`), `assets/scripts/convert_zarr`
+# and `assets/scripts/create_ng_zarr` (both launched by `start_process.py`), and
 # `start_process.py` itself. `projects/grids.py` and `create_ng_zarr/ng_view.py`
 # are dev-only but live inside directories the app imports from, and a per-file
 # carve-out there buys two files at the cost of a fragile pattern.
 #
-# The excluded files stay in the repository, stay linted, and keep working from
-# a checkout. This removes them from the distribution, not from the project.
+# The moved files stay in the repository, stay linted, and keep working from a
+# checkout through the wrappers in `dev/scripts/` that `dev/link_shell.sh` puts
+# on `PATH`. This removes them from the distribution, not from the project.
 [tool.setuptools.packages.find]
 include = ["PyReconstruct*"]
-exclude = [
-    "PyReconstruct.assets.misc",
-    "PyReconstruct.assets.scripts.img",
-    "PyReconstruct.assets.scripts.contours_from_labels",
-]
 
-# The include glob is left broad so a newly added asset ships by default; the
-# retired directories are subtracted rather than the glob being replaced with an
-# explicit list, which is how assets get dropped by omission.
-# `packaging/PyReconstruct.spec` skips the same paths so the installers and the
-# wheel ship the same code.
+# The include glob is left broad so a newly added asset ships by default.
+# `packaging/PyReconstruct.spec` bundles the same tree, so the installers and
+# the wheel ship the same code.
 [tool.setuptools.package-data]
 PyReconstruct = ["assets/**/*", "assets/welcome_series/.welcome/*"]
-
-[tool.setuptools.exclude-package-data]
-PyReconstruct = [
-    "assets/misc/*",
-    "assets/scripts/img/*",
-    "assets/scripts/contours_from_labels/*",
-]
-"PyReconstruct.assets" = [
-    "misc/*",
-    "scripts/img/*",
-    "scripts/contours_from_labels/*",
-]
-"PyReconstruct.assets.scripts" = [
-    "img/*",
-    "contours_from_labels/*",
-]
 
 [tool.setuptools_scm]
 # Tag-derived version. Writes PyReconstruct/_version.py at build time so the

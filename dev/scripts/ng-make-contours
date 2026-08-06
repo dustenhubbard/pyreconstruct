@@ -1,2 +1,6 @@
 #!/usr/bin/env bash
-python -m PyReconstruct.assets.scripts.contours_from_labels.make_contours $@
+# make_contours.py lives outside the package (dev/assets/), so it is not
+# importable as PyReconstruct.assets.* and cannot be launched with `python -m`.
+# Resolve it from this wrapper's own location and run it as a plain script.
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+python "$here/../assets/scripts/contours_from_labels/make_contours.py" "$@"

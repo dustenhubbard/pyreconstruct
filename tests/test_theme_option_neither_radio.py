@@ -21,7 +21,7 @@ from PyReconstruct.modules.datatypes.series import Series
 from PyReconstruct.modules.gui.dialog.all_options import AllOptionsDialog
 
 FIXTURE = os.path.join(
-    os.path.dirname(__file__), "..", "PyReconstruct",
+    os.path.dirname(__file__), "..", "dev",
     "assets", "checker", "files", "shapes1.jser",
 )
 

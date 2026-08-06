@@ -767,7 +767,7 @@ def real_series(tmp_path_factory):
     from PyReconstruct.modules.datatypes.series import Series
 
     fixture = os.path.join(
-        os.path.dirname(__file__), "..", "PyReconstruct",
+        os.path.dirname(__file__), "..", "dev",
         "assets", "checker", "files", "shapes1.jser",
     )
     if not os.path.exists(fixture):

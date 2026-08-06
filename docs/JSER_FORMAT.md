@@ -1050,9 +1050,9 @@ paths described in [section 7](#7-versioning-and-migrations):
 
 | File | Exercises |
 | --- | --- |
-| `PyReconstruct/assets/checker/files/shapes1.jser` | `sections` plus `series` layout, but pre-profiles (`brightness`/`contrast` scalars), pre-flags, `current_trace` single palette, 9-element contour rows and 10-element palette rows with trailing history, and an `options` bag full of keys that no longer exist. |
-| `PyReconstruct/assets/checker/files/shapes2.jser` | The same legacy shape, with non-identity section transforms rather than identities. |
-| `PyReconstruct/assets/checker/files/class_series.jser` | The original **one-key-per-file** layout, with keys like `ZGBJYStudentv2.0` through `ZGBJYStudentv2.197` plus `ZGBJYStudentv2.ser`, and no `sections` or `series` key at all. |
+| `dev/assets/checker/files/shapes1.jser` | `sections` plus `series` layout, but pre-profiles (`brightness`/`contrast` scalars), pre-flags, `current_trace` single palette, 9-element contour rows and 10-element palette rows with trailing history, and an `options` bag full of keys that no longer exist. |
+| `dev/assets/checker/files/shapes2.jser` | The same legacy shape, with non-identity section transforms rather than identities. |
+| `dev/assets/checker/files/class_series.jser` | The original **one-key-per-file** layout, with keys like `ZGBJYStudentv2.0` through `ZGBJYStudentv2.197` plus `ZGBJYStudentv2.ser`, and no `sections` or `series` key at all. |
 
 A reader that opens all three and a writer that re-emits them in the shape described here
 covers most of the format's history.

@@ -36,7 +36,7 @@ from PyReconstruct.modules.datatypes import Transform
 from test_corr_align_propagate import _prop_stub, _patch_corr, _corr_stub
 
 FIXTURE = os.path.join(
-    os.path.dirname(__file__), "..", "PyReconstruct", "assets",
+    os.path.dirname(__file__), "..", "dev", "assets",
     "checker", "files", "shapes1.jser",
 )
 

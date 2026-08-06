@@ -87,7 +87,7 @@ def pytest_terminal_summary(terminalreporter):
 # round-trips; small enough to copy per test.
 SERIES_FIXTURE = (
     Path(__file__).resolve().parents[1]
-    / "PyReconstruct" / "assets" / "checker" / "files" / "class_series.jser"
+    / "dev" / "assets" / "checker" / "files" / "class_series.jser"
 )
 
 # The data-list modules that import `notify` (and, bar `object`, `QuickDialog`)

@@ -198,7 +198,7 @@ def test_openSeries_prompts_when_auto_recovery_fails(monkeypatch):
 # End-to-end against the shipped fixture: Section.src_fp is the real thing.
 # --------------------------------------------------------------------------
 FIXTURE = os.path.join(
-    os.path.dirname(__file__), "..", "PyReconstruct", "assets",
+    os.path.dirname(__file__), "..", "dev", "assets",
     "checker", "files", "shapes1.jser",
 )
 

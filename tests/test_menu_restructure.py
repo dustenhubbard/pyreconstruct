@@ -359,7 +359,7 @@ def test_unhide_all_stays_a_plain_action():
 # PR4: the checkbox mechanism -- real QActions via newAction, resync both ways
 # --------------------------------------------------------------------------- #
 FIXTURE = os.path.join(
-    os.path.dirname(__file__), "..", "PyReconstruct",
+    os.path.dirname(__file__), "..", "dev",
     "assets", "checker", "files", "shapes1.jser",
 )
 

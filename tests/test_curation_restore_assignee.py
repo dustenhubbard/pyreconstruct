@@ -31,7 +31,7 @@ from PyReconstruct.modules.datatypes.log import Log
 from PyReconstruct.modules.datatypes.series import Series
 
 FIXTURE = os.path.join(
-    os.path.dirname(__file__), "..", "PyReconstruct", "assets",
+    os.path.dirname(__file__), "..", "dev", "assets",
     "checker", "files", "shapes1.jser",
 )
 

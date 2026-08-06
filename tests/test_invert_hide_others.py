@@ -66,7 +66,7 @@ from PyReconstruct.modules.gui.main.context_menu_list import (
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIXTURE = os.path.join(
-    REPO_ROOT, "PyReconstruct", "assets", "checker", "files", "shapes1.jser"
+    REPO_ROOT, "dev", "assets", "checker", "files", "shapes1.jser"
 )
 
 

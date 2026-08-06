@@ -72,7 +72,7 @@ from PyReconstruct.modules.backend.settings_store import DictSettingsStore
 from PyReconstruct.modules.datatypes.series import Series
 
 FIXTURE = os.path.join(
-    os.path.dirname(__file__), "..", "PyReconstruct", "assets",
+    os.path.dirname(__file__), "..", "dev", "assets",
     "checker", "files", "shapes1.jser",
 )
 

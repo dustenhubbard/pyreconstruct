@@ -52,7 +52,7 @@ from PyReconstruct.modules.backend.volume.generate_volumes import generateVolume
 from PyReconstruct.modules.gui.popup import custom_plotter as cp
 
 FIXTURE_DIR = os.path.join(
-    os.path.dirname(__file__), "..", "PyReconstruct", "assets", "checker", "files"
+    os.path.dirname(__file__), "..", "dev", "assets", "checker", "files"
 )
 
 
