@@ -138,6 +138,15 @@ Then, once the run finishes:
    `WHATS_NEW.md`; if that section is missing, the notes body is empty apart from
    the compare link.
 3. Publish the draft. Assets are already built, so it goes live instantly.
+4. Update the pinned download links in `README.md`, `docs/index.md` and
+   `docs/USER_GUIDE.md` (section 1) to the new tag and asset names, and commit
+   that. Each of the three names the version in prose and carries four
+   per-platform links of the form
+   `.../releases/download/v1.21.0/PyReconstruct-1.21.0-<platform>`, so the tag in
+   the path, the version inside the filename, and the version in the surrounding
+   sentence all move together.
+   `grep -rn 'releases/download' README.md docs/index.md docs/USER_GUIDE.md`
+   should return twelve links, all naming the new version and none the old one.
 
 ### Pruning is skipped for a staged draft
 
