@@ -775,6 +775,121 @@ def test_a_rename_moves_the_row_between_contour_indices():
     assert store.getAllModifiedNames() >= {"axon", "dendrite01"}
 
 
+def test_the_two_contour_enumerators_differ_only_in_order():
+    """`contourNames` sorts, `contourNamesInInsertionOrder` does not, and they
+    enumerate the same names.
+
+    The store-only half of the 2026-08-06 ordering decision; the object-model
+    half is in `test_section_columnar_dual_write.py`. Names chosen so that
+    append order and sorted order share no position.
+    """
+    store = SectionColumns(1)
+    for name in ("zeta", "mu", "alpha"):
+        store.appendRow(name=name, points=[(0.0, 0.0), (1.0, 1.0)], color=[1, 2, 3])
+
+    assert store.contourNamesInInsertionOrder() == ["zeta", "mu", "alpha"]
+    assert store.contourNames() == ["alpha", "mu", "zeta"]
+    assert sorted(store.contourNamesInInsertionOrder(), key=str) == \
+        store.contourNames()
+
+
+def test_insertion_order_tracks_removal_rename_and_normalization():
+    """The three mutation paths that touch the index's keys.
+
+    Each one is a way the key order could go wrong, and each has an answer the
+    object model also gives:
+
+      * emptying a contour drops it from BOTH enumerators while keeping its
+        position for a later refill, because `removeRow` leaves the key;
+      * a rename into a name the store has never held appends at the tail,
+        which is what `setAttribute`'s `setdefault` does;
+      * a name is enumerated in its NORMALIZED form, because that is the form
+        the index is keyed on.
+    """
+    store = SectionColumns(1)
+    rows = {}
+    for name in ("zeta", "mu"):
+        rows[name] = store.appendRow(
+            name=name, points=[(0.0, 0.0), (1.0, 1.0)], color=[1, 2, 3]
+        )
+
+    ## Emptied, then refilled: back in its original position, not at the tail.
+    store.removeRow(rows["zeta"])
+    assert store.contourNamesInInsertionOrder() == ["mu"]
+    store.appendRow(name="zeta", points=[(0.0, 0.0), (1.0, 1.0)], color=[1, 2, 3])
+    assert store.contourNamesInInsertionOrder() == ["zeta", "mu"]
+
+    ## Renamed into a name the store has never held: the new name is last.
+    store.setAttribute(rows["mu"], "name", "aardvark")
+    assert store.contourNamesInInsertionOrder() == ["zeta", "aardvark"]
+
+    ## Normalized, the way `appendRow` keys the index.
+    store.appendRow(name="two words,and a comma",
+                    points=[(0.0, 0.0), (1.0, 1.0)], color=[1, 2, 3])
+    assert store.contourNamesInInsertionOrder()[-1] == \
+        Trace("two words,and a comma", (1, 2, 3)).name
+
+
+def test_fromSection_takes_the_sections_contour_order_not_the_sorted_one():
+    """The seeding, at the layer that does it, with a stand-in section.
+
+    `fromSection` is duck-typed on `.n` and `.contours`, so this drives it with
+    an out-of-order dict directly rather than through a `Section` -- which
+    makes the property visible without a session's worth of setup, and which is
+    how a future caller building a store from anything section-shaped would hit
+    it. The append walk is still sorted, so the ROW numbers are the sorted
+    walk's and the KEY order is the dict's.
+    """
+    class _StandIn():
+        n = 7
+        contours = {
+            "zeta": [Trace("zeta", (1, 2, 3))],
+            "mu": [Trace("mu", (1, 2, 3))],
+            "alpha": [Trace("alpha", (1, 2, 3))],
+        }
+
+    for traces in _StandIn.contours.values():
+        for trace in traces:
+            trace.points = [(0.0, 0.0), (1.0, 1.0)]
+
+    store = SectionColumns.fromSection(_StandIn())
+
+    assert store.contourNamesInInsertionOrder() == ["zeta", "mu", "alpha"]
+    assert store.contourNames() == ["alpha", "mu", "zeta"]
+    ## Rows came out of the SORTED walk, which is what the rebuild's row
+    ## correlation depends on and what the seeding must not disturb.
+    assert store.rowsForContour("alpha") == [0]
+    assert store.rowsForContour("mu") == [1]
+    assert store.rowsForContour("zeta") == [2]
+
+
+def test_a_contour_the_section_holds_empty_is_seeded_but_not_enumerated():
+    """The one state seeding creates that a build could not create before.
+
+    `Section.removeTrace` leaves an empty `Contour` under its key, so a section
+    handed to `fromSection` can carry a name with no traces. Seeding gives it
+    an index key; both enumerators filter on rows, so neither reports it, and
+    every other index reader treats an empty key and a missing one alike.
+    """
+    class _StandIn():
+        n = 7
+        contours = {"emptied": [], "axon": [Trace("axon", (1, 2, 3))]}
+
+    _StandIn.contours["axon"][0].points = [(0.0, 0.0), (1.0, 1.0)]
+
+    store = SectionColumns.fromSection(_StandIn())
+
+    assert store.contourNames() == ["axon"]
+    assert store.contourNamesInInsertionOrder() == ["axon"]
+    assert store.rowsForContour("emptied") == []
+    assert len(store) == 1
+
+    ## And filling it later puts it where the section had it, ahead of `axon`.
+    store.appendRow(name="emptied", points=[(0.0, 0.0), (1.0, 1.0)],
+                    color=[1, 2, 3])
+    assert store.contourNamesInInsertionOrder() == ["emptied", "axon"]
+
+
 def test_a_copied_row_does_not_share_coordinate_memory_with_its_source():
     """The aliasing class the coordinate coercion exists to close.
 

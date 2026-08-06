@@ -3774,10 +3774,12 @@ def test_a_normal_consumer_reaches_a_live_store_on_every_section(real_series):
     agrees with its contours. This is the precondition the first consumer flip
     (`svg_conversion.py`) found missing, and the whole reason D2 was reopened.
 
-    Deliberately NOT flipping a consumer here -- that is separate work, and it
-    is separately blocked on `SectionColumns.contourNames()` being sorted-only
-    where `Section.contours` is insertion-ordered, which this change does not
-    address and does not claim to.
+    Deliberately NOT flipping a consumer here -- that is separate work. This
+    docstring used to name a second blocker on it as live: `contourNames()`
+    being sorted-only where `Section.contours` is insertion-ordered. That one
+    was answered on 2026-08-06 by adding `contourNamesInInsertionOrder()`
+    beside it, and the tests below this one pin both orders. The flip itself is
+    still separate work.
     """
     from PyReconstruct.modules.datatypes.columnar_store import ContourView
 
@@ -3806,28 +3808,152 @@ def test_a_normal_consumer_reaches_a_live_store_on_every_section(real_series):
     assert checked > 0, "the fixture series produced no trace to read"
 
 
-def test_the_store_ordering_mismatch_is_still_open_and_still_reproduces(
-    real_section
-):
-    """The known, deliberately unfixed difference, pinned so it stays visible.
+def test_the_store_answers_both_contour_orders_at_once(real_section):
+    """The ordering question, answered. Replaces the test that pinned it open.
 
-    `SectionColumns.contourNames()` is sorted; `Section.contours` is insertion
-    ordered. The first attempted consumer flip found this and it is his call,
-    not this change's -- so it is recorded as a live difference rather than
-    quietly worked around. If somebody fixes it, this test fails and says why.
+    That test (`test_the_store_ordering_mismatch_is_still_open_and_still_
+    reproduces`) asserted `contourNames()` and `list(section.contours)` differ,
+    and it was right to: the store had one enumerator and it was sorted. The
+    2026-08-06 decision was to add a second rather than change the first, so
+    the property that replaces it is that **both** hold simultaneously --
+    `contourNames()` still sorted, `contourNamesInInsertionOrder()` matching
+    the object model. Asserting only that "the mismatch is fixed" would pass
+    just as well if the sorted enumerator had quietly been made insertion
+    ordered, which is the change the decision rejected.
+
+    Same probe the old test used: one object whose name sorts FIRST, added
+    LAST, so sorted order and insertion order disagree on it maximally.
     """
     real_section.addTrace(_aTrace(real_section, name="aaa_added_last"))
 
     object_order = list(real_section.contours)
-    store_order = real_section._columns.contourNames()
+    sorted_order = real_section._columns.contourNames()
+    insertion_order = real_section._columns.contourNamesInInsertionOrder()
 
+    ## The probe really does separate the two orders.
     assert object_order[-1] == "aaa_added_last"
-    assert store_order[0] == "aaa_added_last"
-    assert object_order != store_order, (
-        "the store's contour ordering now matches the object model's, so the "
-        "open ordering question was answered somewhere -- update the rewiring "
-        "spec and delete this test"
-    )
+    assert sorted_order[0] == "aaa_added_last"
+    assert sorted_order != insertion_order
+
+    ## The OLD method is unchanged: still sorted, still not the object model's.
+    assert sorted_order == sorted(sorted_order, key=str)
+    assert sorted_order != object_order
+
+    ## The NEW method is the object model's order exactly.
+    assert insertion_order == object_order
+
+    ## And the two enumerate the same contours, differing only in order.
+    assert sorted(insertion_order, key=str) == sorted_order
+
+
+def test_insertion_order_reflects_real_history_and_not_an_accident(real_section):
+    """Add, remove, add again -- the order has to follow what actually happened.
+
+    An enumerator that was merely stable would pass a check on an unmodified
+    section, so the sequence here is chosen to make a wrong answer visible:
+
+      * `zzz_first` is added first and sorts LAST, so an accidentally-sorted
+        answer puts it in the wrong place;
+      * `mmm_second` is added after it and sorts BETWEEN the two;
+      * `zzz_first` is then EMPTIED and refilled, which on the object model
+        keeps its original position (`Contour.remove` leaves the key behind)
+        rather than moving it to the tail -- so an implementation that dropped
+        and recreated the key would answer `mmm_second, zzz_first` and the
+        object model would answer `zzz_first, mmm_second`.
+    """
+    baseline = list(real_section.contours)
+
+    first = _aTrace(real_section, name="zzz_first")
+    real_section.addTrace(first)
+    real_section.addTrace(_aTrace(real_section, name="mmm_second"))
+
+    store = real_section._columns
+    assert store.contourNamesInInsertionOrder() == baseline + [
+        "zzz_first", "mmm_second"
+    ]
+
+    ## Emptied: gone from BOTH enumerators, while the object model keeps an
+    ## empty contour under the key. That divergence is deliberate and is what
+    ## makes the refill below a real test of position rather than of order.
+    real_section.removeTrace(first)
+    assert real_section.contours["zzz_first"].isEmpty()
+    assert "zzz_first" not in store.contourNamesInInsertionOrder()
+    assert "zzz_first" not in store.contourNames()
+
+    ## Refilled: back in its ORIGINAL position, not at the tail.
+    real_section.addTrace(_aTrace(real_section, name="zzz_first"))
+    assert store.contourNamesInInsertionOrder() == baseline + [
+        "zzz_first", "mmm_second"
+    ]
+    assert store.contourNamesInInsertionOrder() == [
+        name for name in real_section.contours
+        if not real_section.contours[name].isEmpty()
+    ]
+
+
+def test_insertion_order_survives_a_rebuild_and_a_save(real_section):
+    """The path that used to erase it, and the reason the fix is in
+    `fromSection`.
+
+    A rebuild re-derives the store from the object model, and since D11 every
+    `save()` rebuilds -- so an insertion order that were only correct at first
+    construction would be correct for about as long as it took the user to hit
+    save. `fromSection` appends rows in sorted order and seeds the index's keys
+    in the section's order for exactly this.
+
+    Checked after the public repair and after a real `save()`, and the row
+    numbering is checked to be untouched by the seeding, because the rebuild
+    correlates every `Trace` to a row through the sorted append walk.
+    """
+    real_section.addTrace(_aTrace(real_section, name="aaa_added_last"))
+    expected = list(real_section.contours)
+
+    real_section.resyncColumnarStore()
+    assert real_section._columns.contourNamesInInsertionOrder() == expected
+    assert real_section._columns.contourNames() == sorted(expected, key=str)
+
+    real_section.save()
+    assert real_section._columns.contourNamesInInsertionOrder() == expected
+    assert real_section._columns.contourNames() == sorted(expected, key=str)
+
+    ## The seeding fixed key order and moved no row NUMBER: a rebuild numbers
+    ## rows 0..n-1 down the SORTED walk, contour by contour, and still does.
+    ## (Not a comparison against the pre-rebuild numbering, which a rebuild has
+    ## always been free to change and does: `aaa_added_last` was appended last
+    ## and comes back first.) This is the numbering
+    ## `Section._rebuildColumnarStore` correlates every `Trace` to a row
+    ## through, so it is the half the seeding had to leave alone.
+    store = real_section._columns
+    walk = []
+    for name in sorted(real_section.contours, key=str):
+        walk.extend(store.rowsForContour(name))
+    assert walk == list(range(len(walk)))
+    assert len(walk) == len(real_section.tracesAsList())
+
+
+def test_every_section_of_the_real_series_agrees_on_insertion_order(real_series):
+    """Both enumerators against the object model on every real section.
+
+    The freshly-loaded case, where the two orders happen to agree because
+    `Section.updateJSON` canonicalizes a file's contours to sorted order on the
+    way in. Worth asserting anyway: it is the state every session starts from,
+    and it is what makes `test_the_store_answers_both_contour_orders_at_once`'s
+    single added object the whole of the divergence rather than one of many.
+    """
+    checked = 0
+    for snum, section in real_series.enumerateSections(show_progress=False):
+        store = section._columns
+        populated = [
+            name for name in section.contours
+            if not section.contours[name].isEmpty()
+        ]
+        assert store.contourNamesInInsertionOrder() == populated, (
+            f"section {snum} disagrees with its store on contour order"
+        )
+        assert store.contourNames() == sorted(populated, key=str)
+        checked += len(populated)
+
+    assert checked > 0, "the fixture series produced no contour to check"
 
 
 # =============================================================================
