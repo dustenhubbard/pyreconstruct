@@ -853,12 +853,19 @@ class SectionColumns():
         ## `len(self._names)`, which the assertion below then confirms is the
         ## row the backing actually produced.
         ##
-        ## The tradeoff, stated rather than left implicit: on the clash-and-
-        ## reissue path `_resolveID` appends to `_foreign_id_reissues` and
-        ## prints, so should a LATER line here raise, that record would describe
-        ## a row that was never appended. That is strictly narrower than what it
-        ## replaces -- a spurious entry in a report nobody reads yet, against
-        ## silent id corruption in every row of the store.
+        ## The tradeoff, stated rather than left implicit, and it has two
+        ## halves. On the clash-and-reissue path `adopt()` appends to the
+        ## issuer's `collisions` and `_resolveID` then appends to
+        ## `_foreign_id_reissues` and prints, so should a LATER line here raise,
+        ## those records would describe a row that was never appended. On the
+        ## SUCCESS path, which reports nothing at all, `adopt()` has already
+        ## added the id to the issuer's `taken` -- so a later raise here strands
+        ## a registration no row holds, and an identical retry of the same
+        ## append then clashes against its own failed attempt, loses the foreign
+        ## id to a reissue, and warns about a trace that does not exist. Both
+        ## are strictly narrower than what this replaces -- a stranded
+        ## registration and a spurious entry, on a parameter with no production
+        ## caller yet, against silent id corruption in every row of the store.
         new_id = self._resolveID(trace_id, foreign_id, name, len(self._names))
         row = self._coordinates.append(points)
         assert row == len(self._names), (
