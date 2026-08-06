@@ -30,6 +30,7 @@ from PyReconstruct.modules.constants import (
     fast_dumps,
     dumps_jser,
     canon_keys_inplace,
+    JSER_SCHEMA_VERSION,
     SERIES_KEYS,
     default_traces,
 )
@@ -1128,6 +1129,34 @@ class Series():
         if "editors" not in series_data:
             series_data["editors"] = []
 
+        # schema_version: TOLERATED WHEN ABSENT, AND ABSENT IS THE COMMON CASE.
+        #
+        # Stamped rather than read, and the difference matters. Everything above
+        # this line IS the migration to the shape this build understands, so the
+        # value written here is a true statement about the dict that leaves this
+        # function whatever the file claimed -- including a file that claimed
+        # nothing, which is every file written before this key existed and,
+        # importantly, every file whose last writer was an older build. An older
+        # build rebuilds the series object from its own model on save
+        # (`docs/JSER_FORMAT.md` divergence 1) and its `Series.getDict` has never
+        # heard of this key, so it deletes the field and leaves every row it
+        # wrote untouched. Measured against the shipped v1.21.0 reader and pinned
+        # in `tests/test_jser_schema_version.py`.
+        #
+        # The consequence is the reason nothing below reads it: absence is not
+        # evidence of an old document, so ABSENCE CANNOT BE DISPATCHED ON, and
+        # neither can presence -- row shape is per row and one document may
+        # legitimately hold both shapes. Per-row shape detection stays
+        # authoritative. See `JSER_SCHEMA_VERSION` for the whole argument.
+        #
+        # Not added to `getEmptyDict` on purpose, which would have got the
+        # absent case for free through the back-fill loop at the top: the
+        # back-fill preserves a value that is already there, so a file carrying
+        # some other build's number would keep it in memory and this build's
+        # in-memory document would then be labelled with a claim that is not
+        # about it.
+        series_data["schema_version"] = JSER_SCHEMA_VERSION
+
         # Canonical key order, last, once every migration above has finished
         # adding and deleting keys. Both this dict and its options bag back-fill
         # missing keys at the tail, so provenance leaked into the byte layout.
@@ -1139,12 +1168,39 @@ class Series():
 
     def getDict(self) -> dict:
         """Convert series object into a dictionary.
-        
+
+        Emits `schema_version` as the first key, and **that field is a hint for
+        whoever reads the file next, never a dispatch key for a reader.** Two
+        independent reasons, both of which a caller has to know before trusting
+        it (the full argument is on `JSER_SCHEMA_VERSION`):
+
+        - **An older build deletes it.** The series object is rebuilt from the
+          in-memory model on every save -- `docs/JSER_FORMAT.md` divergence 1,
+          "sections pass through opaquely; the series object does not" -- and no
+          build before this one writes the key. So a build older than this one
+          opens a file carrying `schema_version`, ignores it, and silently drops
+          it on the first save **while leaving every row it wrote exactly as it
+          found them**. Measured against the shipped v1.21.0 reader and pinned as
+          a test expectation in `tests/test_jser_schema_version.py`. A file with
+          no `schema_version` therefore says nothing about its age or its shape.
+        - **It could not describe the rows anyway.** Row shape is per row: every
+          shipped reader back to v1.19.0 accepts a positional trace row and a
+          keyed one in the same contour, so one document can hold both. Per-row
+          shape detection stays authoritative.
+
+        What it is good for is the part that survives: an external consumer -- a
+        converter, an archive checker, a script reading `.jser` without
+        PyReconstruct -- gets a positive statement of the schema the last writer
+        intended, when there is one. Present means "written by a build that
+        stamps this". Absent means "no claim", not "old".
+
             Returns:
                 (dict): all of the compiled section data
         """
         d = {}
-        
+
+        d["schema_version"] = JSER_SCHEMA_VERSION
+
         d["current_section"] = self.current_section
         d["src_dir"] = self.src_dir
         d["window"] = self.window

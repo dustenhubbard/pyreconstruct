@@ -168,7 +168,9 @@ def test_series_updatejson_emits_the_writer_key_order():
     Series.updateJSON(sd)
     known = [k for k in sd if k in SERIES_KEYS]
     assert known == [k for k in SERIES_KEYS if k in sd]
-    assert known.index("window") == 2
+    # 3, not 2: `schema_version` sorts first, ahead of `current_section` and
+    # `src_dir`. See tests/test_jser_schema_version.py for what that key is.
+    assert known.index("window") == 3
 
 
 def test_series_updatejson_canonicalises_the_options_bag():

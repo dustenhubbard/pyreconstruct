@@ -64,6 +64,7 @@ from .jser_format import (
     dumps_jser,
     canon_keys,
     canon_keys_inplace,
+    JSER_SCHEMA_VERSION,
     SECTION_KEYS,
     SERIES_KEYS,
     TOP_LEVEL_KEYS

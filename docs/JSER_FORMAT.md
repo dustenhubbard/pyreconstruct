@@ -8,9 +8,12 @@ PyReconstruct.
 
 Two things to know before reading further:
 
-- **There is no version field.** Nothing in a `.jser` states which revision of the
-  format it is. Readers infer the shape from which keys are present. See
-  [Versioning and migrations](#7-versioning-and-migrations).
+- **There is a version field and you must not dispatch on it.** A current build writes
+  `schema_version` into the series object, but a build older than that one deletes the
+  key on save while keeping the rows it wrote, so its absence proves nothing about a
+  file. Readers still infer the shape from which keys are present, and row shape is still
+  decided per row. Read [Versioning and migrations](#7-versioning-and-migrations) before
+  using the field for anything.
 - **The reader and the writer do not agree on everything.** A `.jser` written by
   PyReconstruct is not always what PyReconstruct would produce if it re-derived the
   file from its in-memory model. The known divergences are collected in
@@ -608,12 +611,13 @@ order, not sorted by section, so a ztrace may revisit or skip sections.
 
 ## 5. The series object
 
-Eighteen keys, listed here in the order the writer emits them. Unlike a section, the
+Nineteen keys, listed here in the order the writer emits them. Unlike a section, the
 series object is **always rebuilt from the in-memory model on save**, so an unrecognized
 key does not survive a save.
 
 | Key | JSON type | Meaning |
 | --- | --- | --- |
+| `schema_version` | integer | Optional. The document schema the last writer intended. **A hint, never a dispatch key**: a build that predates it deletes it on save while keeping the rows it wrote, so absence means "no claim", not "old". See [7](#7-versioning-and-migrations). |
 | `current_section` | integer | The section number the user was last viewing. UI state only. Must be a live section number. |
 | `src_dir` | string | Directory containing the section images. See [5.1](#51-src_dir). |
 | `window` | array of 4 numbers | `[x, y, w, h]` of the field view in field µm. `w` and `h` are extents, not corners, and must be non-zero. Default `[0, 0, 1, 1]`. |
@@ -836,12 +840,44 @@ the other direction.
 
 ## 7. Versioning and migrations
 
-### There is no version field
+### There is a version field, and it cannot be dispatched on
 
-A `.jser` carries no `schema_version`, no format revision, and no writer identification.
-Readers detect the format by probing for keys. Every historical shape must therefore
-remain readable forever, and there is no way for a file to declare that it needs a newer
-reader than the one opening it.
+A `.jser` written by a current build carries `schema_version` in [the series
+object](#5-the-series-object), first key, currently the integer `1`. It is written by
+`Series.getDict` and tolerated-when-absent by `Series.updateJSON`. **It is a hint for
+external consumers and it is never a reader's dispatch key.** Both halves are load
+bearing, and the second one is not a preference. The field cannot support dispatch, for
+two independent reasons:
+
+1. **An older build deletes it, silently, and keeps the rows it wrote.** By
+   [divergence 1](#9-reader-and-writer-divergences) the series object is rebuilt from the
+   in-memory model on every save, and no build before this one emits the key. Measured
+   against a `git archive` of the shipped `v1.21.0` tag: it opens a file carrying
+   `schema_version`, reads every trace correctly, and its save drops the key while
+   leaving every row byte-for-byte as it found it. So **a file with no `schema_version`
+   is not an old file**. It is the ordinary state of any file that has been near an
+   older build, and a reader treating absence as "legacy shape" would be wrong about a
+   file written minutes ago.
+2. **It could not describe the rows anyway.** Row shape is decided per row: every shipped
+   reader back to `v1.19.0` accepts a positional trace row and [a keyed
+   one](#41-trace-rows) in the same contour, so one document may legitimately hold both.
+   A single document-level integer has nothing true to say about that mixture.
+
+**Per-row shape detection stays authoritative.** Anything that needs to know what a row
+is must look at the row. Everything below in this section (probing for keys, migrating
+in place, keeping every historical shape readable forever) is unchanged by the field's
+existence and remains how the reader actually works. There is still no way for a file to
+declare that it needs a newer reader than the one opening it.
+
+What the field is good for is what survives its own unreliability: a third-party
+consumer (a converter, an archive checker, a script reading `.jser` without
+PyReconstruct) gets a positive statement of which schema the last writer intended, when
+there is one. Present means "written by a build that stamps this". Absent means "no
+claim".
+
+Version `1` is "the first versioned `.jser` document". It asserts no row shape, per
+reason 2. Bump it when the document schema changes in a way an external consumer would
+want to branch on, and record what changed here.
 
 ### How migration works today
 
@@ -882,6 +918,7 @@ run.
 | `current_brightness_contrast_profile` missing | Sets it to `"default"`. |
 | `obj_attrs[name]["3D_modes"]` present | Splits it into `3D_mode` and `3D_opacity` and deletes the pair form. |
 | `editors` missing | Adds an empty array. |
+| `schema_version` missing, or carrying any other value | Sets it to this build's version. The migration above *is* the conversion to this build's shape, so what is stamped is true of the dict that leaves it; a foreign claim is restated rather than carried forward. Nothing branches on either the old value or the new one. |
 
 **Section migrations**
 
@@ -902,14 +939,19 @@ run.
 Several of these are unreachable in combination with each other, and none of them is
 covered by a version check, so a reader cannot distinguish "this file predates the
 palette split" from "this file was hand-edited and is missing `palette_index`". They are
-the same code path.
+the same code path. `schema_version` does not change this and was not built to: it is
+absent from every file these migrations exist to handle, and absent again from any file
+an older build has saved since.
 
 ### Planned direction
 
 The modernization plan treats schema stabilization as a prerequisite workstream rather
 than a byproduct. The intended shape is:
 
-- Add a `schema_version` field at the root.
+- ~~Add a `schema_version` field at the root.~~ **Landed**, at the root of the series
+  object, with the limits recorded above. It buys external consumers a statement of
+  intent and buys the reader nothing, which is the honest accounting: a reader still
+  cannot use it, because an older build deletes it and because row shape is per row.
 - Freeze a canonical v1, with **keyed objects in place of the positional trace and flag
   rows** documented in [section 4](#4-positional-rows).
 - Put parse and migrate in exactly one owner: read any legacy `.jser`, emit canonical v1.
@@ -988,6 +1030,7 @@ substitute real files in `src_dir` to see an image behind the traces.
     }
   ],
   "series": {
+    "schema_version": 1,
     "current_section": 1,
     "src_dir": "",
     "window": [0.5, 0.5, 2.5, 2.0],
@@ -1030,6 +1073,9 @@ Notes on why this particular document round-trips unchanged:
 
 - Key order matches the writer's emission order at every level, including inside
   `options`.
+- `schema_version` leads the series object, because that is where the writer puts it.
+  **Omitting it is equally valid**, because the reader supplies it and a build older
+  than it removes it, so a generator that leaves it out has not produced a lesser file.
 - `align_locked` is `true`, because the reader would force it to `true` anyway.
 - `log_set` is present and empty, because the writer emits it in exactly that case.
 - `tags` and `editors` are empty. Non-empty values are fine and are written sorted; see
