@@ -661,7 +661,7 @@ class MainWindow(QMainWindow):
         zarr_converter = Path(assets_dir) / "scripts/start_process.py"
         launch_prefix = script_launch_prefix()
 
-        cores = determine_cpus(  # determine number of cores to use
+        cores = zarr_worker_count(  # workers to launch, capped at the sweet spot
             self.series.getOption("cpu_max")
         )
         

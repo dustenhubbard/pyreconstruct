@@ -90,7 +90,16 @@ MIN_DOWNSAMPLED_PIXELS = 1024**2
 # Cap concurrency: each worker holds a full-resolution tile in memory, and a
 # large worker count multiplies filesystem/metadata pressure for little gain
 # (the work is I/O bound). Bounded well below typical core counts on purpose.
-MAX_WORKERS = 8
+#
+# 5, not 8: past this the extra workers are a pessimization, not a plateau.
+# Measured 2026-07-28 on a 10-core M4 (synthetic 8192^2 grayscale TIFFs), 8
+# workers ran 8% SLOWER than 5 while burning 19% more CPU (14.16 vs 11.93
+# CPU-seconds). Callers inside the GUI clamp to the same number before they get
+# here, via `modules.backend.func.utils.MAX_ZARR_WORKERS`, so the worker count
+# the Settings slider shows is the one that starts; this clamp is what keeps the
+# guarantee when the script is run directly. The two constants must agree --
+# tests/test_zarr_worker_cpu_bound.py asserts it.
+MAX_WORKERS = 5
 
 # Require a little more free space than estimated before starting.
 DISK_SAFETY_FACTOR = 1.15
