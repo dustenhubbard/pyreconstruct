@@ -3422,7 +3422,7 @@ def test_the_drift_report_is_capped_rather_than_flooding_the_log(
     The report lands in the per-user log file through the stdout/stderr tee,
     and that file rotates at 2 MB. An alignment applied from outside this class
     drifts every trace on the section -- 1,291 of them on the busiest section
-    of the production corpus on record -- so an uncapped report would push out
+    of the production dataset on record -- so an uncapped report would push out
     the history somebody opened the log to read.
     """
     from PyReconstruct.modules.datatypes.section import DRIFT_REPORT_LIMIT

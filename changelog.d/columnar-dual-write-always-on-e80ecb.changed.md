@@ -33,7 +33,7 @@
   figure applies to passes that hold everything at once such as 3D generation
   and quantification.
 
-  These come from a synthetic autosegmentation corpus whose busiest section
+  These come from a synthetic autosegmentation dataset whose busiest section
   carries 1,291 traces. A hand-traced series is smaller, so read them as close
   to a worst case rather than as typical.
 

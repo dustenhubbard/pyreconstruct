@@ -883,7 +883,7 @@ class Series():
             # dense tracing (600 edits, the same workload as the undo-stack
             # measurement) adds 25.0-46.3 KB, the range spanning full LogSet
             # coalescing to none. Per hour that is ~1/85th of what the undo
-            # stacks take in memory over the same hour, and the corpus's own
+            # stacks take in memory over the same hour, and the dataset's own
             # four months of real work by a real user amount to 60,379 B -- one
             # eighth of one percent of the 51 MB file.
             #

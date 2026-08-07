@@ -236,7 +236,7 @@ def test_a_set_of_taken_ids_is_tested_in_place_and_not_copied():
     `deriveForSection` hands the series-wide index to `deriveTraceID` once per
     trace, so an unconditional `set(taken)` copies n ids n times and migrating a
     series costs O(n**2) (measured: 0.888 s at 16k traces, ~91 s projected at
-    the 161,767-trace corpus on record).
+    the 161,767-trace dataset on record).
 
     A subclass of `set` cannot be copied without losing its identity, so
     counting `__contains__` calls says exactly which object was probed. Restore

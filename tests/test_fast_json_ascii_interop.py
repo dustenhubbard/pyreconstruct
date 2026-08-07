@@ -80,11 +80,11 @@ def test_mixed_script_roundtrips_and_is_ascii(backend):
 
 
 # --------------------------------------------------------------------------- #
-# 2. Equivalence with stdlib ensure_ascii=True over a nasty corpus.
+# 2. Equivalence with stdlib ensure_ascii=True over a nasty dataset.
 #    Parsed results (not byte layout) must be equal -- fast_dumps is compact,
 #    json.dumps is not, but json.loads of each must agree.
 # --------------------------------------------------------------------------- #
-NASTY_CORPUS = [
+NASTY_DATASET = [
     {},
     {"empty_str": "", "empty_dict": {}, "empty_list": []},
     {"ascii_only": "plain old ascii 123 !@#"},
@@ -105,9 +105,9 @@ NASTY_CORPUS = [
 
 
 @pytest.mark.parametrize("backend", BACKENDS, ids=lambda b: BACKEND_IDS[b])
-@pytest.mark.parametrize("i", range(len(NASTY_CORPUS)))
+@pytest.mark.parametrize("i", range(len(NASTY_DATASET)))
 def test_equivalent_to_stdlib_ensure_ascii(i, backend):
-    obj = NASTY_CORPUS[i]
+    obj = NASTY_DATASET[i]
     oracle = json.dumps(obj, ensure_ascii=True)   # independent reference
     with force_backend(backend):
         raw = fast_dumps(obj)
