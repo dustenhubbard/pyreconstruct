@@ -21,15 +21,15 @@ large autosegmented series with hundreds of thousands of traces.
 
 ## Install
 
-Download a one-click build for the current stable release, **v1.21.0** - no
+Download a one-click build for the current stable release, **v1.21.1** - no
 Python required.
 
 | Platform | Download |
 | -------- | -------- |
-| Windows (x86_64) | [PyReconstruct-1.21.0-Windows-x86_64-Setup.exe](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.21.0/PyReconstruct-1.21.0-Windows-x86_64-Setup.exe) |
-| macOS (Apple Silicon) | [PyReconstruct-1.21.0-macOS-arm64.dmg](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.21.0/PyReconstruct-1.21.0-macOS-arm64.dmg) |
-| macOS (Intel) | [PyReconstruct-1.21.0-macOS-x86_64.dmg](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.21.0/PyReconstruct-1.21.0-macOS-x86_64.dmg) |
-| Linux (x86_64) | [PyReconstruct-1.21.0-Linux-installer.tar.gz](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.21.0/PyReconstruct-1.21.0-Linux-installer.tar.gz) |
+| Windows (x86_64) | [PyReconstruct-1.21.1-Windows-x86_64-Setup.exe](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.21.1/PyReconstruct-1.21.1-Windows-x86_64-Setup.exe) |
+| macOS (Apple Silicon) | [PyReconstruct-1.21.1-macOS-arm64.dmg](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.21.1/PyReconstruct-1.21.1-macOS-arm64.dmg) |
+| macOS (Intel) | [PyReconstruct-1.21.1-macOS-x86_64.dmg](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.21.1/PyReconstruct-1.21.1-macOS-x86_64.dmg) |
+| Linux (x86_64) | [PyReconstruct-1.21.1-Linux-installer.tar.gz](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.21.1/PyReconstruct-1.21.1-Linux-installer.tar.gz) |
 
 All builds, checksums, and past versions are on the
 **[Releases page](https://github.com/dustenhubbard/PyReconstruct/releases/latest)**.
