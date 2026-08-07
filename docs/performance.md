@@ -26,7 +26,7 @@ origin to this fork. Measured at fork commit `8e9e185` against upstream
 | NVWXP | 187 MB | 83,126 | 38.8 s -> 12.0 s |
 | crop_3 | 312 MB | 89,388 | 63.2 s -> 17.0 s |
 
-A later re-measurement on a different corpus (a real 407 MB autosegmented series
+A later re-measurement on a different dataset (a real 407 MB autosegmented series
 with 161,767 traces, plus size-scaled derivatives up to 1.1 GB and 485,301
 traces) confirms the same picture: opens improved roughly 3.3-3.8x, cold and
 warm alike.

@@ -138,7 +138,7 @@ absorbed.
 
 WIDTH, SCOPE AND COLLISION POLICY
 ---------------------------------
-**64 random bits, base62, series-global.** At the largest corpus on record
+**64 random bits, base62, series-global.** At the largest dataset on record
 (8,676,366 traces) a 6-character flag-width id expects ~663 collisions drawn
 series-globally; 64 bits expects 2.0e-6 at that scale. Uniqueness is enforced
 **across the series**, not per section as flags do it, because a merge crosses
@@ -282,7 +282,7 @@ def deriveTraceID(section_number: int, contour_name: str, row: list,
     ## copying it is not: `deriveForSection` passes the SERIES-wide index once
     ## per trace, so an unconditional `set(taken)` copies n ids n times and
     ## makes migrating a series quadratic in its own trace count -- measured
-    ## 0.888 s at 16k traces and projected ~91 s at the 161,767-trace corpus on
+    ## 0.888 s at 16k traces and projected ~91 s at the 161,767-trace dataset on
     ## record, against a flat ~3 us/trace once the copy is conditional (ledger
     ## row TID.derive.section32k). The branch cannot move an id for any `taken`
     ## that honors set semantics: `x in some_set` and `x in set(some_set)` agree
@@ -556,7 +556,7 @@ class TraceIDIssuer():
         The key retains each row's full canonical JSON for the life of the
         `Series`, which is close to a second in-memory copy of the series' whole
         uncompressed row payload: measured on the 276-section, 125,218-row
-        corpus, 125,218 keys retaining 49,736,142 characters (47.4 MiB, 53.3 MiB
+        dataset, 125,218 keys retaining 49,736,142 characters (47.4 MiB, 53.3 MiB
         counting `str` overhead) against a 50.6 MB `.jser`. Bounded by distinct
         contents rather than by load count is not the same as bounded: an
         EDITING session grows it, because every edited version of a row that

@@ -854,7 +854,7 @@ def test_an_adopted_row_does_not_also_burn_a_derived_id(tmp_path):
       series salt-bumps past values no trace holds;
     * the derivation record retains the full canonical JSON of each row it
       answered for, which `deriveForSection` measures at ~47 MiB on the
-      125,218-row corpus. Deriving for rows that did not need it doubles the
+      125,218-row dataset. Deriving for rows that did not need it doubles the
       most expensive structure in the issuer.
 
     So: one identity per trace, and `taken` says exactly that.

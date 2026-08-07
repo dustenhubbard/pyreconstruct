@@ -33,10 +33,10 @@ Four jobs, all deliberately small:
 
 Note on (2): the ``needs_data``/``needs_pr2`` markers are **scaffolding, and
 nothing carries them yet**. That is intentional. The suite currently has no test
-that depends on an external corpus or on a second interpreter, so there is
+that depends on an external dataset or on a second interpreter, so there is
 nothing to mark today. Registering the vocabulary now costs three lines;
 retrofitting it across 4,000+ tests later does not. The collection-time gating
-hooks that will consume these markers (resolving a corpus path, probing a
+hooks that will consume these markers (resolving a dataset path, probing a
 reference interpreter) belong with the work that introduces the first test
 needing them, not here -- a hook that gates on nothing is harder to review and
 easier to get wrong than one written against a real first caller. ``gui`` is
@@ -100,8 +100,8 @@ _TABLE_MODULES = ("section", "trace", "ztrace", "flag", "object")
 def pytest_configure(config):
     """Register the suite's custom markers."""
     for marker in (
-        "needs_data: requires an external image/series corpus that is not in "
-        "the repository. Not run in CI; gated on a corpus path supplied by the "
+        "needs_data: requires an external image/series dataset that is not in "
+        "the repository. Not run in CI; gated on a dataset path supplied by the "
         "environment.",
         "needs_pr2: requires a separate reference interpreter with the "
         "pyrecon2 package installed. Cannot be an importorskip -- this project "

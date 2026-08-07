@@ -1247,7 +1247,7 @@ def test_registering_a_foreign_id_stops_the_issuer_handing_it_out_again():
     loop, so the issuer can later mint the same id for a different trace. With
     the identical bits source, registration lets that loop see the id and step
     past it. The real `secrets.randbits(64)` source makes this ~4.1e-6 across
-    the largest corpus on record rather than a live data-loss risk, but it is a
+    the largest dataset on record rather than a live data-loss risk, but it is a
     hole in the issuer's stated contract either way, and unlike R1 it is closed
     completely by registration alone.
     """

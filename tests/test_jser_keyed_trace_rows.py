@@ -11,7 +11,7 @@ Three claims are worth a test file, and only one of them is about the happy path
 **1. Off is off, byte for byte.** A switch that changes the default output by one
 byte is not off. `test_the_switch_off_output_is_byte_identical_to_the_positional_
 writer` and its revert-and-fail twin pin that, and the same comparison was run
-outside the suite against a `git archive` of the base commit on three corpora
+outside the suite against a `git archive` of the base commit on three datasets
 including a 50 MB, 125,218-row hand-traced series: identical sha256 on every one.
 
 **2. On is idempotent and id-stable, and the reason is subtler than it looks.**

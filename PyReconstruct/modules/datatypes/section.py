@@ -332,7 +332,7 @@ def _traceDifferences(stored : Trace, obj : Trace) -> list:
 
 ## How many drift complaints a single save is allowed to print. A whole-section
 ## drift -- an alignment change applied from outside this class, say -- produces
-## one per trace, and the busiest section of the production corpus on record
+## one per trace, and the busiest section of the production dataset on record
 ## holds 1,291 of them. The log file this print lands in rotates at 2 MB, so an
 ## unbounded report would evict the history somebody is reading it for.
 DRIFT_REPORT_LIMIT = 20
@@ -1167,7 +1167,7 @@ class Section():
         saves, switch off, identical bytes, plus the revert probes that show
         the comparison can move). The half a test cannot run -- the same series
         saved by a build of the previous commit, which has no argument here at
-        all -- was measured out of suite on three corpora up to 125,218 rows and
+        all -- was measured out of suite on three datasets up to 125,218 rows and
         matched on sha256 every time; the numbers are in the pull request.
 
         **What the keyed shape costs, stated here because this is where it is
