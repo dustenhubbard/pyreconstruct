@@ -138,13 +138,17 @@ class FieldState():
                         # iterating a dict yields its keys, so an 8-key row
                         # unpacks the eight KEY STRINGS into the eight fields
                         # and a 9-key row additionally takes the first key as
-                        # the name. The undo baseline silently became a
-                        # `Trace` named 'x' whose points were pairs of key
-                        # names, and the first undo restored that over the
-                        # user's real traces. This path reads the section file
-                        # verbatim (`shutil.copyfile` above), so it never sees
-                        # `Section.updateJSON` and has to know the shape
-                        # itself.
+                        # the name. The undo baseline silently became a `Trace`
+                        # named 'x' whose points were pairs of key names, and
+                        # the first undo restored that over the user's real
+                        # traces.
+                        #
+                        # This path reads the section file verbatim
+                        # (`shutil.copyfile` above), so it never sees
+                        # `Section.updateJSON` and has to know the shape itself.
+                        # The row's `id` is deliberately ignored: the baseline
+                        # restores the object model, and a trace's id lives in
+                        # the columnar store rather than on the `Trace`.
                         if type(trace_data) is dict:
                             trace_data = keyed_trace_row_to_positional(trace_data)
                         trace = Trace.fromList(trace_data, cname)

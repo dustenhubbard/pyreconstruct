@@ -634,7 +634,27 @@ class Series():
 
                 # update any missing attributes; collect the contour renames so
                 # the series data can follow them below
-                renames.update(Section.updateJSON(section_data, snum))
+                #
+                # `stored_ids` is the trace ids the file's own keyed rows carry,
+                # and re-attaching them is not an optimization -- it is the
+                # difference between a persisted id existing and not. The rows
+                # the object model reads come from THIS hidden copy, never from
+                # the `.jser` directly, and `updateJSON` converts a keyed row to
+                # the positional shape. Without the line below the id is decoded
+                # here and then written out of existence one statement later, so
+                # `Section.__init__` has nothing to adopt no matter what it
+                # does. Measured on a hand-keyed fixture before it was added:
+                # every row reached the store carrying a derived id and not the
+                # one the file named.
+                #
+                # Empty, and therefore a no-op, for every positional file --
+                # which is every file any shipped build has ever written.
+                stored_ids = {}
+                renames.update(Section.updateJSON(
+                    section_data, snum, stored_ids=stored_ids
+                ))
+                if stored_ids:
+                    Section.reattachTraceIDs(section_data, stored_ids)
 
                 # Every section locks on open, and the stored value is ignored
                 # on purpose -- this is the intended behavior, not an oversight,
