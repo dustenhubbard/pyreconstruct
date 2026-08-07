@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QColorDialog,
+    QDialog,
     QApplication,
 )
 from PySide6.QtGui import QColor, QPixmap, QIcon, QPainter, QPalette
@@ -183,9 +184,31 @@ class AutosegColorsWidget(QWidget):
         self.remove_btn.setEnabled(has_sel and len(self.colors) > MIN_PALETTE_COLORS)
 
     def _pick_color(self, initial):
-        """Open QColorDialog; return an [R, G, B] list or None if cancelled."""
-        color = QColorDialog.getColor(QColor(*initial), self)
-        if color.isValid():
+        """Open a colour picker; return an [R, G, B] list or None if cancelled.
+
+        Qt's own dialog rather than the ``QColorDialog.getColor()`` static, and
+        the non-native option is set *before* the colour rather than after --
+        both for the reasons spelled out in ``ColorButton.selectColor``, which
+        this deliberately mirrors. Briefly: on macOS the static opens the shared
+        system "Colors" panel instead of a Qt dialog, and closing that panel
+        (the gesture a live-apply picker invites) returns an invalid ``QColor``,
+        so the colour the user picked is discarded silently -- the swatch bug
+        reported against the trace attributes dialog, which this editor had too.
+        And seeding a dialog before turning the native path off loses the seed
+        on cocoa, which would open this picker on white instead of the colour
+        being edited.
+        """
+        dlg = QColorDialog(self)
+        dlg.setOption(QColorDialog.ColorDialogOption.DontUseNativeDialog, True)
+        dlg.setCurrentColor(QColor(*initial))
+        try:
+            confirmed = dlg.exec() == QDialog.DialogCode.Accepted
+            color = dlg.selectedColor()
+        finally:
+            # parented to this widget, so without this every pick leaves
+            # another dialog alive for as long as the editor is
+            dlg.deleteLater()
+        if confirmed and color.isValid():
             return [color.red(), color.green(), color.blue()]
         return None
 
