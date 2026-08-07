@@ -36,3 +36,5 @@ from .completer_box import CompleterBox
 from .errors import customExcepthook
 
 from .colors import rgb_norm_1, rgb_norm_256, is_light
+
+from .confetti import burst_confetti, ConfettiParticle
