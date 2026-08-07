@@ -419,8 +419,16 @@ class LogSet():
         The residue is one genuinely irreducible case, and the guard fails
         safe on it: a pasted name whose own text contains a line that looks
         like a whole row is indistinguishable, byte for byte, from two real
-        rows. There the guard truncates the name rather than inventing an
-        editor from somebody else's timestamp.
+        rows. There the guard reads both lines as rows, which truncates the
+        name, rather than inventing an editor from somebody else's timestamp.
+
+        Be exact about what "safe" does and does not cover, because it is the
+        word a future reader will remember. The embedded line is still read as
+        a row, so whatever it names in the user field -- text the paster
+        chose -- is admitted: getEditorsFromHistory unions every row's user,
+        so that name IS an editor of the series. What is prevented is the
+        other failure, reading a TIMESTAMP as if it were a person, not the
+        admission of a plausible name somebody typed into a dialog.
 
         Log.__str__ no longer emits a multi-line row at all, so nothing
         written from here on can reach any of this. The guard is for what is
@@ -504,19 +512,45 @@ class LogSet():
                     # The cost, stated plainly because it is a change every
                     # default caller sees, not just skip_corrupt ones: a short
                     # head that can never be completed now RAISES where it used
-                    # to fabricate. That is strictly the better failure -- a
-                    # caller can see a raise and cannot see a fabrication -- and
-                    # it raises on LESS input than the unguarded join did, not
-                    # more, since the shapes that used to parse into a
-                    # fabricated Log were the ones getting through silently.
+                    # to fabricate. That is the better failure -- a caller can
+                    # see a raise and cannot see a fabrication -- but it is not
+                    # a one-directional improvement, and the direction is worth
+                    # stating as it measured. Over generated hazard logs in the
+                    # shape an older writer already put on disk -- the
+                    # population this guard exists for -- the anchored reader
+                    # raises on MORE inputs than the unguarded join did, and no
+                    # input goes the other way, from raising to parsing. Most of
+                    # what newly raises is input the join used to fabricate an
+                    # editor from, which is the trade this is for and wins; a
+                    # minority used to parse with an entirely correct editor set
+                    # and is refused now as well. That minority is not an
+                    # editors loss -- under skip_corrupt it still yields the
+                    # same editor set, because the refused lines are handed back
+                    # individually and read on their own rather than dropped --
+                    # but it is a new raise on the default path, so it is a real
+                    # cost and not a saving. Over the real logs on hand the
+                    # difference is zero in both directions.
                     #
                     # One case is genuinely irreducible and the anchor does not
                     # pretend otherwise: a pasted name whose own text contains
                     # a line that looks like a whole row produces bytes
                     # identical to two real rows, and nothing in the file can
-                    # tell them apart. The guard fails safe there -- it
-                    # truncates the name -- where the unguarded join failed
-                    # unsafe, inventing an editor nobody was.
+                    # tell them apart. The guard fails safe there -- it reads
+                    # both lines as rows, which truncates the name -- where the
+                    # unguarded join failed unsafe, inventing an editor nobody
+                    # was. Be exact about what "safe" does and does not cover:
+                    # the embedded line is still read as a row, so whatever it
+                    # names in the user field -- text the paster chose -- IS
+                    # admitted to Series.editors. What is prevented is the other
+                    # failure -- reading a TIMESTAMP as if it were a person --
+                    # not the admission of a plausible name somebody typed into
+                    # a dialog. Of the hazard shapes measured, this is the only
+                    # one with any residual admission at all, which is why it is
+                    # called irreducible rather than merely unfixed. It is
+                    # pinned in tests/test_editors_from_corrupt_history.py by
+                    # test_the_irreducible_case_fails_safe_rather_than_inventing_an_editor,
+                    # whose assertion records the pasted name as an editor on
+                    # purpose.
                     #
                     # Why this still matters now that Log.__str__ cannot emit a
                     # multi-line row: the historical log is copied byte for
