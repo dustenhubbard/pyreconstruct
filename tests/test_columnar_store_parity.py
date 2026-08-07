@@ -1139,12 +1139,25 @@ def test_copy_keeps_the_id_and_duplicate_issues_a_new_one():
     assert store.getID(duplicated) is not None
 
 
-def test_an_id_survives_every_attribute_edit_including_a_rename():
-    """A rename goes through the attribute-edit path, so it is the same trace.
+def test_the_in_place_setters_keep_a_rows_id_including_a_name_change():
+    """The store's own setters mutate a row where it lies, so its id cannot move.
 
-    This is the case the carry rules exist for: `editTraceAttributes` implements
-    a rename as remove, copy, mutate the name, add, and the result must keep its
-    identity or a rename would look like a delete plus a create to a merge.
+    What this exercises is `setAttribute` / `setTags` / `setCoordinates` called
+    directly on one row -- four **in-place** mutations, with no remove/copy/add
+    cycle anywhere -- so the id column is never rewritten and the issuer is
+    never consulted. Even the name change stays in place: it moves the row
+    between contour indices and leaves the row itself, and therefore its id,
+    exactly where it was.
+
+    It is **not** a test of `Section.editTraceAttributes`, which it never calls.
+    That method is the remove, copy, mutate, add shape, and on the shipped build
+    an attribute edit and a rename each come out a *different* trace: `addTrace`
+    reaches `appendRow`'s no-id arm, `copyRow` is not wired, and the edit
+    re-identifies. That is pinned as the code behaves by
+    `tests/test_trace_id_stability_harness.py::test_an_attribute_edit_moves_the_id_because_copyrow_is_not_wired`
+    and its rename twin. Keeping identity across an attribute edit is the design
+    intent the carry rules exist for; it is not a property this test shows, and
+    a green result here says nothing about that path.
     """
     issuer = StubIssuer()
     store = SectionColumns(1, id_issuer=issuer)
