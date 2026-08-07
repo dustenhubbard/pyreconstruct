@@ -18,6 +18,10 @@ from PySide6.QtWidgets import (
 
 from PyReconstruct.modules.constants import gh_issues
 
+# Sibling module, relative like the package's own re-exports: an absolute import
+# here would re-enter `gui.utils.__init__`, which is what imports this file.
+from .confetti import burst_confetti
+
 # Qt-free report builders (usable from the headless data model too).
 from PyReconstruct.modules.backend.func.error_report import (
     build_error_report,
@@ -78,10 +82,35 @@ class ErrorReportDialog(QDialog):
         self.resize(720, 480)
 
     def _copyReport(self):
+        """Copy the report, confirm it in the button, and celebrate a little.
+
+        The confetti fires only when there was a clipboard to write to. On a
+        platform where ``QApplication.clipboard()`` returns None nothing was
+        copied, and an animation that says otherwise is worse than no animation.
+
+        The button text is set on both paths, which is what it did before this
+        and is left alone deliberately: the label is the honest half of the
+        feedback and its behaviour is not what this change is about. (It is
+        arguably wrong on the no-clipboard path. That is a separate question
+        from whether to animate, and answering it here would hide a behaviour
+        change inside a decoration change.)
+
+        The burst is wrapped because this dialog is the error handler. Every
+        other failure path in this module is written so that the reporter cannot
+        itself become the fault -- see ``show_error_report`` -- and a decoration
+        that could raise out of a clicked handler would undo that for the sake
+        of some dots. A copy that worked must not look like a copy that failed.
+        """
         clipboard = QApplication.clipboard()
-        if clipboard is not None:
+        copied = clipboard is not None
+        if copied:
             clipboard.setText(self._report)
         self._copy_btn.setText("Copied ✓")
+        if copied:
+            try:
+                burst_confetti(self._copy_btn)
+            except Exception:
+                pass
 
 
 # True while a report dialog is running its own modal event loop. See
