@@ -1,10 +1,24 @@
-"""Regression tests for SVG/PNG section export and the two packages it needs.
+"""Regression tests for SVG/PNG section export and the packages it needs.
 
 The bug: ``PyReconstruct/modules/backend/exports/svg_conversion.py`` imports
 ``svgwrite`` (for ``export_svg``) and ``cairosvg`` (for ``export_png``), and
 neither package was declared in ``pyproject.toml``, ``requirements.txt`` or
 ``uv.lock``. ``git log -S svgwrite`` shows they arrived with the feature commits
 that wrote the module and were never added to a dependency file by any of them.
+
+``pillow`` was the third and is covered here too, added after the other two.
+``export_svg`` does ``from PIL import Image`` to re-encode the section image
+into the SVG's base64 data URI, and it was undeclared for the same reason. It
+never failed for anybody, because five locked packages pull pillow in
+transitively -- ``cairosvg`` and ``scikit-image`` directly, ``imageio`` via
+``scikit-image``, ``matplotlib`` via ``vtk``, ``neuroglancer`` via the dev-only
+``funlib-show-neuroglancer`` -- but a transitive edge is somebody else's
+promise, and it takes one dependency bump to withdraw it. It is also the *worse*
+of the three gaps if it ever opens: the guard described below covers ``svgwrite``
+and ``cairosvg`` and does not probe ``PIL`` at all, so a missing pillow is an
+uncaught ``ModuleNotFoundError`` rather than a dialog.
+``test_svg_export_is_not_guarded_against_a_missing_pillow`` pins that
+difference.
 
 What that cost a user was **not** a traceback. ``File > Export > SVG`` and
 ``File > Export > PNG`` (``main_window.py``) each open with a
@@ -31,8 +45,8 @@ the guard as a crash on any machine without Cairo. The guard is widened in
 ``mod_imports.py`` on this branch and covered by
 ``tests/test_modules_available_native_library.py``.
 
-The four tests below are layered so that a regression is reported at the layer
-it actually happened at:
+The tests below are layered so that a regression is reported at the layer it
+actually happened at:
 
 1. ``test_export_packages_are_declared`` reads the dependency files. It fails if
    someone drops the declaration, and it fails identically on every platform,
@@ -42,10 +56,16 @@ it actually happened at:
 3. ``test_export_as_svg_writes_a_real_svg`` runs the real export and checks the
    output is an SVG carrying this section's image and traces -- not merely that
    the call did not raise.
-4. ``test_export_as_png_writes_a_real_png`` does the same for PNG, and is the
-   one test here that can skip. See its docstring: ``cairosvg`` reaches Cairo
-   through a runtime ``dlopen``, so a machine can have the wheel and still not
-   be able to render. That is a real, separate deployment requirement rather
+4. ``test_export_svg_embeds_a_png_pillow_actually_produced`` decodes that
+   embedded image and reads its PNG header, so the pillow leg of the export is
+   asserted on its output rather than on the package being importable.
+5. ``test_svg_export_is_not_guarded_against_a_missing_pillow`` injects a missing
+   pillow and shows the guard passes and the export raises, which is the reason
+   the declaration is worth having rather than relying on the transitive edges.
+6. ``test_export_as_png_writes_a_real_png`` does what (3) does for PNG, and is
+   the one test here that can skip. See its docstring: ``cairosvg`` reaches
+   Cairo through a runtime ``dlopen``, so a machine can have the wheel and still
+   not be able to render. That is a real, separate deployment requirement rather
    than a detail, so the skip names it instead of hiding it, and CI installs
    ``libcairo2`` so the assertion runs there.
 
@@ -58,8 +78,10 @@ with its images beside it, so the copy sets ``src_dir`` to the temporary
 directory the way ``openSeries``'s images-beside-the-jser recovery does.
 """
 
+import base64
 import shutil
 import struct
+import sys
 import tomllib
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -72,8 +94,20 @@ FIXTURE_JSER = CHECKER_FILES / "shapes1.jser"
 
 SVG_NS = "http://www.w3.org/2000/svg"
 
-# The two packages, and the file that imports each one.
-EXPORT_PACKAGES = ["svgwrite", "cairosvg"]
+# Every package ``svg_conversion.py`` imports directly, as
+# {distribution name: import name}. The two differ for pillow, which is why
+# this is a mapping: the declaration tests read distribution names out of the
+# dependency files, the importability test needs the import name.
+#
+# ``zarr`` and ``cv2`` are imported by the same module and are deliberately
+# absent: both were already declared (as ``zarr`` and
+# ``opencv-python-headless``) before any of this, so they are not part of the
+# gap these tests exist to hold shut.
+EXPORT_PACKAGES = {
+    "svgwrite": "svgwrite",
+    "cairosvg": "cairosvg",
+    "pillow": "PIL",
+}
 
 
 @pytest.fixture
@@ -126,9 +160,9 @@ def _cairo_native_error():
 # --------------------------------------------------------------------------
 # 1. The declaration. Platform-independent, and the layer the bug was at.
 # --------------------------------------------------------------------------
-@pytest.mark.parametrize("package", EXPORT_PACKAGES)
+@pytest.mark.parametrize("package", sorted(EXPORT_PACKAGES))
 def test_export_packages_are_declared(package):
-    """Both packages must be declared where an install will actually read them.
+    """Each package must be declared where an install will actually read them.
 
     ``pyproject.toml`` is the source of truth for the uv workflow (and for
     ``pip install .``). ``requirements.txt`` is checked too because it is not
@@ -142,8 +176,10 @@ def test_export_packages_are_declared(package):
     names = [d.split("==")[0].split(">")[0].split("<")[0].strip() for d in declared]
     assert package in names, (
         f"{package} is imported by modules/backend/exports/svg_conversion.py but "
-        f"is not in [project.dependencies]; without it SVG/PNG export cannot "
-        f"run and the main_window guard nags the user to pip-install it"
+        f"is not in [project.dependencies]; without it SVG/PNG export cannot run "
+        f"-- and only svgwrite and cairosvg have a modules_available guard in "
+        f"front of them, so for pillow the failure is an uncaught "
+        f"ModuleNotFoundError rather than the guard's pip-install offer"
     )
 
     requirements = (REPO_ROOT / "requirements.txt").read_text().splitlines()
@@ -158,8 +194,10 @@ def test_export_packages_are_declared(package):
     )
 
 
-@pytest.mark.parametrize("package", EXPORT_PACKAGES)
-def test_export_packages_are_importable(package):
+@pytest.mark.parametrize(
+    "package,import_name", sorted(EXPORT_PACKAGES.items())
+)
+def test_export_packages_are_importable(package, import_name):
     """The declaration has to have produced an installed distribution.
 
     ``importlib.util.find_spec`` rather than ``import``: for ``cairosvg`` the
@@ -167,11 +205,16 @@ def test_export_packages_are_importable(package):
     correctly installed, and that is a different failure with a different fix.
     This test is about the packaging half only, and holds on a machine with no
     Cairo at all.
+
+    The distribution name and the import name are not the same thing for every
+    package -- ``pillow`` imports as ``PIL`` -- so the two are carried
+    separately rather than assumed equal.
     """
     import importlib.util
 
-    assert importlib.util.find_spec(package) is not None, (
-        f"{package} is declared but not installed in this environment; "
+    assert importlib.util.find_spec(import_name) is not None, (
+        f"{package} is declared but not installed in this environment "
+        f"(import name {import_name!r}); "
         f"re-run `uv sync --frozen --no-default-groups --extra test`"
     )
 
@@ -231,6 +274,116 @@ def test_export_as_svg_writes_a_real_svg(exportable_series, tmp_path):
     # A path with no geometry would still satisfy the id check above.
     for path in root.iter(f"{{{SVG_NS}}}path"):
         assert path.get("d", "").startswith("M "), f"empty path for {path.get('id')}"
+
+
+def test_export_svg_embeds_a_png_pillow_actually_produced(
+        exportable_series, tmp_path):
+    """The embedded image is a real PNG of the section, i.e. pillow did the work.
+
+    ``export_svg`` reads the section image with ``PIL.Image.open`` (or
+    ``Image.fromarray`` for a zarr source) and re-encodes it with
+    ``image.save(buffered, format="PNG")`` before base64-ing it into the SVG.
+    The fixture's source image is a **TIFF**, so a PNG in the output can only
+    have come from that round trip -- there is no PNG on disk to copy.
+
+    The test above asserts the data URI's prefix and length, which a truncated
+    or garbage payload would also satisfy. This one decodes it and reads the
+    PNG header by hand (``struct``, not pillow, so the check does not lean on
+    the library it is checking) to assert the raster is the section's own size.
+    That is the pillow leg of the export run end to end, rather than
+    ``find_spec("PIL")`` succeeding.
+    """
+    section = exportable_series.loadSection(min(exportable_series.sections.keys()))
+    height, width = section.img_dims
+
+    out = tmp_path / "section.svg"
+    section.exportAsSVG(str(out))
+
+    root = ET.parse(out).getroot()
+    hrefs = [
+        img.get("{http://www.w3.org/1999/xlink}href") or img.get("href")
+        for img in root.iter(f"{{{SVG_NS}}}image")
+    ]
+    assert len(hrefs) == 1
+    prefix = "data:image/png;base64,"
+    assert hrefs[0].startswith(prefix)
+
+    payload = base64.b64decode(hrefs[0][len(prefix):], validate=True)
+    assert payload[:8] == b"\x89PNG\r\n\x1a\n", (
+        "the embedded data URI says image/png but the bytes are not a PNG"
+    )
+    assert payload[12:16] == b"IHDR"
+    embedded_width, embedded_height = struct.unpack(">II", payload[16:24])
+    assert (embedded_width, embedded_height) == (width, height), (
+        f"embedded image is {embedded_width}x{embedded_height}, but the section "
+        f"image is {width}x{height}"
+    )
+
+    # The SVG canvas is sized from the same image, so the two must agree; a
+    # mismatch means the embed and the geometry came from different places.
+    assert root.get("width") == str(embedded_width)
+    assert root.get("height") == str(embedded_height)
+
+
+def test_svg_export_is_not_guarded_against_a_missing_pillow(
+        exportable_series, tmp_path, monkeypatch):
+    """Without the declaration, a missing pillow is a crash, not a prompt.
+
+    This is why pillow is declared rather than left to arrive transitively, and
+    it is the one way its gap differs from ``svgwrite``'s. ``exportSectionSVG``
+    (``main_window.py``) opens with ``modules_available("svgwrite")`` and
+    ``exportSectionPNG`` with ``modules_available(["svgwrite", "cairosvg"])`` --
+    neither probes ``PIL``. So an environment that resolved without pillow gets
+    a guard that says yes and a ``ModuleNotFoundError`` out of ``export_svg``
+    immediately afterwards, which reaches ``customExcepthook`` as a crash
+    report. ``svgwrite`` and ``cairosvg`` at their worst produced a handled
+    dialog offering the pip install.
+
+    The absence is injected through ``sys.meta_path`` rather than by
+    uninstalling anything, so this runs on a correctly-installed machine and on
+    CI. It asserts the *current* shape of the code -- widening the guard to
+    probe ``PIL`` too would be a different fix, and would fail this test, which
+    is the intended signal rather than a nuisance.
+    """
+    from PyReconstruct.modules.backend.imports.mod_imports import modules_available
+
+    section = exportable_series.loadSection(min(exportable_series.sections.keys()))
+
+    class _Loader:
+        @staticmethod
+        def create_module(spec):
+            raise ModuleNotFoundError("No module named 'PIL'", name="PIL")
+
+        @staticmethod
+        def exec_module(module):  # pragma: no cover - create_module raises first
+            raise ModuleNotFoundError("No module named 'PIL'", name="PIL")
+
+    class _Finder:
+        @staticmethod
+        def find_spec(fullname, path=None, target=None):
+            if fullname != "PIL" and not fullname.startswith("PIL."):
+                return None
+            from importlib.machinery import ModuleSpec
+
+            return ModuleSpec(fullname, _Loader())
+
+    # An earlier test in this file has already imported pillow, so the cached
+    # entries have to go or the finder is never consulted. monkeypatch restores
+    # every one of them at teardown.
+    for cached in [name for name in sys.modules if name.split(".")[0] == "PIL"]:
+        monkeypatch.delitem(sys.modules, cached)
+    monkeypatch.setattr(sys, "meta_path", [_Finder()] + list(sys.meta_path))
+
+    # The guard in front of File > Export > SVG, with the exact argument
+    # main_window passes it. It sees nothing wrong.
+    assert modules_available("svgwrite", notify=False) is True, (
+        "the SVG guard's own probe failed, so this test is not measuring what "
+        "it claims to"
+    )
+
+    with pytest.raises(ModuleNotFoundError) as excinfo:
+        section.exportAsSVG(str(tmp_path / "section.svg"))
+    assert excinfo.value.name == "PIL"
 
 
 def test_export_as_png_writes_a_real_png(exportable_series, tmp_path, monkeypatch):
