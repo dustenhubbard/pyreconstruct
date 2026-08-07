@@ -6,6 +6,15 @@ full release notes on GitHub (linked from the dialog).
 
 ## [Unreleased]
 
+## [1.21.2-beta-1] — 2026-08-07
+
+- **Fixed: The Beta update channel now offers stable releases, not only prereleases.** If you were on
+  the Beta channel when 1.21.0 shipped, the channel had nothing to hand you: it looked only at
+  prereleases, and the 1.21.0 betas were retired the moment the stable build went out, so you saw no
+  update prompt and no error. Beta now offers whichever is newer, the latest prerelease or the latest
+  stable release, so choosing Beta means earlier access rather than a lane walled off from stable. Once
+  you are on this build, future stable releases reach you on Beta automatically.
+
 ## [1.21.1] — 2026-08-07
 
 - **Improved: Every slider in Series ▸ Options shows what it is set to.** The sliders were a bare handle
