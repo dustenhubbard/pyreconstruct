@@ -6,6 +6,57 @@ full release notes on GitHub (linked from the dialog).
 
 ## [Unreleased]
 
+## [1.21.1] — 2026-08-07
+
+- **Fixed: A section that fails to load no longer leaves the field stuck and unclosable.** Jumping to a
+  section PyReconstruct could not read left the view with nothing to draw, so every redraw raised the
+  same error and reopened the error window as fast as you could close it, with Task Manager the only way
+  out. A jump that fails now leaves you on the section you were already viewing.
+- **Fixed: An error that keeps happening opens one window instead of an endless stream.** An error
+  raised while the view redrew came back on every redraw, and each occurrence opened another window on
+  top of the last. Each fault now opens a single window per session, and every occurrence is still
+  written to the log file, which **Help ▸ View log file** shows.
+- **Changed: The scale bar width setting actually moves the scale bar.** The bar could only be drawn at
+  four round lengths per decade, so most of the 81 positions on the slider drew exactly the same bar; it
+  now has many more lengths to choose from, and tick marks divide each one into readable steps. Lengths
+  also print one way now, so the same bar no longer reads `10 µm` at one zoom and `10.0 µm` at another.
+- **Fixed: On macOS, a colour picked for a trace is no longer thrown away.** Clicking a colour swatch
+  opened the shared system "Colors" panel, where picking a colour changed nothing on screen and closing
+  the panel discarded the choice, leaving the swatch blank. Swatches now open PyReconstruct's own colour
+  dialog, the one Windows and Linux already used, with **OK** inside its own window.
+- **Fixed: Cancelling the flag list's colour filter no longer empties the list.** Under
+  **Filter ▸ Color filter ▸ Set filter...**, a cancelled picker was read as a choice of black, so the
+  list hid every flag that was not pure black and "Remove filter" was the only way back. Cancel now
+  leaves the filter alone, on every platform.
+- **Fixed: The autoseg colour editor keeps the colour you pick, and opens on the right one.** Add and
+  Edit under **Series ▸ Options ▸ View ▸ Autoseg import colors** had the same macOS problem as the trace
+  swatch, and the picker opened on white rather than on the colour being edited, so pressing OK without
+  changing anything wrote white over it.
+- **Improved: Every slider in Series ▸ Options shows what it is set to.** The sliders were a bare handle
+  on a blank groove, so the only way to learn a setting's value was to close the dialog and watch what
+  the program did. **CPU usage** now reads as `50% (5 of 10 workers)`, scale bar size and 3D XY
+  resolution read as percentages, and every slider carries tick marks.
+- **Fixed: Opening Series ▸ Options no longer shrinks the scale bar on its own.** The dialog squeezed
+  the stored width into a wider slider range and back again, and that round trip lost a point for most
+  values, the shipped default among them, so pressing OK on a dialog nobody had touched made the bar
+  narrower every time.
+- **Fixed: Reset Defaults moves the sliders in Series ▸ Options.** Three of them, 3D XY resolution,
+  scale bar size and CPU usage, read the stored value rather than the shipped default, so they stayed
+  exactly where you had left them while the rest of the dialog reset.
+- **Improved: The maintainer line in "What's new" is visible without scrolling.** It sat at the very
+  bottom of the scrollable notes, past a screenful of changes, where almost nobody reached it. It now
+  has its own line just below them, at the dialog's ordinary text colour, with the project name linking
+  to pyreconstruct.org.
+- **Fixed: Exporting a section to SVG works again.** Under **File ▸ Export**, saving a section as SVG
+  relied on a drawing package that was never actually included, so instead of exporting the feature
+  could only prompt you to install it yourself -- and on the one-click installers it could not run at
+  all. That package now ships with PyReconstruct. (Exporting to PNG needs the same package plus a
+  system graphics library; that piece is included too, and the app now tells you what is missing
+  instead of failing silently.)
+- **New: A small burst of confetti when you copy an error report.** **Copy report to clipboard** in the
+  error window now throws a dozen small coloured dots out of the button for about half a second. It
+  fires only on a copy that actually reached the clipboard.
+
 ## [1.21.0] — 2026-08-05
 
 - **Changed: In focus mode, editing which object a trace belongs to is now Ctrl-click.** Hold **Ctrl**
