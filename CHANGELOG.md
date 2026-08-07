@@ -13,6 +13,216 @@ the README's *From source (developers)* section).
 
 ## [Unreleased]
 
+## [1.21.1] — 2026-08-07
+
+### Added
+- **A small confetti burst when you copy an error report.** Clicking **Copy
+  report to clipboard** in the error window now throws a dozen small coloured
+  dots out of the button for about half a second, fading them out before they
+  reach the edge of the window, alongside the "Copied ✓" label it already
+  showed. It fires only on a copy that actually reached the clipboard, so it is
+  feedback and not decoration: where the clipboard is unavailable the label
+  still changes and nothing is thrown. The
+  particles are ordinary child widgets of the error window, animated with Qt's
+  own property animations and deleted when they land, so repeating the click
+  leaves nothing behind. The log viewer's own copy button is deliberately
+  untouched.
+
+### Changed
+- **The scale bar width setting moves the scale bar.** The bar is drawn at the
+  longest round length that fits the width you set, and the list of lengths it
+  was allowed to pick from held four values per decade: 1, 2.5, 5 and 10. The
+  width setting holds 81 values. Sweeping all 81 through a real render of the
+  widget, at six zoom levels from a dense view out to a whole section, only
+  three or four of them drew a different bar, and as many as 51 positions in a
+  row drew the same bar to the pixel. The list now carries every whole number
+  from 1 to 10 plus 1.5 and 2.5, which puts 8 to 10 different bars in the same
+  sweep, and every length it can print is still a number you would put in a
+  figure: 3 µm, 40 µm, 250 µm. Tick marks divide each length by a count picked
+  for that length rather than always by five, so a 20 µm bar reads 5, 10, 15
+  instead of 4, 8, 12, 16.
+
+  **A length prints one way now.** The same 10 µm bar printed `10 µm` or
+  `10.0 µm` depending on which side of a decade the zoom happened to be on,
+  because the arithmetic behind it returned a whole number in one case and a
+  decimal in the other and the label was whatever that came out as. Tick labels
+  carried a trailing `.0` on every value. Both go through one formatter now,
+  which drops trailing zeros and does nothing else.
+- **Help ▸ What's new opens on the release you are running instead of five
+  releases at once.** The on-demand re-open reused the fresh-install framing,
+  which lists the current version plus the four before it; on a long set of
+  notes that meant the release you opened it for was the only part most readers
+  reached. It now renders that release and marks the body truncated, appending
+  the line that points at the full notes on GitHub, and the dialog carries that
+  link of its own besides, so nothing became unreachable. The post-update
+  showing is unchanged and still lists every release you missed.
+- **How you close the colour picker is now recorded in the log.** Every way of
+  closing the picker without OK -- the Cancel button, the title-bar close, Esc --
+  returns the same invalid colour, so a report of "I set a colour and nothing
+  happened" could not be told apart from a deliberate Cancel or a misbehaving OK,
+  in the app or in the log. `ColorButton.selectColor` now writes one line per
+  picker interaction to the log that `Help ▸ View log file` opens: OK logs the
+  colour it applied; the Cancel button is named as Cancel, read from the dialog's
+  own button, the one place it differs from a window close; and any other
+  dismissal logs the colour the picker was showing at that moment together with
+  the fact that it was not applied. That showing-colour is the discriminator the
+  earlier trace-swatch report lacked. Behaviour is unchanged -- the picker looks
+  the same and a dismissal still applies nothing; only the log gains a line.
+
+### Fixed
+- **A colour picked for a trace is no longer thrown away on macOS.** Clicking a
+  colour swatch called `QColorDialog.getColor()`, which on macOS does not open a
+  Qt dialog: it opens the shared system "Colors" panel, the live-apply picker
+  every other Mac app uses. Picking a colour there changed nothing on screen,
+  and closing the panel -- the gesture that picker invites -- returned an
+  invalid colour, so the choice was discarded silently and the swatch stayed
+  blank. (Qt bolts an OK button onto that panel and it does work, but the panel
+  opens wherever the system last left it, nowhere near the dialog that asked for
+  it.) The swatch now opens Qt's own colour dialog: modal, parented to the
+  button, with OK inside its own window. This is the picker Windows and Linux
+  already got. Nothing stored was ever wrong -- the colour simply never reached
+  the trace -- and it affected any colour, not only the green in the report.
+- **Cancelling the flag list's colour filter no longer filters the list to
+  black.** "Filter > Color filter > Set filter..." guarded its picker with
+  `if not c: return`, which never fired: `QColor` defines no `__bool__`, so a
+  dismissed picker's invalid colour is still truthy. Cancel therefore fell
+  through and set the filter to `(0, 0, 0)`, hiding every flag that was not
+  pure black -- a flag list that emptied itself on Cancel, with a filter the
+  user never chose and had to find "Remove filter" to clear. This one was not
+  macOS-specific; it happened everywhere, Cancel included.
+
+- **The autoseg import-colours editor no longer discards the colour you pick on
+  macOS.** Series > Options > View > "Autoseg import colors" called
+  `QColorDialog.getColor()` for Add and Edit, the same static behind the trace
+  swatch bug: on macOS it opens the shared system "Colors" panel, and closing
+  that panel returns an invalid colour that was then silently dropped. Both
+  call sites now open Qt's own dialog, as the trace swatch does.
+
+  Both pickers also open on the colour being edited rather than on white. A
+  `QColorDialog` seeded before the native path is switched off loses its seed
+  on macOS, so pressing OK without changing anything would have written white
+  over the colour that was already there.
+- **An error that keeps happening now opens one window instead of an endless
+  stream of them.** The exception hook opened an error window per occurrence,
+  which is fine for a failure the user can stop provoking and a trap for one they
+  cannot. An exception raised while a widget paints recurs on every repaint, and
+  a repaint is not something a user can decline: the window's own event loop
+  delivered the next paint event, which raised, which opened another window on
+  top; and closing one exposed the widget underneath, which repainted, which
+  raised again. Reported on 1.21.0 as "a neverending stream of these windows and
+  I can't close them", with Task Manager the only way out. A report can no longer
+  open from inside another one's window, and a fault -- identified by its type
+  and the line that raised it -- opens a window once per session. A second,
+  unrelated error that happens while a window is up is held back rather than
+  spent: it does not stack on top, and it still gets its own window the next time
+  it occurs with nothing in the way. Every occurrence is still written to the log
+  file, so nothing is lost: `Help > View log file` shows the repeats, and the
+  window now says so.
+- **A section change that cannot read its section file no longer leaves the field
+  permanently broken.** `changeSection` moved the field onto the new section
+  first and read the section and its image afterwards, so for the length of that
+  read the field held no section layer at all -- the move swaps it with the B
+  section's, which is empty until the first section change of a session -- and a
+  read that failed left it that way for good. `paintText` reads the section layer
+  on every paint event, so from that point every repaint raised `AttributeError:
+  'NoneType' object has no attribute 'getTrace'`, and because a window cannot be
+  asked to stop repainting, the error window reopened as fast as it was closed;
+  the app had to be killed from Task Manager. Reported against 1.21.0 on Windows
+  after double-clicking an object in the object list, a jump that saves every
+  section immediately before reading one back, where the file can still be held.
+  The section and its view are now built before anything moves, so a failure
+  leaves the field on the section it was already showing and the underlying error
+  is reported once, in the ordinary way.
+- **The maintainer line in "What's new" is now visible without scrolling.** The
+  provenance line -- "An independent build of PyReconstruct, maintained by
+  Dusten Hubbard." -- was appended to the end of the release-notes markdown,
+  below a rule, which put it inside the scrollable notes browser. On any release
+  with more than a screenful of notes, which is the normal case, a reader had to
+  scroll to the very bottom to reach it, and most never did: the line naming who
+  maintains this build was the one part of the dialog that reliably went unread.
+
+  It is now its own label between the notes and the "Full release notes on
+  GitHub" link, so it is on screen from the moment the dialog opens. The wording
+  is unchanged, and so is the italic the markdown had given it. What has changed
+  is that it is no longer dimmed: it sits at the dialog's ordinary text colour
+  rather than the muted one. Who maintains this build is what a lab needs in
+  order to report an issue to the right person, so it is set to be read rather
+  than skimmed past.
+
+  The project name in that line links to pyreconstruct.org. Just the name is the
+  link, styled the ordinary way -- blue and underlined -- while the rest of the
+  sentence stays plain italic text and is not clickable. A blank line now
+  separates the byline from the "Full release notes on GitHub" link below it, so
+  the two no longer read as one block of small text.
+
+  Both links in the dialog also recolour properly when the theme is switched
+  from Help ▸ Theme while the dialog is open. Qt fixes a link's colour when the
+  text is set rather than when it is drawn, so they used to keep the old theme's
+  blue until the dialog was closed and reopened -- barely visible against the
+  dark background.
+- **Fixed: Reset Defaults now moves the sliders in `Series ▸ Options`.** The
+  dialog rebuilds itself with `use_defaults=True` when Reset Defaults is
+  pressed, and an option that passes that flag to
+  `series.getOption(name, use_defaults)` comes back at the shipped default.
+  Three sliders did not pass it: 3D XY resolution, scale bar size and CPU
+  usage. They read the stored value unconditionally, so those three stayed
+  exactly where the user had left them. Six non-slider options in the same
+  dialog share the same cause and are not covered here.
+
+  Also guards `determine_cpus` against `os.cpu_count()` returning `None`, which
+  Python documents as possible. The dialog does not call it; its only caller is
+  the image-to-zarr conversion, which is where a `None` would otherwise raise.
+- **Every slider in `Series ▸ Options` shows its value while you drag it, in the
+  units the setting is actually stored in.** The sliders were a handle on a blank
+  groove with no number anywhere, so the only way to find out what a setting was
+  set to was to close the dialog and watch what the program did. The **CPU usage**
+  slider is the one that cost someone real time: it reads as a share of the
+  machine's cores, and a setting that looked like four workers ran eight, with
+  nothing on screen to check it against. It now reads `50% (5 of 10 workers)`,
+  resolved through the same `determine_cpus` the image-to-zarr converter calls, so
+  the worker count on the label is the worker count that will start. **Scale bar
+  size** reads as a percentage of the field width and **XY Resolution** in the 3D
+  section as the percentage of the way from the coarsest voxel to the finest. All
+  of them carry tick marks now, so the distance the handle has traveled is
+  readable at a glance, and so does the **Overlap threshold** slider in the series
+  import dialog, which already showed its number.
+
+  **Opening `Series ▸ Options` no longer shrinks the scale bar by itself.** The
+  width is stored from 20 to 100 but the slider ran from 0 to 100, so the dialog
+  squeezed the value on the way in and squeezed it back on the way out. The
+  squeeze does not round trip: 60 of the 81 values it can hold came back one
+  lower than they went in, the shipped default of 25 among them, so pressing OK
+  on a dialog nobody had touched made the scale bar a point narrower, every time.
+  The slider carries the 20 to 100 range itself now and the squeeze is gone, so
+  what you set is what is stored. The stored range, the default and the drawn
+  scale bar are unchanged.
+- **Exporting a section as SVG or PNG no longer nags every user to install
+  missing packages.** `File ▸ Export ▸ SVG`/`PNG` renders through
+  `svg_conversion.py`, which imports `svgwrite` (SVG) and `cairosvg` (PNG), but
+  neither package was declared in `pyproject.toml`, `requirements.txt` or
+  `uv.lock`. Every export therefore tripped the "this feature requires
+  additional Python packages" prompt before it would run, and in the frozen
+  installers -- where there is no pip on hand to accept that offer, and the
+  packages were never bundled because they were never installed into the build
+  environment -- SVG/PNG export could not proceed at all. Both packages are now
+  declared and ride with the build, so SVG export works out of the box. PNG
+  additionally needs a native Cairo library present on the system (`cairosvg`
+  reaches it through `cairocffi`'s runtime `dlopen`, which no wheel supplies);
+  `docs/DEV_UV.md` documents the per-platform requirement, and the guard in
+  `mod_imports.py` was widened to report a missing native library with the exact
+  remedy instead of crashing. Bundling Cairo into the frozen Windows/macOS
+  installers remains a separate, still-open packaging task.
+- **A "What's new" dialog that fails to reach you now says so in the log instead
+  of leaving no trace at all.** `MainWindow.showWhatsNewStartup` wrapped the whole
+  startup showing in a bare `except Exception: pass`, so a failure could only ever
+  be noticed as an absence, with nothing anywhere to say which step declined. The
+  handler still swallows everything -- a first-launch convenience must never
+  disrupt a launch -- but it now writes the exception and its traceback to the log
+  first, and it records the outcome when nothing failed so that "dialog shown" and
+  "not due for this version" can be told apart. `Help ▸ What's new` logs its own
+  failures the same way. The lines go to the log `Help ▸ View log file` already
+  opens.
+
 ## [1.21.0] — 2026-08-05
 
 ### Added
