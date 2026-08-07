@@ -64,7 +64,12 @@ from .jser_format import (
     dumps_jser,
     canon_keys,
     canon_keys_inplace,
+    keyed_rows_default,
+    keyed_trace_row_to_positional,
     JSER_SCHEMA_VERSION,
+    KEYED_ROWS_ENV_VAR,
+    KEYED_TRACE_ROW_KEYS,
+    FILL_MODE_ROW_KEYS,
     SECTION_KEYS,
     SERIES_KEYS,
     TOP_LEVEL_KEYS
