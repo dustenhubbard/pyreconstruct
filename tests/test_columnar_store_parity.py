@@ -1115,10 +1115,12 @@ def test_a_store_without_an_issuer_carries_no_ids():
 def test_copy_keeps_the_id_and_duplicate_issues_a_new_one():
     """The carry asymmetry, and it is the whole argument for this arrangement.
 
-    `copyRow` is the `editTraceAttributes` shape: remove, copy, mutate, add,
-    which is how an attribute edit and a rename are implemented and which
-    produces the same annotation. `duplicateRow` is the duplicate-object and
-    copy-to-sections shape, which produces a new one.
+    `copyRow` is the `editTraceAttributes` shape -- remove, copy, mutate,
+    add -- and it is the operation that would make such an edit come out the
+    same annotation. It has no production caller today, so this test pins the
+    primitive's contract rather than any application path; see the module
+    docstring. `duplicateRow` is the duplicate-object and copy-to-sections
+    shape, which produces a new one.
 
     A missed duplication site under this arrangement produces a collision, which
     an issuer's index refuses and reports. Under the alternative, where a copy

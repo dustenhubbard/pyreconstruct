@@ -1,4 +1,4 @@
-"""A columnar store for one section's traces, behind the Qt-free core seam.
+r"""A columnar store for one section's traces, behind the Qt-free core seam.
 
 Phase 1 of the columnar-sections work. This module is a **parallel
 representation with no consumers**: nothing in the application reads it, no call
@@ -200,12 +200,32 @@ The carry rules are implemented as two store operations, deliberately named for
 the question they answer rather than for the object-model method they correspond
 to, because no object-model method is being changed:
 
-* `copyRow(row)` **keeps** the id. This is the `editTraceAttributes` shape:
-  remove, copy, mutate an attribute, add. It is how an attribute edit and a
-  rename are implemented, and the result is the same trace.
+* `copyRow(row)` **keeps** the id. This is the `editTraceAttributes` shape --
+  remove, copy, mutate an attribute, add -- and it is the operation that would
+  make such an edit come out the same trace.
 * `duplicateRow(row)` **issues** a new id. This is the duplicate-object and
   copy-traces-to-sections shape: a new annotation that happens to start as a
   copy of an old one.
+
+**Neither has a production caller outside this module, and that is not a
+footnote.** The primitives were built and never connected:
+`git grep -n "copyRow(\|duplicateRow(" -- 'PyReconstruct/*.py'` finds every hit
+in this file. `Section.editTraceAttributes` does `removeTrace` /
+`Trace.copy()` / mutate / `addTrace`, and `addTrace` reaches
+`_dualWriteAppend`, which calls `appendRow` with **no `trace_id=` and no
+`foreign_id=`** -- the "nothing is passed, so mint one" arm of the three below.
+`copyRow` is never on that path. So on the shipped build an attribute edit and
+a rename each **re-identify** the trace, in memory, with no save anywhere near
+it: the opposite of what an implemented `copyRow` would do. That was measured
+rather than reasoned about, and it is pinned as the code behaves rather than as
+this design reads, by
+`tests/test_trace_id_stability_harness.py::test_an_attribute_edit_moves_the_id_because_copyrow_is_not_wired`,
+its rename twin, and `::test_the_carry_primitives_have_no_production_caller` --
+the three that go red together the day the wiring lands.
+
+The paragraph below is why the primitives are shaped the way they are, and it
+holds whenever they are wired; it is not a description of what the application
+does today.
 
 `copy()` keeping and `duplicate()` issuing is the asymmetry that matters: a
 missed duplication site under this arrangement produces a **collision**, which
