@@ -22,6 +22,9 @@ from PyReconstruct.modules.constants import (
     fast_loads,
     fast_dumps,
     canon_keys_inplace,
+    keyed_rows_default,
+    keyed_trace_row_to_positional,
+    KEYED_TRACE_ROW_KEYS,
     SECTION_KEYS
 )
 
@@ -853,16 +856,25 @@ class Section():
             for i, trace in enumerate(section_data["contours"][cname]):
                 # convert trace to list format if needed
                 if type(trace) is dict:
-                    trace = [
-                        trace["x"],
-                        trace["y"],
-                        trace["color"],
-                        trace["closed"],
-                        trace["negative"],
-                        trace["hidden"],
-                        trace["mode"],
-                        trace["tags"]
-                    ]
+                    # The decode moved into `keyed_trace_row_to_positional` so
+                    # that this reader and the undo baseline's reader
+                    # (`FieldState.getContours`) share one key set. The visible
+                    # change here is the fill mode: this branch read `mode` and
+                    # only `mode`, which is the spelling the legacy keyed shape
+                    # uses, while the model and `docs/JSER_FORMAT.md` call the
+                    # field `fill_mode` and the keyed row this build WRITES
+                    # spells it that way. Both are accepted, permanently -- the
+                    # reader keeps reading every past shape forever -- and the
+                    # writer emits one of them.
+                    #
+                    # The `id` a keyed row may carry is NOT lifted out here.
+                    # That is deliberate and it is the reason this build can
+                    # write ids it does not read back: the id is dropped, and
+                    # the load path then DERIVES the same id from the row's own
+                    # content (S1, `tid-v1`), which is why a round trip is
+                    # id-stable anyway. Adopting a stored id -- and reporting a
+                    # duplicate instead of adopting it -- is S3's slice.
+                    trace = keyed_trace_row_to_positional(trace)
                     section_data["contours"][cname][i] = trace
                 # remove history from trace if it exists
                 elif len(trace) == 9:
@@ -969,12 +981,70 @@ class Section():
 
         return renamed
 
-    def getDict(self) -> dict:
+    def _persistedTraceIDs(self) -> dict:
+        """`{Trace: id}` for every trace the store holds a live row for.
+
+        Read through `_column_rows`, the store's own trace-to-row map, rather
+        than through `_loaded_trace_ids`. The two agree for a section nobody
+        has touched, and they stop agreeing the moment anybody edits one: the
+        load-time map is a snapshot of the file, while the store is what has
+        been maintained across every `addTrace`, `removeTrace` and rebuild
+        since. A trace created during the session is in the store and not in
+        the snapshot; a trace deleted during the session is in the snapshot and
+        not in the store.
+
+        Empty when the section has no store (a `Section` built by
+        `__new__`, which the undo machinery does) or when the store was built
+        with no issuer. The writer treats a missing id as "no claim" and omits
+        the key, so neither case costs a save.
+        """
+        if self._columns is None:
+            return {}
+        return {
+            trace: self._columns.getID(row)
+            for trace, row in self._column_rows.items()
+        }
+
+    def getDict(self, keyed_rows : bool = None) -> dict:
         """Convert section object into a dictionary.
-        
+
+        Trace rows come out in one of two shapes, and the argument that picks
+        between them is the ONLY thing in this method that is not determined by
+        the object model:
+
+          * **positional** (the default): the 8-element array documented in
+            `docs/JSER_FORMAT.md` section 4.1, which is what every build has
+            written since the format existed.
+          * **keyed**: one JSON object per trace, keys and key order fixed by
+            `KEYED_TRACE_ROW_KEYS`, carrying the trace's persisted id. This is
+            the v1 row shape.
+
+        **The default is positional and the switch-off path is byte-identical
+        to the pre-slice writer**, which is checkable rather than assertable.
+        `tests/test_jser_keyed_trace_rows.py` holds the in-suite half (two
+        saves, switch off, identical bytes, plus the revert probes that show
+        the comparison can move). The half a test cannot run -- the same series
+        saved by a build of the previous commit, which has no argument here at
+        all -- was measured out of suite on three corpora up to 125,218 rows and
+        matched on sha256 every time; the numbers are in the pull request.
+
+        **What the keyed shape costs, stated here because this is where it is
+        chosen.** A build that shipped before the reader learned the
+        `fill_mode` spelling -- which is every build up to and including
+        `v1.21.0` -- raises `KeyError: 'mode'` on the first keyed row and
+        cannot open the file. That is measured against the shipped tag, not
+        predicted. It is why the switch is off by default, why defaulting it on
+        is its own decision, and why it is not something to turn on in a
+        session whose files anybody else will open.
+
+            Params:
+                keyed_rows (bool): force keyed rows on/off; None consults
+                                   `PYRECON_JSER_KEYED_ROWS`
             Returns:
                 (dict) all of the compiled section data
         """
+        if keyed_rows is None:
+            keyed_rows = keyed_rows_default()
         d = {}
         d["src"] = self.src
         d["brightness_contrast_profiles"] = self.bc_profiles
@@ -990,13 +1060,40 @@ class Section():
         d["thickness"] = self.thickness
 
         # save contours (sorted: canonical ordering)
+        #
+        # Both shapes go through `Trace.getList`, so the VALUES are identical
+        # and only the container differs: the coordinate rounding, the sorted
+        # tags and the fill-mode tuple are produced once, in one place, and the
+        # keyed row is that same row zipped onto its key names. A keyed writer
+        # that rebuilt the fields itself would be a second encoder to keep in
+        # step with the first.
+        trace_ids = self._persistedTraceIDs() if keyed_rows else None
         d["contours"] = {}
         for contour_name in sorted(self.contours, key=str):
             if not self.contours[contour_name].isEmpty():
-                d["contours"][contour_name] = [
-                    trace.getList(include_name=False) for trace in self.contours[contour_name]
-                ]
-        
+                if keyed_rows:
+                    rows = []
+                    for trace in self.contours[contour_name]:
+                        row = dict(zip(
+                            KEYED_TRACE_ROW_KEYS[1:],
+                            trace.getList(include_name=False),
+                        ))
+                        trace_id = trace_ids.get(trace)
+                        if trace_id is not None:
+                            # `id` first, matching KEYED_TRACE_ROW_KEYS and the
+                            # flag row's index 0. Built by re-insertion rather
+                            # than by sorting, because the key order IS the
+                            # canonical order and must not depend on the
+                            # alphabet.
+                            row = {"id": trace_id, **row}
+                        rows.append(row)
+                else:
+                    rows = [
+                        trace.getList(include_name=False)
+                        for trace in self.contours[contour_name]
+                    ]
+                d["contours"][contour_name] = rows
+
         d["flags"] = [f.getList() for f in self.flags]
 
         d["calgrid"] = self.calgrid

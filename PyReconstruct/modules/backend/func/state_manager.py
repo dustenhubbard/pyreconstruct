@@ -12,6 +12,8 @@ from PyReconstruct.modules.datatypes import (
     Trace
 )
 
+from PyReconstruct.modules.constants import keyed_trace_row_to_positional
+
 class FieldState():
 
     def __init__(
@@ -129,6 +131,22 @@ class FieldState():
                 for cname, trace_list in data["contours"].items():
                     traces = []
                     for trace_data in trace_list:
+                        # A KEYED ROW MUST BE DECODED BEFORE fromList SEES IT,
+                        # and this is the one place in the read path where
+                        # skipping it does not raise. `Trace.fromList` handed a
+                        # dict does not fail: `len(dict)` is the key count and
+                        # iterating a dict yields its keys, so an 8-key row
+                        # unpacks the eight KEY STRINGS into the eight fields
+                        # and a 9-key row additionally takes the first key as
+                        # the name. The undo baseline silently became a
+                        # `Trace` named 'x' whose points were pairs of key
+                        # names, and the first undo restored that over the
+                        # user's real traces. This path reads the section file
+                        # verbatim (`shutil.copyfile` above), so it never sees
+                        # `Section.updateJSON` and has to know the shape
+                        # itself.
+                        if type(trace_data) is dict:
+                            trace_data = keyed_trace_row_to_positional(trace_data)
                         trace = Trace.fromList(trace_data, cname)
                         l = len(trace.points)
                         if l == 2:

@@ -471,6 +471,12 @@ Traces, flags, comments, transforms and ztrace points are stored as **positional
 arrays**, not keyed objects. Position is meaning. This section documents each layout
 normatively.
 
+**One exception, and it is per row rather than per file.** A trace row inside a section's
+`contours` may also be a **keyed object**, and every shipped reader back to `v1.19.0`
+accepts one. The two shapes are interchangeable within a single contour. See
+[the keyed trace row](#the-keyed-trace-row-v1) below; everything else in this section is
+positional and stays positional.
+
 ### 4.1 Trace rows
 
 A trace row appears in two arities depending on where it is stored.
@@ -519,11 +525,90 @@ Notes that apply to both arities:
   A 9-element row therefore always names itself, even when a name is passed in
   alongside. Conversely, an 8-element row with no external name raises `ValueError`. In
   practice the contour key always supplies the name, so this only bites a direct caller.
-- The decoder **mutates the row it is given** (it pops the name off the front), so a row
-  cannot be decoded twice.
-- `tags` is held in memory as a set. When a section is re-saved from the in-memory model,
-  the tag order in the output is the set's iteration order and is **not the input order**.
-  Two saves of the same data in different processes can emit different tag orderings.
+- The decoder **does not mutate the row it is given**, and a row may be decoded any
+  number of times. This bullet used to say the opposite, and the opposite used to be
+  true: the decoder read the name with `l.pop(0)`, so a 9-element row handed in twice
+  raised `ValueError` the second time with `x` sitting where the name belonged. It reads
+  `name, *fields = l` now. Nothing about the on-disk layout changed — this was only ever
+  a statement about the in-process decoder, and it is corrected here because a generator
+  author reading it had no way to tell.
+- `tags` is held in memory as a set, and **the writer sorts it**, so tag order in the
+  output is stable and is not the set's iteration order. This bullet also used to say the
+  opposite (that two saves in different processes could emit different tag orderings),
+  which was true before the writer became canonical and is not true now. Sorting happens
+  on both paths that can produce a row: the model's encoder sorts, and the unpack
+  migration sorts the stored rows of sections that only pass through. See
+  [Canonical ordering](#canonical-ordering).
+
+#### The keyed trace row (v1)
+
+**Inside a section's `contours` only**, a trace row may be a JSON object instead of an
+array. The name still comes from the enclosing contour key. This is the v1 row shape, and
+the reason it exists is the one field a positional row has nowhere to put: **a persisted
+trace id**.
+
+```json
+{"id": "1xGeBSXSFOQ", "x": [6.0, 7.0, 8.0, 8.5], "y": [1.0, 2.0, 3.0, 2.5],
+ "color": [0, 0, 255], "closed": true, "negative": false, "hidden": true,
+ "fill_mode": ["transparent", "selected"], "tags": ["checked"]}
+```
+
+| Key | JSON type | Legal values |
+| --- | --- | --- |
+| `id` | string | 11 characters drawn from `A-Za-z0-9`. **Optional**; see below. |
+| `x` | array of numbers | As positional index 0. |
+| `y` | array of numbers | As positional index 1. |
+| `color` | array of 3 integers | As positional index 2. |
+| `closed` | boolean | As positional index 3. |
+| `negative` | boolean | As positional index 4. |
+| `hidden` | boolean | As positional index 5. |
+| `fill_mode` | array of 2 strings | As positional index 6. Also accepted, and written by older builds, under the key `mode`. |
+| `tags` | array of strings | As positional index 7. |
+
+Everything the positional bullets above say about **values** — the 7-decimal rounding,
+the `fill_mode` value sets, the two-point rule, sorted tags — applies unchanged. Only the
+container differs. The writer emits the keys in the order of the table, which is the
+canonical order: `id` first, matching the flag row's index 0, then the eight fields in
+positional order.
+
+Six things a generator or a third-party reader needs to know, and none of them are
+guesses:
+
+- **`id` is optional and absent means "no claim".** A row whose trace has no id omits the
+  key rather than writing `null`, and a keyed row with no `id` is exactly the legacy
+  keyed shape. Absence is not evidence that the trace is new.
+- **The id is derived from the row's own content**, not minted randomly, so two
+  independent opens of one file agree on every id with no save in between. That is what
+  makes a keyed round trip id-stable even through a reader that drops the stored id.
+  Conversely: **canonicalizing a row changes its id.** A file whose rows were not written
+  by a canonical writer gets different ids after its first save through one, because the
+  content the derivation reads has changed. It is a birth certificate for a row's
+  content, not a serial number stamped once.
+- **`fill_mode`, not `mode`, is what this build writes**, and the difference is
+  expensive. The legacy keyed shape spells the field `mode`; the model and this document
+  call it `fill_mode`. A reader that only knows `mode` — which is every build up to and
+  including `v1.21.0` — raises `KeyError: 'mode'` on the first keyed row and **cannot
+  open the file at all**. Measured against the shipped tag, not predicted. Readers from
+  this build forward accept both spellings and always will.
+- **An older build that can read the row drops the id.** Feed a `mode`-spelled keyed row
+  to `v1.21.0` and it opens correctly, every trace intact, and its next save writes
+  positional rows with the id gone — for every section in the file, not only the ones the
+  user touched, because the unpack migration rewrites the whole hidden directory. Silent,
+  no warning.
+- **The shapes mix freely.** One contour may hold keyed and positional rows in any
+  combination; the reader decides per row. Nothing at the document level, `schema_version`
+  included, says which shape a file uses. See
+  [section 7](#7-versioning-and-migrations).
+- **The cost is a flat 83 bytes per row** on top of the positional row — 78 for the keys
+  and the punctuation, 5 more for spelling `fill_mode` rather than `mode` — so the
+  percentage is governed entirely by how many points a row carries. Measured: +4.08% on a
+  232-row teaching series, +20.53% on a 125,218-row hand-traced series
+  (50,631,588 → 61,024,682 B). Dense automatic tracing pays a few percent; sparse hand
+  tracing pays a fifth.
+
+**Writing keyed rows is off by default in this build.** `PYRECON_JSER_KEYED_ROWS=1` turns
+it on for a process. It is opt-in because of the third and fourth bullets above, and
+defaulting it on is a decision about other people's files rather than about this format.
 
 ### 4.2 Flag rows
 
@@ -953,7 +1038,13 @@ than a byproduct. The intended shape is:
   intent and buys the reader nothing, which is the honest accounting: a reader still
   cannot use it, because an older build deletes it and because row shape is per row.
 - Freeze a canonical v1, with **keyed objects in place of the positional trace and flag
-  rows** documented in [section 4](#4-positional-rows).
+  rows** documented in [section 4](#4-positional-rows). **The trace half is written, and
+  is off by default**: `PYRECON_JSER_KEYED_ROWS=1` makes the writer emit
+  [the keyed trace row](#the-keyed-trace-row-v1) with its persisted id. Flag rows are not
+  keyed and are not in scope for this — they already carry an id at index 0, so keying
+  them buys nothing yet. Making the switch the default is a separate decision, and it is
+  a decision about files in other people's hands rather than about the format: the two
+  bullets on older builds under [4.1](#the-keyed-trace-row-v1) are its whole substance.
 - Put parse and migrate in exactly one owner: read any legacy `.jser`, emit canonical v1.
 - Treat `options` as an explicitly versioned, prunable bag rather than one that prunes
   silently.
@@ -1353,8 +1444,12 @@ symbol, treat the corresponding claim in this page as unverified until re-checke
 
 | Claim | Source |
 | --- | --- |
-| Trace row layout on write, 7-decimal rounding, tags from a set | `PyReconstruct/modules/datatypes/trace.py:147-174` |
-| Trace row layout on read, name-arity rule, input mutation | `PyReconstruct/modules/datatypes/trace.py:244-275` |
+| Trace row layout on write, 7-decimal rounding, tags sorted | `PyReconstruct/modules/datatypes/trace.py`, `Trace.getList` |
+| Trace row layout on read, name-arity rule, and that the row is **not** mutated | `PyReconstruct/modules/datatypes/trace.py`, `Trace.fromList` |
+| Keyed trace row: key set, key order, `fill_mode`-versus-`mode`, `id` omitted when absent | `PyReconstruct/modules/constants/jser_format.py`, `KEYED_TRACE_ROW_KEYS` / `FILL_MODE_ROW_KEYS` |
+| Keyed trace row on write, and the switch that selects it | `PyReconstruct/modules/datatypes/section.py`, `Section.getDict` |
+| Keyed trace row on read (unpack path and undo-baseline path) | `PyReconstruct/modules/constants/jser_format.py`, `keyed_trace_row_to_positional` |
+| `v1.21.0` cannot open a `fill_mode`-spelled keyed row; a `mode`-spelled one opens and loses every id on save | `tests/test_jser_keyed_trace_rows.py` (run against a `git archive` of the tag) |
 | Trace name normalization | `PyReconstruct/modules/datatypes/trace.py:37-51` |
 | Fill mode style and condition value sets | `PyReconstruct/modules/gui/dialog/trace.py:259-284`, `PyReconstruct/modules/backend/view/trace_layer.py:308-338` |
 | Fill mode values and Reconstruct mode conversion | `PyReconstruct/modules/datatypes/trace.py:610-636` |

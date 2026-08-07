@@ -58,6 +58,13 @@ What it buys, and what it does not:
 Set ``PYRECON_JSER_PRETTY=1`` in the environment, or pass ``pretty=True``, to get
 it. The reader accepts either form; this is whitespace, so it is
 backward-compatible in both directions.
+
+**A third switch lives here and it is not whitespace.**
+``PYRECON_JSER_KEYED_ROWS=1`` changes the *schema* of a trace row from a
+positional array to a keyed object carrying the trace's persisted id. It is off
+by default, it is the only switch in this module that changes what a file means,
+and its full cost is written out at ``KEYED_ROWS_ENV_VAR`` below. Read that
+before turning it on.
 """
 
 import os
@@ -82,6 +89,145 @@ def pretty_default() -> bool:
             (bool) True when ``PYRECON_JSER_PRETTY`` is set to ``1``
     """
     return os.environ.get(PRETTY_ENV_VAR, "") == "1"
+
+
+# ---------------------------------------------------------------------------
+# keyed trace rows (the v1 row shape), opt in
+# ---------------------------------------------------------------------------
+
+#: Environment variable that opts a whole process into **keyed trace rows**.
+#:
+#: Same spelling convention as ``PYRECON_JSER_PRETTY`` and read the same way
+#: (exactly ``"1"``, on every call, never cached at import). Everything else
+#: about it is different, and the difference is the point:
+#:
+#: **This one changes the schema.** ``Section.getDict`` stops writing the
+#: 8-element positional trace row documented in ``docs/JSER_FORMAT.md`` section
+#: 4.1 and writes a JSON object per trace instead, keyed by
+#: ``KEYED_TRACE_ROW_KEYS``, carrying the trace's persisted id. Pretty-printing
+#: adds whitespace and canonical ordering moves bytes around; this adds and
+#: renames keys, and a file written with it on is a different document from the
+#: one written with it off.
+#:
+#: **It is off by default and defaulting it on is a separate decision** (S7 of
+#: `specs/phase1-keyed-row-v1-slices-2026-08-06.md`), because of what it costs
+#: with an older build on the other end -- see ``KEYED_TRACE_ROW_KEYS``.
+KEYED_ROWS_ENV_VAR = "PYRECON_JSER_KEYED_ROWS"
+
+
+def keyed_rows_default() -> bool:
+    """Whether a ``Section.getDict`` call with no explicit ``keyed_rows=`` keys.
+
+    Read from the environment **on every call**, for the same reason
+    ``pretty_default`` is: a flag evaluated once at import cannot be changed in
+    a running process, and a test that cannot set the variable ends up
+    monkeypatching a module global and never exercising the variable name at
+    all.
+
+        Returns:
+            (bool) True when ``PYRECON_JSER_KEYED_ROWS`` is set to ``1``
+    """
+    return os.environ.get(KEYED_ROWS_ENV_VAR, "") == "1"
+
+
+#: The keyed trace row's key order, which is also its normative key set.
+#:
+#: ``id`` LEADS, deliberately, and the precedent is in the file already: a flag
+#: row carries its persisted id at index 0 (``docs/JSER_FORMAT.md`` section
+#: 4.2), so the one other row shape in a ``.jser`` that has an identity puts it
+#: first. The remaining eight are the positional row's fields in the positional
+#: row's order, so the two shapes read the same left to right and a reader
+#: written against one is not surprised by the other.
+#:
+#: The order is fixed here rather than left to dict insertion order for the
+#: reason ``canon_keys`` exists: two saves of identical content must produce
+#: identical bytes.
+#:
+#: **``fill_mode``, not ``mode``, and this is the expensive key.** The model
+#: calls the field ``fill_mode``, ``docs/JSER_FORMAT.md`` section 4.1 calls it
+#: ``fill_mode``, and the legacy keyed branch in ``Section.updateJSON`` calls it
+#: ``mode``. Writing ``mode`` would have made a keyed row readable by every
+#: shipped build back to ``v1.19.0`` for free. Writing ``fill_mode`` does not:
+#: a shipped reader hits ``KeyError: 'mode'`` on the first keyed row and
+#: **cannot open the file at all**. That is measured, not predicted
+#: (``tests/test_jser_keyed_trace_rows.py`` runs it against a ``git archive`` of
+#: the ``v1.21.0`` tag), and it is the whole reason this switch is off by
+#: default and tier A. The trade was made deliberately: a schema that says what
+#: it means, at the price of a hard failure in older builds instead of a silent
+#: one. The reader in this build accepts BOTH spellings and always will --
+#: "the reader must keep reading every past shape forever" -- so the cost is
+#: paid only by builds that shipped before the tolerance did.
+#:
+#: ``id`` is omitted from a row whose trace has no id rather than written as
+#: ``null``: absent means "no claim", the same convention ``schema_version``
+#: uses. A keyed row without ``id`` is exactly the legacy keyed shape and every
+#: reader that has ever existed handles it.
+KEYED_TRACE_ROW_KEYS = (
+    "id",
+    "x",
+    "y",
+    "color",
+    "closed",
+    "negative",
+    "hidden",
+    "fill_mode",
+    "tags",
+)
+
+#: Every key a keyed trace row has ever spelled the fill mode with, newest
+#: first. The reader tries them in order; the writer emits ``[0]``.
+#:
+#: Two entries and not one because the legacy keyed branch that has shipped
+#: unchanged since ``v1.19.0`` writes ``mode``, and files carrying that spelling
+#: exist in the wild. Tolerance on the read side is free and is required by the
+#: 2026-07-27 non-negotiable.
+FILL_MODE_ROW_KEYS = ("fill_mode", "mode")
+
+
+def keyed_trace_row_to_positional(row : dict) -> list:
+    """Convert a keyed trace row into the 8-element positional row.
+
+    The one place the keyed shape is decoded, so the two readers that need it
+    -- ``Section.updateJSON`` on the unpack path and
+    ``FieldState.getContours`` on the undo-baseline path -- cannot drift on the
+    key set. They did not share a decoder before this function existed, and the
+    second one did not have one at all: handed a keyed row it called
+    ``Trace.fromList`` on the dict, which does not raise, because ``len(dict)``
+    is the key count and iterating a dict yields its keys. The result was a
+    ``Trace`` named ``'x'`` with the key strings unpacked into its fields, and
+    no exception anywhere.
+
+    ``id`` is not returned. It is not part of the positional row, and the
+    caller that wants it reads it off the dict before calling this.
+
+        Params:
+            row (dict): a keyed trace row, either spelling of the fill mode
+        Returns:
+            (list) the 8-element positional row
+        Raises:
+            KeyError: if the row is missing a field that has no default. The
+                fill mode is the one field with a spelling to choose between,
+                and a row carrying neither spelling is reported against
+                ``fill_mode`` -- the name this build writes -- rather than
+                against the legacy one.
+    """
+    for key in FILL_MODE_ROW_KEYS:
+        if key in row:
+            fill_mode = row[key]
+            break
+    else:
+        raise KeyError(FILL_MODE_ROW_KEYS[0])
+
+    return [
+        row["x"],
+        row["y"],
+        row["color"],
+        row["closed"],
+        row["negative"],
+        row["hidden"],
+        fill_mode,
+        row["tags"],
+    ]
 
 
 # ---------------------------------------------------------------------------
