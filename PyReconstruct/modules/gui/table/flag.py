@@ -3,9 +3,11 @@ from PySide6.QtWidgets import (
     QWidget, 
     QInputDialog, 
     QMenu, 
-    QColorDialog
+    QColorDialog,
+    QDialog
 )
 from PySide6.QtGui import QColor
+from PySide6.QtCore import Qt
 
 from .data_table import DataTable
 
@@ -510,13 +512,31 @@ class FlagTableWidget(DataTable):
             flag = flags[0]
             self.color_filter = tuple(flag.color)
         else:
-            if self.color_filter:
-                c = QColorDialog.getColor(
-                    QColor(*self.color_filter)
-                )
-            else:
-                c = QColorDialog.getColor()
-            if not c:
+            # Qt's own dialog, non-native option before the colour, and an
+            # explicit accepted/isValid check -- see ColorButton.selectColor,
+            # which this mirrors. Two bugs lived in the four lines this
+            # replaces. The static QColorDialog.getColor() opens the system
+            # "Colors" panel on macOS, where closing the panel returns an
+            # invalid QColor. And the guard was `if not c: return`, which never
+            # fired: QColor defines no __bool__, so `bool(QColor())` is True
+            # even when isValid() is False. So a dismissed picker fell straight
+            # through and set the filter to `(c.red(), c.green(), c.blue())` --
+            # (0, 0, 0) for an invalid colour. Cancelling the picker filtered
+            # this table to black flags and looked like it had emptied itself,
+            # on every platform, Cancel included.
+            initial = (
+                QColor(*self.color_filter) if self.color_filter
+                else QColor(Qt.white)
+            )
+            dlg = QColorDialog(self)
+            dlg.setOption(QColorDialog.ColorDialogOption.DontUseNativeDialog, True)
+            dlg.setCurrentColor(initial)
+            try:
+                confirmed = dlg.exec() == QDialog.DialogCode.Accepted
+                c = dlg.selectedColor()
+            finally:
+                dlg.deleteLater()
+            if not (confirmed and c.isValid()):
                 return
             self.color_filter = (c.red(), c.green(), c.blue())
 
