@@ -8,6 +8,14 @@ full release notes on GitHub (linked from the dialog).
 
 ## [1.21.1] — 2026-08-07
 
+- **Improved: Every slider in Series ▸ Options shows what it is set to.** The sliders were a bare handle
+  on a blank groove, so the only way to learn a setting's value was to close the dialog and watch what
+  the program did. **CPU usage** now reads as `50% (5 of 10 workers)`, scale bar size and 3D XY
+  resolution read as percentages, and every slider carries tick marks.
+- **Changed: The scale bar width setting actually moves the scale bar.** The bar could only be drawn at
+  a few set lengths, so most of the 81 positions on the slider drew exactly the same bar; it
+  now has many more lengths to choose from, and tick marks divide each one into readable steps. Lengths
+  also print one way now, so the same bar no longer reads `10 µm` at one zoom and `10.0 µm` at another.
 - **Fixed: A section that fails to load no longer leaves the field stuck and unclosable.** Jumping to a
   section PyReconstruct could not read left the view with nothing to draw, so every redraw raised the
   same error and reopened the error window as fast as you could close it, with Task Manager the only way
@@ -16,10 +24,6 @@ full release notes on GitHub (linked from the dialog).
   raised while the view redrew came back on every redraw, and each occurrence opened another window on
   top of the last. Each fault now opens a single window per session, and every occurrence is still
   written to the log file, which **Help ▸ View log file** shows.
-- **Changed: The scale bar width setting actually moves the scale bar.** The bar could only be drawn at
-  a few set lengths, so most of the 81 positions on the slider drew exactly the same bar; it
-  now has many more lengths to choose from, and tick marks divide each one into readable steps. Lengths
-  also print one way now, so the same bar no longer reads `10 µm` at one zoom and `10.0 µm` at another.
 - **Fixed: On macOS, a color picked for a trace is no longer thrown away.** Clicking a color swatch
   opened the shared system "Colors" panel, where picking a color changed nothing on screen and closing
   the panel discarded the choice, leaving the swatch blank. Swatches now open PyReconstruct's own color
@@ -32,10 +36,6 @@ full release notes on GitHub (linked from the dialog).
   Edit under **Series ▸ Options ▸ View ▸ Autoseg import colors** had the same macOS problem as the trace
   swatch, and the picker opened on white rather than on the color being edited, so pressing OK without
   changing anything wrote white over it.
-- **Improved: Every slider in Series ▸ Options shows what it is set to.** The sliders were a bare handle
-  on a blank groove, so the only way to learn a setting's value was to close the dialog and watch what
-  the program did. **CPU usage** now reads as `50% (5 of 10 workers)`, scale bar size and 3D XY
-  resolution read as percentages, and every slider carries tick marks.
 - **Fixed: Opening Series ▸ Options no longer shrinks the scale bar on its own.** The dialog squeezed
   the stored width into a wider slider range and back again, and that round trip lost a point for most
   values, the shipped default among them, so pressing OK on a dialog nobody had touched made the bar
