@@ -94,9 +94,15 @@ def test_createztrace_default_is_unchanged_by_the_widening():
 def test_union_members_are_concrete_containers():
     """Exactly two members, both concrete, neither abstract.
 
-    This is the assertion that actually forbids the regression. An abstract
-    member -- ``Sequence``, ``Iterable``, ``Collection`` -- is what lets
-    ``bytes`` back in; naming ``tuple`` and ``list`` cannot.
+    This asserts on ``COLOR_ANNOTATION``, defined in this file, so no edit to
+    ``ztrace.py`` or ``series.py`` can reach it and it is *not* what forbids
+    the regression -- measured: it passes under the ``Sequence`` mutation, and
+    the three that fail are the signature pins above plus
+    ``test_probe_under_mypy``. Those pins read the real annotation object off
+    the source and compare it against this constant; this test keeps the
+    constant honest, so loosening it to make a failing pin pass is caught here
+    instead. An abstract member -- ``Sequence``, ``Iterable``, ``Collection``
+    -- is what lets ``bytes`` back in; naming ``tuple`` and ``list`` cannot.
     """
     assert typing.get_args(COLOR_ANNOTATION) == (tuple[int, ...], list[int])
 
