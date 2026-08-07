@@ -24,6 +24,16 @@ from .filters import passesFilters
 ROW_START = re.compile(r"\d\d-\d\d-\d\d, \d?\d:\d\d, ")
 
 
+## The CSV header line, byte for byte as every writer in the tree emits it:
+## Series.openJser and Series.new (both in series.py) and xmlToJSON (in
+## backend/func/xml_json_conversions.py) write this exact string and nothing
+## else -- all three byte-identical. Readers must match it exactly. A substring
+## test such as `"Date" in line` also matches an ordinary continuation line
+## whose text happens to mention a date field, which is not a header and must
+## not be treated as one.
+LOG_HEADER = "Date, Time, User, Obj, Sections, Event"
+
+
 ## Log event prefixes that record a human deliberately removing annotation
 ## work. These are the only events that entitle an import to discard traces the
 ## other series still holds. Kept beside the Log class because the exact strings
@@ -648,7 +658,7 @@ class LogSet():
 
                 for line in log.readlines():
 
-                    if "Date" in line:
+                    if line.strip() == LOG_HEADER:
 
                         external_store.write(line)
                         new.write(line)
