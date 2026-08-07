@@ -700,6 +700,11 @@ Nineteen keys, listed here in the order the writer emits them. Unlike a section,
 series object is **always rebuilt from the in-memory model on save**, so an unrecognized
 key does not survive a save.
 
+Nineteen is the count in the hidden working directory's `.ser`. **A `.jser` carries
+eighteen of them**: `log_set` is removed on the way out, so the example in
+[section 8](#8-a-minimal-valid-file) has eighteen. It is the only key of the nineteen
+that differs between the two files, and it is marked as such below.
+
 | Key | JSON type | Meaning |
 | --- | --- | --- |
 | `schema_version` | integer | Optional. The document schema the last writer intended. **A hint, never a dispatch key**: a build that predates it deletes it on save while keeping the rows it wrote, so absence means "no claim", not "old". See [7](#7-versioning-and-migrations). |
@@ -716,7 +721,7 @@ key does not survive a save.
 | `ztrace_attrs` | object | Ztrace name -> attribute object. In practice only `alignment` is ever written. |
 | `current_brightness_contrast_profile` | string | Name of the active image adjustment profile. Must be a key of every section's `brightness_contrast_profiles`. Default `"default"`. |
 | `options` | object | Series-scoped settings. See [section 6](#6-the-options-bag). |
-| `log_set` | array of strings | Optional. Pending log rows, each a complete CSV line in the format of [the log string](#the-log-string). See divergence 5 in [section 9](#9-reader-and-writer-divergences). |
+| `log_set` | array of strings | Optional, and **never present in a `.jser`**. Pending log rows, each a complete CSV line in the format of [the log string](#the-log-string). This key lives in the hidden working directory's `.ser` only: the writer flattens its rows into the top-level `log` and removes the key, and the reader replaces whatever it finds with `[]`. Accepted on read, but it does not survive a save. See divergence 5 in [section 9](#9-reader-and-writer-divergences). |
 | `editors` | array of strings | Usernames that have edited the series. A set in memory, so the order is not meaningful; the writer emits it **sorted**. If the stored array is empty, it is recomputed from the log history on load. |
 | `code` | string | Series code: a short identifier independent of the filename. Used as the leading field of exported object tables and as the namespace for per-series computer settings. `""` means unset, and it is the only value the UI rejects. Any other string is accepted, including one containing the delimiters used by the exporters. A configurable regex (default `[0-9A-Za-z]+`) is a *detection* pattern applied to the file name to pre-fill a suggestion; it does not validate what the user enters. |
 | `user_columns` | object | Column name -> array of permitted option strings. See [5.4](#54-user_columns). |
@@ -1150,7 +1155,6 @@ substitute real files in `src_dir` to see an image behind the traces.
       "big_dist": 1,
       "autoseg": {}
     },
-    "log_set": [],
     "editors": [],
     "code": "",
     "user_columns": {},
@@ -1168,7 +1172,11 @@ Notes on why this particular document round-trips unchanged:
   **Omitting it is equally valid**, because the reader supplies it and a build older
   than it removes it, so a generator that leaves it out has not produced a lesser file.
 - `align_locked` is `true`, because the reader would force it to `true` anyway.
-- `log_set` is present and empty, because the writer emits it in exactly that case.
+- `log_set` is **absent**, because the `.jser` writer always removes it. The key belongs
+  to the hidden working directory's `.ser`, not to the `.jser`; including it here would
+  make the document differ from its own saved form by exactly that key. It is still
+  accepted on read, so a generator that emits it produces an openable file, just not one
+  that round-trips. See divergence 5 in [section 9](#9-reader-and-writer-divergences).
 - `tags` and `editors` are empty. Non-empty values are fine and are written sorted; see
   [Canonical ordering](#canonical-ordering).
 - Coordinates use at most 7 decimal places, matching the writer's rounding.
@@ -1203,10 +1211,11 @@ from its own model differ. Each is confirmed by round-tripping a file through op
 save. They matter most for a canonical v1, because each one is a decision that has to be
 made explicitly rather than inherited.
 
-**Two of them are now fixed** and are kept here, marked, because files written by earlier
-builds still exhibit them and a reader must still cope: divergence 6 (unordered sets) and
-divergence 8 (provenance-dependent key order). See
-[Canonical ordering](#canonical-ordering).
+**Four of them are now fixed** and are kept here, marked, because files written by earlier
+builds still exhibit them and a reader must still cope: divergence 4 (a two-point trace's
+`closed` flag), divergence 5 (`log_set` written into the `.jser`), divergence 6 (unordered
+sets) and divergence 8 (provenance-dependent key order). The last two are what
+[Canonical ordering](#canonical-ordering) describes.
 
 **1. Sections pass through opaquely; the series object does not.**
 A section that is not loaded and re-saved during a session travels from input to output
@@ -1251,12 +1260,32 @@ flipped at an unpredictable later save rather than never, and a byte-level diff 
 change no edit accounts for. A generator writing `closed: true` on a two-point row should
 expect it to come back as `false`.
 
-**5. `log_set` is emitted when empty and removed when populated.**
-The series writer always includes a `log_set` key. The `.jser` assembler deletes it only
-when it is non-empty (its contents having been folded into the top-level `log` string).
-The result is inverted from what you would expect: a saved `.jser` contains
-`"log_set": []` when there is no pending log, and omits the key entirely when there was
-one. Both are accepted on read, where the key is optional.
+**5. `log_set` was emitted when empty and removed when populated (FIXED).**
+`log_set` is the hidden working directory's accumulator of the current session's log
+rows. It belongs to the `.ser` inside that directory and never to the `.jser`: on save
+its rows are flattened into the top-level `log` string, and on open the reader overwrites
+whatever it finds with `[]`. So the key carries nothing across a save either way.
+
+The `.jser` assembler used to delete it under `if filedata.get("log_set")`, a truthiness
+test standing in for an existence test. That skipped the removal for a log set that was
+present but empty, so the result was inverted from what you would expect: a saved `.jser`
+contained `"log_set": []` when there was no pending log, and omitted the key entirely
+when there had been one. The key's presence therefore tracked *session activity* rather
+than series content, and save, reopen, save was not byte-idempotent for any series that
+logged an event, a difference of exactly the 13 bytes of the key.
+
+No log content was ever at risk, which is why this was a byte-idempotence bug and not a
+data-loss one: the rows are carried out by a separate read of the in-memory log set, so a
+populated log round-tripped into `log` and came back through the history table regardless
+of what happened to the key.
+
+The removal is now unconditional (`filedata.pop("log_set", None)`, which keeps the
+`KeyError` safety the truthiness test was reaching for). **A `.jser` written by this build
+never contains `log_set`,** whatever the session did, and none of the three checked-in
+fixture files carries it. The key remains optional and accepted on read, so a hand-written
+file may still include it, but it will not survive the next save, and a generator aiming
+for a document that round-trips unchanged should leave it out. See the corrected example
+in [section 8](#8-a-minimal-valid-file).
 
 **6. Sets are serialized in unordered form (FIXED).**
 Five structures are Python sets in memory and arrays on disk: trace `tags`, series
@@ -1364,15 +1393,15 @@ symbol, treat the corresponding claim in this page as unverified until re-checke
 | Per-section files written during open | `PyReconstruct/modules/datatypes/series.py:346-366` |
 | `align_locked` forced true, in the unpack loop only | `PyReconstruct/modules/datatypes/series.py:352` (the recovery path returns earlier, at `:245-256`) |
 | `existing_log.csv` written during open | `PyReconstruct/modules/datatypes/series.py:368-370` |
-| Empty `log_set` injected during open | `PyReconstruct/modules/datatypes/series.py:379-380` |
+| Empty `log_set` injected during open | `PyReconstruct/modules/datatypes/series.py:679-680` |
 | Hidden directory removed on cancel or error | `PyReconstruct/modules/datatypes/series.py:360-362`, `:403-405` |
 | Root structure validation | `PyReconstruct/modules/datatypes/series.py:264-276`, `:305-315` |
 | Legacy one-key-per-file layout migration | `PyReconstruct/modules/datatypes/series.py:279-303` |
 | Missing `log` defaulted to the header line | `PyReconstruct/modules/datatypes/series.py:318-319` |
 | `sections` array length is `max(number)+1` | `PyReconstruct/modules/datatypes/series.py:431-432` |
 | Sections re-read opaquely on save | `PyReconstruct/modules/datatypes/series.py:441-446` |
-| `log_set` deleted only when truthy | `PyReconstruct/modules/datatypes/series.py:450` |
-| Log assembled from `existing_log.csv` plus `log_set` | `PyReconstruct/modules/datatypes/series.py:451-464` |
+| `log_set` removed unconditionally on save (divergence 5) | `PyReconstruct/modules/datatypes/series.py:834-845` |
+| Log assembled from `existing_log.csv` plus `log_set` | `PyReconstruct/modules/datatypes/series.py:846-849`, `:881-888` |
 | Top-level key emission order | `PyReconstruct/modules/datatypes/series.py:431-434` |
 | Section files not `fsync`ed | `PyReconstruct/modules/datatypes/section.py:315-340` |
 
@@ -1383,7 +1412,7 @@ symbol, treat the corresponding claim in this page as unverified until re-checke
 | Series read path (field by field) | `PyReconstruct/modules/datatypes/series.py:124-212` |
 | Series write path and key order | `PyReconstruct/modules/datatypes/series.py:682-724` |
 | Series defaults template | `PyReconstruct/modules/datatypes/series.py:726-836` |
-| `log_set` optional on read | `PyReconstruct/modules/datatypes/series.py:185-188` |
+| `log_set` optional on read | `PyReconstruct/modules/datatypes/series.py:455-459` |
 | Series rebuilt from the model on save | `PyReconstruct/modules/datatypes/series.py:933-941` |
 | `src_dir` joined to `src` without anchoring | `PyReconstruct/modules/datatypes/section.py:117-130` |
 | `src_dir` Zarr suffix sentinel | `PyReconstruct/modules/datatypes/section.py:117-147`, `PyReconstruct/modules/backend/func/zarr_naming.py:1-30` |
@@ -1421,9 +1450,9 @@ symbol, treat the corresponding claim in this page as unverified until re-checke
 | Event whitespace stripped on read | `PyReconstruct/modules/datatypes/log.py:96` |
 | Blank lines skipped | `PyReconstruct/modules/datatypes/log.py:294` |
 | Date and time formats, timezone from a setting | `PyReconstruct/modules/constants/getdatetime.py:6-32` |
-| `log_set` is a flat array of row strings | `PyReconstruct/modules/datatypes/log.py:276-282` |
-| Session events appended only to `log_set` | `PyReconstruct/modules/datatypes/series.py:2551-2564` |
-| Full history recombines both halves | `PyReconstruct/modules/datatypes/series.py:2566-2579` |
+| `log_set` is a flat array of row strings | `PyReconstruct/modules/datatypes/log.py:353-368` |
+| Session events appended only to `log_set` | `PyReconstruct/modules/datatypes/series.py:3719-3732` |
+| Full history recombines both halves | `PyReconstruct/modules/datatypes/series.py:3734-3752` |
 
 ### Sections
 
