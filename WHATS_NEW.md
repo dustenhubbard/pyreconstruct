@@ -6,7 +6,7 @@ full release notes on GitHub (linked from the dialog).
 
 ## [Unreleased]
 
-## [1.21.2-beta-1] — 2026-08-07
+## [1.21.2-beta-1] 2026-08-07
 
 - **Fixed: The Beta update channel now offers stable releases, not only prereleases.** If you were on
   the Beta channel when 1.21.0 shipped, the channel had nothing to hand you: it looked only at

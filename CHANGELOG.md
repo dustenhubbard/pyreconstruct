@@ -13,7 +13,7 @@ the README's *From source (developers)* section).
 
 ## [Unreleased]
 
-## [1.21.2-beta-1] — 2026-08-07
+## [1.21.2-beta-1] 2026-08-07
 
 ### Fixed
 - **The Beta update channel now offers a stable release when it is the newest one.**
