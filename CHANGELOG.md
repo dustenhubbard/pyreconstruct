@@ -17,7 +17,7 @@ the README's *From source (developers)* section).
 
 ### Added
 - **A small confetti burst when you copy an error report.** Clicking **Copy
-  report to clipboard** in the error window now throws a dozen small coloured
+  report to clipboard** in the error window now throws a dozen small colored
   dots out of the button for about half a second, fading them out before they
   reach the edge of the window, alongside the "Copied ✓" label it already
   showed. It fires only on a copy that actually reached the clipboard, so it is
@@ -56,52 +56,52 @@ the README's *From source (developers)* section).
   the line that points at the full notes on GitHub, and the dialog carries that
   link of its own besides, so nothing became unreachable. The post-update
   showing is unchanged and still lists every release you missed.
-- **How you close the colour picker is now recorded in the log.** Every way of
+- **How you close the color picker is now recorded in the log.** Every way of
   closing the picker without OK -- the Cancel button, the title-bar close, Esc --
-  returns the same invalid colour, so a report of "I set a colour and nothing
+  returns the same invalid color, so a report of "I set a color and nothing
   happened" could not be told apart from a deliberate Cancel or a misbehaving OK,
   in the app or in the log. `ColorButton.selectColor` now writes one line per
   picker interaction to the log that `Help ▸ View log file` opens: OK logs the
-  colour it applied; the Cancel button is named as Cancel, read from the dialog's
+  color it applied; the Cancel button is named as Cancel, read from the dialog's
   own button, the one place it differs from a window close; and any other
-  dismissal logs the colour the picker was showing at that moment together with
-  the fact that it was not applied. That showing-colour is the discriminator the
-  earlier trace-swatch report lacked. Behaviour is unchanged -- the picker looks
+  dismissal logs the color the picker was showing at that moment together with
+  the fact that it was not applied. That showing-color is the discriminator the
+  earlier trace-swatch report lacked. Behavior is unchanged -- the picker looks
   the same and a dismissal still applies nothing; only the log gains a line.
 
 ### Fixed
-- **A colour picked for a trace is no longer thrown away on macOS.** Clicking a
-  colour swatch called `QColorDialog.getColor()`, which on macOS does not open a
+- **A color picked for a trace is no longer thrown away on macOS.** Clicking a
+  color swatch called `QColorDialog.getColor()`, which on macOS does not open a
   Qt dialog: it opens the shared system "Colors" panel, the live-apply picker
-  every other Mac app uses. Picking a colour there changed nothing on screen,
+  every other Mac app uses. Picking a color there changed nothing on screen,
   and closing the panel -- the gesture that picker invites -- returned an
-  invalid colour, so the choice was discarded silently and the swatch stayed
+  invalid color, so the choice was discarded silently and the swatch stayed
   blank. (Qt bolts an OK button onto that panel and it does work, but the panel
   opens wherever the system last left it, nowhere near the dialog that asked for
-  it.) The swatch now opens Qt's own colour dialog: modal, parented to the
+  it.) The swatch now opens Qt's own color dialog: modal, parented to the
   button, with OK inside its own window. This is the picker Windows and Linux
-  already got. Nothing stored was ever wrong -- the colour simply never reached
-  the trace -- and it affected any colour, not only the green in the report.
-- **Cancelling the flag list's colour filter no longer filters the list to
+  already got. Nothing stored was ever wrong -- the color simply never reached
+  the trace -- and it affected any color, not only the green in the report.
+- **Canceling the flag list's color filter no longer filters the list to
   black.** "Filter > Color filter > Set filter..." guarded its picker with
   `if not c: return`, which never fired: `QColor` defines no `__bool__`, so a
-  dismissed picker's invalid colour is still truthy. Cancel therefore fell
+  dismissed picker's invalid color is still truthy. Cancel therefore fell
   through and set the filter to `(0, 0, 0)`, hiding every flag that was not
   pure black -- a flag list that emptied itself on Cancel, with a filter the
   user never chose and had to find "Remove filter" to clear. This one was not
   macOS-specific; it happened everywhere, Cancel included.
 
-- **The autoseg import-colours editor no longer discards the colour you pick on
+- **The autoseg import-colors editor no longer discards the color you pick on
   macOS.** Series > Options > View > "Autoseg import colors" called
   `QColorDialog.getColor()` for Add and Edit, the same static behind the trace
   swatch bug: on macOS it opens the shared system "Colors" panel, and closing
-  that panel returns an invalid colour that was then silently dropped. Both
+  that panel returns an invalid color that was then silently dropped. Both
   call sites now open Qt's own dialog, as the trace swatch does.
 
-  Both pickers also open on the colour being edited rather than on white. A
+  Both pickers also open on the color being edited rather than on white. A
   `QColorDialog` seeded before the native path is switched off loses its seed
   on macOS, so pressing OK without changing anything would have written white
-  over the colour that was already there.
+  over the color that was already there.
 - **An error that keeps happening now opens one window instead of an endless
   stream of them.** The exception hook opened an error window per occurrence,
   which is fine for a failure the user can stop provoking and a trap for one they
@@ -144,7 +144,7 @@ the README's *From source (developers)* section).
   It is now its own label between the notes and the "Full release notes on
   GitHub" link, so it is on screen from the moment the dialog opens. The wording
   is unchanged, and so is the italic the markdown had given it. What has changed
-  is that it is no longer dimmed: it sits at the dialog's ordinary text colour
+  is that it is no longer dimmed: it sits at the dialog's ordinary text color
   rather than the muted one. Who maintains this build is what a lab needs in
   order to report an issue to the right person, so it is set to be read rather
   than skimmed past.
@@ -155,8 +155,8 @@ the README's *From source (developers)* section).
   separates the byline from the "Full release notes on GitHub" link below it, so
   the two no longer read as one block of small text.
 
-  Both links in the dialog also recolour properly when the theme is switched
-  from Help ▸ Theme while the dialog is open. Qt fixes a link's colour when the
+  Both links in the dialog also recolor properly when the theme is switched
+  from Help ▸ Theme while the dialog is open. Qt fixes a link's color when the
   text is set rather than when it is drawn, so they used to keep the old theme's
   blue until the dialog was closed and reopened -- barely visible against the
   dark background.
@@ -345,7 +345,7 @@ the README's *From source (developers)* section).
   moment you isolated, per trace, so an object you had hidden stays hidden and
   everything else returns. It sits directly under `Hide other objects` on all
   three menus that offer the isolate -- the field's `Object ▸` submenu, the object
-  list's right-click menu, and the object list's own `Selection` menu -- is greyed
+  list's right-click menu, and the object list's own `Selection` menu -- is grayed
   out until an isolate has left something to restore, and a single Ctrl+Z undoes it
   like any other volume-wide visibility change.
 
@@ -1190,7 +1190,7 @@ the README's *From source (developers)* section).
   nothing is driving the window by hand. Both now answer for themselves, and
   both answer the way that cannot lose anything: the exit prompt saves, because
   declining deletes the hidden working directory holding every unsaved edit and
-  cancelling stops the close entirely, and the recovery prompt opens the
+  canceling stops the close entirely, and the recovery prompt opens the
   recovered series, because declining deletes it.
 - **Importing transforms adds the new alignment to the alignment menu.** Both
   `Alignments > Import alignments` entries, `From .txt file...` and
