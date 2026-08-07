@@ -12,16 +12,18 @@ installed, so showing them there meant the same notes appeared twice around
 every update.
 """
 
+from html import escape
+
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextBrowser,
 )
 from PySide6.QtGui import QTextCursor
-from PySide6.QtCore import Qt, QSettings
+from PySide6.QtCore import Qt, QSettings, QEvent
 
 from PyReconstruct.modules.backend.updater.install_info import current_version_str
 from PyReconstruct.modules.gui.main.first_launch import (
     whats_new_due, whats_new_content, github_release_url, WHATSNEW_KEY,
-    ON_DEMAND_CAP,
+    ON_DEMAND_CAP, HOMEPAGE_URL, LINKED_NAME,
 )
 
 ORG, APP = "KHLab", "PyReconstruct"
@@ -44,6 +46,43 @@ def _space_after_headings(browser, extra=10):
             cursor.setPosition(block.position())
             cursor.setBlockFormat(fmt)
         block = block.next()
+
+
+class LinkLabel(QLabel):
+    """A rich-text label whose link colour survives a live theme change.
+
+    QLabel builds its ``QTextDocument`` when the text is set, and resolves the
+    anchor colour (``QPalette::Link``) into it at that moment. Plain text keeps
+    following the palette at paint time; the anchor does not. So switching theme
+    through Help > Theme with this dialog already open leaves every linked word
+    in the *previous* theme's blue -- measured at 1.85:1 against the dark
+    background, where the same dialog built fresh under that theme renders it at
+    3.16:1.
+
+    Re-setting the text rebuilds the document against the current palette. It
+    has to go through an empty string on the way: ``QLabel::setText`` returns
+    early when the new text equals the old, so assigning the same markup back is
+    a no-op -- measured, it leaves the stale colour exactly where it was.
+
+    ``PaletteChange`` is the event to catch, and it is the only one needed. It
+    arrives on both halves of the app's theme switch: the ``qdark`` branch,
+    which only calls ``QApplication.setStyleSheet()``, and the ``default``
+    branch, which calls ``setPalette()`` as well.
+    """
+
+    def __init__(self, markup, parent=None):
+        super().__init__(parent)
+        self._markup = markup
+        self.setTextFormat(Qt.RichText)
+        self.setText(markup)
+
+    def changeEvent(self, event):
+        # getattr: change events can arrive from inside QLabel.__init__, before
+        # _markup is assigned.
+        if event.type() == QEvent.Type.PaletteChange and getattr(self, "_markup", None):
+            super().setText("")
+            super().setText(self._markup)
+        super().changeEvent(event)
 
 
 def make_notes_browser(markdown_text, min_height=180):
@@ -105,22 +144,79 @@ class WhatsNewDialog(QDialog):
         orienter.setFont(of)
         lay.addWidget(orienter)
 
-        # The maintainer provenance line rides at the very bottom of the notes,
-        # set off from them by a rule and rendered in a quieter (italic) register
-        # so it reads as an aside about who maintains this build, not as one more
-        # release bullet. It comes from the builder as its own field and is the
-        # same on every framing (update, welcome, on-demand, generic fallback);
-        # appending it here, once, is the only place it is rendered, so it can
-        # never double up with the notes body above it.
-        notes_md = content["body"]
-        byline = content.get("byline")
-        if byline:
-            notes_md = f"{notes_md}\n\n---\n\n_{byline}_" if notes_md else f"_{byline}_"
-        self._notes = make_notes_browser(notes_md, min_height=260)
+        # The notes browser renders the release notes and nothing else. The
+        # maintainer provenance line used to be appended to the end of this
+        # markdown, below a rule, which put it inside the scroll: on a release
+        # with more than a screenful of notes -- the normal case -- a reader had
+        # to scroll to the bottom to find out who maintains this build, and most
+        # never did. It is now its own widget below the browser (see below), so
+        # it is on screen from the moment the dialog opens.
+        self._notes = make_notes_browser(content["body"], min_height=260)
         lay.addWidget(self._notes)
 
-        link = QLabel(f'<a href="{url}">Full release notes on GitHub ↗</a>')
-        link.setTextFormat(Qt.RichText)
+        # The provenance line itself: italic, at the ordinary text colour, and a
+        # jump link to the project home page. The italic is the aside register
+        # the markdown `_..._` gave it inside the notes, and it is kept. What is
+        # deliberately *not* kept is the muting: this label first landed dimmed
+        # by `setEnabled(False)`, the way the release date above it is, and the
+        # disabled palette paints it at about 1.6:1 against the dialog
+        # background (measured on the rendered widget, offscreen/Fusion:
+        # #bebebe on #efefef). At that contrast it reads as switched-off rather
+        # than as a quiet aside, and this is the one line a lab needs in order
+        # to report an issue to the right person. So it is an ordinary *enabled*
+        # label in the normal text colour -- italic for the register, full
+        # contrast for the legibility.
+        #
+        # Exactly one word of it is a link: the project name, pointing at the
+        # home page. That word takes the ordinary link styling -- blue and
+        # underlined -- and the rest of the sentence stays plain italic text.
+        # Only the word is a click target; the surrounding words are not.
+        #
+        # The whole line was briefly the anchor, styled to look like ordinary
+        # text so as not to stack two link-coloured rows. Linking just the name
+        # gets the same restraint without the deception: one obvious, ordinary
+        # link instead of a whole sentence that was secretly clickable, so it
+        # needs neither a colour override nor the pointing-hand cursor and
+        # tooltip that were standing in for the missing affordance. It is also
+        # theme-proof for free -- QPalette::Link is whatever the active theme
+        # says it is, resolved at paint, rather than a colour this code samples
+        # at construction and gets wrong under the dark theme.
+        #
+        # `escape()` runs before the split, so the anchor is spliced into
+        # already-escaped text and the sentence can never inject markup. The
+        # split is `partition`, which takes the FIRST occurrence: this byline
+        # contains the name exactly once, and if it ever contained none the
+        # partition yields empty match/tail and the line renders as plain text
+        # with no anchor at all rather than raising.
+        #
+        # The byline comes from the builder as its own field and is the same on
+        # every framing (update, welcome, on-demand, generic fallback);
+        # rendering it here, once, is the only place it appears, so it can never
+        # double up with the notes above it. Some framings carry no byline, and
+        # then no widget is added at all.
+        byline = content.get("byline")
+        if byline:
+            before, name, after = escape(byline).partition(LINKED_NAME)
+            self._byline = LinkLabel(
+                f'{before}<a href="{HOMEPAGE_URL}">{name}</a>{after}' if name
+                else before
+            )
+            bf = self._byline.font()
+            bf.setItalic(True)
+            self._byline.setFont(bf)
+            self._byline.setOpenExternalLinks(True)
+            self._byline.setWordWrap(True)
+            lay.addWidget(self._byline)
+            # A blank line between the byline and the "Full release notes"
+            # link below it, so the two do not read as one block of small text.
+            lay.addSpacing(self._byline.fontMetrics().height())
+        else:
+            self._byline = None
+
+        # Same LinkLabel as the byline: this label has always had the same
+        # stale-anchor-colour behaviour on a live theme switch, and fixing one
+        # anchor in the dialog while leaving the other stale would show.
+        link = LinkLabel(f'<a href="{url}">Full release notes on GitHub ↗</a>')
         link.setOpenExternalLinks(True)
         lay.addWidget(link)
 

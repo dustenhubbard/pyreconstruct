@@ -266,10 +266,25 @@ def test_startup_shows_the_notes_once_per_version_in_the_real_window(
     assert dialog.isModal() is False                      # never blocks startup
     rendered = dialog._notes.toPlainText()
     assert "Added the shiny new thing." in rendered
-    # the maintainer byline rides at the bottom of the notes, exactly once, all
-    # the way through the real startup handler and dialog
-    assert rendered.count(F.MAINTAINER_BYLINE) == 1
-    assert rendered.index("Added the shiny new thing.") < rendered.index(F.MAINTAINER_BYLINE)
+    # the maintainer byline is its own always-visible label below the notes --
+    # not inside the scrollable browser -- exactly once, all the way through the
+    # real startup handler and dialog
+    assert F.MAINTAINER_BYLINE not in rendered
+    # the byline label carries link markup, so compare what it *renders*
+    from PySide6.QtGui import QTextDocumentFragment
+    def shows_byline(lab):
+        return F.MAINTAINER_BYLINE in (
+            QTextDocumentFragment.fromHtml(lab.text()).toPlainText()
+        )
+
+    shown = QTextDocumentFragment.fromHtml(dialog._byline.text()).toPlainText()
+    assert shown == F.MAINTAINER_BYLINE
+    bylines = [lab for lab in dialog.findChildren(QLabel) if shows_byline(lab)]
+    assert bylines == [dialog._byline]
+    lay = dialog.layout()
+    link = next(lab for lab in dialog.findChildren(QLabel)
+                if "Full release notes on GitHub" in lab.text())
+    assert lay.indexOf(dialog._notes) < lay.indexOf(dialog._byline) < lay.indexOf(link)
     assert settings.value(F.WHATSNEW_KEY) == "1.21.0"     # recorded as seen
 
     dialog.close()
