@@ -347,6 +347,16 @@ class TraceIDIssuer():
         ## hold two ids). See `deriveForSection` for why re-derivation must
         ## answer from this record rather than from `_taken`.
         self._derivations = {}
+        ## The same record for ids ADOPTED off a file's own rows, keyed and
+        ## valued identically. `adoptForSection` needs it for the reason
+        ## `deriveForSection` needs its own: `Series.loadSection` builds a fresh
+        ## `Section` every call, so one section's rows are re-read again and
+        ## again in a session, and the second read of a row whose id was adopted
+        ## on the first would find that id in `_taken` and report the trace as
+        ## clashing with itself.
+        self._adoptions = {}
+        ## Ids a file offered that could not be decoded, as (id, name) pairs.
+        self._malformed = []
 
     @property
     def taken(self) -> frozenset:
@@ -361,6 +371,25 @@ class TraceIDIssuer():
         that needed a rule to resolve is told to the user.
         """
         return tuple(self._collisions)
+
+    @property
+    def malformed(self) -> tuple:
+        """Every unreadable id a file offered, as (id, name) pairs.
+
+        Separate from `collisions` because the two are different faults with
+        different causes: a collision means two traces claim one identity, which
+        is a merge hazard; a malformed id means the bytes in the file are not an
+        id at all, which is a hand-edited or foreign file.
+
+        Kept rather than raised, and this is the deliberate half. `adopt` calls
+        `decodeTraceID`, which rejects a malformed id loudly, and letting that
+        reach the caller would make a single bad character in a single row turn
+        a whole series into a file that cannot be opened. The row's id is
+        discarded, an id is derived for the trace instead exactly as for a row
+        that carried none, and the fault is recorded here. Every trace still
+        loads; nothing is silently believed.
+        """
+        return tuple(self._malformed)
 
     def issue(self) -> str:
         """Issue a fresh opaque id for a trace being created now.
@@ -403,7 +432,94 @@ class TraceIDIssuer():
         self._taken.add(trace_id)
         return True
 
-    def deriveForSection(self, section_number: int, contours: dict) -> dict:
+    def adoptForSection(
+            self, section_number: int, contours: dict, stored_ids: dict
+        ) -> dict:
+        """Adopt the ids a section file stored on its own rows.
+
+        The counterpart of `deriveForSection` and deliberately its mirror image:
+        derivation invents an identity for a row that has none, adoption honors
+        one the file already asserts. A row is only ever handled by one of them,
+        which is why the caller runs this FIRST and passes the rows it adopted
+        to `deriveForSection`'s `skip`.
+
+        The order matters and getting it wrong is not subtle. An id written by
+        this build is the id this build DERIVES for that row, so deriving first
+        would put the row's own id into `_taken` and `adopt` would then report
+        every single row of a file as clashing with itself.
+
+        REPEATED LOADS MUST NOT REPORT A ROW AS CLASHING WITH ITSELF
+        -----------------------------------------------------------
+        Same trap `deriveForSection` documents at length, same shape, same fix.
+        `Series.loadSection` constructs a fresh `Section` on every call, so the
+        rows of one section reach this method many times in a session. A naive
+        implementation adopts on the first pass, finds the id in `_taken` on the
+        second, and records a collision against a trace that is simply being
+        re-read. So every adoption is recorded against the derivation's own key
+        -- (section number, contour name, the row's canonical JSON) -- and a
+        repeat request for the same content and the same id is answered from the
+        record without consulting `_taken`.
+
+        The key is the row's canonical JSON and not its index, so re-reading a
+        section after an unrelated contour gained or lost a trace still matches.
+        A row whose CONTENT changed misses the record and is adopted fresh,
+        which is correct: the file is asserting that id for that content now.
+
+            Params:
+                section_number (int): the section these contours sit on
+                contours (dict): {contour name: [positional 8-field row, ...]},
+                    the shape `Section.updateJSON` leaves behind
+                stored_ids (dict): {(contour name, index): id} lifted off the
+                    file's keyed rows. Rows absent from it carried no id.
+            Returns:
+                (dict): {(contour name, index): id} for every row whose stored
+                    id was accepted. A row whose id clashed or could not be
+                    decoded is ABSENT, and the caller derives for it instead;
+                    the fault is in `collisions` or in `malformed`.
+        """
+        out = {}
+        if not stored_ids:
+            return out
+        ## Within-call occurrence count per key, so the k-th byte-identical row
+        ## of a contour matches the k-th recorded adoption.
+        occurrence = {}
+        for cname in sorted(contours, key=str):
+            for i, row in enumerate(contours[cname]):
+                trace_id = stored_ids.get((cname, i))
+                if trace_id is None:
+                    continue
+                key = (section_number, cname, json.dumps(
+                    row, sort_keys=True, separators=(",", ":"),
+                    ensure_ascii=True,
+                ))
+                k = occurrence.get(key, 0)
+                occurrence[key] = k + 1
+                recorded = self._adoptions.setdefault(key, [])
+                if k < len(recorded) and recorded[k] == trace_id:
+                    ## This row, this content, this id, already adopted on an
+                    ## earlier load. Not a clash.
+                    out[(cname, i)] = trace_id
+                    continue
+                try:
+                    accepted = self.adopt(trace_id, cname)
+                except ValueError:
+                    ## Not an id at all. Recorded and dropped rather than
+                    ## raised -- see the `malformed` property for why a file
+                    ## must still open.
+                    self._malformed.append((trace_id, cname))
+                    continue
+                if not accepted:
+                    ## `adopt` has already recorded the clash by name.
+                    continue
+                while len(recorded) <= k:
+                    recorded.append(None)
+                recorded[k] = trace_id
+                out[(cname, i)] = trace_id
+        return out
+
+    def deriveForSection(
+            self, section_number: int, contours: dict, skip=()
+        ) -> dict:
         """Derive ids for every trace of one section, deterministically.
 
         Sorted iteration over contour names -- `sorted(contours, key=str)`, the
@@ -452,6 +568,14 @@ class TraceIDIssuer():
                 section_number (int): the section these contours sit on
                 contours (dict): {contour name: [stored 8-field row, ...]}, the
                     shape `Section.getDict()["contours"]` has
+                skip (container): (contour name, index) pairs NOT to derive for,
+                    because the file already asserted an id for them and
+                    `adoptForSection` accepted it. Such a row is absent from the
+                    result. Deriving for it anyway would be worse than wasteful:
+                    the derived id would be registered in `_taken` beside the
+                    adopted one, so the row would burn two identities and every
+                    later derivation on the series would salt past a value no
+                    trace holds.
             Returns:
                 (dict): {(contour name, index within contour): id}
         """
@@ -461,6 +585,8 @@ class TraceIDIssuer():
         occurrence = {}
         for cname in sorted(contours, key=str):
             for i, row in enumerate(contours[cname]):
+                if (cname, i) in skip:
+                    continue
                 ## The same canonical serialization the derivation itself uses
                 ## (and the same refusal: a row carrying a type json cannot
                 ## encode raises TypeError here, exactly as deriveTraceID
