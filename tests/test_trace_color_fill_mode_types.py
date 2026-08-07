@@ -3,10 +3,11 @@ not ``Sequence``.
 
 These three were annotated ``tuple``, which called the ordinary ``.jser`` round
 trip a type error: ``fromList`` assigns a colour verbatim from parsed JSON,
-where an array decodes to a ``list``, and ``Section.addFlag`` builds a ``Flag``
-straight out of ``trace.color``. Widening them was right. Widening them to
-``Sequence`` was wider than right, and the cost is not visible from the error
-count -- it only shows up in what stops being reported:
+where an array decodes to a ``list``, and ``Section``'s import paths
+(``addImportFlag``, plus the two inline constructions in ``importTraces``)
+build a ``Flag`` straight out of ``trace.color``. Widening them was right.
+Widening them to ``Sequence`` was wider than right, and the cost is not visible
+from the error count -- it only shows up in what stops being reported:
 
     ``str`` satisfies ``Sequence[str]`` and ``bytes`` satisfies ``Sequence[int]``.
 
@@ -63,10 +64,12 @@ def test_trace_color_annotation():
 
 
 def test_flag_color_annotation():
-    """``Flag`` moves with ``Trace``: ``Section.addFlag`` feeds one the other.
+    """``Flag`` moves with ``Trace``: ``addImportFlag`` feeds one the other.
 
-    Correcting ``Trace`` alone put an error *into* ``section.py`` rather than
-    taking one out, because ``trace.color`` then arrived at a ``Flag`` whose own
+    ``Section.addImportFlag`` -- and the two inline constructions in
+    ``Section.importTraces`` -- build a ``Flag`` out of ``trace.color``, so
+    correcting ``Trace`` alone put an error *into* ``section.py`` rather than
+    taking one out: ``trace.color`` then arrived at a ``Flag`` whose own
     annotation still said ``tuple``. The two have to agree.
     """
     assert _param_annotation(Flag.__init__, "color") == COLOR_ANNOTATION
@@ -82,9 +85,15 @@ def test_flag_color_annotation():
 def test_union_members_are_concrete_containers(annotation, expected):
     """Exactly two members, both concrete, neither abstract.
 
-    This is the assertion that actually forbids the regression. An abstract
-    member -- ``Sequence``, ``Iterable``, ``Collection`` -- is what lets ``str``
-    and ``bytes`` back in; naming ``tuple`` and ``list`` cannot.
+    This asserts on the module's own constants, so no edit to ``trace.py`` or
+    ``flag.py`` can reach it and it is *not* what forbids the regression --
+    measured: it passes under the ``Sequence`` mutation. What forbids the
+    regression is the annotation pins above, which read the real annotation
+    object off the source and compare it against these constants; this test
+    keeps those constants honest, so loosening one to make a failing pin pass
+    is caught here instead. An abstract member -- ``Sequence``, ``Iterable``,
+    ``Collection`` -- is what lets ``str`` and ``bytes`` back in; naming
+    ``tuple`` and ``list`` cannot.
     """
     assert typing.get_args(annotation) == expected
 

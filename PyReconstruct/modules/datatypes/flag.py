@@ -19,8 +19,11 @@ class Flag():
         as ``Trace.__init__``'s, and is spelled as that union rather than as
         ``Sequence[int]`` for the same reason too -- ``bytes`` satisfies
         ``Sequence[int]``. ``Flag.fromList`` assigns it verbatim from parsed
-        JSON, where it decodes to a ``list``, and ``Section.addFlag`` builds one
-        straight out of ``trace.color``.
+        JSON, where it decodes to a ``list``, and ``Section``'s import paths --
+        ``addImportFlag`` and the two inline constructions in ``importTraces``
+        -- build one straight out of ``trace.color``. Not ``Section.addFlag``,
+        which earlier versions of this docstring named: that one appends a
+        ``Flag`` that already exists and never touches ``trace.color``.
 
             Params:
                 name (str): the name of the flag
