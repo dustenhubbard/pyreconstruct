@@ -54,6 +54,23 @@ dependencies = [
     # tests/test_export_svg_png.py, which asserts the declaration unconditionally
     # and skips only the native render.
     "cairosvg==2.9.0",
+    # Same module, same class of gap, and the one the guard does *not* cover.
+    # `export_svg` does `from PIL import Image` to embed the section image as a
+    # base64 PNG, so pillow is a first-party runtime requirement of SVG (and
+    # therefore PNG) export -- but `exportSectionSVG`'s `modules_available`
+    # guard probes only svgwrite, so an absent pillow raises ModuleNotFoundError
+    # straight out of `export_svg` and lands in customExcepthook as a crash
+    # report rather than the guard's pip-install offer.
+    #
+    # Nothing fails today only because pillow arrives transitively, and every
+    # one of those edges belongs to somebody else: cairosvg and scikit-image
+    # (direct), imageio (via scikit-image), matplotlib (via vtk), neuroglancer
+    # (dev group only, so not present in a runtime install at all). A bump of
+    # scikit-image or vtk, or dropping cairosvg, silently removes one of them.
+    # Declaring it costs nothing -- 12.3.0 is the version already resolved, and
+    # pillow ships binary wheels on every supported platform with no native
+    # prerequisite of its own -- and it is what makes the import a promise.
+    "pillow==12.3.0",
 ]
 
 [project.urls]
