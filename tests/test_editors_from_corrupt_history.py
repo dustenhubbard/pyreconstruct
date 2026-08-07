@@ -493,6 +493,87 @@ def test_a_row_swallowed_by_a_FAILED_join_is_given_back():
     )
 
 
+# The shape the two lines of the handler exist for, and the only shape that
+# tells them apart. In every case above the join stops on the FIRST line it
+# looks at -- that line carries the stamp, so the guard breaks -- which leaves
+# ``log_str`` still equal to the head and ``i`` still equal to ``start``. Under
+# those conditions "record ``log_list[start]``" and "record ``log_str``" name
+# the same string, and "resume at ``start + 1``" and "resume at ``i + 1``" name
+# the same line. Both handler lines are therefore unobservable until a join has
+# actually ACCUMULATED, which needs a continuation that carries no stamp and
+# still leaves the row short of six comma fields.
+MULTILINE_HEAD = "26-07-03, 16:00, bob"
+MULTILINE_TAIL = "and more of a pasted name"
+MULTILINE_TAIL_2 = "and yet more of it"
+
+
+def test_a_failed_multi_line_join_records_one_entry_per_file_line():
+    """The docstring's "one entry per lost file line, no exceptions", pinned.
+
+    A pasted name holding a newline splits its row across physical lines, so
+    the join eats the tail and the attempt still fails -- and now more than one
+    file line has gone into one attempt. What the handler must do at that point
+    is two separate things, and each is a line of its own:
+
+    * record ``log_list[start]``, the first physical line, and NOT ``log_str``.
+      The concatenation is not a line of the file; recording it names a string
+      no caller can find in the log and folds several losses into one entry.
+    * resume at ``start + 1``, and NOT after everything the join consumed. The
+      join is greedy, so every line it swept up is owed a fresh attempt on its
+      own -- which is what makes the count come out at one per file line rather
+      than one per failed attempt.
+
+    Both are invisible on a join that never accumulated -- but "nothing in this
+    module accumulates" is not why they went unpinned, because one case does.
+    ``test_a_fragment_that_is_itself_six_fields_is_not_read_as_a_row`` below
+    reaches an accumulated join: a stamped head followed by a stamp-less
+    six-field fragment, eaten by the join before the concatenation still fails
+    to parse. Its ``skipped_rows`` really does move under both readings -- it
+    simply never asserts on ``skipped_rows`` at all, only on ``all_logs``,
+    which is identical either way. So the gap was the missing assertion, not
+    the missing accumulation. Asserted here on a two-line split and a
+    three-line one so the entry count tracks the lines lost rather than merely
+    being greater than one.
+    """
+    assert ROW_START.match(MULTILINE_HEAD), "the head is a row start; the anchor passes it"
+    assert len(MULTILINE_HEAD.split(",")) < 6, "and is short, so the join runs"
+    for tail in (MULTILINE_TAIL, MULTILINE_TAIL_2):
+        assert not ROW_START.match(tail), (
+            "the tail carries no stamp, so the join eats it rather than stopping"
+        )
+    assert len("".join([MULTILINE_HEAD, MULTILINE_TAIL, MULTILINE_TAIL_2]).split(",")) < 6, (
+        "and the join is still short of six fields after all of it, so it fails"
+    )
+
+    two = LogSet.fromList([GOOD, MULTILINE_HEAD, MULTILINE_TAIL, LATE], skip_corrupt=True)
+
+    assert [l.user for l in two.all_logs] == ["alice", "carol"], (
+        "the rows either side of the split are untouched"
+    )
+    assert len(two.skipped_rows) == 2, (
+        "two file lines were lost, so two entries: the scan must resume at the "
+        "line after the head, or the tail is never re-examined and the count a "
+        "caller prints undercounts the damage"
+    )
+    assert two.skipped_rows[0] == MULTILINE_HEAD, (
+        "the first entry is the first physical line alone -- not the "
+        "concatenation the join had built by the time it failed"
+    )
+    assert two.skipped_rows[1] == MULTILINE_TAIL, (
+        "and the line the join swept up is handed back and recorded as itself"
+    )
+
+    three = LogSet.fromList(
+        [GOOD, MULTILINE_HEAD, MULTILINE_TAIL, MULTILINE_TAIL_2, LATE],
+        skip_corrupt=True,
+    )
+
+    assert [l.user for l in three.all_logs] == ["alice", "carol"]
+    assert three.skipped_rows == [MULTILINE_HEAD, MULTILINE_TAIL, MULTILINE_TAIL_2], (
+        "three lines lost, three entries, each the file's own line"
+    )
+
+
 def test_position_no_longer_decides_whether_the_next_row_survives():
     """The control, and the point of the fix stated as an invariant.
 
@@ -752,6 +833,35 @@ def test_the_stamp_must_be_a_whole_date_and_time_and_not_just_a_date():
 
     assert [l.user for l in ls.all_logs] == ["alice", "carol"]
     assert "x" not in [l.user for l in ls.all_logs]
+
+
+def test_the_hour_may_be_a_single_digit():
+    """What ``ROW_START`` must ACCEPT, which the tests above do not say.
+
+    Every test either side of this one asks the anchor to refuse something, so
+    the anchor could be tightened arbitrarily and they would all still pass.
+    ``\\d?\\d`` on the hour is the one place it is deliberately lax, and the
+    reason is stated at length beside it: the anchor is a defence for files
+    ALREADY on disk, which were not all written by this build, so an unpadded
+    ``9:04`` is a row the reader must still read as one.
+
+    Tightening it to ``\\d\\d`` costs that row twice over -- it fails the start
+    check, so the default caller gets a ``ValueError`` on a log that reads
+    today, and the ``skip_corrupt`` caller silently loses an editor -- with
+    nothing gained, since no fabrication turns on the hour's width.
+    """
+    unpadded = "26-07-03, 9:04, dave, obj_d, 3, Modify trace(s)"
+    assert ROW_START.match(unpadded), "a single-digit hour still begins a row"
+
+    ls = LogSet.fromList([GOOD, unpadded, LATE], skip_corrupt=True)
+
+    assert "dave" in [l.user for l in ls.all_logs], (
+        "an unpadded hour must not cost its row's editor"
+    )
+    assert ls.skipped_rows == [], "and nothing is recorded as lost"
+
+    # and the default caller, where skip_corrupt never comes into it
+    assert "dave" in [l.user for l in LogSet.fromList([GOOD, unpadded, LATE]).all_logs]
 
 
 def test_the_irreducible_case_fails_safe_rather_than_inventing_an_editor():
