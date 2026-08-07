@@ -1,15 +1,26 @@
 name: tests
 
-# The PR gate: a ruff lint pass and the pytest suite, plus one job that reports
-# and does not gate. Fires on every pull request whatever it targets, and on
-# pushes to main itself (the post-merge validation). The tests import PySide6
+# A ruff lint pass and the pytest suite, plus one job that reports and does not
+# gate. Fires on every pull request whatever it targets, and on pushes to main
+# itself (the post-merge validation). The tests import PySide6
 # (gui.main), so the job installs the headless Qt system libs and runs under the
 # offscreen QPA platform, with no X server / xvfb needed.
 #
-# Two of the three jobs block a merge: `lint` and `test`. `type` is reporting
-# only by design and cannot fail the build -- see its own comment for why, and
-# `mypy.ini` for what it covers. Do not promote it to a gate without watching
-# its count over a run of pull requests first.
+# Exactly one of the three jobs here blocks a merge: `test`. `lint` does fail
+# the run when it goes red, but it is not a required status check, so on its
+# own it does not stop the pull request merging -- fix it anyway, it is the
+# critical-error set and nothing else catches those. `type` is reporting only
+# by design and cannot fail the build at all -- see its own comment for why,
+# and `mypy.ini` for what it covers. Do not promote it to a gate without
+# watching its count over a run of pull requests first.
+#
+# The authority on what blocks a merge is branch protection on `main`, whose
+# required contexts are exactly `test` and `merge-evidence` -- not this
+# comment, and not the set of jobs defined here. Note the second one is not in
+# this file: `merge-evidence` is a separate workflow,
+# `.github/workflows/merge-evidence.yml`, and is no part of this one. Editing
+# the jobs below changes neither list; changing what gates is a branch
+# protection change.
 #
 # The jobs run in parallel rather than lint-then-test: lint finishes in well
 # under a minute, so gating the suite behind it would delay the slower signal
