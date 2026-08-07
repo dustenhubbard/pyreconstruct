@@ -84,6 +84,7 @@ from .outlined_label import OutlinedLabel
 from .help import palette_help
 
 from PyReconstruct.modules.datatypes import Series, Trace
+from PyReconstruct.modules.datatypes.default_settings import validPinnedLength
 from PyReconstruct.modules.constants import (
     locations as loc
 )
@@ -918,14 +919,36 @@ class MousePalette():
         if "sb" in dir(self):
             self.sb.setScale(self.getScale())
     
+    def getPinnedLength(self):
+        """The real-world length the scale bar is pinned to, or None.
+
+        None means the historic screen-fraction sizing, which is what an
+        installation that has never touched the new control gets: the mode
+        option ships as "screen_fraction", so a stored scale_bar_width goes on
+        meaning exactly what it meant before.
+        """
+        if self.series.getOption("scale_bar_mode") != "micron_pinned":
+            return None
+        length = self.series.getOption("scale_bar_length_um")
+        # validPinnedLength, not `length > 0`: a stored inf passes the latter and
+        # then raises out of ScaleBar.__init__, i.e. out of this constructor, on
+        # every launch.  Falling back to the screen-fraction bar leaves the user
+        # a running application and a control they can fix the value in.
+        return length if validPinnedLength(length) else None
+
     def createSB(self):
         """Create the scale bar."""
-        sb_w = int(self.series.getOption("scale_bar_width") / 100 * self.mainwindow.field.width())
-        self.sb = ScaleBar(self.mainwindow, self, sb_w, 50, 1)
+        field_w = self.mainwindow.field.width()
+        sb_w = int(self.series.getOption("scale_bar_width") / 100 * field_w)
+        self.sb = ScaleBar(
+            self.mainwindow, self, sb_w, 50, 1,
+            micron_length=self.getPinnedLength(),
+            max_pixel_length=field_w,
+        )
         self.setScale()
         self.placeSB()
         self.sb.show()
-    
+
     def placeSB(self):
         """Place the scale bar."""
         x, y = self.getButtonCoords("sb")
@@ -942,8 +965,11 @@ class MousePalette():
         self.placeLabel()
         self.placeIncrementButtons()
         self.placeBCButtons()
+        # the field may have changed width, which is the room a pinned bar is
+        # allowed to grow into; a no-op when the width is unchanged
+        self.sb.setMaxPixelLength(self.mainwindow.field.width())
         self.placeSB()
-    
+
     def reset(self):
         """Reset the mouse palette when opening a new series."""
         self.close()

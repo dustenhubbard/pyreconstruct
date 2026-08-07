@@ -2,6 +2,7 @@ import math
 
 from PySide6.QtGui import QPainter, QColor, QFontMetrics, QFont
 
+from PyReconstruct.modules.datatypes.default_settings import validPinnedLength
 from PyReconstruct.modules.gui.utils import drawOutlinedText
 
 from .buttons import MoveableButton
@@ -70,6 +71,121 @@ def niceLength(max_len, rungs=None):
     return length, subdivs
 
 
+# The shortest bar, in screen pixels, that is still worth drawing.
+#
+# Only the micron-pinned mode needs this.  A bar pinned to a fixed real-world
+# length shrinks as the user zooms out, and below roughly this width it is
+# narrower than the label printed over it, so the reader gets a caption with no
+# measurable rule under it.  40 px is a little wider than "5 µm" set in the
+# 12 pt bold Courier the label uses.
+MIN_PINNED_PIXELS = 40
+
+
+def pinnedLength(micron_length, scale, max_pix, min_pix=MIN_PINNED_PIXELS):
+    """Return the length a micron-pinned bar should actually draw.
+
+    In micron-pinned mode the user picks a length in real-world units and the
+    bar's pixel width follows the zoom, which is the inverse of what
+    `niceLength` does.  The whole point of the mode is that the number under the
+    bar does not move, so this returns the user's own length untouched wherever
+    it can be drawn.
+
+    It cannot always be drawn.  Zoomed far out, `micron_length / scale` falls to
+    a handful of pixels; zoomed far in, it runs off the side of the field.  A
+    scale bar whose drawn length does not match its printed label is worse than
+    useless on a figure, so the pixel width is never clamped on its own: when
+    the requested length will not fit the drawable range, the *length itself*
+    moves, by whole decades, and the label moves with it.  The mantissa the user
+    chose is invariant -- 5 µm becomes 0.5 µm or 50 µm, never 4 µm or 6 µm -- so
+    the bar still reads as the number they asked for, and the drawn rule always
+    measures exactly what the label says.
+
+    This deliberately does not reuse `NICE_LENGTHS`.  That ladder exists to snap
+    a screen-fraction bar down to a round number, which is a different job: it
+    would replace the user's chosen length rather than rescale it.
+
+        Params:
+            micron_length (float): the length the user pinned the bar to, in
+                                   real-world units
+            scale (float): real-world units per screen pixel (the current zoom)
+            max_pix (int): the widest the bar is allowed to be drawn, in pixels
+                           -- the room the field gives it
+            min_pix (int): the narrowest bar still worth drawing, in pixels
+        Returns:
+            (float, int): the bar's length in real-world units, and that length
+                          in screen pixels.  (0.0, 0) when there is nothing to
+                          draw, matching `niceLength`.
+    """
+    # validPinnedLength rather than `micron_length > 0`: inf passes the latter
+    # and then reaches math.log10(0.0) below.  See that function.
+    if not (validPinnedLength(micron_length) and scale > 0 and max_pix > 0):
+        return 0.0, 0
+
+    def pixels(exponent):
+        return micron_length * 10.0 ** exponent / scale
+
+    # first guess: the decade shift that lands inside the range, read straight
+    # off the logarithm.  The epsilons keep a length that sits exactly on a
+    # boundary on its own decade rather than one step past it, the same job the
+    # tolerance does in niceLength.
+    exponent = 0
+    if pixels(0) > max_pix:
+        exponent = math.floor(math.log10(max_pix * scale / micron_length) + 1e-9)
+    elif pixels(0) < min_pix:
+        exponent = math.ceil(math.log10(min_pix * scale / micron_length) - 1e-9)
+
+    # then correct it by measurement, because the guess is a float computation
+    # and the invariant below is the thing that actually has to hold.  Both
+    # loops are bounded: each step multiplies or divides the width by ten.
+    steps = 0
+    while pixels(exponent) > max_pix and steps < 400:
+        exponent -= 1
+        steps += 1
+    # growing is only allowed while it still fits; on a field too narrow to hold
+    # one whole decade there may be no exponent that satisfies both bounds, and
+    # fitting wins -- a bar that overruns the field is clipped and lies about its
+    # length, a bar that is too short is merely hard to read.
+    while pixels(exponent) < min_pix and pixels(exponent + 1) <= max_pix and steps < 400:
+        exponent += 1
+        steps += 1
+
+    real_len = micron_length * 10.0 ** exponent
+    pix_len = int(real_len / scale)
+    if pix_len <= 0:
+        return 0.0, 0
+    return real_len, pix_len
+
+
+def pinnedSubdivisions(real_len, rungs=None):
+    """How finely to tick a micron-pinned bar of this length.
+
+    The screen-fraction bar always lands on a `NICE_LENGTHS` rung, so it always
+    has a subdivision count that cuts it into round numbers.  A pinned bar is
+    whatever the user typed, so it may not: 3.7 µm has no division into two to
+    seven parts that prints roundly.  Rather than print ticks labelled 0.74 and
+    1.48, a length that is not a rung gets no interior ticks at all -- 1, which
+    `paintEvent`'s `range(1, subdivs)` draws as none.
+
+        Params:
+            real_len (float): the bar's length in real-world units
+            rungs (tuple): the ladder, as (mantissa, subdivisions) pairs;
+                           defaults to NICE_LENGTHS, read at call time
+        Returns:
+            int: the number of segments to cut the bar into
+    """
+    if rungs is None:
+        rungs = NICE_LENGTHS
+    if not real_len > 0:
+        return 1
+
+    decade = 10.0 ** math.floor(math.log10(real_len))
+    mantissa = real_len / decade
+    for m, s in rungs:
+        if abs(m - mantissa) < 1e-9:
+            return s
+    return 1
+
+
 def formatLength(value):
     """Render a length the way a figure caption would: no trailing zeros.
 
@@ -89,7 +205,8 @@ def formatLength(value):
 
 class ScaleBar(MoveableButton):
 
-    def __init__(self, parent, manager, length, height, scale):
+    def __init__(self, parent, manager, length, height, scale,
+                 micron_length=None, max_pixel_length=None):
         """Create the scale bar.
 
             Params:
@@ -99,18 +216,63 @@ class ScaleBar(MoveableButton):
                 height (int): the max pixel height of the scale bar
                 scale (float): the number of real-world units per pixel
                 ticks (bool): True if ticks should be shown on the scale bar
+                micron_length (float): the real-world length to pin the bar to,
+                                       or None (the default) for the historic
+                                       screen-fraction sizing, where `length` is
+                                       the room the bar may fill and the printed
+                                       figure follows the zoom
+                max_pixel_length (int): how wide the bar may grow when pinned;
+                                        defaults to `length`
         """
         super().__init__(parent, manager, "sb")
         self.scale = scale
+        self.micron_length = micron_length
+        self.max_pixel_length = length if max_pixel_length is None else max_pixel_length
         self.resize(length, height)
+        self._fitPinned()
 
     def setScale(self, scale):
         self.scale = scale
+        self._fitPinned()
         self.update()
 
+    def setMaxPixelLength(self, max_pixel_length):
+        """Say how much room the field has for the bar (pinned mode only)."""
+        if max_pixel_length == self.max_pixel_length:
+            return
+        self.max_pixel_length = max_pixel_length
+        self._fitPinned()
+        self.update()
+
+    def pinnedRender(self):
+        """The pinned bar's length and tick count at the current zoom."""
+        real_len, pix_len = pinnedLength(
+            self.micron_length, self.scale, self.max_pixel_length
+        )
+        return real_len, pix_len, pinnedSubdivisions(real_len)
+
+    def _fitPinned(self):
+        """Resize the widget to the pinned bar, so the paint is never clipped.
+
+        In screen-fraction mode the widget's width is the room the bar may fill
+        and never moves.  Pinned, the bar *is* its width -- the widget is also
+        the drag handle, so leaving it at full field width would put an
+        invisible grab target over the field.  The resize happens here rather
+        than in `paintEvent`, which must not change geometry.
+        """
+        if not self.micron_length:
+            return
+        _real_len, pix_len, _subdivs = self.pinnedRender()
+        if pix_len > 0 and pix_len != self.width():
+            self.resize(pix_len, self.height())
+
     def paintEvent(self, event):
-        # the longest nice length that fits the widget, and how finely to tick it
-        real_len, subdivs = niceLength(self.width() * self.scale)
+        if self.micron_length:
+            # a fixed real-world length: the pixels follow the zoom
+            real_len, _pix_len, subdivs = self.pinnedRender()
+        else:
+            # the longest nice length that fits the widget, and how finely to tick it
+            real_len, subdivs = niceLength(self.width() * self.scale)
         if real_len <= 0:
             return
         pix_len = int(real_len / self.scale)

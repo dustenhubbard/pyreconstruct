@@ -83,10 +83,14 @@ def _identity(value):
 # of the 81 values came back one lower -- so the slider carries the 20-100 range
 # itself and the number on screen is the number stored. Identity, like the other
 # two. Left unchanged, this table fails with `assert 60 == 50` and `assert 25 == 6`.
+#
+# The scale bar's response index moved from 1 to 2 when the sizing-mode radio
+# went in above the slider (see `test_scale_bar_mode_toggle.py`, which pins the
+# whole response layout so the next change here is noticed).
 SLIDERS = [
     ("3D_xy_res", "smoothing_3D", 0, 73, _identity),
     ("cpu_max", "computation", 0, 90, _identity),
-    ("scale_bar_width", "scale_bar", 1, 60, _identity),
+    ("scale_bar_width", "scale_bar", 2, 60, _identity),
 ]
 
 

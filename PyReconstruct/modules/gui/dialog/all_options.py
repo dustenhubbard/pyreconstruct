@@ -27,6 +27,7 @@ from PyReconstruct.modules.backend.updater.updater import (
 from PyReconstruct.modules.backend.func.utils import (
     zarr_worker_count, MAX_ZARR_WORKERS,
 )
+from PyReconstruct.modules.datatypes.default_settings import validPinnedLength
 
 
 def cpuSliderReadout(percent : int) -> str:
@@ -324,21 +325,53 @@ class AllOptionsDialog(QDialog):
         # was invisible to the user and did not round trip: 60 of the 81 values
         # the option can hold came back one lower, the default of 25 included,
         # so pressing OK without touching anything narrowed the scale bar.
+        #
+        # The mode radio picks which of the two quantities below is in force.
+        # Both are kept and both are always editable, so switching modes and
+        # switching back returns the bar to exactly where it was. The default
+        # mode is the historic screen-fraction one, so an installation that
+        # never touches this radio sees no change at all.
         sbw = self.series.getOption("scale_bar_width", use_defaults)
+        sb_mode = self.series.getOption("scale_bar_mode", use_defaults)
+        sb_len = self.series.getOption("scale_bar_length_um", use_defaults)
         structure = [
             [("check",
               ("show numbers", self.series.getOption("show_scale_bar_text", use_defaults)),
               ("show ticks", self.series.getOption("show_scale_bar_ticks", use_defaults))
             )],
+            ["Scale bar sizing:"],
+            [("radio",
+              ("Fixed share of the screen (the µm figure changes as you zoom)",
+               sb_mode != "micron_pinned"),
+              ("Fixed length in µm (the bar's width changes as you zoom)",
+               sb_mode == "micron_pinned"),
+            )],
             ["Scale bar size (percent of field width):"],
             [("slider", sbw, {"minimum": 20, "maximum": 100, "suffix": "%"})],
+            ["Fixed length (µm):", ("float", sb_len)],
+            ["Far enough out or in that the fixed length will not fit the field"],
+            ["legibly, the bar steps by whole decades and the label follows"],
+            ["(5 µm becomes 0.5 µm or 50 µm), so the bar always measures what"],
+            ["it says."],
         ]
 
         def setOption(response):
 
             self.series.setOption("show_scale_bar_text", response[0][0][1])
             self.series.setOption("show_scale_bar_ticks", response[0][1][1])
-            self.series.setOption("scale_bar_width", response[1])
+            self.series.setOption(
+                "scale_bar_mode",
+                "micron_pinned" if response[1][1][1] else "screen_fraction",
+            )
+            self.series.setOption("scale_bar_width", response[2])
+            # an empty or nonsensical box keeps the stored length rather than
+            # pinning the bar to nothing.  "Nonsensical" has to mean more than
+            # `<= 0`: `inf > 0` is True and `1e400` parses to inf, and this key
+            # is global, so storing one would crash the palette on every launch
+            # from here on.  validPinnedLength is the predicate the palette and
+            # the bar itself apply to the same value.
+            if validPinnedLength(response[3]):
+                self.series.setOption("scale_bar_length_um", float(response[3]))
 
         self.addOptionWidget("scale_bar", structure, setOption)
 
