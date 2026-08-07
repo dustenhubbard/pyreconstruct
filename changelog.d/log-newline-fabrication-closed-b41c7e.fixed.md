@@ -32,10 +32,16 @@
   the old writer's own output it invents an editor in 0 of 200,000 cases against
   roughly 44,000 before.
 
-  What remains is genuinely undecidable and now fails safely: a pasted name whose
-  own text contains a line shaped like a whole row is byte-identical to two real
-  rows. The reader keeps both rows and truncates the pasted name, rather than
-  reading somebody's timestamp as a person's name.
+  What remains is genuinely undecidable and now fails safely — but "safely" is
+  worth spelling out, because it does not mean nothing gets through. A pasted
+  name whose own text contains a line shaped like a whole row is byte-identical
+  to two real rows. The reader keeps both rows and truncates the pasted name,
+  rather than reading somebody's timestamp as a person's name. The embedded line
+  is still read as a row, though, so whatever it names in the user column — text
+  whoever pasted it chose — is still counted as an editor and still appears in
+  Series ▸ About. What the fix prevents is the other failure, a timestamp
+  reported as a person; it does not prevent a plausible name typed into a dialog
+  from being admitted.
 
 - **Series ▸ Export Log History no longer crashes on a log damaged this way.**
   It reads the log line by line and asked each line for its date, so the second

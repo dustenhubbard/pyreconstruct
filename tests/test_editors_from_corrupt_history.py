@@ -63,8 +63,20 @@ and ``getEditorsFromHistory`` asks for it. What is pinned here:
   What is left is one genuinely irreducible case, pinned below: a pasted name
   whose own text contains a line shaped like a whole row is byte-identical to
   two real rows, and nothing in the file can tell them apart. The anchor fails
-  *safe* there -- it truncates the name -- where the unguarded join failed
-  unsafe, inventing an editor out of another row's timestamp.
+  *safe* there -- it reads both lines as rows, which truncates the name --
+  where the unguarded join failed unsafe, inventing an editor out of another
+  row's timestamp.
+
+  "Safe" here is not "nothing gets through", and
+  ``test_the_irreducible_case_fails_safe_rather_than_inventing_an_editor``
+  pins the part that does. The embedded line is still read as a row, so
+  whatever it names in the user field -- text the paster chose -- is kept as
+  that row's ``user``, which is exactly what ``getEditorsFromHistory`` unions
+  into the series' editors. The test asserts it on purpose: ``carol`` in its
+  hazard string is text ``bob`` pasted, and it is still there in
+  ``all_logs``. What is prevented is the other failure -- reading a TIMESTAMP
+  as if it were a person -- not the admission of a plausible name somebody
+  typed into a dialog.
 """
 
 import os
