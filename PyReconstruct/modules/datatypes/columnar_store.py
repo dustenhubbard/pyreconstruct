@@ -1083,8 +1083,9 @@ class SectionColumns():
             self._bools[attribute][row] = bool(value)
         else:
             raise KeyError(
-                f"{attribute!r} is not a column. The columns are name, color, "
-                f"fill_mode, tags and {', '.join(BOOL_ATTRIBUTES)}."
+                f"{attribute!r} is not a scalar attribute. setAttribute takes "
+                f"name, color, fill_mode and {', '.join(BOOL_ATTRIBUTES)}; "
+                f"for tags, use setTags."
             )
         self._modified_contours.add(self._names[row])
         self._bump()
