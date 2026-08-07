@@ -1,4 +1,7 @@
+import importlib.util
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Dict, List, Tuple, Union
 
@@ -145,6 +148,118 @@ def modules_available(modules: Union[str, List[str]], notify: bool=True) -> bool
     return False
 
 
+def pip_is_reachable() -> bool:
+    """Whether a pip exists that `install_module`'s command could have run.
+
+    Both routes are checked, because both are used: the install command is a
+    shell `pip install`, which resolves `pip` on PATH, and `sys.executable -m
+    pip` reaches the interpreter's own copy. True if either exists -- the
+    caller only uses this to decide whether "pip failed" can be explained by
+    there being no pip at all, and that claim should only be made when neither
+    route can supply one.
+    """
+
+    if importlib.util.find_spec("pip") is not None:
+
+        return True
+
+    return shutil.which("pip") is not None
+
+
+def uv_created_environment() -> bool:
+    """Whether the running interpreter's environment was created by uv.
+
+    uv stamps `uv = <version>` into the environment's `pyvenv.cfg`. Neither the
+    stdlib's `venv` nor `virtualenv` writes that key, so its presence is a
+    direct answer rather than an inference. Read in preference to the directory
+    name: a uv environment is not always called `.venv` (UV_PROJECT_ENVIRONMENT
+    renames it), and a directory called `.venv` was not necessarily made by uv.
+
+    A frozen build has no `pyvenv.cfg` and answers False, which is correct --
+    nothing there is uv-managed.
+    """
+
+    config = Path(sys.prefix) / "pyvenv.cfg"
+
+    try:
+
+        contents = config.read_text(encoding="utf-8", errors="replace")
+
+    except OSError:
+
+        ## No pyvenv.cfg (a system interpreter, a frozen build), or it is
+        ## unreadable. Either way there is no uv marker to find.
+        return False
+
+    for line in contents.splitlines():
+
+        key, separator, _ = line.partition("=")
+
+        if separator and key.strip() == "uv":
+
+            return True
+
+    return False
+
+
+def no_pip_message(pip_install_name: str) -> str:
+    """Compose the notice shown when the install failed because pip is absent.
+
+    The generic "try pip installing it in a terminal yourself" advice is wrong
+    in this case, and wrong in a way that costs the user the whole afternoon:
+    it names the one command that has already been established not to exist.
+
+    Names the *pip install* name rather than the import name, because that is
+    what the user has to type -- `cloudvolume` is installed as `cloud-volume`.
+
+    For the same reason the non-uv branch spells its commands
+    `"{sys.executable}" -m ...` rather than bare `python`/`pip`. This branch
+    only fires when no pip is reachable, which means PATH has none for *this*
+    interpreter; a bare token would therefore resolve to a different
+    interpreter, and the user would add pip to, and install the package into,
+    an environment that is not the one the notice just named. Quoted because
+    an interpreter path can contain spaces.
+    """
+
+    if uv_created_environment():
+
+        ## The project's documented from-source setup is `uv sync`, and uv does
+        ## not put pip inside the environment it creates; it installs packages
+        ## itself. So this is the expected state of a source install, not a
+        ## broken one, and the remedy is a uv command.
+        return (
+            f"{pip_install_name} could not be installed: this environment has "
+            "no pip in it, so there was no pip command to run.\n\n"
+            "That is normal here. This environment was created by uv, which "
+            "installs packages itself and does not put pip inside it. Install "
+            "the package with uv instead, from a terminal in the "
+            "PyReconstruct source directory:\n\n"
+            f"    uv add {pip_install_name}\n"
+            "        adds it to pyproject.toml and uv.lock, so it survives "
+            "later syncs\n\n"
+            f"    uv pip install {pip_install_name}\n"
+            "        installs it into this environment only, without "
+            "recording it, so the next `uv sync` removes it again\n\n"
+            "Then restart PyReconstruct."
+        )
+
+    return (
+        f"{pip_install_name} could not be installed: pip is not available in "
+        "this Python environment, so there was no pip command to run.\n\n"
+        f"The environment is:\n\n    {sys.executable}\n\n"
+        "Add pip to it from a terminal and then install the package. Both "
+        "lines name that interpreter on purpose -- a bare `python` or `pip` "
+        "would be whichever one your PATH finds, which is not this one:\n\n"
+        f'    "{sys.executable}" -m ensurepip --upgrade\n'
+        f'    "{sys.executable}" -m pip install {pip_install_name}\n\n'
+        "If something else manages this environment, use its own install "
+        f"command instead -- for a uv environment, `uv pip install "
+        f"{pip_install_name}`; for conda, `conda install "
+        f"{pip_install_name}`.\n\n"
+        "Then restart PyReconstruct."
+    )
+
+
 def install_module(module: Union[str, Tuple[str, str]]) -> bool:
     """Interactively install a pip module."""
 
@@ -188,6 +303,25 @@ def install_module(module: Union[str, Tuple[str, str]]) -> bool:
         return True
 
     else:
+
+        ## Why the reason is established by probing rather than by reading the
+        ## subprocess output: the two ways this environment reports a missing
+        ## pip look nothing alike. A shell `pip install` exits 127 with
+        ## "pip: command not found"; `sys.executable -m pip` exits 1 with "No
+        ## module named pip". Matching either string would pin this branch to
+        ## one spelling of the install command. Asking whether a pip exists at
+        ## all answers the same question and survives the command changing.
+        ##
+        ## Deliberately not extended to the other install failures. A network
+        ## timeout and a package that does not exist on the index both leave
+        ## pip reachable, and both keep the generic message, which is at least
+        ## true advice for them: retrying `pip install` in a terminal is what
+        ## they need.
+        if not pip_is_reachable():
+
+            note(no_pip_message(pip_install_name))
+
+            return False
 
         note(
             "Something went wrong. "
