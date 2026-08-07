@@ -78,6 +78,7 @@ with its images beside it, so the copy sets ``src_dir`` to the temporary
 directory the way ``openSeries``'s images-beside-the-jser recovery does.
 """
 
+import ast
 import base64
 import shutil
 import struct
@@ -91,6 +92,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CHECKER_FILES = REPO_ROOT / "dev" / "assets" / "checker" / "files"
 FIXTURE_JSER = CHECKER_FILES / "shapes1.jser"
+MAIN_WINDOW = REPO_ROOT / "PyReconstruct" / "modules" / "gui" / "main" / "main_window.py"
 
 SVG_NS = "http://www.w3.org/2000/svg"
 
@@ -108,6 +110,93 @@ EXPORT_PACKAGES = {
     "cairosvg": "cairosvg",
     "pillow": "PIL",
 }
+
+
+def menu_guard_modules(export_method: str) -> list:
+    """The module list the REAL menu guard in front of ``export_method`` probes.
+
+    Read out of ``main_window.py``'s own source rather than hand-copied into
+    this file, and that distinction is the whole point of this helper.
+    ``test_svg_export_is_not_guarded_against_a_missing_pillow`` claims in its
+    docstring that widening the guard to probe ``PIL`` would fail it. That
+    claim was false for as long as the test wrote ``modules_available(
+    "svgwrite", ...)`` as a literal: the literal is not the guard, so widening
+    both real call sites in ``main_window.py`` left the whole suite green and
+    the sabotage row was decorative. Deriving the argument list from the real
+    call site is what makes the claim true.
+
+    Monkeypatching ``modules_available`` and running the export would have been
+    the more direct mechanism, and it does not work here: ``Section.exportAsSVG``
+    is ``return export_svg(self, svg_fp)`` and consults no guard at all. The
+    guard is purely a GUI-menu-level check that an object-level export call
+    bypasses entirely -- which is precisely why the export can still raise an
+    uncaught ``ModuleNotFoundError``, and why the guard has to be located by
+    source rather than observed by running anything. Driving the real
+    ``main_window`` method instead would drag in a live ``MainWindow``, a
+    ``saveToJser`` and two modal file dialogs to assert one argument list.
+
+    The guard is found by its RELATIONSHIP to the export -- the function that
+    calls ``export_method`` -- not by the name ``exportSectionSVG``, so renaming
+    the menu handler does not quietly turn this back into a test of nothing.
+    Reading the source with ``ast`` rather than importing ``main_window`` keeps
+    Qt out of it; the ``modules_available`` name is matched unqualified because
+    that is how ``main_imports`` re-exports it.
+    """
+    tree = ast.parse(MAIN_WINDOW.read_text())
+
+    parents = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+
+    callers = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == export_method
+    ]
+    assert len(callers) == 1, (
+        f"expected exactly one call to {export_method} in {MAIN_WINDOW.name}, "
+        f"found {len(callers)} at lines {[c.lineno for c in callers]}; the "
+        f"guard this test reads is the one in front of THE caller, so a second "
+        f"one means there is a second guard (or an unguarded path) to account for"
+    )
+
+    enclosing = parents.get(callers[0])
+    while enclosing is not None and not isinstance(
+            enclosing, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        enclosing = parents.get(enclosing)
+    assert enclosing is not None, (
+        f"the call to {export_method} at {MAIN_WINDOW.name}:{callers[0].lineno} "
+        f"is not inside a function, so it has no guard to read"
+    )
+
+    guards = [
+        node for node in ast.walk(enclosing)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "modules_available"
+    ]
+    assert len(guards) == 1, (
+        f"expected exactly one modules_available guard in "
+        f"{MAIN_WINDOW.name}:{enclosing.name} (which calls {export_method}), "
+        f"found {len(guards)} at lines {[g.lineno for g in guards]}"
+    )
+
+    assert guards[0].args, (
+        f"the guard at {MAIN_WINDOW.name}:{guards[0].lineno} passes its modules "
+        f"by keyword; this helper reads the first positional argument"
+    )
+    try:
+        modules = ast.literal_eval(guards[0].args[0])
+    except ValueError:  # pragma: no cover - only if the guard stops being a literal
+        pytest.fail(
+            f"the guard at {MAIN_WINDOW.name}:{guards[0].lineno} no longer passes "
+            f"a literal module list, so this test can no longer read what it "
+            f"probes and must be rewritten rather than left silently toothless"
+        )
+
+    return [modules] if isinstance(modules, str) else list(modules)
 
 
 @pytest.fixture
@@ -341,11 +430,27 @@ def test_svg_export_is_not_guarded_against_a_missing_pillow(
 
     The absence is injected through ``sys.meta_path`` rather than by
     uninstalling anything, so this runs on a correctly-installed machine and on
-    CI. It asserts the *current* shape of the code -- widening the guard to
+    CI. It asserts the *current* shape of the code -- widening either guard to
     probe ``PIL`` too would be a different fix, and would fail this test, which
     is the intended signal rather than a nuisance.
+
+    That last sentence used to be false. The test wrote the guard's argument
+    list out by hand as ``modules_available("svgwrite", notify=False)``, so it
+    was measuring a literal in this file and not the guard: widening BOTH real
+    call sites in ``main_window.py`` to ``["svgwrite", "PIL"]`` and
+    ``["svgwrite", "cairosvg", "PIL"]`` left the entire suite green (6240
+    passed, 3 skipped, 6 xfailed -- identical to an unwidened run). The module
+    lists below now come from ``menu_guard_modules``, which reads them off the
+    real call sites, so both guards are genuinely under this assertion.
+    ``notify`` is still passed ``False`` here and only here: the real guards
+    pass ``True``, and the point of the probe is what the guard *concludes*,
+    which must not depend on a modal dialog nobody is present to answer.
     """
     from PyReconstruct.modules.backend.imports.mod_imports import modules_available
+
+    # Both menu guards, read from main_window.py rather than restated here.
+    svg_guard = menu_guard_modules("exportAsSVG")
+    png_guard = menu_guard_modules("exportAsPNG")
 
     section = exportable_series.loadSection(min(exportable_series.sections.keys()))
 
@@ -374,11 +479,32 @@ def test_svg_export_is_not_guarded_against_a_missing_pillow(
         monkeypatch.delitem(sys.modules, cached)
     monkeypatch.setattr(sys, "meta_path", [_Finder()] + list(sys.meta_path))
 
+    # Neither guard names pillow. Asserted on the real argument lists, and
+    # separately from the probe below, because this is the claim the file's
+    # docstring makes in prose and it deserves to fail by name rather than as
+    # "the probe returned False".
+    for menu, guard in (("SVG", svg_guard), ("PNG", png_guard)):
+        assert not ({"PIL", "pillow"} & set(guard)), (
+            f"the File > Export > {menu} guard now probes pillow ({guard}), so a "
+            f"missing pillow is a dialog rather than the uncaught "
+            f"ModuleNotFoundError this test pins. That is a legitimate fix -- but "
+            f"it makes this test's premise obsolete, so rewrite it (and this "
+            f"file's module docstring) rather than widening the guard silently"
+        )
+
     # The guard in front of File > Export > SVG, with the exact argument
     # main_window passes it. It sees nothing wrong.
-    assert modules_available("svgwrite", notify=False) is True, (
-        "the SVG guard's own probe failed, so this test is not measuring what "
-        "it claims to"
+    #
+    # Only the SVG guard is *run*. The PNG guard probes ``cairosvg``, whose
+    # import dlopens native Cairo and raises OSError where that is absent (see
+    # ``_cairo_native_error``), so running it would report False on a machine
+    # with no libcairo -- a second, unrelated reason to fail, on the one leg of
+    # this file that already has to skip for it. The PNG guard is held to the
+    # assertion above instead, which is platform-independent and is what carries
+    # the teeth for it: widening it to probe PIL fails there.
+    assert modules_available(svg_guard, notify=False) is True, (
+        f"the SVG guard's own probe ({svg_guard}) failed with only pillow "
+        f"injected as missing, so this test is not measuring what it claims to"
     )
 
     with pytest.raises(ModuleNotFoundError) as excinfo:
