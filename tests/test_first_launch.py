@@ -699,6 +699,12 @@ def qapp():
     return QApplication.instance() or QApplication(["test"])
 
 
+def rendered_text(label):
+    """The text a QLabel actually shows, with any rich-text markup resolved."""
+    from PySide6.QtGui import QTextDocumentFragment
+    return QTextDocumentFragment.fromHtml(label.text()).toPlainText()
+
+
 def test_whats_new_dialog_is_modeless_and_renders_its_content(qapp):
     """Lock the hard spec guarantee: the dialog is MODELESS (never blocks
     startup), and the prominent header / body / link / button are wired up.
@@ -738,11 +744,17 @@ def test_whats_new_dialog_is_modeless_and_renders_its_content(qapp):
     ({"on_demand": True}, "Recent releases"),              # the Help-menu re-open
     ({"last_seen": "1.20.1", "version": "9.9.9"}, None),   # the generic fallback
 ])
-def test_dialog_renders_the_byline_once_below_the_notes(qapp, kwargs, orienter):
-    """The real dialog puts the byline in its notes browser, exactly once, on
-    every framing -- including the generic fallback (a running version with no
-    bundled section). Asserted on the rendered QTextBrowser, not just the dict."""
+def test_dialog_renders_the_byline_once_as_its_own_widget(qapp, kwargs, orienter):
+    """The real dialog renders the byline exactly once, on every framing --
+    including the generic fallback (a running version with no bundled section)
+    -- as its own label *outside* the notes browser.
+
+    It used to be appended to the notes markdown, which put it inside the
+    scrollable area: on a release with more than a screenful of notes a reader
+    had to scroll to the bottom to see it. Asserted on the constructed widgets,
+    not just the dict."""
     from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
+    from PySide6.QtWidgets import QLabel
 
     version = kwargs.pop("version", "1.20.3")
     content = F.whats_new_content(version, text=WN, **kwargs)
@@ -750,15 +762,518 @@ def test_dialog_renders_the_byline_once_below_the_notes(qapp, kwargs, orienter):
         assert content["orienter"] == orienter
     dlg = WhatsNewDialog(None, version, content=content)
     try:
-        rendered = dlg._notes.toPlainText()
-        assert BYLINE in rendered                       # rendered, not just in the dict
-        assert rendered.count(BYLINE) == 1              # exactly once, never twice
-        # set off from the notes: it trails the body rather than leading it
-        if content["body"]:
-            first_body_line = content["body"].splitlines()[0].lstrip("#").strip()
-            assert rendered.index(first_body_line) < rendered.index(BYLINE)
+        # not in the scroll any more: the browser carries the notes and nothing else
+        assert BYLINE not in dlg._notes.toPlainText()
+        # its own label, verbatim, exactly once across the whole dialog. The
+        # label carries link markup now, so compare what it *renders*.
+        assert dlg._byline is not None
+        assert rendered_text(dlg._byline) == BYLINE
+        labels = [lab for lab in dlg.findChildren(QLabel)
+                  if BYLINE in rendered_text(lab)]
+        assert labels == [dlg._byline]
     finally:
         dlg.deleteLater()
+
+
+def test_dialog_byline_sits_between_the_notes_and_the_github_link(qapp):
+    """Vertical order: notes (scrollable) -> byline -> "Full release notes" link.
+
+    This is the regression probe for the fix. Reverting it -- appending
+    ``_{byline}_`` back onto ``content["body"]`` before building the browser --
+    leaves ``dlg._byline`` unbuilt and the byline back inside
+    ``dlg._notes.toPlainText()``, so both halves of this assertion fail.
+    """
+    from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
+    from PySide6.QtWidgets import QLabel
+
+    content = F.whats_new_content("1.20.3", last_seen="1.20.1", text=WN)
+    dlg = WhatsNewDialog(None, "1.20.3", content=content,
+                         url="https://example.test/releases")
+    try:
+        lay = dlg.layout()
+        link = next(lab for lab in dlg.findChildren(QLabel)
+                    if "Full release notes on GitHub" in lab.text())
+        assert lay.indexOf(dlg._notes) < lay.indexOf(dlg._byline) < lay.indexOf(link)
+        # and each on its own row, not sharing one
+        assert len({lay.indexOf(w) for w in (dlg._notes, dlg._byline, link)}) == 3
+        # the byline is not inside the scrollable area
+        assert BYLINE not in dlg._notes.toPlainText()
+    finally:
+        dlg.deleteLater()
+
+
+def test_dialog_omits_the_byline_widget_when_the_content_has_none(qapp):
+    """No byline field -> no label at all, rather than an empty muted line."""
+    from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
+    from PySide6.QtWidgets import QLabel
+
+    content = {"version": "1.20.3", "date": None, "orienter": "Recent releases",
+               "body": "- A thing.", "truncated": False}
+    dlg = WhatsNewDialog(None, "1.20.3", content=content, url="https://example.test")
+    try:
+        assert dlg._byline is None
+        assert not any(BYLINE in rendered_text(lab)
+                       for lab in dlg.findChildren(QLabel))
+    finally:
+        dlg.deleteLater()
+
+
+def test_dialog_byline_is_italic_and_not_muted(qapp):
+    """The byline is italic, unbolded and at the ordinary (enabled) text colour.
+
+    The italic carries the aside register the markdown ``_..._`` gave it. The
+    muting does not: it landed dimmed via ``setEnabled(False)``, which borrowed
+    the disabled palette role and rendered it at roughly 1.6:1 against the
+    dialog background -- switched-off rather than secondary. Who maintains this
+    build is what a lab needs in order to report an issue to the right person,
+    so the contrast is deliberately full. Asserted on the constructed widget: a
+    regression restoring the disabled state, or setting the weight instead of
+    the slant, fails here.
+    """
+    from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
+
+    content = F.whats_new_content("1.20.3", last_seen="1.20.1", text=WN)
+    dlg = WhatsNewDialog(None, "1.20.3", content=content,
+                         url="https://example.test/releases")
+    try:
+        font = dlg._byline.font()
+        assert font.italic() is True
+        assert font.bold() is False
+        assert font.underline() is False       # no underline decoration, ever
+        assert font.strikeOut() is False
+        # not the disabled colour role: enabled in its own right and with an
+        # enabled ancestry, so the label paints from the Active group.
+        assert dlg._byline.isEnabled() is True
+        assert dlg._byline.isEnabledTo(dlg) is True
+    finally:
+        dlg.deleteLater()
+
+
+def measure_byline_pixels(dlg):
+    """Read the byline's actual rendered pixels out of the dialog.
+
+    The line is deliberately two-toned: the project name is an ordinary link
+    (blue, underlined) and everything around it is plain italic text. So the ink
+    is split by colour -- a pixel counts as link ink when its blue channel leads
+    its red one by a clear margin, which holds in both themes (link #4747fa vs
+    text #000000 in the default one, #1a5a90 vs #dfe1e2 under qdark) -- and each
+    part is measured on its own.
+
+    Underlines are found by the longest *unbroken* horizontal run of ink. An
+    underline is one continuous rule about as wide as the text it sits under;
+    the glyph rows of a sentence are always broken into many short runs by the
+    spaces between words. Counting ink per row cannot tell those apart, since
+    the x-height rows of ordinary text fill most of a line too.
+
+    All x values in the result are relative to the label's own left edge.
+
+    The label is rendered with *grayscale* antialiasing for the measurement, and
+    that line is load-bearing rather than tidying. Qt's FreeType backend
+    antialiases text with RGB **subpixel** rendering on Linux, which fringes the
+    edge of every glyph with colour: the plain black sentence comes back carrying
+    pixels like (18, 68, 146) and (148, 220, 238), whose blue channel leads their
+    red by far more than the margin above uses to recognise link ink. Split by
+    colour, most of the line then reads as link -- ``link_span`` (1, 432) rather
+    than the project name's (147, 234) -- and the underline check compares the
+    name's real 86px rule against a 432px span that is mostly plain text. That is
+    exactly how this failed on CI while passing every macOS run, at 87px of
+    433px: CoreText hands back grayscale coverage, so there are no fringes to
+    misread and the bug cannot appear there. Reproduced in an ubuntu:24.04
+    container with the workflow's own apt line, at 86px of 432px.
+
+    The rendering itself is correct on Linux -- grabbed and inspected, the name
+    and only the name is blue and underlined -- so this is a measurement that
+    does not survive the platform, not a link that does not draw.
+    ``NoSubpixelAntialias`` changes only how glyph edges are filtered: metrics,
+    layout, the palette roles the two halves of the line paint from, and the
+    underline (a filled rectangle, never a glyph) are identical either way, and
+    the macOS figures are unchanged to the pixel by setting it. It is set
+    unconditionally rather than under a platform check, so both platforms measure
+    the same rendering and macOS cannot quietly stop covering the Linux path.
+    """
+    from PySide6.QtGui import QColor, QFont, QImage
+
+    font = dlg._byline.font()
+    font.setStyleStrategy(
+        QFont.StyleStrategy(font.styleStrategy().value
+                            | QFont.StyleStrategy.NoSubpixelAntialias.value)
+    )
+    dlg._byline.setFont(font)
+
+    dlg.resize(640, 620)
+    dlg.layout().activate()
+    pixmap = dlg.grab()
+    ratio = pixmap.devicePixelRatio()
+    image = pixmap.toImage().convertToFormat(QImage.Format_RGB32)
+
+    rect = dlg._byline.geometry()
+    x0, y0 = int(rect.left() * ratio), int(rect.top() * ratio)
+    x1 = min(int(rect.right() * ratio), image.width() - 1)
+    y1 = min(int(rect.bottom() * ratio), image.height() - 1)
+    assert x1 > x0 and y1 > y0, "byline has no rendered rect to sample"
+
+    def rgb(x, y):
+        return QColor(image.pixel(x, y)).getRgb()[:3]
+
+    def luminance(colour):
+        def channel(v):
+            v /= 255.0
+            return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+        r, g, b = (channel(c) for c in colour)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    background = rgb(x1 - 1, y0)          # sampled past the end of the text
+
+    def is_ink(colour):
+        return sum(abs(a - b) for a, b in zip(colour, background)) > 30
+
+    def is_link_coloured(colour):
+        return colour[2] - colour[0] > 40
+
+    link_xs, plain_xs, plain_ink, link_ink = [], [], [], []
+    for y in range(y0, y1 + 1):
+        for x in range(x0, x1 + 1):
+            colour = rgb(x, y)
+            if not is_ink(colour):
+                continue
+            if is_link_coloured(colour):
+                link_xs.append(x)
+                link_ink.append(colour)
+            else:
+                plain_xs.append(x)
+                plain_ink.append(colour)
+
+    assert plain_xs, "the byline drew no plain text at all"
+
+    def longest_run(lo, hi):
+        """Longest unbroken run of ink in the column band [lo, hi]."""
+        best = 0
+        for y in range(y0, y1 + 1):
+            current = 0
+            for x in range(lo, hi + 1):
+                if is_ink(rgb(x, y)):
+                    current += 1
+                else:
+                    best = max(best, current)
+                    current = 0
+            best = max(best, current)
+        return best
+
+    def separation(colour):
+        a, b = luminance(colour), luminance(background)
+        return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+
+    from collections import Counter
+
+    boldest = max(plain_ink, key=separation)
+    result = dict(background=background, plain_ink=boldest,
+                  plain_contrast=separation(boldest), link_span=None,
+                  link_width=0, link_longest_run=0,
+                  link_ink=Counter(link_ink).most_common(1)[0][0] if link_ink
+                  else None)
+
+    # the plain text runs either side of the link; measure the longer side
+    if link_xs:
+        lo, hi = min(link_xs), max(link_xs)
+        result["link_span"] = (lo - x0, hi - x0)
+        result["link_width"] = hi - lo + 1
+        result["link_longest_run"] = longest_run(lo, hi)
+        before = longest_run(x0, lo - 1) if lo - 1 > x0 else 0
+        after = longest_run(hi + 1, x1) if x1 > hi + 1 else 0
+        result["plain_longest_run"] = max(before, after)
+        result["plain_width"] = max(lo - 1 - x0, x1 - hi - 1)
+    else:
+        result["plain_longest_run"] = longest_run(x0, x1)
+        result["plain_width"] = max(plain_xs) - min(plain_xs) + 1
+    return result
+
+
+def test_dialog_byline_renders_dark_and_unbroken(qapp):
+    """Pixel-level: the plain part of the byline is high-contrast, un-underlined.
+
+    The property assertions above can all hold while the widget still paints
+    wrong -- ``setEnabled(False)`` on an ancestor, a palette override, an
+    unhonoured CSS rule -- so this reads the actual rendered pixels. The
+    contrast must clear 4.5:1: the disabled rendering this replaced measured
+    ~1.6:1, so the threshold separates the two by a wide margin rather than
+    sitting on a knife edge. And the plain text must carry no underline; the
+    linked project name is allowed one and is checked separately below.
+    """
+    from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
+
+    content = F.whats_new_content("1.20.3", last_seen="1.20.1", text=WN)
+    dlg = WhatsNewDialog(None, "1.20.3", content=content,
+                         url="https://example.test/releases")
+    try:
+        m = measure_byline_pixels(dlg)
+        assert m["plain_contrast"] >= 4.5, (
+            f"byline ink {m['plain_ink']} on {m['background']} is only "
+            f"{m['plain_contrast']:.2f}:1 -- it is being painted muted, not at "
+            "full contrast"
+        )
+        assert m["plain_longest_run"] < 0.85 * m["plain_width"], (
+            f"an unbroken {m['plain_longest_run']}px run across "
+            f"{m['plain_width']}px of plain text: the sentence is underlined"
+        )
+    finally:
+        dlg.deleteLater()
+
+
+def test_dialog_byline_links_only_the_project_name(qapp):
+    """Only the words "PyReconstruct" are a link; the sentence around it is not.
+
+    Asserted on the pixels, because this is the whole design of the line: one
+    ordinary blue underlined link inside plain italic text. The link ink is
+    found by colour and must be underlined across its own width, while the text
+    either side of it must not be. The rendered span is also checked against
+    where the font metrics say the word falls, so a markup change that linked
+    the wrong run of characters -- or the whole sentence -- fails here.
+    """
+    from PySide6.QtGui import QFontMetrics
+    from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
+
+    content = F.whats_new_content("1.20.3", last_seen="1.20.1", text=WN)
+    dlg = WhatsNewDialog(None, "1.20.3", content=content,
+                         url="https://example.test/releases")
+    try:
+        m = measure_byline_pixels(dlg)
+        assert m["link_span"] is not None, "nothing in the byline is link-coloured"
+
+        # the link is underlined: one unbroken rule the width of the word
+        assert m["link_longest_run"] >= 0.85 * m["link_width"], (
+            f"the linked name shows no underline (longest run "
+            f"{m['link_longest_run']}px of {m['link_width']}px)"
+        )
+        # ...and the plain text around it is not
+        assert m["plain_longest_run"] < 0.85 * m["plain_width"]
+
+        # the link covers the project name and nothing else
+        metrics = QFontMetrics(dlg._byline.font())
+        lead = metrics.horizontalAdvance(BYLINE[:BYLINE.index(F.LINKED_NAME)])
+        word = metrics.horizontalAdvance(F.LINKED_NAME)
+        start, end = m["link_span"]
+        assert abs(start - lead) <= 4, (
+            f"link ink starts at x={start}, the name starts at x={lead}"
+        )
+        assert abs(end - (lead + word)) <= 4, (
+            f"link ink ends at x={end}, the name ends at x={lead + word}"
+        )
+    finally:
+        dlg.deleteLater()
+
+
+def test_dialog_byline_stays_legible_under_the_dark_theme(qapp):
+    """The byline must stay readable under the theme Help > Theme installs.
+
+    The plain text and the link both take their colour from the palette -- the
+    sentence from the ordinary text role, the anchor from QPalette::Link -- so
+    both follow the theme without this code naming a colour. An earlier revision
+    sampled a colour into the markup instead and rendered the line
+    black-on-charcoal at 1.32:1 under qdark, so the dark theme is asserted
+    directly rather than assumed to follow from the light one.
+    """
+    from PySide6.QtWidgets import QApplication
+    from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
+    import qdarkstyle
+
+    app = QApplication.instance()
+    previous = app.styleSheet()
+    content = F.whats_new_content("1.20.3", last_seen="1.20.1", text=WN)
+    dlg = None
+    try:
+        app.setStyleSheet(qdarkstyle.load_stylesheet_pyside6())
+        dlg = WhatsNewDialog(None, "1.20.3", content=content,
+                             url="https://example.test/releases")
+        m = measure_byline_pixels(dlg)
+        assert m["plain_contrast"] >= 4.5, (
+            f"under the dark theme the byline renders {m['plain_ink']} on "
+            f"{m['background']} -- {m['plain_contrast']:.2f}:1"
+        )
+        assert m["plain_longest_run"] < 0.85 * m["plain_width"], (
+            "the sentence is underlined under qdark"
+        )
+        assert m["link_span"] is not None, (
+            "the linked name is not link-coloured under qdark"
+        )
+    finally:
+        if dlg is not None:
+            dlg.deleteLater()
+        app.setStyleSheet(previous)   # never leak the theme into other tests
+
+
+def test_dialog_byline_link_colour_follows_a_live_theme_switch(qapp):
+    """Switching theme with the dialog open must recolour the link, not strand it.
+
+    QLabel resolves ``QPalette::Link`` into its ``QTextDocument`` when the text
+    is set, so an anchor keeps the colour of whatever theme was active at
+    construction while the plain text around it follows the palette. Left alone,
+    switching to the dark theme with this dialog open renders the linked name in
+    the light theme's blue at 1.85:1 against the dark background.
+
+    The reference is a dialog *built fresh* under the target theme rather than a
+    fixed number: that is the colour the switched dialog is supposed to end up
+    with, and comparing against it cannot drift if qdarkstyle changes its link
+    colour. Both directions are exercised, because the app's theme switch takes
+    two different code paths -- the dark branch only sets a stylesheet, the
+    light branch also sets a palette.
+    """
+    from PySide6.QtWidgets import QApplication
+    from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
+    import qdarkstyle
+
+    app = QApplication.instance()
+    previous = app.styleSheet()
+    content = F.whats_new_content("1.20.3", last_seen="1.20.1", text=WN)
+
+    def build():
+        return WhatsNewDialog(None, "1.20.3", content=content,
+                              url="https://example.test/releases")
+
+    def go_dark():
+        app.setStyleSheet(qdarkstyle.load_stylesheet_pyside6())
+
+    def go_light():
+        app.setStyleSheet("")
+        app.setPalette(app.style().standardPalette())
+
+    switched = fresh_dark = fresh_light = None
+    try:
+        go_light()
+        switched = build()
+        light_ink = measure_byline_pixels(switched)["link_ink"]
+
+        # ...now switch underneath it
+        go_dark()
+        after_dark = measure_byline_pixels(switched)
+        fresh_dark = build()
+        assert after_dark["link_ink"] == measure_byline_pixels(fresh_dark)["link_ink"], (
+            f"after switching to the dark theme the open dialog's link is "
+            f"{after_dark['link_ink']}, but a dialog built fresh under it "
+            "renders a different colour -- the anchor colour is stale"
+        )
+        assert after_dark["link_ink"] != light_ink
+
+        # ...and back, which is the branch that also sets a palette
+        go_light()
+        after_light = measure_byline_pixels(switched)
+        fresh_light = build()
+        assert after_light["link_ink"] == measure_byline_pixels(fresh_light)["link_ink"]
+        assert after_light["link_ink"] == light_ink
+    finally:
+        for dlg in (switched, fresh_dark, fresh_light):
+            if dlg is not None:
+                dlg.deleteLater()
+        app.setStyleSheet(previous)
+        app.setPalette(app.style().standardPalette())
+
+
+def test_dialog_byline_is_a_link_to_the_home_page(qapp):
+    """The project name in the byline jumps to the home page.
+
+    A real ``<a href>`` with ``setOpenExternalLinks(True)``, so Qt follows it
+    and the dialog wires up no handler of its own. The escaping runs before the
+    anchor is spliced in, and the visible text is unchanged by the markup.
+    """
+    from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
+
+    content = F.whats_new_content("1.20.3", last_seen="1.20.1", text=WN)
+    dlg = WhatsNewDialog(None, "1.20.3", content=content,
+                         url="https://example.test/releases")
+    try:
+        markup = dlg._byline.text()
+        assert F.HOMEPAGE_URL == "https://pyreconstruct.org"
+        assert f'<a href="{F.HOMEPAGE_URL}">{F.LINKED_NAME}</a>' in markup
+        # exactly one anchor, wrapping exactly the name
+        assert markup.count("<a ") == 1
+        assert dlg._byline.openExternalLinks() is True
+        # the sentence still reads as itself once the markup is resolved
+        assert rendered_text(dlg._byline) == BYLINE
+        # the name occurs once in the byline, so the first-occurrence split is
+        # unambiguous; if it ever occurred zero times there would be no anchor
+        assert BYLINE.count(F.LINKED_NAME) == 1
+    finally:
+        dlg.deleteLater()
+
+
+def test_dialog_byline_click_activates_only_on_the_project_name(qapp):
+    """Clicking the name follows the link; clicking the rest of the line does not.
+
+    Driven through real mouse clicks on the widget rather than by emitting the
+    signal, so this measures Qt's own hit-testing of the anchor. ``linkActivated``
+    is only observable with ``openExternalLinks`` off -- with it on, Qt consumes
+    the click and opens the URL instead -- so it is switched off for the test,
+    which also keeps any browser from being launched.
+    """
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtGui import QFontMetrics
+    from PySide6.QtTest import QTest
+    from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
+
+    content = F.whats_new_content("1.20.3", last_seen="1.20.1", text=WN)
+    dlg = WhatsNewDialog(None, "1.20.3", content=content,
+                         url="https://example.test/releases")
+    try:
+        dlg.resize(640, 620)
+        dlg.show()
+        label = dlg._byline
+        label.setOpenExternalLinks(False)     # so the signal is observable
+        fired = []
+        label.linkActivated.connect(fired.append)
+
+        metrics = QFontMetrics(label.font())
+        lead = metrics.horizontalAdvance(BYLINE[:BYLINE.index(F.LINKED_NAME)])
+        word = metrics.horizontalAdvance(F.LINKED_NAME)
+        middle = label.height() // 2
+
+        def click(x):
+            fired.clear()
+            QTest.mouseClick(label, Qt.LeftButton, Qt.NoModifier,
+                             QPoint(x, middle))
+            return list(fired)
+
+        # inside the word, at both ends and the middle
+        for x in (lead + 2, lead + word // 2, lead + word - 2):
+            assert click(x) == [F.HOMEPAGE_URL], f"no activation at x={x}"
+        # outside it, including immediately either side
+        for x in (8, lead - 8, lead + word + 8, lead + word + 140):
+            assert click(x) == [], f"the line activated at x={x}, off the name"
+    finally:
+        dlg.deleteLater()
+
+
+def test_dialog_byline_is_followed_by_a_blank_line(qapp):
+    """A blank line separates the byline from the "Full release notes" link.
+
+    Without it the two small-text lines sit one layout spacing apart and read as
+    a single block. The gap is asserted as rendered geometry -- the distance
+    between the two widgets -- rather than by looking for the spacer item, so
+    any way of producing it counts and no way of merely declaring it does.
+    """
+    from PySide6.QtWidgets import QLabel
+    from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
+
+    content = F.whats_new_content("1.20.3", last_seen="1.20.1", text=WN)
+    dlg = WhatsNewDialog(None, "1.20.3", content=content,
+                         url="https://example.test/releases")
+    try:
+        dlg.resize(640, 620)
+        dlg.layout().activate()
+        link = next(lab for lab in dlg.findChildren(QLabel)
+                    if "Full release notes on GitHub" in lab.text())
+        gap = link.geometry().top() - dlg._byline.geometry().bottom() - 1
+        # a blank line is about one line height; the bare layout spacing that
+        # separates every other row in this dialog is well under half of it
+        line = dlg._byline.fontMetrics().height()
+        assert gap >= line, (
+            f"only {gap}px between the byline and the link, less than the "
+            f"{line}px line height a blank line should add"
+        )
+        # and the link is still the row below the byline, not reordered
+        lay = dlg.layout()
+        assert lay.indexOf(dlg._byline) < lay.indexOf(link)
+    finally:
+        dlg.deleteLater()
+
 
 
 def test_whats_new_on_demand_with_unknown_version_omits_it_and_still_opens(
