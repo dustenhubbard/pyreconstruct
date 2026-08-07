@@ -47,6 +47,12 @@ full release notes on GitHub (linked from the dialog).
   bottom of the scrollable notes, past a screenful of changes, where almost nobody reached it. It now
   has its own line just below them, at the dialog's ordinary text colour, with the project name linking
   to pyreconstruct.org.
+- **Fixed: Exporting a section to SVG works again.** Under **File ▸ Export**, saving a section as SVG
+  relied on a drawing package that was never actually included, so instead of exporting the feature
+  could only prompt you to install it yourself -- and on the one-click installers it could not run at
+  all. That package now ships with PyReconstruct. (Exporting to PNG needs the same package plus a
+  system graphics library; that piece is included too, and the app now tells you what is missing
+  instead of failing silently.)
 - **New: A small burst of confetti when you copy an error report.** **Copy report to clipboard** in the
   error window now throws a dozen small coloured dots out of the button for about half a second. It
   fires only on a copy that actually reached the clipboard.

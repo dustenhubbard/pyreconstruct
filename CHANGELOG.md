@@ -176,6 +176,22 @@ the README's *From source (developers)* section).
   The slider carries the 20 to 100 range itself now and the squeeze is gone, so
   what you set is what is stored. The stored range, the default and the drawn
   scale bar are unchanged.
+- **Exporting a section as SVG or PNG no longer nags every user to install
+  missing packages.** `File ▸ Export ▸ SVG`/`PNG` renders through
+  `svg_conversion.py`, which imports `svgwrite` (SVG) and `cairosvg` (PNG), but
+  neither package was declared in `pyproject.toml`, `requirements.txt` or
+  `uv.lock`. Every export therefore tripped the "this feature requires
+  additional Python packages" prompt before it would run, and in the frozen
+  installers -- where there is no pip on hand to accept that offer, and the
+  packages were never bundled because they were never installed into the build
+  environment -- SVG/PNG export could not proceed at all. Both packages are now
+  declared and ride with the build, so SVG export works out of the box. PNG
+  additionally needs a native Cairo library present on the system (`cairosvg`
+  reaches it through `cairocffi`'s runtime `dlopen`, which no wheel supplies);
+  `docs/DEV_UV.md` documents the per-platform requirement, and the guard in
+  `mod_imports.py` was widened to report a missing native library with the exact
+  remedy instead of crashing. Bundling Cairo into the frozen Windows/macOS
+  installers remains a separate, still-open packaging task.
 
 ## [1.21.0] — 2026-08-05
 
