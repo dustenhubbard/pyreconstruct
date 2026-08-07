@@ -959,3 +959,48 @@ def test_export_log_history_still_splits_an_ordinary_log_by_date(tmp_path):
     assert archived.startswith(HEADER) and kept.startswith(HEADER)
     assert "20-01-01" in archived and "20-01-01" not in kept
     assert "carol" in kept and "carol" not in archived
+
+
+def test_export_log_history_does_not_mistake_a_continuation_for_the_header(tmp_path):
+    """A continuation whose text says "Date" is still a continuation.
+
+    The header branch used to test ``"Date" in line`` -- a substring, not the
+    header. A continuation line is free-form event text (a field of its row
+    held a literal newline), so any of them mentioning a date field matched
+    first, before the row/continuation branches ever ran, and was written to
+    BOTH output files: duplicated into the file its row did not go to, and
+    severed from the row it belongs to. ``test_export_log_history_survives_a_
+    row_split_across_two_lines`` above does not catch it -- its continuation
+    reads ``", 12, Modify trace(s)"``, which has no "Date" in it.
+
+    The header is one exact literal (``LOG_HEADER``, matching all three writers
+    in the tree), so matching it exactly is both sufficient and correct.
+    """
+    hidden = tmp_path / "hidden"
+    hidden.mkdir()
+    recent = _today_row("carol")
+    continuation = "Changed the Date field on this trace\n"
+    (hidden / "existing_log.csv").write_text(
+        HEADER
+        + "20-01-01, 08:00, lab, d001sp003, 12, Modify trace(s)\n"
+        + continuation
+        + recent + "\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "archive.csv"
+
+    LogSet.exportLogHistory(str(hidden), str(out), 30)
+
+    archived = out.read_text(encoding="utf-8")
+    kept = (hidden / "existing_log.csv").read_text(encoding="utf-8")
+
+    # its row is older than the cutoff, so the continuation follows it out --
+    # and appears there once, not in both files.
+    assert continuation in archived
+    assert continuation not in kept
+    assert archived.count(continuation) == 1
+    # the header itself is still recognised and still lands in both files
+    assert archived.startswith(HEADER) and kept.startswith(HEADER)
+    # and the ordinary split is unaffected
+    assert "d001sp003" in archived and "d001sp003" not in kept
+    assert "carol" in kept and "carol" not in archived
