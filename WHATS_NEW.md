@@ -17,20 +17,20 @@ full release notes on GitHub (linked from the dialog).
   top of the last. Each fault now opens a single window per session, and every occurrence is still
   written to the log file, which **Help ▸ View log file** shows.
 - **Changed: The scale bar width setting actually moves the scale bar.** The bar could only be drawn at
-  four round lengths per decade, so most of the 81 positions on the slider drew exactly the same bar; it
+  a few set lengths, so most of the 81 positions on the slider drew exactly the same bar; it
   now has many more lengths to choose from, and tick marks divide each one into readable steps. Lengths
   also print one way now, so the same bar no longer reads `10 µm` at one zoom and `10.0 µm` at another.
-- **Fixed: On macOS, a colour picked for a trace is no longer thrown away.** Clicking a colour swatch
-  opened the shared system "Colors" panel, where picking a colour changed nothing on screen and closing
-  the panel discarded the choice, leaving the swatch blank. Swatches now open PyReconstruct's own colour
+- **Fixed: On macOS, a color picked for a trace is no longer thrown away.** Clicking a color swatch
+  opened the shared system "Colors" panel, where picking a color changed nothing on screen and closing
+  the panel discarded the choice, leaving the swatch blank. Swatches now open PyReconstruct's own color
   dialog, the one Windows and Linux already used, with **OK** inside its own window.
-- **Fixed: Cancelling the flag list's colour filter no longer empties the list.** Under
-  **Filter ▸ Color filter ▸ Set filter...**, a cancelled picker was read as a choice of black, so the
+- **Fixed: Canceling the flag list's color filter no longer empties the list.** Under
+  **Filter ▸ Color filter ▸ Set filter...**, a canceled picker was read as a choice of black, so the
   list hid every flag that was not pure black and "Remove filter" was the only way back. Cancel now
   leaves the filter alone, on every platform.
-- **Fixed: The autoseg colour editor keeps the colour you pick, and opens on the right one.** Add and
+- **Fixed: The autoseg color editor keeps the color you pick, and opens on the right one.** Add and
   Edit under **Series ▸ Options ▸ View ▸ Autoseg import colors** had the same macOS problem as the trace
-  swatch, and the picker opened on white rather than on the colour being edited, so pressing OK without
+  swatch, and the picker opened on white rather than on the color being edited, so pressing OK without
   changing anything wrote white over it.
 - **Improved: Every slider in Series ▸ Options shows what it is set to.** The sliders were a bare handle
   on a blank groove, so the only way to learn a setting's value was to close the dialog and watch what
@@ -43,19 +43,12 @@ full release notes on GitHub (linked from the dialog).
 - **Fixed: Reset Defaults moves the sliders in Series ▸ Options.** Three of them, 3D XY resolution,
   scale bar size and CPU usage, read the stored value rather than the shipped default, so they stayed
   exactly where you had left them while the rest of the dialog reset.
-- **Improved: The maintainer line in "What's new" is visible without scrolling.** It sat at the very
-  bottom of the scrollable notes, past a screenful of changes, where almost nobody reached it. It now
-  has its own line just below them, at the dialog's ordinary text colour, with the project name linking
-  to pyreconstruct.org.
 - **Fixed: Exporting a section to SVG works again.** Under **File ▸ Export**, saving a section as SVG
   relied on a drawing package that was never actually included, so instead of exporting the feature
   could only prompt you to install it yourself -- and on the one-click installers it could not run at
   all. That package now ships with PyReconstruct. (Exporting to PNG needs the same package plus a
   system graphics library; that piece is included too, and the app now tells you what is missing
   instead of failing silently.)
-- **New: A small burst of confetti when you copy an error report.** **Copy report to clipboard** in the
-  error window now throws a dozen small coloured dots out of the button for about half a second. It
-  fires only on a copy that actually reached the clipboard.
 
 ## [1.21.0] — 2026-08-05
 
