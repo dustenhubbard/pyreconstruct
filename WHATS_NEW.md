@@ -45,7 +45,7 @@ full release notes on GitHub (linked from the dialog).
   exactly where you had left them while the rest of the dialog reset.
 - **Fixed: Exporting a section to SVG works again.** Under **File ▸ Export**, saving a section as SVG
   relied on a drawing package that was never actually included, so instead of exporting the feature
-  could only prompt you to install it yourself -- and on the one-click installers it could not run at
+  could only prompt you to install it yourself, and on the one-click installers it could not run at
   all. That package now ships with PyReconstruct. (Exporting to PNG needs the same package plus a
   system graphics library; that piece is included too, and the app now tells you what is missing
   instead of failing silently.)
