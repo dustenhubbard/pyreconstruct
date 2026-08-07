@@ -204,16 +204,65 @@ def test_accept_rejects_non_integer_seed(qapp, monkeypatch):
 
 
 def _stub_color(monkeypatch, rgb):
+    """Make ``_pick_color`` return ``rgb``, or act cancelled when it is None.
+
+    Stubs the dialog *class*, not ``QColorDialog.getColor``. The editor no
+    longer calls that static: on macOS it opens the shared system "Colors"
+    panel, whose close button returns an invalid ``QColor`` and silently
+    discarded the colour the user picked (the bug reported against the trace
+    swatch, which this editor had too). ``_pick_color`` now constructs and owns
+    a Qt dialog, so that is what has to be stood in for.
+
+    ``getColor`` is still overridden, as a trap: if ``_pick_color`` ever routes
+    back through the static, ``static_calls`` records it and the test below
+    fails on a real regression rather than hanging on a modal loop.
+    """
+    from PySide6.QtCore import Qt
     from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QColorDialog, QDialog
 
-    class _C(QColor):
-        def isValid(self):
-            return rgb is not None
+    class _StubColorDialog(QColorDialog):
+        static_calls = []
+        execs = []
 
-    def fake_getColor(initial=None, parent=None, *a, **k):
-        return _C(*rgb) if rgb is not None else _C()
+        def setOption(self, option, on=True):
+            """Model cocoa discarding the seed when native is switched off.
 
-    monkeypatch.setattr(ape.QColorDialog, "getColor", staticmethod(fake_getColor))
+            A dialog constructed while the native path is still allowed hands
+            its initial colour to the platform helper; flipping
+            ``DontUseNativeDialog`` on afterwards switches to the Qt widget
+            implementation, which was never seeded and sits at white. The
+            offscreen platform this suite runs on has no native dialog, so
+            there the flip is a no-op and every ordering looks correct --
+            which is exactly why it has to be modelled to be tested. Measured
+            on cocoa, PySide6 6.5.2; see tests/test_color_picker_dismissal.py.
+            """
+            super().setOption(option, on)
+            if on and option == QColorDialog.ColorDialogOption.DontUseNativeDialog:
+                super().setCurrentColor(QColor(Qt.white))
+
+        def exec(self):
+            type(self).execs.append(
+                {
+                    "options": self.options(),
+                    "parent": self.parent(),
+                    "currentColor": self.currentColor().getRgb()[:3],
+                }
+            )
+            if rgb is not None:
+                self.setCurrentColor(QColor(*rgb))
+                self.done(QDialog.DialogCode.Accepted)
+                return QDialog.DialogCode.Accepted
+            self.done(QDialog.DialogCode.Rejected)
+            return QDialog.DialogCode.Rejected
+
+        @staticmethod
+        def getColor(*a, **k):
+            _StubColorDialog.static_calls.append(a)
+            return QColor()
+
+    monkeypatch.setattr(ape, "QColorDialog", _StubColorDialog)
+    return _StubColorDialog
 
 
 def test_add_color_appends_picked_color(qapp, monkeypatch):
@@ -233,11 +282,41 @@ def test_edit_color_replaces_selected(qapp, monkeypatch):
 
 
 def test_cancelled_color_dialog_leaves_palette_unchanged(qapp, monkeypatch):
-    _stub_color(monkeypatch, None)  # invalid -> user cancelled
+    _stub_color(monkeypatch, None)  # cancelled
     w = _widget(qapp, _SeriesStub(palette=[[1, 2, 3], [4, 5, 6]]))
     before = [list(c) for c in w.colors]
     w._add_color()
     assert w.colors == before
+
+
+# --- the picker this editor opens is its own, and opens on the right colour --
+#
+# Same two defects as the trace swatch, and the same fix; see
+# tests/test_color_picker_dismissal.py, which pins them for ``ColorButton``.
+
+
+def test_picker_is_a_dialog_this_code_owns(qapp, monkeypatch):
+    """Not the platform's panel, whose close button discards the pick."""
+    from PySide6.QtWidgets import QColorDialog
+
+    stub = _stub_color(monkeypatch, (11, 22, 33))
+    w = _widget(qapp, _SeriesStub(palette=[[1, 2, 3], [4, 5, 6]]))
+
+    w.list.setCurrentRow(0)
+    w._edit_selected()
+    opened = stub.execs
+
+    assert not stub.static_calls, (
+        "_pick_color went back through the static QColorDialog.getColor(), "
+        "which on macOS opens the system Colors panel instead of a Qt dialog"
+    )
+    assert len(opened) == 1
+    assert opened[0]["options"] & QColorDialog.ColorDialogOption.DontUseNativeDialog
+    assert opened[0]["parent"] is w
+    assert opened[0]["currentColor"] == (1, 2, 3), (
+        "the picker did not open on the colour being edited -- set "
+        "DontUseNativeDialog before seeding the colour, not after"
+    )
 
 
 if __name__ == "__main__":
