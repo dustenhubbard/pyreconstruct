@@ -34,8 +34,22 @@ Three properties are pinned here, one per failure mode:
 1. The command targets the running interpreter (``sys.executable -m pip``),
    with no shell.
 2. A ``returncode == 0`` whose import still fails is reported, not raised.
-3. The ``pip``-absent path (a non-zero return code, typically 127) keeps its
-   existing behaviour exactly.
+3. A non-zero return code never imports the module, whichever explanation it
+   goes on to give.
+
+That last one used to read "the pip-absent path keeps its existing behaviour
+exactly", and it asserted the one message the ``else`` branch had at the time.
+That is no longer a single message: ``install_module`` now asks
+``pip_is_reachable()`` first and sends a genuinely pip-less environment to
+``no_pip_message`` instead of to the generic "try pip installing it in a
+terminal" notice (see ``test_install_module_without_pip.py``, which owns the
+text of both). Which branch that is depends on the machine, and neither test
+below said which one it wanted -- so both read the ambient environment and
+asserted the generic text. They passed on any machine with a ``pip`` on
+``PATH``, including every CI runner, and failed in this project's own
+documented ``uv sync`` environment, which has no pip in it at all. The two
+tests below now pin the branch they mean, one each, and neither can be decided
+by the environment the suite happens to run in.
 """
 
 import sys
@@ -116,6 +130,24 @@ def _unimportable(monkeypatch, name):
 
     monkeypatch.delitem(sys.modules, name, raising=False)
     monkeypatch.setattr(sys, "meta_path", [_Finder()] + list(sys.meta_path))
+
+
+def _pip_present(monkeypatch):
+    """A pip exists on ``PATH``, so a failed install has some other cause.
+
+    Only ``shutil.which`` is patched: ``pip_is_reachable`` answers True if
+    *either* route finds one, so an environment whose ``find_spec("pip")``
+    already succeeds gives the same answer either way.
+    """
+
+    monkeypatch.setattr(mod_imports.shutil, "which", lambda name: "/usr/bin/pip")
+
+
+def _pip_absent(monkeypatch):
+    """Neither route to a pip exists: not importable, not on ``PATH``."""
+
+    monkeypatch.setattr(mod_imports.importlib.util, "find_spec", lambda name: None)
+    monkeypatch.setattr(mod_imports.shutil, "which", lambda name: None)
 
 
 def _never_call_subprocess(monkeypatch):
@@ -239,21 +271,28 @@ def test_the_caller_is_told_the_feature_is_unusable(monkeypatch, captured):
     assert len(captured["notes"]) == 1
 
 
-## --------------------------------------------------- the pip-absent path, unchanged
+## ------------------------------------------- a failed install, either branch
 
 
-def test_pip_absent_keeps_its_existing_message_and_never_imports(
-    monkeypatch, captured
-):
-    """A non-zero return code already degraded correctly. It still does.
+def test_pip_absent_explains_the_absence_and_never_imports(monkeypatch, captured):
+    """No pip anywhere: the module is not imported, and the notice says why.
 
-    ``pip`` missing from ``PATH`` exits 127 through a shell, and the
-    ``else`` branch has always told the user to try it in a terminal. Nothing
-    about this change touches that, and in particular the module is never
-    imported, so a missing ``pip`` cannot reach the new guard at all.
+    A missing ``pip`` exits 127 through a shell and 1 through
+    ``sys.executable -m pip``; either way the ``else`` branch runs and
+    ``module_path`` is never reached, so this failure cannot arrive at the
+    ``returncode == 0`` guard above.
+
+    On the message, only what both halves of ``no_pip_message`` say: the
+    install failed for want of a pip, rather than the generic "try pip
+    installing it in a terminal", which names the command just established not
+    to exist. Which half runs turns on ``uv_created_environment``, and the text
+    of each is pinned in ``test_install_module_without_pip.py`` -- asserting it
+    again here would only duplicate that, and duplicating it is what left these
+    two tests reading the ambient environment in the first place.
     """
 
     _recording_pip(monkeypatch, returncode=127)
+    _pip_absent(monkeypatch)
 
     def must_not_import(module):
         raise AssertionError("module_path was called on a failed install")
@@ -265,16 +304,26 @@ def test_pip_absent_keeps_its_existing_message_and_never_imports(
     assert len(captured["notes"]) == 1
     message = captured["notes"][0]
 
-    assert message == (
-        "Something went wrong. "
-        "Please try pip installing svgwrite in a terminal."
-    )
+    assert message.startswith("svgwrite could not be installed:")
+    assert "there was no pip command to run." in message
+    assert "Then restart PyReconstruct." in message
+
+    ## The generic advice is wrong here and must not be what gets shown.
+    assert "Something went wrong" not in message
 
 
-def test_any_nonzero_return_code_takes_the_same_branch(monkeypatch, captured):
-    """Not just 127: a real pip that failed to resolve behaves identically."""
+def test_a_reachable_pip_that_failed_keeps_the_generic_advice(monkeypatch, captured):
+    """Pip ran and pip failed: retrying it in a terminal is real advice.
+
+    The other side of the discrimination, and the reason the branch is chosen
+    by probing for a pip rather than by reading the return code: a ``1`` from a
+    package that is not on the index looks nothing like a missing pip, and
+    telling that user their environment has no pip would be a new wrong message
+    for an old one. ``module_path`` is not reached on this path either.
+    """
 
     _recording_pip(monkeypatch, returncode=1)
+    _pip_present(monkeypatch)
     monkeypatch.setattr(
         mod_imports,
         "module_path",
@@ -282,7 +331,12 @@ def test_any_nonzero_return_code_takes_the_same_branch(monkeypatch, captured):
     )
 
     assert mod_imports.install_module("svgwrite") is False
-    assert "Something went wrong" in captured["notes"][0]
+
+    assert len(captured["notes"]) == 1
+    assert captured["notes"][0] == (
+        "Something went wrong. "
+        "Please try pip installing svgwrite in a terminal."
+    )
 
 
 ## ------------------------------------------------------------- the frozen build
