@@ -3337,7 +3337,64 @@ class MainWindow(QMainWindow):
         """Called when Ctrl+C is pressed."""
         w = self.getFocusWidget()
         if w: w.copy()
-    
+
+    def selectAll(self):
+        """Called when Ctrl+A is pressed.
+
+        Routed by focus, the same rule backspace() and copy() follow: a focused
+        data list selects its own rows, the field selects the traces on the
+        section.
+
+        Before this, selectall_act was wired straight to field.selectAllTraces.
+        Every list is a dock INSIDE this window, so that action's default
+        WindowShortcut scope claimed Ctrl+A for the whole window and consumed it
+        before the focused list's view ever saw the key -- pressing it over the
+        object list selected traces in the field. Dispatching here fixes that
+        while keeping exactly ONE claimant on the sequence, which is what the
+        ambiguity guards require: a second, list-scoped Ctrl+A action would make
+        Qt fire neither (see tests/test_invert_selection_shortcut.py, and the
+        is_in_field=False note in gui/table/object.py).
+
+        Dispatched by an explicit branch rather than a shared method name (as
+        copy() uses) because the two surfaces do different things to different
+        data, and the field's method is named for what it selects. An alias
+        would put two names on one operation to serve the dispatcher alone.
+
+        `else` rather than `elif w`: getFocusWidget returns a focused DataTable
+        or falls back to the field, and a QWidget defines neither __bool__ nor
+        __len__, so there is no falsy third case to guard for. (copy() and
+        backspace() carry that vestigial guard; it is not copied here.)
+        """
+        w = self.getFocusWidget()
+        if w is self.field:
+            self.field.selectAllTraces()
+        else:
+            w.selectAll()
+
+    def deselectAll(self):
+        """Called when Ctrl+D is pressed. Focus-routed -- see selectAll."""
+        w = self.getFocusWidget()
+        if w is self.field:
+            self.field.deselectAllTraces()
+        else:
+            w.deselectAll()
+
+    def invertSelection(self):
+        """Called by invertselection_act's key. Focus-routed -- see selectAll.
+
+        (Named by act rather than by sequence because
+        test_invert_selection_shortcut scans these sources for the literal key,
+        to catch a second action hardcoding it.)
+
+        Every list already offers "Invert selection" on its context menu, so the
+        key now reaches the command the focused surface already advertises.
+        """
+        w = self.getFocusWidget()
+        if w is self.field:
+            self.field.invertTraceSelection()
+        else:
+            w.invertSelection()
+
     def undo(self, redo=False):
         """Perform an undo/redo action.
         

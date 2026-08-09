@@ -256,6 +256,29 @@ class DataTable(QDockWidget):
         """
         pass
 
+    def selectAll(self):
+        """Select every row currently displayed in the list.
+
+        Reached by Ctrl+A when this list has focus, through
+        MainWindow.selectAll. As with invertSelection below, "every row" means
+        the rows that passed the list's active filters -- a filtered-out row is
+        not in the table and cannot be selected here.
+
+        Selects rows in the list only; it does not push a trace selection into
+        the field, which is what clicking rows already does.
+        """
+        if self.table is not None:
+            self.table.selectAll()
+
+    def deselectAll(self):
+        """Clear the list's row selection.
+
+        Reached by Ctrl+D when this list has focus, through
+        MainWindow.deselectAll.
+        """
+        if self.table is not None:
+            self.table.clearSelection()
+
     def invertSelection(self):
         """Invert the table's row selection.
 
