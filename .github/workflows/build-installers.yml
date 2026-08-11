@@ -260,3 +260,38 @@ jobs:
                 echo "pruning superseded pre-release: $t"
                 gh release delete "$t" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
               done
+
+      - name: Prune orphaned draft-placeholder tags
+        # Staging a release as a draft makes GitHub mint a placeholder tag named
+        # `untagged-<hex>`, because a draft has no real tag to point at yet.
+        # Publishing the draft creates the real vX.Y.Z tag and leaves the
+        # placeholder behind, referenced by nothing.
+        #
+        # That leftover BREAKS BUILDS. vcs-versioning runs `git describe`, cannot
+        # parse `untagged-87b5beb96d79ab5ff1c1`, and raises -- so every branch whose
+        # nearest tag is the placeholder fails to build outright. The one left by the
+        # v1.21.1 draft broke `uv run` on a dev machine three days later.
+        #
+        # Runs unconditionally, unlike the prune above: the orphan is created by the
+        # DRAFT path and only becomes an orphan once that draft is published, so
+        # gating this on the same condition would never clean up the case that
+        # produces it. It is idempotent and clears leftovers from earlier cycles too.
+        #
+        # `gh api .../releases` rather than `gh release list`: the API returns DRAFTS,
+        # and a live draft's placeholder is load-bearing -- it is the only thing that
+        # release points at. That list is what the helper treats as in-use, and an
+        # empty one makes it select nothing, so a failed lookup is a no-op rather
+        # than a mass deletion.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail   # a failed lookup must flag loudly, not feed an empty list onward
+          gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq '.[].tag_name' > /tmp/tags-in-use.txt
+          git ls-remote --tags origin \
+            | sed 's|.*refs/tags/||; s|\^{}$||' \
+            | sort -u \
+            | python3 scripts/prune_untagged_placeholders.py /tmp/tags-in-use.txt \
+            | while read -r t; do
+                echo "deleting orphaned draft-placeholder tag: $t"
+                git push origin ":refs/tags/$t"
+              done
