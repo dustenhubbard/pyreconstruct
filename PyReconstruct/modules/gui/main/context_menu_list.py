@@ -212,9 +212,15 @@ def get_field_menu_list(self):
         self.paste_act,
         self.pasteattributes_act,
         None,
-        ("selectall_act", "Select all traces", self.series, self.field.selectAllTraces),
-        ("deselect_act", "Deselect all traces", self.series, self.field.deselectAllTraces),
-        ("invertselection_act", "Invert selection", self.series, self.field.invertTraceSelection),
+        # The selection trio's handlers are the MainWindow dispatchers, not the
+        # field methods, so the keys follow focus: over a data list they act on
+        # that list's rows, over the field on the section's traces. The labels
+        # stay trace-worded because this is the FIELD's menu -- opening it means
+        # the field has focus, so that is what these rows will do. See
+        # MainWindow.selectAll for why one dispatcher beats a second QAction.
+        ("selectall_act", "Select all traces", self.series, self.selectAll),
+        ("deselect_act", "Deselect all traces", self.series, self.deselectAll),
+        ("invertselection_act", "Invert selection", self.series, self.invertSelection),
         None,
         # The familiar entity triad survives; Trace > now holds only the long
         # tail (the four everyday actions moved to the top strip).
