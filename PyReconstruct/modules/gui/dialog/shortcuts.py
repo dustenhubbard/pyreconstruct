@@ -330,9 +330,19 @@ help_shortcuts = [
     ("homeview_act", "Set view to image"),
     None,
     "Field Interactions",
-    ("selectall_act", "Select all traces on section"),
-    ("deselect_act", "Deselect all traces on section"),
-    ("invertselection_act", "Invert which traces are selected on section"),
+    # The selection trio follows focus (MainWindow.selectAll and friends): over
+    # a data list each acts on that list's rows, over the field on the section's
+    # traces. Described by both surfaces so the dialog does not promise only the
+    # field half.
+    #
+    # "data list" and not "list": the routing is TableManager.hasFocus, which
+    # owns the object, trace, z-trace, section and flag lists. The History list
+    # is a sixth QDockWidget the manager has never held, so it falls through to
+    # the field like any other unrecognized focus. Saying "a focused list" here
+    # would promise that one too.
+    ("selectall_act", "Select all traces on section, or all rows in a focused data list"),
+    ("deselect_act", "Deselect all traces on section, or all rows in a focused data list"),
+    ("invertselection_act", "Invert which traces are selected on section, or which rows in a focused data list"),
     ("edittrace_act", "Edit attributes of selected trace(s)"),
     ("mergetraces_act", "Merge selected traces"),
     ("mergeobjects_act", "Merge attributes of selected traces"),
