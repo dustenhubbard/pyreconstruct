@@ -307,7 +307,7 @@ class VPlotter(vedo.Plotter):
                     sc_obj.msh.scale(side_len / sc_obj.getSideLength())
                 if color:
                     sc_obj.setColor(color)
-                if alpha:
+                if alpha is not None:
                     sc_obj.setAlpha(alpha, self.series)
                 if lw:
                     sc_obj.msh.lw(lw)
@@ -339,7 +339,7 @@ class VPlotter(vedo.Plotter):
             alpha = response[1]
             for obj in self.selected:
                 if color: obj.setColor(color)
-                if alpha: obj.setAlpha(alpha, self.series)
+                if alpha is not None: obj.setAlpha(alpha, self.series)
         
         self.updateSelected()
         self.render()
