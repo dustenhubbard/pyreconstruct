@@ -3,7 +3,7 @@ import re
 import json
 import shutil
 from datetime import datetime
-from copy import deepcopy
+from copy import copy, deepcopy
 from pathlib import Path
 from typing import Union
 
@@ -3612,7 +3612,8 @@ class Series():
             if option_type in (dict, list, tuple):
                 option = json.loads(option)
         else:
-            option = defaults[option_name]
+            raw = defaults[option_name]
+            option = copy(raw) if isinstance(raw, (list, dict)) else raw
             self.setOption(option_name, option)
         
         ## CHECKS FOR UPDATES
