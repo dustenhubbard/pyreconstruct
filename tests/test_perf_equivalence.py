@@ -172,6 +172,9 @@ class _StubTrace:
     def __init__(self, points, closed=True, negative=False):
         self.points, self.closed, self.negative = points, closed, negative
         self.hidden, self.tags = False, set()
+        # TraceData records every attribute a real Trace carries; color is
+        # read since the object attributes dialog's series-wide color seed.
+        self.color = (0, 0, 0)
 
 def _tracedata():
     from PyReconstruct.modules.datatypes.series_data import TraceData
