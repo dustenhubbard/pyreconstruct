@@ -24,6 +24,30 @@ from PyReconstruct.modules.backend.updater.install_info import install_kind
 
 WHATSNEW_KEY = "last_whatsnew_version"
 
+# The "never show the popup" preference, stored beside WHATSNEW_KEY in the same
+# QSettings store so the two mechanisms that write it (the dialog's "Don't show
+# again" button and the Help-menu toggle) cannot disagree about where it lives.
+# It suppresses only the unasked startup popup; Help > What's new stays an
+# explicit request and always opens. While suppressed, WHATSNEW_KEY is not
+# advanced, so switching the popup back on makes it eligible again under the
+# ordinary once-per-version rules: any release missed while it was off shows on
+# the next launch.
+WHATSNEW_SUPPRESS_KEY = "suppress_whatsnew"
+
+
+def whats_new_suppressed(stored):
+    """True when the stored preference says never to show the popup.
+
+    QSettings round-trips a Python bool through backends that hand back the
+    strings "true"/"false" (the INI format among them), so the string
+    spellings count as well as real booleans. Anything unrecognized reads as
+    not suppressed: the popup is the documented default, and a corrupt value
+    must not silently switch it off.
+    """
+    if isinstance(stored, str):
+        return stored.strip().lower() in ("true", "1", "yes")
+    return bool(stored)
+
 # How many releases the Help-menu re-open lists, as opposed to the default
 # ``cap`` the post-update path uses.
 #
@@ -364,8 +388,8 @@ def whats_new_content(current, last_seen=None, cap=5, text=None, on_demand=False
                          ``WELCOME_UPDATE_NOTE`` is appended to whichever of
                          those two bodies was built.
       * ``byline``    -- the maintainer provenance line (``MAINTAINER_BYLINE``),
-                         the same on every framing; the dialog renders it once
-                         below the body, set off by a rule.
+                         the same on every framing; the dialog renders it once,
+                         in the footer row below the body.
       * ``truncated`` -- True when more than ``cap`` missed sections existed.
 
     Sections shown: when ``last_seen`` is a valid version older than ``current``,
