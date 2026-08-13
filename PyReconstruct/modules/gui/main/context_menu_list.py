@@ -304,6 +304,13 @@ def get_context_menu_list_obj(self, list_ops=None, is_in_field=True):
     at the end of its section. See the section comment below for the reasoning
     per item.
 
+    Revised 2026-08-12, a single targeted promotion rather than a restructure:
+    "Reapply autoseg colors..." leaves "Object attributes >" for the top level
+    of the settings section, directly below the submenu it left. It is a common
+    workflow action for automatic-segmentation users rather than an attribute
+    edit, and a beta report showed it buried on the object list. Nothing else
+    moved, nothing was renamed, and the attr_name is unchanged.
+
         Params:
             list_ops (list): list-only table utilities ("Invert selection",
                 "Copy object values") to mount in the standard bottom utility
@@ -488,10 +495,6 @@ def get_context_menu_list_obj(self, list_ops=None, is_in_field=True):
                 ("displayinhabitants_act", "Show inhabitant tree", "", lambda : self.displayHostTree(False)),
                 None,
                 ("setobjalignment_act", "Edit alignment...", "", self.editAlignment),
-                # Reapply the current autoseg palette (colorblind-safe default
-                # or a custom one) to objects imported before the palette
-                # existed, whose old colors were baked in at import time.
-                ("reapplyautosegcolors_act", "Reapply autoseg colors...", "", self.reapplyAutosegColors),
                 None,
                 # Lock/Unlock lives here as its single home (it is a stored
                 # object attribute); do NOT re-add it to another submenu.
@@ -499,6 +502,17 @@ def get_context_menu_list_obj(self, list_ops=None, is_in_field=True):
                 ("unlockobj_act", "Unlock", "", lambda : self.lockObjects(False))
             ]
         },
+        # Promoted out of "Object attributes >" on 2026-08-12. Reapplying the
+        # autoseg palette (colorblind-safe default or a custom one, to objects
+        # whose colors were baked in at import time) is a routine bulk pass for
+        # automatic-segmentation users, not an attribute edit, and a beta
+        # report showed it buried under "Object attributes >" on the object
+        # list. It lands directly below the submenu it left, the adjacency that
+        # keeps "Add to 3D scene" beside "3D >": someone who learned the old
+        # home reaches for "Object attributes >" and finds the row beside it
+        # instead of hunting. The attr_name is unchanged, so any stored
+        # shortcut binding survives the move.
+        ("reapplyautosegcolors_act", "Reapply autoseg colors...", "", self.reapplyAutosegColors),
         # Distinct attr_name from the field Trace submenu's "smoothtraces_act":
         # both menus are populated onto the same widget, so a shared name meant
         # one silently shadowed the other (same class of bug as the old
