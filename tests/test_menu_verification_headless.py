@@ -259,6 +259,12 @@ def test_view_keeps_its_order_with_the_four_inserted_after_show_z_traces(
     same question -- what is currently visible -- and everything before and after
     them is byte-identical to the pre-hoist order, which is what the standing
     rule about not reordering View requires.
+
+    One sanctioned addition since (2026-08-12, his placement call): "Recolor
+    all objects from palette..." directly under "Edit fill opacity...", the
+    series-wide sibling of the object menus' "Reapply palette colors...".
+    Nothing else moved; tests/test_menubar_labels.py holds the structure guard
+    and tests/test_autoseg_reapply_colors.py pins its semantics.
     """
     view = submenu_at(main_window.menubar, "View")
     assert view is not None
@@ -270,11 +276,14 @@ def test_view_keeps_its_order_with_the_four_inserted_after_show_z_traces(
         "Save view to file",
         "Change theme...",
         "Edit fill opacity...",
+        # the 2026-08-12 addition, and the only change to this list since the
+        # hoist below
+        "Recolor all objects from palette...",
         "Set view to image",
         "View magnification...",
         "Set zoom when finding contours...",
         "Show z-traces",
-        # the four hoisted rows, and the only change to this list
+        # the four hoisted rows
         "Trace palette",
         "Section increment buttons",
         "Brightness/contrast sliders",

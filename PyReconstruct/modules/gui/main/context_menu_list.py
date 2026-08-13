@@ -304,6 +304,17 @@ def get_context_menu_list_obj(self, list_ops=None, is_in_field=True):
     at the end of its section. See the section comment below for the reasoning
     per item.
 
+    Revised 2026-08-12, a single targeted promotion rather than a restructure:
+    the reapply-colors row leaves "Object attributes >" for the top level of
+    the settings section, directly below the submenu it left. It is a common
+    workflow action for automatic-segmentation users rather than an attribute
+    edit, and a beta report showed it buried on the object list. On review the
+    maintainer also renamed it "Reapply palette colors...", because the action
+    is not autoseg-specific: palette_color_for_name gives ANY name a stable
+    palette color, and only an unmodified "autoseg_<id>" name gets its
+    import-identical color back. Nothing else moved, and the act_name keeps
+    its historical spelling (see the row comment below).
+
         Params:
             list_ops (list): list-only table utilities ("Invert selection",
                 "Copy object values") to mount in the standard bottom utility
@@ -488,10 +499,6 @@ def get_context_menu_list_obj(self, list_ops=None, is_in_field=True):
                 ("displayinhabitants_act", "Show inhabitant tree", "", lambda : self.displayHostTree(False)),
                 None,
                 ("setobjalignment_act", "Edit alignment...", "", self.editAlignment),
-                # Reapply the current autoseg palette (colorblind-safe default
-                # or a custom one) to objects imported before the palette
-                # existed, whose old colors were baked in at import time.
-                ("reapplyautosegcolors_act", "Reapply autoseg colors...", "", self.reapplyAutosegColors),
                 None,
                 # Lock/Unlock lives here as its single home (it is a stored
                 # object attribute); do NOT re-add it to another submenu.
@@ -499,6 +506,25 @@ def get_context_menu_list_obj(self, list_ops=None, is_in_field=True):
                 ("unlockobj_act", "Unlock", "", lambda : self.lockObjects(False))
             ]
         },
+        # Promoted out of "Object attributes >" on 2026-08-12. Reapplying the
+        # current palette (colorblind-safe default or a custom one, to objects
+        # whose colors were baked in at import time) is a routine bulk pass for
+        # automatic-segmentation users, not an attribute edit, and a beta
+        # report showed it buried under "Object attributes >" on the object
+        # list. It lands directly below the submenu it left, the adjacency that
+        # keeps "Add to 3D scene" beside "3D >": someone who learned the old
+        # home reaches for "Object attributes >" and finds the row beside it
+        # instead of hunting.
+        #
+        # Renamed from "Reapply autoseg colors..." in the same review: the
+        # action colors ANY name (palette_color_for_name hashes non-autoseg
+        # names onto the same palette), so the old label hid it from everyone
+        # without autoseg objects. The act_name keeps its historical spelling
+        # on purpose: it is the key any user-configured shortcut is stored
+        # under (series.getOption(act_name)), so renaming it would silently
+        # unbind the key. The series-wide sibling lives in the menubar's View
+        # menu as "Recolor all objects from palette...".
+        ("reapplyautosegcolors_act", "Reapply palette colors...", "", self.reapplyAutosegColors),
         # Distinct attr_name from the field Trace submenu's "smoothtraces_act":
         # both menus are populated onto the same widget, so a shared name meant
         # one silently shadowed the other (same class of bug as the old
