@@ -324,7 +324,12 @@ MENUBAR_BASELINE = [
 #    small to grab, short of quitting and clearing `window/geometry` by hand.
 #    It lands after the submenu, next to "Reset palette position", not inside
 #    it: the palette submenu is palette-scoped and this is window-scoped.
-# 4. "Recolor all objects from palette..." in View, directly under "Edit fill
+# 4. "Show what's new after updates" in Help, directly under "What's new".
+#    Added with the What's-new dialog's "Don't show again" button: the button
+#    switches the startup popup off, and a preference that could only be
+#    switched off from inside the dialog it hides needs a visible way back on.
+#    Checkable, resynced from the stored preference every time Help opens.
+# 5. "Recolor all objects from palette..." in View, directly under "Edit fill
 #    opacity..." (2026-08-12, his placement call). The series-wide sibling of
 #    the object menus' selection-scoped "Reapply palette colors...": recolors
 #    every unlocked object with the current palette and seed as one undoable
@@ -336,6 +341,7 @@ MENUBAR_BASELINE = [
 _CLEAR_RECENTS_ROW = (2, "act", "clearrecents_act")
 _IMPORT_JSER_ALIGNMENTS_ROW = (2, "act", "import_jser_alignments_act")
 _RESET_WINDOW_ROW = (1, "act", "resetwindow_act")
+_TOGGLE_WHATSNEW_ROW = (1, "act", "togglewhatsnew_act")
 _RECOLOR_ALL_ROW = (1, "act", "recolorallfrompalette_act")
 MENUBAR_EXPECTED = list(MENUBAR_BASELINE)
 MENUBAR_EXPECTED.insert(
@@ -347,6 +353,9 @@ MENUBAR_EXPECTED.insert(
 )
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "act", "lefthanded_act")), _RESET_WINDOW_ROW
+)
+MENUBAR_EXPECTED.insert(
+    MENUBAR_EXPECTED.index((1, "act", "whatsnew_act")) + 1, _TOGGLE_WHATSNEW_ROW
 )
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "act", "fillopacity_act")) + 1, _RECOLOR_ALL_ROW
@@ -400,17 +409,18 @@ def test_no_baseline_action_was_lost():
 
 
 def test_menubar_action_and_submenu_counts():
-    """113 actions at capture, 118 now (the additions).
+    """113 actions at capture, 119 now (the additions).
 
     Submenus were 32 and are 31: the 2026-08-06 hoist emptied
     View > Palette > Visibility and it was removed. The action count is
     deliberately unchanged by that hoist -- moving four rows up two levels adds
     and removes nothing, and an action count that moved here would mean the move
-    had dropped or duplicated one. Addition 4 (the series-wide recolor,
-    2026-08-12) took the count from 117 to 118.
+    had dropped or duplicated one. Additions 4 and 5 (the what's-new toggle
+    and the series-wide recolor, both 2026-08-12, built on separate branches)
+    each took the count up one, 117 to 119 together.
     """
     rows = _rows()
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 118
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 119
     assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 31
 
 
