@@ -25,6 +25,9 @@ class TraceData():
         self.hidden = trace.hidden
         self.negative = trace.negative
         self.tags = trace.tags
+        # A tuple so it hashes (color counting keys on it); None for a trace
+        # with no color, which stays distinct from every real color.
+        self.color = tuple(trace.color) if trace.color else None
 
         # Map the points through the tform ONCE, then compute length, area,
         # centroid, and radius together in a single vectorized NumPy pass
@@ -475,6 +478,30 @@ class SeriesData():
                 tags = tags.union(trace_data.getTags())
         return tags
     
+    def getColorCounts(self, obj_name : str) -> dict:
+        """Traces per color for an object, across every section it is on.
+
+        A dict mapping each distinct trace color (an RGB tuple, or None for
+        a trace with no color) to how many of the object's traces carry it;
+        empty for an unknown object. One key means the object's color is
+        unanimous; more than one is the discrepancy the object attributes
+        dialog renders as a split swatch, wherever in the series the
+        minority traces live.
+
+            Params:
+                obj_name (str): the name of the object to retrieve data for
+        """
+        obj_data = self.data["objects"].get(obj_name)
+        if obj_data is None:
+            return {}
+
+        counts = {}
+        for trace_list in obj_data.traces.values():
+            for trace_data in trace_list:
+                color = trace_data.color
+                counts[color] = counts.get(color, 0) + 1
+        return counts
+
     def getAvgRadius(self, obj_name : str) -> float:
         """Get the average stamp radius of an object.
         

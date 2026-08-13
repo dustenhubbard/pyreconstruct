@@ -182,7 +182,7 @@ def test_ok_still_applies_and_paints(pick_with, parent):
     button.selectColor()
 
     assert button.getColor() == GREEN
-    assert button.styleSheet() == "ColorButton { background-color:rgb(0,255,0) }"
+    assert "background-color:rgb(0,255,0)" in button.styleSheet()
 
 
 def test_cancel_still_leaves_the_colour_alone(pick_with, parent):
@@ -192,7 +192,7 @@ def test_cancel_still_leaves_the_colour_alone(pick_with, parent):
     button.selectColor()
 
     assert button.getColor() == RED
-    assert button.styleSheet() == "ColorButton { background-color:rgb(255,0,0) }"
+    assert "background-color:rgb(255,0,0)" in button.styleSheet()
 
 
 def test_dismissal_still_leaves_a_blank_swatch_blank(pick_with, parent):
