@@ -6,6 +6,44 @@ full release notes on GitHub (linked from the dialog).
 
 ## [Unreleased]
 
+## [1.21.3] — 2026-08-13
+
+- **New: You can switch off the "What's new" popup, and switch it back on.** A
+  "Don't show again" button now sits beside "Got it", and **Help ▸ Show what's
+  new after updates** is the way back on. **Help ▸ What's new** always works
+  regardless.
+- **Changed: The "What's new" window is roomier and easier to read.** It opens
+  wider and taller, with the extra space going to the notes. Who maintains this
+  build now reads as a quiet two-line footer beside the release-notes link
+  instead of sitting inside the notes themselves.
+- **Changed: "Reapply autoseg colors" is now "Reapply palette colors", easier
+  to find, and available for the whole series at once.** It never was only for
+  autoseg objects: it recolors whatever you select using the current palette.
+  It now sits directly in the object right-click menu instead of a submenu, and
+  a new **View ▸ Recolor all objects from palette** recolors every object in
+  the series in one undoable step, skipping locked objects and telling you how
+  many it will touch before it does anything.
+- **Changed: The "trace crosses itself" message now tells you what to try.**
+  Instead of only reporting that the cut could not be made, it points you at
+  **Series ▸ Clean up**, which removes the stray traces automatic segmentation
+  leaves behind, a common cause of the problem.
+- **Fixed: A crash opening the z-trace list after an alignment was renamed or
+  deleted.** A z-trace or an object can be set to follow a particular
+  alignment, but renaming or deleting that alignment left them pointing at one
+  that no longer existed. The z-trace list works out a length for every row as
+  it opens, so a single z-trace in that state stopped the whole list from
+  opening, and the same problem broke smoothing that z-trace and adding it to
+  a 3D scene. Renaming an alignment now carries those settings across, deleting
+  one clears them, and anything still pointing at a missing alignment falls
+  back to the series alignment instead of failing. A series already in that
+  state repairs itself the next time you edit its alignments.
+- **Fixed: A crash when using undo or redo after an earlier undo.** When both a
+  series-wide undo and an undo for just this section are available, and they
+  are not part of the same operation, PyReconstruct compares the two to work
+  out which one Ctrl+Z should take. Some saved states were missing the
+  timestamp that comparison needs, so undoing and then pressing Ctrl+Z again
+  could fail instead of undoing anything.
+
 ## [1.21.2] — 2026-08-13
 
 - **Fixed: Picking a color no longer paints the whole picker window that color.** Choosing a color for
