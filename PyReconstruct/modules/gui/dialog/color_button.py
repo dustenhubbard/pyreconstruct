@@ -165,11 +165,27 @@ class ColorButton(QPushButton):
             )
 
     def setColor(self, color):
-        """Sets the visual color for the button."""
+        """Sets the visual color for the button.
+
+        The style rule is scoped to this class by name. A bare
+        ``background-color`` declaration on a widget cascades into every
+        descendant, and the picker ``selectColor`` opens is parented to this
+        button (that parenting is load-bearing; see ``selectColor``), so the
+        unscoped form repainted the entire color dialog in whatever color
+        was applied last. Reported with screenshots on Windows and macOS:
+        the picker opened solid yellow, green, purple. The class selector
+        matches only ``ColorButton`` itself, never the dialog's widgets.
+
+        A blank color clears the rule rather than leaving the previous one
+        behind: the swatch must read as empty, not as the color it held
+        before the attribute it displays went blank.
+        """
         self.color = color
         if color:
             s = f"({','.join(map(str,self.color))})"
-            self.setStyleSheet(f"background-color:rgb{s}")
+            self.setStyleSheet(f"ColorButton {{ background-color:rgb{s} }}")
+        else:
+            self.setStyleSheet("")
 
     def getColor(self):
         return self.color
