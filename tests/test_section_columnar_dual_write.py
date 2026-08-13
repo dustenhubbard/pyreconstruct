@@ -2790,10 +2790,11 @@ def test_a_refused_scalpel_cut_leaves_the_section_saveable(
     ## It refused, visibly, and left the object alone -- the guarantee the user
     ## was given.
     assert refused is False
-    assert field_notices == [
-        "A selected trace crosses itself and cannot be cut.\n"
-        "The object was left unchanged."
-    ]
+    assert len(field_notices) == 1
+    assert field_notices[0].startswith(
+        "A selected trace's outline crosses over itself"
+    )
+    assert "The object was left unchanged." in field_notices[0]
     assert len(field.section.contours[name]) == 2
     assert field.section.contours[name][0] is first, "the trace was replaced"
 
