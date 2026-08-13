@@ -447,14 +447,20 @@ class SeriesData():
     
     def getTags(self, obj_name : str) -> set:
         """Get the tags associated with an object.
-        
+
+        Always a set, empty for an unknown object. Every caller treats the
+        result as a set (len, union, join); the None this used to return for
+        an unknown name crashed the Object List's Trace tags column when a
+        row was re-queried mid-removal, after the object's data was already
+        gone (user report: TypeError, can only join an iterable).
+
             Params:
                 obj_name (str): the name of the object to retrieve data for
         """
         obj_data = self.data["objects"].get(obj_name)
         if obj_data is None:
-            return None
-        
+            return set()
+
         tags = set()
         for trace_list in obj_data.traces.values():
             for trace_data in trace_list:
