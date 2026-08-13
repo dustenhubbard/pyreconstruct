@@ -6,6 +6,24 @@ full release notes on GitHub (linked from the dialog).
 
 ## [Unreleased]
 
+## [1.21.2] — 2026-08-13
+
+- **Fixed: Picking a color no longer paints the whole picker window that color.** Choosing a color for
+  a trace or a flag quietly attached that color to the picker itself, so the next time it opened, the
+  entire window came up solid yellow, green, or purple with the controls floating on top of it. The
+  picker now opens looking like a normal window, every time, on every platform.
+- **Fixed: The attributes window now shows your object's color.** Opening "Set Attributes" on an object
+  always left the color swatch blank and opened the picker on white, even when the object had a
+  perfectly good color. The swatch now shows the object's color, checked across every section it
+  appears on. If its traces do not all agree, wherever the odd ones out live, the swatch splits
+  diagonally, the most common color against a blank half, so you can see there is a mix before deciding
+  to repaint. And the shown color is just a preview: unless you actually pick a color, pressing OK
+  leaves every trace's color exactly as it was.
+- **Fixed: A crash while editing an object's attributes with the Object List open.** Renaming an
+  object, or making any attribute edit that moves a row, could crash with a "can only join an iterable"
+  error while the list was updating. The list now handles the moment an object's row is on its way out,
+  whatever columns you have enabled.
+
 ## [1.21.1] — 2026-08-07
 
 - **Improved: Every slider in Series ▸ Options shows what it is set to.** The sliders were a bare handle
