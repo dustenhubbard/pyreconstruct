@@ -13,6 +13,84 @@ the README's *From source (developers)* section).
 
 ## [Unreleased]
 
+## [1.21.3] - 2026-08-13
+
+### Added
+- **The What's new dialog has a "Don't show again" button, and the Help menu
+  has a matching "Show what's new after updates" toggle to switch the popup
+  back on.** The button closes the dialog and stops the startup popup for
+  good, including across later updates. It suppresses only the unasked popup:
+  Help > What's new stays an explicit request and always opens. The two
+  controls read and write one stored preference, next to the dialog's
+  once-per-version record, so they can never disagree, and the toggle rereads
+  it every time the Help menu opens. While the popup is off the last-seen
+  version is deliberately not advanced, so switching it back on picks the
+  ordinary rules up intact: a release missed while it was off shows on the
+  next launch, and a release already seen stays seen.
+
+### Changed
+- **Recoloring objects from the palette is easier to find, is no longer
+  labeled as autoseg-only, and can now run over the whole series.** The
+  context row "Reapply autoseg colors..." sat inside `Object attributes >` on
+  the object list (and one menu deeper in the field), and its name undersold
+  it: the palette assigns a stable color to any object name, with only
+  unmodified `autoseg_<id>` names recovering their exact import color, so
+  users without autoseg objects had no reason to try it. The row now reads
+  "Reapply palette colors..." and sits at the top level of the object menus'
+  settings section, directly below the `Object attributes >` submenu it left.
+  A new `View > Recolor all objects from palette...` action applies the same
+  recoloring to every object in the series as one undoable pass; locked
+  objects are skipped rather than blocking the operation, and the
+  confirmation dialog states how many objects will be recolored and how many
+  locked ones will be skipped. The renamed row keeps its internal action
+  name, so a stored keyboard shortcut still binds.
+- **The "trace crosses itself" knife refusal now says what to try and where
+  to find it.** The old dialog told the user a selected trace crosses itself
+  and cannot be cut, and stopped there; users hitting it on automatically
+  segmented traces had no idea the app ships a clean-up tool for the stray
+  traces that segmentation leaves behind. The message
+  now explains that the outline crosses over itself so the cut cannot tell
+  inside from outside, confirms nothing was changed, and points at
+  Series > Clean up to remove the stray traces automatic segmentation
+  leaves behind, a common cause of the refusal. A test reads
+  the menu path off the live menus, so renaming them fails the suite instead
+  of leaving the message pointing at a menu that no longer exists.
+- **The maintainer byline in the What's new dialog now sits in a footer row
+  beside the "Full release notes on GitHub" link, instead of stacking above
+  it.** The byline and the link are the dialog's two small-text footer items,
+  and stacked one over the other they read as a single block and cost a row of
+  vertical space each. The footer now puts the byline bottom-left, on two
+  lines broken at the comma, and the link bottom-right of one row, below the
+  scrollable notes and above the action buttons, so the provenance line is
+  still on screen from the moment the dialog opens. The byline keeps its italic and the project-name link to the
+  home page, and now shares the release date line's quieter secondary style:
+  both lines are italic and paint in a color derived from the theme's palette,
+  a step darker than the near-invisible disabled gray the date line borrowed
+  before, so they read as asides that are still comfortably legible.
+
+### Fixed
+- **Fixed a crash (`AttributeError`) using undo or redo after an earlier
+  undo.** When a series-wide undo and a section-only undo are both available
+  and are not part of the same operation, the app compares the two to work out
+  which one Ctrl+Z should take. That comparison reads a timestamp off each
+  saved state, and section states were only being stamped on one of the three
+  paths that put them on an undo stack, so undoing and then pressing Ctrl+Z
+  again could hit a state with no timestamp at all and fail instead of undoing
+  anything. Every state is now stamped when it is created and re-stamped
+  whenever it moves onto a stack.
+- **Fixed a crash (`KeyError`) opening the z-trace list after an alignment was
+  renamed or deleted.** A z-trace or object can be pinned to a named alignment,
+  but renaming or deleting that alignment rewrote every section without
+  updating those pins, so they kept naming an alignment that no longer existed.
+  Objects shrugged that off, because their drawing path already resets a
+  missing name, while the z-trace path did not: the list computes a distance
+  for every row as it is built, so one pinned z-trace made the whole list
+  impossible to open, and the same pin also broke smoothing that z-trace and
+  adding it to a 3D scene. Renaming an alignment now carries the pins with it,
+  deleting one clears them, and a pin that names something missing falls back
+  to the series alignment instead of failing. A series already carrying a
+  broken pin is repaired the next time its alignments are edited.
+
 ## [1.21.2] - 2026-08-13
 
 ### Fixed
