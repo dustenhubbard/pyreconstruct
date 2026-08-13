@@ -382,6 +382,17 @@ def return_view_menu(self):
             ("changetheme_act", "Change theme...", "", self.setTheme),
             None,
             ("fillopacity_act", "Edit fill opacity...", "", self.setFillOpacity),
+            # Series-wide sibling of the object menus' selection-scoped
+            # "Reapply palette colors..." (added 2026-08-12, his placement
+            # call). It sits beside "Edit fill opacity..." because that is the
+            # one View section about how every object is painted; it is also
+            # the only row in this menu that edits series data, which its
+            # confirm dialog owns up to. Locked objects are SKIPPED rather
+            # than a blocker (an abort would make a series-wide pass useless
+            # the moment one object is locked), the dialog states the split,
+            # and the whole pass is one undo. No shortcut: a rare, confirmed
+            # bulk action does not earn a key.
+            ("recolorallfrompalette_act", "Recolor all objects from palette...", "", self.recolorAllObjectsFromPalette),
             None,
             ("homeview_act", "Set view to image", "Home", self.field.home),
             ("viewmag_act", "View magnification...", "", self.field.setViewMagnification),
