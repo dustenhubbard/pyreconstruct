@@ -47,7 +47,7 @@ from PyReconstruct.modules.gui.dialog.trace import TraceDialog
 from PyReconstruct.modules.gui.main.field_widget_3_object import object_color_seed
 
 FIXTURE = os.path.join(
-    os.path.dirname(__file__), "..", "dev",
+    os.path.dirname(__file__), "..", "PyReconstruct",
     "assets", "checker", "files", "shapes1.jser",
 )
 
