@@ -1,4 +1,5 @@
 from PyReconstruct.modules.calc import distance3D, rolling_average
+from PyReconstruct.modules.datatypes.transform import alignment_tform
 
 from PyReconstruct.modules.datatypes_legacy import ZContour as XMLZContour
 
@@ -78,7 +79,7 @@ class Ztrace():
         """
         tform_pts = []
         for x, y, snum in self.points:
-            tform = series.data["sections"][snum]["tforms"][series.alignment]
+            tform = alignment_tform(series, snum)
             pt = (*tform.map(x, y), snum)
             tform_pts.append(pt)
         
@@ -122,7 +123,7 @@ class Ztrace():
             if pt[2] == section.n:
                 tform = section.tform
             else:
-                tform = series.data["sections"][pt[2]]["tforms"][series.alignment]
+                tform = alignment_tform(series, pt[2])
             x, y = tform.map(x, y)
             tformed_pts.append((x, y, snum))
         
@@ -174,12 +175,13 @@ class Ztrace():
         # get z-values for each section
         zvals = series.getZValues()
 
+        # a stored name that no longer exists degrades to the series alignment
+        # rather than raising; see transform.alignment_tform
         alignment = series.getAttr(self.name, "alignment", ztrace=True)
-        if not alignment: alignment = series.alignment
 
         real_pts = []
         for x, y, snum in self.points:
-            tform = series.data["sections"][snum]["tforms"][alignment]
+            tform = alignment_tform(series, snum, alignment)
             new_pt = (*tform.map(x, y), zvals[snum])
             real_pts.append(new_pt)
         
@@ -216,7 +218,7 @@ class Ztrace():
             
             x, y, snum = pt
 
-            tform = series.data["sections"][snum]["tforms"][z_align]
+            tform = alignment_tform(series, snum, z_align)
             x, y = tform.map(x, y)
 
             snums.append(snum)
@@ -231,7 +233,7 @@ class Ztrace():
 
         for pt in points:
             x, y, snum = pt
-            tform = series.data["sections"][snum]["tforms"][z_align]
+            tform = alignment_tform(series, snum, z_align)
             x, y = tform.map(x, y, inverted=True)
             self.points.append((x, y, snum))
     
