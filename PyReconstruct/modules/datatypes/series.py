@@ -1592,6 +1592,49 @@ class Series():
             if edit(section):
                 section.save()
 
+    def remapStoredAlignments(self, alignment_dict : dict):
+        """Follow renames and clear deletes in stored alignment attributes.
+
+        Objects and z-traces may pin themselves to a named alignment. Renaming
+        or deleting that alignment used to leave the attribute naming something
+        that no longer existed anywhere in the series, because the tform rewrite
+        in ``modifyAlignments`` only ever touched the sections and the
+        series-wide current alignment.
+
+        A name that survives is left alone. A name that became exactly one new
+        name is followed, which is what preserves the intent across a rename:
+        clearing instead would silently drop a z-trace back to the series
+        alignment while the alignment it asked for still existed under a new
+        name. A name that was deleted, or that ambiguously fed several new
+        names, is cleared, since there is no honest single answer.
+
+        A name that never existed is cleared too, so a series already carrying a
+        dangling attribute from an older save is repaired by any alignment edit.
+
+            Params:
+                alignment_dict (dict): as passed to modifyAlignments, mapping
+                    each resulting alignment name to the old name it comes from
+                    (None for a deletion)
+        """
+        surviving = {
+            new_a for new_a, old_a in alignment_dict.items() if old_a is not None
+        }
+        for attrs, is_ztrace in ((self.obj_attrs, False), (self.ztrace_attrs, True)):
+            for name in list(attrs.keys()):
+                stored = attrs.get(name, {}).get("alignment")
+                if stored is None or stored in surviving:
+                    continue
+                renamed_to = [
+                    new_a for new_a, old_a in alignment_dict.items()
+                    if old_a == stored and new_a in surviving
+                ]
+                self.setAttr(
+                    name,
+                    "alignment",
+                    renamed_to[0] if len(renamed_to) == 1 else None,
+                    ztrace=is_ztrace,
+                )
+
     def modifyAlignments(self, alignment_dict : dict, series_states=None, log_event=True):
         """Modify the series's alignment.
 
@@ -1606,6 +1649,10 @@ class Series():
         # change the current alignment if necessary
         if self.alignment != "no-alignment" and alignment_dict[self.alignment] is None:
             self.alignment = "no-alignment"
+
+        # and carry the per-object and per-ztrace alignment attributes across,
+        # or they keep naming an alignment this rewrite is about to remove
+        self.remapStoredAlignments(alignment_dict)
 
         for snum, section in self.enumerateSections(
             message="Modifying alignments...",
