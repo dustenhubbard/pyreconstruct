@@ -13,6 +13,39 @@ the README's *From source (developers)* section).
 
 ## [Unreleased]
 
+## [1.21.2] - 2026-08-13
+
+### Fixed
+- **Fixed the color picker opening painted in the last color that was
+  applied.** Setting a color painted the swatch button with a selector-less
+  `background-color` style rule, and Qt style rules cascade into every
+  descendant widget. The picker dialog is a child of the swatch (on purpose:
+  that parenting keeps it modal and in front of the dialog that opened it), so
+  reopening it showed a solid yellow, green, or purple window instead of a
+  normally styled one. Reported with screenshots on Windows and macOS. The
+  rule is now scoped to the swatch alone, and a swatch handed a blank color
+  now clears its old color instead of keeping it.
+- **Fixed the object attributes dialog opening with a gray color swatch (and
+  a white picker) for objects that have a color.** The dialog was never given
+  the selection's color, only its name and tags. The swatch now shows the
+  selection's color, checked across every section the objects appear on:
+  when all their traces agree it shows solid, and when any trace anywhere
+  disagrees it shows a diagonal split, the predominant color against a blank
+  half, so the discrepancy is visible while the attributes are being edited.
+  The shown color is display only: confirming the dialog without using the
+  picker leaves every trace's color exactly as it was, so an object whose
+  colors vary cannot be accidentally repainted to the one color the swatch
+  happened to show.
+- **Fixed a crash (`TypeError: can only join an iterable`) when editing an
+  object's attributes with the Object List open.** An attribute edit that
+  renames or removes an object deletes its data before the table removes its
+  row, and Qt re-queries the departing row in between, so the table was
+  computing columns for an object that no longer existed: the Trace tags
+  column joined the `None` that `getTags` returned for an unknown object, and
+  the Flat area, Volume, and Radius columns would have failed the same way on
+  rounding `None`. `getTags` now returns an empty set, and the Object List
+  answers a blank row for an object whose data is already gone.
+
 ## [1.21.1] — 2026-08-07
 
 ### Added
