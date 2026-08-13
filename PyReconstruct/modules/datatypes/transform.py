@@ -283,3 +283,43 @@ class Transform():
         return Transform([1, 0, 0, 0, 1, 0])
 
 
+
+
+def alignment_tform(series, snum : int, alignment : str = None):
+    """The transform for an alignment on one section, degrading, never raising.
+
+    ``alignment`` is a stored per-object or per-ztrace alignment name, or None
+    to mean "use the series alignment". A name that no longer exists falls back
+    to the series alignment, and then to ``no-alignment``, which the tform
+    container always seeds with the identity transform.
+
+    The fallback exists because a stored alignment name can outlive the
+    alignment itself. ``Series.remapStoredAlignments`` now carries those
+    attributes across a rename and clears them on a delete, but a series saved
+    before that fix can already hold a dangling name, and a dangling name used
+    to reach a bare tform lookup and raise ``KeyError`` from inside a table
+    population. Reported against the z-trace list, which computes a distance for
+    every row while the table is being built, so one z-trace with a dangling
+    alignment made the whole list impossible to open.
+
+    Nothing is written on a miss. The object path self-heals by clearing the
+    attribute in ``SeriesData.addTrace``, but this runs while tables and 3D
+    meshes are being built, and mutating series attributes from a read is how
+    drawing a table turns into an unsaved change.
+
+    A function taking ``series`` rather than a ``Series`` method, because the
+    callers are datatypes that the suite exercises with lightweight series
+    doubles: everything needed is ``series.data["sections"]`` and
+    ``series.alignment``, so the existing doubles satisfy it unchanged.
+
+        Params:
+            series (Series): the series holding the section tform tables
+            snum (int): the section to get the transform on
+            alignment (str): the stored alignment name, or None
+    """
+    tforms = series.data["sections"][snum]["tforms"]
+    if alignment in tforms:
+        return tforms[alignment]
+    if series.alignment in tforms:
+        return tforms[series.alignment]
+    return tforms["no-alignment"]

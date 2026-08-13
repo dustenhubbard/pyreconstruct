@@ -5,6 +5,7 @@ import trimesh
 
 from PyReconstruct.modules.calc import centroid
 from PyReconstruct.modules.datatypes import Trace, Transform, Series
+from PyReconstruct.modules.datatypes.transform import alignment_tform
 
 
 def exportMesh(tm, output_file, export_type):
@@ -369,9 +370,9 @@ class Ztrace3D(Object3D):
         ztrace = self.series.ztraces[self.name]
 
         # get appropriate alignment (the same for every point of the ztrace)
+        # a stored name that no longer exists degrades to the series alignment
+        # rather than raising; see transform.alignment_tform
         alignment = self.series.getAttr(self.name, "alignment", ztrace=True)
-        if not alignment: alignment = self.series.alignment
-        section_data = self.series.data["sections"]
 
         # NOTE: not batched through mapPointsArray -- every ztrace point carries
         # its own section, so the tform varies point to point and the batches
@@ -383,7 +384,7 @@ class Ztrace3D(Object3D):
             self.addToExtremes(x, y, s)
 
             # get real field coord point
-            tform = section_data[s]["tforms"][alignment]
+            tform = alignment_tform(self.series, s, alignment)
             x, y = tform.map(x, y)
             z = s * thickness
             pts.append((x, y, z))
