@@ -487,17 +487,25 @@ def test_help_menu_offers_whats_new_reopen():
 
     sentinel = lambda: None
     diag_sentinel = lambda: None
+    toggle_sentinel = lambda: None
     stub = SimpleNamespace(
         copyCommit=lambda: None, checkForUpdates=lambda: None,
         showWhatsNew=sentinel, displayShortcuts=lambda: None,
         openWebsite=lambda *_: None, downloadExample=lambda: None,
         copyDiagnosticReport=diag_sentinel,
         viewLogFile=lambda: None, openLogFolder=lambda: None,
+        toggleWhatsNewPopup=toggle_sentinel,
     )
     opts = return_help_menu(stub)["opts"]
     entries = [o for o in opts if isinstance(o, tuple)]
     whatsnew = [o for o in entries if o[0] == "whatsnew_act"]
     assert whatsnew == [("whatsnew_act", "What's new", "", sentinel)]
+
+    # ...and directly under it, the checkable popup on/off switch
+    toggle = [o for o in entries if o[0] == "togglewhatsnew_act"]
+    assert toggle == [("togglewhatsnew_act", "Show what's new after updates",
+                       "checkbox", toggle_sentinel)]
+    assert entries.index(toggle[0]) == entries.index(whatsnew[0]) + 1
 
     # the copyable diagnostic report lives in the "Report issues" submenu
     issuemenu = [o for o in opts if isinstance(o, dict) and o["attr_name"] == "issuemenu"][0]

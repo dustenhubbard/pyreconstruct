@@ -20,9 +20,12 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QColor, QPalette, QTextCursor
 from PySide6.QtCore import Qt, QSettings, QEvent
 
+from functools import partial
+
 from PyReconstruct.modules.backend.updater.install_info import current_version_str
 from PyReconstruct.modules.gui.main.first_launch import (
     whats_new_due, whats_new_content, github_release_url, WHATSNEW_KEY,
+    WHATSNEW_SUPPRESS_KEY, whats_new_suppressed,
     ON_DEMAND_CAP, HOMEPAGE_URL, LINKED_NAME,
 )
 
@@ -158,9 +161,14 @@ def make_notes_browser(markdown_text, min_height=180):
 class WhatsNewDialog(QDialog):
     """A dismissible, modeless summary of what changed since the last-seen version."""
 
-    def __init__(self, parent, version, last_seen=None, content=None, url=None):
+    def __init__(self, parent, version, last_seen=None, content=None, url=None,
+                 settings=None):
         super().__init__(parent)
         self._version = version
+        # Where "Don't show again" persists its preference; injectable for
+        # headless testing. None defers building the real store to the click,
+        # so constructing the dialog alone never touches QSettings.
+        self._settings = settings
         if content is None:
             content = whats_new_content(version, last_seen)
         if url is None:
@@ -289,18 +297,38 @@ class WhatsNewDialog(QDialog):
         footer.addWidget(link, 0, Qt.AlignTop)
         lay.addLayout(footer)
 
+        # "Don't show again" sits left of "Got it", which keeps the default
+        # (Enter) button in the ordinary rightmost spot: dismissing this once
+        # stays the one-keystroke action, switching it off for good takes a
+        # deliberate click. The preference it writes is the same one the Help
+        # menu toggle reads and writes, so either can undo the other.
         row = QHBoxLayout()
         row.addStretch(1)
+        dont_show_btn = QPushButton("Don't show again")
+        dont_show_btn.clicked.connect(self.dontShowAgain)
+        row.addWidget(dont_show_btn)
         close_btn = QPushButton("Got it")
         close_btn.setDefault(True)
         close_btn.clicked.connect(self.accept)
         row.addWidget(close_btn)
         lay.addLayout(row)
 
+    def dontShowAgain(self):
+        """Persist the never-show preference, then close like "Got it".
 
-def _default_show(parent, version, last_seen=None, content=None):
+        Writes ``WHATSNEW_SUPPRESS_KEY`` and nothing else: the once-per-version
+        record is left alone, so a user who later re-enables the popup from the
+        Help menu picks the ordinary rules back up where they stood.
+        """
+        settings = self._settings if self._settings is not None else QSettings(ORG, APP)
+        settings.setValue(WHATSNEW_SUPPRESS_KEY, True)
+        self.accept()
+
+
+def _default_show(parent, version, last_seen=None, content=None, settings=None):
     """Construct and show the dialog modelessly, transiently."""
-    dialog = WhatsNewDialog(parent, version, last_seen=last_seen, content=content)
+    dialog = WhatsNewDialog(parent, version, last_seen=last_seen, content=content,
+                            settings=settings)
     dialog.setAttribute(Qt.WA_DeleteOnClose)
     if parent is not None:
         # Hold a reference so the modeless dialog isn't garbage-collected before
@@ -315,19 +343,32 @@ def maybe_show_whats_new(parent, settings=None, current=None, show=None,
                          key=WHATSNEW_KEY):
     """Show the What's-new dialog once per version; record the version seen.
 
-    The pure gate lives in ``whats_new_due``; this wires it to QSettings and the
-    dialog. The stored last-seen version is threaded into the builder so the
-    dialog can summarise everything missed since then. ``settings`` / ``current``
-    / ``show`` are injectable for headless testing. Returns True if shown.
+    The pure gates live in ``whats_new_suppressed`` and ``whats_new_due``; this
+    wires them to QSettings and the dialog. The stored last-seen version is
+    threaded into the builder so the dialog can summarise everything missed
+    since then. ``settings`` / ``current`` / ``show`` are injectable for
+    headless testing. Returns True if shown.
+
+    The suppression check comes first and returns without writing anything:
+    "Don't show again" beats a pending version bump, and leaving the last-seen
+    record where it stood is what lets the Help-menu toggle hand the ordinary
+    once-per-version rules back intact, pending bump included.
     """
     if settings is None:
         settings = QSettings(ORG, APP)
     if current is None:
         current = current_version_str()
+    if whats_new_suppressed(settings.value(WHATSNEW_SUPPRESS_KEY)):
+        return False
     stored = settings.value(key)
     if not whats_new_due(stored, current):
         return False
-    (show or _default_show)(parent, current, stored)
+    if show is None:
+        # the default dialog gets this same store, so its "Don't show again"
+        # button writes where this gate reads; an injected show is a test seam
+        # with the historical (parent, version, last_seen) signature
+        show = partial(_default_show, settings=settings)
+    show(parent, current, stored)
     settings.setValue(key, current)
     return True
 
@@ -335,9 +376,11 @@ def maybe_show_whats_new(parent, settings=None, current=None, show=None,
 def show_whats_new(parent, current=None, show=None):
     """Show the What's-new dialog on demand (Help -> What's new).
 
-    Unlike ``maybe_show_whats_new`` there is no once-per-version gate and the
-    stored last-seen version is neither consulted nor updated: the dialog always
-    opens on the running version's notes rather than a fresh-install welcome.
+    Unlike ``maybe_show_whats_new`` there is no once-per-version gate, no
+    "Don't show again" suppression (a menu click is an explicit request, not a
+    popup), and the stored last-seen version is neither consulted nor updated:
+    the dialog always opens on the running version's notes rather than a
+    fresh-install welcome.
     Earlier releases are reached through the truncation line and the "Full
     release notes on GitHub" link rather than being listed in full; see
     ``ON_DEMAND_CAP`` for why this path is capped tighter than the post-update

@@ -242,6 +242,109 @@ def test_fresh_install_gets_one_welcome_and_never_a_second(qapp):
     assert len(calls) == 1
 
 
+# ---- "Don't show again": the popup can be switched off, and back on ---------
+
+def _find_button(dialog, label):
+    from PySide6.QtWidgets import QPushButton
+    return next(b for b in dialog.findChildren(QPushButton) if b.text() == label)
+
+
+def test_dont_show_again_suppresses_the_popup_across_restarts(qapp):
+    """The button closes the dialog, and no later launch shows the popup.
+
+    Asserted through the persisted preference rather than any dialog state:
+    the dialog writes the same store ``maybe_show_whats_new`` reads, so each
+    fresh gate run below is a "restart" of the startup logic against the
+    settings the button left behind. The suppression must also beat a pending
+    version bump: a stored last-seen older than the running version is exactly
+    the state ``whats_new_due`` fires on, and the button has to win that
+    argument, or the very next update would undo the user's choice.
+    """
+    settings = FakeSettings({F.WHATSNEW_KEY: "1.20.3"})
+    calls = []
+
+    dlg = W.WhatsNewDialog(None, "1.21.0", last_seen="1.20.3", settings=settings)
+    try:
+        dlg.show()
+        _find_button(dlg, "Don't show again").click()
+        assert not dlg.isVisible()                    # closed, like "Got it"
+        assert F.whats_new_suppressed(settings.value(F.WHATSNEW_SUPPRESS_KEY))
+    finally:
+        dlg.deleteLater()
+
+    # relaunches of the same version stay quiet, as they would have anyway...
+    assert _shown_once(settings, "1.21.0", calls) is False
+    # ...and so does the launch after the NEXT update: the button wins
+    assert _shown_once(settings, "1.21.1", calls) is False
+    assert calls == []
+    # the last-seen record did not advance while suppressed, which is what
+    # keeps the once-per-version rules intact for a later re-enable
+    assert settings.value(F.WHATSNEW_KEY) == "1.20.3"
+
+
+def test_reenabling_restores_the_once_per_version_rules(qapp):
+    """Switching the popup back on hands back the ordinary rules, intact.
+
+    The stored preference is the same one the Help-menu toggle writes (the
+    toggle handler stores ``not checked``); this drives the pure layer with
+    that exact write. A version bump missed while the popup was off shows on
+    the first launch after re-enabling -- the suppressed path never advanced
+    the last-seen record, so nothing was skipped -- and it still shows only
+    once.
+    """
+    settings = FakeSettings({F.WHATSNEW_KEY: "1.20.3",
+                             F.WHATSNEW_SUPPRESS_KEY: True})
+    calls = []
+
+    assert _shown_once(settings, "1.21.0", calls) is False      # off: quiet
+
+    settings.setValue(F.WHATSNEW_SUPPRESS_KEY, False)           # Help toggle
+
+    assert _shown_once(settings, "1.21.0", calls) is True       # catch-up
+    assert calls == [("1.21.0", "1.20.3")]
+    assert _shown_once(settings, "1.21.0", calls) is False      # once only
+    assert len(calls) == 1
+
+
+def test_suppression_survives_the_string_spelling_qsettings_stores(qapp):
+    """A suppression written as the string "true" still suppresses.
+
+    The suite's redirected store is INI-format, and INI (like other QSettings
+    backends) hands a stored Python bool back as the strings "true"/"false".
+    A gate that only respected real booleans would suppress until the app
+    restarted and then start popping up again, which is the kind of failure
+    a test that keeps one FakeSettings dict alive can never see.
+    """
+    for stored, suppressed in [
+        (True, True), ("true", True), ("True", True),
+        (False, False), ("false", False), (None, False), ("", False),
+    ]:
+        assert F.whats_new_suppressed(stored) is suppressed, repr(stored)
+
+    settings = FakeSettings({F.WHATSNEW_KEY: "1.20.3",
+                             F.WHATSNEW_SUPPRESS_KEY: "true"})
+    calls = []
+    assert _shown_once(settings, "1.21.0", calls) is False
+    assert calls == []
+
+
+def test_help_menu_reopen_ignores_the_suppression(qapp):
+    """Help > What's new still opens while the popup is suppressed.
+
+    "Don't show again" is about the unasked startup popup; a menu click is an
+    explicit request, and honoring the preference there would make the toggle
+    the only way to ever see the notes again. ``show_whats_new`` consults no
+    settings at all, and this pins that staying true.
+    """
+    shown = []
+    W.show_whats_new(
+        None, current="1.21.0",
+        show=lambda parent, version, last_seen=None, content=None:
+            shown.append(version),
+    )
+    assert shown == ["1.21.0"]
+
+
 # ---- the real window, real settings store ----------------------------------
 
 def test_startup_shows_the_notes_once_per_version_in_the_real_window(
@@ -327,6 +430,71 @@ def test_the_main_window_fixture_closes_the_gate_before_the_startup_timer(
     main_window._whatsnew_dialog = None
     main_window.showWhatsNewStartup()
     assert main_window._whatsnew_dialog is None
+
+
+def test_help_toggle_reflects_the_stored_state_when_the_menu_opens(main_window):
+    """The Help toggle never lies about whether the popup is on.
+
+    The preference can change behind the menu's back -- the dialog's "Don't
+    show again" button writes it without going anywhere near the menubar -- so
+    the toggle resyncs from the store on every Help open instead of trusting
+    its build-time seed. ``aboutToShow`` is emitted here directly; it is the
+    same signal a real open fires, without needing a visible menu on an
+    offscreen platform.
+    """
+    from PySide6.QtCore import QSettings
+
+    settings = QSettings(W.ORG, W.APP)    # the suite's redirected store
+
+    # freshly built with nothing stored: the popup is on, the toggle says so
+    assert main_window.togglewhatsnew_act.isCheckable() is True
+    assert main_window.togglewhatsnew_act.isChecked() is True
+
+    # the dialog's button flips the preference behind the menu's back...
+    settings.setValue(F.WHATSNEW_SUPPRESS_KEY, True)
+    # ...and opening Help brings the toggle back to the truth
+    main_window.helpmenu.aboutToShow.emit()
+    assert main_window.togglewhatsnew_act.isChecked() is False
+
+    settings.setValue(F.WHATSNEW_SUPPRESS_KEY, False)
+    main_window.helpmenu.aboutToShow.emit()
+    assert main_window.togglewhatsnew_act.isChecked() is True
+
+
+def test_help_toggle_reenables_the_popup(main_window):
+    """Clicking the Help toggle turns the popup off and back on, persistently.
+
+    Driven through ``trigger()``, which is what a real menu click does: it
+    flips the checked state and then runs the handler, so this covers the
+    ``not isChecked()`` polarity in ``toggleWhatsNewPopup`` -- the handler
+    reads the state the click just produced, and getting that backwards would
+    persist the opposite of every click. The re-enabled preference is then
+    read back through the pure gate to show the popup is eligible again.
+    """
+    from PySide6.QtCore import QSettings
+
+    settings = QSettings(W.ORG, W.APP)
+
+    # off: the click unchecks the toggle and persists the suppression
+    assert main_window.togglewhatsnew_act.isChecked() is True
+    main_window.togglewhatsnew_act.trigger()
+    assert main_window.togglewhatsnew_act.isChecked() is False
+    assert F.whats_new_suppressed(settings.value(F.WHATSNEW_SUPPRESS_KEY))
+    assert W.maybe_show_whats_new(
+        None, settings=settings, current="1.21.0",
+        show=lambda *a, **k: pytest.fail("suppressed popup was shown"),
+    ) is False
+
+    # back on: the popup is eligible again under the once-per-version rules
+    main_window.togglewhatsnew_act.trigger()
+    assert main_window.togglewhatsnew_act.isChecked() is True
+    assert not F.whats_new_suppressed(settings.value(F.WHATSNEW_SUPPRESS_KEY))
+    settings.setValue(F.WHATSNEW_KEY, "1.20.3")     # a pending bump
+    calls = []
+    assert _shown_once(settings, "1.21.0", calls) is True
+    assert calls == [("1.21.0", "1.20.3")]
+
+
 # ---- the log line that makes an absence readable -----------------------------
 #
 # The startup hook swallows its own failures on purpose, so nothing must be able
