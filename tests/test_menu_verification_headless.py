@@ -196,6 +196,24 @@ def test_a_menubar_row_is_the_action_the_window_names(
     assert _cpp(row) == expected
 
 
+# Main's hoist tests and its frozen View order are deliberately absent on this
+# release line: the 2026-08-06 visibility hoist and the Reset window row never
+# rode a pick, so those pins describe a View menu this line does not build.
+# The one View change this line DID receive (2026-08-12) gets its own pin:
+
+
+def test_recolor_all_sits_directly_under_edit_fill_opacity(main_window):
+    """The series-wide recolor row is in View, right where the placement call
+    put it, and it is the row bound to recolorallfrompalette_act."""
+    row = menu_action(main_window.menubar, "View > Recolor all objects from palette...")
+    assert row is not None, "no 'Recolor all objects from palette...' row in View"
+
+    view = submenu_at(main_window.menubar, "View")
+    order = [p for p in menu_leaf_paths(view) if " > " not in p]
+    at = order.index("Recolor all objects from palette...")
+    assert order[at - 1] == "Edit fill opacity...", (
+        "the recolor row moved away from 'Edit fill opacity...'"
+    )
 def test_the_field_object_menu_keeps_add_and_remove_reachable(main_window):
     """`Add to 3D scene` and `Remove from scene` are both reachable.
 
