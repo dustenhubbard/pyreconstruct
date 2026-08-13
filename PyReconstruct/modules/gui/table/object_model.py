@@ -62,7 +62,13 @@ class ObjectTableModel(QAbstractTableModel):
     # -- row item production (mirrors DataTable.setRow's column iteration) --
 
     def _buildItems(self, name):
-        """Build the flat list of items for a row, exactly as setRow would."""
+        """Build the flat list of items for a row, exactly as setRow would.
+
+        Empty when the container's getItems produces nothing for the name,
+        which is how the Object List's getItems answers for an object whose
+        series data is already gone (see its guard). Callers already treat an
+        empty list as "no cell here".
+        """
         items = []
         for key in self.container.static_columns:
             items.extend(self.container.getItems(name, key))
@@ -80,9 +86,14 @@ class ObjectTableModel(QAbstractTableModel):
         items = self._cache.get(row)
         if items is None:
             items = self._buildItems(self.names[row])
-            self._cache[row] = items
-            if len(self._cache) > self.CACHE_LIMIT:
-                self._cache.popitem(last=False)  # evict least-recently-used
+            # An empty build means the row's object is mid-removal (see
+            # _buildItems); that is a transient state, not row content, so it
+            # must not occupy a cache slot the removal's _invalidate may not
+            # clear until later in the same event cascade.
+            if items:
+                self._cache[row] = items
+                if len(self._cache) > self.CACHE_LIMIT:
+                    self._cache.popitem(last=False)  # evict least-recently-used
         else:
             self._cache.move_to_end(row)  # mark most-recently-used
         return items
