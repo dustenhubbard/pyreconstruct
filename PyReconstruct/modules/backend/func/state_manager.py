@@ -115,7 +115,20 @@ class FieldState():
         self.flags = []
         for flag in flags:
             self.flags.append(flag.copy())
-    
+
+        # Every state carries a time from birth, so reading it is always safe.
+        # `favor3D` compares the newest 2D and 3D states to decide which undo
+        # Ctrl+Z should take, and it read this attribute off states that had
+        # never been through `SectionStates.addState`, which was the only place
+        # that set it. Two routes produce such a state: an undo pushes
+        # `current_state` straight onto `redo_states`, and the state it pops
+        # back is a `copy()`, which rebuilds through this constructor. Either
+        # leaves a state on a stack with no `time` at all, so a later Ctrl+Z
+        # raised AttributeError instead of undoing anything (reported against
+        # v1.21.2). `updateTime` still restamps a state as it goes onto a
+        # stack; this is the floor under that, not a replacement for it.
+        self.time = round(time.time() * 10)
+
     def copy(self):
         return FieldState(self.contours, self.ztraces, self.tforms, self.flags, self.contours_fp)
     
@@ -362,6 +375,11 @@ class SectionStates():
         section.flags = restored_flags
 
         # edit the undo/redo stacks and the current state
+        # stamped as it goes onto the stack, the same way addState stamps the
+        # state it pushes: favor3D compares these times to pick which undo a
+        # Ctrl+Z takes, so a state arriving on a stack unstamped would be
+        # compared on a birth time that has nothing to do with this undo
+        self.current_state.updateTime()
         self.redo_states.append(self.current_state)
         self.current_state = self.undo_states.pop().copy()
 
@@ -428,6 +446,8 @@ class SectionStates():
         section.flags = restored_flags
 
         # edit the undo/redo stacks and the current state
+        # stamped on the way onto the stack, as in addState and undoState
+        self.current_state.updateTime()
         self.undo_states.append(self.current_state)
         self.current_state = self.redo_states.pop()
 
