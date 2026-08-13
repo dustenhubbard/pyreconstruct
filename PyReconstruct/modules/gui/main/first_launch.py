@@ -364,8 +364,8 @@ def whats_new_content(current, last_seen=None, cap=5, text=None, on_demand=False
                          ``WELCOME_UPDATE_NOTE`` is appended to whichever of
                          those two bodies was built.
       * ``byline``    -- the maintainer provenance line (``MAINTAINER_BYLINE``),
-                         the same on every framing; the dialog renders it once
-                         below the body, set off by a rule.
+                         the same on every framing; the dialog renders it once,
+                         in the footer row below the body.
       * ``truncated`` -- True when more than ``cap`` missed sections existed.
 
     Sections shown: when ``last_seen`` is a valid version older than ``current``,

@@ -775,29 +775,53 @@ def test_dialog_renders_the_byline_once_as_its_own_widget(qapp, kwargs, orienter
         dlg.deleteLater()
 
 
-def test_dialog_byline_sits_between_the_notes_and_the_github_link(qapp):
-    """Vertical order: notes (scrollable) -> byline -> "Full release notes" link.
+def test_dialog_byline_and_link_share_a_footer_row_below_the_notes(qapp):
+    """The byline is a footer under the notes, sharing one row with the link.
 
-    This is the regression probe for the fix. Reverting it -- appending
-    ``_{byline}_`` back onto ``content["body"]`` before building the browser --
-    leaves ``dlg._byline`` unbuilt and the byline back inside
-    ``dlg._notes.toPlainText()``, so both halves of this assertion fail.
+    The approved placement: byline bottom-left and the "Full release notes on
+    GitHub" link bottom-right of the same row, below the scrollable notes
+    browser and above the action buttons. The byline stays outside the scroll,
+    so it is on screen from the moment the dialog opens; sharing the row keeps
+    the two small-text footer items from stacking into what reads as a single
+    block. Asserted as rendered geometry rather than layout indexes, so any
+    layout that produces the row counts and none that merely declares it does.
+
+    This is also the regression probe for keeping the byline out of the notes.
+    Reverting that fix, by appending ``_{byline}_`` back onto
+    ``content["body"]`` before building the browser, leaves ``dlg._byline``
+    unbuilt and the byline back inside ``dlg._notes.toPlainText()``.
     """
     from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
-    from PySide6.QtWidgets import QLabel
+    from PySide6.QtWidgets import QLabel, QPushButton
 
     content = F.whats_new_content("1.20.3", last_seen="1.20.1", text=WN)
     dlg = WhatsNewDialog(None, "1.20.3", content=content,
                          url="https://example.test/releases")
     try:
-        lay = dlg.layout()
+        dlg.resize(760, 620)
+        dlg.layout().activate()
         link = next(lab for lab in dlg.findChildren(QLabel)
                     if "Full release notes on GitHub" in lab.text())
-        assert lay.indexOf(dlg._notes) < lay.indexOf(dlg._byline) < lay.indexOf(link)
-        # and each on its own row, not sharing one
-        assert len({lay.indexOf(w) for w in (dlg._notes, dlg._byline, link)}) == 3
-        # the byline is not inside the scrollable area
-        assert BYLINE not in dlg._notes.toPlainText()
+        byline, notes = dlg._byline, dlg._notes
+        # outside the scrollable area: the browser carries the notes and
+        # nothing else, and the byline widget does not hang off the browser
+        assert BYLINE not in notes.toPlainText()
+        assert not notes.isAncestorOf(byline)
+        # below the notes...
+        assert byline.geometry().top() >= notes.geometry().bottom()
+        # ...on the same row as the link: their vertical extents overlap...
+        assert byline.geometry().top() < link.geometry().bottom()
+        assert link.geometry().top() < byline.geometry().bottom()
+        # ...with the byline on the left and the link on the right
+        assert byline.geometry().right() < link.geometry().left()
+        # the action buttons are the row below the footer
+        got_it = next(b for b in dlg.findChildren(QPushButton)
+                      if b.text() == "Got it")
+        assert got_it.geometry().top() >= byline.geometry().bottom()
+        assert got_it.geometry().top() >= link.geometry().bottom()
+        # and the footer keeps the byline's register: italic, name linked
+        assert byline.font().italic() is True
+        assert f'<a href="{F.HOMEPAGE_URL}">{F.LINKED_NAME}</a>' in byline.text()
     finally:
         dlg.deleteLater()
 
@@ -900,7 +924,13 @@ def measure_byline_pixels(dlg):
     )
     dlg._byline.setFont(font)
 
-    dlg.resize(640, 620)
+    # 760 wide, where this measured at 640 before the byline moved into the
+    # footer row: it now shares that row with the "Full release notes" link,
+    # and at 640 its cell is barely wider than the sentence. The x-coordinate
+    # mapping below assumes the byline renders on a single line, so the row
+    # gets enough width that a platform's slightly wider font metrics cannot
+    # wrap it.
+    dlg.resize(760, 620)
     dlg.layout().activate()
     pixmap = dlg.grab()
     ratio = pixmap.devicePixelRatio()
@@ -1213,7 +1243,10 @@ def test_dialog_byline_click_activates_only_on_the_project_name(qapp):
     dlg = WhatsNewDialog(None, "1.20.3", content=content,
                          url="https://example.test/releases")
     try:
-        dlg.resize(640, 620)
+        # 760 for the same reason measure_byline_pixels resizes to 760: the
+        # click coordinates below assume the byline renders on a single line,
+        # and its footer-row cell at 640 is barely wider than the sentence.
+        dlg.resize(760, 620)
         dlg.show()
         label = dlg._byline
         label.setOpenExternalLinks(False)     # so the signal is observable
@@ -1241,36 +1274,30 @@ def test_dialog_byline_click_activates_only_on_the_project_name(qapp):
         dlg.deleteLater()
 
 
-def test_dialog_byline_is_followed_by_a_blank_line(qapp):
-    """A blank line separates the byline from the "Full release notes" link.
+def test_dialog_link_stays_right_when_the_content_has_no_byline(qapp):
+    """No byline still leaves the GitHub link on the right edge of its row.
 
-    Without it the two small-text lines sit one layout spacing apart and read as
-    a single block. The gap is asserted as rendered geometry -- the distance
-    between the two widgets -- rather than by looking for the spacer item, so
-    any way of producing it counts and no way of merely declaring it does.
+    The byline is what pushes the link rightward in the footer, and some
+    framings carry no byline at all. Without something taking its place the
+    link would slide to the left edge on exactly those framings, so the footer
+    keeps a stretch where the byline would be and the link stays put whether
+    the provenance line is there or not.
     """
     from PySide6.QtWidgets import QLabel
     from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
 
-    content = F.whats_new_content("1.20.3", last_seen="1.20.1", text=WN)
+    content = {"version": "1.20.3", "date": None, "orienter": "Recent releases",
+               "body": "- A thing.", "truncated": False}
     dlg = WhatsNewDialog(None, "1.20.3", content=content,
                          url="https://example.test/releases")
     try:
-        dlg.resize(640, 620)
+        dlg.resize(760, 620)
         dlg.layout().activate()
+        assert dlg._byline is None
         link = next(lab for lab in dlg.findChildren(QLabel)
                     if "Full release notes on GitHub" in lab.text())
-        gap = link.geometry().top() - dlg._byline.geometry().bottom() - 1
-        # a blank line is about one line height; the bare layout spacing that
-        # separates every other row in this dialog is well under half of it
-        line = dlg._byline.fontMetrics().height()
-        assert gap >= line, (
-            f"only {gap}px between the byline and the link, less than the "
-            f"{line}px line height a blank line should add"
-        )
-        # and the link is still the row below the byline, not reordered
-        lay = dlg.layout()
-        assert lay.indexOf(dlg._byline) < lay.indexOf(link)
+        # right-aligned: the link's whole width sits in the right half
+        assert link.geometry().left() > dlg.width() // 2
     finally:
         dlg.deleteLater()
 

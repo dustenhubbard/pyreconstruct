@@ -149,8 +149,8 @@ class WhatsNewDialog(QDialog):
         # markdown, below a rule, which put it inside the scroll: on a release
         # with more than a screenful of notes -- the normal case -- a reader had
         # to scroll to the bottom to find out who maintains this build, and most
-        # never did. It is now its own widget below the browser (see below), so
-        # it is on screen from the moment the dialog opens.
+        # never did. It now lives in the footer row below the browser (see
+        # below), so it is on screen from the moment the dialog opens.
         self._notes = make_notes_browser(content["body"], min_height=260)
         lay.addWidget(self._notes)
 
@@ -194,6 +194,14 @@ class WhatsNewDialog(QDialog):
         # rendering it here, once, is the only place it appears, so it can never
         # double up with the notes above it. Some framings carry no byline, and
         # then no widget is added at all.
+        #
+        # It shares one footer row with the "Full release notes" link: byline
+        # on the left, link on the right, action buttons on their own row
+        # below. Stacked, the two small-text lines read as one block and cost a
+        # row of vertical space each; side by side they are two footer items
+        # with distinct jobs. When the byline is absent a stretch keeps the
+        # link on the right, where it always is.
+        footer = QHBoxLayout()
         byline = content.get("byline")
         if byline:
             before, name, after = escape(byline).partition(LINKED_NAME)
@@ -206,19 +214,21 @@ class WhatsNewDialog(QDialog):
             self._byline.setFont(bf)
             self._byline.setOpenExternalLinks(True)
             self._byline.setWordWrap(True)
-            lay.addWidget(self._byline)
-            # A blank line between the byline and the "Full release notes"
-            # link below it, so the two do not read as one block of small text.
-            lay.addSpacing(self._byline.fontMetrics().height())
+            footer.addWidget(self._byline, 1)
         else:
             self._byline = None
+            footer.addStretch(1)
 
         # Same LinkLabel as the byline: this label has always had the same
         # stale-anchor-colour behaviour on a live theme switch, and fixing one
         # anchor in the dialog while leaving the other stale would show.
+        # AlignTop: when the byline wraps onto a second line at a narrow width,
+        # the link stays level with the byline's first line rather than
+        # floating mid-row.
         link = LinkLabel(f'<a href="{url}">Full release notes on GitHub ↗</a>')
         link.setOpenExternalLinks(True)
-        lay.addWidget(link)
+        footer.addWidget(link, 0, Qt.AlignTop)
+        lay.addLayout(footer)
 
         row = QHBoxLayout()
         row.addStretch(1)
