@@ -28,6 +28,41 @@ from PyReconstruct.modules.gui.table import (
 from .field_widget_2_trace import FieldWidgetTrace
 
 
+def object_color_seed(series_data, obj_names : list):
+    """What the color swatch should show for ``obj_names``, series-wide.
+
+    Returns ``(color, mixed)``. ``color`` is the selection's one agreed
+    trace color, or the PREDOMINANT color (most traces; ties broken by the
+    color triple, so the answer is stable across opens) when the traces
+    disagree, or None when the selection has no traces at all. ``mixed`` is
+    True exactly when more than one distinct color is present, which the
+    swatch renders as a diagonal split (predominant color against blank) so
+    the user is keyed into the discrepancy before deciding to repaint.
+
+    Seed for the object attributes dialog. The swatch went unseeded for
+    years and every color-bearing object opened on a gray swatch and a
+    white-seeded picker; reported twice as "the swatch is blank even though
+    the object has a color".
+
+    Series-wide, deliberately: a first cut answered from the open section
+    only, and click testing caught the gap the same day it was built (a
+    trace recolored on one section, the dialog opened from an adjacent
+    section, no split shown). ``SeriesData`` carries each trace's color for
+    exactly this reason, so the answer costs no section load. Display only:
+    the dialog returns color None unless the picker was actually used (see
+    ``TraceDialog.exec``), so a seeded-then-untouched OK cannot repaint an
+    object whose minority traces hold different colors.
+    """
+    counts = {}
+    for obj_name in obj_names:
+        for color, n in series_data.getColorCounts(obj_name).items():
+            counts[color] = counts.get(color, 0) + n
+    if not counts:
+        return None, False
+    predominant = max(counts, key=lambda c: (counts[c], c or ()))
+    return predominant, len(counts) > 1
+
+
 class FieldWidgetObject(FieldWidgetTrace):
     """
     OBJECT FUNCTIONS
@@ -178,11 +213,15 @@ class FieldWidgetObject(FieldWidgetTrace):
             displayed_name = None
             tags=None
             tags_displayed = False
-        
+
+        displayed_color, color_mixed = object_color_seed(self.series.data, obj_names)
+
         response, confirmed = TraceDialog(
-            self, 
-            name=displayed_name, 
-            tags=tags, 
+            self,
+            name=displayed_name,
+            color=displayed_color,
+            color_mixed=color_mixed,
+            tags=tags,
             is_obj_list=True
         ).exec()
 
