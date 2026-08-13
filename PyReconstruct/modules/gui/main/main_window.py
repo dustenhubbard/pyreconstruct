@@ -823,6 +823,64 @@ class MainWindow(QMainWindow):
         self.series.setOption("fill_opacity", opacity)
         self.field.generateView(generate_image=False)
 
+    def recolorAllObjectsFromPalette(self):
+        """Recolor every unlocked object with the current palette and seed.
+
+        The series-wide sibling of the object menus' selection-scoped "Reapply
+        palette colors..." row, added 2026-08-12 so a whole imported series can
+        be recolored without selecting everything first. Both run through
+        Series.reapplyAutosegColors, so the whole pass is one undoable
+        operation.
+
+        The selection-scoped copy routes through the object_function wrapper,
+        which ABORTS when any selected object is locked. Applied series-wide
+        that rule would make the action useless the moment one object is
+        locked, so locked objects are SKIPPED here instead, and the confirm
+        dialog states the split (his call). The wrapper's other work is
+        mirrored by hand: save the field data first, pass the field's
+        series_states so one undo restores every prior color, then update the
+        object lists and reload the field. The two wrapper behaviors NOT
+        mirrored are selection resolution (this pass names its own objects)
+        and the object list scroll-position restore (updateObjects edits rows
+        in place here; nothing scrolls).
+        """
+        self.saveAllData()
+
+        all_names = sorted(self.series.data["objects"].keys())
+        unlocked = [
+            n for n in all_names if not self.series.getAttr(n, "locked")
+        ]
+        n_locked = len(all_names) - len(unlocked)
+
+        if not all_names:
+            notify("This series has no objects to recolor.")
+            return
+        if not unlocked:
+            notify(
+                "Every object in this series is locked.\n"
+                "Please unlock objects before recoloring."
+            )
+            return
+
+        n = len(unlocked)
+        s = "s" if n != 1 else ""
+        message = f"Recolor {n} object{s} using the current palette and seed?"
+        if n_locked:
+            ls = "s" if n_locked != 1 else ""
+            message += f"\n\n{n_locked} locked object{ls} will be skipped."
+        message += "\n\nThis replaces existing colors. You can undo it."
+        if not notifyConfirm(message, yn=True):
+            return
+
+        self.series.reapplyAutosegColors(
+            unlocked,
+            series_states=self.field.series_states,
+        )
+
+        self.field.table_manager.updateObjects(unlocked)
+        self.field.reload()
+        self.seriesModified(True)
+
     def openSeries(self, series_obj=None, jser_fp=None, query_prev=True):
         """Open an existing series and create the field.
 

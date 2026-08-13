@@ -324,9 +324,19 @@ MENUBAR_BASELINE = [
 #    small to grab, short of quitting and clearing `window/geometry` by hand.
 #    It lands after the submenu, next to "Reset palette position", not inside
 #    it: the palette submenu is palette-scoped and this is window-scoped.
+# 4. "Recolor all objects from palette..." in View, directly under "Edit fill
+#    opacity..." (2026-08-12, his placement call). The series-wide sibling of
+#    the object menus' selection-scoped "Reapply palette colors...": recolors
+#    every unlocked object with the current palette and seed as one undoable
+#    pass, SKIPPING locked objects rather than aborting on them (an abort
+#    would make a series-wide pass useless the moment one object is locked).
+#    It sits beside the fill-opacity row because that is the View section
+#    about how every object is painted. Semantics are covered in
+#    tests/test_autoseg_reapply_colors.py.
 _CLEAR_RECENTS_ROW = (2, "act", "clearrecents_act")
 _IMPORT_JSER_ALIGNMENTS_ROW = (2, "act", "import_jser_alignments_act")
 _RESET_WINDOW_ROW = (1, "act", "resetwindow_act")
+_RECOLOR_ALL_ROW = (1, "act", "recolorallfrompalette_act")
 MENUBAR_EXPECTED = list(MENUBAR_BASELINE)
 MENUBAR_EXPECTED.insert(
     MENUBAR_BASELINE.index((1, "menu", "openrecentmenu")) + 1, _CLEAR_RECENTS_ROW
@@ -337,6 +347,9 @@ MENUBAR_EXPECTED.insert(
 )
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "act", "lefthanded_act")), _RESET_WINDOW_ROW
+)
+MENUBAR_EXPECTED.insert(
+    MENUBAR_EXPECTED.index((1, "act", "fillopacity_act")) + 1, _RECOLOR_ALL_ROW
 )
 
 # The one sanctioned MOVE, as opposed to the additions above, decided
@@ -387,17 +400,41 @@ def test_no_baseline_action_was_lost():
 
 
 def test_menubar_action_and_submenu_counts():
-    """113 actions at capture, 117 now (the additions).
+    """113 actions at capture, 118 now (the additions).
 
     Submenus were 32 and are 31: the 2026-08-06 hoist emptied
     View > Palette > Visibility and it was removed. The action count is
     deliberately unchanged by that hoist -- moving four rows up two levels adds
     and removes nothing, and an action count that moved here would mean the move
-    had dropped or duplicated one.
+    had dropped or duplicated one. Addition 4 (the series-wide recolor,
+    2026-08-12) took the count from 117 to 118.
     """
     rows = _rows()
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 117
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 118
     assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 31
+
+
+def test_recolor_all_objects_sits_in_view_beside_fill_opacity():
+    """Addition 4: the series-wide recolor lives in View, directly under "Edit
+    fill opacity..." (his placement call; the View section about how every
+    object is painted). The label names the scope ("all objects") and the
+    source ("from palette"), keeps the ASCII ellipsis because it opens a
+    confirm dialog, and deliberately does not say "autoseg": the palette
+    colors any object name, which is the same reason the context row is
+    "Reapply palette colors...". Locked-skip and undo semantics are pinned in
+    tests/test_autoseg_reapply_colors.py.
+    """
+    labels = _labels()
+    assert labels["recolorallfrompalette_act"] == \
+        "Recolor all objects from palette..."
+    rows = _rows()
+    flat = [(kind, attr) for _d, kind, attr, _t in rows]
+    at = flat.index(("act", "fillopacity_act"))
+    assert flat[at + 1] == ("act", "recolorallfrompalette_act")
+    # in the View menu: the nearest enclosing top-level menu above it
+    menus = [(d, kind, attr) for d, kind, attr, _t in rows[:at + 2]
+             if kind == "menu" and d == 0]
+    assert menus[-1] == (0, "menu", "viewmenu")
 
 
 # --------------------------------------------------------------------------- #
