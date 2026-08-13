@@ -319,8 +319,16 @@ MENUBAR_BASELINE = [
 #    Series > Import series data > From another series, which is the
 #    whole-series merge dialog, while Alignments > Import alignments offered
 #    only .txt and SWiFT. All three sources now sit together.
+# 3. "Show what's new after updates" in Help, directly under "What's new".
+#    Added with the What's-new dialog's "Don't show again" button: the button
+#    switches the startup popup off, and a preference that could only be
+#    switched off from inside the dialog it hides needs a visible way back on.
+#    Checkable, resynced from the stored preference every time Help opens.
+#    (On main this is addition 4; this release line never received addition 3,
+#    "Reset window", so the numbering here differs by one.)
 _CLEAR_RECENTS_ROW = (2, "act", "clearrecents_act")
 _IMPORT_JSER_ALIGNMENTS_ROW = (2, "act", "import_jser_alignments_act")
+_TOGGLE_WHATSNEW_ROW = (1, "act", "togglewhatsnew_act")
 MENUBAR_EXPECTED = list(MENUBAR_BASELINE)
 MENUBAR_EXPECTED.insert(
     MENUBAR_BASELINE.index((1, "menu", "openrecentmenu")) + 1, _CLEAR_RECENTS_ROW
@@ -328,6 +336,9 @@ MENUBAR_EXPECTED.insert(
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "menu", "importalignmentsmenu")) + 1,
     _IMPORT_JSER_ALIGNMENTS_ROW,
+)
+MENUBAR_EXPECTED.insert(
+    MENUBAR_EXPECTED.index((1, "act", "whatsnew_act")) + 1, _TOGGLE_WHATSNEW_ROW
 )
 
 
@@ -349,9 +360,14 @@ def test_no_baseline_action_was_lost():
 
 
 def test_menubar_action_and_submenu_counts():
-    """113 actions at capture, 116 now (the additions); submenus unchanged."""
+    """113 actions at capture, 117 now on this release line (the additions).
+
+    Main counts differently (it carries the Reset window addition and the
+    2026-08-06 visibility hoist, which emptied and removed a submenu); this
+    line has neither, so 32 submenus stand and the toggle takes 116 to 117.
+    """
     rows = _rows()
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 116
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 117
     assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 32
 
 
