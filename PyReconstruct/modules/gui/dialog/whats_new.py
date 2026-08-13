@@ -100,16 +100,17 @@ class LinkLabel(QLabel):
 # How far the secondary color steps from the dialog background toward the
 # full text color (0 is the background, invisible; 1 is body text). Dusten
 # wants these lines light: "i wanted a lighter gray that was slightly less
-# light than the original release date color that was too white." That asks
-# for a small step, but the suite holds every rendering of these lines to the
-# 4.5:1 legibility floor, which Dusten reaffirmed; 0.55 is the smallest step
-# in hundredths that clears it on the light backgrounds. Measured on the
-# rendered widget: #6a6a6a on cocoa's #ececec is 4.58:1 (0.54 gives 4.38:1),
-# #6c6c6c on offscreen/Fusion's #efefef is 4.57:1, and #868c91 on qdark's
-# #19232d is 4.68:1, so the light themes bind and qdark rides along. Going
-# lighter than 0.55 means deciding to lower the floor for these secondary
-# lines first, and that is Dusten's call to make, not this constant's.
-SECONDARY_TEXT_BLEND = 0.55
+# light than the original release date color that was too white." The number
+# is his, chosen 2026-08-13 from a rendered ladder of candidates with the
+# measured contrast printed beside each: 0.55, the smallest step clearing
+# the 4.5:1 floor, still read as too dark to him, and he picked 0.34, about
+# 2.3:1 on the light backgrounds (#9c9c9c on cocoa's #ececec). That is a
+# deliberate lowering of the legibility floor for these two SECONDARY lines
+# only: the pixel tests now hold them above the old disabled rendering's
+# 1.6:1, which was reported unreadable, rather than above 4.5:1, and the
+# body text's own contrast is untouched. Raising this back toward
+# legible-everywhere is one number, but it is his to raise.
+SECONDARY_TEXT_BLEND = 0.34
 
 
 def secondary_text_color(palette):

@@ -956,9 +956,11 @@ def test_dialog_byline_is_italic_and_not_muted(qapp):
     palette role and rendered it at roughly 1.6:1 against the dialog
     background, switched-off rather than secondary. Who maintains this build
     is what a lab needs in order to report an issue to the right person, so
-    the pixel tests below still hold the rendered contrast to at least 4.5:1.
-    Asserted on the constructed widget: a regression restoring the disabled
-    state, or setting the weight instead of the slant, fails here.
+    the pixel tests below still hold the rendered contrast above that broken
+    1.6:1 (the floor is 2.0:1; the maintainer chose the light 0.34 blend, at
+    about 2.3:1, off a measured ladder, see SECONDARY_TEXT_BLEND). Asserted
+    on the constructed widget: a regression restoring the disabled state, or
+    setting the weight instead of the slant, fails here.
     """
     from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
 
@@ -1204,10 +1206,14 @@ def test_dialog_byline_renders_dark_and_unbroken(qapp):
     The property assertions above can all hold while the widget still paints
     wrong -- ``setEnabled(False)`` on an ancestor, a palette override, an
     unhonoured CSS rule -- so this reads the actual rendered pixels. The
-    contrast must clear 4.5:1: the disabled rendering this replaced measured
-    ~1.6:1, so the threshold separates the two by a wide margin rather than
-    sitting on a knife edge. And the plain text must carry no underline; the
-    linked project name is allowed one and is checked separately below.
+    contrast must clear 2.0:1: the disabled rendering this replaced measured
+    ~1.6:1 and was reported unreadable, while the maintainer's chosen 0.34
+    blend (see SECONDARY_TEXT_BLEND) renders about 2.3:1, so the threshold
+    sits between the broken look and the chosen one. The window is narrow by
+    his choice of a light gray; the exact-color pin in the shared-style test
+    is what guards the other direction, a repaint back toward black. And the
+    plain text must carry no underline; the linked project name is allowed
+    one and is checked separately below.
     """
     from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
 
@@ -1216,10 +1222,10 @@ def test_dialog_byline_renders_dark_and_unbroken(qapp):
                          url="https://example.test/releases")
     try:
         m = measure_byline_pixels(dlg)
-        assert m["plain_contrast"] >= 4.5, (
+        assert m["plain_contrast"] >= 2.0, (
             f"byline ink {m['plain_ink']} on {m['background']} is only "
-            f"{m['plain_contrast']:.2f}:1 -- it is being painted muted, not at "
-            "full contrast"
+            f"{m['plain_contrast']:.2f}:1 -- that is the switched-off disabled "
+            "look, not the chosen secondary gray"
         )
         assert m["plain_longest_run"] < 0.85 * m["plain_width"], (
             f"an unbroken {m['plain_longest_run']}px run across "
@@ -1295,7 +1301,11 @@ def test_dialog_byline_stays_legible_under_the_dark_theme(qapp):
         dlg = WhatsNewDialog(None, "1.20.3", content=content,
                              url="https://example.test/releases")
         m = measure_byline_pixels(dlg)
-        assert m["plain_contrast"] >= 4.5, (
+        # same 2.0:1 floor as the light-theme pixel test, for the same reason
+        # (see SECONDARY_TEXT_BLEND: the maintainer chose a light secondary
+        # gray at about 2.3:1, and the floor separates it from the broken
+        # disabled look rather than enforcing 4.5:1)
+        assert m["plain_contrast"] >= 2.0, (
             f"under the dark theme the byline renders {m['plain_ink']} on "
             f"{m['background']} -- {m['plain_contrast']:.2f}:1"
         )
