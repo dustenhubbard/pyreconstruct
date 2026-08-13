@@ -4,16 +4,25 @@ from PySide6.QtGui import QColor
 
 class ColorButton(QPushButton):
 
-    def __init__(self, color : tuple, parent):
+    def __init__(self, color : tuple, parent, mixed=False):
         """Create the color button widget.
 
             Params:
                 color (tuple): the color for the button
                 parent (QWidget): the parent widget for the button
+                mixed (bool): True to render the diagonal split that marks a
+                    selection whose traces do not agree on one color
+                    (see setColor)
         """
         super().__init__(parent)
         self.color = color
-        self.setColor(color)
+        # True once the user has confirmed a color in the picker, as opposed
+        # to the button merely displaying what it was seeded with. Consumers
+        # that seed the swatch for display (the object-list attributes dialog)
+        # read this to tell "the user chose this color" from "the dialog put
+        # it there", because getColor() alone cannot make that distinction.
+        self.picked = False
+        self.setColor(color, mixed)
         self.clicked.connect(self.selectColor)
 
     def selectColor(self):
@@ -124,6 +133,7 @@ class ColorButton(QPushButton):
             widget_dialog=cancel_button is not None,
         )
         if confirmed and color.isValid():
+            self.picked = True
             self.setColor((color.red(), color.green(), color.blue()))
 
     @staticmethod
@@ -164,7 +174,7 @@ class ColorButton(QPushButton):
                 "-- that colour was NOT applied; only OK applies a colour"
             )
 
-    def setColor(self, color):
+    def setColor(self, color, mixed=False):
         """Sets the visual color for the button.
 
         The style rule is scoped to this class by name. A bare
@@ -176,14 +186,48 @@ class ColorButton(QPushButton):
         the picker opened solid yellow, green, purple. The class selector
         matches only ``ColorButton`` itself, never the dialog's widgets.
 
+        ``mixed`` renders a diagonal split instead of a solid fill: the
+        upper-left half shows ``color`` (the selection's predominant trace
+        color) and the lower-right half stays blank, keying the user into a
+        selection whose traces do not agree on one color. The split is a
+        two-stop hard gradient in the same scoped rule; the 0.499/0.501
+        stops are what make the boundary an edge rather than a fade, and the
+        gradient axis runs corner to corner so the boundary is the
+        anti-diagonal. A confirmed pick always paints solid: the user's
+        chosen color has no minority to disclose.
+
+        The border declaration is load-bearing, not decoration. With only
+        ``background-color`` set, Qt's stylesheet renderer delegates the
+        button's bezel to the underlying style, and under the app's real
+        style stack (cocoa's "macos" style wrapped in run.py's
+        MenuShortcutSpacingStyle proxy) the native bezel is drawn OVER the
+        fill: measured on the live app's screen pixels, a yellow swatch
+        read back as the theme's plain button gray while its picker opened
+        correctly seeded. Declaring a border makes the stylesheet renderer
+        own the whole button box, so the fill actually shows. Offscreen
+        (CI's platform) paints the background-only rule fine, so a pixel
+        test cannot catch a regression here; the border's presence in the
+        rule is the testable property.
+
         A blank color clears the rule rather than leaving the previous one
         behind: the swatch must read as empty, not as the color it held
         before the attribute it displays went blank.
         """
         self.color = color
+        self.mixed = bool(mixed) and bool(color)
+        box = "border: 1px solid palette(mid); border-radius: 4px"
         if color:
             s = f"({','.join(map(str,self.color))})"
-            self.setStyleSheet(f"ColorButton {{ background-color:rgb{s} }}")
+            if self.mixed:
+                self.setStyleSheet(
+                    "ColorButton { background-color:qlineargradient("
+                    "x1:0, y1:0, x2:1, y2:1, "
+                    f"stop:0.499 rgb{s}, stop:0.501 transparent); {box} }}"
+                )
+            else:
+                self.setStyleSheet(
+                    f"ColorButton {{ background-color:rgb{s}; {box} }}"
+                )
         else:
             self.setStyleSheet("")
 
