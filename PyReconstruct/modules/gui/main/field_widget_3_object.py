@@ -265,17 +265,21 @@ class FieldWidgetObject(FieldWidgetTrace):
 
     @object_function(update_objects=True, reload_field=True)
     def reapplyAutosegColors(self, obj_names : list):
-        """Recolor selected objects with the current autoseg palette + seed.
+        """Recolor selected objects with the current palette + seed.
 
-        Confirms first because it discards the objects' existing colors. Locked
-        objects are blocked by the object_function wrapper (update_objects=True),
-        exactly as any other bulk attribute edit; a single series undo restores
-        every prior color.
+        The menu row reads "Reapply palette colors..." (renamed 2026-08-12: the
+        action colors any name, not only autoseg ones); the method keeps its
+        historical name because nothing user-facing hangs on it. Confirms first
+        because it discards the objects' existing colors. Locked objects are
+        blocked by the object_function wrapper (update_objects=True), exactly
+        as any other bulk attribute edit; a single series undo restores every
+        prior color. The series-wide sibling, which SKIPS locked objects
+        instead, is MainWindow.recolorAllObjectsFromPalette.
         """
         n = len(obj_names)
         s = "s" if n != 1 else ""
         confirmed = notifyConfirm(
-            f"Recolor {n} selected object{s} using the current autoseg palette "
+            f"Recolor {n} selected object{s} using the current palette "
             "and seed?\n\n"
             "This replaces the objects' existing colors. You can undo it.",
             yn=True,

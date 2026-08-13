@@ -376,10 +376,15 @@ OBJECT_ROWS = [
     "    Show inhabitant tree",
     "    -----",
     "    Edit alignment...",
-    "    Reapply autoseg colors...",
     "    -----",
     "    Lock",
     "    Unlock",
+    # promoted out of "Object attributes >" on 2026-08-12 (a routine bulk pass
+    # for autoseg users, not an attribute edit) and renamed in the same
+    # review, because the action colors ANY name, not only autoseg ones. It
+    # keeps the adjacency to its old home
+    # (see test_reapply_palette_colors_sits_beside_its_old_home)
+    "Reapply palette colors...",
     "Smooth object",
     "Duplicate object",
     "Split into separate objects",
@@ -452,6 +457,10 @@ def test_object_list_utilities_are_below_the_domain_actions():
     # level. The two edit rows followed when that left the submenu at two items.
     "Smooth object", "Edit object radius...", "Edit object shape...",
     "Split into separate objects",
+    # 2026-08-12: a common workflow action for autoseg users, promoted out of
+    # "Object attributes >" after a beta report showed it buried there, and
+    # renamed from "Reapply autoseg colors..." because it colors any name.
+    "Reapply palette colors...",
 ])
 def test_often_used_object_actions_are_zero_hop(label):
     """The actions the maintainer named as frequent are top-level (one click),
@@ -538,6 +547,20 @@ def test_object_menu_row_order_is_the_approved_one():
     grew one row and lost none, and its order now expresses three hide/unhide
     pairs -- object, isolate, series. See
     test_the_visibility_section_completes_the_scope_matrix.
+
+    Amended 2026-08-12, one targeted promotion and the rename it earned on
+    review: the reapply-colors row left "Object attributes >" for the top
+    level of the settings section, directly below the submenu it left. A beta
+    report showed it buried under "Object attributes >" on the object list
+    even though it is a common workflow action for automatic-segmentation
+    users, not an attribute edit. The placement reuses the adjacency lesson
+    from the 3D pair: the promoted row sits beside its old home, so someone
+    who learned the old location finds it without hunting. On review he also
+    renamed it "Reapply palette colors...", because the action is not
+    autoseg-specific (palette_color_for_name colors ANY name; only an
+    unmodified "autoseg_<id>" gets its import-identical color back), so the
+    old label hid it from everyone without autoseg objects. See
+    test_reapply_palette_colors_sits_beside_its_old_home.
     """
     assert _top_level(_obj_menu()) == [
         "Edit object attributes...",
@@ -552,6 +575,7 @@ def test_object_menu_row_order_is_the_approved_one():
         "Unhide all objects",
         "-----",
         "Object attributes >",
+        "Reapply palette colors...",
         "Smooth object",
         "Duplicate object",
         "Split into separate objects",
@@ -593,7 +617,8 @@ def test_object_level_settings_share_one_section():
     """
     rows = _top_level(_obj_menu())
     members = [
-        "Object attributes >", "Smooth object", "Duplicate object",
+        "Object attributes >", "Reapply palette colors...", "Smooth object",
+        "Duplicate object",
         "Split into separate objects", "Edit object radius...",
         "Edit object shape...", "Group >", "Set curation >",
         "Leave object comment...",
@@ -648,6 +673,58 @@ def test_object_attributes_submenu_leads_the_settings_section():
     rows = _top_level(_obj_menu())
     i = rows.index("Object attributes >")
     assert rows[i - 1] == "-----"
+
+
+def test_reapply_palette_colors_sits_beside_its_old_home():
+    """Promoted 2026-08-12, and the placement is the point.
+
+    The report: on the object list, the reapply-colors row sat under
+    "Object attributes >" even though it is a common workflow action for
+    automatic-segmentation users, not an attribute edit. The fix is one hop up,
+    to the top level of the settings section, DIRECTLY below the submenu it
+    left. That adjacency is the lesson the 3D pair already taught (see
+    test_the_two_3d_rows_are_adjacent): someone who learned the old home
+    reaches for "Object attributes >" and the row is beside it, so nobody
+    hunts. Any future row inserted between the two re-creates the hunt.
+    """
+    rows = _top_level(_obj_menu())
+    assert rows[rows.index("Object attributes >") + 1] == \
+        "Reapply palette colors..."
+
+
+def test_reapply_palette_colors_left_the_attributes_submenu():
+    """The promotion is a move, not a copy: the 3D pair mirrors its frequent
+    member inside the submenu because "Add to scene" belongs to the 3D family
+    either way, but this action was mis-filed, so a leftover copy would keep
+    telling users it is an attribute edit. The act_name stays put because it is
+    the key any user-configured shortcut is stored under
+    (series.getOption(act_name)); renaming it would silently unbind the key.
+    """
+    attrs = next(e for e in _obj_menu() if isinstance(e, dict)
+                 and e["text"] == "Object attributes")
+    assert "reapplyautosegcolors_act" not in _act_names(attrs["opts"])
+    assert "Reapply palette colors..." not in _rows(attrs["opts"])
+    # still reachable, top-level, under its old act_name, on both surfaces
+    for list_ops in (None, OBJ_LIST_OPS):
+        menu = _obj_menu(list_ops=list_ops)
+        assert "Reapply palette colors..." in _top_level(menu)
+        top_level_acts = [e[0] for e in menu if isinstance(e, tuple)]
+        assert "reapplyautosegcolors_act" in top_level_acts
+
+
+def test_reapply_palette_colors_label_names_no_segmentation_method():
+    """Renamed on the same review that promoted it. "Reapply autoseg colors..."
+    described the palette's origin, not the action's reach:
+    palette_color_for_name gives ANY name a stable palette color (only an
+    unmodified "autoseg_<id>" name gets its import-identical color back), so
+    the old label hid the action from every user without autoseg objects. The
+    label is renamed on both surfaces; the act_name is deliberately not (see
+    test_reapply_palette_colors_left_the_attributes_submenu).
+    """
+    for list_ops in (None, OBJ_LIST_OPS):
+        rows = _rows(_obj_menu(list_ops=list_ops))
+        assert "Reapply palette colors..." in rows
+        assert "Reapply autoseg colors..." not in rows
 
 
 def test_comment_and_duplicate_are_below_the_top_spots():
@@ -815,7 +892,16 @@ def test_bulk_tag_action_sits_in_its_own_group_above_delete():
 
 def test_object_attributes_submenu_holds_only_object_level_attributes():
     """Every remaining member is a stored per-object attribute (hosts,
-    alignment, color, lock) -- nothing trace-level."""
+    alignment, lock) -- nothing trace-level.
+
+    The reapply-colors row (now "Reapply palette colors...") was a member until
+    2026-08-12. It does write the color attribute, but what it IS to a user is
+    a bulk workflow pass over imported objects, and a beta report showed
+    autoseg users digging for it here. It was promoted to the top level of the
+    settings section, the same way "Remove all tags" left this submenu's
+    neighborhood once its filing misdescribed it. See
+    test_reapply_palette_colors_sits_beside_its_old_home.
+    """
     attrs = next(e for e in _obj_menu() if isinstance(e, dict)
                  and e["text"] == "Object attributes")
     assert _rows(attrs["opts"]) == [
@@ -825,7 +911,6 @@ def test_object_attributes_submenu_holds_only_object_level_attributes():
         "Show inhabitant tree",
         "-----",
         "Edit alignment...",
-        "Reapply autoseg colors...",
         "-----",
         "Lock",
         "Unlock",

@@ -12,7 +12,15 @@ Two layers are covered:
 * the bulk ``Series.reapplyAutosegColors`` path end-to-end on the real
   ``shapes1.jser`` fixture: colors are rewritten through the normal
   attribute-edit machinery, honor a custom palette, and a single series undo
-  restores every prior color across every section.
+  restores every prior color across every section;
+* the series-wide View menu action ("Recolor all objects from palette...",
+  ``MainWindow.recolorAllObjectsFromPalette``, added 2026-08-12): locked
+  objects are skipped rather than blocking the pass, the confirm dialog names
+  both counts, and one undo restores every prior color.
+
+The method (and this file) keep the "autoseg" name for history; the menu rows
+were renamed to "palette colors" on 2026-08-12 because the mapping covers any
+name, which is pinned by the fallback tests below.
 """
 import os
 import shutil
@@ -295,4 +303,166 @@ def test_reapply_empty_selection_is_noop(tmp_path):
     series.reapplyAutosegColors([], log_event=False)  # must not raise
 
     assert _snapshot_colors(series, all_objs) == before
+    series.close()
+
+
+# --------------------------------------------------------------------------- #
+# the series-wide View menu action
+# --------------------------------------------------------------------------- #
+
+def _run_view_recolor(series, monkeypatch, confirm=True):
+    """Run MainWindow.recolorAllObjectsFromPalette on a stub main window.
+
+    The handler is deliberately not routed through the object_function wrapper
+    (whose locked check ABORTS; series-wide, locked objects must be skipped),
+    so this drives the real method with the real series and stubs only the
+    window plumbing the wrapper would have touched: saveAllData, the field's
+    table manager and reload, and the notify dialogs.
+
+    Returns (messages, calls, series_states): the dialog texts shown, the
+    plumbing calls made, and the undo states the pass wrote into.
+    """
+    import types
+    from PyReconstruct.modules.gui.main import main_window as mw
+    from PyReconstruct.modules.backend.func.state_manager import SeriesStates
+
+    messages = []
+    monkeypatch.setattr(
+        mw, "notifyConfirm", lambda msg, *a, **k: messages.append(msg) or confirm
+    )
+    monkeypatch.setattr(mw, "notify", lambda msg, *a, **k: messages.append(msg))
+
+    calls = {"updated": [], "reloaded": 0, "saved": 0, "modified": []}
+    series_states = SeriesStates(series)
+    field = types.SimpleNamespace(
+        series_states=series_states,
+        table_manager=types.SimpleNamespace(
+            updateObjects=lambda names: calls["updated"].append(sorted(names))
+        ),
+        reload=lambda: calls.__setitem__("reloaded", calls["reloaded"] + 1),
+    )
+    stub = types.SimpleNamespace(
+        series=series,
+        field=field,
+        saveAllData=lambda: calls.__setitem__("saved", calls["saved"] + 1),
+        seriesModified=lambda v=True: calls["modified"].append(v),
+    )
+    mw.MainWindow.recolorAllObjectsFromPalette(stub)
+    return messages, calls, series_states
+
+
+def test_view_recolor_skips_locked_and_recolors_the_rest(tmp_path, monkeypatch):
+    """Locked objects keep their colors; every unlocked object is recolored.
+
+    The skip is the decided semantics: the selection-scoped context row aborts
+    on any locked object (the object_function wrapper's rule), but applied
+    series-wide that rule would make the action useless the moment one object
+    is locked.
+    """
+    series = _load_series(tmp_path)
+    _force_options(series)
+    all_names = sorted(series.data["objects"].keys())
+    assert len(all_names) >= 2, "fixture needs two objects for a lock split"
+    locked = all_names[0]
+    unlocked = all_names[1:]
+
+    # bake a bogus uniform color so any change is visible, THEN lock
+    series.editObjectAttributes(all_names, color=(1, 1, 1), log_event=False)
+    series.setAttr(locked, "locked", True)
+    locked_before = _snapshot_colors(series, [locked])
+
+    _messages, calls, _states = _run_view_recolor(series, monkeypatch)
+
+    # the locked object kept its color on every section
+    assert _snapshot_colors(series, [locked]) == locked_before
+    # every unlocked object took its palette color on every section
+    for snum, section in series.enumerateSections(show_progress=False):
+        for obj in unlocked:
+            if obj in section.contours:
+                expected = palette_color_for_name(obj)
+                for trace in section.contours[obj].getTraces():
+                    assert tuple(trace.color) == expected
+    # the wrapper work the handler mirrors: save first, update exactly the
+    # unlocked rows, reload the field, mark the series modified
+    assert calls["saved"] == 1
+    assert calls["updated"] == [sorted(unlocked)]
+    assert calls["reloaded"] == 1
+    assert calls["modified"] == [True]
+    series.close()
+
+
+def test_view_recolor_confirm_names_both_counts_and_cancel_is_a_noop(
+        tmp_path, monkeypatch):
+    """The dialog states the split before anything changes, and answering no
+    changes nothing: no recolor, no table update, no reload."""
+    series = _load_series(tmp_path)
+    _force_options(series)
+    all_names = sorted(series.data["objects"].keys())
+    assert len(all_names) >= 2
+    series.setAttr(all_names[0], "locked", True)
+    before = _snapshot_colors(series, all_names)
+
+    messages, calls, _states = _run_view_recolor(
+        series, monkeypatch, confirm=False
+    )
+
+    n = len(all_names) - 1
+    s = "s" if n != 1 else ""
+    assert len(messages) == 1
+    assert messages[0] == (
+        f"Recolor {n} object{s} using the current palette and seed?\n\n"
+        "1 locked object will be skipped.\n\n"
+        "This replaces existing colors. You can undo it."
+    )
+    assert _snapshot_colors(series, all_names) == before
+    assert calls["updated"] == []
+    assert calls["reloaded"] == 0
+    series.close()
+
+
+def test_view_recolor_without_locked_objects_omits_the_skip_line(
+        tmp_path, monkeypatch):
+    """A skip line naming zero objects would be noise; it appears only when
+    the split is real."""
+    series = _load_series(tmp_path)
+    _force_options(series)
+    n = len(series.data["objects"])
+
+    messages, _calls, _states = _run_view_recolor(
+        series, monkeypatch, confirm=False
+    )
+
+    s = "s" if n != 1 else ""
+    assert messages[0] == (
+        f"Recolor {n} object{s} using the current palette and seed?\n\n"
+        "This replaces existing colors. You can undo it."
+    )
+    assert "skipped" not in messages[0]
+    series.close()
+
+
+def test_view_recolor_is_a_single_undoable_operation(tmp_path, monkeypatch):
+    """One series undo restores every prior color, exactly like the
+    selection-scoped path (the handler passes the field's series_states into
+    the same Series.reapplyAutosegColors call)."""
+    series = _load_series(tmp_path)
+    _force_options(series)
+    all_names = sorted(series.data["objects"].keys())
+
+    series.editObjectAttributes(all_names, color=(1, 1, 1), log_event=False)
+    before = _snapshot_colors(series, all_names)
+
+    _messages, _calls, series_states = _run_view_recolor(series, monkeypatch)
+
+    after = _snapshot_colors(series, all_names)
+    assert after.keys() == before.keys()
+    assert any(after[k] != before[k] for k in before), \
+        "recolor changed nothing -- undo test would be vacuous"
+
+    assert series_states.canUndo()[0], \
+        "the series-wide recolor must leave an undoable series state"
+    series_states.undoState()
+
+    assert _snapshot_colors(series, all_names) == before, \
+        "a single undo must restore every prior color"
     series.close()

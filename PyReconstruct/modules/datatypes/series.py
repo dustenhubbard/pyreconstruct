@@ -2981,7 +2981,12 @@ class Series():
         self.modified = True
 
     def reapplyAutosegColors(self, obj_names : list, series_states=None, log_event=True):
-        """Recolor objects using the CURRENT autoseg palette and seed.
+        """Recolor objects using the CURRENT palette and seed.
+
+        Presented to the user as "Reapply palette colors..." (context menus)
+        and "Recolor all objects from palette..." (View menu). Renamed from
+        "autoseg colors" on 2026-08-12 because the mapping below covers any
+        name; the method keeps its historical name.
 
         Lets a user reapply today's palette (colorblind-safe default or a custom
         one) to objects imported before the palette existed -- their old colors
@@ -3033,12 +3038,12 @@ class Series():
 
         ## Touch only the sections the selected objects appear on.
         self._forEachObjectSection(
-            obj_names, "Reapplying autoseg colors...", edit, series_states
+            obj_names, "Reapplying palette colors...", edit, series_states
         )
 
         if log_event:
             for name in obj_names:
-                self.addLog(name, None, "Reapply autoseg colors")
+                self.addLog(name, None, "Reapply palette colors")
 
         self.modified = True
 
