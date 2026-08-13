@@ -336,11 +336,25 @@ class ObjectTableWidget(DataTable):
     
     def getItems(self, name : str, item_type : str):
         """Get the QTableWidgetItem(s) for an attribute of an object.
-        
+
+        No items for an object that has already left the series data. A row
+        can be queried in that state: beginRemoveRows makes an attached
+        view's selection model call the model's flags()/data() for the
+        departing row while its name is still in the model but its data is
+        gone from ``series.data["objects"]``, so this method would be
+        computing columns for an object that no longer exists (user crash
+        report: joining the None the old getTags returned for the Trace tags
+        column; the rounded numeric columns fail the same way on
+        ``round(None)``). The model treats an itemless row as "no cell
+        here"; updateData decides removal from ``exists_in_series`` itself,
+        never from here.
+
             Params:
                 name (str): the name of the object to retrieve the data for
                 item_type (str): the specific data to be retrieved
         """
+        if name not in self.series.data["objects"]:
+            return []
         items = []
         if item_type == "Name":
             
