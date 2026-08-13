@@ -95,6 +95,29 @@ def test_swatch_itself_still_paints_the_color(parent):
     assert _dist(center, YELLOW) < _dist(blank_center, YELLOW) / 2
 
 
+def test_the_rule_always_declares_a_border(parent):
+    """Every colored rule carries a border declaration. Load-bearing.
+
+    With only ``background-color`` set, Qt's stylesheet renderer delegates
+    the button bezel to the underlying style, and under the app's real
+    style stack (cocoa's "macos" style wrapped in run.py's
+    MenuShortcutSpacingStyle proxy) the native bezel is drawn OVER the
+    fill: measured on the live app's screen pixels, a yellow swatch read
+    back as plain button gray while its picker opened correctly seeded,
+    which is exactly the user report. The offscreen platform this suite
+    runs on paints the background-only rule fine, proxy installed or not
+    (measured: (252, 252, 87) both ways), so no pixel assertion here can
+    catch the regression; the border's presence in the rule is the
+    property that defeats the failure mode, so that is what gets pinned.
+    Same blind-spot pattern as RecordingColorDialog.setOption in
+    test_color_picker_dismissal.py.
+    """
+    solid = ColorButton(YELLOW, parent)
+    assert "border" in solid.styleSheet()
+    split = ColorButton(YELLOW, parent, mixed=True)
+    assert "border" in split.styleSheet()
+
+
 def test_blank_color_clears_the_previous_rule(parent):
     """A swatch handed a blank color must not keep showing the old one.
 

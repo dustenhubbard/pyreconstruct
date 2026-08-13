@@ -234,7 +234,7 @@ def test_ok_without_changing_anything_leaves_the_colour_alone(picker, parent):
     assert button.getColor() == RED, (
         "pressing OK without touching anything rewrote the trace's colour"
     )
-    assert button.styleSheet() == "ColorButton { background-color:rgb(255,0,0) }"
+    assert "background-color:rgb(255,0,0)" in button.styleSheet()
     channel, rgb = _painted_channel(button)
     assert channel == 0, f"the swatch is no longer red: {rgb}"
 
@@ -248,7 +248,7 @@ def test_accepted_colour_is_stored_and_painted(picker, parent):
     button.selectColor()
 
     assert button.getColor() == GREEN
-    assert button.styleSheet() == "ColorButton { background-color:rgb(0,255,0) }"
+    assert "background-color:rgb(0,255,0)" in button.styleSheet()
     channel, rgb = _painted_channel(button)
     assert channel == 1, f"the swatch is not green: {rgb}"
 
@@ -259,7 +259,7 @@ def test_accepted_colour_replaces_an_existing_one(picker, parent):
     button.selectColor()
 
     assert button.getColor() == GREEN
-    assert button.styleSheet() == "ColorButton { background-color:rgb(0,255,0) }"
+    assert "background-color:rgb(0,255,0)" in button.styleSheet()
     channel, rgb = _painted_channel(button)
     assert channel == 1, f"the swatch is not green: {rgb}"
 
@@ -280,6 +280,6 @@ def test_dismissed_picker_leaves_an_existing_colour_alone(picker, parent):
     button.selectColor()
 
     assert button.getColor() == RED
-    assert button.styleSheet() == "ColorButton { background-color:rgb(255,0,0) }"
+    assert "background-color:rgb(255,0,0)" in button.styleSheet()
     channel, rgb = _painted_channel(button)
     assert channel == 0, f"the swatch is no longer red: {rgb}"
