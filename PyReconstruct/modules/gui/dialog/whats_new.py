@@ -97,6 +97,21 @@ class LinkLabel(QLabel):
         super().changeEvent(event)
 
 
+# How far the secondary color steps from the disabled gray toward the full
+# text color (0 is the disabled gray itself, 1 is body text). Dusten, after
+# click-testing the midpoint (0.5), which read to him as solid dark text: "i
+# wanted a lighter gray that was slightly less light than the original release
+# date color that was too white." That asks for a small step, around 0.2. But
+# 0.2 lands at 2.51:1 on the default dialog background, and the suite holds
+# every rendering of these lines to the 4.5:1 legibility floor; 0.43 is the
+# smallest step in hundredths that clears it there (#6c6c6c on #efefef,
+# 4.57:1, against 4.43:1 at 0.42; the qdark endpoints clear the floor at any
+# step, 7.26:1 at 0.43). Going lighter than 0.43 means deciding to lower the
+# floor for these secondary lines first, and that is Dusten's call to make,
+# not this constant's.
+SECONDARY_TEXT_BLEND = 0.43
+
+
 def secondary_text_color(palette):
     """The color the dialog's secondary lines paint in, derived from the theme.
 
@@ -104,22 +119,25 @@ def secondary_text_color(palette):
     but the disabled palette role the date first borrowed paints too faint to
     read comfortably: measured on the rendered widget (offscreen/Fusion),
     ``QPalette::Disabled WindowText`` is #bebebe on the #efefef dialog
-    background, about 1.6:1. So the secondary color is the midpoint between
-    that disabled gray and the full text color: still clearly lighter than the
-    body text, but a step darker than the disabled role (about 5.5:1 in the
-    default theme, comfortably past the 4.5:1 legibility floor).
+    background, about 1.6:1. So the secondary color starts from that disabled
+    gray and steps ``SECONDARY_TEXT_BLEND`` of the way toward the full text
+    color; see the constant for how far and for the paper trail on the number.
 
     Derived from the palette rather than named as a hex so it follows the
     theme: both endpoint roles are theme-supplied, and the qdark stylesheet
-    resolves its own colors into the widget palette, so the same midpoint
-    lands right on the dark background too (measured about 8:1).
+    resolves its own colors into the widget palette, so the same blend lands
+    right on the dark background too.
     """
     full = palette.color(QPalette.Active, QPalette.WindowText)
     dim = palette.color(QPalette.Disabled, QPalette.WindowText)
+
+    def step(d, f):
+        return round(d + SECONDARY_TEXT_BLEND * (f - d))
+
     return QColor(
-        (full.red() + dim.red()) // 2,
-        (full.green() + dim.green()) // 2,
-        (full.blue() + dim.blue()) // 2,
+        step(dim.red(), full.red()),
+        step(dim.green(), full.green()),
+        step(dim.blue(), full.blue()),
     )
 
 
@@ -179,15 +197,14 @@ class WhatsNewDialog(QDialog):
             else "What's new in PyReconstruct"
         )
         # 700 minimum width, up from the 540 the dialog opened at when the
-        # byline and the release-notes link stacked. Side by side in the
-        # footer, the two need the row wide enough for the byline to render on
-        # one line: at 540 it wraps, and at 640 its cell clears the rendered
-        # sentence by only about 11px (offscreen metrics), close enough for a
-        # platform with slightly wider font metrics to wrap it. At 700 the
-        # slack is about 70px, so the footer sits on one line at the default
-        # size. The height increase lives on the notes browser below, the one
-        # widget that should absorb extra space; no other geometry is set, so
-        # the dialog keeps sizing itself from its contents.
+        # byline and the release-notes link stacked; click-tested and approved
+        # at this size. The width does not shape the footer: the byline breaks
+        # into its two lines explicitly (see the footer below), the same at
+        # every width, so the extra room is purely about how much of a release
+        # note line fits unwrapped. The height increase lives on the notes
+        # browser below, the one widget that should absorb extra space; no
+        # other geometry is set, so the dialog keeps sizing itself from its
+        # contents.
         self.setMinimumWidth(700)
         self.setModal(False)  # modeless: does not block the app
 
@@ -289,10 +306,19 @@ class WhatsNewDialog(QDialog):
         byline = content.get("byline")
         if byline:
             before, name, after = escape(byline).partition(LINKED_NAME)
-            self._byline = SecondaryLabel(
+            markup = (
                 f'{before}<a href="{HOMEPAGE_URL}">{name}</a>{after}' if name
                 else before
             )
+            # Rendered as two lines, broken at the comma -- "An independent
+            # build of PyReconstruct," over "maintained by Dusten Hubbard." --
+            # matching the approved mockup. The break is an explicit <br/> so
+            # the shape is the same at every window width rather than wrap
+            # luck. It is a display concern of this dialog alone, which is why
+            # MAINTAINER_BYLINE itself stays one string: the GitHub release
+            # footer renders the same sentence inline. A byline without a
+            # comma-space renders unchanged, on one line.
+            self._byline = SecondaryLabel(markup.replace(", ", ",<br/>", 1))
             bf = self._byline.font()
             bf.setItalic(True)
             self._byline.setFont(bf)
@@ -306,9 +332,9 @@ class WhatsNewDialog(QDialog):
         # Same LinkLabel as the byline: this label has always had the same
         # stale-anchor-colour behaviour on a live theme switch, and fixing one
         # anchor in the dialog while leaving the other stale would show.
-        # AlignTop: when the byline wraps onto a second line at a narrow width,
-        # the link stays level with the byline's first line rather than
-        # floating mid-row.
+        # AlignTop: the byline renders as two lines (see above), and the link
+        # stays level with the byline's first line rather than floating
+        # mid-row.
         link = LinkLabel(f'<a href="{url}">Full release notes on GitHub ↗</a>')
         link.setOpenExternalLinks(True)
         footer.addWidget(link, 0, Qt.AlignTop)

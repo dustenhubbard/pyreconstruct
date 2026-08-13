@@ -373,15 +373,18 @@ def test_startup_shows_the_notes_once_per_version_in_the_real_window(
     # not inside the scrollable browser -- exactly once, all the way through the
     # real startup handler and dialog
     assert F.MAINTAINER_BYLINE not in rendered
-    # the byline label carries link markup, so compare what it *renders*
+    # the byline label carries link markup, so compare what it *renders*: the
+    # approved sentence on its two display lines, broken at the comma (the
+    # explicit break the dialog adds; the constant itself is one string)
+    two_line_byline = F.MAINTAINER_BYLINE.replace(", ", ",\n", 1)
     from PySide6.QtGui import QTextDocumentFragment
     def shows_byline(lab):
-        return F.MAINTAINER_BYLINE in (
+        return two_line_byline in (
             QTextDocumentFragment.fromHtml(lab.text()).toPlainText()
         )
 
     shown = QTextDocumentFragment.fromHtml(dialog._byline.text()).toPlainText()
-    assert shown == F.MAINTAINER_BYLINE
+    assert shown == two_line_byline
     bylines = [lab for lab in dialog.findChildren(QLabel) if shows_byline(lab)]
     assert bylines == [dialog._byline]
     # placement, on the dialog the real startup handler built: the byline sits
