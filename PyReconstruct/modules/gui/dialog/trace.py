@@ -23,9 +23,10 @@ class TraceDialog(QDialog):
     def __init__(
             self,
             parent : QWidget, 
-            traces : list[Trace]=[], 
+            traces : list[Trace]=[],
             name=None,
             color=None,
+            color_mixed=False,
             tags=None,
             is_palette=False,
             is_obj_list=False,
@@ -110,7 +111,12 @@ class TraceDialog(QDialog):
 
         color_row = QHBoxLayout()
         color_text = QLabel(self, text="Color:")
-        self.color_input = ColorButton(color, self)
+        # color_mixed marks a seed that is only the PREDOMINANT color of a
+        # selection whose traces disagree; the swatch shows it as a diagonal
+        # split so the discrepancy is visible before the user decides to
+        # repaint (object-list path only; the trace path seeds None on
+        # disagreement, which is a blank swatch).
+        self.color_input = ColorButton(color, self, mixed=color_mixed)
         color_row.addWidget(color_text)
         color_row.addWidget(self.color_input)
         color_row.addStretch()
@@ -260,6 +266,16 @@ class TraceDialog(QDialog):
 
             # color
             color = self.color_input.getColor()
+            if self.is_obj_list and not self.color_input.picked:
+                # The swatch was seeded for display (the objects' current
+                # color on the open section, or blank when they disagree or
+                # are not there). Unless the user actually confirmed a color
+                # in the picker, no new value was chosen: return None, which
+                # every consumer reads as "leave the existing colors alone".
+                # Same distinction the tags field draws with tags_mixed
+                # below; without it, an untouched OK would write the one
+                # seeded color onto every trace of a mixed-color object.
+                color = None
             trace.color = color
 
             # tags
