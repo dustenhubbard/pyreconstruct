@@ -178,7 +178,17 @@ class WhatsNewDialog(QDialog):
             f"What's new in PyReconstruct {version}" if version
             else "What's new in PyReconstruct"
         )
-        self.setMinimumWidth(540)
+        # 700 minimum width, up from the 540 the dialog opened at when the
+        # byline and the release-notes link stacked. Side by side in the
+        # footer, the two need the row wide enough for the byline to render on
+        # one line: at 540 it wraps, and at 640 its cell clears the rendered
+        # sentence by only about 11px (offscreen metrics), close enough for a
+        # platform with slightly wider font metrics to wrap it. At 700 the
+        # slack is about 70px, so the footer sits on one line at the default
+        # size. The height increase lives on the notes browser below, the one
+        # widget that should absorb extra space; no other geometry is set, so
+        # the dialog keeps sizing itself from its contents.
+        self.setMinimumWidth(700)
         self.setModal(False)  # modeless: does not block the app
 
         lay = QVBoxLayout(self)
@@ -220,7 +230,14 @@ class WhatsNewDialog(QDialog):
         # to scroll to the bottom to find out who maintains this build, and most
         # never did. It now lives in the footer row below the browser (see
         # below), so it is on screen from the moment the dialog opens.
-        self._notes = make_notes_browser(content["body"], min_height=260)
+        #
+        # 320 minimum height, up from 260: the whole of the dialog's height
+        # bump (about 13% on the dialog, 451px to 511px at the default size,
+        # offscreen metrics) lands here, because the notes are the one thing
+        # worth more room. The browser is the layout's only vertically
+        # expanding widget, so user resizes land here too, and the dialog
+        # still fits a 13 inch laptop screen with room to spare.
+        self._notes = make_notes_browser(content["body"], min_height=320)
         lay.addWidget(self._notes)
 
         # The provenance line itself: italic, in the same secondary style as

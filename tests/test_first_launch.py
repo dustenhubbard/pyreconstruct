@@ -834,6 +834,60 @@ def test_dialog_byline_and_link_share_a_footer_row_below_the_notes(qapp):
         dlg.deleteLater()
 
 
+def test_dialog_minimum_size_and_where_extra_space_goes(qapp):
+    """Minimum width 700, notes browser at least 320 tall, growth goes to notes.
+
+    The numbers are the review record for the 2026-08-12 size bump, chosen
+    rather than inherited:
+
+    * Width 540 -> 700. With the byline and the "Full release notes" link
+      sharing the footer row, 540 wraps the byline onto a second line, and at
+      640 its cell clears the rendered sentence by only about 11px under the
+      offscreen metrics. 700 leaves about 70px of slack, so the footer sits
+      on one line at the default size.
+    * The notes browser's minimum height 260 -> 320, which is the entirety of
+      the height increase (about 13% on the whole dialog, 451px to 511px at
+      the default size): the notes are the one part of the dialog worth more
+      room, and the taller default still fits a 13 inch laptop screen with
+      room to spare.
+
+    The growth half pins WHERE size goes rather than a pixel sum: stretching
+    the dialog must stretch the scrollable notes and leave the byline and the
+    button row their own heights, or a taller dialog would just spread its
+    footer chrome apart.
+    """
+    from PySide6.QtWidgets import QPushButton
+    from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
+
+    content = F.whats_new_content("1.20.3", last_seen="1.20.1", text=WN)
+    dlg = WhatsNewDialog(None, "1.20.3", content=content,
+                         url="https://example.test/releases")
+    try:
+        assert dlg.minimumWidth() == 700
+        assert dlg._notes.minimumHeight() == 320
+
+        # shown (offscreen), so resizes relayout immediately: on a hidden
+        # widget the LayoutRequest a resize posts is deferred until show, and
+        # the child geometry below would still be the pre-resize one
+        dlg.show()
+
+        # at the default (minimum-width) size the byline is a single line
+        assert dlg.width() == 700
+        assert dlg._byline.height() < 2 * dlg._byline.fontMetrics().height()
+
+        # stretching the dialog stretches the notes, not the footer rows
+        got_it = next(b for b in dlg.findChildren(QPushButton)
+                      if b.text() == "Got it")
+        notes_h = dlg._notes.height()
+        byline_h, button_h = dlg._byline.height(), got_it.height()
+        dlg.resize(dlg.width(), dlg.height() + 200)
+        assert dlg._notes.height() >= notes_h + 180   # the browser absorbed it
+        assert dlg._byline.height() == byline_h
+        assert got_it.height() == button_h
+    finally:
+        dlg.deleteLater()
+
+
 def test_dialog_omits_the_byline_widget_when_the_content_has_none(qapp):
     """No byline field -> no label at all, rather than an empty muted line."""
     from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
@@ -979,12 +1033,11 @@ def measure_byline_pixels(dlg):
     )
     dlg._byline.setFont(font)
 
-    # 760 wide, where this measured at 640 before the byline moved into the
-    # footer row: it now shares that row with the "Full release notes" link,
-    # and at 640 its cell is barely wider than the sentence. The x-coordinate
-    # mapping below assumes the byline renders on a single line, so the row
-    # gets enough width that a platform's slightly wider font metrics cannot
-    # wrap it.
+    # The x-coordinate mapping below assumes the byline renders on a single
+    # line. The dialog's own 700 minimum width is chosen to keep the footer on
+    # one line (see WhatsNewDialog), so the minimum would already do; 760
+    # keeps a further margin so a platform with wider font metrics cannot
+    # wrap the byline out from under the assertions.
     dlg.resize(760, 620)
     dlg.layout().activate()
     pixmap = dlg.grab()
@@ -1300,7 +1353,7 @@ def test_dialog_byline_click_activates_only_on_the_project_name(qapp):
     try:
         # 760 for the same reason measure_byline_pixels resizes to 760: the
         # click coordinates below assume the byline renders on a single line,
-        # and its footer-row cell at 640 is barely wider than the sentence.
+        # and 760 keeps a margin past the 700 minimum that guarantees it.
         dlg.resize(760, 620)
         dlg.show()
         label = dlg._byline
