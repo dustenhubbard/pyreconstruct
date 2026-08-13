@@ -679,9 +679,16 @@ class FieldWidgetTrace(FieldWidgetBase):
         # cutting part of it.
         if example_trace.closed and uncuttable_closed_traces(traces_to_cut):
 
+            ## The menu path below is the one menubar.py defines (Series menu,
+            ## "Clean up" submenu). test_knife_cut_guards pins the message
+            ## against the live menu titles, so a rename there fails a test
+            ## instead of orphaning this hint.
             notify(
-                "A selected trace crosses itself and cannot be cut.\n"
-                "The object was left unchanged."
+                "A selected trace's outline crosses over itself, so the cut "
+                "cannot tell inside from outside.\n"
+                "The object was left unchanged.\n\n"
+                "Try Series > Clean up to remove stray traces from "
+                "automatic segmentation, which are a common cause of this."
             )
 
             return False

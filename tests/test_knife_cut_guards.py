@@ -45,8 +45,11 @@ BOWTIE = "test_bowtie"
 
 LOCK_REFUSAL = "Cannot modify locked objects.\nPlease unlock before modifying."
 SELF_INTERSECTION_REFUSAL = (
-    "A selected trace crosses itself and cannot be cut.\n"
-    "The object was left unchanged."
+    "A selected trace's outline crosses over itself, so the cut "
+    "cannot tell inside from outside.\n"
+    "The object was left unchanged.\n\n"
+    "Try Series > Clean up to remove stray traces from "
+    "automatic segmentation, which are a common cause of this."
 )
 
 
@@ -198,6 +201,30 @@ def test_the_refusal_leaves_the_points_untouched(knife_window, field_notices):
     field.cutTrace(_scalpel_across(field, bowtie))
 
     assert [tuple(p) for p in field.section.contours[BOWTIE][0].points] == before
+
+
+def test_the_refusal_names_a_menu_path_that_exists(knife_window, field_notices):
+    """The hint in the refusal must point somewhere real.
+
+    The message tells the user to try Clean up and spells out where it lives.
+    A menu path written in prose is not a widget, so nothing in Qt ties it to
+    the menus menubar.py builds: rename the Series menu or its Clean up submenu
+    and the message would keep directing users to a place that no longer
+    exists. Reading the path off the live QMenu titles (the same objects
+    menubar.py's "text" entries become) makes such a rename fail here instead
+    of silently orphaning the hint.
+    """
+    window, _ = knife_window
+    field = window.field
+    bowtie = _add_self_intersecting_trace(field)
+
+    field.cutTrace(_scalpel_across(field, bowtie))
+
+    live_menu_path = f"{window.seriesmenu.title()} > {window.cleanupmenu.title()}"
+    assert len(field_notices) == 1
+    assert live_menu_path in field_notices[0], (
+        f"the refusal no longer names the real menu path {live_menu_path!r}"
+    )
 
 
 def test_a_normal_trace_is_still_cut(knife_window, field_notices):
