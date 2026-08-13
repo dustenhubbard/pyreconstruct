@@ -97,47 +97,56 @@ class LinkLabel(QLabel):
         super().changeEvent(event)
 
 
-# How far the secondary color steps from the disabled gray toward the full
-# text color (0 is the disabled gray itself, 1 is body text). Dusten, after
-# click-testing the midpoint (0.5), which read to him as solid dark text: "i
-# wanted a lighter gray that was slightly less light than the original release
-# date color that was too white." That asks for a small step, around 0.2. But
-# 0.2 lands at 2.51:1 on the default dialog background, and the suite holds
-# every rendering of these lines to the 4.5:1 legibility floor; 0.43 is the
-# smallest step in hundredths that clears it there (#6c6c6c on #efefef,
-# 4.57:1, against 4.43:1 at 0.42; the qdark endpoints clear the floor at any
-# step, 7.26:1 at 0.43). Going lighter than 0.43 means deciding to lower the
-# floor for these secondary lines first, and that is Dusten's call to make,
-# not this constant's.
-SECONDARY_TEXT_BLEND = 0.43
+# How far the secondary color steps from the dialog background toward the
+# full text color (0 is the background, invisible; 1 is body text). Dusten
+# wants these lines light: "i wanted a lighter gray that was slightly less
+# light than the original release date color that was too white." That asks
+# for a small step, but the suite holds every rendering of these lines to the
+# 4.5:1 legibility floor, which Dusten reaffirmed; 0.55 is the smallest step
+# in hundredths that clears it on the light backgrounds. Measured on the
+# rendered widget: #6a6a6a on cocoa's #ececec is 4.58:1 (0.54 gives 4.38:1),
+# #6c6c6c on offscreen/Fusion's #efefef is 4.57:1, and #868c91 on qdark's
+# #19232d is 4.68:1, so the light themes bind and qdark rides along. Going
+# lighter than 0.55 means deciding to lower the floor for these secondary
+# lines first, and that is Dusten's call to make, not this constant's.
+SECONDARY_TEXT_BLEND = 0.55
 
 
 def secondary_text_color(palette):
     """The color the dialog's secondary lines paint in, derived from the theme.
 
-    The release date and the maintainer byline are secondary to the body text,
-    but the disabled palette role the date first borrowed paints too faint to
-    read comfortably: measured on the rendered widget (offscreen/Fusion),
-    ``QPalette::Disabled WindowText`` is #bebebe on the #efefef dialog
-    background, about 1.6:1. So the secondary color starts from that disabled
-    gray and steps ``SECONDARY_TEXT_BLEND`` of the way toward the full text
-    color; see the constant for how far and for the paper trail on the number.
+    The release date and the maintainer byline are secondary to the body text:
+    lighter than the body, dark enough to read. The color steps
+    ``SECONDARY_TEXT_BLEND`` of the way from the dialog background
+    (``QPalette::Window``) toward the full text color (``QPalette::Active
+    WindowText``); see the constant for how far and for the paper trail on
+    the number.
+
+    Background-to-text, deliberately not disabled-to-text: an earlier blend
+    started from ``QPalette::Disabled WindowText``, and on macOS that
+    degenerates. Measured on cocoa, the Disabled and Active WindowText roles
+    are BOTH #000000 -- the macOS style dims disabled text at paint time, not
+    in the palette -- so a dim-to-full blend returns pure black at every
+    fraction there, while offscreen/Fusion (#bebebe disabled) renders the
+    intended gray and every headless measurement looks fine. Background and
+    text are the two roles a theme can never leave equal without being
+    unreadable outright.
 
     Derived from the palette rather than named as a hex so it follows the
     theme: both endpoint roles are theme-supplied, and the qdark stylesheet
     resolves its own colors into the widget palette, so the same blend lands
     right on the dark background too.
     """
-    full = palette.color(QPalette.Active, QPalette.WindowText)
-    dim = palette.color(QPalette.Disabled, QPalette.WindowText)
+    text = palette.color(QPalette.Active, QPalette.WindowText)
+    bg = palette.color(QPalette.Active, QPalette.Window)
 
-    def step(d, f):
-        return round(d + SECONDARY_TEXT_BLEND * (f - d))
+    def step(b, t):
+        return round(b + SECONDARY_TEXT_BLEND * (t - b))
 
     return QColor(
-        step(dim.red(), full.red()),
-        step(dim.green(), full.green()),
-        step(dim.blue(), full.blue()),
+        step(bg.red(), text.red()),
+        step(bg.green(), text.green()),
+        step(bg.blue(), text.blue()),
     )
 
 
@@ -223,10 +232,11 @@ class WhatsNewDialog(QDialog):
 
         # The release date is secondary to the version above it: italic, in the
         # derived secondary color rather than dimmed by `setEnabled(False)` as
-        # it first was. The disabled role painted it at about 1.6:1 (see
-        # secondary_text_color), and the label stays enabled so it paints from
-        # the Active group like everything else. Escaped: the date string comes
-        # from parsed release notes and this label renders rich text.
+        # it first was. The disabled rendering measured about 1.6:1 against
+        # the dialog background (offscreen/Fusion), and the label stays
+        # enabled so it paints from the Active group like everything else.
+        # Escaped: the date string comes from parsed release notes and this
+        # label renders rich text.
         if content.get("date"):
             released = SecondaryLabel(escape(f"Released {content['date']}"))
             rf = released.font()
@@ -262,9 +272,9 @@ class WhatsNewDialog(QDialog):
         # italic is the aside register the markdown `_..._` gave it inside the
         # notes, and it is kept. The color is the shared secondary one rather
         # than either extreme this line has been at: the disabled-palette
-        # dimming it first landed with reads as switched-off (about 1.6:1, see
-        # secondary_text_color), and the full text color it briefly took
-        # instead made an aside compete with the notes. The derived midpoint
+        # dimming it first landed with reads as switched-off (about 1.6:1
+        # against the dialog background), and the full text color it briefly
+        # took instead made an aside compete with the notes. The derived blend
         # keeps it clearly secondary while a lab that needs to report an issue
         # to the right person can still read it comfortably.
         #

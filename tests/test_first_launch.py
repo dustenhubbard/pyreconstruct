@@ -983,12 +983,13 @@ def test_dialog_date_and_byline_share_the_secondary_style(qapp):
     """The release date and the byline are the dialog's two secondary lines.
 
     Both are italic and both paint in the same palette-derived secondary
-    color, so they read as one register: quieter than the body text but a
-    step darker than the disabled gray the date line used to borrow through
-    ``setEnabled(False)``. Pinned as the relationship rather than as pixel
-    values: the shared color must sit strictly between the palette's disabled
-    and full text colors, and both labels must spell exactly that color into
-    their markup, so the assertions hold under any theme without naming one.
+    color, so they read as one register: quieter than the body text, darker
+    than the near-invisible disabled gray the date line used to borrow
+    through ``setEnabled(False)``. Pinned as the relationship rather than as
+    pixel values: the shared color must sit strictly between the dialog
+    background and the full text lightness (the blend's own endpoints), and
+    both labels must spell exactly that color into their markup, so the
+    assertions hold under any theme without naming one.
     """
     from PySide6.QtGui import QPalette
     from PySide6.QtWidgets import QLabel
@@ -1012,15 +1013,44 @@ def test_dialog_date_and_byline_share_the_secondary_style(qapp):
         color = secondary_text_color(dlg.palette())
         assert f"color:{color.name()}" in date_lab.text()
         assert f"color:{color.name()}" in dlg._byline.text()
-        # ...and that color sits strictly between the disabled gray and the
-        # full text color -- darker than the old date-line gray, lighter than
-        # the body -- whichever way the active theme points
-        full = dlg.palette().color(QPalette.Active, QPalette.WindowText)
-        dim = dlg.palette().color(QPalette.Disabled, QPalette.WindowText)
-        lo, hi = sorted((full.lightness(), dim.lightness()))
+        # ...and that color sits strictly between the dialog background and
+        # the full text lightness -- visible, and quieter than the body --
+        # whichever way the active theme points
+        text = dlg.palette().color(QPalette.Active, QPalette.WindowText)
+        bg = dlg.palette().color(QPalette.Active, QPalette.Window)
+        lo, hi = sorted((text.lightness(), bg.lightness()))
         assert lo < color.lightness() < hi
     finally:
         dlg.deleteLater()
+
+
+def test_secondary_color_survives_the_cocoa_degenerate_palette(qapp):
+    """A palette whose Disabled and Active text are both black still yields gray.
+
+    The regression this pins was invisible to every headless run: on macOS
+    (cocoa) the palette carries ``Disabled WindowText == Active WindowText ==
+    #000000``, because the macOS style dims disabled text at paint time rather
+    than in the palette. The first secondary blend interpolated disabled
+    toward active, which on that palette returns pure black at every
+    fraction, so Dusten saw solid dark text while offscreen/Fusion (#bebebe
+    disabled) rendered the intended gray on every CI and local test run. The
+    blend now runs background-to-text, endpoints no readable theme can leave
+    equal; this feeds it the exact cocoa shape and requires a real
+    intermediate gray.
+    """
+    from PySide6.QtGui import QColor, QPalette
+    from PyReconstruct.modules.gui.dialog.whats_new import secondary_text_color
+
+    cocoa = QPalette()
+    cocoa.setColor(QPalette.Active, QPalette.WindowText, QColor("#000000"))
+    cocoa.setColor(QPalette.Disabled, QPalette.WindowText, QColor("#000000"))
+    cocoa.setColor(QPalette.Active, QPalette.Window, QColor("#ececec"))
+
+    color = secondary_text_color(cocoa)
+    assert color != QColor("#000000"), "degenerated to the text color"
+    assert color != QColor("#ececec"), "degenerated to the background"
+    # strictly between the endpoints: a gray, not either extreme
+    assert 0 < color.lightness() < QColor("#ececec").lightness()
 
 
 def measure_byline_pixels(dlg):
