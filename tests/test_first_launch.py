@@ -843,16 +843,19 @@ def test_dialog_omits_the_byline_widget_when_the_content_has_none(qapp):
 
 
 def test_dialog_byline_is_italic_and_not_muted(qapp):
-    """The byline is italic, unbolded and at the ordinary (enabled) text colour.
+    """The byline is italic, unbolded, enabled, and never disabled-role dim.
 
     The italic carries the aside register the markdown ``_..._`` gave it. The
-    muting does not: it landed dimmed via ``setEnabled(False)``, which borrowed
-    the disabled palette role and rendered it at roughly 1.6:1 against the
-    dialog background -- switched-off rather than secondary. Who maintains this
-    build is what a lab needs in order to report an issue to the right person,
-    so the contrast is deliberately full. Asserted on the constructed widget: a
-    regression restoring the disabled state, or setting the weight instead of
-    the slant, fails here.
+    color is the shared secondary style the release date uses (pinned in
+    ``test_dialog_date_and_byline_share_the_secondary_style``); what this test
+    guards against is the failure mode below that style: an earlier revision
+    dimmed the line via ``setEnabled(False)``, which borrowed the disabled
+    palette role and rendered it at roughly 1.6:1 against the dialog
+    background, switched-off rather than secondary. Who maintains this build
+    is what a lab needs in order to report an issue to the right person, so
+    the pixel tests below still hold the rendered contrast to at least 4.5:1.
+    Asserted on the constructed widget: a regression restoring the disabled
+    state, or setting the weight instead of the slant, fails here.
     """
     from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
 
@@ -869,6 +872,50 @@ def test_dialog_byline_is_italic_and_not_muted(qapp):
         # enabled ancestry, so the label paints from the Active group.
         assert dlg._byline.isEnabled() is True
         assert dlg._byline.isEnabledTo(dlg) is True
+    finally:
+        dlg.deleteLater()
+
+
+def test_dialog_date_and_byline_share_the_secondary_style(qapp):
+    """The release date and the byline are the dialog's two secondary lines.
+
+    Both are italic and both paint in the same palette-derived secondary
+    color, so they read as one register: quieter than the body text but a
+    step darker than the disabled gray the date line used to borrow through
+    ``setEnabled(False)``. Pinned as the relationship rather than as pixel
+    values: the shared color must sit strictly between the palette's disabled
+    and full text colors, and both labels must spell exactly that color into
+    their markup, so the assertions hold under any theme without naming one.
+    """
+    from PySide6.QtGui import QPalette
+    from PySide6.QtWidgets import QLabel
+    from PyReconstruct.modules.gui.dialog.whats_new import (
+        WhatsNewDialog, secondary_text_color,
+    )
+
+    content = F.whats_new_content("1.20.3", last_seen="1.20.1", text=WN)
+    assert content["date"], "fixture notes must carry a release date"
+    dlg = WhatsNewDialog(None, "1.20.3", content=content,
+                         url="https://example.test/releases")
+    try:
+        date_lab = next(lab for lab in dlg.findChildren(QLabel)
+                        if "Released" in lab.text())
+        # both italic: the shared aside register
+        assert date_lab.font().italic() is True
+        assert dlg._byline.font().italic() is True
+        # the date is a real enabled label now, not the disabled-role dimming
+        assert date_lab.isEnabled() is True
+        # one shared color, spelled identically into both labels' markup
+        color = secondary_text_color(dlg.palette())
+        assert f"color:{color.name()}" in date_lab.text()
+        assert f"color:{color.name()}" in dlg._byline.text()
+        # ...and that color sits strictly between the disabled gray and the
+        # full text color -- darker than the old date-line gray, lighter than
+        # the body -- whichever way the active theme points
+        full = dlg.palette().color(QPalette.Active, QPalette.WindowText)
+        dim = dlg.palette().color(QPalette.Disabled, QPalette.WindowText)
+        lo, hi = sorted((full.lightness(), dim.lightness()))
+        assert lo < color.lightness() < hi
     finally:
         dlg.deleteLater()
 

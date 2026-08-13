@@ -17,7 +17,7 @@ from html import escape
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextBrowser,
 )
-from PySide6.QtGui import QTextCursor
+from PySide6.QtGui import QColor, QPalette, QTextCursor
 from PySide6.QtCore import Qt, QSettings, QEvent
 
 from PyReconstruct.modules.backend.updater.install_info import current_version_str
@@ -74,15 +74,68 @@ class LinkLabel(QLabel):
         super().__init__(parent)
         self._markup = markup
         self.setTextFormat(Qt.RichText)
-        self.setText(markup)
+        self.setText(self._styled())
+
+    def _styled(self):
+        """The markup to render right now; subclasses may restyle it.
+
+        Called once at construction and again on every ``PaletteChange``, so a
+        subclass that derives styling from the palette (``SecondaryLabel``)
+        stays current through a live theme switch for free.
+        """
+        return self._markup
 
     def changeEvent(self, event):
         # getattr: change events can arrive from inside QLabel.__init__, before
         # _markup is assigned.
         if event.type() == QEvent.Type.PaletteChange and getattr(self, "_markup", None):
             super().setText("")
-            super().setText(self._markup)
+            super().setText(self._styled())
         super().changeEvent(event)
+
+
+def secondary_text_color(palette):
+    """The color the dialog's secondary lines paint in, derived from the theme.
+
+    The release date and the maintainer byline are secondary to the body text,
+    but the disabled palette role the date first borrowed paints too faint to
+    read comfortably: measured on the rendered widget (offscreen/Fusion),
+    ``QPalette::Disabled WindowText`` is #bebebe on the #efefef dialog
+    background, about 1.6:1. So the secondary color is the midpoint between
+    that disabled gray and the full text color: still clearly lighter than the
+    body text, but a step darker than the disabled role (about 5.5:1 in the
+    default theme, comfortably past the 4.5:1 legibility floor).
+
+    Derived from the palette rather than named as a hex so it follows the
+    theme: both endpoint roles are theme-supplied, and the qdark stylesheet
+    resolves its own colors into the widget palette, so the same midpoint
+    lands right on the dark background too (measured about 8:1).
+    """
+    full = palette.color(QPalette.Active, QPalette.WindowText)
+    dim = palette.color(QPalette.Disabled, QPalette.WindowText)
+    return QColor(
+        (full.red() + dim.red()) // 2,
+        (full.green() + dim.green()) // 2,
+        (full.blue() + dim.blue()) // 2,
+    )
+
+
+class SecondaryLabel(LinkLabel):
+    """A ``LinkLabel`` painted in the dialog's secondary text color.
+
+    The color is written into the markup as an inline span rather than set
+    through ``setPalette``, because a per-widget palette loses to the app-level
+    qdark stylesheet (measured: the override renders in the stylesheet's normal
+    text color, not the palette's). Inline rich-text color wins over both. The
+    span is recomputed from the current palette on every ``PaletteChange``
+    through ``_styled``, so a live theme switch recolors the line instead of
+    stranding it; any anchor inside the markup keeps the ordinary
+    ``QPalette::Link`` styling, which the span does not reach into.
+    """
+
+    def _styled(self):
+        color = secondary_text_color(self.palette()).name()
+        return f'<span style="color:{color}">{self._markup}</span>'
 
 
 def make_notes_browser(markdown_text, min_height=180):
@@ -133,9 +186,17 @@ class WhatsNewDialog(QDialog):
             title.setFont(tf)
             lay.addWidget(title)
 
+        # The release date is secondary to the version above it: italic, in the
+        # derived secondary color rather than dimmed by `setEnabled(False)` as
+        # it first was. The disabled role painted it at about 1.6:1 (see
+        # secondary_text_color), and the label stays enabled so it paints from
+        # the Active group like everything else. Escaped: the date string comes
+        # from parsed release notes and this label renders rich text.
         if content.get("date"):
-            released = QLabel(f"Released {content['date']}")
-            released.setEnabled(False)  # muted, secondary to the version
+            released = SecondaryLabel(escape(f"Released {content['date']}"))
+            rf = released.font()
+            rf.setItalic(True)
+            released.setFont(rf)
             lay.addWidget(released)
 
         orienter = QLabel(content["orienter"])
@@ -154,18 +215,16 @@ class WhatsNewDialog(QDialog):
         self._notes = make_notes_browser(content["body"], min_height=260)
         lay.addWidget(self._notes)
 
-        # The provenance line itself: italic, at the ordinary text colour, and a
-        # jump link to the project home page. The italic is the aside register
-        # the markdown `_..._` gave it inside the notes, and it is kept. What is
-        # deliberately *not* kept is the muting: this label first landed dimmed
-        # by `setEnabled(False)`, the way the release date above it is, and the
-        # disabled palette paints it at about 1.6:1 against the dialog
-        # background (measured on the rendered widget, offscreen/Fusion:
-        # #bebebe on #efefef). At that contrast it reads as switched-off rather
-        # than as a quiet aside, and this is the one line a lab needs in order
-        # to report an issue to the right person. So it is an ordinary *enabled*
-        # label in the normal text colour -- italic for the register, full
-        # contrast for the legibility.
+        # The provenance line itself: italic, in the same secondary style as
+        # the release date above, and a jump link to the project home page. The
+        # italic is the aside register the markdown `_..._` gave it inside the
+        # notes, and it is kept. The color is the shared secondary one rather
+        # than either extreme this line has been at: the disabled-palette
+        # dimming it first landed with reads as switched-off (about 1.6:1, see
+        # secondary_text_color), and the full text color it briefly took
+        # instead made an aside compete with the notes. The derived midpoint
+        # keeps it clearly secondary while a lab that needs to report an issue
+        # to the right person can still read it comfortably.
         #
         # Exactly one word of it is a link: the project name, pointing at the
         # home page. That word takes the ordinary link styling -- blue and
@@ -205,7 +264,7 @@ class WhatsNewDialog(QDialog):
         byline = content.get("byline")
         if byline:
             before, name, after = escape(byline).partition(LINKED_NAME)
-            self._byline = LinkLabel(
+            self._byline = SecondaryLabel(
                 f'{before}<a href="{HOMEPAGE_URL}">{name}</a>{after}' if name
                 else before
             )
