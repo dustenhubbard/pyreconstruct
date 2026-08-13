@@ -495,6 +495,11 @@ _MAIN_WINDOW_SETTINGS_KEYS = (
     # the session that the correction had already run.
     "update_check_on_startup",
     "update_check_on_startup_default_applied",
+    # `toggleWhatsNewPopup` (Help > Show what's new after updates) writes the
+    # What's-new popup suppression preference, and the toggle tests flip it on
+    # purpose; left set, it would silence the startup dialog for every later
+    # test in the session.
+    "suppress_whatsnew",
     "palette/trace_hidden",
     "palette/inc_hidden",
     "palette/bc_hidden",

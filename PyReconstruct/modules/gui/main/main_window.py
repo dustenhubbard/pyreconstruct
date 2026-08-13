@@ -197,6 +197,15 @@ class MainWindow(QMainWindow):
         ## limitation for a rarely-out-of-band toggle.
         self.toggleztraces_act.setChecked(bool(self.series.getOption("show_ztraces")))
 
+        ## The What's-new popup toggle is the exception to the note above: the
+        ## dialog's "Don't show again" button can flip the stored preference
+        ## behind the menu's back, so it resyncs on every Help open besides the
+        ## build-time seed. The connection is made per rebuild without
+        ## disconnecting: clearMenuBar discards the previous helpmenu, and the
+        ## connection dies with it.
+        self.syncWhatsNewPopupToggle()
+        self.helpmenu.aboutToShow.connect(self.syncWhatsNewPopupToggle)
+
     def createContextMenus(self):
         """Create right-click menus used in the field."""
         ## Create user columns options
@@ -693,6 +702,36 @@ class MainWindow(QMainWindow):
             show_whats_new(self)
         except Exception:
             log_exception("What's new (Help menu) failed")
+
+    def syncWhatsNewPopupToggle(self):
+        """Reflect the stored What's-new popup preference on the Help toggle.
+
+        Runs at menubar build and on every Help open (see createMenuBar): the
+        preference can change outside the menu, through the dialog's "Don't
+        show again" button, and a checkable that contradicts the stored state
+        would invert itself on the next click.
+        """
+        from PyReconstruct.modules.gui.main.first_launch import (
+            WHATSNEW_SUPPRESS_KEY, whats_new_suppressed,
+        )
+        settings = QSettings("KHLab", "PyReconstruct")
+        self.togglewhatsnew_act.setChecked(
+            not whats_new_suppressed(settings.value(WHATSNEW_SUPPRESS_KEY))
+        )
+
+    def toggleWhatsNewPopup(self):
+        """Persist the Help-menu toggle: checked means the popup may show.
+
+        Writes only the suppression preference. The once-per-version record is
+        deliberately untouched, so re-enabling hands back the ordinary rules:
+        a version bump missed while the popup was off shows on the next
+        launch, and a version already seen stays seen.
+        """
+        from PyReconstruct.modules.gui.main.first_launch import WHATSNEW_SUPPRESS_KEY
+        settings = QSettings("KHLab", "PyReconstruct")
+        settings.setValue(
+            WHATSNEW_SUPPRESS_KEY, not self.togglewhatsnew_act.isChecked()
+        )
 
     def changeUsername(self, new_name : str = None):
         """Edit the login name used to track history.
