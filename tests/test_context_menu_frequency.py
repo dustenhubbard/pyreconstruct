@@ -384,7 +384,7 @@ OBJECT_ROWS = [
     # review, because the action colors ANY name, not only autoseg ones. It
     # keeps the adjacency to its old home
     # (see test_reapply_palette_colors_sits_beside_its_old_home)
-    "Reapply palette colors...",
+    "Reapply custom color palette to existing objects...",
     "Smooth object",
     "Duplicate object",
     "Split into separate objects",
@@ -460,7 +460,7 @@ def test_object_list_utilities_are_below_the_domain_actions():
     # 2026-08-12: a common workflow action for autoseg users, promoted out of
     # "Object attributes >" after a beta report showed it buried there, and
     # renamed from "Reapply autoseg colors..." because it colors any name.
-    "Reapply palette colors...",
+    "Reapply custom color palette to existing objects...",
 ])
 def test_often_used_object_actions_are_zero_hop(label):
     """The actions the maintainer named as frequent are top-level (one click),
@@ -556,7 +556,7 @@ def test_object_menu_row_order_is_the_approved_one():
     users, not an attribute edit. The placement reuses the adjacency lesson
     from the 3D pair: the promoted row sits beside its old home, so someone
     who learned the old location finds it without hunting. On review he also
-    renamed it "Reapply palette colors...", because the action is not
+    renamed it "Reapply custom color palette to existing objects...", because the action is not
     autoseg-specific (palette_color_for_name colors ANY name; only an
     unmodified "autoseg_<id>" gets its import-identical color back), so the
     old label hid it from everyone without autoseg objects. See
@@ -575,7 +575,7 @@ def test_object_menu_row_order_is_the_approved_one():
         "Unhide all objects",
         "-----",
         "Object attributes >",
-        "Reapply palette colors...",
+        "Reapply custom color palette to existing objects...",
         "Smooth object",
         "Duplicate object",
         "Split into separate objects",
@@ -617,7 +617,7 @@ def test_object_level_settings_share_one_section():
     """
     rows = _top_level(_obj_menu())
     members = [
-        "Object attributes >", "Reapply palette colors...", "Smooth object",
+        "Object attributes >", "Reapply custom color palette to existing objects...", "Smooth object",
         "Duplicate object",
         "Split into separate objects", "Edit object radius...",
         "Edit object shape...", "Group >", "Set curation >",
@@ -689,7 +689,7 @@ def test_reapply_palette_colors_sits_beside_its_old_home():
     """
     rows = _top_level(_obj_menu())
     assert rows[rows.index("Object attributes >") + 1] == \
-        "Reapply palette colors..."
+        "Reapply custom color palette to existing objects..."
 
 
 def test_reapply_palette_colors_left_the_attributes_submenu():
@@ -703,11 +703,11 @@ def test_reapply_palette_colors_left_the_attributes_submenu():
     attrs = next(e for e in _obj_menu() if isinstance(e, dict)
                  and e["text"] == "Object attributes")
     assert "reapplyautosegcolors_act" not in _act_names(attrs["opts"])
-    assert "Reapply palette colors..." not in _rows(attrs["opts"])
+    assert "Reapply custom color palette to existing objects..." not in _rows(attrs["opts"])
     # still reachable, top-level, under its old act_name, on both surfaces
     for list_ops in (None, OBJ_LIST_OPS):
         menu = _obj_menu(list_ops=list_ops)
-        assert "Reapply palette colors..." in _top_level(menu)
+        assert "Reapply custom color palette to existing objects..." in _top_level(menu)
         top_level_acts = [e[0] for e in menu if isinstance(e, tuple)]
         assert "reapplyautosegcolors_act" in top_level_acts
 
@@ -723,7 +723,7 @@ def test_reapply_palette_colors_label_names_no_segmentation_method():
     """
     for list_ops in (None, OBJ_LIST_OPS):
         rows = _rows(_obj_menu(list_ops=list_ops))
-        assert "Reapply palette colors..." in rows
+        assert "Reapply custom color palette to existing objects..." in rows
         assert "Reapply autoseg colors..." not in rows
 
 
@@ -894,7 +894,7 @@ def test_object_attributes_submenu_holds_only_object_level_attributes():
     """Every remaining member is a stored per-object attribute (hosts,
     alignment, lock) -- nothing trace-level.
 
-    The reapply-colors row (now "Reapply palette colors...") was a member until
+    The reapply-colors row (now "Reapply custom color palette to existing objects...") was a member until
     2026-08-12. It does write the color attribute, but what it IS to a user is
     a bulk workflow pass over imported objects, and a beta report showed
     autoseg users digging for it here. It was promoted to the top level of the

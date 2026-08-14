@@ -267,7 +267,7 @@ class FieldWidgetObject(FieldWidgetTrace):
     def reapplyAutosegColors(self, obj_names : list):
         """Recolor selected objects with the current palette + seed.
 
-        The menu row reads "Reapply palette colors..." (renamed 2026-08-12: the
+        The menu row reads "Reapply custom color palette to existing objects..." (renamed 2026-08-12: the
         action colors any name, not only autoseg ones); the method keeps its
         historical name because nothing user-facing hangs on it. Confirms first
         because it discards the objects' existing colors. Locked objects are
