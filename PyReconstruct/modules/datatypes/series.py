@@ -2475,7 +2475,7 @@ class Series():
     def reapplyAutosegColors(self, obj_names : list, series_states=None, log_event=True):
         """Recolor objects using the CURRENT palette and seed.
 
-        Presented to the user as "Reapply palette colors..." (context menus)
+        Presented to the user as "Reapply custom color palette to existing objects..." (context menus)
         and "Recolor all objects from palette..." (View menu). Renamed from
         "autoseg colors" on 2026-08-12 because the mapping below covers any
         name; the method keeps its historical name.
@@ -2513,7 +2513,7 @@ class Series():
 
         ## Touch only the sections the selected objects appear on.
         for snum, section in self.enumerateSections(
-            message="Reapplying palette colors...",
+            message="Reapplying custom color palette...",
             series_states=series_states,
             section_numbers=self.getObjectSections(obj_names)
         ):
@@ -2536,7 +2536,7 @@ class Series():
 
         if log_event:
             for name in obj_names:
-                self.addLog(name, None, "Reapply palette colors")
+                self.addLog(name, None, "Reapply custom color palette")
 
         self.modified = True
 
