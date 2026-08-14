@@ -8,12 +8,10 @@ full release notes on GitHub (linked from the dialog).
 
 ## [1.21.3] — 2026-08-13
 
-- **New: Tired of seeing "What's new" popups? Turn them off.** A "Don't show
-  again" button now sits right beside "Got it", and if you ever miss these
-  notes, **Help ▸ Show what's new after updates** switches them back on
-  whenever you want. **Help ▸ What's new** always works either way. While we
-  were in there, the window got roomier too: wider and taller, with all the
-  extra space going to the notes.
+- **New: Tired of "What's new" popups? Turn them off.** Click "Don't show
+  again", and if you miss the notes later, **Help ▸ Show what's new after
+  updates** turns them back on. **Help ▸ What's new** still works any time.
+  The window is also a bit roomier, with the extra space going to the notes.
 - **Changed: "Reapply autoseg colors" is now "Reapply custom color palette to
   existing objects...", easier to find, and available for the whole series at
   once.** It never was only for autoseg objects: it recolors whatever you
