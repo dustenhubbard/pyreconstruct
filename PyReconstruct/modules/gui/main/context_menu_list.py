@@ -275,7 +275,7 @@ def get_context_menu_list_obj(self, list_ops=None):
     the settings section, directly below the submenu it left. It is a common
     workflow action for automatic-segmentation users rather than an attribute
     edit, and a beta report showed it buried on the object list. On review the
-    maintainer also renamed it "Reapply palette colors...", because the action
+    maintainer also renamed it "Reapply custom color palette to existing objects...", because the action
     is not autoseg-specific: palette_color_for_name gives ANY name a stable
     palette color, and only an unmodified "autoseg_<id>" name gets its
     import-identical color back. Nothing else moved, and the act_name keeps
@@ -459,7 +459,7 @@ def get_context_menu_list_obj(self, list_ops=None):
         # under (series.getOption(act_name)), so renaming it would silently
         # unbind the key. The series-wide sibling lives in the menubar's View
         # menu as "Recolor all objects from palette...".
-        ("reapplyautosegcolors_act", "Reapply palette colors...", "", self.reapplyAutosegColors),
+        ("reapplyautosegcolors_act", "Reapply custom color palette to existing objects...", "", self.reapplyAutosegColors),
         # Distinct attr_name from the field Trace submenu's "smoothtraces_act":
         # both menus are populated onto the same widget, so a shared name meant
         # one silently shadowed the other (same class of bug as the old

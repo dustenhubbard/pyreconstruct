@@ -8,21 +8,20 @@ full release notes on GitHub (linked from the dialog).
 
 ## [1.21.3] — 2026-08-13
 
-- **New: You can switch off the "What's new" popup, and switch it back on.** A
-  "Don't show again" button now sits beside "Got it", and **Help ▸ Show what's
-  new after updates** is the way back on. **Help ▸ What's new** always works
-  regardless.
-- **Changed: The "What's new" window is roomier and easier to read.** It opens
-  wider and taller, with the extra space going to the notes. Who maintains this
-  build now reads as a quiet two-line footer beside the release-notes link
-  instead of sitting inside the notes themselves.
-- **Changed: "Reapply autoseg colors" is now "Reapply palette colors", easier
-  to find, and available for the whole series at once.** It never was only for
-  autoseg objects: it recolors whatever you select using the current palette.
-  It now sits directly in the object right-click menu instead of a submenu, and
-  a new **View ▸ Recolor all objects from palette** recolors every object in
-  the series in one undoable step, skipping locked objects and telling you how
-  many it will touch before it does anything.
+- **New: Tired of seeing "What's new" popups? Turn them off.** A "Don't show
+  again" button now sits right beside "Got it", and if you ever miss these
+  notes, **Help ▸ Show what's new after updates** switches them back on
+  whenever you want. **Help ▸ What's new** always works either way. While we
+  were in there, the window got roomier too: wider and taller, with all the
+  extra space going to the notes.
+- **Changed: "Reapply autoseg colors" is now "Reapply custom color palette to
+  existing objects...", easier to find, and available for the whole series at
+  once.** It never was only for autoseg objects: it recolors whatever you
+  select using the current palette. It now sits directly in the object
+  right-click menu instead of a submenu, and a new **View ▸ Recolor all
+  objects from palette** recolors every object in the series in one undoable
+  step, skipping locked objects and telling you how many it will touch before
+  it does anything.
 - **Changed: The "trace crosses itself" message now tells you what to try.**
   Instead of only reporting that the cut could not be made, it points you at
   **Series ▸ Clean up**, which removes the stray traces automatic segmentation

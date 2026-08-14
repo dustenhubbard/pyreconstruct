@@ -383,7 +383,7 @@ def return_view_menu(self):
             None,
             ("fillopacity_act", "Edit fill opacity...", "", self.setFillOpacity),
             # Series-wide sibling of the object menus' selection-scoped
-            # "Reapply palette colors..." (added 2026-08-12, his placement
+            # "Reapply custom color palette to existing objects..." (added 2026-08-12, his placement
             # call). It sits beside "Edit fill opacity..." because that is the
             # one View section about how every object is painted; it is also
             # the only row in this menu that edits series data, which its

@@ -390,7 +390,7 @@ def test_recolor_all_objects_sits_in_view_beside_fill_opacity():
     source ("from palette"), keeps the ASCII ellipsis because it opens a
     confirm dialog, and deliberately does not say "autoseg": the palette
     colors any object name, which is the same reason the context row is
-    "Reapply palette colors...". Locked-skip and undo semantics are pinned in
+    "Reapply custom color palette to existing objects...". Locked-skip and undo semantics are pinned in
     tests/test_autoseg_reapply_colors.py.
     """
     labels = _labels()
