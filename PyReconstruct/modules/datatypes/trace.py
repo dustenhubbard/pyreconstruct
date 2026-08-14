@@ -63,7 +63,7 @@ class Trace():
         Named as the two containers that occur, and not as ``Sequence``,
         because ``str`` satisfies ``Sequence[str]`` and ``bytes`` satisfies
         ``Sequence[int]``. Under the wider annotation ``trace.fill_mode =
-        "solid"`` and a ``bytes`` colour both type-check silently, which is the
+        "solid"`` and a ``bytes`` color both type-check silently, which is the
         classic widening footgun and is not a trade this needed to make: the
         union reports exactly the same mypy total as ``Sequence`` did.
         ``tests/test_trace_color_fill_mode_types.py`` pins both.

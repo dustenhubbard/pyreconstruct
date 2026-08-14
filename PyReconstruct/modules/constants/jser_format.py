@@ -1,9 +1,9 @@
 """Canonical ordering for the .jser writer, plus an opt-in structural pretty printer.
 
-Two writer behaviours live here. Neither changes the schema: every file this
+Two writer behaviors live here. Neither changes the schema: every file this
 module produces is the same JSON document the compact writer produced, with the
 same keys and the same values. Alongside them sits one schema-level constant,
-``JSER_SCHEMA_VERSION`` -- a value, not a behaviour; nothing in this module reads
+``JSER_SCHEMA_VERSION`` -- a value, not a behavior; nothing in this module reads
 it and nothing in the reader dispatches on it. Read its own docstring before
 using it for anything, because what it cannot do is the interesting half.
 

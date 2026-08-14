@@ -276,7 +276,7 @@ def test_the_shipped_v1_21_0_reader_drops_the_schema_version(tmp_path, fixture_c
     colleague's file.
 
     Two things the assertions below deliberately do *not* treat as damage,
-    because they are v1.21.0 behaviours unrelated to this key and both are
+    because they are v1.21.0 behaviors unrelated to this key and both are
     already fixed on main: it re-emits `log_set` into the series object, and it
     forces `align_locked` to true on unpack (`docs/JSER_FORMAT.md` divergence 3).
     """

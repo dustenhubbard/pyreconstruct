@@ -31,7 +31,7 @@ def focus_edit_p(event, series) -> bool:
     `meta` cannot be bound at all on macOS; see `gui/modifiers.py`.
 
     **Held, not matched exactly.** An extra modifier the user happens to be
-    holding does not disqualify the click, which is the behaviour the fixed Ctrl
+    holding does not disqualify the click, which is the behavior the fixed Ctrl
     binding had. A binding of `"ctrl+shift"` needs both held; a binding of
     `"ctrl"` fires whether or not Shift is also down.
 

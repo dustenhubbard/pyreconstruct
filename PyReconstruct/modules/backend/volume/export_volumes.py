@@ -18,7 +18,7 @@ def collada_available() -> bool:
 
     Collada (.dae) export goes through trimesh's Collada writer, which imports
     'pycollada' lazily. That package is NOT bundled by PyInstaller, so a frozen
-    ("packaged") build never has it available. Callers use this to grey out the
+    ("packaged") build never has it available. Callers use this to gray out the
     .dae menu item up front instead of offering an export that can only fail.
     Uses ``find_spec`` so it merely checks importability without importing.
     """

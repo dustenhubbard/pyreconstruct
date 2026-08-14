@@ -268,7 +268,7 @@ def test_border_points_match_scalar_including_negative_wraparound():
 
 
 def test_isanchorpoint_still_raises_past_the_last_row_or_column():
-    """isAnchorPoint kept its exact behaviour, IndexError included."""
+    """isAnchorPoint kept its exact behavior, IndexError included."""
     g = _bare_grid(np.ones((5, 5), dtype=int))
     with pytest.raises(IndexError):
         g.isAnchorPoint(4, 2)

@@ -21,7 +21,7 @@ and a remapping is what was wanted. 1.21.0 therefore changed the binding and
 nothing else, and Shift-click stopped working. The real thing landed afterwards:
 a picker in the *shortcuts* dialog that accepts whatever combination the user
 holds, covered by ``test_focus_edit_modifier_remappable.py``. Ctrl is still the
-default, so everything below is the out-of-the-box behaviour.
+default, so everything below is the out-of-the-box behavior.
 
 The tests below stop the *cut* shape growing back while that lives elsewhere. A
 setting that exists in ``default_settings`` but is read by nothing, or a dialog

@@ -3,11 +3,11 @@
 The check used to read ``isinstance(other_points, tuple or list)``. Python
 evaluates ``tuple or list`` to ``tuple`` before isinstance runs, so the branch
 was always tuple-only. That spelling is wrong -- it names ``list`` and then
-ignores it -- but the behaviour it produced is the one the module's own type
+ignores it -- but the behavior it produced is the one the module's own type
 aliases ask for: ``Point = Tuple[Coordinate, Coordinate]`` and
 ``PointSeq = List[Point]``, so a tuple is one point and a list is a sequence of
 points. The check now reads ``isinstance(other_points, tuple)``, which says the
-same thing on purpose. No argument shape changes behaviour.
+same thing on purpose. No argument shape changes behavior.
 
 These tests exist to stop the obvious "tidy-up" -- rewriting the check to
 ``isinstance(other_points, (tuple, list))`` -- which looks like a fix for the

@@ -289,7 +289,7 @@ class MainWindow(QMainWindow):
         self.field_menu = QMenu(self)
         populateMenu(self, self.field_menu, field_menu_list)
 
-        ## Grey out export formats whose optional dependency is missing
+        ## Gray out export formats whose optional dependency is missing
         ## (e.g. Collada/.dae without 'pycollada', as in frozen builds).
         disable_unavailable_export_formats(self)
 

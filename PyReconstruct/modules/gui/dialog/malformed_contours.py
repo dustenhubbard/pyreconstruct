@@ -379,7 +379,7 @@ class PixelDustDialog(MalformedContoursDialog):
     the pixel-area threshold the user chose. The user inspects the candidates
     (and can "Go to trace" to confirm), then deselects any legitimate small
     trace before "Delete selected" / "Delete all". Reuses all of the selection,
-    navigation, deletion (undoable), and export behaviour of
+    navigation, deletion (undoable), and export behavior of
     MalformedContoursDialog; only the columns (a pixel-area column, plus its
     physical-area equivalent) and the explanatory heading differ.
 

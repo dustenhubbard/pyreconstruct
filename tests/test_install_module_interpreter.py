@@ -37,7 +37,7 @@ Three properties are pinned here, one per failure mode:
 3. A non-zero return code never imports the module, whichever explanation it
    goes on to give.
 
-That last one used to read "the pip-absent path keeps its existing behaviour
+That last one used to read "the pip-absent path keeps its existing behavior
 exactly", and it asserted the one message the ``else`` branch had at the time.
 That is no longer a single message: ``install_module`` now asks
 ``pip_is_reachable()`` first and sends a genuinely pip-less environment to

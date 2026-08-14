@@ -93,7 +93,7 @@ the code.
     salt             an integer counted up from 0, prepended to the payload as
                      `f"{salt}\\x00{payload}"`. Salting resolves a genuine
                      duplicate: two traces on one section can share a contour, a
-                     colour and a point list, and they still need two ids.
+                     color and a point list, and they still need two ids.
 
     serialization    `json.dumps(inputs, sort_keys=True, separators=(",", ":"),
                      ensure_ascii=True)`. `ensure_ascii` keeps the bytes

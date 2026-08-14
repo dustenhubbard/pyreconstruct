@@ -34,7 +34,7 @@ produce one is caught.
 
 So this is a latent crash in a public method, not a reproduced user-facing one.
 The guard is still worth having: it is what makes the shape-``(0,)`` return
-value of ``getAnchorTrace`` -- which is pinned behaviour -- usable by its only
+value of ``getAnchorTrace`` -- which is pinned behavior -- usable by its only
 caller, and it costs one branch on a path that already allocates per contour.
 
 The fix skips the contour: a contour with no anchor points contributes no
@@ -156,7 +156,7 @@ def test_a_lone_pixel_beside_a_real_blob_drops_only_the_lone_pixel():
 
 
 def test_ordinary_grids_are_bit_identical_to_the_pre_fix_result():
-    """No behaviour change wherever every contour has at least one anchor."""
+    """No behavior change wherever every contour has at least one anchor."""
     rng = np.random.default_rng(31)
     checked = 0
     for _ in range(30):

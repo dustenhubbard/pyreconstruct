@@ -191,7 +191,7 @@ def test_the_version_string_is_inside_the_hashed_payload():
 def test_two_identical_rows_in_one_contour_get_two_ids():
     """Salting, and it resolves a real case rather than a theoretical one.
 
-    Two traces on one section can share a contour, a colour and a point list.
+    Two traces on one section can share a contour, a color and a point list.
     They are still two traces and still need two ids.
     """
     first = deriveTraceID(3, "glia", ROW8)
