@@ -1475,7 +1475,7 @@ class TraceView():
     note below makes, applied to the write direction.
 
     Assignment is still the only way in. `__slots__` covers every name the eight
-    properties do not, so `view.colour = ...` raises rather than landing as an
+    properties do not, so `view.color = ...` raises rather than landing as an
     instance attribute that would shadow the column and read back convincingly,
     and `row` stays read-only because a view that could be repointed at another
     row is a different object, not a written one.
@@ -1529,7 +1529,7 @@ class TraceView():
     ## Two slots, so a name the class has no property for cannot land as an
     ## instance attribute on a class whose whole contract is that it does not
     ## hold values. This matters MORE now that the eight fields accept writes,
-    ## not less: `view.colour = ...` under a plain class would silently create
+    ## not less: `view.color = ...` under a plain class would silently create
     ## an attribute and then read back convincingly, which is precisely the
     ## failure a write-through view must not have.
     __slots__ = ("_columns", "_row")

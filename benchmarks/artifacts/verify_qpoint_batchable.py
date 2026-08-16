@@ -19,8 +19,8 @@ Run:  python verify_qpoint_batchable.py
 ERRATA 2026-07-28 — THE 22-26x THIS SCRIPT REPORTS IS NOT ACHIEVABLE, AND THE
 cv2.polylines SWAP WAS REJECTED.
 
-This script draws every trace in ONE `cv2.polylines` call in a single colour
-with no opacity handling. The real `_drawTrace` varies colour, pen width and
+This script draws every trace in ONE `cv2.polylines` call in a single color
+with no opacity handling. The real `_drawTrace` varies color, pen width and
 opacity per trace, and per-trace opacity needs a blend per trace. Measured on
 that real per-trace loop the OpenCV path costs 1814 ms against QPainter's
 155 ms -- roughly 12x SLOWER, not 22-26x faster. Separately, the field never
@@ -149,8 +149,8 @@ if __name__ == "__main__":
           "object construction\nis removable by batching into OpenCV, a "
           "dependency already pinned. No Rust is\nrequired to reclaim it.")
     print("\n!! The cv2 rows above are NOT achievable in _drawTrace. They draw "
-          "every trace in\n!! one call in a single colour; the real function "
-          "varies colour, width and opacity\n!! per trace, where the OpenCV "
+          "every trace in\n!! one call in a single color; the real function "
+          "varies color, width and opacity\n!! per trace, where the OpenCV "
           "path measures 1814 ms against QPainter's 155 ms\n!! (~12x SLOWER) "
           "and lights different pixels (no antialiasing in the field).\n"
           "!! The swap was REJECTED. The hotspot was removed by starmap QPoint "

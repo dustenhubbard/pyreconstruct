@@ -1,10 +1,10 @@
 """A small confetti burst, used as positive feedback for a completed action.
 
 One public function, ``burst_confetti(anchor)``. It spawns a dozen small
-coloured dots over the window containing ``anchor``, throws them out and down in
+colored dots over the window containing ``anchor``, throws them out and down in
 a short arc, fades them out and deletes them. It is decoration: it returns a
 list of the widgets it made so a caller (and the suite) can see what it did, and
-nothing about the application's behaviour depends on the result.
+nothing about the application's behavior depends on the result.
 
 Three implementation choices are worth stating, because the obvious versions of
 each do not work.
@@ -66,8 +66,8 @@ from PySide6.QtWidgets import QWidget
 
 
 # Deliberately a short, unbranded, high-contrast set rather than the trace
-# palette from `colors.py`: this is chrome, and colouring it from the series'
-# own colours would read as though it meant something about the data.
+# palette from `colors.py`: this is chrome, and coloring it from the series'
+# own colors would read as though it meant something about the data.
 CONFETTI_COLORS = (
     "#e6194b", "#3cb44b", "#ffe119", "#4363d8",
     "#f58231", "#911eb4", "#42d4f4", "#f032e6",
@@ -88,7 +88,7 @@ def _clamp(value: int, low: int, high: int) -> int:
 
 
 class ConfettiParticle(QWidget):
-    """One dot. Owns its colour and its animatable ``opacity``.
+    """One dot. Owns its color and its animatable ``opacity``.
 
     Public only so that a test can count the things a burst created and confirm
     they are gone again; nothing outside this module constructs one.

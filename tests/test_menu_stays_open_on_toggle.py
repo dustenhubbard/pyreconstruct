@@ -108,7 +108,7 @@ def menubar_visibility_menu(main_window):
 
     They were under `View > Palette > Visibility` when this file was written.
     The move does not change what is being tested here: `newAction` installs the
-    keep-open filter on the action, not on one particular menu, so the behaviour
+    keep-open filter on the action, not on one particular menu, so the behavior
     follows the rows to their new home. That is the same property the field
     right-click half of this file exercises.
     """

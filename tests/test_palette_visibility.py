@@ -4,7 +4,7 @@ The four palette show/hide preferences (trace palette, section-increment
 buttons, brightness/contrast sliders, scale bar) are a global UI choice and must
 survive a restart. These tests cover the load/save helpers hermetically -- no
 MousePalette widget is built and no real user settings are touched. The fake
-mimics QSettings' INI behaviour (bools are stored as strings), so the `type=bool`
+mimics QSettings' INI behavior (bools are stored as strings), so the `type=bool`
 coercion the helpers rely on is genuinely exercised.
 """
 from PyReconstruct.modules.gui.palette.mouse_palette import (

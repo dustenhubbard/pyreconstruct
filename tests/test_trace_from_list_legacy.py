@@ -14,7 +14,7 @@ evidence the trap was known; it is now unnecessary (and harmless -- it is left
 in place, since removing it is not this change's business).
 
 **Not fixed, deliberately: the legacy per-trace history field is dropped.** It
-is asserted here as current behaviour, not as desired behaviour, so that the
+is asserted here as current behavior, not as desired behavior, so that the
 loss is pinned rather than merely believed, and so it cannot change silently.
 
 What the audit trail claimed was "the 9th per-trace history field is silently
@@ -136,7 +136,7 @@ def test_round_trip_through_get_list_is_stable():
 
 
 # --------------------------------------------------------------------------
-# unchanged behaviour, pinned so the fix is provably behaviour-preserving
+# unchanged behavior, pinned so the fix is provably behavior-preserving
 # --------------------------------------------------------------------------
 
 def test_nine_field_row_still_self_names_over_a_passed_name():

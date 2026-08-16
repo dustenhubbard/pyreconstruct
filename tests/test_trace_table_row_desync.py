@@ -120,7 +120,7 @@ def test_row_past_the_end_of_an_existing_contour_is_skipped():
 
 
 def test_resolvable_rows_are_still_returned_in_order():
-    """No behaviour change for rows the section does have."""
+    """No behavior change for rows the section does have."""
     section, traces = _section_with(a=1, multi=2)
     a = traces["a"][0]
     b, c = traces["multi"]

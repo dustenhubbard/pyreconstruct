@@ -90,9 +90,9 @@ class ErrorReportDialog(QDialog):
 
         The button text is set on both paths, which is what it did before this
         and is left alone deliberately: the label is the honest half of the
-        feedback and its behaviour is not what this change is about. (It is
+        feedback and its behavior is not what this change is about. (It is
         arguably wrong on the no-clipboard path. That is a separate question
-        from whether to animate, and answering it here would hide a behaviour
+        from whether to animate, and answering it here would hide a behavior
         change inside a decoration change.)
 
         The burst is wrapped because this dialog is the error handler. Every

@@ -1846,7 +1846,7 @@ def test_a_view_refuses_the_writes_it_has_no_property_for():
 
     `__slots__` is what closes the hole a plain class leaves open, and it
     matters more now that the eight accept writes, not less: under a plain
-    class `view.colour = ...` would silently create an instance attribute and
+    class `view.colr = ...` would silently create an instance attribute and
     then read back convincingly, which is exactly the failure a write-through
     view must not have. A misspelt field has to raise, not appear to work.
 
@@ -1864,8 +1864,9 @@ def test_a_view_refuses_the_writes_it_has_no_property_for():
     with pytest.raises(AttributeError):
         view.not_a_field = "written"
     ## The near-miss that motivates `__slots__`: one letter off a real field.
+    ## Misspelled on purpose; leave it.
     with pytest.raises(AttributeError):
-        view.colour = [9, 9, 9]
+        view.colr = [9, 9, 9]
     ## And a `Trace` method name, which is the other way a consumer ported from
     ## the object model could land on a name the view has no column for.
     with pytest.raises(AttributeError):

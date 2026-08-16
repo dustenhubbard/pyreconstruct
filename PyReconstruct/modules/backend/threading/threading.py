@@ -80,7 +80,7 @@ class Worker(QRunnable, QObject):
     @Slot()
     def run(self):
         '''
-        Initialise the runner function with passed args.
+        Initialize the runner function with passed args.
         '''
 
         # Retrieve args/kwargs here; and fire processing using them
