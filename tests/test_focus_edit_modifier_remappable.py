@@ -646,7 +646,7 @@ def test_the_window_stores_the_binding_without_treating_it_as_an_action(
 
 
 # ---------------------------------------------------------------------------
-# the setting actually changes behaviour
+# the setting actually changes behavior
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize(

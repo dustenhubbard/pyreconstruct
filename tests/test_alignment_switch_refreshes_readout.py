@@ -173,7 +173,7 @@ def test_the_edit_alignments_dialog_route_refreshes_the_readout(
 
 
 def test_the_shared_method_is_what_refreshes(main_window):
-    """The placement, not one route's behaviour.
+    """The placement, not one route's behavior.
 
     Asserted on ``MainWindow.changeAlignment`` with no menu and no dialog in the
     picture, because that is the contract a new caller relies on: switch through

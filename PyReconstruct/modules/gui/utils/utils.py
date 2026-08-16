@@ -257,7 +257,7 @@ def keepMenuOpenOnToggle(menu):
     field right-click menu's visibility group in `main/context_menu_list.py`),
     and one change in the builder covers both, plus every other toggle the
     builder makes. Because the filter is installed per action rather than per
-    menu, moving a row to another menu carries the behaviour with it.
+    menu, moving a row to another menu carries the behavior with it.
 
     Idempotent by construction. Installing the same filter object twice is
     harmless (Qt moves it to the front of the list rather than adding a second

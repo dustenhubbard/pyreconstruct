@@ -20,12 +20,12 @@ opacity, so the fade the module is built around happened where nothing could see
 it. A test that only counts widgets cannot tell that apart from a working
 animation.
 
-NOT CHECKED HERE, and not by anything else: what it looks like. Colour, the
+NOT CHECKED HERE, and not by anything else: what it looks like. Color, the
 easing curve, how far the arc should throw, whether 12 dots reads as "small" or
 as "too much" -- none of that is asserted, because none of it has a correct
 value the suite could hold it to. It is a judgement about feel, and it is made
 by looking at it. The tests below would pass on a burst that was the wrong
-colour or that went sideways instead of up; they exist to stop the mechanical
+color or that went sideways instead of up; they exist to stop the mechanical
 failures around it (a leak, a crash, a burst on a failed copy, a broken label, a
 burst drawn where it cannot be seen), not to say the animation is good.
 

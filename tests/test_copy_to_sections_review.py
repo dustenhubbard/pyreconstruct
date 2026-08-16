@@ -1,6 +1,6 @@
 """Regression guards for the review feedback on "Copy to sections" (PR #103).
 
-Two behavioural requests came out of that review, and each gets a guard here
+Two behavioral requests came out of that review, and each gets a guard here
 because neither was pinned by a test before:
 
 1. **"copy" greys out when nothing is selected -- do the same for
@@ -73,7 +73,7 @@ def test_copy_to_sections_greys_out_with_copy(qapp, real_series):
     """copytosections_act must ride in trace_actions with copy_act.
 
     checkActions only ever setEnabled()s that list uniformly, so co-membership
-    IS the "greys out exactly like copy" behaviour. Running the real
+    IS the "greys out exactly like copy" behavior. Running the real
     createContextMenus is what makes this a regression test: restating the list
     here would pass even with the line deleted.
     """

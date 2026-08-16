@@ -175,7 +175,7 @@ def field(real_series):
     f = _Field(series, section, states, FOCUS_OBJ)
 
     # A prior, ordinary, *recorded* edit on an unrelated object -- i.e. the user
-    # has done something earlier in the session. Recolouring is the smallest
+    # has done something earlier in the session. Recoloring is the smallest
     # such edit that goes through the normal editTraceAttributes + saveState
     # path.
     bystander = _one_trace(section, BYSTANDER)

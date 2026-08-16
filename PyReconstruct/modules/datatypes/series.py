@@ -1759,7 +1759,7 @@ class Series():
         passed straight into below. The z-tracing path in
         ``FieldWidgetMouse.ztoolRelease`` calls this with
         ``ztrace_color=self.tracing_trace.color``, and a file-loaded trace's
-        colour is a ``list`` -- so a ``tuple``-only annotation here would go on
+        color is a ``list`` -- so a ``tuple``-only annotation here would go on
         rejecting a live caller even after ``Ztrace`` itself was corrected. See
         ``Ztrace.__init__`` for why the union names its two containers rather
         than saying ``Sequence[int]``.
@@ -1854,10 +1854,10 @@ class Series():
 
         ``new_color`` moves with ``Ztrace.__init__``'s ``color``, which it is
         assigned to below. Its one caller, ``FieldWidgetTrace``'s method of the
-        same name, seeds a ``ColorButton`` with the ztrace's current colour and
+        same name, seeds a ``ColorButton`` with the ztrace's current color and
         reads the button back, and the button
         returns that same object untouched unless the user actually picks a new
-        one -- so on a file-loaded ztrace, whose colour is a ``list``, the value
+        one -- so on a file-loaded ztrace, whose color is a ``list``, the value
         arriving here is a list. See ``Ztrace.__init__`` for why the union names
         its two containers rather than saying ``Sequence[int]``.
 

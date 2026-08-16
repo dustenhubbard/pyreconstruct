@@ -2,7 +2,7 @@
 as ``tests/test_trace_color_fill_mode_types.py``, applied to the third and last
 holder of a stale ``color : tuple``.
 
-``Trace`` and ``Flag`` were corrected when the colour annotation was first found
+``Trace`` and ``Flag`` were corrected when the color annotation was first found
 to be wrong. ``Ztrace`` carried the identical annotation and was reported at the
 time rather than swept into that change, so it stayed wrong. The evidence it is
 wrong is a round trip, not a hypothetical:
@@ -13,7 +13,7 @@ wrong is a round trip, not a hypothetical:
 So every ztrace that has been saved and reopened holds a ``list``, and nothing
 normalizes it afterwards -- ``copy`` passes it through, ``getXMLObj`` only
 iterates it. ``dictFromXMLObj`` reaches the same place from the other end,
-building the colour as a list to scale the XML's 0-1 border to 0-255 in place.
+building the color as a list to scale the XML's 0-1 border to 0-255 in place.
 Under ``color : tuple`` mypy called both of those a type error.
 
 Two adjacent annotations move with it, because each feeds the constructor
@@ -21,7 +21,7 @@ directly: ``Series.createZtrace``'s ``ztrace_color`` (passed straight into
 ``Ztrace(...)``, and given ``trace.color`` by the field's z-tracing path) and
 ``Series.editZtraceAttributes``'s ``new_color`` (assigned straight to
 ``ztrace.color``, and read back off a ``ColorButton`` that returns the ztrace's
-existing colour object untouched when the user does not pick a new one).
+existing color object untouched when the user does not pick a new one).
 
 Widening to ``Sequence[int]`` would have been wider than right, and the cost is
 invisible in an error count -- it only shows up in what stops being reported:
@@ -123,9 +123,9 @@ def test_bytes_is_a_sequence_but_is_not_tuple_or_list():
 def test_both_containers_survive_the_jser_round_trip(color):
     """The union is not too narrow, and the premise really is a round trip.
 
-    A tuple colour comes back a list, which is the whole reason the ``tuple``
+    A tuple color comes back a list, which is the whole reason the ``tuple``
     annotation was wrong -- so this pins the premise rather than the annotation.
-    Runtime behaviour is unchanged by any of this: annotations are never
+    Runtime behavior is unchanged by any of this: annotations are never
     consulted at runtime in this tree.
     """
     ztrace = Ztrace("zt", color, [(1.0, 2.0, 0)])
@@ -138,7 +138,7 @@ def test_both_containers_survive_the_jser_round_trip(color):
     assert isinstance(restored.copy().color, list), "and copy() passes it through"
 
 
-def test_dictfromxmlobj_builds_the_colour_as_a_list():
+def test_dictfromxmlobj_builds_the_color_as_a_list():
     """The other live caller that hands ``Ztrace`` a list.
 
     Duck-typed rather than a real ``ZContour``: this pins the container the

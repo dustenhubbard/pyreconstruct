@@ -11,7 +11,7 @@ class Ztrace():
         ``color`` admits a ``list`` as well as a ``tuple``, for the same reason
         as ``Trace.__init__``'s and ``Flag.__init__``'s: a list is not a mistake
         here, it is the shape a file-loaded ztrace has. ``getDict`` writes the
-        colour straight out, a JSON array decodes to a ``list``, and
+        color straight out, a JSON array decodes to a ``list``, and
         ``fromDict`` assigns it verbatim -- so every ztrace that has been
         through a ``.jser`` save/load carries a list, and nothing normalizes it
         afterwards. ``dictFromXMLObj`` builds one as a list too, scaling the

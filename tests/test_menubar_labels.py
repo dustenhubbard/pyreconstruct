@@ -452,7 +452,7 @@ def test_recolor_all_objects_sits_in_view_beside_fill_opacity():
 # --------------------------------------------------------------------------- #
 # Every label here was verified against its handler before being written; see
 # the module docstring and the PR body. A label that confidently lies is worse
-# than a vague one, so items whose behaviour could not be pinned down were left
+# than a vague one, so items whose behavior could not be pinned down were left
 # alone (File > Projects, in particular).
 RENAMED = {
     # attr_name: (old label, new label)
@@ -865,7 +865,7 @@ def test_clear_recents_action_builds_with_no_shortcut(qapp, real_series):
 
 
 # --------------------------------------------------------------------------- #
-# 5. "Open recent" order -- the reported question, pinned as behaviour
+# 5. "Open recent" order -- the reported question, pinned as behavior
 # --------------------------------------------------------------------------- #
 def test_recent_series_order_is_most_recently_opened_first(tmp_path):
     """The user expected reverse chronological. It already is -- by *open* time,

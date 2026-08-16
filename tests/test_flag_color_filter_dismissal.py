@@ -1,4 +1,4 @@
-"""Dismissing the flag list's colour filter picker must change nothing.
+"""Dismissing the flag list's color filter picker must change nothing.
 
 It used to set the filter to **black**, on every platform, including when the
 user pressed Cancel. Two independent defects in four lines of
@@ -120,7 +120,7 @@ def test_cancelled_picker_leaves_an_existing_filter_alone(qapp, monkeypatch):
     FlagTableWidget.setColorFilter(table, use_selected=False)
 
     assert table.color_filter == RED, (
-        "cancelling the picker overwrote the colour filter"
+        "cancelling the picker overwrote the color filter"
     )
     assert not stub.static_calls
     assert table.tables_created == 0, "a cancelled picker rebuilt the table"
@@ -134,7 +134,7 @@ def test_cancelled_picker_does_not_invent_a_filter(qapp, monkeypatch):
     FlagTableWidget.setColorFilter(table, use_selected=False)
 
     assert table.color_filter is None, (
-        f"cancelling the picker set a colour filter of {table.color_filter}; "
+        f"cancelling the picker set a color filter of {table.color_filter}; "
         "black here filters the flag list down to black flags, which reads as "
         "an empty list the user never asked for"
     )
@@ -168,5 +168,5 @@ def test_picker_opens_on_the_current_filter(qapp, monkeypatch):
     assert opened["parent"] is table
     assert opened["currentColor"] == RED, (
         "the picker did not open on the filter it is editing -- set "
-        "DontUseNativeDialog before seeding the colour, not after"
+        "DontUseNativeDialog before seeding the color, not after"
     )

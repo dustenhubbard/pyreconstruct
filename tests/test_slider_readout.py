@@ -239,7 +239,7 @@ def test_cpu_readout_agrees_with_the_converter_for_every_setting():
 
 
 def test_cpu_readout_never_promises_more_than_the_cap():
-    """Behavioural, independent of the format string: no position on the groove
+    """Behavioral, independent of the format string: no position on the groove
     may name more workers than the converter's ceiling."""
     for percent in range(0, 101):
         workers = int(re.search(r"\((\d+) of ", cpuSliderReadout(percent)).group(1))

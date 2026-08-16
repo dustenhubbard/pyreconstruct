@@ -208,7 +208,7 @@ def _stub_color(monkeypatch, rgb):
     Stubs the dialog *class*, not ``QColorDialog.getColor``. The editor no
     longer calls that static: on macOS it opens the shared system "Colors"
     panel, whose close button returns an invalid ``QColor`` and silently
-    discarded the colour the user picked (the bug reported against the trace
+    discarded the color the user picked (the bug reported against the trace
     swatch, which this editor had too). ``_pick_color`` now constructs and owns
     a Qt dialog, so that is what has to be stood in for.
 
@@ -228,7 +228,7 @@ def _stub_color(monkeypatch, rgb):
             """Model cocoa discarding the seed when native is switched off.
 
             A dialog constructed while the native path is still allowed hands
-            its initial colour to the platform helper; flipping
+            its initial color to the platform helper; flipping
             ``DontUseNativeDialog`` on afterwards switches to the Qt widget
             implementation, which was never seeded and sits at white. The
             offscreen platform this suite runs on has no native dialog, so
@@ -288,7 +288,7 @@ def test_cancelled_color_dialog_leaves_palette_unchanged(qapp, monkeypatch):
     assert w.colors == before
 
 
-# --- the picker this editor opens is its own, and opens on the right colour --
+# --- the picker this editor opens is its own, and opens on the right color --
 #
 # Same two defects as the trace swatch, and the same fix; see
 # tests/test_color_picker_dismissal.py, which pins them for ``ColorButton``.
@@ -313,8 +313,8 @@ def test_picker_is_a_dialog_this_code_owns(qapp, monkeypatch):
     assert opened[0]["options"] & QColorDialog.ColorDialogOption.DontUseNativeDialog
     assert opened[0]["parent"] is w
     assert opened[0]["currentColor"] == (1, 2, 3), (
-        "the picker did not open on the colour being edited -- set "
-        "DontUseNativeDialog before seeding the colour, not after"
+        "the picker did not open on the color being edited -- set "
+        "DontUseNativeDialog before seeding the color, not after"
     )
 
 

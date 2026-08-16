@@ -422,7 +422,7 @@ def test_the_length_default_is_a_float_so_a_fractional_length_survives():
     assert isinstance(default_settings["scale_bar_length_um"], float)
 
 
-def test_a_series_that_never_saw_the_keys_reads_the_historic_behaviour(tmp_path):
+def test_a_series_that_never_saw_the_keys_reads_the_historic_behavior(tmp_path):
     series = _series(tmp_path)
     series.setOption("scale_bar_width", 25)
     assert series.getOption("scale_bar_mode") == "screen_fraction"

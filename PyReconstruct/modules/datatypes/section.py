@@ -1711,7 +1711,7 @@ class Section():
         ## What it bought does not justify that, which is the part that makes
         ## this a narrowing and not a loss. A build copies values straight out of
         ## the object model, so the only divergence it can find is a bug in the
-        ## store's own encode/decode -- `fill_mode` codes, the `uint8` colour
+        ## store's own encode/decode -- `fill_mode` codes, the `uint8` color
         ## row, the tag frozenset. That is a property of `SectionColumns` and not
         ## of any particular section, it does not vary from one section to the
         ## next, and `tests/test_columnar_store_parity.py` already tests it
@@ -2827,7 +2827,7 @@ class Section():
             Params:
                 prefix (str): the flag name prefix, e.g. "import-removed"
                 cname (str): the name of the contour
-                trace (Trace): the trace to flag (used for position and colour)
+                trace (Trace): the trace to flag (used for position and color)
                 comment (str): the explanation shown to the reviewer
         """
         x, y = trace.getCentroid()

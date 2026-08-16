@@ -55,7 +55,7 @@ Ctrl+I?" lands on a test that answers it:
 
 **And why a duplicate would have been worse than the empty string it replaced.**
 ``test_menu_verification_headless.test_two_actions_sharing_a_sequence_fire_neither``
-pins the platform behaviour: Qt resolves an ambiguous shortcut by triggering
+pins the platform behavior: Qt resolves an ambiguous shortcut by triggering
 neither action. ``test_no_two_actions_share_a_shortcut_anywhere_reachable`` below
 is the guard that follows from it, and it is deliberately wider than the existing
 ``test_no_two_actions_on_the_window_share_a_shortcut``. That one reads

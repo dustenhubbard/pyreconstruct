@@ -29,7 +29,7 @@ def collada_menu_label(available=None):
 
 
 def disable_unavailable_export_formats(widget):
-    """Grey out 3D-export formats whose optional dependency is missing.
+    """Gray out 3D-export formats whose optional dependency is missing.
 
     Currently only Collada (.dae), which needs 'pycollada' (absent from frozen
     builds). Disabling the menu item up front means a packaged user is never

@@ -1487,7 +1487,7 @@ def test_the_edit_scan_catches_the_two_shapes_that_slipped_past_it(tmp_path):
 
     ## Aliasing through an intermediate name still counts as parameter-derived.
     planted.write_text(
-        "def recolour(traces, color):\n"
+        "def recolor(traces, color):\n"
         "    chosen = traces[0]\n"
         "    chosen.color = color\n",
         encoding="utf-8",
@@ -1606,7 +1606,7 @@ def test_a_two_point_trace_is_forced_open_in_both(real_section):
     ) is False
 
 
-def test_editTraceAttributes_renames_recolours_retags_and_refills(real_section):
+def test_editTraceAttributes_renames_recolors_retags_and_refills(real_section):
     """The composite path, all four fields at once, including a rename.
 
     A rename moves the trace between contours in the object model and between

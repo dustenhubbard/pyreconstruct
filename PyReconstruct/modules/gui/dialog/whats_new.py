@@ -52,10 +52,10 @@ def _space_after_headings(browser, extra=10):
 
 
 class LinkLabel(QLabel):
-    """A rich-text label whose link colour survives a live theme change.
+    """A rich-text label whose link color survives a live theme change.
 
     QLabel builds its ``QTextDocument`` when the text is set, and resolves the
-    anchor colour (``QPalette::Link``) into it at that moment. Plain text keeps
+    anchor color (``QPalette::Link``) into it at that moment. Plain text keeps
     following the palette at paint time; the anchor does not. So switching theme
     through Help > Theme with this dialog already open leaves every linked word
     in the *previous* theme's blue -- measured at 1.85:1 against the dark
@@ -65,7 +65,7 @@ class LinkLabel(QLabel):
     Re-setting the text rebuilds the document against the current palette. It
     has to go through an empty string on the way: ``QLabel::setText`` returns
     early when the new text equals the old, so assigning the same markup back is
-    a no-op -- measured, it leaves the stale colour exactly where it was.
+    a no-op -- measured, it leaves the stale color exactly where it was.
 
     ``PaletteChange`` is the event to catch, and it is the only one needed. It
     arrives on both halves of the app's theme switch: the ``qdark`` branch,
@@ -285,13 +285,13 @@ class WhatsNewDialog(QDialog):
         # Only the word is a click target; the surrounding words are not.
         #
         # The whole line was briefly the anchor, styled to look like ordinary
-        # text so as not to stack two link-coloured rows. Linking just the name
+        # text so as not to stack two link-colored rows. Linking just the name
         # gets the same restraint without the deception: one obvious, ordinary
         # link instead of a whole sentence that was secretly clickable, so it
-        # needs neither a colour override nor the pointing-hand cursor and
+        # needs neither a color override nor the pointing-hand cursor and
         # tooltip that were standing in for the missing affordance. It is also
         # theme-proof for free -- QPalette::Link is whatever the active theme
-        # says it is, resolved at paint, rather than a colour this code samples
+        # says it is, resolved at paint, rather than a color this code samples
         # at construction and gets wrong under the dark theme.
         #
         # `escape()` runs before the split, so the anchor is spliced into
@@ -341,7 +341,7 @@ class WhatsNewDialog(QDialog):
             footer.addStretch(1)
 
         # Same LinkLabel as the byline: this label has always had the same
-        # stale-anchor-colour behaviour on a live theme switch, and fixing one
+        # stale-anchor-color behavior on a live theme switch, and fixing one
         # anchor in the dialog while leaving the other stale would show.
         # AlignTop: the byline renders as two lines (see above), and the link
         # stays level with the byline's first line rather than floating

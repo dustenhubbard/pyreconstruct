@@ -9,7 +9,7 @@ The Scene-menu checkbox reads/writes ``series.getOption/setOption`` on
 ``smoothing_3D`` widget. These tests pin the shared-key contract:
 
 1. The option defaults ON.
-2. The Options-dialog checkbox is initialised from the stored value on open
+2. The Options-dialog checkbox is initialized from the stored value on open
    (built against a real series through the actual widgets).
 3. The Options-dialog setter round-trips the value back to the same key.
 4. Sync both directions: a value written the Scene-menu way is what the Options

@@ -70,7 +70,7 @@ class Points:
         # a PointSeq argument, appending the whole list as if it were a single
         # point. Written `tuple or list`, which Python evaluates to `tuple`
         # before isinstance runs, this branch has always been tuple-only; the
-        # spelling was wrong and the behaviour was right.
+        # spelling was wrong and the behavior was right.
         if isinstance(other_points, tuple):
 
             self.points.append(other_points)

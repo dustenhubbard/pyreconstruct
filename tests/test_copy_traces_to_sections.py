@@ -85,7 +85,7 @@ def test_parse_section_spec():
     assert parse_section_spec("1-3, 4", valid) == ({1, 2, 3, 4}, [], [])
     assert parse_section_spec("2", valid) == ({2}, [], [])
     assert parse_section_spec("0 2 4", valid) == ({0, 2, 4}, [], [])
-    # reversed range is normalised
+    # reversed range is normalized
     assert parse_section_spec("3-1", valid) == ({1, 2, 3}, [], [])
 
     # bad / out-of-range tokens are reported and excluded
@@ -177,7 +177,7 @@ def test_format_section_run_collapses_only_long_runs():
     assert format_section_run([2, 3]) == "2, 3"
     # 3+ consecutive collapse to lo-hi
     assert format_section_run([2, 3, 4, 5, 10, 17]) == "2-5, 10, 17"
-    # unsorted / duplicate input is normalised
+    # unsorted / duplicate input is normalized
     assert format_section_run([17, 2, 10, 3, 3, 5, 4]) == "2-5, 10, 17"
     # multiple long runs
     assert format_section_run([1, 2, 3, 7, 8, 9]) == "1-3, 7-9"

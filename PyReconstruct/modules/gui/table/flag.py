@@ -512,7 +512,7 @@ class FlagTableWidget(DataTable):
             flag = flags[0]
             self.color_filter = tuple(flag.color)
         else:
-            # Qt's own dialog, non-native option before the colour, and an
+            # Qt's own dialog, non-native option before the color, and an
             # explicit accepted/isValid check -- see ColorButton.selectColor,
             # which this mirrors. Two bugs lived in the four lines this
             # replaces. The static QColorDialog.getColor() opens the system
@@ -521,7 +521,7 @@ class FlagTableWidget(DataTable):
             # fired: QColor defines no __bool__, so `bool(QColor())` is True
             # even when isValid() is False. So a dismissed picker fell straight
             # through and set the filter to `(c.red(), c.green(), c.blue())` --
-            # (0, 0, 0) for an invalid colour. Cancelling the picker filtered
+            # (0, 0, 0) for an invalid color. Cancelling the picker filtered
             # this table to black flags and looked like it had emptied itself,
             # on every platform, Cancel included.
             initial = (

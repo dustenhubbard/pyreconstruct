@@ -973,7 +973,7 @@ def test_dialog_byline_is_italic_and_not_muted(qapp):
         assert font.bold() is False
         assert font.underline() is False       # no underline decoration, ever
         assert font.strikeOut() is False
-        # not the disabled colour role: enabled in its own right and with an
+        # not the disabled color role: enabled in its own right and with an
         # enabled ancestry, so the label paints from the Active group.
         assert dlg._byline.isEnabled() is True
         assert dlg._byline.isEnabledTo(dlg) is True
@@ -1060,7 +1060,7 @@ def measure_byline_pixels(dlg):
 
     The line is deliberately two-toned: the project name is an ordinary link
     (blue, underlined) and everything around it is plain italic text. So the ink
-    is split by colour -- a pixel counts as link ink when its blue channel leads
+    is split by color -- a pixel counts as link ink when its blue channel leads
     its red one by a clear margin, which holds in both themes (link #4747fa vs
     text #000000 in the default one, #1a5a90 vs #dfe1e2 under qdark) -- and each
     part is measured on its own.
@@ -1076,10 +1076,10 @@ def measure_byline_pixels(dlg):
     The label is rendered with *grayscale* antialiasing for the measurement, and
     that line is load-bearing rather than tidying. Qt's FreeType backend
     antialiases text with RGB **subpixel** rendering on Linux, which fringes the
-    edge of every glyph with colour: the plain black sentence comes back carrying
+    edge of every glyph with color: the plain black sentence comes back carrying
     pixels like (18, 68, 146) and (148, 220, 238), whose blue channel leads their
     red by far more than the margin above uses to recognise link ink. Split by
-    colour, most of the line then reads as link -- ``link_span`` (1, 432) rather
+    color, most of the line then reads as link -- ``link_span`` (1, 432) rather
     than the project name's (147, 234) -- and the underline check compares the
     name's real 86px rule against a 432px span that is mostly plain text. That is
     exactly how this failed on CI while passing every macOS run, at 87px of
@@ -1127,33 +1127,33 @@ def measure_byline_pixels(dlg):
     def rgb(x, y):
         return QColor(image.pixel(x, y)).getRgb()[:3]
 
-    def luminance(colour):
+    def luminance(color):
         def channel(v):
             v /= 255.0
             return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
-        r, g, b = (channel(c) for c in colour)
+        r, g, b = (channel(c) for c in color)
         return 0.2126 * r + 0.7152 * g + 0.0722 * b
 
     background = rgb(x1 - 1, y0)          # sampled past the end of the text
 
-    def is_ink(colour):
-        return sum(abs(a - b) for a, b in zip(colour, background)) > 30
+    def is_ink(color):
+        return sum(abs(a - b) for a, b in zip(color, background)) > 30
 
-    def is_link_coloured(colour):
-        return colour[2] - colour[0] > 40
+    def is_link_colored(color):
+        return color[2] - color[0] > 40
 
     link_xs, plain_xs, plain_ink, link_ink = [], [], [], []
     for y in range(y0, y1 + 1):
         for x in range(x0, x1 + 1):
-            colour = rgb(x, y)
-            if not is_ink(colour):
+            color = rgb(x, y)
+            if not is_ink(color):
                 continue
-            if is_link_coloured(colour):
+            if is_link_colored(color):
                 link_xs.append(x)
-                link_ink.append(colour)
+                link_ink.append(color)
             else:
                 plain_xs.append(x)
-                plain_ink.append(colour)
+                plain_ink.append(color)
 
     assert plain_xs, "the byline drew no plain text at all"
 
@@ -1171,8 +1171,8 @@ def measure_byline_pixels(dlg):
             best = max(best, current)
         return best
 
-    def separation(colour):
-        a, b = luminance(colour), luminance(background)
+    def separation(color):
+        a, b = luminance(color), luminance(background)
         return (max(a, b) + 0.05) / (min(a, b) + 0.05)
 
     from collections import Counter
@@ -1240,7 +1240,7 @@ def test_dialog_byline_links_only_the_project_name(qapp):
 
     Asserted on the pixels, because this is the whole design of the line: one
     ordinary blue underlined link inside plain italic text. The link ink is
-    found by colour and must be underlined across its own width, while the text
+    found by color and must be underlined across its own width, while the text
     either side of it must not be. The rendered span is also checked against
     where the font metrics say the word falls, so a markup change that linked
     the wrong run of characters -- or the whole sentence -- fails here.
@@ -1253,7 +1253,7 @@ def test_dialog_byline_links_only_the_project_name(qapp):
                          url="https://example.test/releases")
     try:
         m = measure_byline_pixels(dlg)
-        assert m["link_span"] is not None, "nothing in the byline is link-coloured"
+        assert m["link_span"] is not None, "nothing in the byline is link-colored"
 
         # the link is underlined: one unbroken rule the width of the word
         assert m["link_longest_run"] >= 0.85 * m["link_width"], (
@@ -1281,10 +1281,10 @@ def test_dialog_byline_links_only_the_project_name(qapp):
 def test_dialog_byline_stays_legible_under_the_dark_theme(qapp):
     """The byline must stay readable under the theme Help > Theme installs.
 
-    The plain text and the link both take their colour from the palette -- the
+    The plain text and the link both take their color from the palette -- the
     sentence from the ordinary text role, the anchor from QPalette::Link -- so
-    both follow the theme without this code naming a colour. An earlier revision
-    sampled a colour into the markup instead and rendered the line
+    both follow the theme without this code naming a color. An earlier revision
+    sampled a color into the markup instead and rendered the line
     black-on-charcoal at 1.32:1 under qdark, so the dark theme is asserted
     directly rather than assumed to follow from the light one.
     """
@@ -1313,7 +1313,7 @@ def test_dialog_byline_stays_legible_under_the_dark_theme(qapp):
             "the sentence is underlined under qdark"
         )
         assert m["link_span"] is not None, (
-            "the linked name is not link-coloured under qdark"
+            "the linked name is not link-colored under qdark"
         )
     finally:
         if dlg is not None:
@@ -1321,19 +1321,19 @@ def test_dialog_byline_stays_legible_under_the_dark_theme(qapp):
         app.setStyleSheet(previous)   # never leak the theme into other tests
 
 
-def test_dialog_byline_link_colour_follows_a_live_theme_switch(qapp):
-    """Switching theme with the dialog open must recolour the link, not strand it.
+def test_dialog_byline_link_color_follows_a_live_theme_switch(qapp):
+    """Switching theme with the dialog open must recolor the link, not strand it.
 
     QLabel resolves ``QPalette::Link`` into its ``QTextDocument`` when the text
-    is set, so an anchor keeps the colour of whatever theme was active at
+    is set, so an anchor keeps the color of whatever theme was active at
     construction while the plain text around it follows the palette. Left alone,
     switching to the dark theme with this dialog open renders the linked name in
     the light theme's blue at 1.85:1 against the dark background.
 
     The reference is a dialog *built fresh* under the target theme rather than a
-    fixed number: that is the colour the switched dialog is supposed to end up
+    fixed number: that is the color the switched dialog is supposed to end up
     with, and comparing against it cannot drift if qdarkstyle changes its link
-    colour. Both directions are exercised, because the app's theme switch takes
+    color. Both directions are exercised, because the app's theme switch takes
     two different code paths -- the dark branch only sets a stylesheet, the
     light branch also sets a palette.
     """
@@ -1369,7 +1369,7 @@ def test_dialog_byline_link_colour_follows_a_live_theme_switch(qapp):
         assert after_dark["link_ink"] == measure_byline_pixels(fresh_dark)["link_ink"], (
             f"after switching to the dark theme the open dialog's link is "
             f"{after_dark['link_ink']}, but a dialog built fresh under it "
-            "renders a different colour -- the anchor colour is stale"
+            "renders a different color -- the anchor color is stale"
         )
         assert after_dark["link_ink"] != light_ink
 

@@ -38,7 +38,7 @@ primitive-level test cannot see and a workload harness can.
 
 WHAT THIS MODULE PINS THAT IS *KNOWN* AND *INTENDED*
 -----------------------------------------------------
-Two behaviours here look like defects and are not; they are Track A's shape, and
+Two behaviors here look like defects and are not; they are Track A's shape, and
 pinning them is the point, because S3+ (persisted ids) is what flips them and a
 harness with no red test to flip is a harness that will not notice.
 
@@ -550,7 +550,7 @@ def test_an_attribute_edit_moves_the_id_because_copyrow_is_not_wired(real_series
     right thing, and has no caller. Recorded as the harness's headline gap.
 
     Asserted rather than xfailed on purpose: an xfail says "we expect to fix
-    this and have not"; an assertion on the real behaviour says "this is what
+    this and have not"; an assertion on the real behavior says "this is what
     the program does today", which is what a stability harness is for. The day
     it is wired, this test and the rename one below both go red together with
     the primitive-caller test above.
@@ -902,7 +902,7 @@ def test_an_undo_re_identifies_every_trace_on_the_section(real_series):
     )
     survived = {key: before[key] for key in before if after[key] == before[key]}
     assert not survived, (
-        "an undo KEPT some ids. The measured behaviour at 978b4d91 is that it "
+        "an undo KEPT some ids. The measured behavior at 978b4d91 is that it "
         "keeps none, because the rebuild's correlation is the outgoing row map "
         "and the undo replaced every Trace object in it. If ids now survive an "
         f"undo, this pin is the one to turn over: {survived}"
@@ -964,7 +964,7 @@ def test_a_redo_re_identifies_the_contours_it_restores(real_series):
         if key in after_undo and after_redo[key] == after_undo[key]
     }
     assert not kept, (
-        "a redo kept an id in the contour it restored. The measured behaviour "
+        "a redo kept an id in the contour it restored. The measured behavior "
         "at 978b4d91 is that it keeps none there, because the restore hands "
         f"the rebuild Trace objects it has never seen: {kept}"
     )

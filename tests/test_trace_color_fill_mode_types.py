@@ -2,7 +2,7 @@
 not ``Sequence``.
 
 These three were annotated ``tuple``, which called the ordinary ``.jser`` round
-trip a type error: ``fromList`` assigns a colour verbatim from parsed JSON,
+trip a type error: ``fromList`` assigns a color verbatim from parsed JSON,
 where an array decodes to a ``list``, and ``Section``'s import paths
 (``addImportFlag``, plus the two inline constructions in ``importTraces``)
 build a ``Flag`` straight out of ``trace.color``. Widening them was right.
@@ -118,9 +118,9 @@ def test_both_containers_still_round_trip(color, fill_mode):
     """The union is not too narrow: tuple *and* list survive ``getList`` ->
     ``fromList``, which is the shape the widening existed to admit.
 
-    Runtime behaviour here is unchanged by any of this -- annotations are never
+    Runtime behavior here is unchanged by any of this -- annotations are never
     consulted at runtime in this tree -- so this pins the premise, not the
-    annotation: a list colour really is a shape the round trip produces, so an
+    annotation: a list color really is a shape the round trip produces, so an
     annotation that rejects one really is wrong.
     """
     trace = Trace("obj", color)

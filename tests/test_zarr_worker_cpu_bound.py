@@ -132,7 +132,7 @@ def test_determine_cpus_full_uses_all_cores():
 
 
 def test_determine_cpus_half_is_about_half():
-    # independent behavioural check: half should be bounded by full, and on any
+    # independent behavioral check: half should be bounded by full, and on any
     # multi-core machine strictly fewer than full and within rounding of full/2.
     full = determine_cpus(100)
     half = determine_cpus(50)
