@@ -262,7 +262,7 @@ def test_view_keeps_its_order_with_the_four_inserted_after_show_z_traces(
 
     One sanctioned addition since (2026-08-12, his placement call): "Recolor
     all objects from palette..." directly under "Edit fill opacity...", the
-    series-wide sibling of the object menus' "Reapply palette colors...".
+    series-wide sibling of the object menus' "Reapply custom color palette to existing objects...".
     Nothing else moved; tests/test_menubar_labels.py holds the structure guard
     and tests/test_autoseg_reapply_colors.py pins its semantics.
     """
