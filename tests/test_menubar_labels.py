@@ -331,7 +331,7 @@ MENUBAR_BASELINE = [
 #    Checkable, resynced from the stored preference every time Help opens.
 # 5. "Recolor all objects from palette..." in View, directly under "Edit fill
 #    opacity..." (2026-08-12, his placement call). The series-wide sibling of
-#    the object menus' selection-scoped "Reapply palette colors...": recolors
+#    the object menus' selection-scoped "Reapply custom color palette to existing objects...": recolors
 #    every unlocked object with the current palette and seed as one undoable
 #    pass, SKIPPING locked objects rather than aborting on them (an abort
 #    would make a series-wide pass useless the moment one object is locked).
@@ -431,7 +431,7 @@ def test_recolor_all_objects_sits_in_view_beside_fill_opacity():
     source ("from palette"), keeps the ASCII ellipsis because it opens a
     confirm dialog, and deliberately does not say "autoseg": the palette
     colors any object name, which is the same reason the context row is
-    "Reapply palette colors...". Locked-skip and undo semantics are pinned in
+    "Reapply custom color palette to existing objects...". Locked-skip and undo semantics are pinned in
     tests/test_autoseg_reapply_colors.py.
     """
     labels = _labels()
