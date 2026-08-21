@@ -137,8 +137,11 @@ class MainWindow(QMainWindow):
         from PySide6.QtCore import QTimer
         QTimer.singleShot(2500, self.checkForUpdatesStartup)
 
-        ## Stable builds never auto-show the "What's new" popup on launch;
-        ## Help > What's new remains the way to open it by hand.
+        ## The "What's new" popup on launch. On the stable line the preference
+        ## DEFAULTS to suppressed (WHATSNEW_SUPPRESS_DEFAULT), so nothing shows
+        ## unasked; the Help-menu toggle turns it back on and this path then
+        ## follows the ordinary once-per-version rules.
+        QTimer.singleShot(750, self.showWhatsNewStartup)
 
     def _restoredGeometryIsUsable(self) -> bool:
         """Whether the just-restored geometry is usable on the current screens.
@@ -712,11 +715,13 @@ class MainWindow(QMainWindow):
         would invert itself on the next click.
         """
         from PyReconstruct.modules.gui.main.first_launch import (
-            WHATSNEW_SUPPRESS_KEY, whats_new_suppressed,
+            WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT, whats_new_suppressed,
         )
         settings = QSettings("KHLab", "PyReconstruct")
         self.togglewhatsnew_act.setChecked(
-            not whats_new_suppressed(settings.value(WHATSNEW_SUPPRESS_KEY))
+            not whats_new_suppressed(
+                settings.value(WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT)
+            )
         )
 
     def toggleWhatsNewPopup(self):

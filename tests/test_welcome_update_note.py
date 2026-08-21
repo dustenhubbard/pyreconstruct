@@ -70,8 +70,15 @@ def installed_app(monkeypatch):
 
 
 def _stored(value=None):
-    """Set (or clear) the last-seen record in the redirected settings store."""
+    """Set (or clear) the last-seen record in the redirected settings store.
+
+    Also opens the suppression gate: the stable line defaults the popup to off
+    (WHATSNEW_SUPPRESS_DEFAULT), and this file tests what the dialog RENDERS
+    once it shows, not whether the default lets it show. The default has its
+    own tests in test_whats_new_once_per_version.py.
+    """
     settings = QSettings(W.ORG, W.APP)
+    settings.setValue(F.WHATSNEW_SUPPRESS_KEY, False)
     if value is None:
         settings.remove(F.WHATSNEW_KEY)
     else:
