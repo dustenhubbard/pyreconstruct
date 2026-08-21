@@ -395,7 +395,8 @@ OBJECT_ROWS = [
     "    Remove from group...",
     "    Remove from all groups",
     "Set curation >",
-    "    Needs curation",
+    "    Needs curation (assign to me)",
+    "    Needs curation (assign to)...",
     "    Curated",
     "    Clear status",
     "Custom categories >",
@@ -837,7 +838,10 @@ def test_curation_stays_a_submenu():
     assert "Set curation >" in _top_level(_obj_menu())
     curate = next(e for e in _obj_menu()
                   if isinstance(e, dict) and e["text"] == "Set curation")
-    assert _rows(curate["opts"]) == ["Needs curation", "Curated", "Clear status"]
+    assert _rows(curate["opts"]) == [
+        "Needs curation (assign to me)", "Needs curation (assign to)...",
+        "Curated", "Clear status",
+    ]
 
 
 def test_object_menu_attr_names_are_unique_on_both_surfaces():
