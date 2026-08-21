@@ -171,6 +171,10 @@ default_settings = {
     "findcontour_act": "Shift+F",
     "goto_act": "Ctrl+G",
     "open_act": "Ctrl+O",
+    # Help > Search menus. Ctrl+K (Cmd+K on macOS), the command-palette
+    # convention. NOT Ctrl+Shift+/: macOS delivers that chord as Cmd+?, so a
+    # Ctrl+Shift+/ binding never fires there (found in click testing).
+    "searchmenus_act": "Ctrl+K",
     "save_act": "Ctrl+S",
     "manualbackup_act": "Ctrl+Shift+B",
     "newfromimages_act": "Ctrl+N",

@@ -484,6 +484,11 @@ def return_help_menu(self):
             ("togglewhatsnew_act", "Show what's new after updates", "checkbox",
              self.toggleWhatsNewPopup),
             None,
+            # The Qt-drawn in-window menubar never gets macOS's native Help
+            # search, so the app carries its own: a palette that finds any
+            # menubar command by name and runs it.
+            # series form: the key is user-configurable, looked up by act_name
+            ("searchmenus_act", "Search menus...", self.series, self.openMenuSearch),
             ("shortcutshelp_act", "Shortcuts list", "?", self.displayShortcuts),
             None,
             {

@@ -497,6 +497,7 @@ def test_help_menu_offers_whats_new_reopen():
     diag_sentinel = lambda: None
     toggle_sentinel = lambda: None
     stub = SimpleNamespace(
+        series=object(),
         copyCommit=lambda: None, checkForUpdates=lambda: None,
         showWhatsNew=sentinel, displayShortcuts=lambda: None,
         openWebsite=lambda *_: None, downloadExample=lambda: None,
@@ -504,6 +505,7 @@ def test_help_menu_offers_whats_new_reopen():
         viewLogFile=lambda: None, openLogFolder=lambda: None,
         toggleWhatsNewPopup=toggle_sentinel,
         toggleUpdateCheckOnStartup=toggle_sentinel,
+        openMenuSearch=lambda: None,
     )
     opts = return_help_menu(stub)["opts"]
     entries = [o for o in opts if isinstance(o, tuple)]
