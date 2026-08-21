@@ -853,10 +853,16 @@ class MainWindow(QMainWindow):
                         current_time = round(time.time())
                         time_diff = current_time - int(f)
                         if time_diff <= 7:  # the series is currently being operated on
+                            from PyReconstruct.modules.datatypes.series_owner import (
+                                describe_owner, read_owner,
+                            )
+                            holder = describe_owner(read_owner(hidden_series_dir))
                             QMessageBox.information(
                                 self,
                                 "Series In Use",
-                                "This series is already open in another window.",
+                                f"This series is already open in {holder}.\n"
+                                "Close it there before opening it here; two "
+                                "apps writing the same series can corrupt it.",
                                 QMessageBox.Ok
                             )
                             if not self.series:
