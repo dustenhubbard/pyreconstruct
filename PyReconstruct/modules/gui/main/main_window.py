@@ -324,12 +324,18 @@ class MainWindow(QMainWindow):
         ## Check alignment in alignment submenu
         self.changeAlignment(self.series.alignment)
 
-    def checkActions(self, context_menu=False, clicked_trace=None, clicked_label=None):
+    def checkActions(self, clicked_label=None):
         """Define enabled and disabled actions based on field context.
-        
+
+        Took `context_menu` and `clicked_trace` until 2026-08-17. Both existed
+        only to ask whether the right-click had landed on an already-selected
+        item, and no command in either entity scope reads the clicked item --
+        they all act on the selection. See scope_menus_enabled for what that
+        test was doing instead, and the symptom it produced.
+
             Params:
-                context_menu (bool): True if context menu is being generated
-                clicked_trace (Trace): the trace that was clicked on IF the cotext menu is being generated
+                clicked_label: the zarr overlay label under the cursor, when the
+                    label menu is the one being opened
         """
         ## Skip if actions not initialized
         if not self.actions_initialized:
@@ -339,63 +345,27 @@ class MainWindow(QMainWindow):
         selected_traces = field_section.selected_traces
         selected_ztraces = field_section.selected_ztraces
         
-        ## Allow only general field options if
-        ##   1. both traces and z traces highlighted or
-        ##   2. nothing highlighted
-        
-        # which entity the top-level Q8 edit shortcut acts on this pass
-        active = None
+        ## Each entity scope is live when that scope has a selection, and the
+        ## clicked item does not enter into it -- every command in both scopes
+        ## acts on the SELECTION (trace_function / ztrace_function supply it and
+        ## return early when it is empty). See scope_menus_enabled for the two
+        ## rules this replaced and the symptom they produced.
+        trace_live, ztrace_live = scope_menus_enabled(
+            selected_traces, selected_ztraces
+        )
 
-        if not (bool(selected_traces) ^ bool(selected_ztraces)):
+        for a in self.trace_actions:
+            a.setEnabled(trace_live)
 
-            for a in self.trace_actions:
-                a.setEnabled(False)
+        for a in self.ztrace_actions:
+            a.setEnabled(ztrace_live)
 
-            for a in self.ztrace_actions:
-                a.setEnabled(False)
-
-        ## If selected trace in highlighted traces
-
-        elif (
-                (not context_menu and selected_traces) or
-                (context_menu and clicked_trace in selected_traces)
-        ):
-
-            for a in self.ztrace_actions:
-                a.setEnabled(False)
-
-            for a in self.trace_actions:
-                a.setEnabled(True)
-
-            active = "trace"
-
-        ## If selected ztrace in highlighted ztraces
-
-        elif (
-                (not context_menu and field_section.selected_ztraces) or
-                (context_menu and clicked_trace in field_section.selected_ztraces)
-        ):
-
-            for a in self.trace_actions:
-                a.setEnabled(False)
-
-            for a in self.ztrace_actions:
-                a.setEnabled(True)
-
-            active = "ztrace"
-
-        else:
-
-            for a in self.trace_actions:
-                a.setEnabled(False)
-
-            for a in self.ztrace_actions:
-                a.setEnabled(False)
-
-        # Q8 top-level "Edit ... attributes..." shortcut: label + enabled state
-        # follow whichever entity submenu is active (disabled/neutral when the
-        # selection is empty or an ambiguous trace+z-trace mix).
-        edit_text, edit_enabled = edit_selected_label(active)
+        # The one relabelling row that genuinely cannot serve a mixed selection:
+        # it has a single label, so with both kinds selected it goes neutral and
+        # disabled. That is the only thing the old exclusive-or was protecting.
+        edit_text, edit_enabled = edit_selected_label(
+            edit_selected_entity(selected_traces, selected_ztraces)
+        )
         self.editselected_act.setText(edit_text)
         self.editselected_act.setEnabled(edit_enabled)
 
