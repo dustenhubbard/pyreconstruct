@@ -336,6 +336,9 @@ MENUBAR_BASELINE = [
 _CLEAR_RECENTS_ROW = (2, "act", "clearrecents_act")
 _IMPORT_JSER_ALIGNMENTS_ROW = (2, "act", "import_jser_alignments_act")
 _TOGGLE_WHATSNEW_ROW = (1, "act", "togglewhatsnew_act")
+# Help > "Search menus...": the in-window menubar never gets macOS's native
+# Help search, so the app carries its own palette (stable ship, 2026-08-21).
+_SEARCH_MENUS_ROW = (1, "act", "searchmenus_act")
 _RECOLOR_ALL_ROW = (1, "act", "recolorallfrompalette_act")
 MENUBAR_EXPECTED = list(MENUBAR_BASELINE)
 MENUBAR_EXPECTED.insert(
@@ -347,6 +350,9 @@ MENUBAR_EXPECTED.insert(
 )
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "act", "whatsnew_act")) + 1, _TOGGLE_WHATSNEW_ROW
+)
+MENUBAR_EXPECTED.insert(
+    MENUBAR_EXPECTED.index((1, "act", "shortcutshelp_act")), _SEARCH_MENUS_ROW
 )
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "act", "fillopacity_act")) + 1, _RECOLOR_ALL_ROW
@@ -379,7 +385,7 @@ def test_menubar_action_and_submenu_counts():
     series-wide recolor each took the count up one, 116 to 118 together.
     """
     rows = _rows()
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 118
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 119
     assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 32
 
 
