@@ -10,10 +10,18 @@ from PyReconstruct.modules.gui.main import first_launch as F
 
 # ---- fakes ------------------------------------------------------------------
 class FakeSettings:
-    """A QSettings-shaped dict so the gate/resolver can be tested without Qt I/O."""
+    """A QSettings-shaped dict so the gate/resolver can be tested without Qt I/O.
+
+    Seeds the suppression preference to False: the stable line DEFAULTS the
+    popup to off (WHATSNEW_SUPPRESS_DEFAULT), and these tests exercise the
+    once-per-version machinery behind that gate, not the gate itself. The
+    default has its own tests in test_whats_new_once_per_version.py. A test
+    that wants the closed gate passes the key in `data` explicitly.
+    """
 
     def __init__(self, data=None):
-        self._d = dict(data or {})
+        self._d = {F.WHATSNEW_SUPPRESS_KEY: False}
+        self._d.update(data or {})
         self.writes = []
 
     def value(self, key, default=None):
