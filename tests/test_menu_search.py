@@ -1,20 +1,31 @@
-"""Help > "Search menus...": find any menubar command by typing part of its name.
+"""Help-menu search: find any menubar command by typing part of its name.
 
-The menubar here is Qt-drawn and in-window on every platform, so macOS's native
-Help search never applies to it; this palette is the app's own answer. The
-tests drive the real widget against the real MainWindow menubar, offscreen.
+The menubar here is Qt-drawn and in-window on every platform, so macOS's
+native Help search never applies to it; the app's own answer is a search
+field embedded at the top of the Help menu (a QWidgetAction) with results in
+a popup list under it. The tests drive the real widget against the real
+MainWindow menubar, offscreen.
+
+Behavioral guarantees carried over from the palette-dialog era, all still
+asserted here: word-wise matching, label cleaning, disabled commands visible
+but not runnable, the shortcut riding along in the row, and running by PATH
+rather than through stored wrappers (the wrapper-death regression, plus its
+stronger form: a full menubar rebuild between snapshot and run).
 """
 import pytest
 
 from PySide6.QtCore import Qt
 
-from PyReconstruct.modules.gui.dialog.menu_search import (
-    MenuSearchDialog,
+import PyReconstruct.modules.gui.main.menu_search as menu_search_module
+from PyReconstruct.modules.gui.main.menu_search import (
+    MenuSearchField,
     clean_label,
     collect_menu_commands,
     matches,
     resolve_command,
 )
+
+pytestmark = pytest.mark.gui
 
 
 # --------------------------------------------------------------------------- #
@@ -56,21 +67,65 @@ def test_every_menubar_command_is_collected_with_its_path(main_window):
     # separators and submenu titles are not commands
     assert all(" > " in p or p for p in paths)
     assert not any(p.endswith(" > ") for p in paths)
+    # the search field's own QWidgetAction is textless and must not collect
+    assert "" not in paths
 
 
-def test_the_palette_filters_and_runs_a_command(main_window):
-    dialog = MenuSearchDialog(main_window)
-    dialog._query.setText("search menus")
-    assert dialog._results.count() >= 1
-    labels = [dialog._results.item(i).text() for i in range(dialog._results.count())]
+def test_the_field_is_embedded_at_the_top_of_the_help_menu(main_window):
+    """The macOS shape: the field is the Help menu's first row.
+
+    The keyed action and the field are two actions by design: a QWidgetAction
+    cannot carry the series-form configurable shortcut, so searchmenus_act
+    stays the remappable carrier (asserted last) while the field does the
+    searching.
+    """
+    field = main_window.menusearchfield_act
+    assert isinstance(field, MenuSearchField)
+    help_actions = main_window.helpmenu.actions()
+    assert help_actions[0] is field
+    assert help_actions[1].isSeparator()
+    # the carrier row is still present and still labeled
+    assert main_window.searchmenus_act.text() == "Search menus..."
+    assert "Search menus..." in [a.text() for a in help_actions]
+
+
+def _snapshotted_field(main_window):
+    """The embedded field with its per-open snapshot taken, as aboutToShow does."""
+    field = main_window.menusearchfield_act
+    field._snapshot()
+    return field
+
+
+def test_typing_filters_into_the_popup(main_window):
+    field = _snapshotted_field(main_window)
+    field._query.setText("search menus")
+    assert field._results.count() >= 1
+    labels = [field._results.item(i).text() for i in range(field._results.count())]
     assert any("Help > Search menus" in l for l in labels)
+    # the top hit is preselected so Enter can run it immediately
+    assert field._results.currentRow() == 0
+    field._query.clear()
+
+
+def test_an_empty_field_shows_no_popup(main_window):
+    """Nothing typed, nothing shown: the plain Help menu is the empty state."""
+    field = _snapshotted_field(main_window)
+    field._query.setText("search menus")
+    assert field._results.count() >= 1
+    field._query.setText("")
+    assert field._results.count() == 0
+    assert not field._results.isVisible()
+
+
+def test_enter_runs_the_selected_command_by_path(main_window):
+    field = _snapshotted_field(main_window)
 
     # Rows carry the PATH; _run resolves the live action fresh (the open-time
     # wrappers may be dead by then, which is why the indirection exists). The
     # recorder is connected through a fresh wrapper too: signal connections
     # live on the C++ action, so any valid wrapper of it will do.
     target_path = next(
-        c[0] for c in dialog._commands
+        c[0] for c in field._commands
         if c[0].startswith("Help > ") and "check for updates" in c[0].lower()
     )
     fired = []
@@ -79,22 +134,55 @@ def test_the_palette_filters_and_runs_a_command(main_window):
     live.triggered.disconnect()
     live.triggered.connect(lambda: fired.append("ran"))
 
-    dialog._query.setText(target_path.split(" > ")[-1])
+    field._query.setText(target_path.split(" > ")[-1])
     row = next(
-        i for i in range(dialog._results.count())
-        if dialog._results.item(i).data(Qt.ItemDataRole.UserRole) == target_path
+        i for i in range(field._results.count())
+        if field._results.item(i).data(Qt.ItemDataRole.UserRole) == target_path
     )
-    dialog._results.setCurrentRow(row)
-    dialog._run(dialog._results.currentItem())
+    field._results.setCurrentRow(row)
+    field._run(field._results.currentItem())
     assert fired == ["ran"]
-    assert dialog.result() == dialog.DialogCode.Accepted
+    # running dismisses the search: popup down, field cleared for next time
+    assert not field._results.isVisible()
+    assert field._query.text() == ""
+
+
+def test_running_survives_a_full_menubar_rebuild(main_window):
+    """The wrapper-death regression, in its strongest form.
+
+    createMenuBar rebuilds the whole menubar (it runs whenever a series
+    opens), orphaning every action the snapshot walked. Running by PATH must
+    reach the NEW action; a stored wrapper would trigger nothing, or worse.
+    """
+    field = _snapshotted_field(main_window)
+    target_path = next(
+        c[0] for c in field._commands
+        if c[0].startswith("Help > ") and "check for updates" in c[0].lower()
+    )
+    field._query.setText(target_path.split(" > ")[-1])
+    row = next(
+        i for i in range(field._results.count())
+        if field._results.item(i).data(Qt.ItemDataRole.UserRole) == target_path
+    )
+    stale_item = field._results.item(row)
+
+    main_window.createMenuBar()  # every snapshotted wrapper is now stale
+
+    fired = []
+    rebuilt = resolve_command(main_window.menubar, target_path)
+    assert rebuilt is not None
+    rebuilt.triggered.disconnect()
+    rebuilt.triggered.connect(lambda: fired.append("ran"))
+
+    field._run(stale_item)
+    assert fired == ["ran"]
 
 
 def test_a_disabled_command_is_visible_but_not_runnable(main_window):
     """Finding a command teaches where it lives even when it cannot run now.
 
     Wrappers are re-resolved by path throughout: holding one QAction wrapper
-    across dialog construction is exactly what the palette itself cannot do.
+    across the snapshot is exactly what the field itself cannot do.
     """
     target = next(
         c[0] for c in collect_menu_commands(main_window.menubar)
@@ -102,34 +190,111 @@ def test_a_disabled_command_is_visible_but_not_runnable(main_window):
     )
     resolve_command(main_window.menubar, target).setEnabled(False)
     try:
-        dialog = MenuSearchDialog(main_window)
+        field = _snapshotted_field(main_window)
+        field._query.setText(target.split(" > ")[-1])
         row = next(
-            i for i in range(dialog._results.count())
-            if dialog._results.item(i).data(Qt.ItemDataRole.UserRole) == target
+            i for i in range(field._results.count())
+            if field._results.item(i).data(Qt.ItemDataRole.UserRole) == target
         )
-        item = dialog._results.item(row)
+        item = field._results.item(row)
         assert not (item.flags() & Qt.ItemFlag.ItemIsEnabled)
 
         fired = []
         live = resolve_command(main_window.menubar, target)
         live.triggered.connect(lambda: fired.append("no"))
-        dialog._run(item)
+        field._run(item)
         assert fired == []
-        assert dialog.result() != dialog.DialogCode.Accepted
+        field._query.clear()
     finally:
         resolve_command(main_window.menubar, target).setEnabled(True)
 
 
 def test_shortcut_text_rides_along_in_the_result_row(main_window):
-    dialog = MenuSearchDialog(main_window)
-    dialog._query.setText("search menus")
-    labels = [dialog._results.item(i).text() for i in range(dialog._results.count())]
+    field = _snapshotted_field(main_window)
+    field._query.setText("search menus")
+    labels = [field._results.item(i).text() for i in range(field._results.count())]
     # the key's spelling is platform- and configuration-dependent; what the
     # row must show is that A shortcut rides along in parentheses
     assert any("(" in l and ")" in l for l in labels), labels
+    field._query.clear()
 
 
-def test_the_help_menu_carries_the_entry(main_window):
-    assert main_window.searchmenus_act.text() == "Search menus..."
-    help_actions = [a.text() for a in main_window.helpmenu.actions()]
-    assert "Search menus..." in help_actions
+# --------------------------------------------------------------------------- #
+# reveal integration (menu_reveal is merged separately; here it is stubbed)
+# --------------------------------------------------------------------------- #
+def test_arrow_selection_asks_reveal_for_the_selected_path(main_window, monkeypatch):
+    """Arrow-selecting (and hovering) a result calls reveal_path with the PATH.
+
+    menu_reveal lands from its own branch; until then the module's guarded
+    import falls back to a no-op returning False. The call sites go through
+    the module globals, so the contract is testable either way.
+    """
+    revealed = []
+    closed = []
+    monkeypatch.setattr(
+        menu_search_module, "reveal_path",
+        lambda menubar, path: revealed.append(path) or True,
+    )
+    monkeypatch.setattr(
+        menu_search_module, "close_reveal",
+        lambda menubar: closed.append(True),
+    )
+
+    field = _snapshotted_field(main_window)
+    field._query.setText("check for updates")
+    assert field._results.count() >= 1
+    # typing alone must NOT reveal: opening real menus per keystroke is loud
+    assert revealed == []
+
+    field._revealCurrent()  # what the Down-arrow handler calls after moving
+    assert len(revealed) == 1
+    assert "check for updates" in revealed[0].lower()
+    assert field._reveal_active is True
+
+    # hover goes through the same gate
+    field._hover(field._results.item(0))
+    assert len(revealed) == 2
+
+    # dismissing closes the reveal along with the popup
+    field._dismiss()
+    assert closed
+    assert field._reveal_active is False
+
+
+def test_a_reveal_in_flight_suppresses_the_menu_hide_teardown(main_window, monkeypatch):
+    """Revealing opens the target menu, which closes the Help menu; the
+    aboutToHide cleanup must stand down or it would kill the search
+    mid-gesture. Once the reveal is over, the same signal cleans up again."""
+    monkeypatch.setattr(menu_search_module, "reveal_path", lambda mb, p: True)
+    monkeypatch.setattr(menu_search_module, "close_reveal", lambda mb: None)
+
+    field = _snapshotted_field(main_window)
+    field._query.setText("check for updates")
+    assert field._results.count() >= 1
+    field._revealCurrent()
+    assert field._reveal_active is True
+
+    field._menuHiding()  # the Help menu closing FOR the reveal
+    assert field._query.text() == "check for updates"  # search survived
+
+    field._reveal_active = False
+    field._menuHiding()  # an ordinary close
+    assert field._query.text() == ""
+    assert not field._results.isVisible()
+
+
+# --------------------------------------------------------------------------- #
+# the Ctrl+K entry point
+# --------------------------------------------------------------------------- #
+def test_ctrl_k_opens_help_and_focuses_the_field(main_window):
+    """openMenuSearch (searchmenus_act's handler, default Ctrl+K) opens the
+    Help menu and puts the cursor in the embedded field."""
+    main_window.openMenuSearch()
+    try:
+        assert main_window.helpmenu.isVisible()
+        field = main_window.menusearchfield_act
+        assert field._query.hasFocus()
+        # the per-open snapshot ran (aboutToShow), so typing has data to filter
+        assert len(field._commands) > 50
+    finally:
+        main_window.helpmenu.close()

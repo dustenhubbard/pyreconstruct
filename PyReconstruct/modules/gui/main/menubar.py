@@ -485,8 +485,13 @@ def return_help_menu(self):
              self.toggleWhatsNewPopup),
             None,
             # The Qt-drawn in-window menubar never gets macOS's native Help
-            # search, so the app carries its own: a palette that finds any
-            # menubar command by name and runs it.
+            # search, so the app carries its own: a search field embedded at
+            # the top of this menu (a QWidgetAction, inserted in createMenuBar
+            # because these definitions are pure data built without a
+            # QApplication). This row is the field's remappable keyboard
+            # carrier: a QWidgetAction cannot take the series-form shortcut
+            # lookup, so the key lives here and the handler opens Help and
+            # focuses the field.
             # series form: the key is user-configurable, looked up by act_name
             ("searchmenus_act", "Search menus...", self.series, self.openMenuSearch),
             ("shortcutshelp_act", "Shortcuts list", "?", self.displayShortcuts),
