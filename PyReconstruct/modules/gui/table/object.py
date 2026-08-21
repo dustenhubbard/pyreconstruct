@@ -438,6 +438,14 @@ class ObjectTableWidget(DataTable):
             else:
                 
                 curated, user, date = obj_curation
+                # who set the status lives beside the tuple (older files and
+                # builds have no curation_by; the tooltip simply stays empty)
+                curation_by = self.series.getAttr(name, "curation_by")
+                if curation_by:
+                    verb = "curated" if curated else "assigned"
+                    by_line = f"{verb} by {curation_by} on {date}"
+                    for it in (status_item, user_item, date_item):
+                        it.setToolTip(by_line)
                 text_lightness = QApplication.palette().color(QPalette.WindowText).lightness()
 
                 if curated:
