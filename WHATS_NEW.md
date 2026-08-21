@@ -6,6 +6,48 @@ full release notes on GitHub (linked from the dialog).
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-08-21
+
+#### New
+
+- **Search the menus.** Help ▸ Search menus (Cmd+K on macOS, Ctrl+K
+  elsewhere) finds any command, including the right-click ones, shows its
+  shortcut, and runs it with Enter. Pick a menu-bar result and it opens the
+  menus to show you where it lives. The shortcut is remappable like any other.
+- **Recolor objects inside the 3D scene.** A new Object Colors submenu changes
+  colors without leaving the scene, or reverts them to the series color.
+- **Progress bars for bulk section edits.** Setting thickness or
+  brightness/contrast across many sections now shows its progress instead of a
+  frozen window.
+
+#### Changed
+
+- **"Needs curation" assigns to you, instantly.** No dialog. A new "Needs
+  curation (assign to)..." row assigns someone else. The object list now shows
+  who assigned each status and when.
+- **The What's-new popup is off by default.** Help ▸ Show what's new after
+  updates turns it back on; Help ▸ What's new opens the notes any time.
+- **Right-click menus follow the classic layout again.** The redesigned menus
+  move to the PyReconstruct Dev app. Shortcuts now display beside right-click
+  commands on macOS too.
+- **Your update channel comes with the app.** The stable app follows stable
+  releases; PyReconstruct Dev follows the beta channel. The release channel
+  setting in Series Options > Updates has been removed.
+- **The "series in use" message says which app has the series open.** With two
+  builds installed, "another window" was no longer an answer.
+
+#### Fixed
+
+- **Auto-merge works in point-by-point tracing.** It merges what actually
+  overlaps, selected or not, keeps the existing trace's color and tags, and
+  one Ctrl+Z removes the drawn trace and its merge together.
+- **Tags stay where you put them.** Tagging one trace no longer tags every
+  trace edited alongside it, and a refused knife cut no longer brings deleted
+  tags back.
+- **A crash toggling curation columns from the Lists menu.**
+- **The Beta channel offers a stable release when it is the newest build.**
+  Beta means earlier access, not a separate lane.
+
 ## [1.21.3] — 2026-08-13
 
 - **New: Tired of "What's new" popups? Turn them off.** Click "Don't show

@@ -13,9 +13,87 @@ the README's *From source (developers)* section).
 
 ## [Unreleased]
 
-## [1.21.4] - 2026-08-13
+## [1.22.0] - 2026-08-21
+
+### Added
+- **Find any menu command by typing its name.** Help > Search menus (Ctrl+K;
+  Cmd+K on macOS) searches every menu, shows where the command lives and its
+  shortcut, and runs it with Enter.
+- **Object colors can be changed from inside the 3D scene.** A new Object Colors
+  submenu recolors the selected objects, or reverts them to the color stored in
+  the series.
+- **Bulk section edits now show a progress bar.** Setting thickness or
+  brightness/contrast across many sections used to run for up to a minute with
+  nothing on screen. The edit is no faster, but the app now says what it is
+  doing while it works.
+
+### Changed
+- **Marking an object as needing curation no longer asks anything.** It assigns
+  to you and says so in the status bar. Assigning to somebody else moved to its
+  own row, "Needs curation (assign to)...", which keeps the dialog and
+  pre-fills your name. The record now also keeps who set each status, shown as
+  a tooltip on the object list's curation columns.
+- **The What's-new popup no longer opens on launch unless you ask for it.**
+  Turn on "Show what's new after updates" in the Help menu and release notes
+  will appear once per version, the way they used to. Help > What's new still
+  opens them any time.
+- **The right-click menus follow the classic organization again.** The
+  reorganized menus from the recent betas move to the PyReconstruct Dev build
+  while that design settles. The keyboard shortcuts, and their display fix on
+  macOS, stay.
+- **The update channel now comes with the build.** Series Options kept a
+  Stable/Beta radio per series, but with two apps installed side by side the
+  channel is a property of the app, not the series. The stable app follows
+  stable releases and PyReconstruct Dev follows the beta channel. "Check for
+  updates on startup" stays where it was.
+- **The "series in use" message now says which app has the series open.** With
+  two PyReconstruct builds installed side by side, "another window" was no
+  longer an answer.
 
 ### Fixed
+- **Auto-merge now works the same in polygon mode as in pencil mode.** The
+  auto-merge option merged whenever two or more selected closed traces shared
+  the new trace's name, without ever testing whether they touched. Whether the
+  pre-existing trace happened to be selected differs between the two tracing
+  gestures, so a closed polygon trace often refused to merge where a pencil
+  trace merged, and two selected same-name traces drawn far apart merged when
+  neither should have. Finishing a closed trace now merges it with every
+  same-name closed trace on the section that actually overlaps it, selected or
+  not, and leaves non-overlapping ones alone, so drawing traces apart is still
+  the way to keep separate traces under one name. The merged trace keeps the
+  existing trace's color and tags rather than the palette's fresh copy.
+- **One undo now fully reverts an auto-merged trace.** Drawing a trace and the
+  merge it triggered were recorded as separate undo states, so one Ctrl+Z
+  landed on the in-between state: the original trace plus the un-merged new
+  one, a composite that was never on screen. The draw and its auto-merge are
+  now a single undo step, so one undo restores the section exactly as it was
+  before the trace was drawn and one redo brings the merged result back.
+- **Tagging one trace no longer tags every other trace edited alongside it.**
+  Setting tags on a selection goes through `Section.editTraceAttributes`, whose
+  replace branch assigned the caller's set object itself once per trace, so all
+  of them ended up holding the same `set` rather than one each. Tags are added in
+  place elsewhere (`Trace.addTag` is `self.tags.add(tag)`, and the import
+  conflict flagger calls `trace.tags.add(...)`), so a later single-trace tag
+  appeared on the whole group. Pasting attributes aliased the clipboard trace's
+  own set as well, which put the stray tag back on the clipboard. Each trace now
+  gets its own copy.
+- **A refused knife cut no longer puts deleted tags back on the trace.**
+  `cutTrace` combined every selected trace's tags onto the first one, in place,
+  before it had decided whether the cut could happen at all. When the cut was
+  then refused (a self-intersecting outline, a knife click with no drag, a
+  threshold that discards every piece), the message said the object was left
+  unchanged, but the first trace had already absorbed the others' tags, so a
+  tag just deleted from it reappeared. The tags are now combined on a copy that
+  only the pieces of a completed cut are built from.
+- **Fixed a crash toggling curation columns from the Lists menu.** The command
+  had been broken all along; the new menu search made it reachable, and the
+  first real use crashed it.
+- **Keyboard shortcuts now appear in the right-click menus on macOS.** Qt hides
+  shortcut text in context menus when the platform asks it to, and macOS asks by
+  default. So Ctrl+H showed beside "Hide selected traces" in the menubar and
+  nothing beside the same row in the field menu, which is the surface where that
+  row is actually used. Every menu row the app builds now opts in, so the keys
+  read the same on Windows, Linux and macOS.
 - **The Beta update channel now offers a stable release when it is the newest one.**
   The Beta channel only ever looked at pre-releases, so once v1.21.0 shipped as a
   stable build and the superseded 1.21.0 betas were retired, a Beta-channel user was
