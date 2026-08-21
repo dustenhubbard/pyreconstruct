@@ -191,6 +191,20 @@ class MainWindow(QMainWindow):
         ## Populate menu bar with menus and options
         populateMenuBar(self, self.menubar, menu)
 
+        ## Embed the macOS-style search field at the top of the Help menu.
+        ## Built here rather than in return_help_menu: the menu definitions
+        ## are pure data that tests construct without a QApplication, and a
+        ## QWidgetAction needs live widgets. The remappable key (Ctrl+K)
+        ## stays on searchmenus_act, the visible "Search menus..." row in the
+        ## definitions, whose handler (openMenuSearch) opens Help and focuses
+        ## this field. Rebuilt per createMenuBar pass and parented to the
+        ## Help menu, so it dies with the menu it decorates.
+        from PyReconstruct.modules.gui.main.menu_search import MenuSearchField
+        self.menusearchfield_act = MenuSearchField(self, self.helpmenu)
+        first_help_action = self.helpmenu.actions()[0]
+        self.helpmenu.insertAction(first_help_action, self.menusearchfield_act)
+        self.helpmenu.insertSeparator(first_help_action)
+
         ## Seed menubar checkables that have no aboutToShow resync hook from the
         ## live option, so they are correct on first show. checkActions keeps
         ## them synced thereafter (see its View-toggle block). NOTE: the menubar
@@ -679,6 +693,22 @@ class MainWindow(QMainWindow):
                 settings.value(WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT)
             )
         )
+
+    def openMenuSearch(self):
+        """Open the Help menu with its embedded search field focused (Ctrl+K).
+
+        The keyboard split: the field itself is a QWidgetAction and cannot
+        carry the configurable-shortcut machinery (newAction's series-form
+        lookup builds plain QActions from the pure-data menu definitions), so
+        the remappable key stays on searchmenus_act, the visible "Search
+        menus..." row, which delegates here. Clicking that row lands here
+        too: the click has already closed the Help menu, so reopening it with
+        the field focused is the row doing its job.
+        """
+        help_action = self.helpmenu.menuAction()
+        corner = self.menubar.actionGeometry(help_action).bottomLeft()
+        self.helpmenu.popup(self.menubar.mapToGlobal(corner))
+        self.menusearchfield_act.focusField()
 
     def toggleWhatsNewPopup(self):
         """Persist the Help-menu toggle: checked means the popup may show.
