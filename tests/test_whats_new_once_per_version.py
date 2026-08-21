@@ -404,6 +404,51 @@ def test_startup_shows_the_notes_once_per_version_in_the_real_window(
     assert main_window._whatsnew_dialog is None
 
 
+def test_launch_never_schedules_the_whats_new_popup(
+    qapp, series_jser, qsettings_snapshot, main_window_dialogs, monkeypatch
+):
+    """The stable build never auto-shows the What's-new popup on launch.
+
+    On this release line the popup is a Help-menu item only: constructing the
+    window must not put ``showWhatsNewStartup`` on a timer, whatever the gate
+    would have said. The window is built here rather than taken from the
+    ``main_window`` fixture because the timer fires (or doesn't) inside
+    ``__init__``, before a fixture-provided window ever reaches the test body.
+    ``QTimer`` is swapped for a recorder in the module the constructor imports
+    it from, so every ``singleShot`` the constructor schedules is captured --
+    and dropped, so nothing recorded here can fire into a later test. The
+    update check still being scheduled is the control that proves the recorder
+    saw the constructor's timers at all, rather than passing vacuously.
+    """
+    import sys as _sys
+
+    from PySide6 import QtCore
+
+    from PyReconstruct.modules.gui.main import MainWindow
+
+    real_qtimer = QtCore.QTimer
+    scheduled = []
+
+    class RecordingQTimer(real_qtimer):
+        @staticmethod
+        def singleShot(msec, *args):
+            scheduled.append(getattr(args[-1], "__name__", repr(args[-1])))
+            # recorded, not scheduled: nothing can fire after the test ends
+
+    monkeypatch.setattr(QtCore, "QTimer", RecordingQTimer)
+
+    previous_excepthook = _sys.excepthook
+    window = MainWindow(str(series_jser))
+    try:
+        assert "showWhatsNewStartup" not in scheduled
+        assert "checkForUpdatesStartup" in scheduled    # the recorder saw init
+    finally:
+        _sys.excepthook = previous_excepthook
+        window.series.modified = False
+        window.close()
+        window.deleteLater()
+
+
 # One main-branch test is deliberately absent on this release line:
 # test_the_main_window_fixture_closes_the_gate_before_the_startup_timer asserts
 # that the main_window fixture pre-seeds last_whatsnew_version, a conftest
