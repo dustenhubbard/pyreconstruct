@@ -6,48 +6,36 @@ the open series on every Help open, and the source-install branch is asked
 for by the reinstall prompt instead of stored-only. These pin the removal and
 the Help toggle round trip.
 """
-import os
-import shutil
-
 import pytest
 
 from PyReconstruct.modules.datatypes.series import Series
 from PyReconstruct.modules.backend.settings_store import DictSettingsStore
 from PyReconstruct.modules.gui.dialog.all_options import AllOptionsDialog
 
-FIXTURE = os.path.join(
-    os.path.dirname(__file__), "..", "PyReconstruct",
-    "assets", "checker", "files", "shapes1.jser",
-)
-
 pytestmark = pytest.mark.gui
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def qapp():
     from PySide6.QtWidgets import QApplication
     return QApplication.instance() or QApplication(["test"])
 
 
-def _series(tmp_path):
-    if not os.path.exists(FIXTURE):
-        pytest.skip("fixture shapes1.jser not found")
-    fp = str(tmp_path / "s.jser")
-    shutil.copyfile(FIXTURE, fp)
-    series = Series.openJser(fp)
-    series.setSettingsStore(DictSettingsStore())
-    return series
+@pytest.fixture
+def series(series_jser):
+    s = Series.openJser(str(series_jser))
+    s.setSettingsStore(DictSettingsStore())
+    yield s
+    s.close()
 
 
-def test_series_options_has_no_updates_tab(qapp, tmp_path):
-    series = _series(tmp_path)
+def test_series_options_has_no_updates_tab(qapp, series):
     dlg = AllOptionsDialog(None, series)
     assert "updates" not in dlg.all_widgets
     from PySide6.QtWidgets import QTabWidget
     (tabs,) = dlg.findChildren(QTabWidget)
     labels = [tabs.tabText(i) for i in range(tabs.count())]
     assert "Updates" not in labels
-    series.close()
 
 
 def test_help_toggle_round_trips_the_startup_check(main_window):
