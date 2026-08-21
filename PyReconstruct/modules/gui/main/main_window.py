@@ -137,8 +137,8 @@ class MainWindow(QMainWindow):
         from PySide6.QtCore import QTimer
         QTimer.singleShot(2500, self.checkForUpdatesStartup)
 
-        ## First-launch / post-update "What's new" (once per version, dismissible)
-        QTimer.singleShot(750, self.showWhatsNewStartup)
+        ## Stable builds never auto-show the "What's new" popup on launch;
+        ## Help > What's new remains the way to open it by hand.
 
     def _restoredGeometryIsUsable(self) -> bool:
         """Whether the just-restored geometry is usable on the current screens.
