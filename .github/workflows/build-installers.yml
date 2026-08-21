@@ -58,13 +58,18 @@ jobs:
           - { os: macos-15-intel, plat: macOS,   arch: x86_64 }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0          # setuptools-scm needs full history + tags
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
+          # Cache pip's wheel cache between runs, keyed on the dependency
+          # manifest: the vtk/scipy/opencv stack is most of each leg's
+          # install time and it only changes when pyproject.toml does.
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
 
       - name: Install project, build tools, PyInstaller
         run: |
@@ -124,7 +129,7 @@ jobs:
           ARCH="${{ matrix.arch }}" bash packaging/macos/make_dmg.sh
           mv PyReconstruct-*.dmg dist-assets/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: installer-${{ matrix.plat }}-${{ matrix.arch }}
           path: dist-assets/*
@@ -138,10 +143,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4          # needed for packaging/linux/ + release notes
+      - uses: actions/checkout@v7          # needed for packaging/linux/ + release notes
         with:
           fetch-depth: 0                   # full history + tags for the changelog link
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: dist
           merge-multiple: true
