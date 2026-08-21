@@ -157,12 +157,14 @@ class MenuStubField:
             self, is_in_field, list_ops=list_ops, find_in_field=find_in_field
         )
 
-    def getObjMenu(self, list_ops=None):
+    def getObjMenu(self, list_ops=None, is_in_field=True):
         from PyReconstruct.modules.gui.main.context_menu_list import (
             get_context_menu_list_obj,
         )
 
-        return get_context_menu_list_obj(self, list_ops=list_ops)
+        return get_context_menu_list_obj(
+            self, list_ops=list_ops, is_in_field=is_in_field
+        )
 
     def getZtraceMenu(self, list_ops=None):
         from PyReconstruct.modules.gui.main.field_widget_2_trace import (
