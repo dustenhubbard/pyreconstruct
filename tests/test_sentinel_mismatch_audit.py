@@ -303,12 +303,13 @@ def _trace_field(recorded):
 @pytest.mark.parametrize(
     "builder",
     [
-        # the field menu's top strip
-        lambda field: cml.get_hoisted_trace_actions(field),
+        # the field's trace submenu (the stable line keeps upstream's
+        # organization, so the row lives here rather than on a top strip)
+        lambda field: cml.get_context_menu_list_trace(field, is_in_field=True),
         # the trace list's own copy of the same action
         lambda field: cml.get_context_menu_list_trace(field, is_in_field=False),
     ],
-    ids=["field_top_strip", "trace_list"],
+    ids=["field_trace_menu", "trace_list"],
 )
 def test_merge_attributes_only_action_uses_the_real_keyword(builder):
     """The action passed merge_attrs=True, but the keyword is

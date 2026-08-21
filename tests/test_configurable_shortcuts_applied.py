@@ -50,13 +50,6 @@ pytestmark = pytest.mark.gui
 # the two known offenders
 # --------------------------------------------------------------------------- #
 KNOWN_UNAPPLIED = {
-    # Built once, in `get_context_menu_list_obj` in
-    # `PyReconstruct/modules/gui/main/context_menu_list.py`, with `""` as its
-    # shortcut argument. There is no other construction site, so `Ctrl+Shift+H`
-    # has never bound anything: "Set hosts..." is listed in the shortcuts dialog
-    # with a key that does nothing. The fix is to pass the series (one word), and
-    # it is not in this PR because that file is being edited by another open PR.
-    "sethosts_act": "no construction site passes a series (context_menu_list.py)",
     # Built in `return_view_menu` in `PyReconstruct/modules/gui/main/menubar.py`
     # with the literal `"Home"`. The key therefore works out of the box, and a
     # rebind in the shortcuts dialog is stored but silently discarded on the next
@@ -127,7 +120,7 @@ def _main_window_stub(series):
     """
     from PySide6.QtWidgets import QMenuBar, QWidget
 
-    from test_context_menu_frequency import _FieldStub
+    from menu_test_helpers import _FieldStub
 
     class _Reaches:
         """Answers any attribute chain and any call.
