@@ -52,10 +52,18 @@ RELEASE_BODY = "## 1.21.0\n\n- Added the shiny new thing.\n- REMOTE-ONLY-SENTINE
 
 
 class FakeSettings:
-    """A QSettings-shaped dict, so the gate can be driven without Qt I/O."""
+    """A QSettings-shaped dict, so the gate can be driven without Qt I/O.
+
+    Seeds the suppression preference to False: the stable line defaults the
+    popup to off, and this file's sequence tests exercise the once-per-version
+    machinery behind that gate. The default itself is tested by
+    test_launch_shows_nothing_while_the_preference_is_unset, which uses the
+    real (redirected) QSettings and clears the key.
+    """
 
     def __init__(self, data=None):
-        self._d = dict(data or {})
+        self._d = {F.WHATSNEW_SUPPRESS_KEY: False}
+        self._d.update(data or {})
         self.writes = []
 
     def value(self, key, default=None):
@@ -64,6 +72,21 @@ class FakeSettings:
     def setValue(self, key, val):
         self._d[key] = val
         self.writes.append((key, val))
+
+
+@pytest.fixture(autouse=True)
+def open_the_suppression_gate(qapp):
+    """Open the stable default's gate before each test in this file.
+
+    The stable line defaults the popup to suppressed
+    (WHATSNEW_SUPPRESS_DEFAULT), and almost everything here exercises the
+    once-per-version machinery BEHIND that gate. The two tests of the default
+    itself clear or set the key in their own bodies, after this runs, so they
+    stay in control of it.
+    """
+    from PySide6.QtCore import QSettings
+
+    QSettings(W.ORG, W.APP).setValue(F.WHATSNEW_SUPPRESS_KEY, False)
 
 
 @pytest.fixture(autouse=True)
@@ -404,49 +427,54 @@ def test_startup_shows_the_notes_once_per_version_in_the_real_window(
     assert main_window._whatsnew_dialog is None
 
 
-def test_launch_never_schedules_the_whats_new_popup(
-    qapp, series_jser, qsettings_snapshot, main_window_dialogs, monkeypatch
+def test_launch_shows_nothing_while_the_preference_is_unset(
+    qapp, series_jser, qsettings_snapshot, main_window_dialogs
 ):
-    """The stable build never auto-shows the What's-new popup on launch.
+    """The stable default: an unset preference means the popup stays away.
 
-    On this release line the popup is a Help-menu item only: constructing the
-    window must not put ``showWhatsNewStartup`` on a timer, whatever the gate
-    would have said. The window is built here rather than taken from the
-    ``main_window`` fixture because the timer fires (or doesn't) inside
-    ``__init__``, before a fixture-provided window ever reaches the test body.
-    ``QTimer`` is swapped for a recorder in the module the constructor imports
-    it from, so every ``singleShot`` the constructor schedules is captured --
-    and dropped, so nothing recorded here can fire into a later test. The
-    update check still being scheduled is the control that proves the recorder
-    saw the constructor's timers at all, rather than passing vacuously.
+    The startup path still runs (the timer is scheduled, the gate is asked);
+    what keeps stable quiet is WHATSNEW_SUPPRESS_DEFAULT. A user who never
+    touched the Help toggle launches, and nothing appears unasked.
     """
-    import sys as _sys
+    from PySide6.QtCore import QSettings
 
-    from PySide6 import QtCore
+    settings = QSettings(W.ORG, W.APP)    # the suite's redirected store
+    # earlier tests in this file share the store; this test is about the
+    # UNSET state, so clear both keys rather than trusting the order
+    settings.remove(W.WHATSNEW_SUPPRESS_KEY)
+    settings.remove(W.WHATSNEW_KEY)
 
-    from PyReconstruct.modules.gui.main import MainWindow
+    shown = []
+    result = W.maybe_show_whats_new(
+        None, settings=settings, current="9.9.9", show=lambda *a, **k: shown.append(a)
+    )
+    assert result is False
+    assert shown == []
+    # and the gate declined WITHOUT consuming the version: turning the popup
+    # on later must hand back the ordinary once-per-version rules intact
+    assert settings.value(W.WHATSNEW_KEY) is None
 
-    real_qtimer = QtCore.QTimer
-    scheduled = []
 
-    class RecordingQTimer(real_qtimer):
-        @staticmethod
-        def singleShot(msec, *args):
-            scheduled.append(getattr(args[-1], "__name__", repr(args[-1])))
-            # recorded, not scheduled: nothing can fire after the test ends
+def test_turning_the_toggle_on_restores_the_popup(
+    qapp, series_jser, qsettings_snapshot, main_window_dialogs
+):
+    """The toggle is real, not decoration: enabling it re-arms the popup.
 
-    monkeypatch.setattr(QtCore, "QTimer", RecordingQTimer)
+    This is the behavior the maintainer asked for on the stable line after the
+    first cut removed the startup path outright and left the Help toggle
+    controlling nothing: keep the functionality, default it to off.
+    """
+    from PySide6.QtCore import QSettings
 
-    previous_excepthook = _sys.excepthook
-    window = MainWindow(str(series_jser))
-    try:
-        assert "showWhatsNewStartup" not in scheduled
-        assert "checkForUpdatesStartup" in scheduled    # the recorder saw init
-    finally:
-        _sys.excepthook = previous_excepthook
-        window.series.modified = False
-        window.close()
-        window.deleteLater()
+    settings = QSettings(W.ORG, W.APP)
+    settings.setValue(W.WHATSNEW_SUPPRESS_KEY, False)   # what the toggle writes
+
+    shown = []
+    result = W.maybe_show_whats_new(
+        None, settings=settings, current="9.9.9", show=lambda *a, **k: shown.append(a)
+    )
+    assert result is True
+    assert len(shown) == 1
 
 
 # One main-branch test is deliberately absent on this release line:
@@ -468,10 +496,14 @@ def test_help_toggle_reflects_the_stored_state_when_the_menu_opens(main_window):
     from PySide6.QtCore import QSettings
 
     settings = QSettings(W.ORG, W.APP)    # the suite's redirected store
+    # back to the unset state (the file's autouse fixture opens the gate)
+    settings.remove(F.WHATSNEW_SUPPRESS_KEY)
+    main_window.syncWhatsNewPopupToggle()
 
-    # freshly built with nothing stored: the popup is on, the toggle says so
+    # freshly built with nothing stored: the stable default is OFF, and the
+    # toggle says so instead of showing a checked box for a silent popup
     assert main_window.togglewhatsnew_act.isCheckable() is True
-    assert main_window.togglewhatsnew_act.isChecked() is True
+    assert main_window.togglewhatsnew_act.isChecked() is False
 
     # the dialog's button flips the preference behind the menu's back...
     settings.setValue(F.WHATSNEW_SUPPRESS_KEY, True)
@@ -497,9 +529,21 @@ def test_help_toggle_reenables_the_popup(main_window):
     from PySide6.QtCore import QSettings
 
     settings = QSettings(W.ORG, W.APP)
+    # back to the unset state (the file's autouse fixture opens the gate);
+    # this test is about the toggle's round trip FROM the stable default
+    settings.remove(F.WHATSNEW_SUPPRESS_KEY)
+    main_window.syncWhatsNewPopupToggle()
 
-    # off: the click unchecks the toggle and persists the suppression
+    # the stable default: fresh store, toggle starts OFF; the first click
+    # checks it and persists suppression=False
+    assert main_window.togglewhatsnew_act.isChecked() is False
+    main_window.togglewhatsnew_act.trigger()
     assert main_window.togglewhatsnew_act.isChecked() is True
+    assert not F.whats_new_suppressed(
+        settings.value(F.WHATSNEW_SUPPRESS_KEY, F.WHATSNEW_SUPPRESS_DEFAULT)
+    )
+
+    # off again: the click unchecks the toggle and persists the suppression
     main_window.togglewhatsnew_act.trigger()
     assert main_window.togglewhatsnew_act.isChecked() is False
     assert F.whats_new_suppressed(settings.value(F.WHATSNEW_SUPPRESS_KEY))
@@ -508,7 +552,7 @@ def test_help_toggle_reenables_the_popup(main_window):
         show=lambda *a, **k: pytest.fail("suppressed popup was shown"),
     ) is False
 
-    # back on: the popup is eligible again under the once-per-version rules
+    # and back on: the popup is eligible again under the once-per-version rules
     main_window.togglewhatsnew_act.trigger()
     assert main_window.togglewhatsnew_act.isChecked() is True
     assert not F.whats_new_suppressed(settings.value(F.WHATSNEW_SUPPRESS_KEY))
@@ -532,6 +576,9 @@ def test_startup_logs_that_it_showed_the_dialog(main_window, monkeypatch, capsys
     from PySide6.QtCore import QSettings
 
     settings = QSettings(W.ORG, W.APP)              # redirected by the suite
+    # open the stable default's gate: this test is about the log line the
+    # startup hook writes when the dialog shows, not about the default
+    settings.setValue(F.WHATSNEW_SUPPRESS_KEY, False)
     settings.setValue(F.WHATSNEW_KEY, "1.20.3")
     monkeypatch.setattr(W, "current_version_str", lambda: "1.21.0")
 

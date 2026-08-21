@@ -25,7 +25,7 @@ from functools import partial
 from PyReconstruct.modules.backend.updater.install_info import current_version_str
 from PyReconstruct.modules.gui.main.first_launch import (
     whats_new_due, whats_new_content, github_release_url, WHATSNEW_KEY,
-    WHATSNEW_SUPPRESS_KEY, whats_new_suppressed,
+    WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT, whats_new_suppressed,
     ON_DEMAND_CAP, HOMEPAGE_URL, LINKED_NAME,
 )
 
@@ -412,7 +412,7 @@ def maybe_show_whats_new(parent, settings=None, current=None, show=None,
         settings = QSettings(ORG, APP)
     if current is None:
         current = current_version_str()
-    if whats_new_suppressed(settings.value(WHATSNEW_SUPPRESS_KEY)):
+    if whats_new_suppressed(settings.value(WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT)):
         return False
     stored = settings.value(key)
     if not whats_new_due(stored, current):

@@ -34,6 +34,12 @@ WHATSNEW_KEY = "last_whatsnew_version"
 # the next launch.
 WHATSNEW_SUPPRESS_KEY = "suppress_whatsnew"
 
+# The STABLE line ships with the popup off: nothing appears unasked until the
+# user turns "Show what's new after updates" on in the Help menu. The toggle
+# and the dialog's "Don't show again" button keep working either way; this is
+# only what an unset preference means. The test line defaults the other way.
+WHATSNEW_SUPPRESS_DEFAULT = True
+
 
 def whats_new_suppressed(stored):
     """True when the stored preference says never to show the popup.
