@@ -292,6 +292,32 @@ def newMenu(widget : QWidget, container, menu_dict : dict):
         addItem(widget, menu, item)
 
 
+def showShortcutInContextMenus(action : QAction):
+    """Let a menu row display the key it is bound to, on every platform.
+
+    Qt hides shortcut text in CONTEXT menus when
+    Qt.AA_DontShowShortcutsInContextMenus is set, and macOS sets it by default
+    (measured on cocoa, PySide6: the attribute reads True and every action's
+    isShortcutVisibleInContextMenu() reads False, while the same check on
+    Windows and Linux reads False/True). Menubar menus are unaffected, so the
+    result was a split that only Mac users saw: Ctrl+H was printed beside "Hide
+    selected traces" in the menubar and blank beside the same row in the field's
+    right-click menu -- the surface where that row is actually used.
+
+    The platform default is aimed at applications whose context menus are
+    incidental. Here the field's right-click menu is the primary way the app is
+    driven, and its shortcut-bearing rows were put on the top strip precisely so
+    the keys would be "on display" (the frequency-first redesign's own words).
+    Hiding them there defeats the arrangement.
+
+    Opted in per action rather than by clearing the application attribute: the
+    attribute is global and silent, this is local to the rows the app builds and
+    is visible at the call site. Harmless on an action with no shortcut -- the
+    property only governs whether an existing one is drawn.
+    """
+    action.setShortcutVisibleInContextMenu(True)
+
+
 def newAction(widget : QWidget, container : QMenu, action_tuple : tuple):
     """Create an action within a menu.
 
@@ -337,6 +363,8 @@ def newAction(widget : QWidget, container : QMenu, action_tuple : tuple):
     else:  # assume series was passed in
         action.setShortcut(kbd.getOption(act_name))
 
+    showShortcutInContextMenus(action)
+
     # A checkable row is a persistent on/off state, and states get set in
     # groups, so toggling one must not dismiss the menu the next one is in.
     # Asked of the action rather than of the kbd argument, so both spellings of
@@ -362,6 +390,12 @@ def newQAction(widget : QWidget, container : QMenu, action : QAction):
             action (QAction): the action to add to the menu
     """
     container.addAction(action)
+
+    # Same rule as newAction. These are the menubar's own QActions being reused
+    # in the field's right-click menu (cut / copy / paste / paste attributes),
+    # and they are exactly the ones a user has already learned a key for, so
+    # they are the last rows that should hide it.
+    showShortcutInContextMenus(action)
 
     # same rule as newAction: a toggle keeps its menu open. Nothing in the app
     # currently reaches this branch with a checkable action, but the rule is a
