@@ -714,6 +714,12 @@ def menu_leaf_paths(root) -> dict:
             keepalive.append(action)
             if action.isSeparator():
                 continue
+            if not action.text():
+                # textless rows are structural artifacts, not commands: the
+                # Help menu's embedded search field is a QWidgetAction with
+                # no text, and the production walker (collect_menu_commands)
+                # skips these for the same reason
+                continue
             submenu = action.menu()
             if submenu is not None:
                 keepalive.append(submenu)
