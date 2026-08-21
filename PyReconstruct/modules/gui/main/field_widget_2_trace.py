@@ -1219,11 +1219,15 @@ class FieldWidgetTrace(FieldWidgetBase):
                 merge_attrs_only (bool): True if only trace attributes should be merged
                 restrict (list): restrict merging to a list of traces
         """
-        if len(traces) < 2:
+        to_merge = restrict if restrict else traces
+
+        # the two-trace minimum applies to what is actually merged: autoMerge
+        # passes a restrict list built from overlap, and only the new trace in
+        # that list is guaranteed to be selected
+        if len(to_merge) < 2:
             notify("Please select two or more traces to merge.")
             return False
 
-        to_merge = restrict if restrict else traces
         first_trace = to_merge[0]
 
         # set attributes to be the first object selected
