@@ -156,10 +156,24 @@ class TableManager():
             self.recreateTable(table)
     
     def toggleCuration(self):
-        """Quick shortcut to toggle curation on/off for the tables."""
-        cr_on = all([table.columns["Curate"] for table in self.tables])
-        for table in self.tables["object"]:
-            table.columns["Curate"] = not cr_on
+        """Quick shortcut to toggle curation on/off for the object lists.
+
+        Never reachable until the Help search made every menubar command
+        runnable, at which point its first real invocation crashed: it
+        iterated `self.tables` (a dict keyed by table type, so that yields
+        strings) and indexed `columns` like a dict (it is a list of
+        (name, shown) pairs -- see ObjectTableWidget, which reads it via
+        dict(self.columns)).
+        """
+        obj_tables = self.tables["object"]
+        cr_on = bool(obj_tables) and all(
+            dict(table.columns)["Curate"] for table in obj_tables
+        )
+        for table in obj_tables:
+            table.columns = [
+                (name, (not cr_on) if name == "Curate" else shown)
+                for name, shown in table.columns
+            ]
             self.recreateTable(table)
     
     def recreateTable(self, table):
