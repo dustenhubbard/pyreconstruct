@@ -5,6 +5,7 @@ import math
 from PySide6.QtWidgets import QWidget, QSlider
 from PySide6.QtGui import QIcon, QPixmap, QFont
 from PySide6.QtCore import QSize, Qt, QSettings
+from PyReconstruct.modules.constants.settings_domain import settings_domain
 
 # Palette-visibility preferences are global (a UI choice, not per-series) and
 # persist across launches. Map each in-memory flag to its QSettings key.
@@ -676,17 +677,17 @@ class MousePalette():
 
     def loadVisibilityState(self):
         """Restore palette-visibility flags from the persisted preferences."""
-        for attr, value in load_palette_visibility(QSettings("KHLab", "PyReconstruct")).items():
+        for attr, value in load_palette_visibility(QSettings(*settings_domain())).items():
             setattr(self, attr, value)
 
     def saveVisibilityState(self):
         """Persist the current palette-visibility flags so they survive a restart."""
         state = {attr: getattr(self, attr) for attr in PALETTE_VIS_KEYS}
-        save_palette_visibility(QSettings("KHLab", "PyReconstruct"), state)
+        save_palette_visibility(QSettings(*settings_domain()), state)
 
     def loadPositionState(self):
         """Restore persisted palette positions over the in-memory defaults."""
-        saved = load_palette_positions(QSettings("KHLab", "PyReconstruct"))
+        saved = load_palette_positions(QSettings(*settings_domain()))
         for attr, value in saved.items():
             setattr(self, attr, value)
 
@@ -696,7 +697,7 @@ class MousePalette():
             f"{group}_{axis}": getattr(self, f"{group}_{axis}")
             for group in PALETTE_POS_GROUPS for axis in ("x", "y")
         }
-        save_palette_positions(QSettings("KHLab", "PyReconstruct"), positions)
+        save_palette_positions(QSettings(*settings_domain()), positions)
 
     def applyVisibilityState(self):
         """Show/hide palette widgets to match the current visibility flags."""
@@ -744,7 +745,7 @@ class MousePalette():
         self.inc_x,   self.inc_y   = 0.99, 0.99
         self.bc_x,    self.bc_y    = 0.99, 0.8
         self.sb_x,    self.sb_y    = 0.01, 0.99
-        clear_palette_positions(QSettings("KHLab", "PyReconstruct"))
+        clear_palette_positions(QSettings(*settings_domain()))
         self.resize()
     
     def setPaletteIncMode(self, all : bool):

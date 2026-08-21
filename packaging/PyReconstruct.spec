@@ -23,6 +23,15 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_sub
 
 # SPECPATH is the absolute path of the directory containing this spec (packaging/).
 REPO_ROOT = Path(SPECPATH).parent
+
+# --- Build flavor: packaging/FLAVOR ("dev") makes the side-by-side Dev app --
+#     own name, own icons, own bundle id, and a runtime hook that stamps
+#     PYRECON_APP_NAME so the app itself knows which flavor it is (update
+#     channel, settings store, ownership marker, window title). No FLAVOR
+#     file (the release line) builds the stable app, unchanged.
+_flavor_file = REPO_ROOT / "packaging" / "FLAVOR"
+IS_DEV = _flavor_file.exists() and _flavor_file.read_text().strip() == "dev"
+APP_NAME = "PyReconstruct Dev" if IS_DEV else "PyReconstruct"
 PKG_DIR = REPO_ROOT / "PyReconstruct"
 ASSETS = PKG_DIR / "assets"
 ENTRY = str(PKG_DIR / "run.py")
@@ -263,7 +272,7 @@ a = Analysis(
         str(REPO_ROOT / "packaging" / "rthook_qt.py"),
         str(REPO_ROOT / "packaging" / "rthook_ssl.py"),
         str(REPO_ROOT / "packaging" / "rthook_gl.py"),
-    ],
+    ] + ([str(REPO_ROOT / "packaging" / "rthook_flavor.py")] if IS_DEV else []),
     excludes=[
         "PyQt5", "PyQt6", "PySide2",   # forbid clashing Qt bindings
         "tkinter",
@@ -282,8 +291,8 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 is_win = sys.platform.startswith("win")
 is_mac = sys.platform == "darwin"
 
-win_icon = str(PKG_DIR / "assets" / "img" / "PyReconstruct.ico")
-mac_icon = str(REPO_ROOT / "packaging" / "PyReconstruct.icns")  # built by make_icns.sh
+win_icon = str(PKG_DIR / "assets" / "img" / ("PyReconstructDev.ico" if IS_DEV else "PyReconstruct.ico"))
+mac_icon = str(REPO_ROOT / "packaging" / "PyReconstruct.icns")  # built by make_icns.sh (flavor-aware)
 if not Path(mac_icon).exists():   # allow a local build that skipped make_icns.sh
     mac_icon = None
 
@@ -292,7 +301,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="PyReconstruct",
+    name=APP_NAME,
     console=False,            # windowed (no console window)
     icon=win_icon if is_win else (mac_icon if is_mac else None),
     upx=False,                # UPX corrupts Qt/VTK shared libraries
@@ -302,15 +311,16 @@ coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
-    name="PyReconstruct",
+    name=APP_NAME,
     upx=False,
 )
 
 if is_mac:
     app = BUNDLE(
         coll,
-        name="PyReconstruct.app",
+        name=f"{APP_NAME}.app",
         icon=mac_icon,
-        bundle_identifier="edu.utexas.synapseweb.pyreconstruct",
+        bundle_identifier=("edu.utexas.synapseweb.pyreconstruct.dev"
+                           if IS_DEV else "edu.utexas.synapseweb.pyreconstruct"),
         info_plist={"NSHighResolutionCapable": True},
     )
