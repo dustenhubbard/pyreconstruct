@@ -248,7 +248,12 @@ class ObjectTableWidget(DataTable):
             ("invertobjselection_act1", "Invert selection", "", self.invertSelection),
             ("copyobjrow_act", "Copy object values", "", self.table.copy),
         ]
-        context_menu_list = self.mainwindow.field.getObjMenu(list_ops=list_ops)
+        # is_in_field=False: this dock lives inside the main window, so a keyed
+        # row built here would be a second claimant on the same sequence, and
+        # Qt fires neither of an ambiguous pair. The field copy keeps the keys.
+        context_menu_list = self.mainwindow.field.getObjMenu(
+            list_ops=list_ops, is_in_field=False
+        )
         self.context_menu = QMenu(self)
         populateMenu(self, self.context_menu, context_menu_list)
 

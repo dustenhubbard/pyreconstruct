@@ -51,7 +51,7 @@ def _main_window_stub(series):
     """
     from PySide6.QtWidgets import QWidget
     from PySide6.QtGui import QAction
-    from test_context_menu_frequency import _FieldStub
+    from menu_test_helpers import _FieldStub
 
     class Stub(QWidget):
         def __getattr__(self, name):
@@ -161,7 +161,7 @@ def test_trace_list_menu_still_binds_no_shortcut_for_copy_to_sections(qapp, real
     from PyReconstruct.modules.gui.main.context_menu_list import (
         get_context_menu_list_trace,
     )
-    from test_context_menu_frequency import _Anything, _series
+    from menu_test_helpers import _Anything, _series
 
     rows = get_context_menu_list_trace(
         _Anything(series=_series()),
