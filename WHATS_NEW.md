@@ -26,7 +26,7 @@ full release notes on GitHub (linked from the dialog).
   curation (assign to)..." row assigns someone else. The object list now shows
   who assigned each status and when.
 - **The What's-new popup is off by default.** Help ▸ Show what's new after
-  updates turns it back on; Help ▸ What's new opens the notes any time.
+  updates turns it back on; Help ▸ What's new? opens the notes any time.
 - **Right-click menus follow the classic layout again.** The redesigned menus
   move to the PyReconstruct Dev app. Shortcuts now display beside right-click
   commands on macOS too.
