@@ -48,7 +48,13 @@ class QSettingsStore(SettingsStore):
     """
 
     ORG = "KHLab"
-    APP = "PyReconstruct"
+
+    @property
+    def APP(self):
+        # flavored: "PyReconstruct Dev" carries its own store, so the two
+        # side-by-side builds never fight over stored state (agenda item 5)
+        from PyReconstruct.modules.constants.settings_domain import settings_app
+        return settings_app()
 
     def _settings(self, code: Optional[str]):
         from PySide6.QtCore import QSettings

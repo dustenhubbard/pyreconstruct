@@ -105,20 +105,29 @@ jobs:
       - name: Frozen self-test (Windows) — catches windowed-only import bugs
         if: runner.os == 'Windows'
         run: |
-          $p = Start-Process -FilePath "dist\PyReconstruct\PyReconstruct.exe" -ArgumentList "--selftest" -Wait -PassThru
+          $flavor = ""
+          if (Test-Path "packaging\FLAVOR") { $flavor = (Get-Content "packaging\FLAVOR" -Raw).Trim() }
+          $app = if ($flavor -eq "dev") { "PyReconstruct Dev" } else { "PyReconstruct" }
+          $p = Start-Process -FilePath "dist\$app\$app.exe" -ArgumentList "--selftest" -Wait -PassThru
           if ($p.ExitCode -ne 0) { Write-Error "frozen self-test failed (exit $($p.ExitCode))"; exit 1 }
           Write-Host "frozen self-test OK"
 
       - name: Frozen self-test (macOS) — catches windowed-only import bugs
         if: runner.os == 'macOS'
         run: |
-          dist/PyReconstruct.app/Contents/MacOS/PyReconstruct --selftest
+          FLAVOR="$(cat packaging/FLAVOR 2>/dev/null | tr -d '[:space:]' || true)"
+          if [ "$FLAVOR" = "dev" ]; then APP_NAME="PyReconstruct Dev"; else APP_NAME="PyReconstruct"; fi
+          "dist/${APP_NAME}.app/Contents/MacOS/${APP_NAME}" --selftest
           echo "frozen self-test OK"
 
       - name: Build Windows installer (Inno Setup)
         if: runner.os == 'Windows'
         run: |
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DPYR_VERSION=$env:PYR_PUBLIC" "packaging\windows\PyReconstruct.iss"
+          $flavor = ""
+          if (Test-Path "packaging\FLAVOR") { $flavor = (Get-Content "packaging\FLAVOR" -Raw).Trim() }
+          $args = @("/DPYR_VERSION=$env:PYR_PUBLIC")
+          if ($flavor -eq "dev") { $args += "/DPYR_FLAVOR=dev" }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" @args "packaging\windows\PyReconstruct.iss"
           New-Item -ItemType Directory -Force -Path dist-assets | Out-Null
           Move-Item "packaging\windows\Output\*.exe" dist-assets\
 
@@ -175,7 +184,10 @@ jobs:
             echo "::error::Linux installer version pin did not apply — DEFAULT_SOURCE line in packaging/linux/install.sh no longer matches the sed pattern above"
             exit 1
           }
-          tar -czf "dist/PyReconstruct-${VERSION}-Linux-installer.tar.gz" "$STAGE"
+          FLAVOR="$(cat packaging/FLAVOR 2>/dev/null | tr -d '[:space:]' || true)"
+          SUFFIX=""
+          [ "$FLAVOR" = "dev" ] && SUFFIX="-Dev"
+          tar -czf "dist/PyReconstruct-${VERSION}-Linux-installer${SUFFIX}.tar.gz" "$STAGE"
       - name: Generate checksums
         run: cd dist && for f in *; do [ -f "$f" ] && sha256sum "$f" > "$f.sha256"; done
       - name: Build friendly release notes

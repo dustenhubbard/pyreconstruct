@@ -20,10 +20,6 @@ from .backup import BackupDialog
 from .autoseg_palette import AutosegColorsWidget
 
 from PyReconstruct.modules.datatypes import Series
-from PyReconstruct.modules.constants import is_frozen
-from PyReconstruct.modules.backend.updater.updater import (
-    channel_radio_index, radio_response_channel,
-)
 from PyReconstruct.modules.backend.func.utils import (
     zarr_worker_count, MAX_ZARR_WORKERS,
 )
@@ -127,9 +123,6 @@ class AllOptionsDialog(QDialog):
                 ["time"],
                 ["computation"]
 
-            ],
-            "Updates": [
-                ["updates"],
             ],
             "Backup": [
                 ["backup"],
@@ -536,31 +529,6 @@ class AllOptionsDialog(QDialog):
             self.series.setOption("rotate_step_3D", response[1])
         self.addOptionWidget("3D_step", structure, setOption)
 
-        # updates
-        if is_frozen():  # installed build: choose the release channel
-            # channel_radio_index normalizes legacy values ("stable"/"edge") and
-            # maps to the radio position; radio_response_channel is its inverse.
-            channel_idx = channel_radio_index(
-                self.series.getOption("update_channel", use_defaults))
-            structure = [
-                ["Update channel:"],
-                [("radio",
-                  ("Stable (recommended)", channel_idx == 0),
-                  ("Beta (early features, may be unstable)", channel_idx == 1))],
-                [("check", ("Check for updates on startup",
-                            self.series.getOption("update_check_on_startup", use_defaults)))],
-            ]
-            def setOption(response):
-                self.series.setOption("update_channel", radio_response_channel(response[0]))
-                self.series.setOption("update_check_on_startup", response[1][0][1])
-        else:  # source/pip install: choose the GitHub branch to reinstall from
-            structure = [
-                ["Update reinstalls from a GitHub branch (source install):"],
-                ["Branch:", ("text", self.series.getOption("update_branch", use_defaults)), None],
-            ]
-            def setOption(response):
-                self.series.setOption("update_branch", response[0])
-        self.addOptionWidget("updates", structure, setOption)
 
         # backup
         backup_widget = BackupDialog(self, self.series, include_confirm=False)

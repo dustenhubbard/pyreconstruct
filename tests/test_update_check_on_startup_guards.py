@@ -287,11 +287,19 @@ def test_a_launch_with_no_series_open_does_not_check(monkeypatch, stamp):
     assert not stamp.present()
 
 
-def test_the_channel_the_check_runs_on_is_the_stored_one(monkeypatch, stamp):
-    """Beta users have to be offered beta builds, or the check misinforms them."""
+def test_the_channel_the_check_runs_on_is_the_builds_not_the_stored_one(monkeypatch, stamp):
+    """The channel is pinned per build: the stable app checks the release
+    channel even when a pre-pin install left "prerelease" stored on the
+    series, and the Dev flavor checks the prerelease channel. Beta users get
+    beta builds by running PyReconstruct Dev, not by a per-series option."""
+    monkeypatch.delenv("PYRECON_APP_NAME", raising=False)
     window = _launch(_Window(_Series(update_channel="prerelease")),
                      monkeypatch=monkeypatch)
+    assert window.dispatched == ["release"]
 
+def test_the_dev_flavor_checks_the_prerelease_channel(monkeypatch, stamp):
+    monkeypatch.setenv("PYRECON_APP_NAME", "PyReconstruct Dev")
+    window = _launch(_Window(_Series()), monkeypatch=monkeypatch)
     assert window.dispatched == ["prerelease"]
 
 

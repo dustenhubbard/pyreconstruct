@@ -467,6 +467,13 @@ def return_help_menu(self):
         [
             ("repobranch_act", repo_string, "", self.copyCommit),
             ("checkupdates_act", "Check for updates...", "", self.checkForUpdates),
+            # Checkable, mirroring the update_check_on_startup series option
+            # that used to live on the Series Options Updates tab (removed with
+            # the channel radio: everything update-related lives here now). It
+            # resyncs on every Help open because the option follows the open
+            # series, not this window.
+            ("toggleupdatecheck_act", "Check for updates on startup", "checkbox",
+             self.toggleUpdateCheckOnStartup),
             ("whatsnew_act", "What's new", "", self.showWhatsNew),
             # Checkable, mirroring the stored suppress_whatsnew preference the
             # dialog's "Don't show again" button also writes. Unlike the

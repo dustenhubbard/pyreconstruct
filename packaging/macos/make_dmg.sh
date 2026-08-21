@@ -8,13 +8,23 @@ set -euo pipefail
 
 : "${PYR_PUBLIC:?set PYR_PUBLIC to the public version string}"
 ARCH="${ARCH:-x86_64}"
-APP="dist/PyReconstruct.app"
-OUT="PyReconstruct-${PYR_PUBLIC}-macOS-${ARCH}.dmg"
+# The Dev flavor bundles as "PyReconstruct Dev.app" and its dmg carries a
+# -Dev suffix AFTER the platform tag: the in-app updater parses the version
+# out of "PyReconstruct-<ver>-<platform>", so the suffix must trail both.
+FLAVOR="$(cat packaging/FLAVOR 2>/dev/null | tr -d '[:space:]' || true)"
+if [ "$FLAVOR" = "dev" ]; then
+    APP_NAME="PyReconstruct Dev"
+    OUT="PyReconstruct-${PYR_PUBLIC}-macOS-${ARCH}-Dev.dmg"
+else
+    APP_NAME="PyReconstruct"
+    OUT="PyReconstruct-${PYR_PUBLIC}-macOS-${ARCH}.dmg"
+fi
+APP="dist/${APP_NAME}.app"
 
 [ -d "$APP" ] || { echo "error: $APP not found (build with PyInstaller first)" >&2; exit 1; }
 rm -f "$OUT"
 
-STAGE="$(mktemp -d)/PyReconstruct"
+STAGE="$(mktemp -d)/${APP_NAME}"
 mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"   # drag-and-drop target in the mounted dmg
@@ -23,7 +33,7 @@ cp "$(dirname "$0")/dmg-readme.txt" "$STAGE/Read Before First Launch.txt"  # uns
 # hdiutil create intermittently fails with "Resource busy" on CI runners when a
 # stale diskimages-helper still holds a disk image. Retry with cleanup + backoff.
 make_dmg() {
-    hdiutil create -volname "PyReconstruct ${PYR_PUBLIC}" -srcfolder "$STAGE" \
+    hdiutil create -volname "${APP_NAME} ${PYR_PUBLIC}" -srcfolder "$STAGE" \
         -fs HFS+ -format UDZO -ov "$OUT"
 }
 for attempt in 1 2 3 4 5; do

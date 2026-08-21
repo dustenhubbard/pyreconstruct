@@ -3,8 +3,15 @@
 # system `sips` + `iconutil`). Run from the repo root before PyInstaller.
 set -euo pipefail
 
-SRC="PyReconstruct/assets/img/PyReconstruct.png"
-[ -f "$SRC" ] || SRC="PyReconstruct/assets/img/logo.png"
+# The Dev flavor (packaging/FLAVOR says "dev") gets the dark-glass icon; the
+# output path stays the same either way, since the spec reads one location.
+FLAVOR="$(cat packaging/FLAVOR 2>/dev/null | tr -d '[:space:]' || true)"
+if [ "$FLAVOR" = "dev" ]; then
+    SRC="PyReconstruct/assets/img/PyReconstructDev.png"
+else
+    SRC="PyReconstruct/assets/img/PyReconstruct.png"
+    [ -f "$SRC" ] || SRC="PyReconstruct/assets/img/logo.png"
+fi
 
 WORK="$(mktemp -d)"
 ICONSET="$WORK/PyReconstruct.iconset"

@@ -6,18 +6,36 @@
   #define PYR_VERSION "0.0.0"
 #endif
 
+; Flavor: CI passes /DPYR_FLAVOR=dev when packaging/FLAVOR says so. The Dev
+; app is a separate product -- its own AppId, name, install dir, and icon --
+; so it installs beside stable and the two upgrade independently. The asset
+; keeps the "PyReconstruct-<ver>-<platform>" shape the in-app updater parses,
+; with the -Dev marker trailing the platform tag.
+#ifdef PYR_FLAVOR
+  #if PYR_FLAVOR == "dev"
+    #define PYR_APPID "{{0C76AF3D-BB20-4EDB-99FC-2B9244E213F7}}"
+    #define PYR_NAME "PyReconstruct Dev"
+    #define PYR_OUTBASE "PyReconstruct-" + PYR_VERSION + "-Windows-x86_64-Dev-Setup"
+  #endif
+#endif
+#ifndef PYR_NAME
+  #define PYR_APPID "{{A1B2C3D4-E5F6-47A8-9B0C-1D2E3F4A5B6C}}"
+  #define PYR_NAME "PyReconstruct"
+  #define PYR_OUTBASE "PyReconstruct-" + PYR_VERSION + "-Windows-x86_64-Setup"
+#endif
+
 [Setup]
 ; Fixed AppId => re-running the installer upgrades the existing install in place
 ; (this is what the in-app updater relies on).
-AppId={{A1B2C3D4-E5F6-47A8-9B0C-1D2E3F4A5B6C}}
-AppName=PyReconstruct
+AppId={#PYR_APPID}
+AppName={#PYR_NAME}
 AppVersion={#PYR_VERSION}
 AppPublisher=SynapseWeb
-DefaultDirName={autopf}\PyReconstruct
-DefaultGroupName=PyReconstruct
-UninstallDisplayIcon={app}\PyReconstruct.exe
+DefaultDirName={autopf}\{#PYR_NAME}
+DefaultGroupName={#PYR_NAME}
+UninstallDisplayIcon={app}\{#PYR_NAME}.exe
 OutputDir=Output
-OutputBaseFilename=PyReconstruct-{#PYR_VERSION}-Windows-x86_64-Setup
+OutputBaseFilename={#PYR_OUTBASE}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -41,17 +59,17 @@ Type: filesandordirs; Name: "{app}\_internal"
 Type: files; Name: "{app}\*.dll"
 
 [Files]
-Source: "..\..\dist\PyReconstruct\*"; DestDir: "{app}"; \
+Source: "..\..\dist\{#PYR_NAME}\*"; DestDir: "{app}"; \
     Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
-Name: "{group}\PyReconstruct"; Filename: "{app}\PyReconstruct.exe"
-Name: "{autodesktop}\PyReconstruct"; Filename: "{app}\PyReconstruct.exe"; Tasks: desktopicon
+Name: "{group}\{#PYR_NAME}"; Filename: "{app}\{#PYR_NAME}.exe"
+Name: "{autodesktop}\{#PYR_NAME}"; Filename: "{app}\{#PYR_NAME}.exe"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; \
     GroupDescription: "Additional shortcuts:"
 
 [Run]
-Filename: "{app}\PyReconstruct.exe"; Description: "Launch PyReconstruct"; \
+Filename: "{app}\{#PYR_NAME}.exe"; Description: "Launch {#PYR_NAME}"; \
     Flags: nowait postinstall skipifsilent

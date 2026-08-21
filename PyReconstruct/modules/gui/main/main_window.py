@@ -11,6 +11,8 @@ from PyReconstruct.modules.backend.func.window_geometry import (
     window_geometry_is_usable,
 )
 from .status_readout import FieldStatusReadout
+from PyReconstruct.modules.constants.settings_domain import settings_domain
+from PyReconstruct.modules.datatypes.series_owner import app_display_name
 
 
 def windowGeometrySettings():
@@ -20,7 +22,7 @@ def windowGeometrySettings():
     geometry read/write to a scratch file without going near the developer's
     real `KHLab/PyReconstruct` domain.
     """
-    return QSettings("KHLab", "PyReconstruct")
+    return QSettings(*settings_domain())
 
 
 def remappedBCProfile(current : str, profiles_dict : dict) -> str:
@@ -89,7 +91,7 @@ class MainWindow(QMainWindow):
         ## Catch all exceptions and display errors
         sys.excepthook = customExcepthook  # defined in gui.utils
 
-        self.setWindowTitle("PyReconstruct")
+        self.setWindowTitle(app_display_name())
         self.setWindowIcon(QPixmap(icon_path))
 
         ## Restore the saved window geometry, or fall back to a modest default
@@ -281,6 +283,7 @@ class MainWindow(QMainWindow):
         ## connection dies with it.
         self.syncWhatsNewPopupToggle()
         self.helpmenu.aboutToShow.connect(self.syncWhatsNewPopupToggle)
+        self.helpmenu.aboutToShow.connect(self.syncUpdateCheckToggle)
 
     def createContextMenus(self):
         """Create right-click menus used in the field."""
@@ -684,7 +687,7 @@ class MainWindow(QMainWindow):
         ``self.series.user``.
         """
         from PyReconstruct.modules.gui.main.first_launch import resolve_username
-        resolve_username(QSettings("KHLab", "PyReconstruct"), self.series)
+        resolve_username(QSettings(*settings_domain()), self.series)
         self.notifyNewEditor()
 
     def applyUpdateCheckDefaultStartup(self):
@@ -765,9 +768,29 @@ class MainWindow(QMainWindow):
         from PyReconstruct.modules.gui.main.first_launch import (
             WHATSNEW_SUPPRESS_KEY, whats_new_suppressed,
         )
-        settings = QSettings("KHLab", "PyReconstruct")
+        settings = QSettings(*settings_domain())
         self.togglewhatsnew_act.setChecked(
             not whats_new_suppressed(settings.value(WHATSNEW_SUPPRESS_KEY))
+        )
+
+    def syncUpdateCheckToggle(self):
+        """Reflect the open series' update_check_on_startup option on Help.
+
+        Runs on every Help open: the option lives on the series, so switching
+        series can change it behind the menu's back.
+        """
+        if getattr(self, "series", None) is None:
+            return
+        self.toggleupdatecheck_act.setChecked(
+            bool(self.series.getOption("update_check_on_startup"))
+        )
+
+    def toggleUpdateCheckOnStartup(self):
+        """Persist the Help-menu toggle: checked means the launch check runs."""
+        if getattr(self, "series", None) is None:
+            return
+        self.series.setOption(
+            "update_check_on_startup", self.toggleupdatecheck_act.isChecked()
         )
 
     def toggleWhatsNewPopup(self):
@@ -779,7 +802,7 @@ class MainWindow(QMainWindow):
         launch, and a version already seen stays seen.
         """
         from PyReconstruct.modules.gui.main.first_launch import WHATSNEW_SUPPRESS_KEY
-        settings = QSettings("KHLab", "PyReconstruct")
+        settings = QSettings(*settings_domain())
         settings.setValue(
             WHATSNEW_SUPPRESS_KEY, not self.togglewhatsnew_act.isChecked()
         )
@@ -795,12 +818,12 @@ class MainWindow(QMainWindow):
                 self,
                 "Username",
                 "Enter your username:",
-                text=QSettings("KHLab", "PyReconstruct").value("username", self.series.user),
+                text=QSettings(*settings_domain()).value("username", self.series.user),
             )
             if not confirmed or not new_name:
                 return
         
-        QSettings("KHLab", "PyReconstruct").setValue("username", new_name)
+        QSettings(*settings_domain()).setValue("username", new_name)
         self.series.user = new_name
 
         self.notifyNewEditor()
@@ -1081,10 +1104,19 @@ class MainWindow(QMainWindow):
                 current_time = round(time.time())
                 time_diff = current_time - int(f)
                 if time_diff <= _SERIES_LOCK_HEARTBEAT:  # currently being operated on
+                    # the identity file beside the heartbeat says who and which
+                    # app flavor; with two builds installed, "another window"
+                    # stopped being an answer
+                    from PyReconstruct.modules.datatypes.series_owner import (
+                        describe_owner, read_owner,
+                    )
+                    holder = describe_owner(read_owner(hidden_series_dir))
                     QMessageBox.information(
                         self,
                         "Series In Use",
-                        "This series is already open in another window.",
+                        f"This series is already open in {holder}.\n"
+                        "Close it there before opening it here; two "
+                        "apps writing the same series can corrupt it.",
                         QMessageBox.Ok
                     )
                     if not self.series:
@@ -1116,7 +1148,7 @@ class MainWindow(QMainWindow):
         """Point the file explorer at the folder the series was opened from."""
         # set explorer filepath
         if not self.series.isWelcomeSeries() and self.series.jser_fp:
-            settings = QSettings("KHLab", "PyReconstruct")
+            settings = QSettings(*settings_domain())
             settings.setValue("last_folder", os.path.dirname(self.series.jser_fp))
 
     def _buildFieldAndPalette(self):
@@ -1366,7 +1398,7 @@ class MainWindow(QMainWindow):
         """Change the title of the window reflect modifications."""
         # check for welcome series
         if self.series.isWelcomeSeries():
-            self.setWindowTitle("PyReconstruct")
+            self.setWindowTitle(app_display_name())
             return
         
         if modified:
@@ -3552,7 +3584,7 @@ class MainWindow(QMainWindow):
         if install_kind() == "source":
             self._updateFromSource()
             return
-        channel = self.series.getOption("update_channel")
+        channel = pinned_channel()
         progbar = getProgbar("Checking for updates…", cancel=False, maximum=0)
         self._runUpdateCheck(
             channel,
@@ -3617,7 +3649,7 @@ class MainWindow(QMainWindow):
             if not self.series.getOption("update_check_on_startup"):
                 return
             import time
-            settings = QSettings("KHLab", "PyReconstruct")
+            settings = QSettings(*settings_domain())
             try:
                 last = float(settings.value("last_update_check_epoch", 0) or 0)
             except (TypeError, ValueError):
@@ -3634,7 +3666,7 @@ class MainWindow(QMainWindow):
             if 0 <= elapsed < 24 * 3600:
                 return
             settings.setValue("last_update_check_epoch", time.time())
-            channel = self.series.getOption("update_channel")
+            channel = pinned_channel()
             self._runUpdateCheck(
                 channel,
                 on_result=lambda info: self._onStartupCheck(info, channel),
@@ -3661,13 +3693,19 @@ class MainWindow(QMainWindow):
 
     def _updateFromSource(self):
         """Source/pip-install update path: reuse the cli pip+git reinstall."""
-        branch = self.series.getOption("update_branch") or "main"
-        if not notifyConfirm(
-            f"This will reinstall PyReconstruct from GitHub branch '{branch}' via pip, "
-            "then restart. Continue?",
-            yn=True,
-        ):
+        # The branch field left Series Options with the Updates tab; the
+        # prompt is the field now, pre-filled with the stored value.
+        branch, confirmed = QInputDialog.getText(
+            self,
+            "Update from source",
+            "This will reinstall PyReconstruct from a GitHub branch via pip,\n"
+            "then restart. Branch:",
+            text=self.series.getOption("update_branch") or "main",
+        )
+        if not confirmed or not branch.strip():
             return
+        branch = branch.strip()
+        self.series.setOption("update_branch", branch)
         from PyReconstruct import cli
         progbar = getProgbar(f"Updating from '{branch}'… (progress in console)", cancel=False, maximum=0)
         pool = ThreadPool()
