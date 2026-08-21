@@ -15,7 +15,6 @@ from PyReconstruct.modules.gui.utils import (
     populateMenu,
     noUndoWarning,
     notify,
-    getProgbar
 )
 from PyReconstruct.modules.gui.dialog import QuickDialog, FileDialog
 from PyReconstruct.modules.datatypes import Series
@@ -220,31 +219,21 @@ class SectionTableWidget(DataTable):
         
         self.mainwindow.saveAllData()
 
-        # set up progress (skip for single sections, e.g. a lock checkbox toggle)
-        progress = 0
-        final_value = len(section_numbers)
-        if final_value > 1:
-            progbar = getProgbar(
-                text=f"{'Locking' if lock else 'Unlocking'} sections...",
-                cancel=False
-            )
-        else:
-            progbar = None
-
-        try:
-            for snum in section_numbers:
-                section = self.series.loadSection(snum)
-                section.align_locked = lock
-                section.save()
-                if log_event:
-                    self.series.addLog(None, snum, f"{'Lock' if lock else 'Unlock'} section")
-                progress += 1
-                if progbar is not None:
-                    progbar.setValue(progress/final_value * 100)
-        finally:
-            # make sure the dialog is closed if the loop exits early
-            if progbar is not None and progress < final_value:
-                progbar.close()
+        # Progress comes from the shared section iterator rather than a
+        # hand-rolled QProgressDialog: it loads each section, drives the bar,
+        # and routes through Series' progress-reporter seam, so a headless
+        # caller gets the null reporter instead of a Qt dialog. The dialog is
+        # still skipped for a single section (a lock checkbox toggle), which is
+        # what show_progress is guarding.
+        for snum, section in self.series.enumerateSections(
+            show_progress=len(section_numbers) > 1,
+            message=f"{'Locking' if lock else 'Unlocking'} sections...",
+            section_numbers=section_numbers,
+        ):
+            section.align_locked = lock
+            section.save()
+            if log_event:
+                self.series.addLog(None, snum, f"{'Lock' if lock else 'Unlock'} section")
 
         self.manager.updateSections(section_numbers)
         
@@ -286,8 +275,13 @@ class SectionTableWidget(DataTable):
 
         self.mainwindow.saveAllData()
 
-        for snum in section_numbers:
-            section = self.series.loadSection(snum)
+        # Same shared iterator as lockSections: this loads and saves one section
+        # at a time, so across a whole series it is slow enough to need saying so.
+        for snum, section in self.series.enumerateSections(
+            show_progress=len(section_numbers) > 1,
+            message="Adjusting brightness/contrast...",
+            section_numbers=section_numbers,
+        ):
             if b is not None:
                 if inc:
                     section.brightness += b
@@ -377,13 +371,23 @@ class SectionTableWidget(DataTable):
         # keep track of which objects to update
         modified_contours = set()
 
-        # iterate through selected sections
-        for snum in section_numbers:
-            section = self.series.loadSection(snum)
+        # Reported by a user: setting thickness across 277 sections took about a
+        # minute with nothing on screen. Each section is loaded, every contour on
+        # it flagged, and the section written back, so the cost scales with the
+        # selection and there is no cheaper way to do it -- what was missing was
+        # saying so. The shared iterator supplies the bar.
+        for snum, section in self.series.enumerateSections(
+            show_progress=len(section_numbers) > 1,
+            message="Setting section thickness...",
+            section_numbers=section_numbers,
+        ):
             section.thickness = thickness
             # flag all traces as modified because the thickness of the section has been changed
             section.modified_contours = set(section.contours.keys())
-            modified_contours.union(section.modified_contours)
+            # |=, not .union(): union returns a new set and discards it, so this
+            # accumulator stayed empty and the updateObjects call after the loop
+            # was a no-op on every run.
+            modified_contours |= section.modified_contours
             section.save()
             self.manager.updateObjects(section.modified_contours)
             if log_event:
