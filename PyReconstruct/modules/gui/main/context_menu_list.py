@@ -211,7 +211,10 @@ def get_context_menu_list_obj(self, list_ops=None, is_in_field=True):
             "opts":
             [
                 ("blankcurate_act", "Blank", "", lambda : self.bulkCurate("")),
+                # instant, assigned to the current user; the dialog moved to
+                # the row below so the default costs zero clicks
                 ("needscuration_act", "Needs curation", "", lambda : self.bulkCurate("Needs curation")),
+                ("needscurationassign_act", "Needs curation (assign to)...", "", self.bulkCurateAssign),
                 ("curated_act", "Curated", "", lambda : self.bulkCurate("Curated"))
             ]
         },
