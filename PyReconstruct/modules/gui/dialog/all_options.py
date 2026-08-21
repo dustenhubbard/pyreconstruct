@@ -20,7 +20,6 @@ from .backup import BackupDialog
 from .autoseg_palette import AutosegColorsWidget
 
 from PyReconstruct.modules.datatypes import Series
-from PyReconstruct.modules.constants import is_frozen
 from PyReconstruct.modules.backend.func.utils import determine_cpus
 
 
@@ -118,9 +117,6 @@ class AllOptionsDialog(QDialog):
                 ["time"],
                 ["computation"]
 
-            ],
-            "Updates": [
-                ["updates"],
             ],
             "Backup": [
                 ["backup"],
@@ -491,22 +487,6 @@ class AllOptionsDialog(QDialog):
             self.series.setOption("rotate_step_3D", response[1])
         self.addOptionWidget("3D_step", structure, setOption)
 
-        # updates
-        if is_frozen():  # installed build: the channel is pinned per build
-            structure = [
-                [("check", ("Check for updates on startup",
-                            self.series.getOption("update_check_on_startup", use_defaults)))],
-            ]
-            def setOption(response):
-                self.series.setOption("update_check_on_startup", response[0][0][1])
-        else:  # source/pip install: choose the GitHub branch to reinstall from
-            structure = [
-                ["Update reinstalls from a GitHub branch (source install):"],
-                ["Branch:", ("text", self.series.getOption("update_branch", use_defaults)), None],
-            ]
-            def setOption(response):
-                self.series.setOption("update_branch", response[0])
-        self.addOptionWidget("updates", structure, setOption)
 
         # backup
         backup_widget = BackupDialog(self, self.series, include_confirm=False)
