@@ -66,29 +66,17 @@ def normalize_channel(channel):
     return _LEGACY_CHANNELS.get(channel, channel)
 
 
-def channel_radio_index(channel):
-    """Index of the Updates radio for ``channel`` (legacy values normalized).
+def pinned_channel():
+    """The update channel this build follows.
 
-    Unknown/missing channels fall back to 0 (Stable), matching the default.
+    The channel is a property of the installed build, not a per-series option:
+    the stable app follows the release channel and the Dev flavor (which
+    packaging marks with PYRECON_APP_NAME) follows the prerelease channel.
+    The old Series Options radio let one install wander between channels,
+    which is exactly what the two side-by-side builds replace.
     """
-    channel = normalize_channel(channel)
-    try:
-        return UPDATE_CHANNELS.index(channel)
-    except ValueError:
-        return 0
-
-
-def radio_response_channel(radio_response):
-    """Map a QuickDialog radio response to a channel value (positional).
-
-    ``radio_response`` is the list of ``(label, checked)`` tuples QuickDialog
-    returns for a radio group, one per button in UI order. Returns the channel
-    for the checked button; falls back to 'release' if somehow none is checked.
-    """
-    for i, item in enumerate(radio_response):
-        if item[1] and i < len(UPDATE_CHANNELS):
-            return UPDATE_CHANNELS[i]
-    return "release"
+    from PyReconstruct.modules.datatypes.series_owner import app_display_name
+    return "prerelease" if "Dev" in app_display_name() else "release"
 
 
 class UpdateCancelled(Exception):

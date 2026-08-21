@@ -3552,7 +3552,7 @@ class MainWindow(QMainWindow):
         if install_kind() == "source":
             self._updateFromSource()
             return
-        channel = self.series.getOption("update_channel")
+        channel = pinned_channel()
         progbar = getProgbar("Checking for updates…", cancel=False, maximum=0)
         self._runUpdateCheck(
             channel,
@@ -3634,7 +3634,7 @@ class MainWindow(QMainWindow):
             if 0 <= elapsed < 24 * 3600:
                 return
             settings.setValue("last_update_check_epoch", time.time())
-            channel = self.series.getOption("update_channel")
+            channel = pinned_channel()
             self._runUpdateCheck(
                 channel,
                 on_result=lambda info: self._onStartupCheck(info, channel),
