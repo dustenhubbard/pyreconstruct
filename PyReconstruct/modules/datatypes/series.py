@@ -2805,6 +2805,11 @@ class Series():
                     other_date = attr_value[-1]
                     if other_date >= self_date:
                         self.obj_attrs[obj_name]["curation"] = attr_value
+                        # the assigner belongs to the curation that won; a
+                        # missing value on the other side clears rather than
+                        # keeping an assigner for a status it did not set
+                        other_by = other.obj_attrs.get(obj_name, {}).get("curation_by")
+                        self.obj_attrs[obj_name]["curation_by"] = other_by
     
     def importTraces(
             self,
@@ -3254,18 +3259,29 @@ class Series():
 
     def setCuration(self, names : list, cr_status : str, assign_to : str = ""):
         """Set the curation status for a set of objects.
-        
+
+        The status itself stays the historical 3-tuple
+        ``(curated, user, date)`` -- three call sites and every shipped build
+        strict-unpack it, so its shape is load-bearing. WHO SET the status is
+        recorded beside it under the ``curation_by`` attribute, which older
+        builds simply never read. The assigner needs no parameter: it is this
+        series' user, the same identity every log line already carries, which
+        is also what lets updateCurationFromHistory restore it from the log
+        author for series rebuilt from history.
+
             Params:
                 names (list): the object names to mark as curated
                 cr_status(str): the curation state to set
-                asign_to (str): the user to assign to if Needs Curation
+                assign_to (str): the user to assign to if Needs Curation
         """
         for name in names:
             if cr_status == "":
                 self.setAttr(name, "curation", None)
+                self.setAttr(name, "curation_by", None)
                 self.log_set.removeCuration(name)
             elif cr_status == "Needs curation":
                 self.setAttr(name, "curation", (False, assign_to, getDateTime()[0]))
+                self.setAttr(name, "curation_by", self.user)
                 # record the assignee in the log event so that
                 # updateCurationFromHistory can restore it (older logs carry
                 # the bare event and restore with no assignee)
@@ -3276,6 +3292,7 @@ class Series():
                 self.addLog(name, None, event)
             elif cr_status == "Curated":
                 self.setAttr(name, "curation", (True, self.user, getDateTime()[0]))
+                self.setAttr(name, "curation_by", self.user)
                 self.addLog(name, None, "Mark as curated")
     
     def reorderSections(self, d : dict = None, log_event=True):
@@ -3513,6 +3530,8 @@ class Series():
                     self.obj_attrs[name] = {}
                 if "curation" not in self.obj_attrs[name] or not self.obj_attrs[name]["curation"][0]:  # overwrite if at previous step in curation flow
                     self.obj_attrs[name]["curation"] = (True, log.user, log.date)
+                    # the log author is who set the status
+                    self.obj_attrs[name]["curation_by"] = log.user
                 marked_objs.add(name)
             elif "Mark as needs curation" in log.event:
                 if name not in self.obj_attrs:
@@ -3527,6 +3546,8 @@ class Series():
                     )
                     assign_to = m.group(1) if m else ""
                     self.obj_attrs[name]["curation"] = (False, assign_to, log.date)
+                    # the log author is who set the status
+                    self.obj_attrs[name]["curation_by"] = log.user
                 marked_objs.add(name)
     
     def _settingsStore(self):
