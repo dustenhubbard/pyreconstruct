@@ -673,33 +673,16 @@ class FieldWidgetTrace(FieldWidgetBase):
 
         ## Assume same, otherwise suffer consequences
         example_trace = traces[0]
-        ## Combine tags
-        #
-        # `example_trace` is `traces[0]`, and `traces` is
-        # `self.section.selected_traces.copy()` -- a copy of the LIST, not of the
-        # traces. So this writes `tags` in place on one of the section's own
-        # traces, from outside `Section`, and nothing mirrors it into the store.
-        #
-        # `deleteTraces` further down would have covered the drift by dropping
-        # these traces' rows, but three refusal paths return between here and
-        # there (uncuttable self-crossing trace, and two failures of the cut
-        # itself). On any of them the section keeps a trace whose tags no longer
-        # match its row, and the next edit to that trace raises
-        # `ColumnarDualWriteMismatch` at the user for an action they already saw
-        # refused. (The next `Section.save()` rebuilds the store and logs the
-        # drift rather than raising, since D11, which is why this is now a
-        # crash-on-next-edit rather than an unsaveable section.) Repair as soon
-        # as the drift exists rather than relying on every exit path below
-        # staying the way it is.
-        merged_any = False
-        for trace in traces[1:]:
-            for tag in trace.tags:
-                if tag not in example_trace.tags:
-                    merged_any = True
-                    example_trace.tags.add(tag)
 
-        if merged_any:
-            self.section.resyncColumnarStore()
+        ## Combine tags onto a copy, never the live trace: three refusals sit
+        ## below this point and each tells the user the object was left
+        ## unchanged. Mutating traces[0] here made that a lie, because a tag
+        ## just deleted from it came back the moment a cut was refused. The
+        ## copy is what the pieces of a completed cut are built from, so the
+        ## success path still gives every piece the selection's combined tags.
+        piece_base = example_trace.copy()
+        for trace in traces[1:]:
+            piece_base.tags |= trace.tags
 
         ## Pixelize the selected traces
         traces_to_cut = [self.section_layer.traceToPix(t) for t in traces]
@@ -781,7 +764,7 @@ class FieldWidgetTrace(FieldWidgetBase):
         for piece in cut_traces:
             self.newTrace(
                 piece,
-                example_trace,
+                piece_base,
                 closed=example_trace.closed,
                 reduce_points=False,
                 log_event=False
