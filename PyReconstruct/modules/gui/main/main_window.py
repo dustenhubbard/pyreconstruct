@@ -281,6 +281,7 @@ class MainWindow(QMainWindow):
         ## connection dies with it.
         self.syncWhatsNewPopupToggle()
         self.helpmenu.aboutToShow.connect(self.syncWhatsNewPopupToggle)
+        self.helpmenu.aboutToShow.connect(self.syncUpdateCheckToggle)
 
     def createContextMenus(self):
         """Create right-click menus used in the field."""
@@ -768,6 +769,26 @@ class MainWindow(QMainWindow):
         settings = QSettings("KHLab", "PyReconstruct")
         self.togglewhatsnew_act.setChecked(
             not whats_new_suppressed(settings.value(WHATSNEW_SUPPRESS_KEY))
+        )
+
+    def syncUpdateCheckToggle(self):
+        """Reflect the open series' update_check_on_startup option on Help.
+
+        Runs on every Help open: the option lives on the series, so switching
+        series can change it behind the menu's back.
+        """
+        if getattr(self, "series", None) is None:
+            return
+        self.toggleupdatecheck_act.setChecked(
+            bool(self.series.getOption("update_check_on_startup"))
+        )
+
+    def toggleUpdateCheckOnStartup(self):
+        """Persist the Help-menu toggle: checked means the launch check runs."""
+        if getattr(self, "series", None) is None:
+            return
+        self.series.setOption(
+            "update_check_on_startup", self.toggleupdatecheck_act.isChecked()
         )
 
     def toggleWhatsNewPopup(self):
@@ -3661,13 +3682,19 @@ class MainWindow(QMainWindow):
 
     def _updateFromSource(self):
         """Source/pip-install update path: reuse the cli pip+git reinstall."""
-        branch = self.series.getOption("update_branch") or "main"
-        if not notifyConfirm(
-            f"This will reinstall PyReconstruct from GitHub branch '{branch}' via pip, "
-            "then restart. Continue?",
-            yn=True,
-        ):
+        # The branch field left Series Options with the Updates tab; the
+        # prompt is the field now, pre-filled with the stored value.
+        branch, confirmed = QInputDialog.getText(
+            self,
+            "Update from source",
+            "This will reinstall PyReconstruct from a GitHub branch via pip,\n"
+            "then restart. Branch:",
+            text=self.series.getOption("update_branch") or "main",
+        )
+        if not confirmed or not branch.strip():
             return
+        branch = branch.strip()
+        self.series.setOption("update_branch", branch)
         from PyReconstruct import cli
         progbar = getProgbar(f"Updating from '{branch}'… (progress in console)", cancel=False, maximum=0)
         pool = ThreadPool()
