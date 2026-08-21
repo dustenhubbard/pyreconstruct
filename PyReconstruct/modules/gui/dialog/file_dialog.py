@@ -2,6 +2,7 @@ import os
 
 from PySide6.QtCore import QSettings, QDir
 from PySide6.QtWidgets import QFileDialog
+from PyReconstruct.modules.constants.settings_domain import settings_domain
 
 class FileDialog(QFileDialog):
 
@@ -9,7 +10,7 @@ class FileDialog(QFileDialog):
         super().__init__(parent)
 
         # Retrieve the last opened folder path from QSettings
-        settings = QSettings("KHLab", "PyReconstruct")
+        settings = QSettings(*settings_domain())
         last_folder = settings.value("last_folder", QDir.homePath())
 
         # Set the current directory to the last opened folder
@@ -30,7 +31,7 @@ class FileDialog(QFileDialog):
             new_dir = os.path.dirname(response)
                 
         if new_dir:
-            settings = QSettings("KHLab", "PyReconstruct")
+            settings = QSettings(*settings_domain())
             settings.setValue("last_folder", new_dir)
 
     @staticmethod
@@ -49,7 +50,7 @@ class FileDialog(QFileDialog):
             response = fd.getOpenFileNames(fd, caption, filter=filter)[0]
         elif file_mode == "save":
             if not caption: caption = "Save File"
-            settings = QSettings("KHLab", "PyReconstruct")
+            settings = QSettings(*settings_domain())
             last_folder = settings.value("last_folder", QDir.homePath())
             d = os.path.join(last_folder, file_name)
             response = fd.getSaveFileName(fd, caption, dir=d, filter=filter)[0]

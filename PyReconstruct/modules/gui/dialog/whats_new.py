@@ -29,7 +29,13 @@ from PyReconstruct.modules.gui.main.first_launch import (
     ON_DEMAND_CAP, HOMEPAGE_URL, LINKED_NAME,
 )
 
-ORG, APP = "KHLab", "PyReconstruct"
+from PyReconstruct.modules.constants.settings_domain import (
+    SETTINGS_ORG as ORG, settings_app,
+)
+# The unflavored default, kept as a module name because tests and the
+# isolation suite address the store through it; the live QSettings sites
+# below resolve through settings_app() so the Dev flavor gets its own store.
+APP = "PyReconstruct"
 
 
 def _space_after_headings(browser, extra=10):
@@ -374,7 +380,7 @@ class WhatsNewDialog(QDialog):
         record is left alone, so a user who later re-enables the popup from the
         Help menu picks the ordinary rules back up where they stood.
         """
-        settings = self._settings if self._settings is not None else QSettings(ORG, APP)
+        settings = self._settings if self._settings is not None else QSettings(ORG, settings_app())
         settings.setValue(WHATSNEW_SUPPRESS_KEY, True)
         self.accept()
 
@@ -409,7 +415,7 @@ def maybe_show_whats_new(parent, settings=None, current=None, show=None,
     once-per-version rules back intact, pending bump included.
     """
     if settings is None:
-        settings = QSettings(ORG, APP)
+        settings = QSettings(ORG, settings_app())
     if current is None:
         current = current_version_str()
     if whats_new_suppressed(settings.value(WHATSNEW_SUPPRESS_KEY)):

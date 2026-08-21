@@ -22,6 +22,7 @@ from .filters import passesFilters
 
 from PyReconstruct.modules.calc import traceGeometry
 
+from PyReconstruct.modules.constants.settings_domain import settings_domain
 from PyReconstruct.modules.constants import (
     createHiddenDir,
     welcome_series_dir,
@@ -283,7 +284,7 @@ def _default_settings_store():
     a second cache of its own. That matters for more than tidiness: this
     function is what `Series.getOption`/`setOption` fall back on, so while it
     cached separately, `set_default_settings_store()` -- the sanctioned way to
-    redirect settings away from the real `QSettings("KHLab", "PyReconstruct")`
+    redirect settings away from the real `QSettings(*settings_domain())`
     domain -- closed only the store that `constants.getdatetime` uses and left
     every `getOption` call resolving the real one. A caller that redirected
     settings the documented way still got a half-open seam, and the half that
