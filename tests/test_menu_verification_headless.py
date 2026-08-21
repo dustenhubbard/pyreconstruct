@@ -234,15 +234,15 @@ def test_the_field_object_menu_keeps_add_and_remove_reachable(main_window):
 
     paths = menu_leaf_paths(object_menu)
 
-    assert _cpp(paths["Add to 3D scene"]) == wanted_add
+    # upstream organization: both halves live inside "3D", as a pair
+    assert _cpp(paths["3D > Add to scene"]) == wanted_add
     assert _cpp(paths["3D > Remove from scene"]) == wanted_remove
 
 
-# `sethosts_act` has a default of `Ctrl+Shift+H` in `default_settings.py` and an
-# editable row in the shortcuts dialog, but `get_context_menu_list_trace` builds
-# it with `""` instead of `self.series`, so the action ships with no shortcut and
-# the key does nothing. Pinned by its own test below rather than fixed here:
-# giving it the key it was configured for is a user-visible change.
+# `sethosts_act` has a default of `Ctrl+Shift+H` in `default_settings.py`. For a
+# long time the menu built it with `""`, so the configured key did nothing; the
+# stable menu reorganization brought the fix with it (the row now carries the
+# series form through the field's copy).
 KNOWN_UNAPPLIED_SHORTCUTS = {"sethosts_act"}
 
 
@@ -297,20 +297,16 @@ def test_set_hosts_ships_without_the_shortcut_it_is_configured_for(
     """`Set hosts...` has a configured key that the menu never applies.
 
     Found by the test above, and the exact shape of the affordance problem: the
-    option exists (`Ctrl+Shift+H`), the shortcuts dialog offers an editable row
-    for it, and the action is built with `""`, so the key does nothing until the
-    user opens that dialog and presses OK. `resetShortcuts` is what repairs it,
-    which is why the second half here passes.
-
-    Recorded rather than fixed: making a configured key start working is a
-    user-visible change and this is a test change. `Ctrl+Shift+H` is unclaimed
-    elsewhere in this window (the 3D scene popup hardcodes it for
-    `organize_act`, a different window), so nothing collides.
+    option exists (`Ctrl+Shift+H`) and the shortcuts dialog offers an editable
+    row for it. The row is built with the series form through the field's copy
+    of the menu, so the configured key is live from the first launch, and
+    `resetShortcuts` leaves it exactly where it was. `Ctrl+Shift+H` is unclaimed
+    elsewhere in this window, so nothing collides.
     """
     series = local_series_settings(main_window)
 
     assert series.getOption("sethosts_act") == "Ctrl+Shift+H"
-    assert main_window.sethosts_act.shortcut().toString() == ""
+    assert main_window.sethosts_act.shortcut() == QKeySequence("Ctrl+Shift+H")
 
     main_window.resetShortcuts()
 
@@ -353,13 +349,13 @@ def test_an_export_format_with_no_backing_library_is_disabled(main_window):
     need nothing beyond `trimesh` stay enabled, which is what makes this a gate
     rather than a blanket.
     """
-    export_menu = submenu_at(main_window.field_menu, "Object > 3D > Export mesh as")
+    export_menu = submenu_at(main_window.field_menu, "Object > 3D > Export meshes")
     assert export_menu is not None
 
     paths = menu_leaf_paths(export_menu)
 
     assert paths["Collada (.dae) (not installed)"].isEnabled() is False
-    assert paths["STL (.stl)"].isEnabled() is True
+    assert paths["Stl (.stl)"].isEnabled() is True
 
 
 # --- FIRING: a real key press -------------------------------------------------
