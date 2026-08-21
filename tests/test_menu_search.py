@@ -298,3 +298,39 @@ def test_ctrl_k_opens_help_and_focuses_the_field(main_window):
         assert len(field._commands) > 50
     finally:
         main_window.helpmenu.close()
+
+
+# --------------------------------------------------------------------------- #
+# the field's right-click commands are searchable too
+# --------------------------------------------------------------------------- #
+def test_right_click_commands_are_searchable(main_window):
+    """The day-to-day operations live in the field's context menu, not the
+    menubar; a search that misses them misses the point (click-test report)."""
+    from PyReconstruct.modules.gui.main.menu_search import collect_all_commands
+
+    paths = [c[0] for c in collect_all_commands(main_window)]
+    rc = [p for p in paths if p.startswith("Right-click > ")]
+    assert len(rc) > 20, rc[:5]
+    assert any(p.startswith("Right-click > Object > ") for p in rc)
+    assert any(p.startswith("Right-click > Trace > ") for p in rc)
+
+
+def test_right_click_commands_resolve_and_run(main_window):
+    from PyReconstruct.modules.gui.main.menu_search import (
+        collect_all_commands, resolve_command,
+    )
+
+    path = next(
+        c[0] for c in collect_all_commands(main_window)
+        if c[0].startswith("Right-click > ") and c[2]
+    )
+    action = resolve_command(main_window.menubar, path, mainwindow=main_window)
+    assert action is not None and action.isEnabled()
+
+
+def test_reveal_declines_right_click_paths(main_window):
+    """Reveal has nothing to anchor a context menu to; it must say no
+    cleanly rather than open something wrong."""
+    from PyReconstruct.modules.gui.main.menu_reveal import reveal_path
+
+    assert reveal_path(main_window.menubar, "Right-click > Trace > Set open") is False
