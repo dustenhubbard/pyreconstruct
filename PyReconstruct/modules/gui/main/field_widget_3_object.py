@@ -881,27 +881,68 @@ class FieldWidgetObject(FieldWidgetTrace):
     @object_function(update_objects=True, reload_field=False)
     def bulkCurate(self, names : list, curation_status : str):
         """Set the curation status for multiple selected objects.
-        
+
+        No dialog. "Needs curation" assigns to the CURRENT USER: the default
+        should not require answering anything (reported after a five-hour
+        session in which every marking cost a dialog whose usual answer was
+        blank). Assigning to somebody else is the deliberate extra step and
+        lives in its own row (bulkCurateAssign).
+
             Params:
                 curation_status (str): "", "Needs curation" or "Curated"
         """
-        # prompt assign to
-        if curation_status == "Needs curation":
-            assign_to, confirmed = QInputDialog.getText(
-                self,
-                "Assign to",
-                "Assign curation to username:\n(press enter to leave blank)"
-            )
-            if not confirmed:
-                return False
-        else:
-            assign_to = ""
-        
+        return self._applyCuration(names, curation_status)
+
+    @object_function(update_objects=True, reload_field=False)
+    def bulkCurateAssign(self, names : list):
+        """Mark as needing curation, assigned to a user of the caller's choice.
+
+        The dialog that used to sit in front of EVERY needs-curation marking,
+        kept for the case that actually wants it, pre-filled with the current
+        user so the common answer is one Enter away.
+        """
+        assign_to, confirmed = QInputDialog.getText(
+            self,
+            "Assign to",
+            "Assign curation to username:\n(press enter to leave blank)",
+            text=self.series.user,
+        )
+        if not confirmed:
+            return False
+        return self._applyCuration(names, "Needs curation", assign_to)
+
+    def _applyCuration(self, names, curation_status, assign_to=None):
+        """The undecorated core the two menu rows share.
+
+        ``assign_to=None`` means the default: needs-curation self-assigns to
+        the series' user, everything else carries no assignee. The status bar
+        acknowledges the change, because an action with no dialog needs SOME
+        acknowledgment ("indicates it occurred", in the reporter's words).
+        """
+        if assign_to is None:
+            assign_to = self.series.user if curation_status == "Needs curation" else ""
+
         self.series_states.addState()
-        
+
         self.series.setCuration(names, curation_status, assign_to)
+        self._curationStatusMessage(names, curation_status, assign_to)
 
         return True
+
+    def _curationStatusMessage(self, names, curation_status, assign_to):
+        """One transient status-bar line acknowledging a silent bulk action."""
+        count = f"{len(names)} object" + ("s" if len(names) != 1 else "")
+        if curation_status == "Needs curation":
+            who = "you" if assign_to == self.series.user else (assign_to or "no one")
+            text = f"Marked {count} as needing curation (assigned to {who})"
+        elif curation_status == "Curated":
+            text = f"Marked {count} as curated"
+        else:
+            text = f"Cleared curation on {count}"
+        try:
+            self.mainwindow.statusBar().showMessage(text, 4000)
+        except Exception:
+            pass
     
     @object_function(update_objects=False, reload_field=False)  # set update objects as False to avoid the lock check
     def lockObjects(self, names : list, lock=True):
