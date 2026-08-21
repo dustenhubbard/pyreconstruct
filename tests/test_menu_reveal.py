@@ -88,13 +88,13 @@ def test_reveal_walks_nested_submenus(main_window):
 
 def test_reveal_reaches_depth_four(main_window):
     menubar = main_window.menubar
-    path = "View > Palette > Visibility > Trace palette"
+    path = "View > Palette > Increment palette buttons > Up"
     assert reveal_path(menubar, path) is True
     opened = open_menus(menubar)
     assert "View" in opened
     assert "View > Palette" in opened
-    assert "View > Palette > Visibility" in opened
-    assert active_trail(menubar, path) == "Trace palette"
+    assert "View > Palette > Increment palette buttons" in opened
+    assert active_trail(menubar, path) == "Up"
     close_reveal(menubar)
 
 
@@ -114,7 +114,7 @@ def test_unknown_paths_return_false_without_side_effects(main_window):
 
 def test_close_reveal_closes_everything_and_is_reentrant(main_window):
     menubar = main_window.menubar
-    assert reveal_path(menubar, "View > Palette > Visibility > Scale bar")
+    assert reveal_path(menubar, "View > Palette > Increment palette buttons > Down")
     assert open_menus(menubar) != []
     close_reveal(menubar)
     assert open_menus(menubar) == []
