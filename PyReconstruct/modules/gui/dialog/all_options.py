@@ -20,7 +20,6 @@ from .backup import BackupDialog
 from .autoseg_palette import AutosegColorsWidget
 
 from PyReconstruct.modules.datatypes import Series
-from PyReconstruct.modules.constants import is_frozen
 from PyReconstruct.modules.backend.func.utils import (
     zarr_worker_count, MAX_ZARR_WORKERS,
 )

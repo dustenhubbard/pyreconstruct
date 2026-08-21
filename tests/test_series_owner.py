@@ -11,7 +11,6 @@ import json
 import os
 import socket
 
-import pytest
 
 from PyReconstruct.modules.datatypes.series_owner import (
     OWNER_FILENAME,

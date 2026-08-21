@@ -22,7 +22,6 @@ from .filters import passesFilters
 
 from PyReconstruct.modules.calc import traceGeometry
 
-from PyReconstruct.modules.constants.settings_domain import settings_domain
 from PyReconstruct.modules.constants import (
     createHiddenDir,
     welcome_series_dir,

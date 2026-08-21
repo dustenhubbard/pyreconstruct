@@ -6,7 +6,6 @@ side-by-side apps reads it at call time: the window title, the global
 QSettings domain, the per-series settings store, the pinned update channel,
 and the series ownership marker. These pin that seam.
 """
-import pytest
 
 from PyReconstruct.modules.constants.settings_domain import settings_app, settings_domain
 from PyReconstruct.modules.backend.settings_store import QSettingsStore
