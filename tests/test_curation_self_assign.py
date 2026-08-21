@@ -22,18 +22,17 @@ import pytest
 from PyReconstruct.modules.backend.settings_store import DictSettingsStore
 from PyReconstruct.modules.datatypes.series import Series
 
-FIXTURE = os.path.join(
-    os.path.dirname(__file__), "..", "PyReconstruct", "assets",
-    "checker", "files", "shapes1.jser",
-)
+# main keeps its series fixture under dev/assets (the release line bundles
+# one under PyReconstruct/assets/checker); lean on conftest's path.
+from conftest import SERIES_FIXTURE
 
 
 @pytest.fixture
 def series(tmp_path):
-    if not os.path.exists(FIXTURE):
-        pytest.skip("fixture shapes1.jser not found")
-    fp = str(tmp_path / "shapes1.jser")
-    shutil.copyfile(FIXTURE, fp)
+    if not SERIES_FIXTURE.exists():
+        pytest.skip(f"series fixture missing: {SERIES_FIXTURE}")
+    fp = str(tmp_path / "series.jser")
+    shutil.copyfile(SERIES_FIXTURE, fp)
     s = Series.openJser(fp)
     s.setSettingsStore(DictSettingsStore())
     yield s
