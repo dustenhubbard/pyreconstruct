@@ -639,7 +639,9 @@ class Section():
                 tags (set): the new set of tags. None leaves each trace's own
                     tags untouched (as for name/color/mode); an empty set
                     REPLACES them with no tags, which is how
-                    Series.removeAllTraceTags clears them.
+                    Series.removeAllTraceTags clears them. The set is copied
+                    per trace, so the caller's set is never adopted and no two
+                    traces share one.
                 mode (tuple): the new fill mode for the traces
                 add_tags (bool): True if tags should be added (rather than replaced)
                 log_event (bool): true if the event should be logged
@@ -664,7 +666,12 @@ class Section():
                     for tag in tags:
                         new_trace.tags.add(tag)
                 else:
-                    new_trace.tags = tags
+                    # copy per trace: a bare assignment would hand the same set
+                    # object to every trace in the loop (and to the caller, whose
+                    # set it is), so a later in-place tags.add on one trace would
+                    # appear on all of them. Trace.copy() copies tags for the
+                    # same reason.
+                    new_trace.tags = set(tags)
             fill_mode = list(new_trace.fill_mode)
             if mode is not None:
                 style, condition = mode
