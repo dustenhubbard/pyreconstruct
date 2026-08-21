@@ -9,7 +9,7 @@ feature cannot drift on what a path is.
 """
 from shiboken6 import isValid
 
-from PyReconstruct.modules.gui.dialog.menu_search import (
+from PyReconstruct.modules.gui.main.menu_search import (
     clean_label,
     collect_menu_commands,
 )

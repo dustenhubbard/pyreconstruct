@@ -31,7 +31,7 @@ a cosmetic feature. Failures degrade to "nothing revealed" instead.
 from PySide6.QtWidgets import QApplication
 from shiboken6 import isValid
 
-from PyReconstruct.modules.gui.dialog.menu_search import clean_label
+from PyReconstruct.modules.gui.main.menu_search import clean_label
 
 
 def _settle():
