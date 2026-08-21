@@ -135,6 +135,35 @@ def test_open_trace_is_never_a_merge_target(merge_field):
     assert sorted(t.closed for t in contour) == [False, True]
 
 
+def test_one_undo_restores_the_pre_draw_section(merge_field):
+    """#137: the auto-merged draw is one undo step, and one redo step."""
+    field = merge_field
+
+    _draw(field, SQ_BASE)
+    field.section.selected_traces = []
+
+    before_points = [list(t.points) for t in _contour(field)]
+    assert len(before_points) == 1
+
+    _draw(field, SQ_OVERLAPPING)
+    assert len(_contour(field)) == 1
+    merged_points = [list(t.points) for t in _contour(field)]
+    assert merged_points != before_points
+
+    # one undo: the section is exactly as it was before the draw
+    field.undoState()
+    after_undo = [list(t.points) for t in _contour(field)]
+    assert after_undo == before_points, (
+        "one Ctrl+Z after an auto-merged draw must restore the pre-draw "
+        "contour, not the half-reverted original-plus-unmerged-new state"
+    )
+
+    # one redo: the merged result comes back
+    field.undoState(redo=True)
+    after_redo = [list(t.points) for t in _contour(field)]
+    assert after_redo == merged_points
+
+
 def test_merged_trace_keeps_the_existing_traces_attributes(merge_field):
     """The merged result inherits the pre-existing trace's color and tags.
 
