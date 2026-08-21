@@ -736,8 +736,13 @@ class FieldWidgetMouse(FieldWidgetData):
                 # a no-op when the trace layer is hidden (@field_interaction) or
                 # when the retraced line collapses to < 2 points. The return
                 # value cannot be used here because it carries log_event, which
-                # is forced False while scissoring.
-                added_before = len(self.section.added_traces)
+                # is forced False while scissoring. Counting added_traces does
+                # not work either: on a logged draw the table refresh inside
+                # newTrace calls clearTracking() and empties that list before
+                # newTrace returns. The contour itself is the only witness the
+                # refresh cannot erase.
+                name = self.tracing_trace.name
+                contour_before = len(self.section.contours.get(name, []))
 
                 self.newTrace(
                     current_trace_copy,
@@ -746,7 +751,7 @@ class FieldWidgetMouse(FieldWidgetData):
                     log_event=(log_event and (not self.is_scissoring))
                 )
 
-                recreated = len(self.section.added_traces) > added_before
+                recreated = len(self.section.contours.get(name, [])) > contour_before
 
                 if recreated and log_event and self.is_scissoring:
                     self.series.addLog(self.tracing_trace.name, self.section.n, "Modify trace(s)")
