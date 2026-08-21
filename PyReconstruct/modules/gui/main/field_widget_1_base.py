@@ -207,6 +207,11 @@ class FieldWidgetBase:
         if not self.series.isWelcomeSeries():
             self.time = str(round(time.time()))
             open(os.path.join(self.series.getwdir(), self.time), "w").close()
+            # identity beside the heartbeat, so the "series in use" guard can
+            # say WHICH app holds the series (stable and Dev install side by
+            # side); see modules/datatypes/series_owner.py
+            from PyReconstruct.modules.datatypes.series_owner import write_owner
+            write_owner(self.series.getwdir())
             self.timer = QTimer(self)
             self.timer.timeout.connect(self.markTime)
             self.timer.start(5000)
