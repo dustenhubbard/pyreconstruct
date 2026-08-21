@@ -1,10 +1,10 @@
-"""The Series > Options > Updates section no longer offers a channel radio.
+"""Update settings have left Series Options entirely.
 
-The update channel is pinned per build (updater.pinned_channel: the stable app
-follows the release channel, the Dev flavor the prerelease channel), so the
-frozen-build Updates section holds only the "Check for updates on startup"
-check. These pin that shape and that applying the dialog leaves the stored
-update_channel value untouched, whatever a pre-pin install had wandered it to.
+The channel is pinned per build (updater.pinned_channel), the Updates tab is
+gone, "Check for updates on startup" is a checkable Help item resynced from
+the open series on every Help open, and the source-install branch is asked
+for by the reinstall prompt instead of stored-only. These pin the removal and
+the Help toggle round trip.
 """
 import os
 import shutil
@@ -13,13 +13,14 @@ import pytest
 
 from PyReconstruct.modules.datatypes.series import Series
 from PyReconstruct.modules.backend.settings_store import DictSettingsStore
-from PyReconstruct.modules.gui.dialog import all_options as AO
 from PyReconstruct.modules.gui.dialog.all_options import AllOptionsDialog
 
 FIXTURE = os.path.join(
     os.path.dirname(__file__), "..", "PyReconstruct",
     "assets", "checker", "files", "shapes1.jser",
 )
+
+pytestmark = pytest.mark.gui
 
 
 @pytest.fixture(scope="module")
@@ -38,36 +39,30 @@ def _series(tmp_path):
     return series
 
 
-def _frozen_dialog(monkeypatch, series):
-    monkeypatch.setattr(AO, "is_frozen", lambda: True)
-    return AllOptionsDialog(None, series)
-
-
-def _updates_widget(dlg):
-    return dlg.all_widgets["updates"]
-
-
-def test_no_channel_radio_on_frozen_build(qapp, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QRadioButton
+def test_series_options_has_no_updates_tab(qapp, tmp_path):
     series = _series(tmp_path)
-    dlg = _frozen_dialog(monkeypatch, series)
-    w = _updates_widget(dlg)
-    assert w.findChildren(QRadioButton) == []
+    dlg = AllOptionsDialog(None, series)
+    assert "updates" not in dlg.all_widgets
+    from PySide6.QtWidgets import QTabWidget
+    (tabs,) = dlg.findChildren(QTabWidget)
+    labels = [tabs.tabText(i) for i in range(tabs.count())]
+    assert "Updates" not in labels
     series.close()
 
 
-def test_apply_keeps_stored_channel_and_saves_startup_check(qapp, tmp_path, monkeypatch):
-    from PySide6.QtWidgets import QCheckBox
-    series = _series(tmp_path)
-    # a pre-pin install that had wandered onto the beta channel
-    series.setOption("update_channel", "prerelease")
-    dlg = _frozen_dialog(monkeypatch, series)
-    w = _updates_widget(dlg)
-    (check,) = w.findChildren(QCheckBox)
-    check.setChecked(not series.getOption("update_check_on_startup"))
-    expected = check.isChecked()
-    assert w.accept(close=False)   # populate w.responses from the real widgets
-    w.set()                        # run the dialog's setOption closure
-    assert series.getOption("update_check_on_startup") == expected
-    assert series.getOption("update_channel") == "prerelease"
-    series.close()
+def test_help_toggle_round_trips_the_startup_check(main_window):
+    mw = main_window
+    stored = bool(mw.series.getOption("update_check_on_startup"))
+
+    # the resync reflects the stored option on the checkable
+    mw.syncUpdateCheckToggle()
+    assert mw.toggleupdatecheck_act.isChecked() == stored
+
+    # flipping the checkable persists the option
+    mw.toggleupdatecheck_act.setChecked(not stored)
+    mw.toggleUpdateCheckOnStartup()
+    assert bool(mw.series.getOption("update_check_on_startup")) == (not stored)
+
+    # and the resync agrees with what was just written
+    mw.syncUpdateCheckToggle()
+    assert mw.toggleupdatecheck_act.isChecked() == (not stored)

@@ -31,8 +31,9 @@ full release notes on GitHub (linked from the dialog).
   move to the PyReconstruct Dev app. Shortcuts now display beside right-click
   commands on macOS too.
 - **Your update channel comes with the app.** The stable app follows stable
-  releases; PyReconstruct Dev follows the beta channel. The release channel
-  setting in Series Options > Updates has been removed.
+  releases; PyReconstruct Dev follows the beta channel. The Series Options
+  Updates tab has been removed; "Check for updates on startup" now lives in
+  the Help menu, under "Check for updates...".
 - **The "series in use" message says which app has the series open.** With two
   builds installed, "another window" was no longer an answer.
 

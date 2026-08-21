@@ -512,6 +512,7 @@ def test_help_menu_offers_whats_new_reopen():
         copyDiagnosticReport=diag_sentinel,
         viewLogFile=lambda: None, openLogFolder=lambda: None,
         toggleWhatsNewPopup=toggle_sentinel,
+        toggleUpdateCheckOnStartup=toggle_sentinel,
         openMenuSearch=lambda: None,
     )
     opts = return_help_menu(stub)["opts"]
