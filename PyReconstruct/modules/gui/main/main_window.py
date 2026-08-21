@@ -246,12 +246,22 @@ class MainWindow(QMainWindow):
         ## Check alignment in alignment submenu
         self.changeAlignment(self.series.alignment)
 
-    def checkActions(self, context_menu=False, clicked_trace=None, clicked_label=None):
+    def checkActions(self, clicked_label=None):
         """Define enabled and disabled actions based on field context.
-        
+
+        Each entity scope is live when that scope has a selection, and the
+        clicked item does not enter into it: every command in both scopes acts
+        on the SELECTION (trace_function / ztrace_function supply it and return
+        early when it is empty). This replaced two rules that together left the
+        z-trace menu reading as empty -- an exclusive-or that disabled BOTH
+        menus whenever traces and z-traces were selected at once, and a
+        clicked-item test that answered a question no handler asks. The
+        relabelling top-level edit row those rules served is gone with the
+        menu reorganization; scope is chosen by opening "Trace" or "Ztrace".
+
             Params:
-                context_menu (bool): True if context menu is being generated
-                clicked_trace (Trace): the trace that was clicked on IF the cotext menu is being generated
+                clicked_label: the zarr overlay label under the cursor, when
+                    the label menu is the one being opened
         """
         ## Skip if actions not initialized
         if not self.actions_initialized:
@@ -260,66 +270,12 @@ class MainWindow(QMainWindow):
         field_section = self.field.section
         selected_traces = field_section.selected_traces
         selected_ztraces = field_section.selected_ztraces
-        
-        ## Allow only general field options if
-        ##   1. both traces and z traces highlighted or
-        ##   2. nothing highlighted
-        
-        # which entity the top-level Q8 edit shortcut acts on this pass
-        active = None
 
-        if not (bool(selected_traces) ^ bool(selected_ztraces)):
+        for a in self.trace_actions:
+            a.setEnabled(bool(selected_traces))
 
-            for a in self.trace_actions:
-                a.setEnabled(False)
-
-            for a in self.ztrace_actions:
-                a.setEnabled(False)
-
-        ## If selected trace in highlighted traces
-
-        elif (
-                (not context_menu and selected_traces) or
-                (context_menu and clicked_trace in selected_traces)
-        ):
-
-            for a in self.ztrace_actions:
-                a.setEnabled(False)
-
-            for a in self.trace_actions:
-                a.setEnabled(True)
-
-            active = "trace"
-
-        ## If selected ztrace in highlighted ztraces
-
-        elif (
-                (not context_menu and field_section.selected_ztraces) or
-                (context_menu and clicked_trace in field_section.selected_ztraces)
-        ):
-
-            for a in self.trace_actions:
-                a.setEnabled(False)
-
-            for a in self.ztrace_actions:
-                a.setEnabled(True)
-
-            active = "ztrace"
-
-        else:
-
-            for a in self.trace_actions:
-                a.setEnabled(False)
-
-            for a in self.ztrace_actions:
-                a.setEnabled(False)
-
-        # Q8 top-level "Edit ... attributes..." shortcut: label + enabled state
-        # follow whichever entity submenu is active (disabled/neutral when the
-        # selection is empty or an ambiguous trace+z-trace mix).
-        edit_text, edit_enabled = edit_selected_label(active)
-        self.editselected_act.setText(edit_text)
-        self.editselected_act.setEnabled(edit_enabled)
+        for a in self.ztrace_actions:
+            a.setEnabled(bool(selected_ztraces))
 
         # check labels
         if clicked_label:

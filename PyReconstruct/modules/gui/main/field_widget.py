@@ -268,7 +268,7 @@ class FieldWidget(QWidget, FieldWidgetView):
 
             self.clicked_trace, clicked_type = self.section_layer.getTrace(event.x(), event.y())
 
-            self.mainwindow.checkActions(context_menu=True, clicked_trace=self.clicked_trace, clicked_label=clicked_label)
+            self.mainwindow.checkActions(clicked_label=clicked_label)
             self.lclick, self.rclick, self.mclick = False, False, False
 
             if clicked_label:

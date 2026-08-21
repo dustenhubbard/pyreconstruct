@@ -119,7 +119,7 @@ def test_field_menu_binds_the_key_rather_than_the_empty_string():
     would both have been decorative.
     """
     from PyReconstruct.modules.gui.main.context_menu_list import get_field_menu_list
-    from test_context_menu_frequency import _kbds, _main_window_stub
+    from menu_test_helpers import _kbds, _main_window_stub
 
     stub = _main_window_stub()
     kbds = _kbds(get_field_menu_list(stub))

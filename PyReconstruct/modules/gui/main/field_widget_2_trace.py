@@ -1379,19 +1379,18 @@ class FieldWidgetTrace(FieldWidgetBase):
                 list_ops (list): list-only table utilities ("Invert selection",
                     "Copy z-trace values") for the standard bottom utility slot
         """
+        # Upstream's organization (the stable line follows upstream's menu
+        # structure): the 3D add lives inside "3D", not hoisted above it.
         context_menu_list = [
-            ("editztracce_act", "Edit z-trace attributes...", "", self.editZtraceAttributes),
+            ("editztracce_act", "Edit attributes...", "", self.editZtraceAttributes),
             ("smoothztrace_act", "Smooth", "", self.smoothZtrace),
-            # Hoisted out of "3D >" alongside the object menu's equivalent (this
-            # lab is 3D-heavy). The label gains "3D" because at top level it no
-            # longer has the submenu for context.
-            ("addto3D_act", "Add to 3D scene", "", self.addZtraceTo3D),
             None,
             {
                 "attr_name": "ztracemenu_3D",
                 "text": "3D",
                 "opts":
                 [
+                    ("addto3D_act", "Add to scene", "", self.addZtraceTo3D),
                     ("remove3D_act", "Remove from scene", "", self.removeZtrace3D)
                 ]
             },
@@ -1405,7 +1404,7 @@ class FieldWidgetTrace(FieldWidgetBase):
                     ("removeztraceallgroups_act", "Remove from all groups", "", self.removeZtraceFromAllGroups)
                 ]
             },
-            ("setztracealignment_act", "Edit alignment...", "", self.editZtraceAlignment),
+            ("setztracealignment_act", "Change ztrace alignment...", "", self.editZtraceAlignment),
         ]
 
         # table utilities, in the slot every list shares
@@ -1414,7 +1413,7 @@ class FieldWidgetTrace(FieldWidgetBase):
 
         context_menu_list += [
             None,
-            ("deleteztrace_act", "Delete z-traces", "", self.deleteZtrace)
+            ("deleteztrace_act", "Delete", "", self.deleteZtrace)
         ]
 
         return context_menu_list
