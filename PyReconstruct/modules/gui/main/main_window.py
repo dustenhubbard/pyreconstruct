@@ -680,6 +680,16 @@ class MainWindow(QMainWindow):
             )
         )
 
+    def openMenuSearch(self):
+        """Open the menu-search palette (Help > Search menus...).
+
+        Built fresh per open: the menubar is rebuilt whenever a series opens,
+        so the palette walks the live one rather than caching actions that a
+        rebuild would orphan.
+        """
+        from PyReconstruct.modules.gui.dialog.menu_search import MenuSearchDialog
+        MenuSearchDialog(self).exec()
+
     def toggleWhatsNewPopup(self):
         """Persist the Help-menu toggle: checked means the popup may show.
 
