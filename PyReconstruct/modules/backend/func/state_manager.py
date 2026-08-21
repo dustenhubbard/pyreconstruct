@@ -274,6 +274,22 @@ class SectionStates():
             updated_ztraces
         )
         
+    def dropStatesAfter(self, count : int):
+        """Drop the undo states pushed after the first `count`.
+
+        Collapses a multi-part action into one undo step. The caller counts
+        the undo states before triggering the follow-up parts (autoMerge does
+        this around the merge that follows a draw, upstream issue #137) and
+        the intermediate snapshots those parts pushed are removed, so the next
+        undo lands on the state saved before the whole gesture rather than on
+        a composite the user never saw. The current state is untouched: it
+        already reflects the finished action, and redo replays it from there.
+
+            Params:
+                count (int): how many undo states to keep, from the oldest
+        """
+        del self.undo_states[count:]
+
     def undoState(self, section : Section, series : Series) -> set:
         """Restore an undo state on the section.
         
