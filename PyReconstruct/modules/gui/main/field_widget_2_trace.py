@@ -659,10 +659,16 @@ class FieldWidgetTrace(FieldWidgetBase):
 
         ## Assume same, otherwise suffer consequences
         example_trace = traces[0]
-        ## Combine tags
+
+        ## Combine tags onto a copy, never the live trace: three refusals sit
+        ## below this point and each tells the user the object was left
+        ## unchanged. Mutating traces[0] here made that a lie, because a tag
+        ## just deleted from it came back the moment a cut was refused. The
+        ## copy is what the pieces of a completed cut are built from, so the
+        ## success path still gives every piece the selection's combined tags.
+        piece_base = example_trace.copy()
         for trace in traces[1:]:
-            for tag in trace.tags:
-                example_trace.tags.add(tag)
+            piece_base.tags |= trace.tags
 
         ## Pixelize the selected traces
         traces_to_cut = [self.section_layer.traceToPix(t) for t in traces]
@@ -744,7 +750,7 @@ class FieldWidgetTrace(FieldWidgetBase):
         for piece in cut_traces:
             self.newTrace(
                 piece,
-                example_trace,
+                piece_base,
                 closed=example_trace.closed,
                 reduce_points=False,
                 log_event=False
