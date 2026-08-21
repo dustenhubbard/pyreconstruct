@@ -188,3 +188,42 @@ def test_merged_trace_keeps_the_existing_traces_attributes(merge_field):
         "palette's fresh copy"
     )
     assert "keep_me" in merged.tags
+
+
+def _finish_poly(field, pix_points):
+    """Finish a point-to-point trace the way the mouse handlers do: through
+    lineRelease, guards and all. The click-test regression lived in exactly
+    the part the direct newTrace-plus-autoMerge calls above skip: lineRelease
+    decided whether the draw happened by counting section.added_traces, but a
+    logged draw refreshes the tables inside newTrace, and that refresh calls
+    clearTracking() and empties the list before newTrace returns. The guard
+    therefore never saw the new trace and autoMerge was unreachable from the
+    polygon gesture."""
+    from PyReconstruct.modules.gui.main.field_widget_5_mouse import CLOSEDTRACE
+    field.setMouseMode(CLOSEDTRACE)
+    field.is_line_tracing = True
+    field.current_trace = list(pix_points)
+    field.lineRelease(override=True)
+
+
+def test_polygon_gesture_reaches_automerge(merge_field):
+    """An overlapping point-to-point draw merges through the real release."""
+    field = merge_field
+
+    _finish_poly(field, SQ_BASE)
+    assert len(_contour(field)) == 1
+
+    field.section.selected_traces = []
+    _finish_poly(field, SQ_OVERLAPPING)
+    assert len(_contour(field)) == 1, (
+        "lineRelease did not reach autoMerge for an overlapping polygon draw"
+    )
+
+
+def test_polygon_gesture_leaves_disjoint_traces_alone(merge_field):
+    """A disjoint same-name draw through lineRelease stays a separate trace."""
+    field = merge_field
+
+    _finish_poly(field, SQ_BASE)
+    _finish_poly(field, SQ_DISJOINT)
+    assert len(_contour(field)) == 2
