@@ -474,7 +474,7 @@ def return_help_menu(self):
             # series, not this window.
             ("toggleupdatecheck_act", "Check for updates on startup", "checkbox",
              self.toggleUpdateCheckOnStartup),
-            ("whatsnew_act", "What's new", "", self.showWhatsNew),
+            ("whatsnew_act", "What's new?", "", self.showWhatsNew),
             # Checkable, mirroring the stored suppress_whatsnew preference the
             # dialog's "Don't show again" button also writes. Unlike the
             # menubar's other checkables this one resyncs on every Help open

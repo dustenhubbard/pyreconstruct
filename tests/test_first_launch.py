@@ -510,7 +510,7 @@ def test_help_menu_offers_whats_new_reopen():
     opts = return_help_menu(stub)["opts"]
     entries = [o for o in opts if isinstance(o, tuple)]
     whatsnew = [o for o in entries if o[0] == "whatsnew_act"]
-    assert whatsnew == [("whatsnew_act", "What's new", "", sentinel)]
+    assert whatsnew == [("whatsnew_act", "What's new?", "", sentinel)]
 
     # ...and directly under it, the checkable popup on/off switch
     toggle = [o for o in entries if o[0] == "togglewhatsnew_act"]
