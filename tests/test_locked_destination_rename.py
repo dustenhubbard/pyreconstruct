@@ -267,8 +267,10 @@ def test_merge_attributes_destination_is_always_a_source_trace(
 
     It renames the selection onto `to_merge[0].name`, and `to_merge` is either
     the selection itself or `restrict`, which `autoMerge` builds out of the
-    selection. So the destination is always one of the traces `trace_function`
-    already cleared, and this path needed no new check.
+    same-name traces overlapping the one just drawn -- every one of them
+    carries the name of the new trace, which `newTrace` always selects. So the
+    destination name always belongs to a trace `trace_function` already
+    cleared, and this path needed no new check.
 
     Pinned because the fix deliberately did not touch it: if a future caller
     passes a `restrict` list from outside the selection, the destination stops
