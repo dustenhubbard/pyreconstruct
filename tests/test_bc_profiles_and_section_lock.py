@@ -301,10 +301,25 @@ def _table_stub(monkeypatch, locked_sections=(), selected=(1, 2)):
             for n in selected
         }
     }
+    def _enumerate_sections(show_progress=True, message="", series_states=None,
+                            breakable=True, section_numbers=None):
+        """The double's stand-in for Series.enumerateSections.
+
+        The bulk section handlers iterate through it rather than calling
+        loadSection in a hand-written loop, because it is what drives the
+        progress bar (see test_section_list_progress.py). It yields
+        (snum, section) over the requested subset; this double drops the
+        progress arguments, which is exactly what NullProgressReporter does
+        headless.
+        """
+        wanted = list(sections) if section_numbers is None else list(section_numbers)
+        return [(n, sections[n]) for n in wanted if n in sections]
+
     stub = types.SimpleNamespace(
         series=types.SimpleNamespace(
             data=data,
             loadSection=lambda n: sections[n],
+            enumerateSections=_enumerate_sections,
             addLog=lambda *a, **k: None,
         ),
         manager=types.SimpleNamespace(updateSections=lambda nums: None),
