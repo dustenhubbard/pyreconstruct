@@ -21,9 +21,6 @@ from .autoseg_palette import AutosegColorsWidget
 
 from PyReconstruct.modules.datatypes import Series
 from PyReconstruct.modules.constants import is_frozen
-from PyReconstruct.modules.backend.updater.updater import (
-    channel_radio_index, radio_response_channel,
-)
 from PyReconstruct.modules.backend.func.utils import determine_cpus
 
 
@@ -495,22 +492,13 @@ class AllOptionsDialog(QDialog):
         self.addOptionWidget("3D_step", structure, setOption)
 
         # updates
-        if is_frozen():  # installed build: choose the release channel
-            # channel_radio_index normalizes legacy values ("stable"/"edge") and
-            # maps to the radio position; radio_response_channel is its inverse.
-            channel_idx = channel_radio_index(
-                self.series.getOption("update_channel", use_defaults))
+        if is_frozen():  # installed build: the channel is pinned per build
             structure = [
-                ["Update channel:"],
-                [("radio",
-                  ("Stable (recommended)", channel_idx == 0),
-                  ("Beta (early features, may be unstable)", channel_idx == 1))],
                 [("check", ("Check for updates on startup",
                             self.series.getOption("update_check_on_startup", use_defaults)))],
             ]
             def setOption(response):
-                self.series.setOption("update_channel", radio_response_channel(response[0]))
-                self.series.setOption("update_check_on_startup", response[1][0][1])
+                self.series.setOption("update_check_on_startup", response[0][0][1])
         else:  # source/pip install: choose the GitHub branch to reinstall from
             structure = [
                 ["Update reinstalls from a GitHub branch (source install):"],

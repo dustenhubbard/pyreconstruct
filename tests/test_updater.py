@@ -118,32 +118,14 @@ def test_pick_release_prerelease_falls_back_to_stable_never_to_rolling():
     assert picked["tag_name"] != U.ROLLING_TAG
 
 
-# ---- channel value <-> radio helpers ----------------------------------------
-@pytest.mark.parametrize("channel,idx", [
-    ("release", 0), ("prerelease", 1),
-    ("stable", 0), ("edge", 1),          # legacy values normalize
-    ("developer", 1),                    # removed channel -> Beta radio, not index 0
-    (None, 0), ("bogus", 0), ("", 0),    # unknown/missing -> Stable (the default)
-])
-def test_channel_radio_index(channel, idx):
-    assert U.channel_radio_index(channel) == idx
+# ---- the pinned per-build channel --------------------------------------------
+def test_pinned_channel_stable_build(monkeypatch):
+    monkeypatch.delenv("PYRECON_APP_NAME", raising=False)
+    assert U.pinned_channel() == "release"
 
-@pytest.mark.parametrize("checked_idx,channel", [(0, "release"), (1, "prerelease")])
-def test_radio_response_channel(checked_idx, channel):
-    resp = [["Stable", False], ["Beta", False]]
-    resp[checked_idx][1] = True
-    assert U.radio_response_channel(resp) == channel
-
-def test_radio_response_channel_defaults_release_when_none_checked():
-    resp = [("Stable", False), ("Beta", False)]
-    assert U.radio_response_channel(resp) == "release"
-
-def test_channel_index_and_response_roundtrip():
-    # opening the dialog then re-saving the shown radio must preserve the value
-    for channel in U.UPDATE_CHANNELS:
-        idx = U.channel_radio_index(channel)
-        resp = [(lbl, i == idx) for i, lbl in enumerate(U.UPDATE_CHANNELS)]
-        assert U.radio_response_channel(resp) == channel
+def test_pinned_channel_dev_build(monkeypatch):
+    monkeypatch.setenv("PYRECON_APP_NAME", "PyReconstruct Dev")
+    assert U.pinned_channel() == "prerelease"
 
 def test_normalize_channel():
     assert U.normalize_channel("stable") == "release"
