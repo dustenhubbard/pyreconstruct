@@ -108,6 +108,58 @@ def edit_selected_label(active):
     return ("Edit attributes...", False)
 
 
+def scope_menus_enabled(selected_traces, selected_ztraces):
+    """Which entity scopes have something to act on.
+
+    Pure decision function, shared by MainWindow.checkActions so the rule is
+    testable without a Qt loop -- same idiom as edit_selected_label.
+
+    A scope is live when that scope HAS A SELECTION. Nothing else. Two rules
+    used to sit on top of that and both were wrong:
+
+      * An exclusive-or: with traces AND z-traces both selected, BOTH scopes
+        were switched off. Selecting more things made fewer commands available,
+        which no user would predict. Its only justification was the top-level
+        relabelling edit row, which can name one entity at a time and so needs
+        an unambiguous winner -- but that row is one action, and it was
+        disabling two whole menus to protect itself. It still gets its
+        unambiguous answer from edit_selected_label; nothing else has to pay
+        for it.
+      * A clicked-item test: on a right-click the scope was live only if the
+        item under the cursor was already in that scope's selection. But no
+        command in either scope reads the clicked item. Every one of them is
+        wrapped in trace_function / ztrace_function, which take the SELECTION
+        (or the focused data table's rows) and return early when it is empty.
+        So the gate asked a question the handlers do not ask, and answered it
+        for them.
+
+    Together those two produced the reported symptom: the z-trace submenu
+    "is empty so i don't know what was originally intended to go here" -- nine
+    rows, every one greyed, unless the right-click happened to land on an
+    already-selected z-trace with no trace co-selected.
+
+        Params:
+            selected_traces: the section's selected traces
+            selected_ztraces: the section's selected z-traces
+        Returns:
+            (tuple): (trace scope live, z-trace scope live)
+    """
+    return (bool(selected_traces), bool(selected_ztraces))
+
+
+def edit_selected_entity(selected_traces, selected_ztraces):
+    """Which entity the one relabelling edit row names, or None.
+
+    Unlike the scope menus above this genuinely cannot serve a mixed selection:
+    it is a single action with a single label, so with both kinds selected there
+    is no honest thing for it to say and it goes neutral and disabled. That is
+    the exclusive-or's real and only home.
+    """
+    if bool(selected_traces) == bool(selected_ztraces):
+        return None
+    return "trace" if selected_traces else "ztrace"
+
+
 def get_label_menu_list(self):
     """The zarr-label right-click menu (unchanged by the frequency redesign).
 
