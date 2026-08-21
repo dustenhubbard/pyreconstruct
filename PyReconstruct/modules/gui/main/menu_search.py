@@ -141,9 +141,65 @@ def collect_menu_commands(menubar):
     return commands
 
 
-def resolve_command(menubar, path):
-    """The live QAction for a path, looked up fresh. None when it is gone."""
-    for cand_path, _sc, _en, action in collect_menu_commands(menubar):
+def collect_all_commands(mainwindow):
+    """The menubar's commands plus the field's right-click commands.
+
+    Most of the app's day-to-day work lives in the FIELD's context menu (the
+    Trace/Object/Ztrace operations), not the menubar, so a search that only
+    reads the menubar misses exactly the commands people reach for. The field
+    menu is a plain QMenu built onto the MainWindow (createContextMenus), so
+    the same walker reads it; its paths are prefixed "Right-click" so a result
+    says where the command actually lives. Reveal cannot open a context menu
+    (there is nothing to anchor it to until the user right-clicks), so these
+    entries list and run only -- reveal_path simply reports False for them.
+
+    Duplicates are real and kept: a command that exists in both the menubar
+    and the right-click menu appears twice, under the two places a user could
+    actually find it.
+    """
+    commands = list(collect_menu_commands(mainwindow.menubar))
+    field_menu = getattr(mainwindow, "field_menu", None)
+    if field_menu is not None and isValid(field_menu):
+        commands += _collect_from_menu(field_menu, ["Right-click"])
+    return commands
+
+
+def _collect_from_menu(menu, trail):
+    """collect_menu_commands' walk, exposed for a menu that is not a menubar."""
+    commands = []
+    submenus = _submenus_by_title_action(menu)
+    for action in menu.actions():
+        if not isValid(action):
+            continue
+        if action.isSeparator():
+            continue
+        submenu = submenus.get(getCppPointer(action)[0])
+        if submenu is not None:
+            commands += _collect_from_menu(
+                submenu, trail + [clean_label(action.text())]
+            )
+            continue
+        if not action.text():
+            continue
+        path = " > ".join(trail + [clean_label(action.text())])
+        commands.append(
+            (path, action.shortcut().toString(), action.isEnabled(), action)
+        )
+    return commands
+
+
+def resolve_command(menubar, path, mainwindow=None):
+    """The live QAction for a path, looked up fresh. None when it is gone.
+
+    With `mainwindow` given, right-click commands resolve too; the bare
+    menubar form stays for callers (and tests) that predate the field menu
+    joining the search.
+    """
+    if mainwindow is not None:
+        source = collect_all_commands(mainwindow)
+    else:
+        source = collect_menu_commands(menubar)
+    for cand_path, _sc, _en, action in source:
         if cand_path == path and isValid(action):
             return action
     return None
@@ -252,7 +308,7 @@ class MenuSearchField(QWidgetAction):
         self._commands = [
             (path, shortcut, enabled)
             for path, shortcut, enabled, _action
-            in collect_menu_commands(self._mainwindow.menubar)
+            in collect_all_commands(self._mainwindow)
         ]
 
     def _menuHiding(self):
@@ -362,7 +418,9 @@ class MenuSearchField(QWidgetAction):
         # always re-resolved by path, never the snapshot wrapper: the wrapper
         # may be dead (see collect_menu_commands), and the menubar itself may
         # have been rebuilt since the snapshot was taken
-        action = resolve_command(self._mainwindow.menubar, path)
+        action = resolve_command(
+            self._mainwindow.menubar, path, mainwindow=self._mainwindow
+        )
         if action is None or not action.isEnabled():
             return
         self._closeReveal()
