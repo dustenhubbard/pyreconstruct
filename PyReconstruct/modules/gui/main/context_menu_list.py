@@ -187,7 +187,21 @@ def get_context_menu_list_obj(self, list_ops=None, is_in_field=True):
                 # smoothobj_act, not upstream's smoothtraces_act: the trace menu
                 # already stores a QAction under that name on the same widget,
                 # and a duplicate silently shadows it.
-                ("smoothobj_act", "Smooth object traces", "", self.smoothObject),
+                # In the object LIST this row displays the smooth key, since
+                # over the list that key really does smooth the selected
+                # objects (mainwindow.smoothSelection routes by focus). The
+                # key is display-only here, via the label's tab column: the
+                # sequence is claimed exactly once, by the field's routed
+                # "Smooth traces" row, and a second binding would make Qt
+                # fire neither. The field's Object submenu stays keyless
+                # because in the field the key smooths traces, not objects.
+                ("smoothobj_act",
+                 "Smooth object traces" + (
+                     "\t" + (self.series.getOption("smoothtraces_act") or "")
+                     if (not is_in_field and self.series.getOption("smoothtraces_act"))
+                     else ""
+                 ),
+                 "", self.smoothObject),
                 ("splitobj_act", "Split traces into individual objects", "", self.splitObject),
                 None,
                 ("hideobj_act", "Hide", "", self.hideObj),
@@ -288,7 +302,15 @@ def get_context_menu_list_trace(self, is_in_field=True, list_ops=None, find_in_f
 
     context_menu += [
         None,
-        ("smoothtraces_act", "Smooth traces", "", self.smoothTraces),
+        # in the field the row carries the remappable key and routes by focus
+        # (mainwindow.smoothSelection): over the object list the same key
+        # smooths the selected objects whole. The list variant stays keyless
+        # and direct so exactly one QAction claims the sequence.
+        # the dispatcher is reached through a lambda so the mainwindow
+        # attribute is read at invoke time, not while stubs build the list
+        ("smoothtraces_act", "Smooth traces", sc,
+         (lambda: self.mainwindow.smoothSelection()) if is_in_field
+         else self.smoothTraces),
         ("mergetraces_act", "Merge traces", sc, self.mergeTraces),
         ("mergeobjects_act", "Merge attributes", sc, lambda : self.mergeTraces(merge_attrs_only=True)),
         None,
