@@ -307,8 +307,23 @@ class SectionListPopup(QWidget):
             )
         )
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # a bare width override strips the native handle styling and leaves
+        # a ghost of a scrollbar; paint the handle from the text color so it
+        # holds contrast in both themes
+        line = pal.windowText().color()
         self.list.verticalScrollBar().setStyleSheet(
-            "QScrollBar:vertical { width: 8px; }"
+            "QScrollBar:vertical {{ width: 8px; background: transparent;"
+            "  margin: 0; }}"
+            "QScrollBar::handle:vertical {{"
+            "  background: rgba({r},{g},{b},110); border-radius: 4px;"
+            "  min-height: 24px; }}"
+            "QScrollBar::handle:vertical:hover {{"
+            "  background: rgba({r},{g},{b},170); }}"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{"
+            "  height: 0; }}"
+            "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{"
+            "  background: transparent; }}"
+            .format(r=line.red(), g=line.green(), b=line.blue())
         )
 
         row_h = self.list.sizeHintForRow(0) if numbers else 18
