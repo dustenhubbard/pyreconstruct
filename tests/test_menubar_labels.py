@@ -346,6 +346,9 @@ _TOGGLE_WHATSNEW_ROW = (1, "act", "togglewhatsnew_act")
 # Series Options Updates tab (removed with the channel radio, 2026-08-21).
 # It sits directly under "Check for updates...", the action it governs.
 _TOGGLE_UPDATECHECK_ROW = (1, "act", "toggleupdatecheck_act")
+# Help > "Search menus...": the in-window menubar never gets macOS's native
+# Help search, so the app carries its own palette (stable ship, 2026-08-21).
+_SEARCH_MENUS_ROW = (1, "act", "searchmenus_act")
 _RECOLOR_ALL_ROW = (1, "act", "recolorallfrompalette_act")
 MENUBAR_EXPECTED = list(MENUBAR_BASELINE)
 MENUBAR_EXPECTED.insert(
@@ -364,6 +367,9 @@ MENUBAR_EXPECTED.insert(
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "act", "checkupdates_act")) + 1,
     _TOGGLE_UPDATECHECK_ROW,
+)
+MENUBAR_EXPECTED.insert(
+    MENUBAR_EXPECTED.index((1, "act", "shortcutshelp_act")), _SEARCH_MENUS_ROW
 )
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "act", "fillopacity_act")) + 1, _RECOLOR_ALL_ROW
@@ -428,7 +434,7 @@ def test_menubar_action_and_submenu_counts():
     each took the count up one, 117 to 119 together.
     """
     rows = _rows()
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 120
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 121
     assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 31
 
 

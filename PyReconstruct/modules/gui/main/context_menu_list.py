@@ -609,7 +609,10 @@ def get_context_menu_list_obj(self, list_ops=None, is_in_field=True):
             "text": "Set curation",
             "opts":
             [
-                ("needscuration_act", "Needs curation", "", lambda : self.bulkCurate("Needs curation")),
+                # instant, no dialog; the label says who gets it so the row
+                # beside it reads as the deliberate alternative, not a twin
+                ("needscuration_act", "Needs curation (assign to me)", "", lambda : self.bulkCurate("Needs curation")),
+                ("needscurationassign_act", "Needs curation (assign to)...", "", self.bulkCurateAssign),
                 ("curated_act", "Curated", "", lambda : self.bulkCurate("Curated")),
                 ("blankcurate_act", "Clear status", "", lambda : self.bulkCurate("")),
             ]
