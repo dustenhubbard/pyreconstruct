@@ -397,35 +397,49 @@ def test_press_right_after_popup_close_is_swallowed(main_window, qtbot):
     assert fired == [1, 1]
 
 
-def test_section_popup_lists_everything_in_a_bounded_box(main_window, qtbot):
-    """The whole series is in the list, the box never nears screen height,
-    and the current section starts selected (his call: full range, bounded
-    popup)."""
-    popup = main_window.sectionJumpFromStatusBar()
+def test_section_popup_has_jump_row_first_and_current_checked(main_window, qtbot):
+    from PySide6.QtWidgets import QWidgetAction
+    menu = main_window.sectionJumpFromStatusBar()
     qtbot.wait(20)
-    numbers = sorted(main_window.series.sections.keys())
-    assert popup.list.count() == len(numbers)
-    assert popup.list.currentItem() is not None
-    assert popup.list.currentItem().text() == str(main_window.series.current_section)
-    row_h = popup.list.sizeHintForRow(0)
-    assert popup.height() <= row_h * (popup.VISIBLE_ROWS + 4)
-    popup.hide()
+    acts = menu.actions()
+    assert isinstance(acts[0], QWidgetAction)
+    checked = [a for a in acts[1:] if a.isChecked()]
+    assert len(checked) == 1
+    assert checked[0].text() == str(main_window.series.current_section)
+    assert menu.activeAction() is checked[0]
+    menu.close()
+
 
 def test_jump_field_return_jumps_by_number(main_window, qtbot, monkeypatch):
     from PySide6.QtCore import QEvent, Qt
     from PySide6.QtGui import QKeyEvent
+    from PySide6.QtWidgets import QWidgetAction
 
     jumped = []
     monkeypatch.setattr(main_window, "changeSection",
                         lambda n, **k: jumped.append(n))
-    popup = main_window.sectionJumpFromStatusBar()
+    menu = main_window.sectionJumpFromStatusBar()
     qtbot.wait(20)
+    field = next(a for a in menu.actions()
+                 if isinstance(a, QWidgetAction)).defaultWidget()
     target = str(sorted(main_window.series.sections.keys())[-1])
-    popup.field.setText(target)
-    QApplication.sendEvent(popup.field, QKeyEvent(
+    field.setText(target)
+    QApplication.sendEvent(field, QKeyEvent(
         QEvent.KeyPress, Qt.Key_Return, Qt.KeyboardModifier.NoModifier))
     assert jumped == [int(target)]
-    assert not popup.isVisible()
+    assert not menu.isVisible()
+
+
+@pytest.fixture(autouse=True)
+def no_popup_leaks(qtbot):
+    """Any popup a test here leaves alive poisons LATER tests instead of the
+    guilty one (a leaked popup grab made the menu-reveal sweep fail 31 paths
+    in one full-suite run). Fail the leaker locally."""
+    yield
+    qtbot.wait(10)  # let queued deleteLater and hide events run
+    leaked = QApplication.activePopupWidget()
+    assert leaked is None, f"test leaked an active popup: {leaked!r}"
+
 
 def test_opening_click_cannot_trigger_a_menu_row(main_window, qtbot):
     """The click that opens the section menu must never also choose a row.

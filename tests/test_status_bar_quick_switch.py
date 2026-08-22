@@ -61,53 +61,50 @@ def choose(qtbot, menu, text):
     qtbot.mouseClick(menu, Qt.LeftButton, pos=menu.actionGeometry(action).center())
 
 
-# ---- section: the bounded list popup, reached from the bar -------------------
+# ---- section: the anchored jump menu, reached from the bar -------------------
 # The center-screen Go To Section dialog left this path on his call
-# (2026-08-22); the menu-bar route and a right-click on the segment still own
-# the dialog. The popup is a jump field over a scrollable list of the whole
-# series (SectionListPopup), because a QMenu cannot scroll inside a bounded
-# height.
+# (2026-08-22); the menu-bar route still owns the dialog. These drive the
+# menu the way the other two segments' tests drive theirs.
 
-def open_section_popup(main_window):
-    """Open via the segment's signal and read the popup off the window: the
-    offscreen platform neither holds a popup grab through a synthesized click
-    nor reports Qt.Popup windows visible, so neither mouseClick nor scanning
-    topLevelWidgets can reach it there. The press/release emission mechanics
-    have their own pins in test_field_status_readout."""
-    main_window.status_readout.section_segment.clicked.emit()
-    return main_window._section_popup
+def test_clicking_the_section_segment_opens_the_anchored_menu(
+    qtbot, main_window
+):
+    """The click opens the shared anchored menu, jump row first."""
+    from PySide6.QtWidgets import QWidgetAction
 
-
-def test_clicking_the_section_segment_opens_the_list_popup(qtbot, main_window):
-    popup = open_section_popup(main_window)
-    assert popup is not None
-    assert popup.field is not None and popup.list.count() > 0
-    popup.hide()
+    click(qtbot, main_window.status_readout.section_segment)
+    menu = popup_of(main_window.status_readout.section_segment)
+    assert menu is not None
+    assert isinstance(menu.actions()[0], QWidgetAction)
+    menu.close()
 
 
 def test_choosing_a_section_number_moves_the_field_and_the_readout(
     qtbot, main_window
 ):
-    """Click -> popup -> a row -> the field is there and the bar says so."""
-    popup = open_section_popup(main_window)
-    target = next(
-        int(popup.list.item(i).text()) for i in range(popup.list.count())
-        if popup.list.item(i).text() != str(main_window.series.current_section)
-    )
-    matches = popup.list.findItems(str(target), Qt.MatchExactly)
-    popup._rowChosen(matches[0])
+    """Click -> menu -> a number row -> the field is there and the bar says so."""
+    sections = sorted(main_window.series.sections.keys())
+    if len(sections) < 2:
+        pytest.skip("fixture series has a single section")
+    target = next(n for n in sections if n != main_window.series.current_section)
+
+    click(qtbot, main_window.status_readout.section_segment)
+    menu = popup_of(main_window.status_readout.section_segment)
+    choose(qtbot, menu, str(target))
 
     assert main_window.series.current_section == target
     assert main_window.status_readout.section_segment.text() == f"Section: {target}"
     assert main_window.status_readout.text().startswith(f"Section: {target}")
 
 
-def test_dismissing_the_section_popup_changes_nothing(qtbot, main_window):
+def test_dismissing_the_section_menu_changes_nothing(qtbot, main_window):
+    """Closing the menu without choosing must be a no-op."""
     before = main_window.series.current_section
     readout_before = main_window.status_readout.text()
 
-    popup = open_section_popup(main_window)
-    popup.hide()
+    click(qtbot, main_window.status_readout.section_segment)
+    menu = popup_of(main_window.status_readout.section_segment)
+    menu.close()
 
     assert main_window.series.current_section == before
     assert main_window.status_readout.text() == readout_before

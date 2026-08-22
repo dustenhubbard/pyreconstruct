@@ -28,11 +28,7 @@ Two properties of the old flat label are kept deliberately:
 
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtCore import QPoint
-from PySide6.QtWidgets import (
-    QApplication, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-    QListWidgetItem, QVBoxLayout, QWidget,
-)
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QLineEdit, QWidget
 
 
 SEPARATOR = "  |  "
@@ -183,9 +179,11 @@ class FieldStatusReadout(QWidget):
         self._separators = []
 
         layout = QHBoxLayout(self)
-        # zero margins: the status bar supplies its own, and a second set makes
-        # the readout sit visibly higher than a `showMessage` notice beside it.
-        layout.setContentsMargins(0, 0, 0, 0)
+        # Margins: zero vertically (the status bar supplies its own, and a
+        # second set makes the readout sit visibly higher than a showMessage
+        # notice beside it), but 10 px on the left so the first pill clears
+        # macOS's rounded window corner, which otherwise crowds it.
+        layout.setContentsMargins(10, 0, 0, 0)
         layout.setSpacing(0)
         for i, widget in enumerate(self._segments):
             if i:
@@ -235,107 +233,61 @@ class FieldStatusReadout(QWidget):
         )
 
 
-class SectionListPopup(QWidget):
-    """The section segment's popup: a jump field over a scrollable list.
+class SectionJumpField(QLineEdit):
+    """The jump row at the top of the section popup.
 
-    A QMenu cannot scroll inside a bounded height (its only overflow handling
-    engages at screen height, which for a large series meant a popup as tall
-    as the display). This is the pattern menu_search.py already proved: a
-    plain Qt.Popup window holding a line edit and a QListWidget, which
-    scrolls at any height. The list carries the WHOLE series; the visible
-    height is capped at about twelve rows; the current section starts
-    selected and centered.
-
-    Keyboard contract, matching the old jump row: typed digits select the
-    first section whose number starts with them; Up and Down move the
-    selection; Return jumps to the selected row once the user has arrowed,
-    else to the exactly typed number; Escape and clicking outside close
-    (Qt.Popup behavior). Clicking a row jumps.
+    A pure jump field, never a filter: hiding actions in a shown QMenu is the
+    live-mutation trap menu_search.py documents, so the list is never touched.
+    Typed digits move the menu's active action to the first section whose
+    number starts with them; Return jumps. Modeled on
+    MenuSearchField.eventFilter: the filter consumes Return itself, prefers
+    the menu's active action once the user has arrowed, falls back to the
+    parsed number, and closes the menu, because a QLineEdit does not accept
+    Return and the propagated event would also activate a menu row (one
+    keystroke, two jumps).
     """
 
-    VISIBLE_ROWS = 12
-
-    def __init__(self, numbers, current, jump, parent=None):
-        super().__init__(parent, Qt.Popup)
+    def __init__(self, menu, acts_by_number, jump, parent=None):
+        super().__init__(parent)
+        self._menu = menu
+        self._acts = acts_by_number      # list of (number, QAction), menu order
         self._jump = jump
         self._arrowed = False
-
-        self.field = QLineEdit(self)
+        numbers = [n for n, _ in acts_by_number]
         if numbers:
-            self.field.setPlaceholderText(
-                f"Jump to section ({numbers[0]}-{numbers[-1]})"
-            )
-        self.list = QListWidget(self)
-        current_item = None
-        for number in numbers:
-            item = QListWidgetItem(str(number), self.list)
-            if number == current:
-                current_item = item
-        if current_item is not None:
-            self.list.setCurrentItem(current_item)
+            self.setPlaceholderText(f"Jump to section ({numbers[0]}-{numbers[-1]})")
+        self.textEdited.connect(self._moveActive)
+        self.installEventFilter(self)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(2)
-        layout.addWidget(self.field)
-        layout.addWidget(self.list)
-
-        row_h = self.list.sizeHintForRow(0) if numbers else 18
-        self.list.setFixedHeight(row_h * min(self.VISIBLE_ROWS, max(len(numbers), 1)) + 6)
-
-        self.field.textEdited.connect(self._typeSelect)
-        self.field.installEventFilter(self)
-        self.list.itemClicked.connect(self._rowChosen)
-
-    def showAnchored(self, segment):
-        top_left = segment.mapToGlobal(segment.rect().topLeft())
-        hint = self.sizeHint()
-        self.move(top_left - QPoint(0, hint.height() + 2))
-        self.show()
-        if self.list.currentItem() is not None:
-            self.list.scrollToItem(self.list.currentItem(),
-                                   QListWidget.PositionAtCenter)
-        self.field.setFocus()
-
-    def hideEvent(self, event):
-        self.closed()
-        super().hideEvent(event)
-
-    def closed(self):
-        pass  # rebound to the segment's popupClosed by the caller
-
-    def _typeSelect(self, text):
+    def _moveActive(self, text):
         self._arrowed = False
         text = text.strip()
         if not text.isdigit():
             return
-        matches = self.list.findItems(text, Qt.MatchStartsWith)
-        if matches:
-            self.list.setCurrentItem(matches[0])
-            self.list.scrollToItem(matches[0], QListWidget.PositionAtCenter)
-
-    def _rowChosen(self, item):
-        self.hide()
-        self._jump(int(item.text()))
+        for number, act in self._acts:
+            if str(number).startswith(text):
+                self._menu.setActiveAction(act)
+                return
 
     def eventFilter(self, obj, event):
         if event.type() == QEvent.KeyPress:
             key = event.key()
             if key in (Qt.Key_Up, Qt.Key_Down):
                 self._arrowed = True
-                QApplication.sendEvent(self.list, event)
+                QApplication.sendEvent(self._menu, event)
                 return True
             if key in (Qt.Key_Return, Qt.Key_Enter):
-                item = self.list.currentItem()
-                if self._arrowed and item is not None:
-                    self.hide()
-                    self._jump(int(item.text()))
+                active = self._menu.activeAction()
+                if self._arrowed and active is not None and active.isEnabled():
+                    self._menu.close()
+                    active.trigger()
                     return True
-                text = self.field.text().strip()
+                text = self.text().strip()
                 if text.isdigit():
-                    exact = self.list.findItems(text, Qt.MatchExactly)
-                    if exact:
-                        self.hide()
-                        self._jump(int(exact[0].text()))
-                return True   # consumed either way
+                    for number, act in self._acts:
+                        if number == int(text):
+                            self._menu.close()
+                            self._jump(number)
+                            return True
+                return True   # consumed either way: never let Return reach the menu too
         return super().eventFilter(obj, event)
