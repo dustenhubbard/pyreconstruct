@@ -518,3 +518,14 @@ def test_typing_accumulates_multi_digit_numbers(main_window, qtbot, monkeypatch)
         QEvent.KeyPress, Qt.Key_Return, Qt.KeyboardModifier.NoModifier))
     assert jumped == [target]
     assert not popup.isVisible()
+
+
+def test_popup_paints_its_stylesheet_background(main_window, qtbot):
+    """Translucent without styled-background paints nothing and shows black
+    (his click-test report), so both attributes are pinned together."""
+    from PySide6.QtCore import Qt
+    popup = main_window.sectionJumpFromStatusBar()
+    qtbot.wait(10)
+    assert popup.testAttribute(Qt.WA_TranslucentBackground)
+    assert popup.testAttribute(Qt.WA_StyledBackground)
+    popup.hide()

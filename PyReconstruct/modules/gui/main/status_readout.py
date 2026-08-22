@@ -288,6 +288,10 @@ class SectionListPopup(QWidget):
         # rows with the highlight color, and a width fitted to the content
         # instead of whatever a QListWidget defaults to.
         self.setAttribute(Qt.WA_TranslucentBackground)
+        # a plain QWidget does not paint stylesheet backgrounds on its own;
+        # without this the translucent window paints NOTHING and the
+        # compositor shows black
+        self.setAttribute(Qt.WA_StyledBackground, True)
         pal = self.palette()
         self.setStyleSheet(
             "SectionListPopup {{ background: {bg}; border: 1px solid {mid};"
