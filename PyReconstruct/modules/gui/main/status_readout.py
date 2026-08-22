@@ -48,14 +48,11 @@ class StatusSegment(QLabel):
         super().__init__(parent)
         self.setToolTip(tooltip)
         self.setCursor(Qt.PointingHandCursor)
-        # The hand cursor only signals clickability once the pointer is
-        # already there. The palette's link color says it at a glance, the
-        # way it does everywhere else in the OS, and hover adds the
-        # underline for confirmation. palette(link) tracks the theme.
-        self.setStyleSheet(
-            "StatusSegment { color: palette(link); }"
-            "StatusSegment:hover { text-decoration: underline; }"
-        )
+        # Visual affordance beyond the hover cursor is an open design
+        # question (his call: not link-blue; something shaped like a
+        # button, with the segment popups anchored and styled to match).
+        # The plan for that is being reviewed; until it lands the segment
+        # signals clickability by cursor and tooltip alone.
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
