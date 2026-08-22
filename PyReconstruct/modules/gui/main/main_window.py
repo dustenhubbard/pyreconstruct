@@ -2462,76 +2462,33 @@ class MainWindow(QMainWindow):
         return menu
 
     def sectionJumpFromStatusBar(self):
-        """Offer the series' sections over the status bar's section segment.
+        """Offer every section over the status bar's section segment.
 
-        The menu is sized to the space ABOVE the bar, never to the series: a
-        QMenu taller than the screen is clamped to the full screen by Qt, and
-        its bottom scroll arrow then sits exactly on top of the pill that
-        opened it (his click-test report; also the review's first blocker,
-        since bounded scrolling is the one thing QMenu cannot do). So the
-        rows are a window around the current section, as many as fit between
-        the top of the screen and the segment, and the menu always ends above
-        the pill. The jump row reaches every section by number and a
-        right-click on the segment opens the classic dialog.
+        One popup, three requirements that a native QMenu cannot meet at
+        once: the whole series scrollable, a compact height that always ends
+        above the pill, and the look of the neighboring menus. So this is the
+        field-over-list popup (SectionListPopup) restyled into a visual
+        sibling of those menus. It owns its own window and focus, which also
+        ends the keystroke fight an edit embedded in a QMenu loses to the
+        menu's keyboard grab: typing lands in the jump field, plainly.
+        Right-clicking the segment opens the classic dialog instead.
         """
-        from PySide6.QtWidgets import QWidgetAction
-        from PyReconstruct.modules.gui.main.status_readout import SectionJumpField
+        from PyReconstruct.modules.gui.main.status_readout import SectionListPopup
 
-        all_numbers = sorted(self.series.sections.keys())
+        numbers = sorted(self.series.sections.keys())
         segment = self.status_readout.section_segment
-        menu = QMenu(segment)
-        menu.aboutToHide.connect(menu.deleteLater)
+
+        popup = SectionListPopup(
+            numbers, self.series.current_section,
+            lambda n: self.changeSection(int(n)),
+        )
         segment.popupOpened()
-        menu.aboutToHide.connect(segment.popupClosed)
-
-        # how many rows fit above the bar: measured from this menu's own
-        # font, with the jump row and frame taken off the top
-        top_left = segment.mapToGlobal(segment.rect().topLeft())
-        screen_top = self.screen().availableGeometry().top()
-        row_h = menu.fontMetrics().height() + 10
-        available = max(top_left.y() - screen_top - 3 * row_h, row_h)
-        max_rows = max(int(available // row_h), 7)
-
-        here = self.series.current_section
-        idx = all_numbers.index(here) if here in all_numbers else 0
-        lo = max(0, idx - max_rows // 2)
-        numbers = all_numbers[lo:lo + max_rows]
-
-        jump_action = QWidgetAction(menu)
-        menu.addAction(jump_action)
-
-        def jump(number):
-            self.changeSection(int(number))
-
-        current_act = None
-        acts_by_number = []
-        for number in numbers:
-            act = menu.addAction(str(number))
-            act.setCheckable(True)
-            act.setChecked(number == here)
-            if number == here:
-                current_act = act
-            act.triggered.connect(lambda _checked=False, n=number: jump(n))
-            acts_by_number.append((number, act))
-
-        # the container-with-margins wrapper and the synchronous focus below
-        # copy menu_search.py exactly: that field demonstrably receives
-        # keystrokes inside an open QMenu on macOS
-        from PySide6.QtWidgets import QHBoxLayout, QWidget as _QW
-        field = SectionJumpField(menu, acts_by_number, jump,
-                                 all_numbers=all_numbers)
-        container = _QW()
-        wrap = QHBoxLayout(container)
-        wrap.setContentsMargins(8, 4, 8, 4)
-        wrap.addWidget(field)
-        jump_action.setDefaultWidget(container)
-
-        menu.popup(top_left - QPoint(0, menu.sizeHint().height() + 2))
-        if current_act is not None:
-            menu.setActiveAction(current_act)
-        field.setFocus()
-        self._section_popup = menu
-        return menu
+        popup.closed = segment.popupClosed
+        # reachable for tests: offscreen platforms neither hold popup grabs
+        # nor report Qt.Popup windows visible, so scanning cannot find it
+        self._section_popup = popup
+        popup.showAnchored(segment)
+        return popup
 
     def quickSwitchAlignment(self):
         """Offer the series' alignments over the status bar's alignment segment.
