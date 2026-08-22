@@ -61,50 +61,57 @@ def choose(qtbot, menu, text):
     qtbot.mouseClick(menu, Qt.LeftButton, pos=menu.actionGeometry(action).center())
 
 
-# ---- section: the existing Go To Section dialog, reached from the bar -------
+# ---- section: the bounded list popup, reached from the bar -------------------
+# The center-screen Go To Section dialog left this path on his call
+# (2026-08-22); the menu-bar route and a right-click on the segment still own
+# the dialog. The popup is a jump field over a scrollable list of the whole
+# series (SectionListPopup), because a QMenu cannot scroll inside a bounded
+# height.
 
-def test_clicking_the_section_segment_opens_go_to_section(
-    qtbot, main_window, main_window_dialogs
-):
-    """The click must reach the app's one section-jump dialog, not a new one."""
-    click(qtbot, main_window.status_readout.section_segment)
+def open_section_popup(main_window):
+    """Open via the segment's signal and read the popup off the window: the
+    offscreen platform neither holds a popup grab through a synthesized click
+    nor reports Qt.Popup windows visible, so neither mouseClick nor scanning
+    topLevelWidgets can reach it there. The press/release emission mechanics
+    have their own pins in test_field_status_readout."""
+    main_window.status_readout.section_segment.clicked.emit()
+    return main_window._section_popup
 
-    assert "Go To Section" in main_window_dialogs.dialogs
+
+def test_clicking_the_section_segment_opens_the_list_popup(qtbot, main_window):
+    popup = open_section_popup(main_window)
+    assert popup is not None
+    assert popup.field is not None and popup.list.count() > 0
+    popup.hide()
 
 
 def test_choosing_a_section_number_moves_the_field_and_the_readout(
-    qtbot, main_window, monkeypatch
+    qtbot, main_window
 ):
-    """Click -> dialog -> a number -> the field is there and the bar says so."""
-    from PySide6.QtWidgets import QInputDialog
-
-    sections = sorted(main_window.series.sections.keys())
-    if len(sections) < 2:
-        pytest.skip("fixture series has a single section")
-    target = next(n for n in sections if n != main_window.series.current_section)
-
-    monkeypatch.setattr(
-        QInputDialog, "getText", staticmethod(lambda *a, **k: (str(target), True))
+    """Click -> popup -> a row -> the field is there and the bar says so."""
+    popup = open_section_popup(main_window)
+    target = next(
+        int(popup.list.item(i).text()) for i in range(popup.list.count())
+        if popup.list.item(i).text() != str(main_window.series.current_section)
     )
-
-    click(qtbot, main_window.status_readout.section_segment)
+    matches = popup.list.findItems(str(target), Qt.MatchExactly)
+    popup._rowChosen(matches[0])
 
     assert main_window.series.current_section == target
     assert main_window.status_readout.section_segment.text() == f"Section: {target}"
     assert main_window.status_readout.text().startswith(f"Section: {target}")
 
 
-def test_cancelling_the_section_dialog_changes_nothing(
-    qtbot, main_window, main_window_dialogs
-):
-    """The recorder's default answer is a cancel, which must be a no-op."""
+def test_dismissing_the_section_popup_changes_nothing(qtbot, main_window):
     before = main_window.series.current_section
     readout_before = main_window.status_readout.text()
 
-    click(qtbot, main_window.status_readout.section_segment)
+    popup = open_section_popup(main_window)
+    popup.hide()
 
     assert main_window.series.current_section == before
     assert main_window.status_readout.text() == readout_before
+
 
 
 # ---- alignment -------------------------------------------------------------
@@ -235,7 +242,11 @@ def test_the_detail_part_of_the_readout_is_not_clickable(main_window):
 
 
 def test_a_second_click_does_not_leave_the_first_menu_behind(qtbot, main_window):
-    """Repeated clicks must not accumulate menus parented to the segment."""
+    """Repeated clicks must not accumulate menus parented to the segment.
+
+    A press arriving right after a popup hides is the dismissing press and is
+    swallowed by design (the explicit toggle), so the re-click here backdates
+    the hide stamp the way real time passing would."""
     segment = main_window.status_readout.alignment_segment
 
     click(qtbot, segment)
@@ -244,5 +255,6 @@ def test_a_second_click_does_not_leave_the_first_menu_behind(qtbot, main_window)
     choose(qtbot, first, main_window.series.alignment)
     qtbot.waitUntil(lambda: popup_of(segment) is None, timeout=2000)
 
+    segment._popup_hidden_at = 0.0
     click(qtbot, segment)
     assert popup_of(segment) is not None

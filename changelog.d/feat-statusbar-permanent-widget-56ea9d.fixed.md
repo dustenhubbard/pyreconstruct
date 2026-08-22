@@ -5,8 +5,8 @@
   a temporary notice, and Qt clears the temporary notice on every status-tip
   event: hovering any menu action sends one, an action with no status tip sends
   an empty string, and the bar went blank until the pointer returned to the
-  field. Nothing in the tree was clearing it. The readout is now a permanent
-  status-bar widget, which status-tip events do not touch.
+  field. Nothing in the tree was clearing it. The readout is now a
+  status-bar widget of its own, which status-tip events do not touch.
 
 - **Guarded a latent `IndexError` in the same readout.** `self.current_trace[-1]`
   sat under a bare `if self.is_line_tracing:`. Every path that empties

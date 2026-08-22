@@ -327,3 +327,213 @@ def test_banner_paints(main_window, qtbot):
     qtbot.wait(25)
     sb.repaint()
     assert before != sb.grab().toImage()
+
+
+def test_mouse_move_width_changes_do_not_move_the_readout(main_window, qtbot):
+    """The readout's geometry holds still while the coordinates rewrite.
+
+    The readout is right-anchored (stretch=0, which test_banner_paints above
+    protects), so any width change moves its left edge with the cursor: the
+    jitter he saw on the first main-line click test. The detail label's
+    minimum width absorbs ordinary coordinate churn.
+    """
+    readout = main_window.status_readout
+    readout.setReadout("Section: 5", "Alignment: default", "B/C Profile: default",
+                       "x = 1.11, y = 2.22")
+    QApplication.processEvents()
+    width_before = readout.sizeHint().width()
+    for detail in ("x = 999.99, y = 888.88", "x = 3.1, y = 4.2",
+                   "x = 12345.67, y = 8.9  |  Closest trace: d001"):
+        readout.setReadout("Section: 5", "Alignment: default",
+                           "B/C Profile: default", detail)
+        QApplication.processEvents()
+        assert readout.sizeHint().width() == width_before, detail
+
+
+def test_pills_do_not_grow_the_status_bar(main_window):
+    """The rounded outline must live inside the bar the text already needs."""
+    from PySide6.QtWidgets import QLabel, QStatusBar
+    plain = QStatusBar()
+    plain.addWidget(QLabel("Section: 5"))
+    assert main_window.statusbar.sizeHint().height() <= plain.sizeHint().height()
+
+
+def test_popup_owns_the_pressed_state(main_window, qtbot):
+    """popupOpened/popupClosed pair through a real anchored popup."""
+    seg = main_window.status_readout.alignment_segment
+    assert seg._popup_open is False
+    menu = main_window.quickSwitchAlignment()
+    assert seg._popup_open is True
+    menu.close()
+    qtbot.wait(10)
+    assert seg._popup_open is False
+
+
+def test_press_right_after_popup_close_is_swallowed(main_window, qtbot):
+    """The click that dismissed the popup must not instantly reopen it."""
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    seg = main_window.status_readout.alignment_segment
+    fired = []
+    seg.clicked.connect(lambda: fired.append(1))
+
+    def press():
+        QApplication.sendEvent(seg, QMouseEvent(
+            QEvent.MouseButtonPress, QPointF(3, 3), Qt.LeftButton,
+            Qt.LeftButton, Qt.NoModifier))
+        QApplication.sendEvent(seg, QMouseEvent(
+            QEvent.MouseButtonRelease, QPointF(3, 3), Qt.LeftButton,
+            Qt.LeftButton, Qt.NoModifier))
+
+    press()
+    assert fired == [1]
+    seg.popupOpened()
+    seg.popupClosed()          # popup just hid: the very next press is the dismisser
+    press()
+    assert fired == [1], "the dismissing press reopened the popup"
+    seg._popup_hidden_at = 0.0  # far in the past: presses work again
+    press()
+    assert fired == [1, 1]
+
+
+def test_section_popup_lists_everything_in_a_bounded_box(main_window, qtbot):
+    """The whole series is in the list, the box never nears screen height,
+    and the current section starts selected (his call: full range, bounded
+    popup)."""
+    popup = main_window.sectionJumpFromStatusBar()
+    qtbot.wait(20)
+    numbers = sorted(main_window.series.sections.keys())
+    assert popup.list.count() == len(numbers)
+    assert popup.list.currentItem() is not None
+    assert popup.list.currentItem().text() == str(main_window.series.current_section)
+    row_h = popup.list.sizeHintForRow(0)
+    assert popup.height() <= row_h * (popup.VISIBLE_ROWS + 4)
+    popup.hide()
+
+
+def test_jump_field_return_jumps_by_number(main_window, qtbot, monkeypatch):
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QKeyEvent
+
+    jumped = []
+    monkeypatch.setattr(main_window, "changeSection",
+                        lambda n, **k: jumped.append(n))
+    popup = main_window.sectionJumpFromStatusBar()
+    qtbot.wait(20)
+    target = str(sorted(main_window.series.sections.keys())[-1])
+    popup.field.setText(target)
+    QApplication.sendEvent(popup.field, QKeyEvent(
+        QEvent.KeyPress, Qt.Key_Return, Qt.KeyboardModifier.NoModifier))
+    assert jumped == [int(target)]
+    assert not popup.isVisible()
+
+
+def test_opening_click_cannot_trigger_a_menu_row(main_window, qtbot):
+    """The click that opens the section menu must never also choose a row.
+
+    A 500-section menu is taller than the screen, so Qt clamps it over the
+    segment itself; if the segment emitted on press, the release of that same
+    click would land on whichever row Qt put under the pointer and jump
+    there. Emitting on release means the menu opens with no button held.
+    """
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    seg = main_window.status_readout.section_segment
+    opened = []
+    seg.clicked.connect(lambda: opened.append(1))
+    QApplication.sendEvent(seg, QMouseEvent(
+        QEvent.MouseButtonPress, QPointF(3, 3), Qt.LeftButton,
+        Qt.LeftButton, Qt.NoModifier))
+    assert opened == [], "segment fired on press; the release would hit the menu"
+    QApplication.sendEvent(seg, QMouseEvent(
+        QEvent.MouseButtonRelease, QPointF(3, 3), Qt.LeftButton,
+        Qt.LeftButton, Qt.NoModifier))
+    assert opened == [1]
+
+
+def test_right_click_opens_the_classic_dialog(main_window, main_window_dialogs):
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    seg = main_window.status_readout.section_segment
+    QApplication.sendEvent(seg, QMouseEvent(
+        QEvent.MouseButtonRelease, QPointF(3, 3), Qt.RightButton,
+        Qt.RightButton, Qt.NoModifier))
+    assert "Go To Section" in main_window_dialogs.dialogs
+
+
+def test_section_menu_always_ends_above_the_pill(main_window, qtbot):
+    """The menu's bottom edge must sit above the segment, never on it.
+
+    A QMenu taller than the screen gets clamped to the full screen and its
+    bottom scroll arrow lands exactly on the pill (his click-test report),
+    so the row count is fitted to the space above the bar and the geometry
+    is pinned here.
+    """
+    popup = main_window.sectionJumpFromStatusBar()
+    qtbot.wait(20)
+    seg = main_window.status_readout.section_segment
+    seg_top = seg.mapToGlobal(seg.rect().topLeft()).y()
+    popup_bottom = popup.pos().y() + popup.sizeHint().height()
+    assert popup_bottom <= seg_top, (
+        f"popup bottom {popup_bottom} covers the segment top {seg_top}"
+    )
+    screen_h = main_window.screen().availableGeometry().height()
+    assert popup.sizeHint().height() < screen_h
+    popup.hide()
+
+
+def test_typing_accumulates_multi_digit_numbers(main_window, qtbot, monkeypatch):
+    """Digits typed one at a time must build one number, then Enter jumps.
+
+    The exact click-test failure: inside a QMenu, each digit fed the menu's
+    single-keystroke type-select, so the highlight jumped on the first digit
+    and a three-digit number could never be typed. The popup owns its own
+    focus; the field is an ordinary line edit.
+    """
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QKeyEvent
+
+    numbers = sorted(main_window.series.sections.keys())
+    target = next((n for n in reversed(numbers) if n >= 10), None)
+    if target is None:
+        pytest.skip("fixture series has no multi-digit section")
+
+    jumped = []
+    monkeypatch.setattr(main_window, "changeSection",
+                        lambda n, **k: jumped.append(n))
+    popup = main_window.sectionJumpFromStatusBar()
+    qtbot.wait(20)
+
+    for ch in str(target):
+        QApplication.sendEvent(popup.field, QKeyEvent(
+            QEvent.KeyPress, Qt.Key_0 + int(ch),
+            Qt.KeyboardModifier.NoModifier, ch))
+    assert popup.field.text() == str(target), (
+        "digits did not accumulate in the field"
+    )
+    QApplication.sendEvent(popup.field, QKeyEvent(
+        QEvent.KeyPress, Qt.Key_Return, Qt.KeyboardModifier.NoModifier))
+    assert jumped == [target]
+    assert not popup.isVisible()
+
+
+def test_popup_paints_real_pixels(main_window, qtbot):
+    """The popup's center pixel must be the palette window color.
+
+    Attribute pins were not enough: the frame shipped black once (nothing
+    painted the translucent window) and transparent once (the stylesheet
+    background failed to composite on the popup). Grabbing pixels is the
+    assertion that fails when the user sees black."""
+    popup = main_window.sectionJumpFromStatusBar()
+    qtbot.wait(20)
+    image = popup.grab().toImage()
+    center = image.pixelColor(image.width() // 2, 2)
+    expected = popup.palette().window().color()
+    assert center == expected, (
+        f"popup frame paints {center.name()} where the window color "
+        f"{expected.name()} belongs"
+    )
+    popup.hide()
