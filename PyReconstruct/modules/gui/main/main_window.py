@@ -3481,6 +3481,21 @@ class MainWindow(QMainWindow):
         else:
             w.selectAll()
 
+    def smoothSelection(self):
+        """One key for both smooths, routed by focus (see selectAll).
+
+        Over the object list, the selected objects are smoothed whole
+        (object_function also covers the no-focus case by taking the objects
+        owning the selected traces); everywhere else the selected traces on
+        this section are smoothed. One dispatcher keeps exactly one claimant
+        on the key, which is what the ambiguity guards require.
+        """
+        w = self.getFocusWidget()
+        if isinstance(w, ObjectTableWidget):
+            self.field.smoothObject()
+        else:
+            self.field.smoothTraces()
+
     def deselectAll(self):
         """Called when Ctrl+D is pressed. Focus-routed -- see selectAll."""
         w = self.getFocusWidget()
