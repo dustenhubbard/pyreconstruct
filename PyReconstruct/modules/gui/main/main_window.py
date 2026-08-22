@@ -139,10 +139,16 @@ class MainWindow(QMainWindow):
         ## message. Qt clears the temporary message on every status-tip event,
         ## and hovering a QAction with no status tip sends an empty one, which
         ## is what used to blank the readout on a trip to the menu bar.
-        ## Permanent widgets are laid out to the right of the temporary-message
-        ## area. stretch=0 keeps the readout right-aligned and leaves the
-        ## temporary-message area at its natural width so showMessage notices
-        ## paint normally.
+        ## A NORMAL status-bar widget, not a permanent one, on his call
+        ## (2026-08-21): permanent widgets are right-anchored, which read as a
+        ## jarring change for no reason a regular user could see. A normal
+        ## widget sits on the left like the old readout did, and still fixes
+        ## the original blanking bug -- menu status-tip events clear the
+        ## TEMPORARY message, and the readout is a widget now, not a message.
+        ## The one trade: while a real showMessage notice is up (the curation
+        ## acknowledgment, the update banner) Qt hides normal widgets, so the
+        ## notice briefly takes the readout's place and the readout returns
+        ## when it expires. test_banner_paints keeps the notice area painting.
         ##
         ## Its first three parts are clickable: section, alignment and
         ## brightness/contrast profile are the three things a user switches
@@ -150,10 +156,14 @@ class MainWindow(QMainWindow):
         ## under the pointer. See gui/main/status_readout.py for why a segment
         ## has to be its own widget.
         self.status_readout = FieldStatusReadout()
-        self.status_readout.section_clicked.connect(self.changeSection)
+        self.status_readout.section_clicked.connect(self.sectionJumpFromStatusBar)
+        # right-click keeps the classic Go To Section dialog (his option 1)
+        self.status_readout.section_segment.right_clicked.connect(
+            lambda: self.changeSection()
+        )
         self.status_readout.alignment_clicked.connect(self.quickSwitchAlignment)
         self.status_readout.bc_profile_clicked.connect(self.quickSwitchBCProfile)
-        self.statusbar.addPermanentWidget(self.status_readout, 0)
+        self.statusbar.addWidget(self.status_readout, 0)
 
         ## Open series if requested thru CLI
         if filename and Path(filename).exists():
@@ -2421,18 +2431,64 @@ class MainWindow(QMainWindow):
         """
         menu = QMenu(segment)
         menu.aboutToHide.connect(menu.deleteLater)
+        # the pill's pressed look exists exactly while its popup does
+        segment.popupOpened()
+        menu.aboutToHide.connect(segment.popupClosed)
+
+        fm = menu.fontMetrics()
+        current_act = None
         for name in names:
-            act = menu.addAction(name)
+            # display middle-elided, act on the full value
+            act = menu.addAction(fm.elidedText(str(name), Qt.ElideMiddle, 360))
             act.setCheckable(True)
             act.setChecked(name == current)
+            if name == current:
+                current_act = act
             # default argument, not a closure over the loop variable
             act.triggered.connect(lambda _checked=False, n=name: switch(n))
 
-        # above the segment: the status bar is at the bottom of the window, so
-        # a menu dropped below it would open off-screen
+        # Above the segment: the status bar is at the bottom of the window, so
+        # a menu dropped below it would open off-screen. No height cap: QMenu's
+        # exceeds-screen scrolling is the only scrolling it reliably has, and
+        # sizeHint() ignores a maximum anyway, so the anchor bounds the hint by
+        # the screen and lets popup() do its own clamping.
         top_left = segment.mapToGlobal(segment.rect().topLeft())
-        menu.popup(top_left - QPoint(0, menu.sizeHint().height()))
+        screen_h = self.screen().availableGeometry().height()
+        menu.popup(top_left - QPoint(0, min(menu.sizeHint().height(), screen_h)))
+        if current_act is not None:
+            # after popup(), not before: activation set on an unshown menu is
+            # not guaranteed to survive the show
+            menu.setActiveAction(current_act)
         return menu
+
+    def sectionJumpFromStatusBar(self):
+        """Offer every section over the status bar's section segment.
+
+        One popup, three requirements that a native QMenu cannot meet at
+        once: the whole series scrollable, a compact height that always ends
+        above the pill, and the look of the neighboring menus. So this is the
+        field-over-list popup (SectionListPopup) restyled into a visual
+        sibling of those menus. It owns its own window and focus, which also
+        ends the keystroke fight an edit embedded in a QMenu loses to the
+        menu's keyboard grab: typing lands in the jump field, plainly.
+        Right-clicking the segment opens the classic dialog instead.
+        """
+        from PyReconstruct.modules.gui.main.status_readout import SectionListPopup
+
+        numbers = sorted(self.series.sections.keys())
+        segment = self.status_readout.section_segment
+
+        popup = SectionListPopup(
+            numbers, self.series.current_section,
+            lambda n: self.changeSection(int(n)),
+        )
+        segment.popupOpened()
+        popup.closed = segment.popupClosed
+        # reachable for tests: offscreen platforms neither hold popup grabs
+        # nor report Qt.Popup windows visible, so scanning cannot find it
+        self._section_popup = popup
+        popup.showAnchored(segment)
+        return popup
 
     def quickSwitchAlignment(self):
         """Offer the series' alignments over the status bar's alignment segment.
