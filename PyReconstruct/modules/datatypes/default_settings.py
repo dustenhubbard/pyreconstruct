@@ -127,6 +127,7 @@ default_settings = {
     "edittrace_act": "Ctrl+E",
     "mergetraces_act": "Ctrl+M",
     "mergeobjects_act": "Ctrl+Shift+M",
+    "smoothtraces_act": "Ctrl+Shift+R",
     "hidetraces_act": "Ctrl+H",
     "unhideall_act": "Ctrl+U",
     "pastetopalette_act": "Shift+G",
