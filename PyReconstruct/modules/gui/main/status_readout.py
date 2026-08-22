@@ -264,9 +264,11 @@ class SectionListPopup(QWidget):
 
         self.field = QLineEdit(self)
         if numbers:
-            self.field.setPlaceholderText(
-                f"Jump to section ({numbers[0]}-{numbers[-1]})"
-            )
+            # the placeholder is just the range: it is what sets the popup's
+            # width, and a sentence made the whole popup far wider than the
+            # menus beside it. The explanation lives in the tooltip.
+            self.field.setPlaceholderText(f"{numbers[0]}-{numbers[-1]}")
+            self.field.setToolTip("Type a section number and press Enter")
         self.list = QListWidget(self)
         current_item = None
         for number in numbers:
@@ -311,12 +313,10 @@ class SectionListPopup(QWidget):
 
         row_h = self.list.sizeHintForRow(0) if numbers else 18
         self.list.setFixedHeight(row_h * min(self.VISIBLE_ROWS, max(len(numbers), 1)) + 6)
+        # width follows the widest number, like the menus beside it: digits
+        # plus the row padding, the thin scrollbar, and the frame margins
         digits = self.fontMetrics().horizontalAdvance(str(numbers[-1]) if numbers else "0000")
-        width = max(
-            self.field.fontMetrics().horizontalAdvance(self.field.placeholderText()) + 30,
-            digits + 70,
-        )
-        self.setFixedWidth(width)
+        self.setFixedWidth(max(digits + 56, 84))
 
         self.field.textEdited.connect(self._typeSelect)
         self.field.installEventFilter(self)
