@@ -14,7 +14,6 @@ every needs-curation marking cost a dialog whose usual answer was blank):
    older builds never read. The log author is the assigner, which is what
    lets the from-history restore recover it.
 """
-import os
 import shutil
 
 import pytest
