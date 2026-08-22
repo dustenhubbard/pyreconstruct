@@ -474,7 +474,7 @@ def return_help_menu(self):
             # series, not this window.
             ("toggleupdatecheck_act", "Check for updates on startup", "checkbox",
              self.toggleUpdateCheckOnStartup),
-            ("whatsnew_act", "What's new", "", self.showWhatsNew),
+            ("whatsnew_act", "What's new?", "", self.showWhatsNew),
             # Checkable, mirroring the stored suppress_whatsnew preference the
             # dialog's "Don't show again" button also writes. Unlike the
             # menubar's other checkables this one resyncs on every Help open
@@ -484,6 +484,16 @@ def return_help_menu(self):
             ("togglewhatsnew_act", "Show what's new after updates", "checkbox",
              self.toggleWhatsNewPopup),
             None,
+            # The Qt-drawn in-window menubar never gets macOS's native Help
+            # search, so the app carries its own: a search field embedded at
+            # the top of this menu (a QWidgetAction, inserted in createMenuBar
+            # because these definitions are pure data built without a
+            # QApplication). This row is the field's remappable keyboard
+            # carrier: a QWidgetAction cannot take the series-form shortcut
+            # lookup, so the key lives here and the handler opens Help and
+            # focuses the field.
+            # series form: the key is user-configurable, looked up by act_name
+            ("searchmenus_act", "Search menus...", self.series, self.openMenuSearch),
             ("shortcutshelp_act", "Shortcuts list", "?", self.displayShortcuts),
             None,
             {

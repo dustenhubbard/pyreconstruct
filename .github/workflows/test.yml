@@ -373,9 +373,13 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           set -euo pipefail
+          # The conftest clamps stacked -q (so the result line survives), which
+          # also keeps collect-only output in node-id form. Count node ids, and
+          # keep the old per-file "tests/x.py: N" summing as the fallback so the
+          # counter reads both formats.
           count=$(uv run --frozen --no-default-groups --extra test \
                     python -m pytest --collect-only -q -m gui \
-                  | awk -F': ' '/^tests\// {sum += $2} END {print sum + 0}')
+                  | awk -F': ' '/^tests\/.*::/ {ids += 1} /^tests\/[^:]*: [0-9]+$/ {sum += $2} END {print (ids ? ids : sum) + 0}')
           echo "gui-marked tests collected: $count"
           if [ "$count" -eq 0 ]; then
             echo '::error::the gui marker collected 0 tests. The real-widget suite is not running.'
