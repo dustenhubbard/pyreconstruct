@@ -61,56 +61,57 @@ def choose(qtbot, menu, text):
     qtbot.mouseClick(menu, Qt.LeftButton, pos=menu.actionGeometry(action).center())
 
 
-# ---- section: the anchored jump menu, reached from the bar -------------------
+# ---- section: the bounded list popup, reached from the bar -------------------
 # The center-screen Go To Section dialog left this path on his call
-# (2026-08-22); the menu-bar route still owns the dialog. These drive the
-# menu the way the other two segments' tests drive theirs.
+# (2026-08-22); the menu-bar route and a right-click on the segment still own
+# the dialog. The popup is a jump field over a scrollable list of the whole
+# series (SectionListPopup), because a QMenu cannot scroll inside a bounded
+# height.
 
-def test_clicking_the_section_segment_opens_the_anchored_menu(
-    qtbot, main_window
-):
-    """The click opens the shared anchored menu, jump row first."""
-    from PySide6.QtWidgets import QWidgetAction
+def open_section_popup(main_window):
+    """Open via the segment's signal and read the popup off the window: the
+    offscreen platform neither holds a popup grab through a synthesized click
+    nor reports Qt.Popup windows visible, so neither mouseClick nor scanning
+    topLevelWidgets can reach it there. The press/release emission mechanics
+    have their own pins in test_field_status_readout."""
+    main_window.status_readout.section_segment.clicked.emit()
+    return main_window._section_popup
 
-    click(qtbot, main_window.status_readout.section_segment)
-    menu = popup_of(main_window.status_readout.section_segment)
-    assert menu is not None
-    assert isinstance(menu.actions()[0], QWidgetAction)
-    menu.close()
+
+def test_clicking_the_section_segment_opens_the_list_popup(qtbot, main_window):
+    popup = open_section_popup(main_window)
+    assert popup is not None
+    assert popup.field is not None and popup.list.count() > 0
+    popup.hide()
 
 
 def test_choosing_a_section_number_moves_the_field_and_the_readout(
     qtbot, main_window
 ):
-    """Click -> menu -> a number row -> the field is there and the bar says so."""
-    click(qtbot, main_window.status_readout.section_segment)
-    menu = popup_of(main_window.status_readout.section_segment)
-    # pick from what the menu actually lists: the rows are a window around
-    # the current section, so a far-away number is reached by the jump row,
-    # not by a row (that path has its own test)
-    listed = [a.text() for a in menu.actions()
-              if a.text() and a.text() != str(main_window.series.current_section)]
-    if not listed:
-        pytest.skip("fixture series has a single section")
-    target = int(listed[0])
-    choose(qtbot, menu, str(target))
+    """Click -> popup -> a row -> the field is there and the bar says so."""
+    popup = open_section_popup(main_window)
+    target = next(
+        int(popup.list.item(i).text()) for i in range(popup.list.count())
+        if popup.list.item(i).text() != str(main_window.series.current_section)
+    )
+    matches = popup.list.findItems(str(target), Qt.MatchExactly)
+    popup._rowChosen(matches[0])
 
     assert main_window.series.current_section == target
     assert main_window.status_readout.section_segment.text() == f"Section: {target}"
     assert main_window.status_readout.text().startswith(f"Section: {target}")
 
 
-def test_dismissing_the_section_menu_changes_nothing(qtbot, main_window):
-    """Closing the menu without choosing must be a no-op."""
+def test_dismissing_the_section_popup_changes_nothing(qtbot, main_window):
     before = main_window.series.current_section
     readout_before = main_window.status_readout.text()
 
-    click(qtbot, main_window.status_readout.section_segment)
-    menu = popup_of(main_window.status_readout.section_segment)
-    menu.close()
+    popup = open_section_popup(main_window)
+    popup.hide()
 
     assert main_window.series.current_section == before
     assert main_window.status_readout.text() == readout_before
+
 
 
 # ---- alignment -------------------------------------------------------------

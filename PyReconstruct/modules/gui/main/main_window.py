@@ -2462,67 +2462,31 @@ class MainWindow(QMainWindow):
         return menu
 
     def sectionJumpFromStatusBar(self):
-        """Offer the series' sections over the status bar's section segment.
+        """Offer every section over the status bar's section segment.
 
-        The same anchored menu the other two segments use, plus a jump row.
-        The row is built before popup() because inserting into a shown QMenu
-        is the live-mutation trap menu_search.py documents. Focus lands on
-        the jump field only after the menu is shown; setFocus on a
-        not-yet-active popup window can silently fail.
+        A bounded, scrollable popup (his call, 2026-08-22): the whole series
+        is in the list, about twelve rows are visible, and the popup never
+        approaches screen height the way a QMenu would. The jump field on
+        top reaches any section by number; right-clicking the segment opens
+        the classic Go To Section dialog instead.
         """
-        from PySide6.QtCore import QTimer
-        from PySide6.QtWidgets import QWidgetAction
-        from PyReconstruct.modules.gui.main.status_readout import SectionJumpField
+        from PyReconstruct.modules.gui.main.status_readout import SectionListPopup
 
-        # A window around the current section, not the whole series: his
-        # call (2026-08-22). The menu stays shorter than any screen, which is
-        # also what keeps it anchored instead of clamped over the segment,
-        # and the jump row on top still reaches every section by number.
-        # Right-clicking the segment opens the classic dialog instead.
-        all_numbers = sorted(self.series.sections.keys())
-        here = self.series.current_section
-        idx = all_numbers.index(here) if here in all_numbers else 0
-        lo = max(0, idx - 15)
-        numbers = all_numbers[lo:idx + 16]
+        numbers = sorted(self.series.sections.keys())
         segment = self.status_readout.section_segment
-        menu = QMenu(segment)
-        menu.aboutToHide.connect(menu.deleteLater)
+
+        popup = SectionListPopup(
+            numbers, self.series.current_section,
+            lambda n: self.changeSection(int(n)),
+        )
         segment.popupOpened()
-        menu.aboutToHide.connect(segment.popupClosed)
-
-        jump_action = QWidgetAction(menu)
-        acts_by_number = []
-        field_holder = []
-
-        def jump(number):
-            self.changeSection(int(number))
-
-        current_act = None
-        # the jump row must be the menu's first action, so add it first with a
-        # placeholder widget bound after the number actions exist
-        menu.addAction(jump_action)
-        for number in numbers:
-            act = menu.addAction(str(number))
-            act.setCheckable(True)
-            act.setChecked(number == self.series.current_section)
-            if number == self.series.current_section:
-                current_act = act
-            act.triggered.connect(lambda _checked=False, n=number: jump(n))
-            acts_by_number.append((number, act))
-
-        # the jump field ranges over the whole series, not the window
-        field = SectionJumpField(menu, acts_by_number, jump,
-                                 all_numbers=all_numbers)
-        jump_action.setDefaultWidget(field)
-        field_holder.append(field)
-
-        top_left = segment.mapToGlobal(segment.rect().topLeft())
-        screen_h = self.screen().availableGeometry().height()
-        menu.popup(top_left - QPoint(0, min(menu.sizeHint().height(), screen_h)))
-        if current_act is not None:
-            menu.setActiveAction(current_act)
-        QTimer.singleShot(0, field.setFocus)
-        return menu
+        popup.closed = segment.popupClosed
+        # the live popup, reachable for tests and for anyone who needs to
+        # dismiss it programmatically; offscreen platforms never report
+        # Qt.Popup windows visible, so scanning topLevelWidgets cannot find it
+        self._section_popup = popup
+        popup.showAnchored(segment)
+        return popup
 
     def quickSwitchAlignment(self):
         """Offer the series' alignments over the status bar's alignment segment.
