@@ -48,6 +48,14 @@ class StatusSegment(QLabel):
         super().__init__(parent)
         self.setToolTip(tooltip)
         self.setCursor(Qt.PointingHandCursor)
+        # The hand cursor only signals clickability once the pointer is
+        # already there. The palette's link color says it at a glance, the
+        # way it does everywhere else in the OS, and hover adds the
+        # underline for confirmation. palette(link) tracks the theme.
+        self.setStyleSheet(
+            "StatusSegment { color: palette(link); }"
+            "StatusSegment:hover { text-decoration: underline; }"
+        )
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -103,6 +111,19 @@ class FieldStatusReadout(QWidget):
                 self._separators.append(separator)
                 layout.addWidget(separator)
             layout.addWidget(widget)
+
+        # Left-mounted (a normal status-bar widget), so the anchored edge is
+        # the left one and the per-mouse-move coordinate rewrites grow and
+        # shrink rightward into empty bar. The minimum width still steadies
+        # the detail span so the text does not slide under a pointer parked
+        # right of it; left alignment keeps short text in place.
+        fm = self.detail_label.fontMetrics()
+        self.detail_label.setMinimumWidth(
+            fm.horizontalAdvance("x = 99999.99, y = 99999.99  |  Closest trace: a_typical_name")
+        )
+        self.detail_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
 
         self.section_segment.clicked.connect(self.section_clicked)
         self.alignment_segment.clicked.connect(self.alignment_clicked)

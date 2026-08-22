@@ -327,3 +327,24 @@ def test_banner_paints(main_window, qtbot):
     qtbot.wait(25)
     sb.repaint()
     assert before != sb.grab().toImage()
+
+
+def test_mouse_move_width_changes_do_not_move_the_readout(main_window, qtbot):
+    """The readout's geometry holds still while the coordinates rewrite.
+
+    The readout is right-anchored (stretch=0, which test_banner_paints above
+    protects), so any width change moves its left edge with the cursor: the
+    jitter he saw on the first main-line click test. The detail label's
+    minimum width absorbs ordinary coordinate churn.
+    """
+    readout = main_window.status_readout
+    readout.setReadout("Section: 5", "Alignment: default", "B/C Profile: default",
+                       "x = 1.11, y = 2.22")
+    QApplication.processEvents()
+    width_before = readout.sizeHint().width()
+    for detail in ("x = 999.99, y = 888.88", "x = 3.1, y = 4.2",
+                   "x = 12345.67, y = 8.9  |  Closest trace: d001"):
+        readout.setReadout("Section: 5", "Alignment: default",
+                           "B/C Profile: default", detail)
+        QApplication.processEvents()
+        assert readout.sizeHint().width() == width_before, detail

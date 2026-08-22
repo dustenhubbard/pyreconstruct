@@ -139,10 +139,16 @@ class MainWindow(QMainWindow):
         ## message. Qt clears the temporary message on every status-tip event,
         ## and hovering a QAction with no status tip sends an empty one, which
         ## is what used to blank the readout on a trip to the menu bar.
-        ## Permanent widgets are laid out to the right of the temporary-message
-        ## area. stretch=0 keeps the readout right-aligned and leaves the
-        ## temporary-message area at its natural width so showMessage notices
-        ## paint normally.
+        ## A NORMAL status-bar widget, not a permanent one, on his call
+        ## (2026-08-21): permanent widgets are right-anchored, which read as a
+        ## jarring change for no reason a regular user could see. A normal
+        ## widget sits on the left like the old readout did, and still fixes
+        ## the original blanking bug -- menu status-tip events clear the
+        ## TEMPORARY message, and the readout is a widget now, not a message.
+        ## The one trade: while a real showMessage notice is up (the curation
+        ## acknowledgment, the update banner) Qt hides normal widgets, so the
+        ## notice briefly takes the readout's place and the readout returns
+        ## when it expires. test_banner_paints keeps the notice area painting.
         ##
         ## Its first three parts are clickable: section, alignment and
         ## brightness/contrast profile are the three things a user switches
@@ -153,7 +159,7 @@ class MainWindow(QMainWindow):
         self.status_readout.section_clicked.connect(self.changeSection)
         self.status_readout.alignment_clicked.connect(self.quickSwitchAlignment)
         self.status_readout.bc_profile_clicked.connect(self.quickSwitchBCProfile)
-        self.statusbar.addPermanentWidget(self.status_readout, 0)
+        self.statusbar.addWidget(self.status_readout, 0)
 
         ## Open series if requested thru CLI
         if filename and Path(filename).exists():
