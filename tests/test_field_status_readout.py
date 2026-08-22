@@ -348,3 +348,91 @@ def test_mouse_move_width_changes_do_not_move_the_readout(main_window, qtbot):
                            "B/C Profile: default", detail)
         QApplication.processEvents()
         assert readout.sizeHint().width() == width_before, detail
+
+
+def test_pills_do_not_grow_the_status_bar(main_window):
+    """The rounded outline must live inside the bar the text already needs."""
+    from PySide6.QtWidgets import QLabel, QStatusBar
+    plain = QStatusBar()
+    plain.addWidget(QLabel("Section: 5"))
+    assert main_window.statusbar.sizeHint().height() <= plain.sizeHint().height()
+
+
+def test_popup_owns_the_pressed_state(main_window, qtbot):
+    """popupOpened/popupClosed pair through a real anchored popup."""
+    seg = main_window.status_readout.alignment_segment
+    assert seg._popup_open is False
+    menu = main_window.quickSwitchAlignment()
+    assert seg._popup_open is True
+    menu.close()
+    qtbot.wait(10)
+    assert seg._popup_open is False
+
+
+def test_press_right_after_popup_close_is_swallowed(main_window, qtbot):
+    """The click that dismissed the popup must not instantly reopen it."""
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    seg = main_window.status_readout.alignment_segment
+    fired = []
+    seg.clicked.connect(lambda: fired.append(1))
+
+    def press():
+        QApplication.sendEvent(seg, QMouseEvent(
+            QEvent.MouseButtonPress, QPointF(3, 3), Qt.LeftButton,
+            Qt.LeftButton, Qt.NoModifier))
+
+    press()
+    assert fired == [1]
+    seg.popupOpened()
+    seg.popupClosed()          # popup just hid: the very next press is the dismisser
+    press()
+    assert fired == [1], "the dismissing press reopened the popup"
+    seg._popup_hidden_at = 0.0  # far in the past: presses work again
+    press()
+    assert fired == [1, 1]
+
+
+def test_section_popup_has_jump_row_first_and_current_checked(main_window, qtbot):
+    from PySide6.QtWidgets import QWidgetAction
+    menu = main_window.sectionJumpFromStatusBar()
+    qtbot.wait(20)
+    acts = menu.actions()
+    assert isinstance(acts[0], QWidgetAction)
+    checked = [a for a in acts[1:] if a.isChecked()]
+    assert len(checked) == 1
+    assert checked[0].text() == str(main_window.series.current_section)
+    assert menu.activeAction() is checked[0]
+    menu.close()
+
+
+def test_jump_field_return_jumps_by_number(main_window, qtbot, monkeypatch):
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtWidgets import QWidgetAction
+
+    jumped = []
+    monkeypatch.setattr(main_window, "changeSection",
+                        lambda n, **k: jumped.append(n))
+    menu = main_window.sectionJumpFromStatusBar()
+    qtbot.wait(20)
+    field = next(a for a in menu.actions()
+                 if isinstance(a, QWidgetAction)).defaultWidget()
+    target = str(sorted(main_window.series.sections.keys())[-1])
+    field.setText(target)
+    QApplication.sendEvent(field, QKeyEvent(
+        QEvent.KeyPress, Qt.Key_Return, Qt.KeyboardModifier.NoModifier))
+    assert jumped == [int(target)]
+    assert not menu.isVisible()
+
+
+@pytest.fixture(autouse=True)
+def no_popup_leaks(qtbot):
+    """Any popup a test here leaves alive poisons LATER tests instead of the
+    guilty one (a leaked popup grab made the menu-reveal sweep fail 31 paths
+    in one full-suite run). Fail the leaker locally."""
+    yield
+    qtbot.wait(10)  # let queued deleteLater and hide events run
+    leaked = QApplication.activePopupWidget()
+    assert leaked is None, f"test leaked an active popup: {leaked!r}"

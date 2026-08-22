@@ -61,47 +61,50 @@ def choose(qtbot, menu, text):
     qtbot.mouseClick(menu, Qt.LeftButton, pos=menu.actionGeometry(action).center())
 
 
-# ---- section: the existing Go To Section dialog, reached from the bar -------
+# ---- section: the anchored jump menu, reached from the bar -------------------
+# The center-screen Go To Section dialog left this path on his call
+# (2026-08-22); the menu-bar route still owns the dialog. These drive the
+# menu the way the other two segments' tests drive theirs.
 
-def test_clicking_the_section_segment_opens_go_to_section(
-    qtbot, main_window, main_window_dialogs
+def test_clicking_the_section_segment_opens_the_anchored_menu(
+    qtbot, main_window
 ):
-    """The click must reach the app's one section-jump dialog, not a new one."""
-    click(qtbot, main_window.status_readout.section_segment)
+    """The click opens the shared anchored menu, jump row first."""
+    from PySide6.QtWidgets import QWidgetAction
 
-    assert "Go To Section" in main_window_dialogs.dialogs
+    click(qtbot, main_window.status_readout.section_segment)
+    menu = popup_of(main_window.status_readout.section_segment)
+    assert menu is not None
+    assert isinstance(menu.actions()[0], QWidgetAction)
+    menu.close()
 
 
 def test_choosing_a_section_number_moves_the_field_and_the_readout(
-    qtbot, main_window, monkeypatch
+    qtbot, main_window
 ):
-    """Click -> dialog -> a number -> the field is there and the bar says so."""
-    from PySide6.QtWidgets import QInputDialog
-
+    """Click -> menu -> a number row -> the field is there and the bar says so."""
     sections = sorted(main_window.series.sections.keys())
     if len(sections) < 2:
         pytest.skip("fixture series has a single section")
     target = next(n for n in sections if n != main_window.series.current_section)
 
-    monkeypatch.setattr(
-        QInputDialog, "getText", staticmethod(lambda *a, **k: (str(target), True))
-    )
-
     click(qtbot, main_window.status_readout.section_segment)
+    menu = popup_of(main_window.status_readout.section_segment)
+    choose(qtbot, menu, str(target))
 
     assert main_window.series.current_section == target
     assert main_window.status_readout.section_segment.text() == f"Section: {target}"
     assert main_window.status_readout.text().startswith(f"Section: {target}")
 
 
-def test_cancelling_the_section_dialog_changes_nothing(
-    qtbot, main_window, main_window_dialogs
-):
-    """The recorder's default answer is a cancel, which must be a no-op."""
+def test_dismissing_the_section_menu_changes_nothing(qtbot, main_window):
+    """Closing the menu without choosing must be a no-op."""
     before = main_window.series.current_section
     readout_before = main_window.status_readout.text()
 
     click(qtbot, main_window.status_readout.section_segment)
+    menu = popup_of(main_window.status_readout.section_segment)
+    menu.close()
 
     assert main_window.series.current_section == before
     assert main_window.status_readout.text() == readout_before
@@ -235,7 +238,11 @@ def test_the_detail_part_of_the_readout_is_not_clickable(main_window):
 
 
 def test_a_second_click_does_not_leave_the_first_menu_behind(qtbot, main_window):
-    """Repeated clicks must not accumulate menus parented to the segment."""
+    """Repeated clicks must not accumulate menus parented to the segment.
+
+    A press arriving right after a popup hides is the dismissing press and is
+    swallowed by design (the explicit toggle), so the re-click here backdates
+    the hide stamp the way real time passing would."""
     segment = main_window.status_readout.alignment_segment
 
     click(qtbot, segment)
@@ -244,5 +251,6 @@ def test_a_second_click_does_not_leave_the_first_menu_behind(qtbot, main_window)
     choose(qtbot, first, main_window.series.alignment)
     qtbot.waitUntil(lambda: popup_of(segment) is None, timeout=2000)
 
+    segment._popup_hidden_at = 0.0
     click(qtbot, segment)
     assert popup_of(segment) is not None

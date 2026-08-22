@@ -156,7 +156,7 @@ class MainWindow(QMainWindow):
         ## under the pointer. See gui/main/status_readout.py for why a segment
         ## has to be its own widget.
         self.status_readout = FieldStatusReadout()
-        self.status_readout.section_clicked.connect(self.changeSection)
+        self.status_readout.section_clicked.connect(self.sectionJumpFromStatusBar)
         self.status_readout.alignment_clicked.connect(self.quickSwitchAlignment)
         self.status_readout.bc_profile_clicked.connect(self.quickSwitchBCProfile)
         self.statusbar.addWidget(self.status_readout, 0)
@@ -2427,17 +2427,86 @@ class MainWindow(QMainWindow):
         """
         menu = QMenu(segment)
         menu.aboutToHide.connect(menu.deleteLater)
+        # the pill's pressed look exists exactly while its popup does
+        segment.popupOpened()
+        menu.aboutToHide.connect(segment.popupClosed)
+
+        fm = menu.fontMetrics()
+        current_act = None
         for name in names:
-            act = menu.addAction(name)
+            # display middle-elided, act on the full value
+            act = menu.addAction(fm.elidedText(str(name), Qt.ElideMiddle, 360))
             act.setCheckable(True)
             act.setChecked(name == current)
+            if name == current:
+                current_act = act
             # default argument, not a closure over the loop variable
             act.triggered.connect(lambda _checked=False, n=name: switch(n))
 
-        # above the segment: the status bar is at the bottom of the window, so
-        # a menu dropped below it would open off-screen
+        # Above the segment: the status bar is at the bottom of the window, so
+        # a menu dropped below it would open off-screen. No height cap: QMenu's
+        # exceeds-screen scrolling is the only scrolling it reliably has, and
+        # sizeHint() ignores a maximum anyway, so the anchor bounds the hint by
+        # the screen and lets popup() do its own clamping.
         top_left = segment.mapToGlobal(segment.rect().topLeft())
-        menu.popup(top_left - QPoint(0, menu.sizeHint().height()))
+        screen_h = self.screen().availableGeometry().height()
+        menu.popup(top_left - QPoint(0, min(menu.sizeHint().height(), screen_h)))
+        if current_act is not None:
+            # after popup(), not before: activation set on an unshown menu is
+            # not guaranteed to survive the show
+            menu.setActiveAction(current_act)
+        return menu
+
+    def sectionJumpFromStatusBar(self):
+        """Offer the series' sections over the status bar's section segment.
+
+        The same anchored menu the other two segments use, plus a jump row.
+        The row is built before popup() because inserting into a shown QMenu
+        is the live-mutation trap menu_search.py documents. Focus lands on
+        the jump field only after the menu is shown; setFocus on a
+        not-yet-active popup window can silently fail.
+        """
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QWidgetAction
+        from PyReconstruct.modules.gui.main.status_readout import SectionJumpField
+
+        numbers = sorted(self.series.sections.keys())
+        segment = self.status_readout.section_segment
+        menu = QMenu(segment)
+        menu.aboutToHide.connect(menu.deleteLater)
+        segment.popupOpened()
+        menu.aboutToHide.connect(segment.popupClosed)
+
+        jump_action = QWidgetAction(menu)
+        acts_by_number = []
+        field_holder = []
+
+        def jump(number):
+            self.changeSection(int(number))
+
+        current_act = None
+        # the jump row must be the menu's first action, so add it first with a
+        # placeholder widget bound after the number actions exist
+        menu.addAction(jump_action)
+        for number in numbers:
+            act = menu.addAction(str(number))
+            act.setCheckable(True)
+            act.setChecked(number == self.series.current_section)
+            if number == self.series.current_section:
+                current_act = act
+            act.triggered.connect(lambda _checked=False, n=number: jump(n))
+            acts_by_number.append((number, act))
+
+        field = SectionJumpField(menu, acts_by_number, jump)
+        jump_action.setDefaultWidget(field)
+        field_holder.append(field)
+
+        top_left = segment.mapToGlobal(segment.rect().topLeft())
+        screen_h = self.screen().availableGeometry().height()
+        menu.popup(top_left - QPoint(0, min(menu.sizeHint().height(), screen_h)))
+        if current_act is not None:
+            menu.setActiveAction(current_act)
+        QTimer.singleShot(0, field.setFocus)
         return menu
 
     def quickSwitchAlignment(self):

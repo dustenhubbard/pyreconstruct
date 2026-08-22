@@ -26,40 +26,103 @@ Two properties of the old flat label are kept deliberately:
     clickable ones untouched.
 """
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
+from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QLineEdit, QWidget
 
 
 SEPARATOR = "  |  "
 
 
 class StatusSegment(QLabel):
-    """A readout segment that reports a left-click.
+    """A readout segment that reports a left-click and looks pressable.
 
     `QLabel` has no `clicked` signal; a label is not a button and Qt will not
     pretend otherwise. Overriding `mousePressEvent` is the documented way to
     give a plain widget a press, and press (not release) is what the rest of
     this application's popups use.
+
+    The affordance is shape, not color (his call: not link-blue): a rounded
+    outline painted from the palette's text color at low alpha, a slightly
+    stronger fill on hover, stronger again while the segment's popup is open.
+    Palette-derived, so both themes are covered without theme code. The
+    pressed look is owned by the POPUP helper through popupOpened() and
+    popupClosed(), never by the press itself, so a click handler that opens
+    no popup cannot strand the pill in its pressed state.
     """
 
     clicked = Signal()
+
+    #: inner padding so the outline does not hug the glyphs; the vertical
+    #: pixel is measured by test_pills_do_not_grow_the_status_bar
+    H_PAD = 8
+    V_PAD = 1
 
     def __init__(self, tooltip: str, parent=None):
         super().__init__(parent)
         self.setToolTip(tooltip)
         self.setCursor(Qt.PointingHandCursor)
-        # Visual affordance beyond the hover cursor is an open design
-        # question (his call: not link-blue; something shaped like a
-        # button, with the segment popups anchored and styled to match).
-        # The plan for that is being reviewed; until it lands the segment
-        # signals clickability by cursor and tooltip alone.
+        self.setAttribute(Qt.WA_Hover)
+        self.setContentsMargins(self.H_PAD, self.V_PAD, self.H_PAD, self.V_PAD)
+        self._hovered = False
+        self._popup_open = False
+        self._popup_hidden_at = 0.0
+
+    # -- pressed state, owned by the popup helper --------------------------
+    def popupOpened(self):
+        self._popup_open = True
+        self.update()
+
+    def popupClosed(self):
+        import time
+        self._popup_open = False
+        self._popup_hidden_at = time.monotonic()
+        self.update()
+
+    def event(self, e):
+        if e.type() in (QEvent.HoverEnter, QEvent.HoverLeave):
+            self._hovered = e.type() == QEvent.HoverEnter
+            self.update()
+        return super().event(e)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
+            # Toggle explicitly instead of trusting the platform's
+            # ReplayMousePressOutsidePopup style hint: where the dismissing
+            # press is replayed, the click that closed the popup would
+            # instantly reopen it and the pill could never dismiss its own
+            # popup. A press arriving within the double-click interval of
+            # the popup hiding IS that dismissing press; swallow it.
+            import time
+            from PySide6.QtWidgets import QApplication
+            interval = QApplication.doubleClickInterval() / 1000.0
+            if time.monotonic() - self._popup_hidden_at < interval:
+                event.accept()
+                return
             self.clicked.emit()
             event.accept()
             return
         super().mousePressEvent(event)
+
+    def paintEvent(self, event):
+        from PySide6.QtGui import QPainter, QPainterPath, QPen
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        line = self.palette().windowText().color()
+        outline = QPainterPath()
+        radius = self.height() / 2.0 - 0.5
+        rect = self.rect().adjusted(0, 0, -1, -1)
+        outline.addRoundedRect(rect, radius, radius)
+        if self._popup_open or self._hovered:
+            fill = QColor(line)
+            fill.setAlpha(40 if self._popup_open else 20)
+            painter.fillPath(outline, fill)
+        edge = QColor(line)
+        edge.setAlpha(90)
+        painter.setPen(QPen(edge, 1))
+        painter.drawPath(outline)
+        painter.end()
+        super().paintEvent(event)
 
 
 class FieldStatusReadout(QWidget):
@@ -148,3 +211,63 @@ class FieldStatusReadout(QWidget):
         return SEPARATOR.join(
             widget.text() for widget in self._segments if widget.text()
         )
+
+
+class SectionJumpField(QLineEdit):
+    """The jump row at the top of the section popup.
+
+    A pure jump field, never a filter: hiding actions in a shown QMenu is the
+    live-mutation trap menu_search.py documents, so the list is never touched.
+    Typed digits move the menu's active action to the first section whose
+    number starts with them; Return jumps. Modeled on
+    MenuSearchField.eventFilter: the filter consumes Return itself, prefers
+    the menu's active action once the user has arrowed, falls back to the
+    parsed number, and closes the menu, because a QLineEdit does not accept
+    Return and the propagated event would also activate a menu row (one
+    keystroke, two jumps).
+    """
+
+    def __init__(self, menu, acts_by_number, jump, parent=None):
+        super().__init__(parent)
+        self._menu = menu
+        self._acts = acts_by_number      # list of (number, QAction), menu order
+        self._jump = jump
+        self._arrowed = False
+        numbers = [n for n, _ in acts_by_number]
+        if numbers:
+            self.setPlaceholderText(f"Jump to section ({numbers[0]}-{numbers[-1]})")
+        self.textEdited.connect(self._moveActive)
+        self.installEventFilter(self)
+
+    def _moveActive(self, text):
+        self._arrowed = False
+        text = text.strip()
+        if not text.isdigit():
+            return
+        for number, act in self._acts:
+            if str(number).startswith(text):
+                self._menu.setActiveAction(act)
+                return
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.KeyPress:
+            key = event.key()
+            if key in (Qt.Key_Up, Qt.Key_Down):
+                self._arrowed = True
+                QApplication.sendEvent(self._menu, event)
+                return True
+            if key in (Qt.Key_Return, Qt.Key_Enter):
+                active = self._menu.activeAction()
+                if self._arrowed and active is not None and active.isEnabled():
+                    self._menu.close()
+                    active.trigger()
+                    return True
+                text = self.text().strip()
+                if text.isdigit():
+                    for number, act in self._acts:
+                        if number == int(text):
+                            self._menu.close()
+                            self._jump(number)
+                            return True
+                return True   # consumed either way: never let Return reach the menu too
+        return super().eventFilter(obj, event)
