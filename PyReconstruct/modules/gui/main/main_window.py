@@ -157,6 +157,10 @@ class MainWindow(QMainWindow):
         ## has to be its own widget.
         self.status_readout = FieldStatusReadout()
         self.status_readout.section_clicked.connect(self.sectionJumpFromStatusBar)
+        # right-click keeps the classic Go To Section dialog (his option 1)
+        self.status_readout.section_segment.right_clicked.connect(
+            lambda: self.changeSection()
+        )
         self.status_readout.alignment_clicked.connect(self.quickSwitchAlignment)
         self.status_readout.bc_profile_clicked.connect(self.quickSwitchBCProfile)
         self.statusbar.addWidget(self.status_readout, 0)
@@ -2470,7 +2474,16 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QWidgetAction
         from PyReconstruct.modules.gui.main.status_readout import SectionJumpField
 
-        numbers = sorted(self.series.sections.keys())
+        # A window around the current section, not the whole series: his
+        # call (2026-08-22). The menu stays shorter than any screen, which is
+        # also what keeps it anchored instead of clamped over the segment,
+        # and the jump row on top still reaches every section by number.
+        # Right-clicking the segment opens the classic dialog instead.
+        all_numbers = sorted(self.series.sections.keys())
+        here = self.series.current_section
+        idx = all_numbers.index(here) if here in all_numbers else 0
+        lo = max(0, idx - 15)
+        numbers = all_numbers[lo:idx + 16]
         segment = self.status_readout.section_segment
         menu = QMenu(segment)
         menu.aboutToHide.connect(menu.deleteLater)
@@ -2497,7 +2510,9 @@ class MainWindow(QMainWindow):
             act.triggered.connect(lambda _checked=False, n=number: jump(n))
             acts_by_number.append((number, act))
 
-        field = SectionJumpField(menu, acts_by_number, jump)
+        # the jump field ranges over the whole series, not the window
+        field = SectionJumpField(menu, acts_by_number, jump,
+                                 all_numbers=all_numbers)
         jump_action.setDefaultWidget(field)
         field_holder.append(field)
 

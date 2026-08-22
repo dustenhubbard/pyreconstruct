@@ -83,13 +83,16 @@ def test_choosing_a_section_number_moves_the_field_and_the_readout(
     qtbot, main_window
 ):
     """Click -> menu -> a number row -> the field is there and the bar says so."""
-    sections = sorted(main_window.series.sections.keys())
-    if len(sections) < 2:
-        pytest.skip("fixture series has a single section")
-    target = next(n for n in sections if n != main_window.series.current_section)
-
     click(qtbot, main_window.status_readout.section_segment)
     menu = popup_of(main_window.status_readout.section_segment)
+    # pick from what the menu actually lists: the rows are a window around
+    # the current section, so a far-away number is reached by the jump row,
+    # not by a row (that path has its own test)
+    listed = [a.text() for a in menu.actions()
+              if a.text() and a.text() != str(main_window.series.current_section)]
+    if not listed:
+        pytest.skip("fixture series has a single section")
+    target = int(listed[0])
     choose(qtbot, menu, str(target))
 
     assert main_window.series.current_section == target

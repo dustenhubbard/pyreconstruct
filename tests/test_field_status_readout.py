@@ -463,3 +463,41 @@ def test_opening_click_cannot_trigger_a_menu_row(main_window, qtbot):
         QEvent.MouseButtonRelease, QPointF(3, 3), Qt.LeftButton,
         Qt.LeftButton, Qt.NoModifier))
     assert opened == [1]
+
+
+def test_section_menu_lists_a_window_and_the_jump_spans_the_series(
+    main_window, qtbot, monkeypatch
+):
+    """The listed rows are a window around the current section; typing a
+    number outside the window still jumps (his option 1, 2026-08-22)."""
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtWidgets import QWidgetAction
+
+    numbers = sorted(main_window.series.sections.keys())
+    jumped = []
+    monkeypatch.setattr(main_window, "changeSection",
+                        lambda n, **k: jumped.append(n))
+    menu = main_window.sectionJumpFromStatusBar()
+    qtbot.wait(20)
+    rows = [a for a in menu.actions() if not isinstance(a, QWidgetAction)]
+    assert len(rows) <= 31
+
+    field = next(a for a in menu.actions()
+                 if isinstance(a, QWidgetAction)).defaultWidget()
+    target = numbers[-1]   # may lie outside the window on a large series
+    field.setText(str(target))
+    QApplication.sendEvent(field, QKeyEvent(
+        QEvent.KeyPress, Qt.Key_Return, Qt.KeyboardModifier.NoModifier))
+    assert jumped == [target]
+
+
+def test_right_click_opens_the_classic_dialog(main_window, main_window_dialogs):
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    seg = main_window.status_readout.section_segment
+    QApplication.sendEvent(seg, QMouseEvent(
+        QEvent.MouseButtonRelease, QPointF(3, 3), Qt.RightButton,
+        Qt.RightButton, Qt.NoModifier))
+    assert "Go To Section" in main_window_dialogs.dialogs
