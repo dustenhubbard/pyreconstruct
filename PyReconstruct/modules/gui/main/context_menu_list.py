@@ -288,7 +288,15 @@ def get_context_menu_list_trace(self, is_in_field=True, list_ops=None, find_in_f
 
     context_menu += [
         None,
-        ("smoothtraces_act", "Smooth traces", "", self.smoothTraces),
+        # in the field the row carries the remappable key and routes by focus
+        # (mainwindow.smoothSelection): over the object list the same key
+        # smooths the selected objects whole. The list variant stays keyless
+        # and direct so exactly one QAction claims the sequence.
+        # the dispatcher is reached through a lambda so the mainwindow
+        # attribute is read at invoke time, not while stubs build the list
+        ("smoothtraces_act", "Smooth traces", sc,
+         (lambda: self.mainwindow.smoothSelection()) if is_in_field
+         else self.smoothTraces),
         ("mergetraces_act", "Merge traces", sc, self.mergeTraces),
         ("mergeobjects_act", "Merge attributes", sc, lambda : self.mergeTraces(merge_attrs_only=True)),
         None,

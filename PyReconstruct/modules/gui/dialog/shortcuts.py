@@ -344,6 +344,7 @@ help_shortcuts = [
     ("deselect_act", "Deselect all traces on section, or all rows in a focused data list"),
     ("invertselection_act", "Invert which traces are selected on section, or which rows in a focused data list"),
     ("edittrace_act", "Edit attributes of selected trace(s)"),
+    ("smoothtraces_act", "Smooth selection (traces, or objects over the object list)"),
     ("mergetraces_act", "Merge selected traces"),
     ("mergeobjects_act", "Merge attributes of selected traces"),
     ("hidetraces_act", "Hide selected traces"),
