@@ -288,20 +288,18 @@ class SectionListPopup(QWidget):
         # rows with the highlight color, and a width fitted to the content
         # instead of whatever a QListWidget defaults to.
         self.setAttribute(Qt.WA_TranslucentBackground)
-        # a plain QWidget does not paint stylesheet backgrounds on its own;
-        # without this the translucent window paints NOTHING and the
-        # compositor shows black
-        self.setAttribute(Qt.WA_StyledBackground, True)
+        # The frame is painted in paintEvent with plain QPainter, the same
+        # mechanism the pills use, because stylesheet backgrounds on a
+        # translucent top-level popup are unreliable on macOS: with
+        # WA_StyledBackground unset nothing painted (black), and with it set
+        # the background still failed to composite. Only the CHILD list keeps
+        # a stylesheet; children of a translucent window paint normally.
         pal = self.palette()
         self.setStyleSheet(
-            "SectionListPopup {{ background: {bg}; border: 1px solid {mid};"
-            "  border-radius: 6px; }}"
             "QListWidget {{ background: transparent; border: none; }}"
             "QListWidget::item {{ padding: 3px 14px; border-radius: 4px; }}"
             "QListWidget::item:selected {{ background: {hl}; color: {hlt}; }}"
             .format(
-                bg=pal.window().color().name(),
-                mid=pal.mid().color().name(),
                 hl=pal.highlight().color().name(),
                 hlt=pal.highlightedText().color().name(),
             )
@@ -323,6 +321,18 @@ class SectionListPopup(QWidget):
         self.field.textEdited.connect(self._typeSelect)
         self.field.installEventFilter(self)
         self.list.itemClicked.connect(self._rowChosen)
+
+    def paintEvent(self, event):
+        from PySide6.QtGui import QPainter, QPainterPath, QPen
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(self.rect().adjusted(0, 0, -1, -1), 6.0, 6.0)
+        painter.fillPath(path, self.palette().window().color())
+        painter.setPen(QPen(self.palette().mid().color(), 1))
+        painter.drawPath(path)
+        painter.end()
+        super().paintEvent(event)
 
     def showAnchored(self, segment):
         top_left = segment.mapToGlobal(segment.rect().topLeft())

@@ -520,12 +520,20 @@ def test_typing_accumulates_multi_digit_numbers(main_window, qtbot, monkeypatch)
     assert not popup.isVisible()
 
 
-def test_popup_paints_its_stylesheet_background(main_window, qtbot):
-    """Translucent without styled-background paints nothing and shows black
-    (his click-test report), so both attributes are pinned together."""
-    from PySide6.QtCore import Qt
+def test_popup_paints_real_pixels(main_window, qtbot):
+    """The popup's center pixel must be the palette window color.
+
+    Attribute pins were not enough: the frame shipped black once (nothing
+    painted the translucent window) and transparent once (the stylesheet
+    background failed to composite on the popup). Grabbing pixels is the
+    assertion that fails when the user sees black."""
     popup = main_window.sectionJumpFromStatusBar()
-    qtbot.wait(10)
-    assert popup.testAttribute(Qt.WA_TranslucentBackground)
-    assert popup.testAttribute(Qt.WA_StyledBackground)
+    qtbot.wait(20)
+    image = popup.grab().toImage()
+    center = image.pixelColor(image.width() // 2, 2)
+    expected = popup.palette().window().color()
+    assert center == expected, (
+        f"popup frame paints {center.name()} where the window color "
+        f"{expected.name()} belongs"
+    )
     popup.hide()
