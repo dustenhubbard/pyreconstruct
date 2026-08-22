@@ -368,6 +368,7 @@ help_shortcuts = [
     ("findobjectfirst_act", "Find first instance of a trace in the series"),
     ("findcontour_act", "Find a trace on the current section"),
     ("goto_act", "Go to a specific section number"),
+    ("searchmenus_act", "Search the menus for a command"),
     None,
     "File",
     ("open_act", "Open a series file"),

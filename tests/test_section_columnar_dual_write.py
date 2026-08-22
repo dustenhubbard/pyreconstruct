@@ -2798,11 +2798,12 @@ def test_a_refused_scalpel_cut_leaves_the_section_saveable(
     assert len(field.section.contours[name]) == 2
     assert field.section.contours[name][0] is first, "the trace was replaced"
 
-    ## And it merged the tags on its way to that refusal, in place, on a trace
-    ## the section still holds. This is the drift.
-    assert first.tags == {"tag_from_first", "tag_from_second"}
+    ## The tag merge happens on a copy now (the 1.22.0 fix), so a refused cut
+    ## really does leave the trace unchanged: no merged tags, no drift, and
+    ## nothing for the old in-place repair to repair.
+    assert first.tags == {"tag_from_first"}
 
-    ## The store came with it. Before the repair this raised, and kept raising.
+    ## With no drift, the save has nothing to raise about.
     field.section.save()
 
     ## The user's next edit, which is where the raise actually used to arrive.

@@ -117,6 +117,17 @@ def pytest_configure(config):
     ):
         config.addinivalue_line("markers", marker)
 
+    # pytest.ini already passes -q, so the habitual `pytest -q tests/` stacks
+    # to verbosity -2, and pytest suppresses the final "N passed in Xs" line
+    # (and the blank line before it) whenever verbosity < -1 -- while -rs skip
+    # reasons still print. The result reads like the run died between the
+    # short summary and the count. The result line is the one thing about a
+    # run that has to actually get read (see pytest_terminal_summary above),
+    # so a redundant -q must not be able to silence it: clamp the floor at -1.
+    # The reporter reads config.option.verbose live, so setting it here works.
+    if config.option.verbose < -1:
+        config.option.verbose = -1
+
 
 # pytest-qt lives in the `test` extra, not in the runtime dependencies, and it is
 # the only thing that supplies the session-scoped `qapp` fixture that
@@ -729,6 +740,12 @@ def menu_leaf_paths(root) -> dict:
         for action in actions:
             keepalive.append(action)
             if action.isSeparator():
+                continue
+            if not action.text():
+                # textless rows are structural artifacts, not commands: the
+                # Help menu's embedded search field is a QWidgetAction with
+                # no text, and the production walker (collect_menu_commands)
+                # skips these for the same reason
                 continue
             submenu = action.menu()
             if submenu is not None:
