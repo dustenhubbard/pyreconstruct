@@ -247,15 +247,21 @@ class SectionJumpField(QLineEdit):
     keystroke, two jumps).
     """
 
-    def __init__(self, menu, acts_by_number, jump, parent=None):
+    def __init__(self, menu, acts_by_number, jump, parent=None, all_numbers=None):
         super().__init__(parent)
         self._menu = menu
         self._acts = acts_by_number      # list of (number, QAction), menu order
         self._jump = jump
+        # the listed rows are a window sized to the space above the bar; the
+        # typed jump reaches the whole series
+        self._all_numbers = all_numbers if all_numbers is not None else [
+            n for n, _ in acts_by_number
+        ]
         self._arrowed = False
-        numbers = [n for n, _ in acts_by_number]
-        if numbers:
-            self.setPlaceholderText(f"Jump to section ({numbers[0]}-{numbers[-1]})")
+        if self._all_numbers:
+            self.setPlaceholderText(
+                f"Jump to section ({self._all_numbers[0]}-{self._all_numbers[-1]})"
+            )
         self.textEdited.connect(self._moveActive)
         self.installEventFilter(self)
 
@@ -283,11 +289,9 @@ class SectionJumpField(QLineEdit):
                     active.trigger()
                     return True
                 text = self.text().strip()
-                if text.isdigit():
-                    for number, act in self._acts:
-                        if number == int(text):
-                            self._menu.close()
-                            self._jump(number)
-                            return True
+                if text.isdigit() and int(text) in self._all_numbers:
+                    self._menu.close()
+                    self._jump(int(text))
+                    return True
                 return True   # consumed either way: never let Return reach the menu too
         return super().eventFilter(obj, event)

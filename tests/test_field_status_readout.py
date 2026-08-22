@@ -476,3 +476,24 @@ def test_right_click_opens_the_classic_dialog(main_window, main_window_dialogs):
         QEvent.MouseButtonRelease, QPointF(3, 3), Qt.RightButton,
         Qt.RightButton, Qt.NoModifier))
     assert "Go To Section" in main_window_dialogs.dialogs
+
+
+def test_section_menu_always_ends_above_the_pill(main_window, qtbot):
+    """The menu's bottom edge must sit above the segment, never on it.
+
+    A QMenu taller than the screen gets clamped to the full screen and its
+    bottom scroll arrow lands exactly on the pill (his click-test report),
+    so the row count is fitted to the space above the bar and the geometry
+    is pinned here.
+    """
+    menu = main_window.sectionJumpFromStatusBar()
+    qtbot.wait(20)
+    seg = main_window.status_readout.section_segment
+    seg_top = seg.mapToGlobal(seg.rect().topLeft()).y()
+    menu_bottom = menu.pos().y() + menu.sizeHint().height()
+    assert menu_bottom <= seg_top, (
+        f"menu bottom {menu_bottom} covers the segment top {seg_top}"
+    )
+    screen_h = main_window.screen().availableGeometry().height()
+    assert menu.sizeHint().height() < screen_h
+    menu.close()

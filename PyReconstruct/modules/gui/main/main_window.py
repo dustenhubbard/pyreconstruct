@@ -2464,65 +2464,73 @@ class MainWindow(QMainWindow):
     def sectionJumpFromStatusBar(self):
         """Offer the series' sections over the status bar's section segment.
 
-        The same anchored menu the other two segments use, plus a jump row.
-        The row is built before popup() because inserting into a shown QMenu
-        is the live-mutation trap menu_search.py documents. Focus lands on
-        the jump field only after the menu is shown; setFocus on a
-        not-yet-active popup window can silently fail.
+        The menu is sized to the space ABOVE the bar, never to the series: a
+        QMenu taller than the screen is clamped to the full screen by Qt, and
+        its bottom scroll arrow then sits exactly on top of the pill that
+        opened it (his click-test report; also the review's first blocker,
+        since bounded scrolling is the one thing QMenu cannot do). So the
+        rows are a window around the current section, as many as fit between
+        the top of the screen and the segment, and the menu always ends above
+        the pill. The jump row reaches every section by number and a
+        right-click on the segment opens the classic dialog.
         """
         from PySide6.QtWidgets import QWidgetAction
         from PyReconstruct.modules.gui.main.status_readout import SectionJumpField
 
-        numbers = sorted(self.series.sections.keys())
+        all_numbers = sorted(self.series.sections.keys())
         segment = self.status_readout.section_segment
         menu = QMenu(segment)
         menu.aboutToHide.connect(menu.deleteLater)
         segment.popupOpened()
         menu.aboutToHide.connect(segment.popupClosed)
 
+        # how many rows fit above the bar: measured from this menu's own
+        # font, with the jump row and frame taken off the top
+        top_left = segment.mapToGlobal(segment.rect().topLeft())
+        screen_top = self.screen().availableGeometry().top()
+        row_h = menu.fontMetrics().height() + 10
+        available = max(top_left.y() - screen_top - 3 * row_h, row_h)
+        max_rows = max(int(available // row_h), 7)
+
+        here = self.series.current_section
+        idx = all_numbers.index(here) if here in all_numbers else 0
+        lo = max(0, idx - max_rows // 2)
+        numbers = all_numbers[lo:lo + max_rows]
+
         jump_action = QWidgetAction(menu)
-        acts_by_number = []
-        field_holder = []
+        menu.addAction(jump_action)
 
         def jump(number):
             self.changeSection(int(number))
 
         current_act = None
-        # the jump row must be the menu's first action, so add it first with a
-        # placeholder widget bound after the number actions exist
-        menu.addAction(jump_action)
+        acts_by_number = []
         for number in numbers:
             act = menu.addAction(str(number))
             act.setCheckable(True)
-            act.setChecked(number == self.series.current_section)
-            if number == self.series.current_section:
+            act.setChecked(number == here)
+            if number == here:
                 current_act = act
             act.triggered.connect(lambda _checked=False, n=number: jump(n))
             acts_by_number.append((number, act))
 
         # the container-with-margins wrapper and the synchronous focus below
         # copy menu_search.py exactly: that field demonstrably receives
-        # keystrokes inside an open QMenu on macOS, and the two differences
-        # (bare edit as the action widget, focus deferred to a timer) were
-        # what left this one deaf on a real machine
+        # keystrokes inside an open QMenu on macOS
         from PySide6.QtWidgets import QHBoxLayout, QWidget as _QW
-        field = SectionJumpField(menu, acts_by_number, jump)
+        field = SectionJumpField(menu, acts_by_number, jump,
+                                 all_numbers=all_numbers)
         container = _QW()
         wrap = QHBoxLayout(container)
         wrap.setContentsMargins(8, 4, 8, 4)
         wrap.addWidget(field)
         jump_action.setDefaultWidget(container)
-        field_holder.append(field)
 
-        top_left = segment.mapToGlobal(segment.rect().topLeft())
-        screen_h = self.screen().availableGeometry().height()
-        menu.popup(top_left - QPoint(0, min(menu.sizeHint().height(), screen_h)))
+        menu.popup(top_left - QPoint(0, menu.sizeHint().height() + 2))
         if current_act is not None:
             menu.setActiveAction(current_act)
-        # synchronous, in the same stack as popup(), the way openMenuSearch
-        # focuses the help search field; a deferred setFocus lands after the
-        # menu's popup grab settles and can silently fail
         field.setFocus()
+        self._section_popup = menu
         return menu
 
     def quickSwitchAlignment(self):
