@@ -2470,7 +2470,6 @@ class MainWindow(QMainWindow):
         the jump field only after the menu is shown; setFocus on a
         not-yet-active popup window can silently fail.
         """
-        from PySide6.QtCore import QTimer
         from PySide6.QtWidgets import QWidgetAction
         from PyReconstruct.modules.gui.main.status_readout import SectionJumpField
 
@@ -2501,8 +2500,18 @@ class MainWindow(QMainWindow):
             act.triggered.connect(lambda _checked=False, n=number: jump(n))
             acts_by_number.append((number, act))
 
+        # the container-with-margins wrapper and the synchronous focus below
+        # copy menu_search.py exactly: that field demonstrably receives
+        # keystrokes inside an open QMenu on macOS, and the two differences
+        # (bare edit as the action widget, focus deferred to a timer) were
+        # what left this one deaf on a real machine
+        from PySide6.QtWidgets import QHBoxLayout, QWidget as _QW
         field = SectionJumpField(menu, acts_by_number, jump)
-        jump_action.setDefaultWidget(field)
+        container = _QW()
+        wrap = QHBoxLayout(container)
+        wrap.setContentsMargins(8, 4, 8, 4)
+        wrap.addWidget(field)
+        jump_action.setDefaultWidget(container)
         field_holder.append(field)
 
         top_left = segment.mapToGlobal(segment.rect().topLeft())
@@ -2510,7 +2519,10 @@ class MainWindow(QMainWindow):
         menu.popup(top_left - QPoint(0, min(menu.sizeHint().height(), screen_h)))
         if current_act is not None:
             menu.setActiveAction(current_act)
-        QTimer.singleShot(0, field.setFocus)
+        # synchronous, in the same stack as popup(), the way openMenuSearch
+        # focuses the help search field; a deferred setFocus lands after the
+        # menu's popup grab settles and can silently fail
+        field.setFocus()
         return menu
 
     def quickSwitchAlignment(self):

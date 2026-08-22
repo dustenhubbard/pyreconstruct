@@ -420,8 +420,10 @@ def test_jump_field_return_jumps_by_number(main_window, qtbot, monkeypatch):
                         lambda n, **k: jumped.append(n))
     menu = main_window.sectionJumpFromStatusBar()
     qtbot.wait(20)
-    field = next(a for a in menu.actions()
-                 if isinstance(a, QWidgetAction)).defaultWidget()
+    from PySide6.QtWidgets import QLineEdit
+    container = next(a for a in menu.actions()
+                     if isinstance(a, QWidgetAction)).defaultWidget()
+    field = container.findChild(QLineEdit)   # padded container, like the help search
     target = str(sorted(main_window.series.sections.keys())[-1])
     field.setText(target)
     QApplication.sendEvent(field, QKeyEvent(
