@@ -314,7 +314,7 @@ def test_the_field_object_menu_keeps_add_and_remove_reachable(main_window):
 
     paths = menu_leaf_paths(object_menu)
 
-    assert _cpp(paths["Add to 3D scene"]) == wanted_add
+    assert _cpp(paths["3D > Add to scene"]) == wanted_add
     assert _cpp(paths["3D > Remove from scene"]) == wanted_remove
 
 
@@ -541,13 +541,13 @@ def test_an_export_format_with_no_backing_library_is_disabled(main_window):
     need nothing beyond `trimesh` stay enabled, which is what makes this a gate
     rather than a blanket.
     """
-    export_menu = submenu_at(main_window.field_menu, "Object > 3D > Export mesh as")
+    export_menu = submenu_at(main_window.field_menu, "Object > 3D > Export meshes")
     assert export_menu is not None
 
     paths = menu_leaf_paths(export_menu)
 
     assert paths["Collada (.dae) (not installed)"].isEnabled() is False
-    assert paths["STL (.stl)"].isEnabled() is True
+    assert paths["Stl (.stl)"].isEnabled() is True
 
 
 # --- FIRING: a real key press -------------------------------------------------

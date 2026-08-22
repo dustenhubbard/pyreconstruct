@@ -306,7 +306,7 @@ class MainWindow(QMainWindow):
         self.field_menu = QMenu(self)
         populateMenu(self, self.field_menu, field_menu_list)
 
-        ## Gray out export formats whose optional dependency is missing
+        ## Grey out export formats whose optional dependency is missing
         ## (e.g. Collada/.dae without 'pycollada', as in frozen builds).
         disable_unavailable_export_formats(self)
 
@@ -319,11 +319,6 @@ class MainWindow(QMainWindow):
             self.mergetraces_act,
             self.mergeobjects_act,
             self.hidetraces_act,
-            # the top-strip copy of "Edit object attributes...": the objects it
-            # edits are the ones owning the selected traces, so it is gated by
-            # the trace selection exactly as its "Object >" copy is (that copy
-            # rides on objectmenu above)
-            self.editobjattrs_act,
             self.cut_act,
             self.copy_act,
             self.copytosections_act,
@@ -344,15 +339,19 @@ class MainWindow(QMainWindow):
     def checkActions(self, clicked_label=None):
         """Define enabled and disabled actions based on field context.
 
-        Took `context_menu` and `clicked_trace` until 2026-08-17. Both existed
-        only to ask whether the right-click had landed on an already-selected
-        item, and no command in either entity scope reads the clicked item --
-        they all act on the selection. See scope_menus_enabled for what that
-        test was doing instead, and the symptom it produced.
+        Each entity scope is live when that scope has a selection, and the
+        clicked item does not enter into it: every command in both scopes acts
+        on the SELECTION (trace_function / ztrace_function supply it and return
+        early when it is empty). This replaced two rules that together left the
+        z-trace menu reading as empty -- an exclusive-or that disabled BOTH
+        menus whenever traces and z-traces were selected at once, and a
+        clicked-item test that answered a question no handler asks. The
+        relabelling top-level edit row those rules served is gone with the
+        menu reorganization; scope is chosen by opening "Trace" or "Ztrace".
 
             Params:
-                clicked_label: the zarr overlay label under the cursor, when the
-                    label menu is the one being opened
+                clicked_label: the zarr overlay label under the cursor, when
+                    the label menu is the one being opened
         """
         ## Skip if actions not initialized
         if not self.actions_initialized:
@@ -361,30 +360,12 @@ class MainWindow(QMainWindow):
         field_section = self.field.section
         selected_traces = field_section.selected_traces
         selected_ztraces = field_section.selected_ztraces
-        
-        ## Each entity scope is live when that scope has a selection, and the
-        ## clicked item does not enter into it -- every command in both scopes
-        ## acts on the SELECTION (trace_function / ztrace_function supply it and
-        ## return early when it is empty). See scope_menus_enabled for the two
-        ## rules this replaced and the symptom they produced.
-        trace_live, ztrace_live = scope_menus_enabled(
-            selected_traces, selected_ztraces
-        )
 
         for a in self.trace_actions:
-            a.setEnabled(trace_live)
+            a.setEnabled(bool(selected_traces))
 
         for a in self.ztrace_actions:
-            a.setEnabled(ztrace_live)
-
-        # The one relabelling row that genuinely cannot serve a mixed selection:
-        # it has a single label, so with both kinds selected it goes neutral and
-        # disabled. That is the only thing the old exclusive-or was protecting.
-        edit_text, edit_enabled = edit_selected_label(
-            edit_selected_entity(selected_traces, selected_ztraces)
-        )
-        self.editselected_act.setText(edit_text)
-        self.editselected_act.setEnabled(edit_enabled)
+            a.setEnabled(bool(selected_ztraces))
 
         # check labels
         if clicked_label:
