@@ -59,3 +59,33 @@ def test_dispatch_routes_by_focus(main_window, monkeypatch):
     monkeypatch.setattr(mw, "getFocusWidget", lambda: table)
     mw.smoothSelection()
     assert calls == ["traces", "object"]
+
+
+def test_object_list_row_displays_the_key_without_claiming_it(main_window):
+    """The Object List's smooth row shows the key in its label's tab column.
+
+    Display only: the sequence has exactly one claimant (the field's routed
+    row), and the list is where the key genuinely smooths objects, so the
+    label may say so. The field's Object submenu stays keyless because there
+    the key smooths traces.
+    """
+    from PyReconstruct.modules.gui.main.context_menu_list import get_context_menu_list_obj
+    field = main_window.field
+
+    def smooth_row(entries):
+        for e in entries:
+            if isinstance(e, dict):
+                found = smooth_row(e["opts"])
+                if found:
+                    return found
+            elif isinstance(e, tuple) and e[0] == "smoothobj_act":
+                return e
+        return None
+
+    in_list = smooth_row(get_context_menu_list_obj(field, is_in_field=False))
+    in_field = smooth_row(get_context_menu_list_obj(field, is_in_field=True))
+    key = main_window.series.getOption("smoothtraces_act")
+    assert key
+    assert in_list[1] == f"Smooth object traces\t{key}"
+    assert in_list[2] == ""                      # display only, no binding
+    assert in_field[1] == "Smooth object traces" # keyless where untrue
