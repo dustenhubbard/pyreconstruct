@@ -1077,15 +1077,10 @@ def test_trace_field_menu_offers_hide_other_traces_after_hide():
 
     names = _act_names(get_context_menu_list_trace(_Stub(), is_in_field=True))
     assert "hideothertraces_act" in names
-    assert names[-1] == "hideothertraces_act"
-    # hoisted to the top strip, so no longer duplicated inside the submenu
-    assert "hidetraces_act" not in names
-
-    from PyReconstruct.modules.gui.main.context_menu_list import (
-        get_hoisted_trace_actions,
-    )
-    hoisted = [a[0] for a in get_hoisted_trace_actions(_Stub())]
-    assert "hidetraces_act" in hoisted
+    # under stable's organization "Hide selected traces" lives back inside the
+    # Trace submenu (the fork's top-strip hoist is parked), so only presence
+    # of the hide-others row is pinned here, not its neighbors
+    assert "hidetraces_act" in names
 
 
 def test_hide_other_traces_is_field_only_not_in_trace_list():

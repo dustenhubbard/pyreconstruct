@@ -182,9 +182,6 @@ from .menubar import return_menubar
 from .context_menu_list import (
     get_field_menu_list,
     get_label_menu_list,
-    edit_selected_label,
-    edit_selected_entity,
-    scope_menus_enabled,
     disable_unavailable_export_formats,
     sync_restore_visibility_action,
 )
