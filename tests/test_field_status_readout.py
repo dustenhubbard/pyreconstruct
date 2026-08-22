@@ -382,6 +382,9 @@ def test_press_right_after_popup_close_is_swallowed(main_window, qtbot):
         QApplication.sendEvent(seg, QMouseEvent(
             QEvent.MouseButtonPress, QPointF(3, 3), Qt.LeftButton,
             Qt.LeftButton, Qt.NoModifier))
+        QApplication.sendEvent(seg, QMouseEvent(
+            QEvent.MouseButtonRelease, QPointF(3, 3), Qt.LeftButton,
+            Qt.LeftButton, Qt.NoModifier))
 
     press()
     assert fired == [1]
@@ -436,3 +439,27 @@ def no_popup_leaks(qtbot):
     qtbot.wait(10)  # let queued deleteLater and hide events run
     leaked = QApplication.activePopupWidget()
     assert leaked is None, f"test leaked an active popup: {leaked!r}"
+
+
+def test_opening_click_cannot_trigger_a_menu_row(main_window, qtbot):
+    """The click that opens the section menu must never also choose a row.
+
+    A 500-section menu is taller than the screen, so Qt clamps it over the
+    segment itself; if the segment emitted on press, the release of that same
+    click would land on whichever row Qt put under the pointer and jump
+    there. Emitting on release means the menu opens with no button held.
+    """
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    seg = main_window.status_readout.section_segment
+    opened = []
+    seg.clicked.connect(lambda: opened.append(1))
+    QApplication.sendEvent(seg, QMouseEvent(
+        QEvent.MouseButtonPress, QPointF(3, 3), Qt.LeftButton,
+        Qt.LeftButton, Qt.NoModifier))
+    assert opened == [], "segment fired on press; the release would hit the menu"
+    QApplication.sendEvent(seg, QMouseEvent(
+        QEvent.MouseButtonRelease, QPointF(3, 3), Qt.LeftButton,
+        Qt.LeftButton, Qt.NoModifier))
+    assert opened == [1]

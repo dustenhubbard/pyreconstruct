@@ -96,13 +96,25 @@ class StatusSegment(QLabel):
             import time
             from PySide6.QtWidgets import QApplication
             interval = QApplication.doubleClickInterval() / 1000.0
-            if time.monotonic() - self._popup_hidden_at < interval:
-                event.accept()
-                return
-            self.clicked.emit()
+            self._pressed = time.monotonic() - self._popup_hidden_at >= interval
             event.accept()
             return
         super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        # Emit on RELEASE, not press: a section menu taller than the screen
+        # gets clamped over the segment itself, and a menu opened during the
+        # press would receive the release on whatever row sits under the
+        # pointer, jumping to a section nobody chose. Released with no button
+        # down, the open menu waits for a real second click.
+        if event.button() == Qt.LeftButton:
+            if getattr(self, "_pressed", False) and self.rect().contains(event.position().toPoint()):
+                self._pressed = False
+                self.clicked.emit()
+            self._pressed = False
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
     def paintEvent(self, event):
         from PySide6.QtGui import QPainter, QPainterPath, QPen
