@@ -1,0 +1,43 @@
+# Dependency updates. Security fixes were reaching 37 open alerts because
+# nothing here opened the PRs; the point of this file is that routine bumps
+# stop waiting on a person.
+#
+# Grouped on purpose: one PR per ecosystem per week beats thirty-four PRs for
+# one package's CVE list. Security updates still come through immediately,
+# outside the schedule, because Dependabot treats them separately.
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      # patch and minor together: these are the ones the test suite can
+      # honestly judge. A major bump gets its own PR and a human read.
+      routine:
+        update-types: ["patch", "minor"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: "pip"
+    directory: "/benchmarks"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 2
+    groups:
+      routine:
+        update-types: ["patch", "minor"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    groups:
+      routine:
+        update-types: ["patch", "minor", "major"]
+    commit-message:
+      prefix: "ci(deps)"
