@@ -43,6 +43,19 @@ No Python required. Direct downloads for the current stable release, **v1.22.0**
 All builds, checksums, and past versions are on the
 **[Releases page](https://github.com/dustenhubbard/PyReconstruct/releases/latest)**.
 
+### Minimum requirements
+
+| | Minimum |
+| --- | --- |
+| Windows | Windows 10, 64-bit |
+| macOS | macOS 12 (Monterey), Apple Silicon or Intel |
+| Linux | glibc 2.28 or newer (Ubuntu 20.04, Debian 10, RHEL 8 and up), x86_64 |
+| Graphics | OpenGL for the 3D scene; Windows builds carry a software fallback |
+| Python | 3.11, for source installs only. The installers include their own. |
+
+Older systems are not blocked from installing, but parts of the app will fail
+at runtime rather than at startup.
+
 - **Windows**: builds are unsigned for now; if SmartScreen warns, choose
   **More info → Run anyway**.
 - **macOS**: open the `.dmg` and drag PyReconstruct to Applications. Builds are
