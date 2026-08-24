@@ -198,6 +198,23 @@ def test_every_collected_path_can_be_revealed(main_window):
     menubar = main_window.menubar
     paths = [c[0] for c in collect_menu_commands(menubar)]
     assert len(paths) > 50
+    # TEMPORARY: name the code that removes menubar entries
+    import traceback as _tb
+    from PySide6.QtWidgets import QMenuBar as _QMB
+    _real_remove, _real_clear = _QMB.removeAction, _QMB.clear
+
+    def _spy_remove(self, act):
+        print("DIAG removeAction:", act.text() if act else act)
+        _tb.print_stack()
+        return _real_remove(self, act)
+
+    def _spy_clear(self):
+        print("DIAG menubar.clear()")
+        _tb.print_stack()
+        return _real_clear(self)
+
+    _QMB.removeAction, _QMB.clear = _spy_remove, _spy_clear
+
     before = [a.text() for a in menubar.actions()]
     print("\nDIAG menubar at collect:", before)
     failures = []

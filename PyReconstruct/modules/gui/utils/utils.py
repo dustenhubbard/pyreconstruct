@@ -384,9 +384,9 @@ def newAction(widget : QWidget, container : QMenu, action_tuple : tuple):
         series, flag = kbd
         if "checkbox" in flag:
             action.setCheckable(True)
-        action.setShortcut(series.getOption(act_name))
+        applySeriesShortcut(action, act_name, series)
     else:  # assume series was passed in
-        action.setShortcut(kbd.getOption(act_name))
+        applySeriesShortcut(action, act_name, kbd)
 
     showShortcutInContextMenus(action)
 
