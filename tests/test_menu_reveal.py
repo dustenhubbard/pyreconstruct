@@ -198,29 +198,18 @@ def test_every_collected_path_can_be_revealed(main_window):
     menubar = main_window.menubar
     paths = [c[0] for c in collect_menu_commands(menubar)]
     assert len(paths) > 50
+    before = [a.text() for a in menubar.actions()]
+    print("\nDIAG menubar at collect:", before)
     failures = []
     for p in paths:
-        if reveal_path(menubar, p):
-            continue
-        failures.append(p)
-        if len(failures) == 1:
-            # TEMPORARY CI DIAGNOSTIC
-            from PySide6.QtWidgets import QApplication, QMenu
-            from shiboken6 import isValid
-            labels = [x.strip() for x in p.split(" > ")]
-            print("\nDIAG first failure:", p)
-            print("DIAG active popup:", QApplication.activePopupWidget())
-            print("DIAG menubar valid:", isValid(menubar))
-            top = [a.text() for a in menubar.actions()]
-            print("DIAG menubar actions:", top)
-            match = [a for a in menubar.actions() if a.text().replace("&", "") == labels[0]]
-            print("DIAG top match:", match)
-            if match:
-                m = match[0].menu()
-                print("DIAG submenu:", m, "valid:", m is not None and isValid(m))
-                if m is not None and isValid(m):
-                    print("DIAG children:", [a.text() for a in m.actions()][:12])
-                    print("DIAG enabled:", [(a.text(), a.isEnabled()) for a in m.actions()][:6])
-
+        ok = reveal_path(menubar, p)
+        now = [a.text() for a in menubar.actions()]
+        if now != before:
+            print("DIAG menubar CHANGED after revealing:", p)
+            print("DIAG   was:", before)
+            print("DIAG   now:", now)
+            before = now
+        if not ok:
+            failures.append(p)
     close_reveal(menubar)
     assert failures == []
