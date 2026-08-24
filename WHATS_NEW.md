@@ -6,6 +6,14 @@ full release notes on GitHub (linked from the dialog).
 
 ## [Unreleased]
 
+## [1.22.1] - 2026-08-24
+
+#### Fixed
+
+- **PyReconstruct now has support for even older versions of macOS (macOS 12
+  Monterey, 2022).** The builds now use a version that runs on macOS 12 and
+  up. The README lists the minimum system for each platform.
+
 ## [1.22.0] - 2026-08-21
 
 #### New
