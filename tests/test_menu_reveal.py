@@ -198,6 +198,26 @@ def test_every_collected_path_can_be_revealed(main_window):
     menubar = main_window.menubar
     paths = [c[0] for c in collect_menu_commands(menubar)]
     assert len(paths) > 50
+    # TEMPORARY: watch the Alignments menu's life
+    import traceback as _tb
+    from shiboken6 import isValid as _isValid
+
+    _align_act = next((a for a in menubar.actions() if a.text() == "Alignments"), None)
+    _align_menu = _align_act.menu() if _align_act else None
+    print("DIAG align action:", _align_act, "menu:", _align_menu)
+    if _align_menu is not None:
+        _align_menu.destroyed.connect(lambda *_: (print("DIAG ALIGN MENU DESTROYED"), _tb.print_stack()))
+    if _align_act is not None:
+        _align_act.destroyed.connect(lambda *_: (print("DIAG ALIGN ACTION DESTROYED"), _tb.print_stack()))
+
+    def _align_state(tag):
+        live_act = _align_act is not None and _isValid(_align_act)
+        live_menu = _align_menu is not None and _isValid(_align_menu)
+        in_bar = any(a is _align_act for a in menubar.actions()) if live_act else False
+        print(f"DIAG {tag}: action_alive={live_act} menu_alive={live_menu} in_menubar={in_bar}")
+
+    _align_state("at collect")
+
     # TEMPORARY: name the code that removes menubar entries
     import traceback as _tb
     from PySide6.QtWidgets import QMenuBar as _QMB
@@ -225,6 +245,7 @@ def test_every_collected_path_can_be_revealed(main_window):
             print("DIAG menubar CHANGED after revealing:", p)
             print("DIAG   was:", before)
             print("DIAG   now:", now)
+            _align_state("after change")
             before = now
         if not ok:
             failures.append(p)
