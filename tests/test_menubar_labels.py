@@ -790,7 +790,7 @@ MENUBAR_DEFAULT_KEYS = {
     "open_act": "Ctrl+O",
     "save_act": "Ctrl+S",
     "newfromimages_act": "Ctrl+N",
-    "restart_act": "Ctrl+R",
+    "restart_act": "Ctrl+Alt+R",  # moved off browser refresh in the 2026-08-23 sweep
     "quit_act": "Ctrl+Q",
 }
 

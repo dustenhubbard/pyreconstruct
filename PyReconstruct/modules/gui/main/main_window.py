@@ -3884,9 +3884,22 @@ class MainWindow(QMainWindow):
             # as focus mode's edit-click modifier, which is a held modifier
             # rather than a key sequence. Those are stored the same way and have
             # nothing to apply to a menu entry.
-            if act_name.endswith("_act"):
-                getattr(self, act_name).setShortcut(kbd)
             self.series.setOption(act_name, kbd)
+            if act_name.endswith("_act"):
+                # through the helper so a legacy alias follows every rebind:
+                # option first, so the helper reads the fresh value and the
+                # claim check sees the user's newest bindings
+                applySeriesShortcut(getattr(self, act_name), act_name, self.series)
+
+        # Rebinding one act can claim (or release) a chord some OTHER act
+        # holds as a legacy alias, and that act's own option did not change,
+        # so the loop above never revisits it. Re-resolve every alias carrier.
+        from PyReconstruct.modules.datatypes.default_settings import (
+            LEGACY_SHORTCUT_ALIASES,
+        )
+        for act_name in LEGACY_SHORTCUT_ALIASES:
+            if act_name not in shortcuts_dict and getattr(self, act_name, None):
+                applySeriesShortcut(getattr(self, act_name), act_name, self.series)
     
     def displayAbout(self):
         """Display the widget display information about the series."""
