@@ -11,6 +11,17 @@ def get_username() -> str:
         user = 'default'
     return user
 
+# The 2026-08-23 shortcut sweep (scheme C of the three drafted, plus the two
+# macOS collisions): every move defuses a reflex trap, every freed chord stays
+# deliberately unbound so an old habit lands on silence, and the one legacy
+# chord with deep roots keeps working through this alias registry. An action
+# listed here answers to its stored binding AND to the legacy chord, as long
+# as no other action's current binding claims that chord; menus display only
+# the stored binding, so new users learn one key.
+LEGACY_SHORTCUT_ALIASES = {
+    "pasteattributes_act": "Ctrl+B",
+}
+
 default_settings = {
     # user
     "username": get_username(),  # MFO
@@ -95,7 +106,7 @@ default_settings = {
     "autoseg_color_seed": 0,
 
     # shortcuts 
-    "alloptions_act": "Shift+O",
+    "alloptions_act": "Ctrl+,",
     "flicker_act": "/",
     "focus_act": "X",
     "hideall_act": "H",
@@ -125,10 +136,10 @@ default_settings = {
     # user-configurable in the shortcuts dialog.
     "invertselection_act": "Ctrl+Shift+I",
     "edittrace_act": "Ctrl+E",
-    "mergetraces_act": "Ctrl+M",
+    "mergetraces_act": "Shift+M",
     "mergeobjects_act": "Ctrl+Shift+M",
     "smoothtraces_act": "Ctrl+Shift+R",
-    "hidetraces_act": "Ctrl+H",
+    "hidetraces_act": "Shift+H",
     "unhideall_act": "Ctrl+U",
     "pastetopalette_act": "Shift+G",
     "pastetopalettewithshape_act": "Ctrl+Shift+G",
@@ -167,7 +178,7 @@ default_settings = {
     "addobjto3D_act": "Ctrl+Shift+D",
     "cut_act": "Ctrl+X",
     "paste_act": "Ctrl+V",
-    "pasteattributes_act": "Ctrl+B",
+    "pasteattributes_act": "Ctrl+Shift+V",
     "findobjectfirst_act": "Ctrl+F",
     "findcontour_act": "Shift+F",
     "goto_act": "Ctrl+G",
@@ -179,18 +190,18 @@ default_settings = {
     "save_act": "Ctrl+S",
     "manualbackup_act": "Ctrl+Shift+B",
     "newfromimages_act": "Ctrl+N",
-    "restart_act": "Ctrl+R",
+    "restart_act": "Ctrl+Alt+R",
     "quit_act": "Ctrl+Q",
     "objectlist_act": "Ctrl+Shift+O",
     "togglecuration_act": "Ctrl+Shift+C",
     "tracelist_act": "Ctrl+Shift+T",
-    "ztracelist_act": "Ctrl+Shift+Z",
+    "ztracelist_act": "Ctrl+Alt+Z",
     "sectionlist_act": "Ctrl+Shift+S",
     "flaglist_act": "Ctrl+Shift+F",
     "changealignment_act": "Ctrl+Shift+A",
     "modifytracepalette_act": "Ctrl+Shift+P",
-    "incpaletteup_act": "Ctrl+=",
-    "incpalettedown_act": "Ctrl+-",
+    "incpaletteup_act": "Ctrl+]",
+    "incpalettedown_act": "Ctrl+[",
     "sethosts_act": "Ctrl+Shift+H",
 
     # palette-specific shortcuts

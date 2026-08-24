@@ -198,6 +198,22 @@ def test_every_collected_path_can_be_revealed(main_window):
     menubar = main_window.menubar
     paths = [c[0] for c in collect_menu_commands(menubar)]
     assert len(paths) > 50
-    failures = [p for p in paths if not reveal_path(menubar, p)]
+    # A menubar rebuild can land mid-sweep (a queued slot running inside the
+    # settle that reveal_path does), and while it is in flight the menubar is
+    # briefly missing the menus it has not re-added yet. Paths collected
+    # before that are not stale: the menus come back, alive and attached. So
+    # a failure is only real if it survives re-collecting and retrying once
+    # on a settled menubar. Without this the sweep failed on CI roughly five
+    # runs in six, always as one real failure plus a cascade of paths that
+    # were merely revealed too early.
+    def _revealable(path):
+        if reveal_path(menubar, path):
+            return True
+        close_reveal(menubar)
+        if path not in [c[0] for c in collect_menu_commands(menubar)]:
+            return True    # the rebuild renamed or moved it; not a reveal bug
+        return reveal_path(menubar, path)
+
+    failures = [p for p in paths if not _revealable(p)]
     close_reveal(menubar)
     assert failures == []

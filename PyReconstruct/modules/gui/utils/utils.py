@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 from datetime import datetime
 
+from shiboken6 import isValid
 from PySide6.QtWidgets import (
     QApplication,
     QWidget,
@@ -318,6 +319,31 @@ def showShortcutInContextMenus(action : QAction):
     action.setShortcutVisibleInContextMenu(True)
 
 
+def applySeriesShortcut(action, act_name: str, series):
+    """Bind an action's stored shortcut plus any legacy alias still unclaimed.
+
+    The primary comes from the series option (user-remappable, shown in
+    menus). If the act carries a LEGACY_SHORTCUT_ALIASES entry, the old chord
+    keeps firing too, unless the user's current bindings gave that chord to
+    some other action, in which case the alias yields silently.
+    """
+    from PyReconstruct.modules.datatypes.default_settings import (
+        LEGACY_SHORTCUT_ALIASES, default_settings,
+    )
+    primary = series.getOption(act_name)
+    sequences = [primary] if primary else []
+    alias = LEGACY_SHORTCUT_ALIASES.get(act_name)
+    if alias and alias != primary:
+        claimed = any(
+            name != act_name and series.getOption(name) == alias
+            for name in default_settings
+            if name.endswith("_act")
+        )
+        if not claimed:
+            sequences.append(alias)
+    action.setShortcuts(sequences)
+
+
 def newAction(widget : QWidget, container : QMenu, action_tuple : tuple):
     """Create an action within a menu.
 
@@ -359,9 +385,9 @@ def newAction(widget : QWidget, container : QMenu, action_tuple : tuple):
         series, flag = kbd
         if "checkbox" in flag:
             action.setCheckable(True)
-        action.setShortcut(series.getOption(act_name))
+        applySeriesShortcut(action, act_name, series)
     else:  # assume series was passed in
-        action.setShortcut(kbd.getOption(act_name))
+        applySeriesShortcut(action, act_name, kbd)
 
     showShortcutInContextMenus(action)
 
@@ -373,8 +399,22 @@ def newAction(widget : QWidget, container : QMenu, action_tuple : tuple):
         keepMenuOpenOnToggle(container)
 
     # remove previous action
+    #
+    # A dead wrapper here used to raise RuntimeError partway through a rebuild
+    # and leave a HALF-BUILT menubar: the menus after the raise never got
+    # added, so the window silently lost whole menus (Alignments and View, in
+    # the CI failure that surfaced this). clearMenuBar drops these references
+    # first so the wrapper is normally alive, but any path that clears without
+    # it, or a generation reaped between clear and rebuild, brings the raise
+    # back. Losing a stale reference is never worth losing the rest of the
+    # menubar, so a dead wrapper is skipped rather than fatal.
     if act_name in dir(widget):
-        widget.removeAction(getattr(widget, act_name))
+        previous = getattr(widget, act_name)
+        try:
+            if isValid(previous):
+                widget.removeAction(previous)
+        except RuntimeError:
+            pass
     
     # attach to widget
     widget.addAction(action)

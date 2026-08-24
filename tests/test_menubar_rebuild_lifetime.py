@@ -144,3 +144,43 @@ def test_clear_menu_bar_leaves_other_widgets_attributes_alone(main_window, qapp)
     clearMenuBar(table, table.menubar)
 
     assert table.some_unrelated_attr is sentinel
+
+
+def test_a_dead_previous_action_does_not_truncate_the_menubar(main_window):
+    """A rebuild must finish even when a stale wrapper is already dead.
+
+    newAction removes the previous action of the same name before adding the
+    new one. When that wrapper had been reaped, removeAction raised and the
+    rebuild stopped partway, so the window lost every menu after the raise
+    (Alignments and View, in the CI failure that surfaced this). Dead wrappers
+    are skipped now, so the rebuild always completes.
+    """
+    import PyReconstruct.modules.gui.utils.utils as U
+
+    mw = main_window
+    before = [a.text() for a in mw.menubar.actions()]
+    assert "Alignments" in before and "View" in before
+
+    class _Dead:
+        def __repr__(self):
+            return "<dead action>"
+
+    real_remove = type(mw).removeAction
+    real_isvalid = U.isValid
+
+    def raising_remove(self, act):
+        if isinstance(act, _Dead):
+            raise RuntimeError("Internal C++ object already deleted")
+        return real_remove(self, act)
+
+    mw.open_act = _Dead()
+    try:
+        type(mw).removeAction = raising_remove
+        U.isValid = lambda obj: True     # force the raising path
+        mw.createMenuBar()
+    finally:
+        type(mw).removeAction = real_remove
+        U.isValid = real_isvalid
+
+    after = [a.text() for a in mw.menubar.actions()]
+    assert after == before, f"rebuild truncated the menubar: {after}"
