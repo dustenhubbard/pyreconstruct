@@ -72,6 +72,7 @@ from PyReconstruct.modules.gui.popup import (
 # it pulls vedo/vtk/matplotlib and is not needed at startup.
 
 from PyReconstruct.modules.gui.utils import (
+    applySeriesShortcut,
     populateMenuBar,
     clearMenuBar,
     populateMenu,

@@ -5,6 +5,7 @@ from .utils import (
     keepMenuOpenOnToggle,
     newMenu,
     newAction,
+    applySeriesShortcut,
     newQAction,
     addItem,
     populateMenu,
