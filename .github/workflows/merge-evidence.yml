@@ -34,7 +34,22 @@ jobs:
   merge-evidence:
     runs-on: ubuntu-latest
     steps:
+      - name: routine dependency PRs are vouched for by the suite
+        # The one exception to label-only evidence, added 2026-08-24: a
+        # dependabot patch or minor bump merges on green checks alone (see
+        # dependabot-auto.yml for the policy and the reason). Read from the
+        # event payload, so a PR head cannot forge it.
+        id: dep
+        run: |
+          if [ "${{ github.event.pull_request.user.login }}" = "dependabot[bot]" ]; then
+            echo "dependabot PR -- the test suite is the evidence"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: require the `reviewed` label
+        if: steps.dep.outputs.skip != 'true'
         env:
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |

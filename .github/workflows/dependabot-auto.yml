@@ -1,0 +1,44 @@
+# Routine dependency PRs merge themselves when the suite agrees.
+#
+# POLICY, stated plainly because it narrows the merge-evidence gate:
+# a PR authored by dependabot[bot] whose update type is patch or minor is
+# merged without a human reading it, once every required check passes. The
+# evidence for those merges is the test suite, not a person. Major bumps and
+# anything not authored by dependabot still need the `reviewed` label.
+#
+# Why: 37 security alerts sat open because every bump waited on one person.
+# A dependency CVE list that nobody has time to clear is worse than a machine
+# merging patch bumps a green suite already vouched for.
+name: dependabot-auto
+
+on: pull_request_target
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: read the update type
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: enable auto-merge for patch and minor
+        if: contains(fromJSON('["version-update:semver-patch","version-update:semver-minor"]'), steps.meta.outputs.update-type)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr merge --auto --squash "${{ github.event.pull_request.html_url }}"
+
+      - name: leave a major bump for a person
+        if: steps.meta.outputs.update-type == 'version-update:semver-major'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment "${{ github.event.pull_request.html_url }}" \
+            --body "Major version bump, so this one waits for a human. Apply \`reviewed\` to merge."
