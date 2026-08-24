@@ -92,15 +92,24 @@ def classify_headings(text, tag_versions):
     ``tag_versions`` is a set of parsed versions. Returns a dict with:
 
       ``released``    heading names that match a tag
-      ``staged``      heading names above every tag: written, not yet cut
-      ``missing``     heading names at or below the newest tag with no tag
+      ``staged``      heading names above the newest FINAL tag: written, not
+                      yet cut
+      ``missing``     heading names at or below the newest final tag with no tag
       ``unparseable`` heading names that are not versions at all
 
     ``[Unreleased]`` is skipped: it is the Keep a Changelog holding area and is
     never a tag by design.
     """
     result = {"released": [], "staged": [], "missing": [], "unparseable": []}
-    newest_tag = max(tag_versions) if tag_versions else None
+    # Measured against the newest FINAL tag, not the newest tag of any kind.
+    # Two lines ship from this repository now: stable releases from the
+    # release line, and pre-releases from the Dev line. A Dev tag like
+    # v1.23.0-beta-1 is newer than every stable version, so comparing against
+    # it made a freshly written stable heading (1.22.1) look like a section
+    # whose tag never happened. Pre-release tags still count as released when
+    # a heading names one; they just do not set the bar for what is staged.
+    finals = {v for v in tag_versions if not v.is_prerelease}
+    newest_tag = max(finals) if finals else (max(tag_versions) if tag_versions else None)
 
     for section in parse_all_sections(text):
         name = section["version"]
