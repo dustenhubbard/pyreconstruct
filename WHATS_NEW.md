@@ -6,7 +6,13 @@ full release notes on GitHub (linked from the dialog).
 
 ## [Unreleased]
 
-## [1.22.1] - 2026-08-24
+## [1.22.1] - 2026-08-25
+
+#### Changed
+
+- **The "this series has multiple alignments" note no longer pops up.** It was
+  there to help longtime users transition to alignments, and it read as a
+  warning to everyone else. Nothing else changed.
 
 #### Fixed
 
