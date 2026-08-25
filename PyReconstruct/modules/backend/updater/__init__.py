@@ -18,6 +18,7 @@ from .updater import (
     compare_versions,
     check_for_update,
     pinned_channel,
+    other_flavor_url,
     download_asset,
     fetch_checksum,
     launch_installer,

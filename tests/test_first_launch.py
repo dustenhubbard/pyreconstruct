@@ -526,6 +526,7 @@ def test_help_menu_offers_whats_new_reopen():
         toggleWhatsNewPopup=toggle_sentinel,
         toggleUpdateCheckOnStartup=toggle_sentinel,
         openMenuSearch=lambda: None,
+        openOtherFlavorPage=lambda: None,
     )
     opts = return_help_menu(stub)["opts"]
     entries = [o for o in opts if isinstance(o, tuple)]

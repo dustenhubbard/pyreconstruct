@@ -3653,6 +3653,16 @@ class MainWindow(QMainWindow):
         clipboard = QApplication.clipboard()
         clipboard.setText(repo_info["commit"])
 
+    def openOtherFlavorPage(self):
+        """Open the download page for the other build (Help menu).
+
+        The stable app points at the newest beta, the Dev app at the newest
+        stable; the URL is resolved by the updater at click time so it never
+        goes stale.
+        """
+        from PyReconstruct.modules.backend.updater import other_flavor_url
+        self.openWebsite(other_flavor_url())
+
     def checkForUpdates(self):
         """Manual update check (Help -> Check for updates).
 

@@ -66,6 +66,38 @@ def normalize_channel(channel):
     return _LEGACY_CHANNELS.get(channel, channel)
 
 
+def other_flavor_url(timeout=6):
+    """The download page for the OTHER build: stable from Dev, the newest beta
+    from stable.
+
+    Resolved when clicked, never stored, so the link cannot go stale:
+
+    * From the Dev build the answer is GitHub's own ``releases/latest``
+      redirect, which always lands on the newest stable release. No API call.
+    * From the stable build there is no such redirect for pre-releases, so the
+      newest curated beta is looked up through the same release list the
+      updater reads (drafts and the rolling tag excluded, exactly as
+      ``pick_release`` does). Any failure -- offline, rate-limited, no beta
+      right after a final ships -- falls back to the releases index, which
+      lists everything.
+    """
+    base = f"https://github.com/{GITHUB_REPO}/releases"
+    if pinned_channel() == "prerelease":
+        return f"{base}/latest"
+    try:
+        rels = [r for r in (fetch_releases(timeout=timeout) or []) if not r.get("draft")]
+        newest_pre = next(
+            (r for r in rels
+             if r.get("prerelease") and r.get("tag_name") != ROLLING_TAG),
+            None,
+        )
+        if newest_pre and newest_pre.get("html_url"):
+            return newest_pre["html_url"]
+    except Exception:
+        pass
+    return base
+
+
 def pinned_channel():
     """The update channel this build follows.
 
