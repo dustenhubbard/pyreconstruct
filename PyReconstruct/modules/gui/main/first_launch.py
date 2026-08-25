@@ -59,11 +59,13 @@ def whats_new_suppressed(stored):
 # on-demand body at the default cap of five was 23,456 -- a scroll long enough
 # that the release they opened it for is the only part most readers ever see.
 #
-# One release is the honest floor rather than a compromise: the builder marks a
-# capped body ``truncated``, which appends the line pointing at the full notes on
-# GitHub, and the dialog carries that link of its own besides. Nothing becomes
+# Three releases, chosen 2026-08-25: enough recent history that a reader sees
+# what the last few updates brought, short enough that the release they opened
+# it for stays the first thing on screen. The builder marks a capped body
+# ``truncated``, which appends the line pointing at the full notes on GitHub,
+# and the dialog carries that link of its own besides. Nothing becomes
 # unreachable; it stops being pre-expanded.
-ON_DEMAND_CAP = 1
+ON_DEMAND_CAP = 3
 
 # Provenance line shown below the notes in every framing of the What's-new dialog,
 # and near the footer of the GitHub release body. Maintainer-approved verbatim: it
@@ -275,10 +277,10 @@ def github_release_url(version=None):
 
 
 # Shown when the running version has no friendly highlights bundled at all; the
-# detailed changelog is reached via the "Full release notes on GitHub" link.
+# detailed changelog is reached via the "All release notes on GitHub" link.
 GENERIC_NOTES = (
     "Thanks for updating PyReconstruct.\n\n"
-    "Click **Full release notes on GitHub** below to see everything that "
+    "Click **All release notes on GitHub** below to see everything that "
     "changed in this version."
 )
 
@@ -286,7 +288,7 @@ GENERIC_NOTES = (
 # updating addresses the wrong person: nobody updated, this is a first run.
 GENERIC_WELCOME_NOTES = (
     "Welcome to PyReconstruct.\n\n"
-    "Click **Full release notes on GitHub** below to see what is in this "
+    "Click **All release notes on GitHub** below to see what is in this "
     "version."
 )
 
@@ -365,11 +367,14 @@ def _render_sections(sections, truncated):
         blocks.append(f"{heading}\n\n{s['body']}" if s["body"] else heading)
     body = "\n\n".join(blocks).strip()
     if truncated:
-        body += "\n\n_…and earlier releases — see the full notes on GitHub._"
+        # Asterisk emphasis, not underscores: Qt's markdown renderer follows
+        # the GitHub dialect, where _single underscores_ draw as UNDERLINE.
+        # This aside rendered as one long not-a-link until 2026-08-25.
+        body += "\n\n*…and earlier releases: see the full notes on GitHub.*"
     return body
 
 
-def whats_new_content(current, last_seen=None, cap=5, text=None, on_demand=False,
+def whats_new_content(current, last_seen=None, cap=3, text=None, on_demand=False,
                       installed_app=None):
     """Build what the What's-new dialog renders (offline-safe, never raises).
 
