@@ -6,6 +6,89 @@ full release notes on GitHub (linked from the dialog).
 
 ## [Unreleased]
 
+## [1.23.0-beta-2] — 2026-08-25
+
+#### New
+
+- **Double-click a `.jser` file to open it in PyReconstruct.** The command line
+  also takes a jser path directly: `pyreconstruct series.jser`.
+- **Find any menu command by typing its name.** Help ▸ Search menus (Cmd+K on
+  macOS, Ctrl+K on Windows and Linux) shows where it lives and its shortcut,
+  and runs it with Enter.
+- **The bottom status bar now has clickable buttons.** Section, alignment, and
+  B/C profile open their menus where you clicked, and the readout stays on the
+  left and holds still.
+- **Object colors can be changed inside the 3D scene, independently of the
+  object's attributes.**
+- **Bulk section edits show a progress bar.**
+- **Smoothing has a keyboard shortcut.**
+- **The window opens at 70% of the screen,** and View ▸ Reset window puts it
+  back there any time.
+- **The What's New popup grew up.** It shows the last three releases, links to
+  every version's notes on GitHub, and has a "Don't show again" button with a
+  Help-menu toggle to turn it back on.
+- **Download the other build from the Help menu.** The Dev app links to the
+  newest stable release, and the stable app links to the newest Dev beta.
+- **PyReconstruct Dev installs beside stable.** Its own app, install location,
+  and updates, so testing a beta never touches your stable install.
+
+#### Changed
+
+- **Eight default shortcuts changed** so common actions stop colliding. Every
+  one is remappable, and the full list is in the release notes.
+- **The right-click menus follow the stable app's organization, for now.**
+- **Recoloring objects from the palette is easier to find,** is no longer
+  labeled autoseg-only, and can run over the whole series.
+- **Marking an object as needing curation no longer asks anything.** A separate
+  row assigns someone else.
+- **A checkable menu item no longer closes its menu,** so a set of toggles can
+  be set in one trip.
+- **The "this series has multiple alignments" popup is gone.**
+- **Clearer messages.** The knife's "trace crosses itself" refusal says what to
+  try, "series in use" names the app holding the series, and an import that
+  cannot use the history check says so before it runs.
+- **Smaller installers.** About 13 MB less to download on macOS and Windows,
+  nothing removed.
+- **The CPU usage slider stops at the worker count that is actually fastest.**
+
+#### Fixed
+
+- **Lists no longer spawn or float tiny.** New lists open as tabs on the
+  existing list, and a list dragged out gets a usable size.
+- **Tagging one trace no longer tags every trace edited alongside it.**
+- **Auto-merge works the same in polygon mode as in pencil mode,** and one undo
+  fully reverts an auto-merged trace.
+- **Keyboard shortcuts now appear in the right-click menus on macOS.**
+- **Cmd+A, Cmd+D and Cmd+Shift+I act on whichever list has focus** instead of
+  always acting on the field (Ctrl on Windows and Linux).
+- **Cmd+Shift+H now runs Set hosts...,** which it never did from a fresh
+  install (Ctrl+Shift+H on Windows and Linux).
+- **Rebinding Home now sticks** instead of reverting on the next series open.
+- **The z-trace commands are no longer greyed out almost all the time,** and
+  the z-trace list no longer crashes after an alignment was renamed or deleted.
+- **Fixed crashes:** smoothing a trace on macOS 12, toggling curation columns
+  from the Lists menu, undo after an earlier undo, and opening a section with
+  an empty contour name.
+- **The Beta update channel offers a stable release when it is the newest one.**
+- **Settings behave.** A never-saved setting can no longer overwrite the
+  shipped default for every series, editing a column list no longer corrupts
+  the stored value, a malformed column setting says which one it is, and Reset
+  Defaults now resets everything it claims to.
+- **Flags keep their identity.** Flags from before flags had IDs stay the same
+  on every open, so importing another user's copy merges instead of
+  duplicating. The resolved-flags filter turns back off and shows its
+  checkmark, and hidden flags and traces are released from memory.
+- **Opening a series whose object names contain a space or a comma no longer
+  loses those objects' groups, comments, curation status, and host links.**
+- **Confirming "Edit alignment..." without touching it no longer clears the
+  selected objects' alignment.**
+- **"Duplicate object" and "Split into separate objects" no longer write into
+  a locked object,** and the scissors tool no longer asks "unlock it?" only to
+  ignore the answer.
+- **Series history is sturdier.** A damaged row in the edit log no longer takes
+  good rows, or an editor's entry, down with it.
+- **An opacity of 0 in the 3D scene is no longer discarded.**
+
 ## [1.21.0] — 2026-08-05
 
 - **Changed: In focus mode, editing which object a trace belongs to is now Ctrl-click.** Hold **Ctrl**
