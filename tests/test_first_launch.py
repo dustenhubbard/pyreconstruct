@@ -210,23 +210,37 @@ def test_whats_new_last_seen_immediate_previous_shows_current_only():
     assert c["truncated"] is False
 
 
-def test_whats_new_caps_at_five_and_flags_truncation():
+def test_whats_new_caps_at_three_and_flags_truncation():
     versions = ["1.8.0", "1.7.0", "1.6.0", "1.5.0", "1.4.0", "1.3.0", "1.2.0"]
     text = "# What's New\n\n" + "\n".join(
         f"## [{v}] — 2026-06-15\n\n- Note for {v}.\n" for v in versions
     )
     c = F.whats_new_content("1.8.0", last_seen="1.1.0", text=text)
     assert c["truncated"] is True
-    for v in versions[:5]:                      # newest five shown
+    for v in versions[:3]:                      # newest three shown
         assert f"### {v}" in c["body"]
-    for v in versions[5:]:                      # oldest two dropped
+    for v in versions[3:]:                      # the rest dropped
         assert f"### {v}" not in c["body"]
     assert "and earlier releases" in c["body"]
 
 
+def test_truncation_line_is_asterisk_emphasis_not_underscore():
+    """Qt's markdown renderer (GitHub dialect) draws _underscore emphasis_ as
+    UNDERLINE, so the pointer line rendered as one long dead-looking link
+    until 2026-08-25. Asterisk emphasis renders as the intended italic."""
+    text = "# What's New\n\n" + "\n".join(
+        f"## [1.{n}.0] — 2026-06-15\n\n- Note.\n" for n in range(9, 1, -1)
+    )
+    c = F.whats_new_content("1.9.0", last_seen="1.0.0", text=text)
+    assert c["truncated"] is True
+    line = c["body"].splitlines()[-1]
+    assert line.startswith("*") and line.endswith("*")
+    assert "_" not in line
+
+
 def test_whats_new_missing_current_section_falls_back_to_generic():
     c = F.whats_new_content("9.9.9", last_seen="1.20.1", text=WN)
-    assert "Full release notes on GitHub" in c["body"]
+    assert "All release notes on GitHub" in c["body"]
     assert "Bullet" not in c["body"]            # never leaks other sections
     assert c["version"] == "9.9.9"
     assert c["truncated"] is False
@@ -240,12 +254,12 @@ def test_whats_new_matches_current_section_by_version_not_spelling():
     dashed = "# What's New\n\n## [1.20.4-rc.1] — 2026-07-03\n\n- RC bullet.\n"
     c = F.whats_new_content("1.20.4rc1", last_seen=None, text=dashed)
     assert "RC bullet." in c["body"]
-    assert "Full release notes on GitHub" not in c["body"]   # matched, not generic
+    assert "All release notes on GitHub" not in c["body"]   # matched, not generic
 
     compact = "# What's New\n\n## [1.20.4rc1] — 2026-07-03\n\n- RC bullet.\n"
     c2 = F.whats_new_content("1.20.4-rc.1", last_seen=None, text=compact)
     assert "RC bullet." in c2["body"]
-    assert "Full release notes on GitHub" not in c2["body"]
+    assert "All release notes on GitHub" not in c2["body"]
 
 
 def test_whats_new_downgrade_and_garbage_last_seen_are_treated_as_fresh():
@@ -272,7 +286,7 @@ def test_whats_new_reads_bundled_file_and_is_offline_safe(monkeypatch, tmp_path)
 
     # nothing bundled -> friendly generic, never raises, never the network
     monkeypatch.setattr(F, "find_whats_new_path", lambda: None)
-    assert "Full release notes on GitHub" in F.whats_new_content("1.20.3")["body"]
+    assert "All release notes on GitHub" in F.whats_new_content("1.20.3")["body"]
 
 
 # ---- the maintainer byline (provenance line on every framing) ---------------
@@ -320,7 +334,7 @@ def test_byline_is_present_on_the_generic_fallback_body(kwargs):
     # a running version with no bundled section at all falls back to the generic
     # body; the byline rides along there too
     c = F.whats_new_content("9.9.9", text=WN, **kwargs)
-    assert "Full release notes on GitHub" in c["body"]   # the generic body
+    assert "All release notes on GitHub" in c["body"]   # the generic body
     assert c["byline"] == BYLINE
     assert BYLINE not in c["body"]
 
@@ -448,35 +462,41 @@ def _on_demand_body(monkeypatch, tmp_path, current="1.20.3"):
     return captured[0]
 
 
-def test_help_menu_reopen_shows_only_the_running_version(monkeypatch, tmp_path):
-    """The current release is rendered; the ones before it are not."""
+def test_help_menu_reopen_shows_the_latest_three(monkeypatch, tmp_path):
+    """The running version leads, with the two releases before it beneath:
+    recent history, newest first (his ask, 2026-08-25)."""
     content = _on_demand_body(monkeypatch, tmp_path)
-    assert "### 1.20.3" in content["body"]
+    assert content["body"].index("### 1.20.3") < content["body"].index("### 1.20.2")
     assert "Bullet three-A." in content["body"]        # its own notes, in full
-    assert "### 1.20.2" not in content["body"]
-    assert "### 1.20.1" not in content["body"]
+    assert "### 1.20.2" in content["body"]
+    assert "### 1.20.1" in content["body"]
+    # exactly three sections in the fixture, so nothing was cut
+    assert content["truncated"] is False
 
 
-def test_help_menu_reopen_keeps_earlier_releases_reachable(monkeypatch, tmp_path):
-    """Capped, not hidden: the truncation pointer is what makes this honest."""
-    content = _on_demand_body(monkeypatch, tmp_path)
+def test_help_menu_reopen_caps_at_three_and_stays_reachable(monkeypatch, tmp_path):
+    """A fourth release drops off the reopen, and the truncation pointer is
+    what keeps that honest."""
+    from PyReconstruct.modules.gui.dialog import whats_new as W
+
+    wn = tmp_path / "WHATS_NEW.md"
+    wn.write_text(
+        WN + "\n## [1.20.0] — 2026-06-01\n\n- Bullet zero.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(F, "find_whats_new_path", lambda: wn)
+    monkeypatch.setattr(W, "current_version_str", lambda: "1.20.3")
+    captured = []
+    W.show_whats_new(
+        None,
+        show=lambda parent, version, last_seen=None, content=None: captured.append(content),
+    )
+    content = captured[0]
+    assert "### 1.20.1" in content["body"]
+    assert "### 1.20.0" not in content["body"]
     assert content["truncated"] is True
     assert "and earlier releases" in content["body"]
     assert "full notes on GitHub" in content["body"]
-
-
-def test_help_menu_reopen_is_shorter_than_it_was(monkeypatch, tmp_path):
-    """Against what this path used to render: the same builder at the default
-    cap, which is what `show_whats_new` passed before.
-
-    Deliberately not compared against the post-update catch-up. That comparison
-    holds on the shipped notes (6,838 characters against 15,816 for
-    1.21.0-beta-7) and fails on this fixture, whose releases are two bullets
-    each, so the truncation line alone outweighs a release. Asserting it here
-    would be pinning a property of the fixture rather than of the change."""
-    on_demand = _on_demand_body(monkeypatch, tmp_path)
-    uncapped = F.whats_new_content("1.20.3", on_demand=True, text=WN)
-    assert len(on_demand["body"]) < len(uncapped["body"])
 
 
 def test_post_update_catch_up_still_renders_every_missed_release(monkeypatch, tmp_path):
@@ -588,21 +608,21 @@ def test_welcome_note_survives_the_generic_fallback_body():
     """
     c = F.whats_new_content("9.9.9", last_seen=None, text=WN, installed_app=True)
     assert c["orienter"] == "Welcome to PyReconstruct"
-    assert "Full release notes on GitHub" in c["body"]   # the generic body
+    assert "All release notes on GitHub" in c["body"]   # the generic body
     assert "Bullet" not in c["body"]                     # still leaks no sections
     assert "checks once a day" in c["body"]
     assert "Series ▸ Options" in c["body"]
 
     # nothing bundled at all -- the generic body is the whole body
     c2 = F.whats_new_content("1.20.3", last_seen=None, text="", installed_app=True)
-    assert "Full release notes on GitHub" in c2["body"]
+    assert "All release notes on GitHub" in c2["body"]
     assert "Beta channel" in c2["body"]
 
 
 @pytest.mark.parametrize("kwargs", [{"last_seen": "1.20.1"}, {"on_demand": True}])
 def test_generic_fallback_carries_no_note_outside_the_welcome(kwargs):
     c = F.whats_new_content("9.9.9", text=WN, installed_app=True, **kwargs)
-    assert "Full release notes on GitHub" in c["body"]   # the generic body
+    assert "All release notes on GitHub" in c["body"]   # the generic body
     assert "checks once a day" not in c["body"]
 
 
@@ -683,7 +703,7 @@ def test_generic_fallback_greets_under_the_welcome_framing():
     assert c["orienter"] == "Welcome to PyReconstruct"
     assert c["body"].startswith("Welcome to PyReconstruct.")
     assert "Thanks for updating" not in c["body"]
-    assert "Full release notes on GitHub" in c["body"]   # still points at them
+    assert "All release notes on GitHub" in c["body"]   # still points at them
     assert "checks once a day" not in c["body"]          # source build: no note
 
 
@@ -750,7 +770,7 @@ def test_whats_new_dialog_is_modeless_and_renders_its_content(qapp):
         assert "PyReconstruct 1.20.3" in labels       # prominent version header
         assert "Released June 29, 2026" in labels      # release date
         assert "What's new since 1.20.1" in labels     # orienter
-        assert "Full release notes on GitHub" in labels
+        assert "All release notes on GitHub" in labels
         assert "A shiny new thing." in dlg._notes.toPlainText()  # body rendered
         assert "Got it" in [b.text() for b in dlg.findChildren(QPushButton)]
     finally:
@@ -856,7 +876,7 @@ def test_dialog_byline_and_link_share_a_footer_row_below_the_notes(qapp):
         dlg.resize(760, 620)
         dlg.layout().activate()
         link = next(lab for lab in dlg.findChildren(QLabel)
-                    if "Full release notes on GitHub" in lab.text())
+                    if "All release notes on GitHub" in lab.text())
         byline, notes = dlg._byline, dlg._notes
         # outside the scrollable area: the browser carries the notes and
         # nothing else, and the byline widget does not hang off the browser
@@ -1496,7 +1516,7 @@ def test_dialog_link_stays_right_when_the_content_has_no_byline(qapp):
         dlg.layout().activate()
         assert dlg._byline is None
         link = next(lab for lab in dlg.findChildren(QLabel)
-                    if "Full release notes on GitHub" in lab.text())
+                    if "All release notes on GitHub" in lab.text())
         # right-aligned: the link's whole width sits in the right half
         assert link.geometry().left() > dlg.width() // 2
     finally:

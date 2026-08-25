@@ -388,10 +388,10 @@ def test_startup_shows_the_notes_once_per_version_in_the_real_window(
     bylines = [lab for lab in dialog.findChildren(QLabel) if shows_byline(lab)]
     assert bylines == [dialog._byline]
     # placement, on the dialog the real startup handler built: the byline sits
-    # in the footer row below the notes, left of the "Full release notes" link
+    # in the footer row below the notes, left of the "All release notes" link
     dialog.layout().activate()
     link = next(lab for lab in dialog.findChildren(QLabel)
-                if "Full release notes on GitHub" in lab.text())
+                if "All release notes on GitHub" in lab.text())
     assert dialog._byline.geometry().top() >= dialog._notes.geometry().bottom()
     assert dialog._byline.geometry().right() < link.geometry().left()
     assert settings.value(F.WHATSNEW_KEY) == "1.21.0"     # recorded as seen

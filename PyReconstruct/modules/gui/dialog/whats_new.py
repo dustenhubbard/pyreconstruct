@@ -180,7 +180,9 @@ def make_notes_browser(markdown_text, min_height=180):
 
     Falls back to plain text if the markdown can't be rendered.
     """
-    text = markdown_text or "_No release notes were published._"
+    # Asterisks, not underscores: Qt's GitHub markdown dialect renders
+    # _underscore emphasis_ as underline, which reads as a broken link.
+    text = markdown_text or "*No release notes were published.*"
     browser = QTextBrowser()
     browser.setOpenExternalLinks(True)
     try:
@@ -206,7 +208,12 @@ class WhatsNewDialog(QDialog):
         if content is None:
             content = whats_new_content(version, last_seen)
         if url is None:
-            url = github_release_url(version)
+            # The releases INDEX, not this version's tag: the dialog already
+            # renders this version's notes, so the link's job is everything
+            # else -- every shipped version's notes in one place (his ask,
+            # 2026-08-25). The truncation line in a capped body points at the
+            # same landing.
+            url = github_release_url()
 
         self.setWindowTitle(
             f"What's new in PyReconstruct {version}" if version
@@ -313,7 +320,7 @@ class WhatsNewDialog(QDialog):
         # double up with the notes above it. Some framings carry no byline, and
         # then no widget is added at all.
         #
-        # It shares one footer row with the "Full release notes" link: byline
+        # It shares one footer row with the "All release notes" link: byline
         # on the left, link on the right, action buttons on their own row
         # below. Stacked, the two small-text lines read as one block and cost a
         # row of vertical space each; side by side they are two footer items
@@ -352,7 +359,7 @@ class WhatsNewDialog(QDialog):
         # AlignTop: the byline renders as two lines (see above), and the link
         # stays level with the byline's first line rather than floating
         # mid-row.
-        link = LinkLabel(f'<a href="{url}">Full release notes on GitHub ↗</a>')
+        link = LinkLabel(f'<a href="{url}">All release notes on GitHub ↗</a>')
         link.setOpenExternalLinks(True)
         footer.addWidget(link, 0, Qt.AlignTop)
         lay.addLayout(footer)
