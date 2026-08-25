@@ -57,7 +57,34 @@ class TableManager():
         new_table = table_type_classes[table_type](*args)
         self.tables[table_type].append(new_table)
 
+        anchor = self._dockedAnchor(new_table)
         self.mainwindow.addDockWidget(Qt.LeftDockWidgetArea, new_table)
+        if anchor is not None:
+            self.mainwindow.tabifyDockWidget(anchor, new_table)
+            new_table.show()
+            new_table.raise_()
+
+    def _dockedAnchor(self, new_table):
+        """Find a visible docked list for a new list to tab onto.
+
+        Every list docks into the same area; letting Qt split the area
+        squeezes each list to ~180px once a few are open. Tabbing onto an
+        existing list gives every list the full area instead. Floating and
+        closed lists are not anchors, so a new list still docks plainly when
+        no usable anchor exists. Users can still drag a tab out to split.
+        """
+        if not hasattr(self.mainwindow, "tabifyDockWidget"):
+            return None
+        for tables in self.tables.values():
+            for table in tables:
+                if (
+                    table is not new_table
+                    and not table.isFloating()
+                    and table.isVisible()
+                    and self.mainwindow.dockWidgetArea(table) == Qt.LeftDockWidgetArea
+                ):
+                    return table
+        return None
     
     def _markViewerStale(self, obj_names=None, ztrace_names=None, all_objects=False):
         """Mark meshes in the open 3D scene whose 2D data was just edited.

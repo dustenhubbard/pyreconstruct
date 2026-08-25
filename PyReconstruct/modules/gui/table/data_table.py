@@ -18,6 +18,22 @@ from PyReconstruct.modules.gui.dialog import (
 
 class DataTable(QDockWidget):
 
+    # A newly floated list gets at least this size. Docked lists can be
+    # squeezed to ~90px wide by the dock area split, and a list dragged out
+    # kept that squeezed size.
+    FLOAT_MIN_WIDTH = 500
+    FLOAT_MIN_HEIGHT = 640
+
+    # Hard floor, docked or floating. Qt's own floor (90x129) leaves a list
+    # unreadable. Kept low enough that side-by-side docked lists and the
+    # field still fit on small screens.
+    MIN_WIDTH = 200
+    MIN_HEIGHT = 250
+
+    # gives every list a unique objectName; QMainWindow.saveState() cannot
+    # restore a dock widget without one
+    _name_counter = 0
+
     def __init__(self, data_name : str, series : Series, mainwindow : QWidget, manager):
         """Create the object table dock widget.
         
@@ -39,6 +55,14 @@ class DataTable(QDockWidget):
         # set desired format for widget
         self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)  # can be docked to right or left side
         self.setWindowTitle(f"{self.name.capitalize()} List")
+        DataTable._name_counter += 1
+        self.setObjectName(f"{self.name}-list-{DataTable._name_counter}")
+        self.setMinimumSize(self.MIN_WIDTH, self.MIN_HEIGHT)
+
+        # give the first float a usable size; later floats keep the size the
+        # user set (Qt restores the last floating geometry on its own)
+        self._float_size_applied = False
+        self.topLevelChanged.connect(self._applyFloatSize)
 
         # set defaults
         if "static_columns" not in dir(self): self.static_columns = []
@@ -60,9 +84,24 @@ class DataTable(QDockWidget):
         # save manager object
         self.manager = manager
     
+    def _applyFloatSize(self, floating : bool):
+        """Give a newly floated list a usable size.
+
+        Runs once per widget: the first time it floats, either dimension
+        smaller than the float minimum is raised to it. Later floats are left
+        alone so a size the user set by hand survives re-floating.
+        """
+        if not floating or self._float_size_applied:
+            return
+        self._float_size_applied = True
+        self.resize(
+            max(self.width(), self.FLOAT_MIN_WIDTH),
+            max(self.height(), self.FLOAT_MIN_HEIGHT)
+        )
+
     def createMenus(self):
         """Create the menubar and context menu for the widget.
-        
+
         This must be overwritten in child classes.
         """
         self.menubar = self.main_widget.menuBar()
