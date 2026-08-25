@@ -56,12 +56,10 @@ def test_user_is_present_true_on_a_real_platform(qapp, monkeypatch):
     assert gui_utils.user_is_present() is True
 
 
-def test_notify_new_editor_is_a_no_op_offscreen(main_window, main_window_dialogs):
-    """`notifyNewEditor` returns before touching `notify` when nobody is there.
-
-    The fixture series has more than two alignments, so on a real display this
-    would show the multiple-alignments notice.
-    """
+def test_notify_new_editor_shows_nothing(main_window, main_window_dialogs):
+    """The multiple-alignments notice is gone (2026-08-25): it was written to
+    transition legacy users and read as a warning to everyone else. The hook
+    stays for a future notice, and must show nothing today."""
     assert len(main_window.series.getAlignments()) > 2
     main_window_dialogs.notices.clear()
     main_window.notifyNewEditor()
