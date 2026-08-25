@@ -457,6 +457,14 @@ def return_view_menu(self):
     return view_menu
 
 
+def _other_flavor_label(self=None):
+    """Menu text for the cross-flavor download row, decided by this build."""
+    from PyReconstruct.modules.datatypes.series_owner import app_display_name
+    if "Dev" in app_display_name():
+        return "Download PyReconstruct (stable)..."
+    return "Download PyReconstruct Dev (beta)..."
+
+
 def return_help_menu(self):
     """Return help menu."""
 
@@ -467,6 +475,11 @@ def return_help_menu(self):
         [
             ("repobranch_act", repo_string, "", self.copyCommit),
             ("checkupdates_act", "Check for updates...", "", self.checkForUpdates),
+            # The other build's download page, labeled by what THIS build is:
+            # the stable app offers Dev, the Dev app offers stable. Resolved
+            # when clicked (updater.other_flavor_url), so it always points at
+            # the latest of the other flavor.
+            ("getotherflavor_act", _other_flavor_label(), "", self.openOtherFlavorPage),
             # Checkable, mirroring the update_check_on_startup series option
             # that used to live on the Series Options Updates tab (removed with
             # the channel radio: everything update-related lives here now). It
