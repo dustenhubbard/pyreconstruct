@@ -1,0 +1,1 @@
+**Double-click a `.jser` file to open it in PyReconstruct.** Works on Windows, macOS, and Linux once this version's installer is installed. On macOS a double-click also reaches an already-open PyReconstruct.

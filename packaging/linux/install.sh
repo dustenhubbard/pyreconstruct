@@ -118,6 +118,8 @@ case "$BIN_DIR" in /*) ;; *) BIN_DIR="$PWD/$BIN_DIR" ;; esac
 VENV="$APPROOT/venv"
 APPS_DIR="$DATA_HOME/applications"
 HICOLOR="$DATA_HOME/icons/hicolor"
+MIME_DIR="$DATA_HOME/mime"
+MIME_XML="$MIME_DIR/packages/pyreconstruct.xml"
 ICON_DIR="$HICOLOR/512x512/apps"
 LAUNCHER="$BIN_DIR/pyreconstruct"
 DESKTOP="$APPS_DIR/pyreconstruct.desktop"
@@ -406,9 +408,19 @@ EOF
   fi
 }
 
+# ------------------------------- mime type -----------------------------------
+install_mime() {
+  local src="$SCRIPT_DIR/pyreconstruct-mime.xml"
+  [ -f "$src" ] || { warn "mime definition not shipped; .jser double-click will not work"; return; }
+  log "Installing mime type: $MIME_XML"
+  mkdir -p "$MIME_DIR/packages"
+  install -m 0644 "$src" "$MIME_XML"
+}
+
 refresh_caches() {
   have update-desktop-database && update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true
   have gtk-update-icon-cache && gtk-update-icon-cache -f -t "$HICOLOR" >/dev/null 2>&1 || true
+  have update-mime-database && update-mime-database "$MIME_DIR" >/dev/null 2>&1 || true
 }
 
 # ------------------------------- PATH handling -------------------------------
@@ -460,6 +472,7 @@ write_manifest() {
     printf 'prefix %s\n' "$APPROOT"
     printf '%s\n' "$LAUNCHER"
     printf '%s\n' "$DESKTOP"
+    if [ -f "$MIME_XML" ]; then printf '%s\n' "$MIME_XML"; fi
     if [ -n "$ICON" ]; then printf '%s\n' "$ICON"; fi
     if [ -n "$PATH_RC_EDITED" ]; then printf 'pathrc %s\n' "$PATH_RC_EDITED"; fi
   } >"$MANIFEST"
@@ -515,6 +528,7 @@ if [ -n "$OLD_VENV" ]; then rm -rf -- "$OLD_VENV" 2>/dev/null || true; OLD_VENV=
 write_launcher
 install_icon
 install_desktop
+install_mime
 refresh_caches
 # path_advice must run before write_manifest: it may record a shell-rc PATH edit
 # (PATH_RC_EDITED) that the manifest needs so uninstall can undo it.
