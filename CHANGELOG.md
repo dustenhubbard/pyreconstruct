@@ -13,7 +13,13 @@ the README's *From source (developers)* section).
 
 ## [Unreleased]
 
-## [1.22.1] - 2026-08-24
+## [1.22.1] - 2026-08-25
+
+### Changed
+- **The "this series has multiple alignments" popup is gone.** It was written
+  long ago to help users transition to working with alignments, and for
+  everyone since it read as a warning about something that is not a problem.
+  The Alignments menu is unchanged.
 
 ### Fixed
 - **Fixed a crash on macOS 12 the first time a trace was smoothed.** The Mac
