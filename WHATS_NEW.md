@@ -27,6 +27,8 @@ full release notes on GitHub (linked from the dialog).
 - **The What's New popup grew up.** It shows the last three releases, links to
   every version's notes on GitHub, and has a "Don't show again" button with a
   Help-menu toggle to turn it back on.
+- **Download the other build from the Help menu.** The Dev app links to the
+  newest stable release, and the stable app links to the newest Dev beta.
 - **PyReconstruct Dev installs beside stable.** Its own app, install location,
   and updates, so testing a beta never touches your stable install.
 
