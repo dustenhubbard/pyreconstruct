@@ -3966,20 +3966,13 @@ class MainWindow(QMainWindow):
                f"Press {self.series.getOption('modifytracepalette_act')} to view all palettes.")
     
     def notifyNewEditor(self):
-        """Provide any relevant notifications to new editors."""
-        if not user_is_present():
-            # notify()'s offscreen fallback blocks on stdin, and this is a
-            # courtesy notice with nobody to read it
-            return
-        if (
-            not self.series.isWelcomeSeries() and
-            self.series.user not in self.series.editors and
-            len(self.series.getAlignments()) > 2
-        ):
-            notify(
-                "Note: this series has multiple alignments.\n" + 
-                f"Press {self.series.getOption('changealignment_act')} to view"
-            )
+        """Provide any relevant notifications to new editors.
+
+        Empty on purpose. The multiple-alignments notice that lived here was
+        written to help legacy users transition to alignments; it now reads
+        as a warning to people who never used the legacy behavior. Removed
+        2026-08-25. The hook stays so a future notice has a home.
+        """
     
     def editSeriesCodePattern(self):
         """Edit the regex pattern used to automatically detect series codes."""
