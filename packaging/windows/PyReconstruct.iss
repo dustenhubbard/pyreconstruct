@@ -15,12 +15,14 @@
   #if PYR_FLAVOR == "dev"
     #define PYR_APPID "{{0C76AF3D-BB20-4EDB-99FC-2B9244E213F7}}"
     #define PYR_NAME "PyReconstruct Dev"
+    #define PYR_PROGID "PyReconstructDev.jser"
     #define PYR_OUTBASE "PyReconstruct-" + PYR_VERSION + "-Windows-x86_64-Dev-Setup"
   #endif
 #endif
 #ifndef PYR_NAME
   #define PYR_APPID "{{A1B2C3D4-E5F6-47A8-9B0C-1D2E3F4A5B6C}}"
   #define PYR_NAME "PyReconstruct"
+  #define PYR_PROGID "PyReconstruct.jser"
   #define PYR_OUTBASE "PyReconstruct-" + PYR_VERSION + "-Windows-x86_64-Setup"
 #endif
 
@@ -47,6 +49,8 @@ PrivilegesRequiredOverridesAllowed=dialog commandline
 ; Close a running PyReconstruct so its files aren't locked during an upgrade.
 CloseApplications=yes
 RestartApplications=no
+; The .jser association below; tells Explorer to refresh its file-type cache.
+ChangesAssociations=yes
 
 [InstallDelete]
 ; In-place upgrades (fixed AppId) copy the new onedir tree over the old one.
@@ -69,6 +73,24 @@ Name: "{autodesktop}\{#PYR_NAME}"; Filename: "{app}\{#PYR_NAME}.exe"; Tasks: des
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; \
     GroupDescription: "Additional shortcuts:"
+
+[Registry]
+; Associate .jser with this install. HKA is per-user here (PrivilegesRequired
+; is lowest), so stable and Dev can each hold their own ProgID without UAC.
+; OpenWithProgids (not a bare default value) so an existing user choice for
+; .jser is respected; a fresh machine opens .jser with this app directly.
+Root: HKA; Subkey: "Software\Classes\.jser\OpenWithProgids"; \
+    ValueType: string; ValueName: "{#PYR_PROGID}"; ValueData: ""; \
+    Flags: uninsdeletevalue uninsdeletekeyifempty
+Root: HKA; Subkey: "Software\Classes\.jser"; ValueType: string; \
+    ValueName: ""; ValueData: "{#PYR_PROGID}"; Flags: createvalueifdoesntexist
+Root: HKA; Subkey: "Software\Classes\{#PYR_PROGID}"; ValueType: string; \
+    ValueName: ""; ValueData: "PyReconstruct series"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\{#PYR_PROGID}\DefaultIcon"; \
+    ValueType: string; ValueName: ""; ValueData: "{app}\{#PYR_NAME}.exe,0"
+Root: HKA; Subkey: "Software\Classes\{#PYR_PROGID}\shell\open\command"; \
+    ValueType: string; ValueName: ""; \
+    ValueData: """{app}\{#PYR_NAME}.exe"" ""%1"""
 
 [Run]
 Filename: "{app}\{#PYR_NAME}.exe"; Description: "Launch {#PYR_NAME}"; \

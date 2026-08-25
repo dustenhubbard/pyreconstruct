@@ -12,3 +12,4 @@ Categories=Science;Biology;
 Keywords=reconstruct;neuron;segmentation;microscopy;electron;
 StartupNotify=true
 StartupWMClass=PyReconstruct
+MimeType=application/x-pyreconstruct-jser;

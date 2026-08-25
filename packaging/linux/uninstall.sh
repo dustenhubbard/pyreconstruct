@@ -35,6 +35,8 @@ if [ -n "$PREFIX_OVERRIDE" ]; then APPROOT="$PREFIX_OVERRIDE"; else APPROOT="$DA
 case "$APPROOT" in /*) ;; *) APPROOT="$PWD/$APPROOT" ;; esac   # absolute (safety check requires it)
 APPS_DIR="$DATA_HOME/applications"
 HICOLOR="$DATA_HOME/icons/hicolor"
+MIME_DIR="$DATA_HOME/mime"
+MIME_XML="$MIME_DIR/packages/pyreconstruct.xml"
 MARKER="$APPROOT/.pyreconstruct-install"
 MANIFEST="$APPROOT/.install-manifest"
 DEFAULT_LAUNCHER="${XDG_BIN_HOME:-$HOME/.local/bin}/pyreconstruct"
@@ -55,7 +57,7 @@ remove_file() {
   case "$p" in /*) : ;; *) warn "skipping non-absolute path: $p"; return 0 ;; esac
   base=$(basename -- "$p")
   case "$base" in
-    pyreconstruct|pyreconstruct.desktop|pyreconstruct.png) : ;;
+    pyreconstruct|pyreconstruct.desktop|pyreconstruct.png|pyreconstruct.xml) : ;;
     *) warn "skipping unexpected entry: $p"; return 0 ;;
   esac
   if [ -f "$p" ] || [ -L "$p" ]; then
@@ -75,6 +77,7 @@ if [ -f "$MANIFEST" ]; then
 else
   remove_file "$DEFAULT_LAUNCHER"
   remove_file "$DEFAULT_DESKTOP"
+  remove_file "$MIME_XML"
   remove_file "$DEFAULT_ICON"
 fi
 
@@ -114,6 +117,7 @@ fi
 # 4) refresh desktop/icon caches (best-effort)
 have update-desktop-database && update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true
 have gtk-update-icon-cache && gtk-update-icon-cache -f -t "$HICOLOR" >/dev/null 2>&1 || true
+have update-mime-database && update-mime-database "$MIME_DIR" >/dev/null 2>&1 || true
 
 if [ "$removed_any" -eq 1 ]; then log "PyReconstruct uninstalled."; else log "Nothing to remove."; fi
 note "Your data (.jser series files and config) was left untouched."

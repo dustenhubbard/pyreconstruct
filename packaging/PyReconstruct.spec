@@ -322,5 +322,27 @@ if is_mac:
         icon=mac_icon,
         bundle_identifier=("edu.utexas.synapseweb.pyreconstruct.dev"
                            if IS_DEV else "edu.utexas.synapseweb.pyreconstruct"),
-        info_plist={"NSHighResolutionCapable": True},
+        info_plist={
+            "NSHighResolutionCapable": True,
+            # Claim .jser so Finder offers this app for double-clicked series.
+            # macOS delivers the file as an open-document event, handled by
+            # the FileOpen watcher in run.py, never as argv. Both flavors
+            # declare the same UTI; LSHandlerRank Owner on stable and
+            # Alternate on Dev keeps stable the double-click default when
+            # both are installed.
+            "CFBundleDocumentTypes": [{
+                "CFBundleTypeName": "PyReconstruct series",
+                "CFBundleTypeRole": "Editor",
+                "LSItemContentTypes": ["edu.utexas.synapseweb.pyreconstruct.jser"],
+                "LSHandlerRank": "Alternate" if IS_DEV else "Owner",
+            }],
+            "UTExportedTypeDeclarations": [{
+                "UTTypeIdentifier": "edu.utexas.synapseweb.pyreconstruct.jser",
+                "UTTypeDescription": "PyReconstruct series",
+                "UTTypeConformsTo": ["public.json"],
+                "UTTypeTagSpecification": {
+                    "public.filename-extension": ["jser"],
+                },
+            }],
+        },
     )
