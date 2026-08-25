@@ -13,7 +13,36 @@ if getattr(sys, "frozen", False):
     multiprocessing.freeze_support()
 
 import PySide6
+from PySide6.QtCore import QEvent, QObject
 from PySide6.QtWidgets import QApplication
+
+
+class FileOpenWatcher(QObject):
+    """Route macOS open-document events (a double-clicked .jser) into the app.
+
+    macOS hands a double-clicked file to the app as a QFileOpenEvent, never as
+    argv, both at launch and while running. Before the main window exists the
+    path parks in ``pending`` (runPyReconstruct spins the event loop once to
+    collect it); after that the event opens the series in the live window.
+    Windows and Linux pass the path as argv and never send this event, so the
+    filter is a no-op there.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.pending = None
+        self.main_window = None
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.FileOpen:
+            path = event.file()
+            if path:
+                if self.main_window is not None:
+                    self.main_window.openSeries(jser_fp=path)
+                else:
+                    self.pending = path
+            return True
+        return super().eventFilter(obj, event)
 
 
 if __name__ == "__main__":
@@ -52,6 +81,16 @@ def runPyReconstruct(filename=None):
     # create the Qt Application
     app = QApplication(sys.argv)
 
+    # catch a double-clicked .jser (macOS sends it as an event once the loop
+    # spins; one processEvents pass collects a launch-time double-click so the
+    # first window opens straight into that series instead of the welcome one)
+    file_open_watcher = FileOpenWatcher()
+    app.installEventFilter(file_open_watcher)
+    app.processEvents()
+    if filename is None and file_open_watcher.pending is not None:
+        filename = file_open_watcher.pending
+        file_open_watcher.pending = None
+
     # push menu shortcut keybinds clear of their labels (the native style packs
     # them within a few pixels of the widest label). A QProxyStyle survives the
     # setTheme stylesheet swaps, so it is installed once, here.
@@ -65,7 +104,9 @@ def runPyReconstruct(filename=None):
     while run:
 
         main_window = main.MainWindow(filename)
+        file_open_watcher.main_window = main_window
         app.exec()
+        file_open_watcher.main_window = None
 
         if main_window.restart_mainwindow:  # restart requested
 
