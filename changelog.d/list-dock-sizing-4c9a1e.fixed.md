@@ -1,0 +1,1 @@
+**Lists no longer spawn or float tiny.** A new list now opens as a tab on the existing list instead of splitting the space. A list dragged out to float gets a usable size instead of keeping its squeezed one. And no list can shrink below a readable minimum. You can still drag a tab out to place lists side by side.
