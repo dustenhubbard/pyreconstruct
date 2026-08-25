@@ -71,17 +71,36 @@ jobs:
           cache: "pip"
           cache-dependency-path: pyproject.toml
 
-      - name: Install project, build tools, PyInstaller
-        # MACOSX_DEPLOYMENT_TARGET pins which macOS wheels pip is allowed to
-        # pick. Without it, the arm64 runner (macOS 14) takes scipy's
-        # macosx_14_0_arm64 wheel, which links the newer Accelerate LAPACK
-        # that only exists on macOS 13.3 and up. On an older Mac the app
-        # launched fine and then died the first time it smoothed a trace:
+      - name: Fetch macOS wheels that run on macOS 12
+        if: runner.os == 'macOS'
+        # numpy and scipy each ship two wheels per architecture, and the newer
+        # one links the Accelerate LAPACK that arrived in macOS 13.3. pip on a
+        # macOS 14 runner takes that newer wheel, and the result launches fine
+        # on an older Mac and then dies the first time it smooths a trace:
         # "Symbol not found: _dstevr$NEWLAPACK", reported from macOS 12.4.
-        # 12.0 makes pip take scipy's macosx_12_0_arm64 wheel instead, which
-        # runs on every Mac the app claims to support.
-        env:
-          MACOSX_DEPLOYMENT_TARGET: "12.0"
+        #
+        # MACOSX_DEPLOYMENT_TARGET does not help: it tells a COMPILER what to
+        # target and says nothing about which prebuilt wheel pip downloads.
+        # The platform has to be named outright, which is what --platform
+        # does; --no-deps and --only-binary keep it from resolving anything
+        # else for the wrong platform. These land before the project install,
+        # so the project sees its pins already satisfied.
+        run: |
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            PLAT=macosx_12_0_arm64
+          else
+            PLAT=macosx_10_13_x86_64
+          fi
+          NUMPY=$(python -c "import re;print(re.search(r'numpy==([0-9.]+)', open('pyproject.toml').read()).group(1))")
+          SCIPY=$(python -c "import re;print(re.search(r'scipy==([0-9.]+)', open('pyproject.toml').read()).group(1))")
+          python -m pip install --upgrade pip
+          python -m pip download --only-binary=:all: --no-deps \
+            --platform "$PLAT" --python-version 311 --dest oldwheels \
+            "numpy==$NUMPY" "scipy==$SCIPY"
+          ls oldwheels
+          python -m pip install --no-deps oldwheels/*.whl
+
+      - name: Install project, build tools, PyInstaller
         run: |
           python -m pip install --upgrade pip
           python -m pip install setuptools-scm "pyinstaller>=6,<7"
