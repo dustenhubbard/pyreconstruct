@@ -302,3 +302,48 @@ jobs:
                 echo "pruning superseded pre-release: $t"
                 gh release delete "$t" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
               done
+
+  readme-bump:
+    # A stable tag makes the README's direct-download table stale the moment
+    # the release publishes, and the bump was a hand-made PR every release
+    # until it was forgotten one time too many (v1.22.0 shipped while the
+    # table still said v1.21.2). This opens that PR automatically. It edits
+    # only the three shapes the table uses -- the bold version callout, the
+    # /releases/download/vX.Y.Z/ path, and the versioned asset filenames --
+    # so prose examples elsewhere in the README (a beta tag named in the
+    # updater section) are left alone. Label and merge stay human steps, per
+    # the repo's gate discipline. Pre-release tags skip this entirely.
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - name: Open the bump PR (stable tags only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "pre-release tag; no bump"; exit 0; }
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -E -i \
+            -e "s|(releases/download/)v[0-9]+\.[0-9]+\.[0-9]+/|\1v${VERSION}/|g" \
+            -e "s#PyReconstruct-[0-9]+\.[0-9]+\.[0-9]+-(Windows|macOS|Linux)#PyReconstruct-${VERSION}-\1#g" \
+            -e "s|current stable release, \*\*v[0-9]+\.[0-9]+\.[0-9]+\*\*|current stable release, **v${VERSION}**|" \
+            README.md
+          git diff --quiet README.md && { echo "README already current"; exit 0; }
+          git config user.name "$(git log -1 --format=%an)"
+          git config user.email "$(git log -1 --format=%ae)"
+          BRANCH="docs/readme-v${VERSION}"
+          git checkout -b "$BRANCH"
+          git add README.md
+          git commit -m "docs(readme): point the download links at v${VERSION}" \
+            -m "Opened by the release build so the direct-download table never trails a stable release again."
+          git push -f origin "$BRANCH"
+          gh pr create --base main --head "$BRANCH" \
+            --title "docs(readme): point the download links at v${VERSION}" \
+            --body "The v${VERSION} release just published; this points the README's direct-download table at it. Opened automatically by the release build. Label and merge as usual." \
+            || echo "PR already open for $BRANCH"
