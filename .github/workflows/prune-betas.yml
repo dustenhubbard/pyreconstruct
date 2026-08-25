@@ -1,0 +1,52 @@
+# Prune beta releases that a stable release has overtaken.
+#
+# The releases page kept showing v1.22.1-beta-1 after stable v1.22.1 shipped;
+# nobody should install a beta of a version that is already out. The rule:
+# a beta is stale once its base version is at or below the newest stable.
+# Betas of a NEWER version (the next Dev cycle) always survive.
+#
+# Runs when a release publishes and by hand. Deletes the release AND its tag.
+# Guardrails: only prereleases, only tags shaped vX.Y.Z-beta-N, never drafts,
+# never stables.
+
+name: prune-betas
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Delete betas at or below the newest stable
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          releases=$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate \
+            --jq '.[] | select(.draft==false) | "\(.tag_name) \(.prerelease)"')
+
+          latest_stable=$(awk '$2=="false" {print $1}' <<<"$releases" \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -1)
+          [ -n "$latest_stable" ] || { echo "no stable release; nothing to prune"; exit 0; }
+          echo "newest stable: $latest_stable"
+
+          pruned=0
+          while read -r tag; do
+            [ -n "$tag" ] || continue
+            base=$(sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+)-beta-[0-9]+$/\1/' <<<"$tag")
+            [ "$base" != "$tag" ] || { echo "skip (not a beta tag): $tag"; continue; }
+            newest=$(printf '%s\n%s\n' "$base" "$latest_stable" | sort -V | tail -1)
+            if [ "$newest" = "$latest_stable" ]; then
+              echo "pruning $tag (base $base is not newer than stable $latest_stable)"
+              gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+              pruned=$((pruned + 1))
+            else
+              echo "keeping $tag (base $base is newer than stable $latest_stable)"
+            fi
+          done < <(awk '$2=="true" {print $1}' <<<"$releases")
+          echo "pruned $pruned beta release(s)"
