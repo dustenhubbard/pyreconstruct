@@ -16,8 +16,7 @@ full release notes on GitHub (linked from the dialog).
   macOS, Ctrl+K on Windows and Linux) shows where it lives and its shortcut,
   and runs it with Enter.
 - **The bottom status bar now has clickable buttons.** Section, alignment, and
-  B/C profile open their menus where you clicked, and the readout stays on the
-  left and holds still.
+  B/C profile open their menus where you clicked.
 - **Object colors can be changed inside the 3D scene, independently of the
   object's attributes.**
 - **Bulk section edits show a progress bar.**
