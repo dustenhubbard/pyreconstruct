@@ -1,0 +1,1 @@
+**The What's New popup now shows the last three releases**, so you can see what recent updates brought. The link at the bottom now goes to the release notes for every version on GitHub. Also fixed: the closing "…and earlier releases" line rendered underlined, like a broken link.
