@@ -34,7 +34,7 @@ full release notes on GitHub (linked from the dialog).
 #### Changed
 
 - **Eight default shortcuts changed** so common actions stop colliding. Every
-  one is remappable, and the full list is in the release notes.
+  one is remappable, and Help ▸ Shortcuts list shows the current keys.
 - **The right-click menus follow the stable app's organization, for now.**
 - **Recoloring objects from the palette is easier to find,** is no longer
   labeled autoseg-only, and can run over the whole series.
