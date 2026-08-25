@@ -1,0 +1,43 @@
+# Watchdog for the README's direct-download table.
+#
+# Born from the v1.22.1 re-release: the README pointed at v1.22.1 while that
+# release sat as a draft (drafts have no public assets), so every download
+# link 404'd for hours and a user found it first. The bump job keeps
+# the links CURRENT; this job proves they RESOLVE.
+#
+# Runs daily, on any release state change (publish/unpublish/delete is
+# exactly the window that broke the 1.22.1 links), and by hand. Checks the README on both
+# lines, since both ship a download table. Scheduled workflows only run from
+# the default branch, so this file only needs to live on main.
+
+name: link-check
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  release:
+    types: [published, unpublished, deleted]
+  workflow_dispatch:
+
+jobs:
+  readme-downloads:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Curl every README download link on both lines
+        shell: bash
+        run: |
+          fail=0
+          for branch in main release/1.21.0; do
+            readme=$(curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${branch}/README.md") || { echo "::error::could not fetch README on ${branch}"; fail=1; continue; }
+            links=$(grep -o 'releases/download/[^)"]*' <<<"$readme" | sort -u)
+            [ -n "$links" ] || { echo "::error::no download links found in README on ${branch}"; fail=1; continue; }
+            while read -r path; do
+              code=$(curl -s -o /dev/null -w '%{http_code}' -I -L "https://github.com/${GITHUB_REPOSITORY}/${path}")
+              echo "${branch}: ${code} ${path}"
+              if [ "$code" != "200" ]; then
+                echo "::error::dead download link on ${branch}: ${path} returned ${code}"
+                fail=1
+              fi
+            done <<<"$links"
+          done
+          exit $fail
