@@ -10,61 +10,38 @@ full release notes on GitHub (linked from the dialog).
 
 #### New
 
-- **Hide the lists with one click.** A sidebar button in the bottom status bar,
-  View ▸ Show/hide lists, or Cmd+Option+S (Ctrl+Alt+S on Windows and Linux)
-  collapses the whole list area. The same toggle brings back exactly the lists
-  you had open, tabs intact. Floating lists stay where they are.
-- **PyReconstruct remembers your list layout, per series.** Close a series with
-  lists open, docked, tabbed, floating, or collapsed, and opening it brings the
-  same lists back where they were, tiny floating ones included.
-- **Right-click the scale bar, the section increment buttons, the
-  brightness/contrast sliders, or the trace palette to hide them.** The View
-  menu keeps every toggle, and its checkmarks always match, whichever road you
-  use.
-- **Series ▸ Clean up can repair self-crossing traces.** Autoseg sometimes
-  leaves a tiny spike that crosses the outline and blocks the scalpel; the new
-  clean-up removes the artifact and keeps the trace's real shape, in one undo.
-  A true figure 8 with two real loops is skipped and listed in a review window
-  that jumps you to each one for the scissors, and every repair pass ends in a
-  summary you can copy or save. Thanks Patrick for reporting this!
-- **Choose what the hover shows.** Hover over a trace and the pop-up shows
-  object data; a new option under Series ▸ Options picks which columns appear
-  and in what order, per series. Ported from Michael's upstream work.
-- **The alignment and B/C profile buttons can create.** Each button's menu ends
-  with a row that opens the matching edit dialog.
+- **Hide the lists with one click:** the sidebar button in the status bar,
+  View ▸ Show/hide lists, or Cmd+Option+S (Ctrl+Alt+S on Windows and Linux).
+- **List layout is remembered per series.** Reopening a series brings back the
+  same lists, docked, tabbed, floating, or collapsed.
+- **Right-click the scale bar, section buttons, B/C sliders, or trace palette
+  to hide them.** The View menu checkmarks stay in sync.
+- **Series ▸ Clean up can repair self-crossing traces.** Removes the autoseg
+  spikes that block the scalpel; true figure 8s are skipped and listed for the
+  scissors. Thanks Patrick for reporting this!
+- **Hover columns are configurable.** Series ▸ Options picks which object data
+  the trace hover shows.
+- **The alignment and B/C profile buttons can create new entries** from their
+  status bar menus.
 
 #### Changed
 
-- **List tabs have close buttons, and the double title bar is gone.** The tab
-  names the list and its X closes it. A list docked alone keeps its title bar
-  so it can still be dragged out.
-- **The Help menu is reorganized into five groups:** search (with the cursor
-  ready the moment Help opens), the version, updates and the other build's
-  download, the What's New pop-up controls, then everything else. Two rows read
-  plainer: "Automatically check for updates" and "Turn off What's new pop-up",
-  where a tick means off.
+- **List tabs have close buttons,** replacing the double title bar.
+- **The Help menu is reorganized into five groups,** with the search bar
+  focused when it opens.
 
 #### Fixed
 
-- **Floating lists can be tiny again on purpose.** A floated list sized by hand
-  can shrink to a few rows; only lists spawning tiny stay blocked. Thanks
-  Patrick for reporting this!
-- **The "trace crosses itself" message now gives the right advice for figure
-  8s:** cut out the crossing with the scissors tool. Thanks Patrick for
-  reporting this!
-- **PyReconstruct Dev now starts with your settings.** The first launch of a Dev
-  install copies the choices your stable app already holds, once, instead of
-  starting from defaults. Thanks Patrick for reporting this!
-- **Resizing no longer zooms the view out.** Collapsing the lists or resizing
-  the main window nudged the zoom outward a little each time; the view now
-  holds its magnification exactly.
-- **Docked lists now scroll all the way to the bottom.** A sizing bug could
-  hide the last row or two of a docked list, and undocking was the only
-  workaround.
-- **Switching themes no longer crowds the lists.** Columns re-measure for the
-  new theme's font and padding.
-- **Prompts name your platform's undo keys.** On macOS they say Cmd+Z, not
-  Ctrl+Z.
+- **Floating lists can be resized small again.** Thanks to Patrick for
+  flagging this one.
+- **The "trace crosses itself" message now recommends the scissors for figure
+  8s.** Another good catch from Patrick.
+- **PyReconstruct Dev's first launch copies your stable settings** instead of
+  starting from defaults. Thanks again, Patrick!
+- **Resizing the window no longer zooms the view out.**
+- **Docked lists scroll all the way to the bottom.**
+- **Switching themes no longer crowds list columns.**
+- **Prompts say Cmd+Z on macOS, not Ctrl+Z.**
 
 ## [1.23.0-beta-2] — 2026-08-25
 
