@@ -156,12 +156,23 @@ class FieldStatusReadout(QWidget):
     because none of it names a thing the user can switch to.
     """
 
+    lists_clicked = Signal()
     section_clicked = Signal()
     alignment_clicked = Signal()
     bc_profile_clicked = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        # The one segment with fixed text: it names an action (show/hide the
+        # docked lists), not a current value, so setReadout never rewrites it
+        # and it stays out of self._segments. The text is a sidebar glyph
+        # (U+25E7, square with left half filled), not a word, on his click
+        # test call (2026-08-25); the word lives in the hover.
+        self.lists_segment = StatusSegment(
+            "Lists", self
+        )
+        self.lists_segment.setText("\u25e7")
 
         self.section_segment = StatusSegment(
             "Jump to a section", self
@@ -189,6 +200,9 @@ class FieldStatusReadout(QWidget):
         # macOS's rounded window corner, which otherwise crowds it.
         layout.setContentsMargins(10, 0, 0, 0)
         layout.setSpacing(0)
+        layout.addWidget(self.lists_segment)
+        self._separators.append(QLabel(SEPARATOR, self))
+        layout.addWidget(self._separators[-1])
         for i, widget in enumerate(self._segments):
             if i:
                 separator = QLabel(SEPARATOR, self)
@@ -209,6 +223,7 @@ class FieldStatusReadout(QWidget):
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         )
 
+        self.lists_segment.clicked.connect(self.lists_clicked)
         self.section_segment.clicked.connect(self.section_clicked)
         self.alignment_segment.clicked.connect(self.alignment_clicked)
         self.bc_profile_segment.clicked.connect(self.bc_profile_clicked)

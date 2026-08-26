@@ -434,3 +434,144 @@ def test_list_tabs_sit_on_top(qapp, dock_mainwindow, manager):
     open_list(manager, "section", qapp)
     assert dock_mainwindow.tabPosition(Qt.LeftDockWidgetArea) == QTabWidget.TabPosition.North
     assert dock_mainwindow.tabPosition(Qt.RightDockWidgetArea) == QTabWidget.TabPosition.North
+
+
+# --------------------------------------------------------------------------
+# The collapse toggle (stage 1 of the sidebar, his call 2026-08-25): hide the
+# docked lists, bring the same set back, never touch a floating list.
+# --------------------------------------------------------------------------
+
+def test_collapse_hides_docked_and_spares_floating(qapp, dock_mainwindow, manager):
+    docked = open_list(manager, "object", qapp)
+    tabbed = open_list(manager, "section", qapp)
+    floater = open_list(manager, "ztrace", qapp)
+    floater.setFloating(True)
+    settle(qapp)
+    manager.toggleListsCollapsed()
+    settle(qapp)
+    assert manager.listsCollapsed()
+    assert not docked.isVisible()
+    assert not tabbed.isVisible()
+    assert floater.isVisible()
+
+
+def test_expand_restores_exactly_the_hidden_set(qapp, dock_mainwindow, manager):
+    docked = open_list(manager, "object", qapp)
+    tabbed = open_list(manager, "section", qapp)
+    manager.toggleListsCollapsed()
+    settle(qapp)
+    manager.toggleListsCollapsed()
+    settle(qapp)
+    assert not manager.listsCollapsed()
+    assert docked.isVisible()
+    assert tabbed.isVisible()
+    # still one tab group, not re-split
+    assert docked in dock_mainwindow.tabifiedDockWidgets(tabbed)
+
+
+def test_list_closed_while_collapsed_stays_closed(qapp, dock_mainwindow, manager):
+    keeper = open_list(manager, "object", qapp)
+    goner = open_list(manager, "section", qapp)
+    manager.toggleListsCollapsed()
+    settle(qapp)
+    goner.close()
+    settle(qapp)
+    manager.toggleListsCollapsed()
+    settle(qapp)
+    assert keeper.isVisible()
+    assert goner not in manager.tables["section"]
+    assert not goner.isVisible()
+
+
+def test_collapse_with_nothing_docked_is_a_noop(qapp, dock_mainwindow, manager):
+    floater = open_list(manager, "object", qapp)
+    floater.setFloating(True)
+    settle(qapp)
+    manager.toggleListsCollapsed()
+    settle(qapp)
+    assert not manager.listsCollapsed()   # nothing was hidden, nothing pending
+    assert floater.isVisible()
+
+
+def test_new_list_while_collapsed_expands_first(qapp, dock_mainwindow, manager):
+    first = open_list(manager, "object", qapp)
+    manager.toggleListsCollapsed()
+    settle(qapp)
+    newest = open_list(manager, "section", qapp)
+    assert not manager.listsCollapsed()
+    assert first.isVisible()
+    assert newest.isVisible()
+    assert first in dock_mainwindow.tabifiedDockWidgets(newest)
+
+
+# --------------------------------------------------------------------------
+# Tabs with X's, no double title (his click test, 2026-08-25): the tab names
+# the list and closes it; the title bar only exists for a lone docked list.
+# --------------------------------------------------------------------------
+
+def _dock_tab_bar(manager):
+    bars = manager._dockTabBars()
+    assert len(bars) == 1, f"expected one dock tab bar, found {len(bars)}"
+    return bars[0]
+
+
+def test_tabbed_lists_hide_their_title_bars(qapp, dock_mainwindow, manager):
+    first = open_list(manager, "object", qapp)
+    second = open_list(manager, "section", qapp)
+    assert first.titleBarWidget() is not None      # empty widget = hidden
+    assert second.titleBarWidget() is not None
+
+
+def test_a_lone_docked_list_keeps_its_title_bar(qapp, dock_mainwindow, manager):
+    """Without a tab there is nothing to drag and no X; the title bar stays."""
+    only = open_list(manager, "object", qapp)
+    assert only.titleBarWidget() is None
+
+
+def test_dock_tabs_carry_close_buttons(qapp, dock_mainwindow, manager):
+    open_list(manager, "object", qapp)
+    open_list(manager, "section", qapp)
+    settle(qapp)
+    assert _dock_tab_bar(manager).tabsClosable()
+
+
+def test_tab_x_closes_the_right_list(qapp, dock_mainwindow, manager):
+    """Resolved by pointer, not tab text: two lists of one type share a
+    title."""
+    import shiboken6
+
+    keeper = open_list(manager, "object", qapp)
+    goner = open_list(manager, "object", qapp)
+    settle(qapp)
+    bar = _dock_tab_bar(manager)
+    goner_ptr = shiboken6.getCppPointer(goner)[0]
+    index = next(i for i in range(bar.count()) if bar.tabData(i) == goner_ptr)
+    bar.tabCloseRequested.emit(index)
+    settle(qapp)
+    assert goner not in manager.tables["object"]
+    assert keeper in manager.tables["object"]
+    assert keeper.isVisible()
+
+
+def test_group_shrunk_to_one_gets_its_title_bar_back(qapp, dock_mainwindow, manager):
+    keeper = open_list(manager, "object", qapp)
+    goner = open_list(manager, "section", qapp)
+    settle(qapp)
+    assert keeper.titleBarWidget() is not None
+    goner.close()
+    settle(qapp)
+    assert keeper.titleBarWidget() is None
+
+
+def test_floated_list_never_keeps_the_empty_title_widget(qapp, dock_mainwindow, manager):
+    """Floating runs on the native frame; the empty docked title widget must
+    not ride along, and docking back into the group hides it again."""
+    first = open_list(manager, "object", qapp)
+    second = open_list(manager, "section", qapp)
+    second.setFloating(True)
+    settle(qapp)
+    assert second.titleBarWidget() is None
+    second.setFloating(False)
+    settle(qapp)
+    assert second.titleBarWidget() is not None     # back in the tab group
+    assert first.titleBarWidget() is not None

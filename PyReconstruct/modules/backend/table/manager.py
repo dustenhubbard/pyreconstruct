@@ -37,9 +37,17 @@ class TableManager():
         self.section = section
         self.mainwindow = mainwindow
         self.series_states = series_states
+        # the docked lists hidden by the collapse toggle, in hide order;
+        # non-empty IS the collapsed state
+        self._collapsed = []
     
     def newTable(self, table_type : str, section=None):
         """Create a new object list widget."""
+        # opening a list while the lists are collapsed reveals them first, so
+        # the new list can tab onto a visible anchor and is actually seen
+        if self._collapsed:
+            self.expandLists()
+
         if table_type == "trace":
             args = (
                 self.series,
@@ -71,6 +79,8 @@ class TableManager():
             self.mainwindow.tabifyDockWidget(anchor, new_table)
             new_table.show()
             new_table.raise_()
+        self._wireTabBars()
+        self._syncTitleBars()
 
     def _dockedAnchor(self, new_table):
         """Find a visible docked list for a new list to tab onto.
@@ -94,6 +104,87 @@ class TableManager():
                     return table
         return None
     
+    def listsCollapsed(self):
+        """True while the collapse toggle is hiding the docked lists."""
+        return bool(self._collapsed)
+
+    def toggleListsCollapsed(self):
+        """The Lists pill / View menu / shortcut toggle (his stage 1,
+        2026-08-25): hide every docked list, or bring back exactly the set
+        the collapse hid. Floating lists are real windows now and are never
+        touched. Collapsing with no docked list visible is a no-op rather
+        than an empty collapsed state, so the toggle cannot get stuck."""
+        if self._collapsed:
+            self.expandLists()
+        else:
+            self.collapseLists()
+
+    def collapseLists(self):
+        docked = [
+            t for tables in self.tables.values() for t in tables
+            if not t.isFloating() and t.isVisible()
+        ]
+        for t in docked:
+            t.hide()
+        self._collapsed = docked
+
+    def expandLists(self):
+        # a list closed while hidden removed itself from self.tables
+        # (DataTable.closeEvent); only survivors come back
+        alive = {t for tables in self.tables.values() for t in tables}
+        for t in self._collapsed:
+            if t in alive:
+                t.show()
+        self._collapsed = []
+        # Qt may mint a fresh tab bar for the restored group
+        self._wireTabBars()
+        self._syncTitleBars()
+
+    def _dockTabBars(self):
+        """The dock area's own tab bars. QMainWindow creates them as its
+        direct children; every other QTabBar in the app (inside dialogs, the
+        3D scene) has a deeper parent, which is what the parent check
+        excludes."""
+        if not hasattr(self.mainwindow, "findChildren"):
+            return []
+        from PySide6.QtWidgets import QTabBar
+        return [tb for tb in self.mainwindow.findChildren(QTabBar)
+                if tb.parent() is self.mainwindow]
+
+    def _wireTabBars(self):
+        """Give every dock tab an X (his call, 2026-08-25: "tabs but with
+        x's"). Wired at most once per tab bar; Qt reuses them, and the
+        property guard keeps a rewire from stacking connections."""
+        for tb in self._dockTabBars():
+            tb.setTabsClosable(True)
+            if not tb.property("pyrecon_close_wired"):
+                tb.setProperty("pyrecon_close_wired", True)
+                tb.tabCloseRequested.connect(
+                    lambda i, tb=tb: self._closeTabbedList(tb, i)
+                )
+
+    def _closeTabbedList(self, tab_bar, index):
+        """Close the list behind a dock tab's X.
+
+        A dock tab bar stores its dock widget's C++ pointer in tabData;
+        matching on that instead of the tab TEXT survives two lists of the
+        same type, whose titles are identical."""
+        import shiboken6
+        ptr = tab_bar.tabData(index)
+        for tables in self.tables.values():
+            for table in list(tables):
+                if shiboken6.getCppPointer(table)[0] == ptr:
+                    table.close()
+                    self._syncTitleBars()
+                    return
+
+    def _syncTitleBars(self):
+        """Re-decide every list's docked title bar; see syncDockedTitleBar."""
+        for tables in self.tables.values():
+            for table in tables:
+                if hasattr(table, "syncDockedTitleBar"):
+                    table.syncDockedTitleBar()
+
     def _markViewerStale(self, obj_names=None, ztrace_names=None, all_objects=False):
         """Mark meshes in the open 3D scene whose 2D data was just edited.
 

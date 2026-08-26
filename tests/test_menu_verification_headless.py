@@ -265,6 +265,11 @@ def test_view_keeps_its_order_with_the_four_inserted_after_show_z_traces(
     series-wide sibling of the object menus' "Reapply custom color palette to existing objects...".
     Nothing else moved; tests/test_menubar_labels.py holds the structure guard
     and tests/test_autoseg_reapply_colors.py pins its semantics.
+
+    Second sanctioned addition (2026-08-25, stage 1 of his sidebar):
+    "Show/hide lists" leads the menu -- it is the one View row about whether
+    the lists are on screen at all, and it mirrors the status bar's Lists
+    pill. Everything after it is the prior order, unmoved.
     """
     view = submenu_at(main_window.menubar, "View")
     assert view is not None
@@ -272,6 +277,7 @@ def test_view_keeps_its_order_with_the_four_inserted_after_show_z_traces(
     order = [p for p in menu_leaf_paths(view) if " > " not in p]
 
     assert order == [
+        "Show/hide lists",
         "Copy view to clipboard",
         "Save view to file",
         "Change theme...",

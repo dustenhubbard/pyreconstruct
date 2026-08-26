@@ -114,6 +114,36 @@ class DataTable(QDockWidget):
                     max(self.height(), self.FLOAT_MIN_HEIGHT)
                 )
         self._syncDockAction(floating)
+        sync_all = getattr(self.manager, "_syncTitleBars", None)
+        if sync_all is not None:
+            sync_all()
+
+    def syncDockedTitleBar(self):
+        """Hide the title bar while this list shares a tab group.
+
+        The tab already names the list, so the title bar under it was the
+        same name again plus the float and close buttons ("the double title
+        with the x buttons", his click test 2026-08-25). Closing moved to the
+        tab's own X; floating is dragging the tab out. A list docked ALONE
+        has no tab bar, so it keeps its title bar -- without it there would
+        be nothing to drag and no way to close. Floating lists always run
+        with the native frame (None here); an empty QWidget is what Qt
+        documents for suppressing a dock title bar.
+        """
+        if self.isFloating():
+            if self.titleBarWidget() is not None:
+                self.setTitleBarWidget(None)
+            return
+        mw = self.mainwindow
+        # visible mates only: a closed dock stays tabified in Qt's eyes, and
+        # counting it would strand the survivor without a title bar forever
+        tabbed = hasattr(mw, "tabifiedDockWidgets") and any(
+            d.isVisible() for d in mw.tabifiedDockWidgets(self)
+        )
+        if tabbed and self.titleBarWidget() is None:
+            self.setTitleBarWidget(QWidget(self))
+        elif not tabbed and self.titleBarWidget() is not None:
+            self.setTitleBarWidget(None)
 
     def _syncDockAction(self, floating : bool):
         """Show a "Dock this list" menubar action while the list floats.
@@ -507,4 +537,11 @@ class DataTable(QDockWidget):
         """Remove self from manager table list."""
         self.manager.tables[self.name].remove(self)
         super().closeEvent(event)
+        # a tab group that shrank to one list gets its title bar back. The
+        # hide() runs first: Qt hides a closed widget only after this event
+        # returns, and the sync's visible-mates check must not count this one.
+        self.hide()
+        sync_all = getattr(self.manager, "_syncTitleBars", None)
+        if sync_all is not None:
+            sync_all()
 

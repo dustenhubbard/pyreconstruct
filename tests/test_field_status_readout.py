@@ -537,3 +537,23 @@ def test_popup_paints_real_pixels(main_window, qtbot):
         f"{expected.name()} belongs"
     )
     popup.hide()
+
+
+def test_lists_pill_exists_and_reports_clicks(qapp):
+    """The Lists pill (stage 1 of the sidebar, 2026-08-25): fixed text, first
+    in the row, and its click reaches the toggle signal. setReadout never
+    rewrites it -- it names an action, not a current value."""
+    from PyReconstruct.modules.gui.main.status_readout import FieldStatusReadout
+
+    readout = FieldStatusReadout()
+    try:
+        assert readout.lists_segment.text() == "\u25e7"   # the sidebar glyph
+        assert readout.lists_segment.toolTip() == "Lists"  # the word, on hover
+        hits = []
+        readout.lists_clicked.connect(lambda: hits.append(1))
+        readout.lists_segment.clicked.emit()
+        assert hits == [1]
+        readout.setReadout("Section: 5", "Alignment: a", "B/C Profile: b", "")
+        assert readout.lists_segment.text() == "\u25e7"
+    finally:
+        readout.deleteLater()

@@ -156,6 +156,7 @@ class MainWindow(QMainWindow):
         ## under the pointer. See gui/main/status_readout.py for why a segment
         ## has to be its own widget.
         self.status_readout = FieldStatusReadout()
+        self.status_readout.lists_clicked.connect(self.toggleLists)
         self.status_readout.section_clicked.connect(self.sectionJumpFromStatusBar)
         # right-click keeps the classic Go To Section dialog (his option 1)
         self.status_readout.section_segment.right_clicked.connect(
@@ -2408,7 +2409,7 @@ class MainWindow(QMainWindow):
             # route would otherwise be a third place to remember.
             self.field.updateStatusBar()
 
-    def statusQuickSwitch(self, segment, names, current, switch):
+    def statusQuickSwitch(self, segment, names, current, switch, manage=None):
         """Pop a list of names up over a status-bar segment.
 
         `popup()` rather than `exec()`: `exec()` spins a nested modal event
@@ -2426,6 +2427,10 @@ class MainWindow(QMainWindow):
                 names (list): the names to offer, in the order to show them
                 current (str): the name to mark as current
                 switch (callable): called with the chosen name
+                manage ((str, callable)): an optional final row, separated
+                    from the names, that opens the matching management dialog
+                    (his click test, 2026-08-25: the pills must offer a road
+                    to CREATING a profile or alignment, not only switching)
             Returns:
                 (QMenu): the menu that was popped up
         """
@@ -2446,6 +2451,11 @@ class MainWindow(QMainWindow):
                 current_act = act
             # default argument, not a closure over the loop variable
             act.triggered.connect(lambda _checked=False, n=name: switch(n))
+
+        if manage is not None:
+            label, open_dialog = manage
+            menu.addSeparator()
+            menu.addAction(label, open_dialog)
 
         # Above the segment: the status bar is at the bottom of the window, so
         # a menu dropped below it would open off-screen. No height cap: QMenu's
@@ -2503,12 +2513,17 @@ class MainWindow(QMainWindow):
             sorted(self.field.section.tforms.keys()),
             self.series.alignment,
             self.switchAlignmentFromStatusBar,
+            manage=("New or edit alignments...", self.modifyAlignments),
         )
 
     def switchAlignmentFromStatusBar(self, alignment : str):
         """Switch alignment and repaint the readout."""
         self.changeAlignment(alignment)
         self.field.updateStatusBar()
+
+    def toggleLists(self):
+        """Show or hide the docked lists (the Lists pill, View menu, or key)."""
+        self.field.table_manager.toggleListsCollapsed()
 
     def quickSwitchBCProfile(self):
         """Offer the series' brightness/contrast profiles over its segment."""
@@ -2517,6 +2532,7 @@ class MainWindow(QMainWindow):
             sorted(self.field.section.bc_profiles.keys()),
             self.series.bc_profile,
             self.switchBCProfileFromStatusBar,
+            manage=("New or edit profiles...", self.changeBCProfiles),
         )
 
     def switchBCProfileFromStatusBar(self, profile : str):

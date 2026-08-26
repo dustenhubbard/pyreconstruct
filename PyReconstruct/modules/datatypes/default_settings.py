@@ -187,6 +187,10 @@ default_settings = {
     # convention. NOT Ctrl+Shift+/: macOS delivers that chord as Cmd+?, so a
     # Ctrl+Shift+/ binding never fires there (found in click testing).
     "searchmenus_act": "Ctrl+K",
+    # View > Show/hide lists. S for Sidebar, on his call (2026-08-25):
+    # Ctrl+Alt+S here, delivered as Cmd+Option+S on macOS. Plain Ctrl+S and
+    # Ctrl+Shift+S are save and the section list; bare S is the stamp tool.
+    "togglelists_act": "Ctrl+Alt+S",
     "save_act": "Ctrl+S",
     "manualbackup_act": "Ctrl+Shift+B",
     "newfromimages_act": "Ctrl+N",

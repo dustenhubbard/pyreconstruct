@@ -351,6 +351,10 @@ _TOGGLE_UPDATECHECK_ROW = (1, "act", "toggleupdatecheck_act")
 # offers the Dev beta, Dev offers stable; legacy Beta-channel users hold a
 # lone beta install and this is their road back to stable.
 _GET_OTHER_FLAVOR_ROW = (1, "act", "getotherflavor_act")
+# View > Show/hide lists (2026-08-25, his stage 1 of the sidebar): the
+# collapse toggle, also the Lists pill in the status bar. Remappable,
+# default Cmd+backslash (Ctrl+backslash on Windows/Linux).
+_TOGGLE_LISTS_ROW = (1, "act", "togglelists_act")
 # Help > "Search menus...": the in-window menubar never gets macOS's native
 # Help search, so the app carries its own palette (stable ship, 2026-08-21).
 _SEARCH_MENUS_ROW = (1, "act", "searchmenus_act")
@@ -377,6 +381,8 @@ MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "act", "checkupdates_act")) + 1,
     _GET_OTHER_FLAVOR_ROW,
 )
+_i = MENUBAR_EXPECTED.index((1, "act", "copyscreen_act"))
+MENUBAR_EXPECTED[_i:_i] = [_TOGGLE_LISTS_ROW, (1, "sep", None)]
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "act", "shortcutshelp_act")), _SEARCH_MENUS_ROW
 )
@@ -443,7 +449,7 @@ def test_menubar_action_and_submenu_counts():
     each took the count up one, 117 to 119 together.
     """
     rows = _rows()
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 122
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 123
     assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 31
 
 
