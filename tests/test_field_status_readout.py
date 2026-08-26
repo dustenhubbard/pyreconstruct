@@ -539,22 +539,42 @@ def test_popup_paints_real_pixels(main_window, qtbot):
     popup.hide()
 
 
-def test_lists_pill_exists_and_reports_clicks(qapp):
-    """The Lists pill (stage 1 of the sidebar, 2026-08-25): fixed text, first
-    in the row, and its click reaches the toggle signal. setReadout never
-    rewrites it -- it names an action, not a current value."""
+def test_sidebar_icon_segment_is_painted_and_reports_clicks(qapp):
+    """The sidebar toggle (2026-08-25, reworked 2026-08-26): a PAINTED icon,
+    no pill outline, the word only on hover. Painted because a font big
+    enough to read grew the status bar, which the next test forbids."""
+    from PyReconstruct.modules.gui.main.status_readout import (
+        FieldStatusReadout,
+        SidebarIconSegment,
+    )
+
+    readout = FieldStatusReadout()
+    try:
+        segment = readout.lists_segment
+        assert isinstance(segment, SidebarIconSegment)
+        assert segment.text() == ""            # nothing to read; it is drawn
+        assert segment._outlined is False      # no pill around the icon
+        assert segment.toolTip() == "Lists"    # the word, on hover
+        hits = []
+        readout.lists_clicked.connect(lambda: hits.append(1))
+        segment.clicked.emit()
+        assert hits == [1]
+        readout.setReadout("Section: 5", "Alignment: a", "B/C Profile: b", "")
+        assert segment.text() == ""            # setReadout never touches it
+    finally:
+        readout.deleteLater()
+
+
+def test_sidebar_icon_is_bigger_than_the_text_it_replaced(qapp):
+    """The complaint was legibility: the icon must use most of the line
+    height, which a glyph at text size did not."""
     from PyReconstruct.modules.gui.main.status_readout import FieldStatusReadout
 
     readout = FieldStatusReadout()
     try:
-        assert readout.lists_segment.text() == "\u25e7"   # the sidebar glyph
-        assert readout.lists_segment.toolTip() == "Lists"  # the word, on hover
-        hits = []
-        readout.lists_clicked.connect(lambda: hits.append(1))
-        readout.lists_segment.clicked.emit()
-        assert hits == [1]
-        readout.setReadout("Section: 5", "Alignment: a", "B/C Profile: b", "")
-        assert readout.lists_segment.text() == "\u25e7"
+        segment = readout.lists_segment
+        glyph_height = segment.fontMetrics().tightBoundingRect("\u25e7").height()
+        assert segment._icon_h > glyph_height
     finally:
         readout.deleteLater()
 

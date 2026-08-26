@@ -213,12 +213,23 @@ class DataTable(QDockWidget):
         mw = self.mainwindow
         # visible mates only: a closed dock stays tabified in Qt's eyes, and
         # counting it would strand the survivor without a title bar forever
+        # Visible AND still docked. Qt keeps a torn-out dock in its
+        # tabifiedDockWidgets list, so counting a floating mate left the
+        # survivor with a hidden title bar after the other tab was undocked
+        # (his click test, 2026-08-26). A closed dock lingers there too,
+        # which is what the visibility half covers.
         tabbed = hasattr(mw, "tabifiedDockWidgets") and any(
-            d.isVisible() for d in mw.tabifiedDockWidgets(self)
+            d.isVisible() and not d.isFloating()
+            for d in mw.tabifiedDockWidgets(self)
         )
         if tabbed and self.titleBarWidget() is None:
-            # tabs carry the name and the X; the title row disappears
-            self.setTitleBarWidget(QWidget(self))
+            # tabs carry the name and the X; the title row disappears.
+            # setFixedHeight(0), not a bare QWidget: a plain one reports a
+            # height of -1 and Qt logs "Negative sizes are not possible"
+            # while laying the dock out (measured 2026-08-26).
+            spacer = QWidget(self)
+            spacer.setFixedHeight(0)
+            self.setTitleBarWidget(spacer)
         elif not tabbed and self.titleBarWidget() is not None:
             # a lone list keeps Qt's ORIGINAL title bar. A slim tab-styled
             # bar was tried and looked worse (his click test, 2026-08-25).
