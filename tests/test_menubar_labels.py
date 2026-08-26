@@ -324,7 +324,8 @@ MENUBAR_BASELINE = [
 #    small to grab, short of quitting and clearing `window/geometry` by hand.
 #    It lands after the submenu, next to "Reset palette position", not inside
 #    it: the palette submenu is palette-scoped and this is window-scoped.
-# 4. "Show what's new after updates" in Help, directly under "What's new".
+# 4. "Turn off What's new pop-up" in Help, directly under "What's new".
+#    Checked means OFF (his call, 2026-08-26).
 #    Added with the What's-new dialog's "Don't show again" button: the button
 #    switches the startup popup off, and a preference that could only be
 #    switched off from inside the dialog it hides needs a visible way back on.
@@ -342,7 +343,8 @@ _CLEAR_RECENTS_ROW = (2, "act", "clearrecents_act")
 _IMPORT_JSER_ALIGNMENTS_ROW = (2, "act", "import_jser_alignments_act")
 _RESET_WINDOW_ROW = (1, "act", "resetwindow_act")
 _TOGGLE_WHATSNEW_ROW = (1, "act", "togglewhatsnew_act")
-# Help > "Check for updates on startup": the checkable that replaced the
+# Help > "Automatically check for updates" (renamed 2026-08-26 with the
+# Help regroup): the checkable that replaced the
 # Series Options Updates tab (removed with the channel radio, 2026-08-21).
 # It sits directly under "Check for updates...", the action it governs.
 _TOGGLE_UPDATECHECK_ROW = (1, "act", "toggleupdatecheck_act")
@@ -351,6 +353,10 @@ _TOGGLE_UPDATECHECK_ROW = (1, "act", "toggleupdatecheck_act")
 # offers the Dev beta, Dev offers stable; legacy Beta-channel users hold a
 # lone beta install and this is their road back to stable.
 _GET_OTHER_FLAVOR_ROW = (1, "act", "getotherflavor_act")
+# View > Show/hide lists (2026-08-25, his stage 1 of the sidebar): the
+# collapse toggle, also the sidebar pill in the status bar. Remappable,
+# default Cmd+Option+S (Ctrl+Alt+S on Windows/Linux).
+_TOGGLE_LISTS_ROW = (1, "act", "togglelists_act")
 # Series > Clean up > Repair self-crossing traces (2026-08-25, Patrick's
 # report): autoseg's zero-width spikes block the scalpel; the safe ones are
 # repaired in bulk, real figure 8s are skipped for the scissors.
@@ -370,24 +376,47 @@ MENUBAR_EXPECTED.insert(
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "act", "lefthanded_act")), _RESET_WINDOW_ROW
 )
-MENUBAR_EXPECTED.insert(
-    MENUBAR_EXPECTED.index((1, "act", "whatsnew_act")) + 1, _TOGGLE_WHATSNEW_ROW
-)
-MENUBAR_EXPECTED.insert(
-    MENUBAR_EXPECTED.index((1, "act", "checkupdates_act")) + 1,
-    _TOGGLE_UPDATECHECK_ROW,
-)
-MENUBAR_EXPECTED.insert(
-    MENUBAR_EXPECTED.index((1, "act", "checkupdates_act")) + 1,
-    _GET_OTHER_FLAVOR_ROW,
-)
+
+
+
+_i = MENUBAR_EXPECTED.index((1, "act", "copyscreen_act"))
+MENUBAR_EXPECTED[_i:_i] = [_TOGGLE_LISTS_ROW, (1, "sep", None)]
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((2, "act", "removeempty_act")) + 1,
     _REPAIR_SELF_CROSSINGS_ROW,
 )
-MENUBAR_EXPECTED.insert(
-    MENUBAR_EXPECTED.index((1, "act", "shortcutshelp_act")), _SEARCH_MENUS_ROW
-)
+# The second sanctioned MOVE (2026-08-26, his Help layout call): Help is
+# regrouped into five separated groups -- the search field, then what this
+# build IS, then updates, then the What's-new pop-up, then the rest exactly
+# as it was. Expressed as remove-then-rebuild of the Help rows rather than by
+# rewriting the frozen baseline, so the deviation stays visible;
+# test_no_baseline_action_was_lost still sees every Help action, which is what
+# makes this a move and not a loss.
+_HELP_HEAD_OLD = [
+    (1, "act", "repobranch_act"),
+    (1, "act", "checkupdates_act"),
+    (1, "act", "whatsnew_act"),
+    (1, "sep", None),
+    (1, "act", "shortcutshelp_act"),
+]
+_HELP_HEAD_NEW = [
+    _SEARCH_MENUS_ROW,
+    (1, "sep", None),
+    (1, "act", "repobranch_act"),
+    (1, "sep", None),
+    (1, "act", "checkupdates_act"),
+    _TOGGLE_UPDATECHECK_ROW,
+    (1, "sep", None),
+    _GET_OTHER_FLAVOR_ROW,
+    (1, "sep", None),
+    (1, "act", "whatsnew_act"),
+    _TOGGLE_WHATSNEW_ROW,
+    (1, "sep", None),
+    (1, "act", "shortcutshelp_act"),
+]
+_help_at = MENUBAR_EXPECTED.index((1, "act", "repobranch_act"))
+assert MENUBAR_EXPECTED[_help_at:_help_at + len(_HELP_HEAD_OLD)] == _HELP_HEAD_OLD
+MENUBAR_EXPECTED[_help_at:_help_at + len(_HELP_HEAD_OLD)] = _HELP_HEAD_NEW
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "act", "fillopacity_act")) + 1, _RECOLOR_ALL_ROW
 )
@@ -451,7 +480,7 @@ def test_menubar_action_and_submenu_counts():
     each took the count up one, 117 to 119 together.
     """
     rows = _rows()
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 123
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 124
     assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 31
 
 

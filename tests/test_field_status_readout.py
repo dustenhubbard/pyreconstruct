@@ -537,3 +537,52 @@ def test_popup_paints_real_pixels(main_window, qtbot):
         f"{expected.name()} belongs"
     )
     popup.hide()
+
+
+def test_sidebar_icon_segment_is_painted_and_reports_clicks(qapp):
+    """The sidebar toggle (2026-08-25, reworked 2026-08-26): a PAINTED icon,
+    no pill outline, the word only on hover. Painted because a font big
+    enough to read grew the status bar, which the next test forbids."""
+    from PyReconstruct.modules.gui.main.status_readout import (
+        FieldStatusReadout,
+        SidebarIconSegment,
+    )
+
+    readout = FieldStatusReadout()
+    try:
+        segment = readout.lists_segment
+        assert isinstance(segment, SidebarIconSegment)
+        assert segment.text() == ""            # nothing to read; it is drawn
+        assert segment._outlined is False      # no pill around the icon
+        assert segment.toolTip() == "Lists"    # the word, on hover
+        hits = []
+        readout.lists_clicked.connect(lambda: hits.append(1))
+        segment.clicked.emit()
+        assert hits == [1]
+        readout.setReadout("Section: 5", "Alignment: a", "B/C Profile: b", "")
+        assert segment.text() == ""            # setReadout never touches it
+    finally:
+        readout.deleteLater()
+
+
+def test_sidebar_icon_is_bigger_than_the_text_it_replaced(qapp):
+    """The complaint was legibility: the icon must use most of the line
+    height, which a glyph at text size did not."""
+    from PyReconstruct.modules.gui.main.status_readout import FieldStatusReadout
+
+    readout = FieldStatusReadout()
+    try:
+        segment = readout.lists_segment
+        glyph_height = segment.fontMetrics().tightBoundingRect("\u25e7").height()
+        assert segment._icon_h > glyph_height
+    finally:
+        readout.deleteLater()
+
+
+def test_lists_pill_hover_names_the_live_shortcut(qapp, main_window, gui_dialogs):
+    """The hover reads the collapse binding from the live action (his ask,
+    2026-08-25), platform-rendered, so a rebind updates it on the menubar
+    rebuild. The bare-widget default stays plain "Lists" (test above)."""
+    tooltip = main_window.status_readout.lists_segment.toolTip()
+    assert tooltip.startswith("Lists (")
+    assert len(tooltip) > len("Lists ()")

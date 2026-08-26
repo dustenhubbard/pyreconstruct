@@ -156,6 +156,7 @@ class MainWindow(QMainWindow):
         ## under the pointer. See gui/main/status_readout.py for why a segment
         ## has to be its own widget.
         self.status_readout = FieldStatusReadout()
+        self.status_readout.lists_clicked.connect(self.toggleLists)
         self.status_readout.section_clicked.connect(self.sectionJumpFromStatusBar)
         # right-click keeps the classic Go To Section dialog (his option 1)
         self.status_readout.section_segment.right_clicked.connect(
@@ -288,7 +289,21 @@ class MainWindow(QMainWindow):
         self.menusearchfield_act = MenuSearchField(self, self.helpmenu)
         first_help_action = self.helpmenu.actions()[0]
         self.helpmenu.insertAction(first_help_action, self.menusearchfield_act)
-        self.helpmenu.insertSeparator(first_help_action)
+        # No separator inserted here any more: the menu definition already
+        # ends its first group with one, and adding a second put a divider
+        # between the field and the "Search menus..." row that shares its
+        # group (his Help layout call, 2026-08-26).
+
+        ## The Lists pill's hover names the collapse shortcut. Read from the
+        ## live action each menubar build, so a rebind through the shortcuts
+        ## dialog (which rebuilds the menubar) updates the hover too.
+        ## NativeText renders the platform's own chord.
+        if hasattr(self, "status_readout") and hasattr(self, "togglelists_act"):
+            from PySide6.QtGui import QKeySequence
+            key = self.togglelists_act.shortcut().toString(QKeySequence.NativeText)
+            self.status_readout.lists_segment.setToolTip(
+                f"Lists ({key})" if key else "Lists"
+            )
 
         ## Seed menubar checkables that have no aboutToShow resync hook from the
         ## live option, so they are correct on first show. checkActions keeps
@@ -403,10 +418,7 @@ class MainWindow(QMainWindow):
         self.backupmenu.setEnabled(is_not_welcome_series)
 
         ## Check for palette
-        self.togglepalette_act.setChecked(not self.mouse_palette.palette_hidden)
-        self.toggleinc_act.setChecked(not self.mouse_palette.inc_hidden)
-        self.togglebc_act.setChecked(not self.mouse_palette.bc_hidden)
-        self.togglesb_act.setChecked(not self.mouse_palette.sb_hidden)
+        self.syncPaletteToggles()
 
         ## Sync the View-submenu checkboxes to the live field state so they are
         ## accurate every time the menu opens (state can change via shortcut,
@@ -769,13 +781,17 @@ class MainWindow(QMainWindow):
         preference can change outside the menu, through the dialog's "Don't
         show again" button, and a checkable that contradicts the stored state
         would invert itself on the next click.
+
+        Checked means the popup is OFF, matching the row's wording (his call,
+        2026-08-26): the tick and the stored suppression flag are the same
+        thing now, so the dialog's button and this row always agree.
         """
         from PyReconstruct.modules.gui.main.first_launch import (
             WHATSNEW_SUPPRESS_KEY, whats_new_suppressed,
         )
         settings = QSettings(*settings_domain())
         self.togglewhatsnew_act.setChecked(
-            not whats_new_suppressed(settings.value(WHATSNEW_SUPPRESS_KEY))
+            whats_new_suppressed(settings.value(WHATSNEW_SUPPRESS_KEY))
         )
 
     def syncUpdateCheckToggle(self):
@@ -815,17 +831,21 @@ class MainWindow(QMainWindow):
         self.menusearchfield_act.focusField()
 
     def toggleWhatsNewPopup(self):
-        """Persist the Help-menu toggle: checked means the popup may show.
+        """Persist the Help-menu toggle: CHECKED means the popup is off.
 
-        Writes only the suppression preference. The once-per-version record is
-        deliberately untouched, so re-enabling hands back the ordinary rules:
-        a version bump missed while the popup was off shows on the next
-        launch, and a version already seen stays seen.
+        The row reads "Turn off What's new pop-up", so a tick is the
+        disabled state (his call, 2026-08-26); the stored preference is the
+        suppression flag itself, and the two now match exactly.
+
+        Writes only that preference. The once-per-version record is
+        deliberately untouched, so switching the popup back on hands back the
+        ordinary rules: a version bump missed while it was off shows on the
+        next launch, and a version already seen stays seen.
         """
         from PyReconstruct.modules.gui.main.first_launch import WHATSNEW_SUPPRESS_KEY
         settings = QSettings(*settings_domain())
         settings.setValue(
-            WHATSNEW_SUPPRESS_KEY, not self.togglewhatsnew_act.isChecked()
+            WHATSNEW_SUPPRESS_KEY, self.togglewhatsnew_act.isChecked()
         )
 
     def changeUsername(self, new_name : str = None):
@@ -934,6 +954,30 @@ class MainWindow(QMainWindow):
         self.field.reload()
         self.seriesModified(True)
 
+    def _captureListLayout(self):
+        """Remember the open lists for the current series (list_layout).
+
+        Runs when a series is about to close: a series switch and the app
+        close. Skipped for the welcome series and before the field exists.
+        """
+        field = getattr(self, "field", None)
+        if (
+            not self.series or self.series.isWelcomeSeries()
+            or field is None or not hasattr(field, "table_manager")
+        ):
+            return
+        self.series.setOption(
+            "list_layout", field.table_manager.captureLayout()
+        )
+
+    def _restoreListLayout(self):
+        """Reopen the lists the current series had open last time."""
+        if not self.series or self.series.isWelcomeSeries():
+            return
+        layout = self.series.getOption("list_layout")
+        if layout:
+            self.field.table_manager.restoreLayout(layout, self.field.section)
+
     def openSeries(self, series_obj=None, jser_fp=None, query_prev=True):
         """Open an existing series and create the field.
 
@@ -943,6 +987,10 @@ class MainWindow(QMainWindow):
         """
 
         if self.series:  # series open and save yes
+
+            # the outgoing series remembers its list layout before anything
+            # closes; the incoming series replays its own at the end
+            self._captureListLayout()
 
             first_open = False
 
@@ -996,6 +1044,9 @@ class MainWindow(QMainWindow):
 
         # add the series to recently opened
         self.addToRecentSeries()
+
+        # reopen the lists this series had open last time, where they were
+        self._restoreListLayout()
 
     # ------------------------------------------------------------------
     # openSeries steps.
@@ -2408,7 +2459,11 @@ class MainWindow(QMainWindow):
             # route would otherwise be a third place to remember.
             self.field.updateStatusBar()
 
-    def statusQuickSwitch(self, segment, names, current, switch):
+    #: pixels between a status-bar pill and the menu it opens. Matches the
+    #: section popup's own lift, which is the spacing he approved.
+    PILL_MENU_GAP = 2
+
+    def statusQuickSwitch(self, segment, names, current, switch, manage=None):
         """Pop a list of names up over a status-bar segment.
 
         `popup()` rather than `exec()`: `exec()` spins a nested modal event
@@ -2426,6 +2481,10 @@ class MainWindow(QMainWindow):
                 names (list): the names to offer, in the order to show them
                 current (str): the name to mark as current
                 switch (callable): called with the chosen name
+                manage ((str, callable)): an optional final row, separated
+                    from the names, that opens the matching management dialog
+                    (his click test, 2026-08-25: the pills must offer a road
+                    to CREATING a profile or alignment, not only switching)
             Returns:
                 (QMenu): the menu that was popped up
         """
@@ -2447,14 +2506,26 @@ class MainWindow(QMainWindow):
             # default argument, not a closure over the loop variable
             act.triggered.connect(lambda _checked=False, n=name: switch(n))
 
+        if manage is not None:
+            label, open_dialog = manage
+            menu.addSeparator()
+            menu.addAction(label, open_dialog)
+
         # Above the segment: the status bar is at the bottom of the window, so
         # a menu dropped below it would open off-screen. No height cap: QMenu's
         # exceeds-screen scrolling is the only scrolling it reliably has, and
         # sizeHint() ignores a maximum anyway, so the anchor bounds the hint by
         # the screen and lets popup() do its own clamping.
+        # The same 2px lift the section popup gives itself
+        # (SectionListPopup, status_readout.py): flush against the pill these
+        # two menus read as crowded, and he called the section spacing right
+        # (2026-08-26).
         top_left = segment.mapToGlobal(segment.rect().topLeft())
         screen_h = self.screen().availableGeometry().height()
-        menu.popup(top_left - QPoint(0, min(menu.sizeHint().height(), screen_h)))
+        menu.popup(
+            top_left
+            - QPoint(0, min(menu.sizeHint().height(), screen_h) + self.PILL_MENU_GAP)
+        )
         if current_act is not None:
             # after popup(), not before: activation set on an unshown menu is
             # not guaranteed to survive the show
@@ -2503,12 +2574,46 @@ class MainWindow(QMainWindow):
             sorted(self.field.section.tforms.keys()),
             self.series.alignment,
             self.switchAlignmentFromStatusBar,
+            manage=("New or edit alignments...", self.modifyAlignments),
         )
 
     def switchAlignmentFromStatusBar(self, alignment : str):
         """Switch alignment and repaint the readout."""
         self.changeAlignment(alignment)
         self.field.updateStatusBar()
+
+    def syncPaletteToggles(self):
+        """Point the View checkboxes at the palette's live visibility flags.
+
+        Seeded state was not enough once a group could be hidden by
+        right-clicking the widget itself (his report, 2026-08-26): that path
+        changes the flag without touching the menu, so the checkmarks
+        disagreed. MousePalette.saveVisibilityState calls this after every
+        visibility change, from either road, which is a push rather than a
+        menu-open pull: connecting to a menu's aboutToShow was tried and is
+        not viable here -- the View attribute is not the menubar's View menu,
+        and walking the live menubar for the real one invalidates the actions
+        createMenuBar is still assigning.
+
+        setChecked emits `toggled`, not `triggered`, and the handlers are on
+        `triggered`, so this never re-fires a toggle.
+        """
+        palette = getattr(self, "mouse_palette", None)
+        if palette is None:
+            return
+        for action_name, hidden in (
+            ("togglepalette_act", palette.palette_hidden),
+            ("toggleinc_act", palette.inc_hidden),
+            ("togglebc_act", palette.bc_hidden),
+            ("togglesb_act", palette.sb_hidden),
+        ):
+            action = getattr(self, action_name, None)
+            if action is not None:
+                action.setChecked(not hidden)
+
+    def toggleLists(self):
+        """Show or hide the docked lists (the Lists pill, View menu, or key)."""
+        self.field.table_manager.toggleListsCollapsed()
 
     def quickSwitchBCProfile(self):
         """Offer the series' brightness/contrast profiles over its segment."""
@@ -2517,6 +2622,7 @@ class MainWindow(QMainWindow):
             sorted(self.field.section.bc_profiles.keys()),
             self.series.bc_profile,
             self.switchBCProfileFromStatusBar,
+            manage=("New or edit profiles...", self.changeBCProfiles),
         )
 
     def switchBCProfileFromStatusBar(self, profile : str):
@@ -3390,11 +3496,14 @@ class MainWindow(QMainWindow):
         """Find and repair closed traces whose outline crosses itself.
 
         The safe ones (a tiny crossing artifact beside one real loop) are
-        repaired in one undoable pass; a genuine figure 8 with two real lobes
+        repaired in one undoable pass; a genuine figure 8 with two real loops
         is skipped and named, because only the scissors should decide which
-        lobe lives. Locked objects are left alone, like the other clean-ups.
+        loop lives. Locked objects are left alone, like the other clean-ups.
         """
         self.saveAllData()
+
+
+        from PyReconstruct.modules.gui.utils import undo_chord
 
         candidates = self.series.findSelfCrossingTraces()
         if not candidates:
@@ -3402,19 +3511,19 @@ class MainWindow(QMainWindow):
             return
 
         safe = [r for r in candidates if r["repairable"]]
-        lobed = [r for r in candidates if not r["repairable"]]
+        looped = [r for r in candidates if not r["repairable"]]
 
         if safe:
             noun = "trace" if len(safe) == 1 else "traces"
             prompt = (
                 f"Repair {len(safe)} self-crossing {noun}? The tiny crossing "
                 "is removed and the trace's real outline is kept.\n"
-                "This can be undone (Ctrl+Z)."
+                f"This can be undone ({undo_chord()})."
             )
-            if lobed:
-                skipped_noun = "trace needs" if len(lobed) == 1 else "traces need"
+            if looped:
+                skipped_noun = "trace needs" if len(looped) == 1 else "traces need"
                 prompt += (
-                    f"\n\n{len(lobed)} more {skipped_noun} the scissors; "
+                    f"\n\n{len(looped)} more {skipped_noun} the scissors; "
                     "a review list opens after."
                 )
             if notifyConfirm(prompt, yn=True):
@@ -3433,7 +3542,7 @@ class MainWindow(QMainWindow):
                     )
                     self.repaired_crossings_dialog.show()
 
-        if lobed:
+        if looped:
             # a modeless review list, not a message: the user works the field
             # with the scissors while it stays open, and can copy the whole
             # set out (his report, 2026-08-26)
@@ -3442,7 +3551,7 @@ class MainWindow(QMainWindow):
             )
             self.skipped_crossings_dialog = SkippedCrossingsDialog(
                 self,
-                lobed,
+                looped,
                 navigate=self.field.focusMalformedContour,
             )
             self.skipped_crossings_dialog.show()
@@ -3462,11 +3571,13 @@ class MainWindow(QMainWindow):
             notify("No empty traces found.")
             return
 
+        from PyReconstruct.modules.gui.utils import undo_chord
+
         count = len(candidates)
         noun = "empty trace" if count == 1 else "empty traces"
         if not notifyConfirm(
             f"Remove {count} {noun} from the series?\n\n"
-            "This can be undone (Ctrl+Z).",
+            f"This can be undone ({undo_chord()}).",
             yn=True,
         ):
             return
@@ -4156,7 +4267,14 @@ class MainWindow(QMainWindow):
                 qdarkstyle.load_stylesheet_pyside6() + 
                 qdark_addon
             )
-    
+
+        # the lists measured their columns under the old theme's font and
+        # padding; re-measure so the new theme's text is not crowded
+        # (his report, 2026-08-26)
+        field = getattr(self, "field", None)
+        if field is not None and hasattr(field, "table_manager"):
+            field.table_manager.refreshColumnWidths()
+
     def addToRecentSeries(self, series_fp : str = None):
         """Add a series to the recently opened series list."""
         if series_fp is None:
@@ -4485,6 +4603,11 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Save all data to files when the user exits."""
+        # capture the list layout FIRST: saveToJser(close=True) closes the
+        # series, and capturing after it recorded nothing -- undocked lists
+        # did not survive a relaunch (his click test, 2026-08-25). A canceled
+        # close leaves the early capture behind, which is merely current.
+        self._captureListLayout()
         response = self.saveToJser(notify=True, close=True)
         if response == "cancel":
             event.ignore()

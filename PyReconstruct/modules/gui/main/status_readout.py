@@ -63,12 +63,19 @@ class StatusSegment(QLabel):
     H_PAD = 8
     V_PAD = 1
 
-    def __init__(self, tooltip: str, parent=None):
+    def __init__(self, tooltip: str, parent=None, outlined=True):
+        """``outlined`` False drops the pill border and its fill, for a
+        segment whose content is a glyph rather than a value: the sidebar
+        icon read as cramped inside a pill at readout text size (his call,
+        2026-08-26). Hover and press still work; the affordance is the
+        cursor and the glyph itself.
+        """
         super().__init__(parent)
         self.setToolTip(tooltip)
         self.setCursor(Qt.PointingHandCursor)
         self.setAttribute(Qt.WA_Hover)
         self.setContentsMargins(self.H_PAD, self.V_PAD, self.H_PAD, self.V_PAD)
+        self._outlined = outlined
         self._hovered = False
         self._popup_open = False
         self._popup_hidden_at = 0.0
@@ -127,6 +134,9 @@ class StatusSegment(QLabel):
         super().mouseReleaseEvent(event)
 
     def paintEvent(self, event):
+        if not self._outlined:
+            super().paintEvent(event)
+            return
         from PySide6.QtGui import QPainter, QPainterPath, QPen
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -147,6 +157,59 @@ class StatusSegment(QLabel):
         super().paintEvent(event)
 
 
+class SidebarIconSegment(StatusSegment):
+    """The sidebar toggle: a painted icon, not a character.
+
+    A panel outline with its left column filled, drawn from the palette's
+    text color so both themes are covered. Painted rather than set as text
+    because a font large enough to read at a glance made the status bar
+    taller (his call, 2026-08-26), and because a glyph's own padding wastes
+    the line height a painted icon can use.
+    """
+
+    #: how much of the line height the icon uses, and its aspect
+    ICON_HEIGHT_RATIO = 0.82
+    ICON_ASPECT = 1.15
+
+    def __init__(self, tooltip: str, parent=None):
+        super().__init__(tooltip, parent, outlined=False)
+        # sized from the font so it tracks the readout beside it without
+        # ever exceeding the line the text already needs
+        line = self.fontMetrics().height()
+        self._icon_h = max(9, int(line * self.ICON_HEIGHT_RATIO))
+        self._icon_w = int(self._icon_h * self.ICON_ASPECT)
+        self.setFixedWidth(self._icon_w + 2 * self.H_PAD)
+
+    def paintEvent(self, event):
+        from PySide6.QtCore import QRectF
+        from PySide6.QtGui import QPainter, QPen
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        color = self.palette().windowText().color()
+        if not (self._hovered or self._popup_open):
+            color.setAlpha(190)   # quiet until pointed at, like the pills
+
+        rect = QRectF(
+            (self.width() - self._icon_w) / 2.0,
+            (self.height() - self._icon_h) / 2.0,
+            self._icon_w,
+            self._icon_h,
+        )
+        painter.setPen(QPen(color, 1.4))
+        painter.drawRoundedRect(rect, 2.0, 2.0)
+
+        # the filled left column: the sidebar itself
+        split = rect.left() + rect.width() * 0.38
+        painter.setPen(QPen(color, 1.0))
+        painter.drawLine(split, rect.top(), split, rect.bottom())
+        painter.fillRect(
+            QRectF(rect.left(), rect.top(), split - rect.left(), rect.height()),
+            color,
+        )
+        painter.end()
+
+
 class FieldStatusReadout(QWidget):
     """The permanent status-bar widget: three clickable segments and the rest.
 
@@ -156,12 +219,27 @@ class FieldStatusReadout(QWidget):
     because none of it names a thing the user can switch to.
     """
 
+    lists_clicked = Signal()
     section_clicked = Signal()
     alignment_clicked = Signal()
     bc_profile_clicked = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        # The one segment with fixed text: it names an action (show/hide the
+        # docked lists), not a current value, so setReadout never rewrites it
+        # and it stays out of self._segments. The text is a sidebar glyph
+        # (U+25E7, square with left half filled), not a word, on his click
+        # test call (2026-08-25); the word lives in the hover.
+        #
+        # PAINTED, not a text glyph, and with no pill (2026-08-26): the glyph
+        # was hard to make out, and a font big enough to fix that grew the
+        # status bar (measured: 1.25x is already taller than the bar's
+        # natural height, which test_pills_do_not_grow_the_status_bar
+        # forbids). A painted icon fills the same line height with no font
+        # padding, so it reads clearly at the bar's own size.
+        self.lists_segment = SidebarIconSegment("Lists", self)
 
         self.section_segment = StatusSegment(
             "Jump to a section", self
@@ -189,6 +267,9 @@ class FieldStatusReadout(QWidget):
         # macOS's rounded window corner, which otherwise crowds it.
         layout.setContentsMargins(10, 0, 0, 0)
         layout.setSpacing(0)
+        layout.addWidget(self.lists_segment)
+        self._separators.append(QLabel(SEPARATOR, self))
+        layout.addWidget(self._separators[-1])
         for i, widget in enumerate(self._segments):
             if i:
                 separator = QLabel(SEPARATOR, self)
@@ -209,6 +290,7 @@ class FieldStatusReadout(QWidget):
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         )
 
+        self.lists_segment.clicked.connect(self.lists_clicked)
         self.section_segment.clicked.connect(self.section_clicked)
         self.alignment_segment.clicked.connect(self.alignment_clicked)
         self.bc_profile_segment.clicked.connect(self.bc_profile_clicked)

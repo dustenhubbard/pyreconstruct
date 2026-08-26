@@ -7,7 +7,7 @@ scalpel. The repair keeps the trace's real loop and discards the artifact.
 
 The safety rule under test is his option 1 (2026-08-25): repair only when
 the discarded loops are tiny beside the kept one. A genuine figure 8 with
-two real lobes is skipped for the scissors, because keeping one lobe would
+two real loops is skipped for the scissors, because keeping one loop would
 silently delete the other.
 """
 
@@ -25,7 +25,7 @@ SPIKED_SQUARE = [
     (0.0, 10.0),
 ]
 
-# A bowtie with two equal lobes: a genuine figure 8, never auto-repaired.
+# A bowtie with two equal loops: a genuine figure 8, never auto-repaired.
 EQUAL_BOWTIE = [(0.0, 0.0), (10.0, 0.0), (0.0, 8.0), (10.0, 8.0)]
 
 
@@ -45,7 +45,7 @@ def test_spike_is_repaired_to_the_real_loop():
     assert (5.0, 10.5) not in repaired                  # the spike did not
 
 
-def test_equal_lobes_are_left_for_the_scissors():
+def test_equal_loops_are_left_for_the_scissors():
     assert repair_self_crossing(EQUAL_BOWTIE) is None
 
 
@@ -127,12 +127,12 @@ def test_unrepairable_records_are_not_applied(series_with_spike):
 
 # --------------------------------------------------------------------------
 # The two review windows around the pass (his asks, 2026-08-26): skipped
-# lobed traces get an actionable list, repaired ones get a summary. Both
+# looped traces get an actionable list, repaired ones get a summary. Both
 # inherit navigation, copy-to-clipboard and save-as-CSV from the malformed-
 # contours review dialog, so only what is specific here is tested.
 # --------------------------------------------------------------------------
 
-def _lobed_record():
+def _looped_record():
     return {
         "name": "figure8", "section": 4, "index": 0, "points": 4,
         "location": (1.0, 2.0), "reason": "Outline crosses itself",
@@ -148,7 +148,7 @@ def test_skipped_dialog_navigates_and_copies(qapp, gui_dialogs):
 
     visited = []
     dialog = SkippedCrossingsDialog(
-        None, [_lobed_record()],
+        None, [_looped_record()],
         navigate=lambda snum, name, index: visited.append((snum, name)),
     )
     try:
@@ -173,7 +173,7 @@ def test_repaired_dialog_summarizes_with_the_same_roads(qapp, gui_dialogs):
         RepairedCrossingsDialog,
     )
 
-    record = dict(_lobed_record(), repairable=True)
+    record = dict(_looped_record(), repairable=True)
     dialog = RepairedCrossingsDialog(None, [record], navigate=lambda *a: None)
     try:
         heading = dialog._headingText()
@@ -184,3 +184,34 @@ def test_repaired_dialog_summarizes_with_the_same_roads(qapp, gui_dialogs):
         assert any(label.startswith("Save table as CSV") for label in labels)
     finally:
         dialog.deleteLater()
+
+
+def test_the_repair_prompt_builds_without_error(qapp, main_window, gui_dialogs, monkeypatch):
+    """The confirm prompt crashed live with NameError: the undo-chord helper
+    was used at line 3519 with no import in scope, and no test drove the
+    prompt itself (his error report, 2026-08-26). This one does: a spiked
+    trace goes in, the prompt must reach notifyConfirm and decline safely."""
+    from PyReconstruct.modules.datatypes import Trace
+    import PyReconstruct.modules.gui.main.main_window as mw
+
+    series = main_window.series
+    snum = sorted(series.sections)[0]
+    section = series.loadSection(snum)
+    trace = Trace("prompt_spike", (255, 0, 0), closed=True)
+    trace.points = [
+        (0.0, 0.0), (10.0, 0.0), (10.0, 10.0),
+        (5.0, 10.0), (5.0, 10.5), (5.0, 10.0),
+        (0.0, 10.0),
+    ]
+    section.addTrace(trace, log_event=False)
+    section.save()
+
+    prompts = []
+    monkeypatch.setattr(
+        mw, "notifyConfirm", lambda text, yn=True: prompts.append(text) or False
+    )
+    main_window.repairSelfCrossingTraces()      # raised NameError before
+
+    assert prompts, "the confirm prompt never built"
+    assert "This can be undone (" in prompts[0]
+    assert "Ctrl+Z" not in prompts[0] or "Cmd" not in prompts[0]

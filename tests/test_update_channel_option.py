@@ -1,7 +1,7 @@
 """Update settings have left Series Options entirely.
 
 The channel is pinned per build (updater.pinned_channel), the Updates tab is
-gone, "Check for updates on startup" is a checkable Help item resynced from
+gone, "Automatically check for updates" is a checkable Help item resynced from
 the open series on every Help open, and the source-install branch is asked
 for by the reinstall prompt instead of stored-only. These pin the removal and
 the Help toggle round trip.

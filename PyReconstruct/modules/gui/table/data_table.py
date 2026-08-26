@@ -16,6 +16,24 @@ from PyReconstruct.modules.gui.dialog import (
     TableColumnsDialog
 )
 
+class _ListBody(QMainWindow):
+    """The internal window each list renders into, with an honest width hint.
+
+    Qt sizes a docked QDockWidget from its CONTENT widget's sizeHint, so the
+    width floor lives here: the default hint (~256px) obscured the tail of
+    the object list's menu bar (his click test, 2026-08-26). Columns may
+    still overflow -- some are deliberately very wide -- but every menu in
+    the list's own bar is reachable at the default width.
+    """
+
+    def sizeHint(self):
+        hint = super().sizeHint()
+        needed = self.menuBar().sizeHint().width() + 8
+        if hint.width() < needed:
+            hint.setWidth(needed)
+        return hint
+
+
 class DataTable(QDockWidget):
 
     # A newly floated list gets at least this size. Docked lists can be
@@ -24,11 +42,20 @@ class DataTable(QDockWidget):
     FLOAT_MIN_WIDTH = 500
     FLOAT_MIN_HEIGHT = 640
 
-    # Hard floor, docked or floating. Qt's own floor (90x129) leaves a list
-    # unreadable. Kept low enough that side-by-side docked lists and the
-    # field still fit on small screens.
+    # Floor while DOCKED. Qt's own floor (90x129) leaves a docked list
+    # unreadable, and the dock split used to squeeze lists there. Kept low
+    # enough that side-by-side docked lists and the field still fit on small
+    # screens.
     MIN_WIDTH = 200
     MIN_HEIGHT = 250
+
+    # Floor while FLOATING. Deliberately much lower: a floated list sized by
+    # hand is a choice, not an accident. Patrick keeps a three-row object
+    # list floating to mark the p-stamp he is on, and the docked floor
+    # blocked that (his report, 2026-08-25). This floor only stops a floated
+    # list from vanishing under its own title bar.
+    FLOAT_SHRINK_MIN_WIDTH = 120
+    FLOAT_SHRINK_MIN_HEIGHT = 100
 
     # gives every list a unique objectName; QMainWindow.saveState() cannot
     # restore a dock widget without one
@@ -62,7 +89,8 @@ class DataTable(QDockWidget):
         # floating behavior: a real window (not an always-on-top tool
         # palette), a usable first-float size, and a way back to the dock
         self._float_size_applied = False
-        self._dock_action = None
+        self._dock_button = None
+        self._real_window = False
         self.topLevelChanged.connect(self._onTopLevelChanged)
 
         # set defaults
@@ -79,7 +107,7 @@ class DataTable(QDockWidget):
         self.horizontal_headers = self.getHeaders()
 
         # create the main window widget
-        self.main_widget = QMainWindow()
+        self.main_widget = _ListBody()
         self.setWidget(self.main_widget)
 
         # save manager object
@@ -99,43 +127,217 @@ class DataTable(QDockWidget):
         dimension below the float minimum; later floats keep the user's size
         (Qt restores the last floating geometry on its own).
         """
-        if floating:
-            self.setWindowFlags(
-                Qt.Window
-                | Qt.WindowMinimizeButtonHint
-                | Qt.WindowMaximizeButtonHint
-                | Qt.WindowCloseButtonHint
-            )
-            self.show()
-            if not self._float_size_applied:
-                self._float_size_applied = True
-                self.resize(
-                    max(self.width(), self.FLOAT_MIN_WIDTH),
-                    max(self.height(), self.FLOAT_MIN_HEIGHT)
-                )
+        # the dock-back icon first: _becomeRealWindow measures the menu bar
+        # for the width floor, and the icon widens that bar (measured
+        # 2026-08-26: 311px without it, 341px with)
         self._syncDockAction(floating)
+        if floating:
+            # NEVER reflag mid-drag: swapping window flags destroys and
+            # recreates the native window under the cursor, which kills the
+            # tear-out gesture (found in his click test, 2026-08-25: docked
+            # lists could not be dragged out at all). Wait for the release.
+            self._whenMouseReleased(self._becomeRealWindow)
+        else:
+            self._real_window = False
+            self.setMinimumSize(self.MIN_WIDTH, self.MIN_HEIGHT)
+        sync_all = getattr(self.manager, "_syncTitleBars", None)
+        if sync_all is not None:
+            sync_all()
+
+    def _whenMouseReleased(self, callback):
+        """Run ``callback`` now, or after the mouse button is let go.
+
+        A dock tear-out arrives with the left button still held; a float from
+        code (restoreLayout, the tab double-click) arrives with no button.
+        """
+        from PySide6.QtWidgets import QApplication
+
+        if not (QApplication.mouseButtons() & Qt.LeftButton):
+            callback()
+            return
+        from PySide6.QtCore import QTimer
+
+        timer = QTimer(self)
+        timer.setInterval(30)
+
+        def poll():
+            if QApplication.mouseButtons() & Qt.LeftButton:
+                return
+            timer.stop()
+            timer.deleteLater()
+            if self.isFloating():   # the drag may have ended back in the dock
+                callback()
+
+        timer.timeout.connect(poll)
+        timer.start()
+
+    def _becomeRealWindow(self):
+        """Turn this floating dock into an ordinary window. Idempotent.
+
+        Called from two places: the deferred path below (an ordinary float,
+        once the mouse is released) and the tab tear-out, which needs the
+        real window IMMEDIATELY so the system can carry on the drag. The
+        guard keeps the second call from re-showing and re-sizing what the
+        first already built.
+
+        The title bar widget clears FIRST: setTitleBarWidget recreates the
+        native window and Qt hands the fresh one default (tool) flags, so
+        clearing it after setWindowFlags un-did the flags (caught by
+        test_code_driven_float_is_still_immediate when the slim bar landed).
+        """
+        if self._real_window and self.isFloating():
+            return
+        self._real_window = True
+        if self.titleBarWidget() is not None:
+            self.setTitleBarWidget(None)
+        self.setWindowFlags(
+            Qt.Window
+            | Qt.WindowMinimizeButtonHint
+            | Qt.WindowMaximizeButtonHint
+            | Qt.WindowCloseButtonHint
+        )
+        self.show()
+        if not self._float_size_applied:
+            self._float_size_applied = True
+            self.resize(
+                max(self.width(), self.FLOAT_MIN_WIDTH),
+                max(self.height(), self.FLOAT_MIN_HEIGHT)
+            )
+        # A floated list may be shrunk by hand well below the docked floor
+        # in HEIGHT (Patrick's three-row list), but never so narrow that its
+        # own menu bar clips (his report, 2026-08-26): the width floor is
+        # the same menu-bar measure the docked hint uses.
+        menubar_width = self.main_widget.menuBar().sizeHint().width() + 8
+        self.setMinimumSize(
+            max(self.FLOAT_SHRINK_MIN_WIDTH, menubar_width),
+            self.FLOAT_SHRINK_MIN_HEIGHT,
+        )
+
+    def syncDockedTitleBar(self):
+        """Hide the title bar while this list shares a tab group.
+
+        The tab already names the list, so the title bar under it was the
+        same name again plus the float and close buttons ("the double title
+        with the x buttons", his click test 2026-08-25). Closing moved to the
+        tab's own X; floating is dragging the tab out. A list docked ALONE
+        has no tab bar, so it keeps its title bar -- without it there would
+        be nothing to drag and no way to close. Floating lists always run
+        with the native frame (None here); an empty QWidget is what Qt
+        documents for suppressing a dock title bar.
+        """
+        if self.isFloating():
+            # hands off: _becomeRealWindow owns the floating state, and any
+            # window surgery here mid-drag would kill the tear-out gesture
+            return
+        mw = self.mainwindow
+        # visible mates only: a closed dock stays tabified in Qt's eyes, and
+        # counting it would strand the survivor without a title bar forever
+        # Visible AND still docked. Qt keeps a torn-out dock in its
+        # tabifiedDockWidgets list, so counting a floating mate left the
+        # survivor with a hidden title bar after the other tab was undocked
+        # (his click test, 2026-08-26). A closed dock lingers there too,
+        # which is what the visibility half covers.
+        tabbed = hasattr(mw, "tabifiedDockWidgets") and any(
+            d.isVisible() and not d.isFloating()
+            for d in mw.tabifiedDockWidgets(self)
+        )
+        if tabbed and self.titleBarWidget() is None:
+            # tabs carry the name and the X; the title row disappears.
+            # setFixedHeight(0), not a bare QWidget: a plain one reports a
+            # height of -1 and Qt logs "Negative sizes are not possible"
+            # while laying the dock out (measured 2026-08-26).
+            spacer = QWidget(self)
+            spacer.setFixedHeight(0)
+            self.setTitleBarWidget(spacer)
+            self._repolishTitle()
+        elif not tabbed and self.titleBarWidget() is not None:
+            # a lone list keeps Qt's ORIGINAL title bar. A slim tab-styled
+            # bar was tried and looked worse (his click test, 2026-08-25).
+            self.setTitleBarWidget(None)
+            self._repolishTitle()
+
+    def _repolishTitle(self):
+        """Repaint after a title bar swap.
+
+        Restoring the native title during a tab tear-out left it BLANK on
+        the dark theme until something else repainted it (his report,
+        2026-08-26): the app-level stylesheet does not re-resolve on a
+        title-bar widget change, and the system drag starves the repaint.
+        unpolish/polish forces the stylesheet pass, update() the paint.
+        """
+        style = self.style()
+        style.unpolish(self)
+        style.polish(self)
+        self.update()
+
+    def _dockIcon(self):
+        """The dock-back icon: the restore glyph, bold and crisp.
+
+        The same two-overlapping-squares shape as the title bar's own undock
+        button (his call, 2026-08-26). Coordinates are LOGICAL 16-space: a
+        painter on a devicePixelRatio pixmap scales painting itself, so the
+        device-space coordinates tried before drew double size and clipped
+        to a corner fragment (his screenshot, 2026-08-26). Integer coords,
+        no antialiasing: at 2x each 1-logical-px stroke lands on exactly two
+        device pixels, which is what crisp means here.
+        """
+        from PySide6.QtCore import QLineF, QRectF
+        from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+
+        pixmap = QPixmap(32, 32)          # 2x canvas; painting is 16-logical
+        pixmap.setDevicePixelRatio(2.0)
+        pixmap.fill(QColor(0, 0, 0, 0))
+        color = self.palette().windowText().color()
+
+        painter = QPainter(pixmap)
+        pen = QPen(color, 1)
+        pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+        painter.setPen(pen)
+        # back square (6,3)-(13,10): top and right edges plus the two stubs
+        # that vanish behind the front square
+        painter.drawLines([
+            QLineF(6, 3, 13, 3),          # top
+            QLineF(13, 3, 13, 10),        # right
+            QLineF(6, 3, 6, 5),           # left stub
+            QLineF(11, 10, 13, 10),       # bottom stub
+        ])
+        painter.drawRect(QRectF(3, 6, 7, 7))   # the front square, whole
+        painter.end()
+        return QIcon(pixmap)
 
     def _syncDockAction(self, floating : bool):
-        """Show a "Dock this list" menubar action while the list floats.
+        """Show an icon-only dock-back button while the list floats.
 
-        Created on the first float and re-attached on every one: the lists
-        rebuild their menubars (object list on column changes, for one), which
-        silently drops any action added earlier. Membership is re-checked
-        against the menubar each time rather than trusting a stored flag.
+        An icon, not a text menu item, matching the undock affordance's
+        vocabulary (his call, 2026-08-25), leftmost in the bar (his call,
+        2026-08-26). It is the menubar's FIRST ACTION, not a corner widget: a
+        left corner widget OVERLAPS the first menu item on macOS instead of
+        pushing it aside (his report, 2026-08-26, the icon sat on "List").
+        An action gets real layout space, so the menus shift right of it.
+        Rebuilds drop menubar actions, so membership is re-checked each
+        float rather than trusted.
         """
         if floating:
-            if self._dock_action is None:
+            if self._dock_button is None:
                 from PySide6.QtGui import QAction
-                self._dock_action = QAction("Dock this list", self)
-                self._dock_action.triggered.connect(
-                    lambda: self.setFloating(False)
-                )
+                action = QAction(self.main_widget)
+                action.setToolTip("Dock this list")
+                action.triggered.connect(lambda: self.setFloating(False))
+                self._dock_button = action
+            # repainted on every float, so a theme switch recolors it: the
+            # icon is drawn from the CURRENT palette, the same treatment as
+            # the status bar's sidebar icon (his call, 2026-08-26; the stock
+            # style icon was too small to make out)
+            self._dock_button.setIcon(self._dockIcon())
             menubar = self.main_widget.menuBar()
-            if self._dock_action not in menubar.actions():
-                menubar.addAction(self._dock_action)
-            self._dock_action.setVisible(True)
-        elif self._dock_action is not None:
-            self._dock_action.setVisible(False)
+            actions = menubar.actions()
+            if self._dock_button not in actions:
+                menubar.insertAction(
+                    actions[0] if actions else None, self._dock_button
+                )
+            self._dock_button.setVisible(True)
+        elif self._dock_button is not None:
+            self._dock_button.setVisible(False)
 
     def createMenus(self):
         """Create the menubar and context menu for the widget.
@@ -291,12 +493,13 @@ class DataTable(QDockWidget):
         """Update the title of the widget."""
         self.setWindowTitle(f"{self.name.capitalize()} List")
         
-    def resizeEvent(self, event):
-        """Resize the table when window is resized."""
-        super().resizeEvent(event)
-        w = event.size().width()
-        h = event.size().height()
-        self.table.resize(w, h-20)
+    # No resizeEvent override on purpose. The table is main_widget's CENTRAL
+    # WIDGET (createTable), so the layout already sizes it to the space under
+    # the menu bar. An old override resized it by hand to the DOCK's height
+    # minus a guessed 20px, which ignored the real title bar and menu bar:
+    # docked, the table ran past its viewport and the last rows could not be
+    # scrolled to (his report, 2026-08-26; undocking changed the geometry
+    # enough to hide it). The layout needs no help.
 
     def selectedRows(self):
         """Get the indices of the rows the user has selected, without repeats.
@@ -390,8 +593,33 @@ class DataTable(QDockWidget):
             selection, QItemSelectionModel.ClearAndSelect
         )
     
+    def _titleBarContextMenu(self, event) -> bool:
+        """Offer float/dock/close on a TITLE BAR right-click (his ask,
+        2026-08-25). Returns True when the click was on the title bar (or a
+        floating list's frame area) and the menu was shown; content clicks
+        return False and keep the trace/object menu. Kept as an attribute so
+        the tests can reach the menu popup() shows."""
+        # floating lists run under the native frame, whose right-click is
+        # the OS's; their road back is the "Dock this list" menubar button
+        if (
+            event is None or self.isFloating()
+            or self.main_widget.geometry().contains(event.pos())
+        ):
+            return False
+        from PySide6.QtWidgets import QMenu
+
+        menu = QMenu(self)
+        menu.aboutToHide.connect(menu.deleteLater)
+        menu.addAction("Undock this list", lambda: self.setFloating(True))
+        menu.addAction("Close this list", self.close)
+        self._titlebar_menu = menu
+        menu.popup(event.globalPos())
+        return True
+
     def contextMenuEvent(self, event=None):
         """Executed when button is right-clicked: pulls up menu for user."""
+        if self._titleBarContextMenu(event):
+            return
         super().contextMenuEvent(event)
 
         items = self.getSelected()
@@ -507,4 +735,11 @@ class DataTable(QDockWidget):
         """Remove self from manager table list."""
         self.manager.tables[self.name].remove(self)
         super().closeEvent(event)
+        # a tab group that shrank to one list gets its title bar back. The
+        # hide() runs first: Qt hides a closed widget only after this event
+        # returns, and the sync's visible-mates check must not count this one.
+        self.hide()
+        sync_all = getattr(self.manager, "_syncTitleBars", None)
+        if sync_all is not None:
+            sync_all()
 

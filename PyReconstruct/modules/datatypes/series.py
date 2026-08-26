@@ -2583,7 +2583,7 @@ class Series():
         Autoseg produces these (often a one-pixel spike doubling back), and a
         crossed outline blocks the scalpel. Each candidate record carries
         ``repairable``: True when repair_self_crossing accepts it under the
-        safety ratio, False when the crossing separates real lobes and only
+        safety ratio, False when the crossing separates real loops and only
         the scissors should touch it. Locked objects are skipped, matching the
         other clean-up scans. Scans only; use repairSelfCrossingTraces to
         apply.

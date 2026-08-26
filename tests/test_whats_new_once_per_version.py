@@ -449,19 +449,23 @@ def test_help_toggle_reflects_the_stored_state_when_the_menu_opens(main_window):
 
     settings = QSettings(W.ORG, W.APP)    # the suite's redirected store
 
-    # freshly built with nothing stored: the popup is on, the toggle says so
+    # The row reads "Turn off What's new pop-up", so a TICK is the disabled
+    # state (his call, 2026-08-26): the checkmark and the stored suppression
+    # flag are the same thing.
+    #
+    # freshly built with nothing stored: the popup is on, so the row is clear
     assert main_window.togglewhatsnew_act.isCheckable() is True
-    assert main_window.togglewhatsnew_act.isChecked() is True
+    assert main_window.togglewhatsnew_act.isChecked() is False
 
     # the dialog's button flips the preference behind the menu's back...
     settings.setValue(F.WHATSNEW_SUPPRESS_KEY, True)
-    # ...and opening Help brings the toggle back to the truth
+    # ...and opening Help brings the toggle back to the truth: off means ticked
     main_window.helpmenu.aboutToShow.emit()
-    assert main_window.togglewhatsnew_act.isChecked() is False
+    assert main_window.togglewhatsnew_act.isChecked() is True
 
     settings.setValue(F.WHATSNEW_SUPPRESS_KEY, False)
     main_window.helpmenu.aboutToShow.emit()
-    assert main_window.togglewhatsnew_act.isChecked() is True
+    assert main_window.togglewhatsnew_act.isChecked() is False
 
 
 def test_help_toggle_reenables_the_popup(main_window):
@@ -469,28 +473,29 @@ def test_help_toggle_reenables_the_popup(main_window):
 
     Driven through ``trigger()``, which is what a real menu click does: it
     flips the checked state and then runs the handler, so this covers the
-    ``not isChecked()`` polarity in ``toggleWhatsNewPopup`` -- the handler
-    reads the state the click just produced, and getting that backwards would
-    persist the opposite of every click. The re-enabled preference is then
-    read back through the pure gate to show the popup is eligible again.
+    polarity in ``toggleWhatsNewPopup`` -- the handler reads the state the
+    click just produced, and getting that backwards would persist the
+    opposite of every click. Checked means OFF here (his call, 2026-08-26),
+    matching the row's wording. The re-enabled preference is then read back
+    through the pure gate to show the popup is eligible again.
     """
     from PySide6.QtCore import QSettings
 
     settings = QSettings(W.ORG, W.APP)
 
-    # off: the click unchecks the toggle and persists the suppression
-    assert main_window.togglewhatsnew_act.isChecked() is True
-    main_window.togglewhatsnew_act.trigger()
+    # off: the click TICKS the row ("turn off") and persists the suppression
     assert main_window.togglewhatsnew_act.isChecked() is False
+    main_window.togglewhatsnew_act.trigger()
+    assert main_window.togglewhatsnew_act.isChecked() is True
     assert F.whats_new_suppressed(settings.value(F.WHATSNEW_SUPPRESS_KEY))
     assert W.maybe_show_whats_new(
         None, settings=settings, current="1.21.0",
         show=lambda *a, **k: pytest.fail("suppressed popup was shown"),
     ) is False
 
-    # back on: the popup is eligible again under the once-per-version rules
+    # back on: unticking the row makes the popup eligible again
     main_window.togglewhatsnew_act.trigger()
-    assert main_window.togglewhatsnew_act.isChecked() is True
+    assert main_window.togglewhatsnew_act.isChecked() is False
     assert not F.whats_new_suppressed(settings.value(F.WHATSNEW_SUPPRESS_KEY))
     settings.setValue(F.WHATSNEW_KEY, "1.20.3")     # a pending bump
     calls = []
