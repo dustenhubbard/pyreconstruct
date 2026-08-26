@@ -703,12 +703,16 @@ class FieldWidgetTrace(FieldWidgetBase):
             ## "Clean up" submenu). test_knife_cut_guards pins the message
             ## against the live menu titles, so a rename there fails a test
             ## instead of orphaning this hint.
+            ## Two roads, by cause (Patrick's report, 2026-08-25): a
+            ## hand-drawn figure 8 is fixed with the scissors, not Clean up.
             notify(
                 "A selected trace's outline crosses over itself, so the cut "
                 "cannot tell inside from outside.\n"
                 "The object was left unchanged.\n\n"
-                "Try Series > Clean up to remove stray traces from "
-                "automatic segmentation, which are a common cause of this."
+                "For a hand-drawn crossing (a figure 8), use the scissors "
+                "tool to cut out the crossing point, then retrace it.\n"
+                "For stray traces from automatic segmentation, "
+                "Series > Clean up removes them."
             )
 
             return False

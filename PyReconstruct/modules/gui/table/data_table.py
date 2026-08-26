@@ -24,11 +24,20 @@ class DataTable(QDockWidget):
     FLOAT_MIN_WIDTH = 500
     FLOAT_MIN_HEIGHT = 640
 
-    # Hard floor, docked or floating. Qt's own floor (90x129) leaves a list
-    # unreadable. Kept low enough that side-by-side docked lists and the
-    # field still fit on small screens.
+    # Floor while DOCKED. Qt's own floor (90x129) leaves a docked list
+    # unreadable, and the dock split used to squeeze lists there. Kept low
+    # enough that side-by-side docked lists and the field still fit on small
+    # screens.
     MIN_WIDTH = 200
     MIN_HEIGHT = 250
+
+    # Floor while FLOATING. Deliberately much lower: a floated list sized by
+    # hand is a choice, not an accident. Patrick keeps a three-row object
+    # list floating to mark the p-stamp he is on, and the docked floor
+    # blocked that (his report, 2026-08-25). This floor only stops a floated
+    # list from vanishing under its own title bar.
+    FLOAT_SHRINK_MIN_WIDTH = 120
+    FLOAT_SHRINK_MIN_HEIGHT = 100
 
     # gives every list a unique objectName; QMainWindow.saveState() cannot
     # restore a dock widget without one
@@ -113,6 +122,13 @@ class DataTable(QDockWidget):
                     max(self.width(), self.FLOAT_MIN_WIDTH),
                     max(self.height(), self.FLOAT_MIN_HEIGHT)
                 )
+            # a floated list may be shrunk by hand well below the docked
+            # floor; see FLOAT_SHRINK_MIN_*
+            self.setMinimumSize(
+                self.FLOAT_SHRINK_MIN_WIDTH, self.FLOAT_SHRINK_MIN_HEIGHT
+            )
+        else:
+            self.setMinimumSize(self.MIN_WIDTH, self.MIN_HEIGHT)
         self._syncDockAction(floating)
         sync_all = getattr(self.manager, "_syncTitleBars", None)
         if sync_all is not None:

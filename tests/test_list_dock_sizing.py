@@ -273,12 +273,32 @@ def test_minimum_is_set_on_every_list_type(qapp, dock_mainwindow, manager):
         assert table.minimumHeight() == table.MIN_HEIGHT
 
 
-def test_floating_list_cannot_shrink_below_minimum(qapp, dock_mainwindow, manager):
+def test_floating_list_shrinks_to_the_float_floor_only(qapp, dock_mainwindow, manager):
+    """Patrick's three-row list (2026-08-25): a floated list sized by hand may
+    go far below the docked floor, down to the float floor and no further."""
     table = open_list(manager, "object", qapp)
     table.setFloating(True)
     settle(qapp)
-    table.resize(50, 50)
+    table.resize(150, 140)              # a deliberate tiny list: allowed
     settle(qapp)
+    assert table.width() == 150
+    assert table.height() == 140
+    table.resize(50, 50)                # below even the float floor: clamped
+    settle(qapp)
+    assert table.width() >= table.FLOAT_SHRINK_MIN_WIDTH
+    assert table.height() >= table.FLOAT_SHRINK_MIN_HEIGHT
+
+
+def test_redocking_a_tiny_float_restores_the_docked_floor(qapp, dock_mainwindow, manager):
+    table = open_list(manager, "object", qapp)
+    table.setFloating(True)
+    settle(qapp)
+    table.resize(150, 140)
+    settle(qapp)
+    table.setFloating(False)
+    settle(qapp)
+    assert table.minimumWidth() == table.MIN_WIDTH
+    assert table.minimumHeight() == table.MIN_HEIGHT
     assert table.width() >= table.MIN_WIDTH
     assert table.height() >= table.MIN_HEIGHT
 

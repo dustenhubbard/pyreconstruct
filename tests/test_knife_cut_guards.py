@@ -48,8 +48,10 @@ SELF_INTERSECTION_REFUSAL = (
     "A selected trace's outline crosses over itself, so the cut "
     "cannot tell inside from outside.\n"
     "The object was left unchanged.\n\n"
-    "Try Series > Clean up to remove stray traces from "
-    "automatic segmentation, which are a common cause of this."
+    "For a hand-drawn crossing (a figure 8), use the scissors "
+    "tool to cut out the crossing point, then retrace it.\n"
+    "For stray traces from automatic segmentation, "
+    "Series > Clean up removes them."
 )
 
 
