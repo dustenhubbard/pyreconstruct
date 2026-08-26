@@ -270,7 +270,7 @@ class DataTable(QDockWidget):
         the palette's text color at 2x for crisp Retina rendering, in the
         same visual family as the status bar's sidebar icon.
         """
-        from PySide6.QtCore import QPointF, QRectF, QSize
+        from PySide6.QtCore import QPointF, QRectF
         from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap, QPolygonF
 
         size = 32                     # painted 2x; the bar shows it at 16
