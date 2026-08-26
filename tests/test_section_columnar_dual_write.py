@@ -837,6 +837,10 @@ OUT_OF_CLASS_TRACE_EDITS = {
         "mergeTags edits tags in place",
     "modules/datatypes/series.py::Series.copyObjects":
         "DETACHED: renames `trace.copy()`, then addTrace",
+    "modules/datatypes/series.py::Series.repairSelfCrossingTraces":
+        "DETACHED: `new_trace = trace.copy()` takes the points rewrite; the "
+        "section's own trace is only removed (removeTrace) and the repaired "
+        "copy inserted (addTrace), both store-aware",
     "modules/datatypes/series.py::Series.copyTracesToSections":
         "DETACHED: `new_trace = trace.copy()`, re-projected, then addTrace",
     "modules/datatypes/series.py::Series.deleteDuplicateTraces":

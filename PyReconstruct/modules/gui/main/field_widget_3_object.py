@@ -329,6 +329,36 @@ class FieldWidgetObject(FieldWidgetTrace):
         self.mainwindow.field.findTrace(obj_name, index)
         self.mainwindow.field.setFocus()
 
+    def repairSelfCrossingContours(self, records: list) -> list:
+        """Apply the self-crossing repairs; the delete path's sibling.
+
+        Same shape as deleteMalformedContours: refuse locked objects, save
+        field data, let the series (whose enumerateSections records the undo
+        state) do the work, then refresh the tables and field.
+        """
+        if not records:
+            return []
+
+        names = {r["name"] for r in records}
+        if any(self.series.getAttr(n, "locked") for n in names):
+            notify(
+                "Cannot repair traces of locked objects.\n"
+                "Please unlock before repairing."
+            )
+            return []
+
+        self.mainwindow.saveAllData()
+
+        repaired = self.series.repairSelfCrossingTraces(
+            records,
+            series_states=self.series_states,
+        )
+
+        if repaired:
+            self.table_manager.updateObjects({r["name"] for r in repaired})
+            self.reload()
+        return repaired
+
     def deleteMalformedContours(self, records: list) -> list:
         """Delete malformed contours chosen in the dialog.
 

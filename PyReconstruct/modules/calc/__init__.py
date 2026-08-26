@@ -30,6 +30,7 @@ from .grid import (
     getExterior
 )
 from .polygon import (
+    repair_self_crossing,
     uncuttable_closed_traces
 )
 from .image import (
