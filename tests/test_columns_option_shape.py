@@ -28,6 +28,11 @@ COLUMN_OPTIONS = [
     "flag_columns",
     "section_columns",
     "ztrace_columns",
+    # the field hover pop-up's columns (ported from upstream 267c2625,
+    # 2026-08-26). Not a data list's columns, but the same
+    # (name, enabled) pair shape, so the same validation applies -- and a
+    # hand-edited .jser can break it the same way.
+    "hover_columns",
 ]
 
 
