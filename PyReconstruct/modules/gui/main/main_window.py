@@ -3516,7 +3516,7 @@ class MainWindow(QMainWindow):
             prompt = (
                 f"Repair {len(safe)} self-crossing {noun}? The tiny crossing "
                 "is removed and the trace's real outline is kept.\n"
-                "This can be undone (Ctrl+Z)."
+                f"This can be undone ({undo_chord()})."
             )
             if lobed:
                 skipped_noun = "trace needs" if len(lobed) == 1 else "traces need"
@@ -3569,11 +3569,13 @@ class MainWindow(QMainWindow):
             notify("No empty traces found.")
             return
 
+        from PyReconstruct.modules.gui.utils import undo_chord
+
         count = len(candidates)
         noun = "empty trace" if count == 1 else "empty traces"
         if not notifyConfirm(
             f"Remove {count} {noun} from the series?\n\n"
-            "This can be undone (Ctrl+Z).",
+            f"This can be undone ({undo_chord()}).",
             yn=True,
         ):
             return
