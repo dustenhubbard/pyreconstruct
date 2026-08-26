@@ -351,6 +351,10 @@ _TOGGLE_UPDATECHECK_ROW = (1, "act", "toggleupdatecheck_act")
 # offers the Dev beta, Dev offers stable; legacy Beta-channel users hold a
 # lone beta install and this is their road back to stable.
 _GET_OTHER_FLAVOR_ROW = (1, "act", "getotherflavor_act")
+# Series > Clean up > Repair self-crossing traces (2026-08-25, Patrick's
+# report): autoseg's zero-width spikes block the scalpel; the safe ones are
+# repaired in bulk, real figure 8s are skipped for the scissors.
+_REPAIR_SELF_CROSSINGS_ROW = (2, "act", "repairselfcrossings_act")
 # Help > "Search menus...": the in-window menubar never gets macOS's native
 # Help search, so the app carries its own palette (stable ship, 2026-08-21).
 _SEARCH_MENUS_ROW = (1, "act", "searchmenus_act")
@@ -376,6 +380,10 @@ MENUBAR_EXPECTED.insert(
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "act", "checkupdates_act")) + 1,
     _GET_OTHER_FLAVOR_ROW,
+)
+MENUBAR_EXPECTED.insert(
+    MENUBAR_EXPECTED.index((2, "act", "removeempty_act")) + 1,
+    _REPAIR_SELF_CROSSINGS_ROW,
 )
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "act", "shortcutshelp_act")), _SEARCH_MENUS_ROW
@@ -443,7 +451,7 @@ def test_menubar_action_and_submenu_counts():
     each took the count up one, 117 to 119 together.
     """
     rows = _rows()
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 122
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 123
     assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 31
 
 
@@ -617,6 +625,7 @@ SERIES_MENU_LABELS = [
     "    Find duplicates named differently...",
     "    Remove pixel-dust traces...",
     "    Remove empty traces...",
+    "    Repair self-crossing traces...",
     "-----",
     "Restore object curation status from log",
     "-----",

@@ -3208,10 +3208,13 @@ def test_remove_would_not_be_the_operation_contour_remove_is():
         "modules/datatypes/series.py:deleteAllTraces",
         "modules/datatypes/series.py:deleteMalformedTraces",
         "modules/datatypes/series.py:deleteDuplicateTraces",
+        "modules/datatypes/series.py:repairSelfCrossingTraces",
         "modules/datatypes/series.py:splitObject",
     }, readds
-    assert len(readds) == 11, readds
-    assert sum(readds.values()) == 6, (
+    assert len(readds) == 12, readds
+    # repairSelfCrossingTraces (2026-08-25) removes the crossed trace and
+    # re-adds the repaired copy, so it lands on the readd side
+    assert sum(readds.values()) == 7, (
         f"the remove/mutate/add shape has changed: {readds}. The argument for "
         f"keeping `remove` off the view rests on it."
     )
