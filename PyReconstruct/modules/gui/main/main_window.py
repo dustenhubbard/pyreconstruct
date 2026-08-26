@@ -786,13 +786,17 @@ class MainWindow(QMainWindow):
         preference can change outside the menu, through the dialog's "Don't
         show again" button, and a checkable that contradicts the stored state
         would invert itself on the next click.
+
+        Checked means the popup is OFF, matching the row's wording (his call,
+        2026-08-26): the tick and the stored suppression flag are the same
+        thing now, so the dialog's button and this row always agree.
         """
         from PyReconstruct.modules.gui.main.first_launch import (
             WHATSNEW_SUPPRESS_KEY, whats_new_suppressed,
         )
         settings = QSettings(*settings_domain())
         self.togglewhatsnew_act.setChecked(
-            not whats_new_suppressed(settings.value(WHATSNEW_SUPPRESS_KEY))
+            whats_new_suppressed(settings.value(WHATSNEW_SUPPRESS_KEY))
         )
 
     def syncUpdateCheckToggle(self):
@@ -832,17 +836,21 @@ class MainWindow(QMainWindow):
         self.menusearchfield_act.focusField()
 
     def toggleWhatsNewPopup(self):
-        """Persist the Help-menu toggle: checked means the popup may show.
+        """Persist the Help-menu toggle: CHECKED means the popup is off.
 
-        Writes only the suppression preference. The once-per-version record is
-        deliberately untouched, so re-enabling hands back the ordinary rules:
-        a version bump missed while the popup was off shows on the next
-        launch, and a version already seen stays seen.
+        The row reads "Turn off What's new pop-up", so a tick is the
+        disabled state (his call, 2026-08-26); the stored preference is the
+        suppression flag itself, and the two now match exactly.
+
+        Writes only that preference. The once-per-version record is
+        deliberately untouched, so switching the popup back on hands back the
+        ordinary rules: a version bump missed while it was off shows on the
+        next launch, and a version already seen stays seen.
         """
         from PyReconstruct.modules.gui.main.first_launch import WHATSNEW_SUPPRESS_KEY
         settings = QSettings(*settings_domain())
         settings.setValue(
-            WHATSNEW_SUPPRESS_KEY, not self.togglewhatsnew_act.isChecked()
+            WHATSNEW_SUPPRESS_KEY, self.togglewhatsnew_act.isChecked()
         )
 
     def changeUsername(self, new_name : str = None):

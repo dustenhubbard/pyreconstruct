@@ -515,7 +515,9 @@ def return_help_menu(self):
             # menubar's other checkables this one resyncs on every Help open
             # (see MainWindow.createMenuBar), because the dialog can flip the
             # preference behind the menu's back.
-            ("togglewhatsnew_act", "Show what's new after updates", "checkbox",
+            # Checked means OFF, matching the wording (his call, 2026-08-26):
+            # the tick IS the stored suppression flag.
+            ("togglewhatsnew_act", "Turn off What's new pop-up", "checkbox",
              self.toggleWhatsNewPopup),
             None,
             # 5. the rest, unchanged

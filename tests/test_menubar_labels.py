@@ -324,7 +324,8 @@ MENUBAR_BASELINE = [
 #    small to grab, short of quitting and clearing `window/geometry` by hand.
 #    It lands after the submenu, next to "Reset palette position", not inside
 #    it: the palette submenu is palette-scoped and this is window-scoped.
-# 4. "Show what's new after updates" in Help, directly under "What's new".
+# 4. "Turn off What's new pop-up" in Help, directly under "What's new".
+#    Checked means OFF (his call, 2026-08-26).
 #    Added with the What's-new dialog's "Don't show again" button: the button
 #    switches the startup popup off, and a preference that could only be
 #    switched off from inside the dialog it hides needs a visible way back on.
