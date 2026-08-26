@@ -153,8 +153,10 @@ class TableManager():
 
     def _wireTabBars(self):
         """Give every dock tab an X (his call, 2026-08-25: "tabs but with
-        x's"). Wired at most once per tab bar; Qt reuses them, and the
-        property guard keeps a rewire from stacking connections."""
+        x's") and a double-click that floats its list, the deliberate sibling
+        of dragging the tab out. Wired at most once per tab bar; Qt reuses
+        them, and the property guard keeps a rewire from stacking
+        connections."""
         for tb in self._dockTabBars():
             tb.setTabsClosable(True)
             if not tb.property("pyrecon_close_wired"):
@@ -162,6 +164,48 @@ class TableManager():
                 tb.tabCloseRequested.connect(
                     lambda i, tb=tb: self._closeTabbedList(tb, i)
                 )
+                tb.tabBarDoubleClicked.connect(
+                    lambda i, tb=tb: self._floatTabbedList(tb, i)
+                )
+                from PySide6.QtCore import Qt as _Qt
+                tb.setContextMenuPolicy(_Qt.CustomContextMenu)
+                tb.customContextMenuRequested.connect(
+                    lambda pos, tb=tb: self._tabContextMenu(tb, pos)
+                )
+
+    def _floatTabbedList(self, tab_bar, index):
+        """Float the list behind a double-clicked tab."""
+        table = self._tableForTab(tab_bar, index)
+        if table is not None:
+            table.setFloating(True)
+
+    def _tableForTab(self, tab_bar, index):
+        """The list behind a dock tab, matched by the pointer in tabData
+        (tab TEXT collides when two lists of one type are open)."""
+        import shiboken6
+        ptr = tab_bar.tabData(index)
+        for tables in self.tables.values():
+            for table in tables:
+                if shiboken6.getCppPointer(table)[0] == ptr:
+                    return table
+        return None
+
+    def _tabContextMenu(self, tab_bar, pos):
+        """Right-click on a tab: float or close its list (his ask,
+        2026-08-25). Returned for the tests; popped up for the user."""
+        index = tab_bar.tabAt(pos)
+        if index < 0:
+            return None
+        table = self._tableForTab(tab_bar, index)
+        if table is None:
+            return None
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(tab_bar)
+        menu.aboutToHide.connect(menu.deleteLater)
+        menu.addAction("Float this list", lambda: table.setFloating(True))
+        menu.addAction("Close this list", table.close)
+        menu.popup(tab_bar.mapToGlobal(pos))
+        return menu
 
     def _closeTabbedList(self, tab_bar, index):
         """Close the list behind a dock tab's X.

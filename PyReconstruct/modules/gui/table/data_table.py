@@ -16,6 +16,49 @@ from PyReconstruct.modules.gui.dialog import (
     TableColumnsDialog
 )
 
+class ListTitleBar(QWidget):
+    """A slim title bar for a lone docked list, dressed like a tab.
+
+    One docked list has no tab bar, so Qt shows its full title bar; two or
+    more show tabs and no title bar. The jump between the two looked drastic
+    and the buttons vanished (his click test, 2026-08-25). This bar keeps
+    the same vocabulary as a tab: the list's name on the left, a float
+    button and an X on the right, at tab height. Qt still drags the dock by
+    any non-button part of a custom title bar, so tear-out keeps working.
+    """
+
+    def __init__(self, table):
+        super().__init__(table)
+        from PySide6.QtWidgets import QHBoxLayout, QLabel, QStyle, QToolButton
+
+        self._label = QLabel(table.windowTitle(), self)
+        style = self.style()
+
+        def button(icon, tip, slot):
+            b = QToolButton(self)
+            b.setAutoRaise(True)
+            b.setIcon(style.standardIcon(icon))
+            b.setToolTip(tip)
+            b.clicked.connect(slot)
+            return b
+
+        self.float_button = button(
+            QStyle.StandardPixmap.SP_TitleBarNormalButton,
+            "Float this list", lambda: table.setFloating(True),
+        )
+        self.close_button = button(
+            QStyle.StandardPixmap.SP_TitleBarCloseButton,
+            "Close this list", table.close,
+        )
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 2, 2, 2)
+        layout.addWidget(self._label)
+        layout.addStretch(1)
+        layout.addWidget(self.float_button)
+        layout.addWidget(self.close_button)
+
+
 class DataTable(QDockWidget):
 
     # A newly floated list gets at least this size. Docked lists can be
@@ -109,30 +152,72 @@ class DataTable(QDockWidget):
         (Qt restores the last floating geometry on its own).
         """
         if floating:
-            self.setWindowFlags(
-                Qt.Window
-                | Qt.WindowMinimizeButtonHint
-                | Qt.WindowMaximizeButtonHint
-                | Qt.WindowCloseButtonHint
-            )
-            self.show()
-            if not self._float_size_applied:
-                self._float_size_applied = True
-                self.resize(
-                    max(self.width(), self.FLOAT_MIN_WIDTH),
-                    max(self.height(), self.FLOAT_MIN_HEIGHT)
-                )
-            # a floated list may be shrunk by hand well below the docked
-            # floor; see FLOAT_SHRINK_MIN_*
-            self.setMinimumSize(
-                self.FLOAT_SHRINK_MIN_WIDTH, self.FLOAT_SHRINK_MIN_HEIGHT
-            )
+            # NEVER reflag mid-drag: swapping window flags destroys and
+            # recreates the native window under the cursor, which kills the
+            # tear-out gesture (found in his click test, 2026-08-25: docked
+            # lists could not be dragged out at all). Wait for the release.
+            self._whenMouseReleased(self._becomeRealWindow)
         else:
             self.setMinimumSize(self.MIN_WIDTH, self.MIN_HEIGHT)
         self._syncDockAction(floating)
         sync_all = getattr(self.manager, "_syncTitleBars", None)
         if sync_all is not None:
             sync_all()
+
+    def _whenMouseReleased(self, callback):
+        """Run ``callback`` now, or after the mouse button is let go.
+
+        A dock tear-out arrives with the left button still held; a float from
+        code (restoreLayout, the tab double-click) arrives with no button.
+        """
+        from PySide6.QtWidgets import QApplication
+
+        if not (QApplication.mouseButtons() & Qt.LeftButton):
+            callback()
+            return
+        from PySide6.QtCore import QTimer
+
+        timer = QTimer(self)
+        timer.setInterval(30)
+
+        def poll():
+            if QApplication.mouseButtons() & Qt.LeftButton:
+                return
+            timer.stop()
+            timer.deleteLater()
+            if self.isFloating():   # the drag may have ended back in the dock
+                callback()
+
+        timer.timeout.connect(poll)
+        timer.start()
+
+    def _becomeRealWindow(self):
+        """The floating half of _onTopLevelChanged, once it is safe.
+
+        The title bar widget clears FIRST: setTitleBarWidget recreates the
+        native window and Qt hands the fresh one default (tool) flags, so
+        clearing it after setWindowFlags un-did the flags (caught by
+        test_code_driven_float_is_still_immediate when the slim bar landed).
+        """
+        if self.titleBarWidget() is not None:
+            self.setTitleBarWidget(None)
+        self.setWindowFlags(
+            Qt.Window
+            | Qt.WindowMinimizeButtonHint
+            | Qt.WindowMaximizeButtonHint
+            | Qt.WindowCloseButtonHint
+        )
+        self.show()
+        if not self._float_size_applied:
+            self._float_size_applied = True
+            self.resize(
+                max(self.width(), self.FLOAT_MIN_WIDTH),
+                max(self.height(), self.FLOAT_MIN_HEIGHT)
+            )
+        # a floated list may be shrunk by hand well below the docked floor
+        self.setMinimumSize(
+            self.FLOAT_SHRINK_MIN_WIDTH, self.FLOAT_SHRINK_MIN_HEIGHT
+        )
 
     def syncDockedTitleBar(self):
         """Hide the title bar while this list shares a tab group.
@@ -147,8 +232,8 @@ class DataTable(QDockWidget):
         documents for suppressing a dock title bar.
         """
         if self.isFloating():
-            if self.titleBarWidget() is not None:
-                self.setTitleBarWidget(None)
+            # hands off: _becomeRealWindow owns the floating state, and any
+            # window surgery here mid-drag would kill the tear-out gesture
             return
         mw = self.mainwindow
         # visible mates only: a closed dock stays tabified in Qt's eyes, and
@@ -156,10 +241,15 @@ class DataTable(QDockWidget):
         tabbed = hasattr(mw, "tabifiedDockWidgets") and any(
             d.isVisible() for d in mw.tabifiedDockWidgets(self)
         )
-        if tabbed and self.titleBarWidget() is None:
-            self.setTitleBarWidget(QWidget(self))
-        elif not tabbed and self.titleBarWidget() is not None:
-            self.setTitleBarWidget(None)
+        current = self.titleBarWidget()
+        if tabbed:
+            # tabs carry the name and the X; the title row disappears
+            if current is None or isinstance(current, ListTitleBar):
+                self.setTitleBarWidget(QWidget(self))
+        else:
+            # a lone list shows the tab-like slim bar, same buttons as a tab
+            if not isinstance(current, ListTitleBar):
+                self.setTitleBarWidget(ListTitleBar(self))
 
     def _syncDockAction(self, floating : bool):
         """Show a "Dock this list" menubar action while the list floats.
@@ -436,8 +526,33 @@ class DataTable(QDockWidget):
             selection, QItemSelectionModel.ClearAndSelect
         )
     
+    def _titleBarContextMenu(self, event) -> bool:
+        """Offer float/dock/close on a TITLE BAR right-click (his ask,
+        2026-08-25). Returns True when the click was on the title bar (or a
+        floating list's frame area) and the menu was shown; content clicks
+        return False and keep the trace/object menu. Kept as an attribute so
+        the tests can reach the menu popup() shows."""
+        # floating lists run under the native frame, whose right-click is
+        # the OS's; their road back is the "Dock this list" menubar button
+        if (
+            event is None or self.isFloating()
+            or self.main_widget.geometry().contains(event.pos())
+        ):
+            return False
+        from PySide6.QtWidgets import QMenu
+
+        menu = QMenu(self)
+        menu.aboutToHide.connect(menu.deleteLater)
+        menu.addAction("Float this list", lambda: self.setFloating(True))
+        menu.addAction("Close this list", self.close)
+        self._titlebar_menu = menu
+        menu.popup(event.globalPos())
+        return True
+
     def contextMenuEvent(self, event=None):
         """Executed when button is right-clicked: pulls up menu for user."""
+        if self._titleBarContextMenu(event):
+            return
         super().contextMenuEvent(event)
 
         items = self.getSelected()

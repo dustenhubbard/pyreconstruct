@@ -542,10 +542,18 @@ def test_tabbed_lists_hide_their_title_bars(qapp, dock_mainwindow, manager):
     assert second.titleBarWidget() is not None
 
 
-def test_a_lone_docked_list_keeps_its_title_bar(qapp, dock_mainwindow, manager):
-    """Without a tab there is nothing to drag and no X; the title bar stays."""
+def test_a_lone_docked_list_wears_the_tab_like_bar(qapp, dock_mainwindow, manager):
+    """A lone list has no tab bar, so it wears the slim tab-like bar: the
+    name plus the SAME float and close buttons the tabs carry, so going from
+    one list to two reads as one tab becoming two (his call, 2026-08-25)."""
+    from PyReconstruct.modules.gui.table.data_table import ListTitleBar
+
     only = open_list(manager, "object", qapp)
-    assert only.titleBarWidget() is None
+    bar = only.titleBarWidget()
+    assert isinstance(bar, ListTitleBar)
+    bar.float_button.click()
+    settle(qapp)
+    assert only.isFloating()
 
 
 def test_dock_tabs_carry_close_buttons(qapp, dock_mainwindow, manager):
@@ -573,14 +581,16 @@ def test_tab_x_closes_the_right_list(qapp, dock_mainwindow, manager):
     assert keeper.isVisible()
 
 
-def test_group_shrunk_to_one_gets_its_title_bar_back(qapp, dock_mainwindow, manager):
+def test_group_shrunk_to_one_gets_the_slim_bar_back(qapp, dock_mainwindow, manager):
+    from PyReconstruct.modules.gui.table.data_table import ListTitleBar
+
     keeper = open_list(manager, "object", qapp)
     goner = open_list(manager, "section", qapp)
     settle(qapp)
-    assert keeper.titleBarWidget() is not None
+    assert not isinstance(keeper.titleBarWidget(), ListTitleBar)
     goner.close()
     settle(qapp)
-    assert keeper.titleBarWidget() is None
+    assert isinstance(keeper.titleBarWidget(), ListTitleBar)
 
 
 def test_floated_list_never_keeps_the_empty_title_widget(qapp, dock_mainwindow, manager):
@@ -595,3 +605,105 @@ def test_floated_list_never_keeps_the_empty_title_widget(qapp, dock_mainwindow, 
     settle(qapp)
     assert second.titleBarWidget() is not None     # back in the tab group
     assert first.titleBarWidget() is not None
+
+
+# --------------------------------------------------------------------------
+# Tearing a list out by drag must survive the real-window flag swap
+# (his click test, 2026-08-25: the swap mid-drag killed the gesture).
+# --------------------------------------------------------------------------
+
+def test_flag_swap_waits_for_the_mouse_release(qapp, dock_mainwindow, manager, monkeypatch):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+
+    table = open_list(manager, "object", qapp)
+
+    held = {"buttons": Qt.LeftButton}
+    monkeypatch.setattr(
+        QApplication, "mouseButtons", staticmethod(lambda: held["buttons"])
+    )
+
+    table.setFloating(True)          # what a drag tear-out does, button held
+    settle(qapp)
+    assert not (table.windowFlags() & Qt.Window) == Qt.Window or \
+        (table.windowFlags() & Qt.Tool) == Qt.Tool   # still Qt's tool window
+
+    held["buttons"] = Qt.NoButton    # the user lets go
+    import time
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        qapp.processEvents()
+        flags = table.windowFlags()
+        if (flags & Qt.Window) and not (flags & Qt.Tool) == Qt.Tool:
+            break
+    flags = table.windowFlags()
+    assert flags & Qt.WindowMinimizeButtonHint   # the real-window flags landed
+    assert table.minimumHeight() == table.FLOAT_SHRINK_MIN_HEIGHT
+
+
+def test_code_driven_float_is_still_immediate(qapp, dock_mainwindow, manager):
+    """restoreLayout and the tab double-click float with no button held; the
+    flags must land synchronously, as every earlier float test assumes."""
+    from PySide6.QtCore import Qt
+
+    table = open_list(manager, "object", qapp)
+    table.setFloating(True)
+    settle(qapp)
+    assert table.windowFlags() & Qt.WindowMinimizeButtonHint
+
+
+def test_double_clicking_a_tab_floats_its_list(qapp, dock_mainwindow, manager):
+    import shiboken6
+
+    open_list(manager, "object", qapp)
+    second = open_list(manager, "section", qapp)
+    settle(qapp)
+    bar = manager._dockTabBars()[0]
+    ptr = shiboken6.getCppPointer(second)[0]
+    index = next(i for i in range(bar.count()) if bar.tabData(i) == ptr)
+    bar.tabBarDoubleClicked.emit(index)
+    settle(qapp)
+    assert second.isFloating()
+    assert second.width() >= second.FLOAT_MIN_WIDTH
+
+
+# --------------------------------------------------------------------------
+# Right-click roads between docked and floating (his ask, 2026-08-25)
+# --------------------------------------------------------------------------
+
+def test_tab_right_click_offers_float_and_close(qapp, dock_mainwindow, manager):
+    open_list(manager, "object", qapp)
+    second = open_list(manager, "section", qapp)
+    settle(qapp)
+    bar = manager._dockTabBars()[0]
+    import shiboken6
+    ptr = shiboken6.getCppPointer(second)[0]
+    index = next(i for i in range(bar.count()) if bar.tabData(i) == ptr)
+    menu = manager._tabContextMenu(bar, bar.tabRect(index).center())
+    labels = [a.text() for a in menu.actions()]
+    assert labels == ["Float this list", "Close this list"]
+    menu.actions()[0].trigger()
+    settle(qapp)                      # the menu deletes itself on hide
+    assert second.isFloating()
+
+
+def test_title_bar_right_click_offers_float_and_close(qapp, dock_mainwindow, manager):
+    """A lone docked list's title bar right-click floats or closes it.
+    Floating lists run under the native frame, so their right-click is the
+    OS's; the "Dock this list" menubar button is their road back."""
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QContextMenuEvent
+
+    table = open_list(manager, "object", qapp)
+    assert not table.main_widget.geometry().contains(QPoint(5, 2))
+
+    event = QContextMenuEvent(
+        QContextMenuEvent.Reason.Mouse, QPoint(5, 2),
+        table.mapToGlobal(QPoint(5, 2)),
+    )
+    table.contextMenuEvent(event)
+    labels = [a.text() for a in table._titlebar_menu.actions()]
+    assert labels == ["Float this list", "Close this list"]
+    table._titlebar_menu.actions()[0].trigger()
+    settle(qapp)
+    assert table.isFloating()

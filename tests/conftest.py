@@ -928,6 +928,15 @@ def main_window(qapp, series_jser, qsettings_snapshot, main_window_dialogs):
 
     previous_excepthook = _sys.excepthook
     window = MainWindow(str(series_jser))
+    # The list-layout memory (list_layout option, 2026-08-25) must not leak
+    # between tests: teardown's close() would capture whatever lists a test
+    # opened into the session's shared settings store, and the NEXT window on
+    # the same series code would silently reopen them -- which broke three
+    # unrelated premises (an empty table manager, the field's pixel width,
+    # the saved window geometry). Restore ran during construction and found
+    # this test's store state; capture is what plants the leak, so capture
+    # alone is stubbed. The layout tests drive the real manager directly.
+    window._captureListLayout = lambda: None
     try:
         yield window
     finally:

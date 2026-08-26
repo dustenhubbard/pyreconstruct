@@ -246,7 +246,6 @@ class MainWindow(QMainWindow):
         self.setGeometry(*self.defaultWindowGeometry())
 
         windowGeometrySettings().setValue("window/geometry", self.saveGeometry())
-        self._captureListLayout()
 
     def openWelcomeSeries(self):
         """Open a welcome series."""
@@ -4483,6 +4482,11 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Save all data to files when the user exits."""
+        # capture the list layout FIRST: saveToJser(close=True) closes the
+        # series, and capturing after it recorded nothing -- undocked lists
+        # did not survive a relaunch (his click test, 2026-08-25). A canceled
+        # close leaves the early capture behind, which is merely current.
+        self._captureListLayout()
         response = self.saveToJser(notify=True, close=True)
         if response == "cancel":
             event.ignore()
