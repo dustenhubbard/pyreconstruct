@@ -557,3 +557,12 @@ def test_lists_pill_exists_and_reports_clicks(qapp):
         assert readout.lists_segment.text() == "\u25e7"
     finally:
         readout.deleteLater()
+
+
+def test_lists_pill_hover_names_the_live_shortcut(qapp, main_window, gui_dialogs):
+    """The hover reads the collapse binding from the live action (his ask,
+    2026-08-25), platform-rendered, so a rebind updates it on the menubar
+    rebuild. The bare-widget default stays plain "Lists" (test above)."""
+    tooltip = main_window.status_readout.lists_segment.toolTip()
+    assert tooltip.startswith("Lists (")
+    assert len(tooltip) > len("Lists ()")

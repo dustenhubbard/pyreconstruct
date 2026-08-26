@@ -291,6 +291,17 @@ class MainWindow(QMainWindow):
         self.helpmenu.insertAction(first_help_action, self.menusearchfield_act)
         self.helpmenu.insertSeparator(first_help_action)
 
+        ## The Lists pill's hover names the collapse shortcut. Read from the
+        ## live action each menubar build, so a rebind through the shortcuts
+        ## dialog (which rebuilds the menubar) updates the hover too.
+        ## NativeText renders the platform's own chord.
+        if hasattr(self, "status_readout") and hasattr(self, "togglelists_act"):
+            from PySide6.QtGui import QKeySequence
+            key = self.togglelists_act.shortcut().toString(QKeySequence.NativeText)
+            self.status_readout.lists_segment.setToolTip(
+                f"Lists ({key})" if key else "Lists"
+            )
+
         ## Seed menubar checkables that have no aboutToShow resync hook from the
         ## live option, so they are correct on first show. checkActions keeps
         ## them synced thereafter (see its View-toggle block). NOTE: the menubar
