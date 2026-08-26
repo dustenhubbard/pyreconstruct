@@ -3503,6 +3503,8 @@ class MainWindow(QMainWindow):
         self.saveAllData()
 
 
+        from PyReconstruct.modules.gui.utils import undo_chord
+
         candidates = self.series.findSelfCrossingTraces()
         if not candidates:
             notify("No self-crossing traces found.")

@@ -184,3 +184,34 @@ def test_repaired_dialog_summarizes_with_the_same_roads(qapp, gui_dialogs):
         assert any(label.startswith("Save table as CSV") for label in labels)
     finally:
         dialog.deleteLater()
+
+
+def test_the_repair_prompt_builds_without_error(qapp, main_window, gui_dialogs, monkeypatch):
+    """The confirm prompt crashed live with NameError: the undo-chord helper
+    was used at line 3519 with no import in scope, and no test drove the
+    prompt itself (his error report, 2026-08-26). This one does: a spiked
+    trace goes in, the prompt must reach notifyConfirm and decline safely."""
+    from PyReconstruct.modules.datatypes import Trace
+    import PyReconstruct.modules.gui.main.main_window as mw
+
+    series = main_window.series
+    snum = sorted(series.sections)[0]
+    section = series.loadSection(snum)
+    trace = Trace("prompt_spike", (255, 0, 0), closed=True)
+    trace.points = [
+        (0.0, 0.0), (10.0, 0.0), (10.0, 10.0),
+        (5.0, 10.0), (5.0, 10.5), (5.0, 10.0),
+        (0.0, 10.0),
+    ]
+    section.addTrace(trace, log_event=False)
+    section.save()
+
+    prompts = []
+    monkeypatch.setattr(
+        mw, "notifyConfirm", lambda text, yn=True: prompts.append(text) or False
+    )
+    main_window.repairSelfCrossingTraces()      # raised NameError before
+
+    assert prompts, "the confirm prompt never built"
+    assert "This can be undone (" in prompts[0]
+    assert "Ctrl+Z" not in prompts[0] or "Cmd" not in prompts[0]
