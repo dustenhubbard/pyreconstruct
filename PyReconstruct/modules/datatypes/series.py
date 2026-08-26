@@ -2561,6 +2561,96 @@ class Series():
                         ))
         return candidates
 
+    def findSelfCrossingTraces(self, max_discard_ratio=0.05) -> list:
+        """Find closed traces whose outline crosses itself.
+
+        Autoseg produces these (often a one-pixel spike doubling back), and a
+        crossed outline blocks the scalpel. Each candidate record carries
+        ``repairable``: True when repair_self_crossing accepts it under the
+        safety ratio, False when the crossing separates real lobes and only
+        the scissors should touch it. Locked objects are skipped, matching the
+        other clean-up scans. Scans only; use repairSelfCrossingTraces to
+        apply.
+        """
+        from PyReconstruct.modules.calc import repair_self_crossing
+        from shapely.geometry import Polygon as _Polygon
+
+        candidates = []
+        for snum, section in self.enumerateSections(
+            message="Scanning for self-crossing traces...",
+        ):
+            for cname in section.contours:
+                if self.getAttr(cname, "locked"):
+                    continue
+                for index, trace in enumerate(section.contours[cname]):
+                    if not trace.closed or len(trace.points) < 3:
+                        continue
+                    if _Polygon(trace.points).is_valid:
+                        continue
+                    repaired = repair_self_crossing(
+                        trace.points, max_discard_ratio
+                    )
+                    record = Series._cleanupRecord(
+                        cname, snum, index, trace,
+                        "Outline crosses itself",
+                    )
+                    record["repairable"] = repaired is not None
+                    candidates.append(record)
+        return candidates
+
+    def repairSelfCrossingTraces(self, records : list, series_states=None,
+                                 max_discard_ratio=0.05,
+                                 message="Repairing self-crossing traces...") -> list:
+        """Repair the repairable records from findSelfCrossingTraces.
+
+        Mirrors deleteMalformedTraces: sections are reloaded, each record's
+        trace is re-found by its color-and-points signature, and the repair is
+        recomputed at apply time so an edit made since the scan cannot be
+        clobbered (an unmatched or no-longer-repairable trace is skipped and
+        left out of the returned list). The repaired trace replaces the
+        original through removeTrace/addTrace, so logs and tracking see an
+        ordinary edit and undo restores the original.
+        """
+        from PyReconstruct.modules.calc import repair_self_crossing
+
+        by_section = {}
+        for record in records:
+            if record.get("repairable"):
+                by_section.setdefault(record["section"], []).append(record)
+        if not by_section:
+            return []
+
+        repaired_records = []
+        for snum, section in self.enumerateSections(
+            message=message,
+            series_states=series_states
+        ):
+            changed = False
+            for record in by_section.get(snum, []):
+                contour = section.contours.get(record["name"])
+                if not contour:
+                    continue
+                for trace in contour:
+                    if self._traceMatchesSignature(trace, record["match"]):
+                        new_points = repair_self_crossing(
+                            trace.points, max_discard_ratio
+                        )
+                        if new_points is None:
+                            break
+                        new_trace = trace.copy()
+                        new_trace.points = new_points
+                        section.removeTrace(trace)
+                        section.addTrace(new_trace)
+                        repaired_records.append(record)
+                        changed = True
+                        break
+            if changed:
+                section.save()
+
+        if repaired_records:
+            self.modified = True
+        return repaired_records
+
     def findEmptyTraces(self, include_locked=False) -> list:
         """Find empty / degenerate traces (no meaningful geometry).
 
