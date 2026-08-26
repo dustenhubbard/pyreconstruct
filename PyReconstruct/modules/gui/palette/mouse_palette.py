@@ -685,6 +685,9 @@ class MousePalette():
         """Persist the current palette-visibility flags so they survive a restart."""
         state = {attr: getattr(self, attr) for attr in PALETTE_VIS_KEYS}
         save_palette_visibility(QSettings(*settings_domain()), state)
+        # every toggle road ends here, so this is where the View menu's
+        # checkboxes learn about a change they did not make
+        self.notifyVisibilityChanged()
 
     def loadPositionState(self):
         """Restore persisted palette positions over the in-memory defaults."""
@@ -745,6 +748,17 @@ class MousePalette():
             menu.popup(widget.mapToGlobal(pos))
 
         widget.customContextMenuRequested.connect(show)
+
+    def notifyVisibilityChanged(self):
+        """Tell the main window to re-read the View checkboxes.
+
+        Every visibility change lands here through saveVisibilityState, so
+        the menu stays in step with a right-click hide as well as its own
+        toggles (his report, 2026-08-26).
+        """
+        sync = getattr(self.mainwindow, "syncPaletteToggles", None)
+        if sync is not None:
+            sync()
 
     def applyVisibilityState(self):
         """Show/hide palette widgets to match the current visibility flags."""

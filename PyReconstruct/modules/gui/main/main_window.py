@@ -423,10 +423,7 @@ class MainWindow(QMainWindow):
         self.backupmenu.setEnabled(is_not_welcome_series)
 
         ## Check for palette
-        self.togglepalette_act.setChecked(not self.mouse_palette.palette_hidden)
-        self.toggleinc_act.setChecked(not self.mouse_palette.inc_hidden)
-        self.togglebc_act.setChecked(not self.mouse_palette.bc_hidden)
-        self.togglesb_act.setChecked(not self.mouse_palette.sb_hidden)
+        self.syncPaletteToggles()
 
         ## Sync the View-submenu checkboxes to the live field state so they are
         ## accurate every time the menu opens (state can change via shortcut,
@@ -2581,6 +2578,35 @@ class MainWindow(QMainWindow):
         """Switch alignment and repaint the readout."""
         self.changeAlignment(alignment)
         self.field.updateStatusBar()
+
+    def syncPaletteToggles(self):
+        """Point the View checkboxes at the palette's live visibility flags.
+
+        Seeded state was not enough once a group could be hidden by
+        right-clicking the widget itself (his report, 2026-08-26): that path
+        changes the flag without touching the menu, so the checkmarks
+        disagreed. MousePalette.saveVisibilityState calls this after every
+        visibility change, from either road, which is a push rather than a
+        menu-open pull: connecting to a menu's aboutToShow was tried and is
+        not viable here -- the View attribute is not the menubar's View menu,
+        and walking the live menubar for the real one invalidates the actions
+        createMenuBar is still assigning.
+
+        setChecked emits `toggled`, not `triggered`, and the handlers are on
+        `triggered`, so this never re-fires a toggle.
+        """
+        palette = getattr(self, "mouse_palette", None)
+        if palette is None:
+            return
+        for action_name, hidden in (
+            ("togglepalette_act", palette.palette_hidden),
+            ("toggleinc_act", palette.inc_hidden),
+            ("togglebc_act", palette.bc_hidden),
+            ("togglesb_act", palette.sb_hidden),
+        ):
+            action = getattr(self, action_name, None)
+            if action is not None:
+                action.setChecked(not hidden)
 
     def focusMenuSearchField(self):
         """Put the cursor in the Help menu's search field as Help opens.

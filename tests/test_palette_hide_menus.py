@@ -65,3 +65,41 @@ def test_arming_is_idempotent_across_rebuilds(qapp, main_window, gui_dialogs):
     assert menu is not None
     assert len(menu.actions()) == 1
     menu.hide()
+
+
+def test_view_checkmarks_follow_a_right_click_hide(qapp, main_window, gui_dialogs):
+    """The bug his click test found: hiding a group from its own right-click
+    left the View checkbox still ticked. Every visibility change now pushes a
+    resync (MousePalette.saveVisibilityState), so both roads agree."""
+    palette = main_window.mouse_palette
+    assert main_window.togglesb_act.isChecked()
+
+    menu = _menu_for(palette, palette.sb)
+    menu.actions()[0].trigger()          # "Hide the scale bar"
+    qapp.processEvents()
+    assert palette.sb_hidden
+
+    qapp.processEvents()
+    assert not main_window.togglesb_act.isChecked()
+
+    # and back the other way: the View toggle shows it again
+    main_window.togglesb_act.trigger()
+    qapp.processEvents()
+    assert not palette.sb_hidden
+    assert main_window.togglesb_act.isChecked()
+
+
+def test_every_palette_group_stays_in_sync(qapp, main_window, gui_dialogs):
+    palette = main_window.mouse_palette
+    cases = (
+        (palette.palette_buttons[0], "togglepalette_act", "palette_hidden"),
+        (palette.inc_buttons[0], "toggleinc_act", "inc_hidden"),
+        (palette.bc_widgets[0][1], "togglebc_act", "bc_hidden"),
+    )
+    for widget, action_name, flag in cases:
+        action = getattr(main_window, action_name)
+        menu = _menu_for(palette, widget)
+        menu.actions()[0].trigger()
+        qapp.processEvents()
+        assert getattr(palette, flag) is True, action_name
+        assert action.isChecked() is False, action_name
