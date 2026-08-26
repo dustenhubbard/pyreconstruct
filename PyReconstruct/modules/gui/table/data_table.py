@@ -274,33 +274,34 @@ class DataTable(QDockWidget):
         """The dock-back icon: the restore glyph, bold and crisp.
 
         The same two-overlapping-squares shape as the title bar's own undock
-        button (his call, 2026-08-26). Drawn as plain strokes in device
-        pixels on a 2x canvas: a composition-mode punch-out was tried first
-        and rendered clipped (his report, 2026-08-26), so the back square is
-        four explicit lines that stop where the front square begins.
+        button (his call, 2026-08-26). Coordinates are LOGICAL 16-space: a
+        painter on a devicePixelRatio pixmap scales painting itself, so the
+        device-space coordinates tried before drew double size and clipped
+        to a corner fragment (his screenshot, 2026-08-26). Integer coords,
+        no antialiasing: at 2x each 1-logical-px stroke lands on exactly two
+        device pixels, which is what crisp means here.
         """
         from PySide6.QtCore import QLineF, QRectF
         from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 
-        pixmap = QPixmap(32, 32)          # device pixels; shown at 16 logical
+        pixmap = QPixmap(32, 32)          # 2x canvas; painting is 16-logical
         pixmap.setDevicePixelRatio(2.0)
         pixmap.fill(QColor(0, 0, 0, 0))
         color = self.palette().windowText().color()
 
         painter = QPainter(pixmap)
-        pen = QPen(color, 2)
+        pen = QPen(color, 1)
         pen.setCapStyle(Qt.PenCapStyle.FlatCap)
         painter.setPen(pen)
-        # the back square's visible edges: top, right, and two stubs down to
-        # where the front square occludes it
+        # back square (6,3)-(13,10): top and right edges plus the two stubs
+        # that vanish behind the front square
         painter.drawLines([
-            QLineF(11, 6, 27, 6),         # top
-            QLineF(26, 6, 26, 20),        # right
-            QLineF(12, 6, 12, 11),        # left stub
-            QLineF(21, 19, 26, 19),       # bottom stub
+            QLineF(6, 3, 13, 3),          # top
+            QLineF(13, 3, 13, 10),        # right
+            QLineF(6, 3, 6, 5),           # left stub
+            QLineF(11, 10, 13, 10),       # bottom stub
         ])
-        # the front square, whole
-        painter.drawRect(QRectF(6, 12, 14, 14))
+        painter.drawRect(QRectF(3, 6, 7, 7))   # the front square, whole
         painter.end()
         return QIcon(pixmap)
 
