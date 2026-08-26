@@ -368,7 +368,6 @@ def test_floated_list_redocks_under_the_swapped_flags(qapp, dock_mainwindow, man
 
 
 def test_dock_button_appears_only_while_floating(qapp, dock_mainwindow, manager):
-    from PySide6.QtCore import Qt
 
     table = open_list(manager, "object", qapp)
     assert table._dock_button is None          # never floated: no button at all
@@ -400,7 +399,6 @@ def test_dock_button_redocks_the_list(qapp, dock_mainwindow, manager):
 def test_dock_button_survives_a_menubar_rebuild(qapp, dock_mainwindow, manager):
     """The object list rebuilds its menubar on column changes; the corner
     widget is re-checked on every float rather than trusted."""
-    from PySide6.QtCore import Qt
 
     table = open_list(manager, "object", qapp)
     table.setFloating(True)
