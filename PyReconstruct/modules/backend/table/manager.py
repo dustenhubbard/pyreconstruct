@@ -109,13 +109,21 @@ class TableManager():
         return bool(self._collapsed)
 
     def toggleListsCollapsed(self):
-        """The Lists pill / View menu / shortcut toggle (his stage 1,
+        """The sidebar pill / View menu / shortcut toggle (his stage 1,
         2026-08-25): hide every docked list, or bring back exactly the set
         the collapse hid. Floating lists are real windows now and are never
         touched. Collapsing with no docked list visible is a no-op rather
-        than an empty collapsed state, so the toggle cannot get stuck."""
+        than an empty collapsed state, so the toggle cannot get stuck.
+
+        With NO list open at all -- a freshly opened series -- the toggle
+        opens the object list instead of doing nothing (his call,
+        2026-08-26): it is the list people reach for first, and a button
+        that appears dead on a new series is worse than an opinion.
+        """
         if self._collapsed:
             self.expandLists()
+        elif not any(self.tables.values()):
+            self.newTable("object")
         else:
             self.collapseLists()
 

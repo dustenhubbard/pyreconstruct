@@ -742,3 +742,23 @@ def test_dock_button_follows_the_style_not_a_hardcoded_side(qapp, dock_mainwindo
         if not rect.width():
             continue                      # style declined to answer
         assert table._dockButtonCorner() == expected, style_name
+
+
+def test_toggle_on_a_bare_series_opens_the_object_list(qapp, dock_mainwindow, manager):
+    """A freshly opened series has no lists, and the sidebar button used to
+    do nothing at all there. It now opens the object list (his call,
+    2026-08-26), the one most people want first."""
+    assert not any(manager.tables.values())
+    manager.toggleListsCollapsed()
+    settle(qapp)
+    assert len(manager.tables["object"]) == 1
+    table = manager.tables["object"][0]
+    assert table.isVisible()
+    assert not table.isFloating()
+    assert not manager.listsCollapsed()
+
+    # and the next press collapses it, the ordinary behavior
+    manager.toggleListsCollapsed()
+    settle(qapp)
+    assert manager.listsCollapsed()
+    assert not table.isVisible()
