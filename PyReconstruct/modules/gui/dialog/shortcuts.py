@@ -380,6 +380,7 @@ help_shortcuts = [
     ("quit_act", "Quit"),
     None,
     "Lists",
+    ("togglelists_act", "Show or hide the lists"),
     ("objectlist_act", "Open Object List"),
     ("togglecuration_act", "Toggle curation columns in object list"),
     ("tracelist_act", "Open Trace List"),

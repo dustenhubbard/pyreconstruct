@@ -120,6 +120,23 @@ class FieldWidget(QWidget, FieldWidgetView):
 
         w = event.size().width()
         h = event.size().height()
+
+        # Scale the view window by the exact pixel change, centered, so the
+        # magnification never moves on a widget resize. resizeWindow's
+        # aspect fixer only ever GROWS a dimension, so without this a shrink
+        # (collapsing the lists, narrowing the main window) zoomed the view
+        # out a little, and grow-then-shrink cycles drifted outward forever
+        # (his click test, 2026-08-25; long-reported on window resizes).
+        old_w, old_h = self.pixmap_dim if self.pixmap_dim else (0, 0)
+        window = getattr(self.series, "window", None)
+        if old_w and old_h and window and (w != old_w or h != old_h):
+            center_x = window[0] + window[2] / 2
+            center_y = window[1] + window[3] / 2
+            window[2] *= w / old_w
+            window[3] *= h / old_h
+            window[0] = center_x - window[2] / 2
+            window[1] = center_y - window[3] / 2
+
         self.pixmap_dim = (w, h)
         self.generateView()
 

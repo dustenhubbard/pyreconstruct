@@ -1175,3 +1175,14 @@ def ask_yes_no(prompt="Please enter y/[n]: "):
         else:
             
             print("Please enter 'y' or 'n'.")
+
+
+def undo_chord() -> str:
+    """The platform's undo keys, for user-facing text.
+
+    A confirm prompt told a macOS user "Ctrl+Z" (his click test,
+    2026-08-26); prose leads with the chord the reader actually has. The
+    CODE keeps Qt's stored Ctrl+ strings; only display strings come here.
+    """
+    import sys
+    return "Cmd+Z" if sys.platform == "darwin" else "Ctrl+Z"

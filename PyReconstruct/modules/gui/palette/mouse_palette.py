@@ -178,6 +178,7 @@ class MousePalette():
 
         # apply the restored visibility now that every palette widget exists
         self.applyVisibilityState()
+        self.installHideMenus()
     
     def placeModeButton(self, button, pos : int):
         """Place the mode button in the main window.
@@ -684,6 +685,9 @@ class MousePalette():
         """Persist the current palette-visibility flags so they survive a restart."""
         state = {attr: getattr(self, attr) for attr in PALETTE_VIS_KEYS}
         save_palette_visibility(QSettings(*settings_domain()), state)
+        # every toggle road ends here, so this is where the View menu's
+        # checkboxes learn about a change they did not make
+        self.notifyVisibilityChanged()
 
     def loadPositionState(self):
         """Restore persisted palette positions over the in-memory defaults."""
@@ -698,6 +702,63 @@ class MousePalette():
             for group in PALETTE_POS_GROUPS for axis in ("x", "y")
         }
         save_palette_positions(QSettings(*settings_domain()), positions)
+
+    # Right-click to hide, group by group (his ask, 2026-08-26): the View
+    # menu keeps every toggle, and this adds the direct road from the widget
+    # itself. One installer per group, run wherever the widgets are (re)built,
+    # so a rebuilt slider is still armed.
+    HIDE_LABELS = {
+        "palette": "Hide the trace palette",
+        "inc": "Hide the section increment buttons",
+        "bc": "Hide the brightness/contrast sliders",
+        "sb": "Hide the scale bar",
+    }
+
+    def installHideMenus(self):
+        """Give every palette group a right-click "Hide ..." menu."""
+        groups = (
+            ("palette", self.palette_buttons + [self.label], self.togglePalette),
+            ("inc", list(self.inc_buttons), self.toggleIncrement),
+            ("bc", [w for pair in self.bc_widgets for w in pair], self.toggleBC),
+            ("sb", [self.sb], self.toggleSB),
+        )
+        for key, widgets, toggle in groups:
+            for widget in widgets:
+                if widget is None:
+                    continue
+                self._installHideMenu(widget, self.HIDE_LABELS[key], toggle)
+
+    def _installHideMenu(self, widget, label, toggle):
+        """Arm one widget. Idempotent: the palettes rebuild, and a second
+        connect on the same widget would open two menus on one click."""
+        from PySide6.QtCore import Qt
+
+        if widget.property("pyrecon_hide_menu"):
+            return
+        widget.setProperty("pyrecon_hide_menu", True)
+        widget.setContextMenuPolicy(Qt.CustomContextMenu)
+
+        def show(pos, widget=widget, label=label, toggle=toggle):
+            from PySide6.QtWidgets import QMenu
+
+            menu = QMenu(widget)
+            menu.aboutToHide.connect(menu.deleteLater)
+            menu.addAction(label, toggle)
+            self._hide_menu = menu   # reachable for the tests
+            menu.popup(widget.mapToGlobal(pos))
+
+        widget.customContextMenuRequested.connect(show)
+
+    def notifyVisibilityChanged(self):
+        """Tell the main window to re-read the View checkboxes.
+
+        Every visibility change lands here through saveVisibilityState, so
+        the menu stays in step with a right-click hide as well as its own
+        toggles (his report, 2026-08-26).
+        """
+        sync = getattr(self.mainwindow, "syncPaletteToggles", None)
+        if sync is not None:
+            sync()
 
     def applyVisibilityState(self):
         """Show/hide palette widgets to match the current visibility flags."""
@@ -957,6 +1018,10 @@ class MousePalette():
         
     def resize(self):
         """Move the buttons to fit the main window."""
+        # cheap and idempotent: a palette group rebuilt since the last pass
+        # (the trace palette on a series change, the sliders on a B/C reset)
+        # gets its right-click hide menu here
+        self.installHideMenus()
         for mbname in self.mode_buttons:
             button, mode, pos = self.mode_buttons[mbname]
             self.placeModeButton(button, pos)

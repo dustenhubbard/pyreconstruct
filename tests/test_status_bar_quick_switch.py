@@ -127,7 +127,9 @@ def test_clicking_the_alignment_segment_lists_the_series_alignments(
 
     menu = popup_of(main_window.status_readout.alignment_segment)
     assert menu is not None and menu.isVisible()
-    assert entry_texts(menu) == expected
+    # the trailing separator ("" in entry_texts) and the management row were
+    # added on his click test call (2026-08-25)
+    assert entry_texts(menu) == expected + ["", "New or edit alignments..."]
     assert checked_texts(menu) == [main_window.series.alignment]
 
 
@@ -199,7 +201,7 @@ def test_clicking_the_bc_segment_lists_the_profiles(
 
     menu = popup_of(main_window.status_readout.bc_profile_segment)
     assert menu is not None and menu.isVisible()
-    assert entry_texts(menu) == expected
+    assert entry_texts(menu) == expected + ["", "New or edit profiles..."]
     assert checked_texts(menu) == [main_window.series.bc_profile]
 
 
@@ -258,3 +260,45 @@ def test_a_second_click_does_not_leave_the_first_menu_behind(qtbot, main_window)
     segment._popup_hidden_at = 0.0
     click(qtbot, segment)
     assert popup_of(segment) is not None
+
+
+def test_pill_menus_offer_the_management_dialog(qapp, main_window):
+    """The pills must offer a road to CREATING a profile or alignment, not
+    only switching (his click test, 2026-08-25): a separated final row opens
+    the matching management dialog."""
+    menu = main_window.quickSwitchBCProfile()
+    try:
+        labels = [a.text() for a in menu.actions() if not a.isSeparator()]
+        assert labels[-1] == "New or edit profiles..."
+        assert menu.actions()[-2].isSeparator()
+    finally:
+        menu.hide()
+
+    menu = main_window.quickSwitchAlignment()
+    try:
+        labels = [a.text() for a in menu.actions() if not a.isSeparator()]
+        assert labels[-1] == "New or edit alignments..."
+        assert menu.actions()[-2].isSeparator()
+    finally:
+        menu.hide()
+
+
+def test_pill_menus_clear_the_pill_by_the_section_gap(qapp, main_window, qtbot):
+    """The alignment and B/C menus sat flush against their pill and read as
+    crowded; the section popup's own 2px lift is the approved spacing (his
+    call, 2026-08-26), so both menus use it."""
+    from PyReconstruct.modules.gui.main.main_window import MainWindow
+
+    for open_menu, segment in (
+        (main_window.quickSwitchAlignment,
+         main_window.status_readout.alignment_segment),
+        (main_window.quickSwitchBCProfile,
+         main_window.status_readout.bc_profile_segment),
+    ):
+        menu = open_menu()
+        try:
+            pill_top = segment.mapToGlobal(segment.rect().topLeft()).y()
+            gap = pill_top - (menu.pos().y() + menu.sizeHint().height())
+            assert gap == MainWindow.PILL_MENU_GAP
+        finally:
+            menu.hide()

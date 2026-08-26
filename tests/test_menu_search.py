@@ -83,7 +83,11 @@ def test_the_field_is_embedded_at_the_top_of_the_help_menu(main_window):
     assert isinstance(field, MenuSearchField)
     help_actions = main_window.helpmenu.actions()
     assert help_actions[0] is field
-    assert help_actions[1].isSeparator()
+    # The "Search menus..." row shares the field's group (his Help regroup,
+    # 2026-08-26): field, then the keyed row that displays its shortcut, then
+    # the group separator. No divider between the field and that row.
+    assert help_actions[1].text() == "Search menus..."
+    assert help_actions[2].isSeparator()
     # the carrier row is still present and still labeled
     assert main_window.searchmenus_act.text() == "Search menus..."
     assert "Search menus..." in [a.text() for a in help_actions]
@@ -334,3 +338,27 @@ def test_reveal_declines_right_click_paths(main_window):
     from PyReconstruct.modules.gui.main.menu_reveal import reveal_path
 
     assert reveal_path(main_window.menubar, "Right-click > Trace > Set open") is False
+
+
+def test_the_field_takes_focus_when_help_opens(qapp, main_window, qtbot):
+    """The cursor lands in the search field on every Help open (his call,
+    2026-08-26), with no click. Hooked to the field's own show rather than
+    the menu's aboutToShow: the window's menu attribute is not always the
+    menu the menubar shows, so a menu-side connect can fire for nobody."""
+    from PySide6.QtCore import QEvent
+    from PySide6.QtWidgets import QApplication
+
+    field = main_window.menusearchfield_act
+    container = field.defaultWidget()
+
+    # Asserted on the REQUEST, not on hasFocus(): offscreen the menu window
+    # is never activated, so Qt gives focus to nobody however correct the
+    # wiring is. focusField() is the thing this feature owns.
+    called = []
+    field.focusField = lambda: called.append(True)
+
+    QApplication.sendEvent(container, QEvent(QEvent.Type.Show))
+    for _ in range(6):
+        qapp.processEvents()
+
+    assert called == [True]
