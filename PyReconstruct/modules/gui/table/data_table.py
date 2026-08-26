@@ -246,58 +246,35 @@ class DataTable(QDockWidget):
             # bar was tried and looked worse (his click test, 2026-08-25).
             self.setTitleBarWidget(None)
 
-    def _dockButtonCorner(self):
-        """The menubar corner matching this style's own dock buttons.
-
-        Asks the style where it would draw a dock's float button and follows
-        it, so the icon lands beside the platform's own controls instead of
-        opposite them. Falls back to the right corner if the style declines
-        to answer (a zero-width rect).
-        """
-        from PySide6.QtWidgets import QStyle, QStyleOptionDockWidget
-
-        option = QStyleOptionDockWidget()
-        option.initFrom(self)
-        option.rect = self.rect()
-        option.title = self.windowTitle()
-        option.closable = True
-        option.floatable = True
-        option.movable = True
-        rect = self.style().subElementRect(
-            QStyle.SubElement.SE_DockWidgetFloatButton, option, self
-        )
-        if rect.width() and rect.x() < self.width() / 2:
-            return Qt.TopLeftCorner
-        return Qt.TopRightCorner
-
     def _syncDockAction(self, floating : bool):
         """Show an icon-only dock-back button while the list floats.
 
         An icon, not a text menu item, matching the undock affordance's
-        vocabulary (his call, 2026-08-25), on the SAME side of the bar as the
-        style's own dock buttons (his call, 2026-08-26). Which side that is
-        differs by platform, measured 2026-08-26: the macOS style draws a
-        dock's float/close icons on the left, Fusion and Windows on the
-        right, so the corner is derived from the style rather than picked.
-        The corner survives the menubar rebuilds the lists run (the object
-        list rebuilds on column changes), and is re-checked each float
-        anyway rather than trusted.
+        vocabulary (his call, 2026-08-25), leftmost in the bar (his call,
+        2026-08-26). It is the menubar's FIRST ACTION, not a corner widget: a
+        left corner widget OVERLAPS the first menu item on macOS instead of
+        pushing it aside (his report, 2026-08-26, the icon sat on "List").
+        An action gets real layout space, so the menus shift right of it.
+        Rebuilds drop menubar actions, so membership is re-checked each
+        float rather than trusted.
         """
         if floating:
             if self._dock_button is None:
-                from PySide6.QtWidgets import QStyle, QToolButton
-                button = QToolButton(self.main_widget)
-                button.setAutoRaise(True)
-                button.setIcon(self.style().standardIcon(
+                from PySide6.QtGui import QAction
+                from PySide6.QtWidgets import QStyle
+                action = QAction(self.main_widget)
+                action.setIcon(self.style().standardIcon(
                     QStyle.StandardPixmap.SP_TitleBarNormalButton
                 ))
-                button.setToolTip("Dock this list")
-                button.clicked.connect(lambda: self.setFloating(False))
-                self._dock_button = button
+                action.setToolTip("Dock this list")
+                action.triggered.connect(lambda: self.setFloating(False))
+                self._dock_button = action
             menubar = self.main_widget.menuBar()
-            corner = self._dockButtonCorner()
-            if menubar.cornerWidget(corner) is not self._dock_button:
-                menubar.setCornerWidget(self._dock_button, corner)
+            actions = menubar.actions()
+            if self._dock_button not in actions:
+                menubar.insertAction(
+                    actions[0] if actions else None, self._dock_button
+                )
             self._dock_button.setVisible(True)
         elif self._dock_button is not None:
             self._dock_button.setVisible(False)

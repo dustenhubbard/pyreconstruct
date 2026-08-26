@@ -265,9 +265,17 @@ class TableManager():
             return
         table.setFloating(True)
         table._becomeRealWindow()
-        # put the pointer over the new window's title bar, roughly where it
-        # was on the tab, so the drag reads as continuous
-        table.move(global_pos.x() - table.width() // 4, global_pos.y() - 12)
+        # Qt applies the list's LAST floating geometry to the fresh float in
+        # queued events, which yanked the window to wherever it floated last
+        # (his report, 2026-08-26: a wild jump). Drain those first, THEN put
+        # the window under the cursor, near the title bar's left end so the
+        # gesture reads as dragging the window by its title.
+        from PySide6.QtWidgets import QApplication
+        QApplication.processEvents()
+        table.move(
+            global_pos.x() - min(90, table.width() // 4),
+            global_pos.y() - 10,
+        )
         handle = table.windowHandle()
         if handle is not None:
             handle.startSystemMove()

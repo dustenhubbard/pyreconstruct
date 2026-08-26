@@ -379,9 +379,9 @@ def test_dock_button_appears_only_while_floating(qapp, dock_mainwindow, manager)
     assert not button.icon().isNull()          # an icon, not a text row
     assert not button.text()
     assert button.toolTip() == "Dock this list"
-    assert table.main_widget.menuBar().cornerWidget(
-        table._dockButtonCorner()
-    ) is button   # the side the style puts its own dock buttons on
+    # the menubar's FIRST action: real layout space, so it pushes the first
+    # menu right instead of overlapping it (a corner widget sat on "List")
+    assert table.main_widget.menuBar().actions()[0] is button
     table.setFloating(False)
     settle(qapp)
     assert not button.isVisible()
@@ -391,14 +391,14 @@ def test_dock_button_redocks_the_list(qapp, dock_mainwindow, manager):
     table = open_list(manager, "object", qapp)
     table.setFloating(True)
     settle(qapp)
-    table._dock_button.click()
+    table._dock_button.trigger()
     settle(qapp)
     assert not table.isFloating()
 
 
 def test_dock_button_survives_a_menubar_rebuild(qapp, dock_mainwindow, manager):
-    """The object list rebuilds its menubar on column changes; the corner
-    widget is re-checked on every float rather than trusted."""
+    """The object list rebuilds its menubar on column changes, which drops
+    menubar actions; membership is re-checked on every float."""
 
     table = open_list(manager, "object", qapp)
     table.setFloating(True)
@@ -409,7 +409,7 @@ def test_dock_button_survives_a_menubar_rebuild(qapp, dock_mainwindow, manager):
     table.setFloating(True)
     settle(qapp)
     menubar = table.main_widget.menuBar()
-    assert menubar.cornerWidget(table._dockButtonCorner()) is table._dock_button
+    assert menubar.actions()[0] is table._dock_button
     assert table._dock_button.isVisible()
 
 
@@ -714,34 +714,6 @@ def test_default_docked_width_clears_the_list_menu_bar(qapp, dock_mainwindow, ma
     click test, 2026-08-26). Columns may still overflow; the menu bar not."""
     table = open_list(manager, "object", qapp)
     assert table.width() >= table.main_widget.menuBar().sizeHint().width()
-
-
-def test_dock_button_follows_the_style_not_a_hardcoded_side(qapp, dock_mainwindow, manager):
-    """Measured 2026-08-26: the macOS style draws a dock's float/close icons
-    on the LEFT, Fusion and Windows on the RIGHT. The dock-back icon must
-    land on whichever side this style uses, so it never sits opposite the
-    platform's own controls."""
-    from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QStyle, QStyleFactory, QStyleOptionDockWidget
-
-    table = open_list(manager, "object", qapp)
-
-    for style_name, expected in (("macOS", Qt.TopLeftCorner),
-                                 ("Fusion", Qt.TopRightCorner)):
-        style = QStyleFactory.create(style_name)
-        if style is None:
-            continue                      # not built on this platform
-        table.setStyle(style)
-        option = QStyleOptionDockWidget()
-        option.initFrom(table)
-        option.rect = table.rect()
-        option.floatable = option.closable = option.movable = True
-        rect = style.subElementRect(
-            QStyle.SubElement.SE_DockWidgetFloatButton, option, table
-        )
-        if not rect.width():
-            continue                      # style declined to answer
-        assert table._dockButtonCorner() == expected, style_name
 
 
 def test_toggle_on_a_bare_series_opens_the_object_list(qapp, dock_mainwindow, manager):
