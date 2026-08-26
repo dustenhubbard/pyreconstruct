@@ -352,9 +352,13 @@ _TOGGLE_UPDATECHECK_ROW = (1, "act", "toggleupdatecheck_act")
 # lone beta install and this is their road back to stable.
 _GET_OTHER_FLAVOR_ROW = (1, "act", "getotherflavor_act")
 # View > Show/hide lists (2026-08-25, his stage 1 of the sidebar): the
-# collapse toggle, also the Lists pill in the status bar. Remappable,
-# default Cmd+backslash (Ctrl+backslash on Windows/Linux).
+# collapse toggle, also the sidebar pill in the status bar. Remappable,
+# default Cmd+Option+S (Ctrl+Alt+S on Windows/Linux).
 _TOGGLE_LISTS_ROW = (1, "act", "togglelists_act")
+# Series > Clean up > Repair self-crossing traces (2026-08-25, Patrick's
+# report): autoseg's zero-width spikes block the scalpel; the safe ones are
+# repaired in bulk, real figure 8s are skipped for the scissors.
+_REPAIR_SELF_CROSSINGS_ROW = (2, "act", "repairselfcrossings_act")
 # Help > "Search menus...": the in-window menubar never gets macOS's native
 # Help search, so the app carries its own palette (stable ship, 2026-08-21).
 _SEARCH_MENUS_ROW = (1, "act", "searchmenus_act")
@@ -383,6 +387,10 @@ MENUBAR_EXPECTED.insert(
 )
 _i = MENUBAR_EXPECTED.index((1, "act", "copyscreen_act"))
 MENUBAR_EXPECTED[_i:_i] = [_TOGGLE_LISTS_ROW, (1, "sep", None)]
+MENUBAR_EXPECTED.insert(
+    MENUBAR_EXPECTED.index((2, "act", "removeempty_act")) + 1,
+    _REPAIR_SELF_CROSSINGS_ROW,
+)
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "act", "shortcutshelp_act")), _SEARCH_MENUS_ROW
 )
@@ -449,7 +457,7 @@ def test_menubar_action_and_submenu_counts():
     each took the count up one, 117 to 119 together.
     """
     rows = _rows()
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 123
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 124
     assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 31
 
 
@@ -623,6 +631,7 @@ SERIES_MENU_LABELS = [
     "    Find duplicates named differently...",
     "    Remove pixel-dust traces...",
     "    Remove empty traces...",
+    "    Repair self-crossing traces...",
     "-----",
     "Restore object curation status from log",
     "-----",

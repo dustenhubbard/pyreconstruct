@@ -1,0 +1,125 @@
+"""Series > Clean up > Repair self-crossing traces.
+
+Autoseg emits closed traces whose outline crosses itself, usually a
+zero-width spike doubling back over its own edge (Patrick's report,
+2026-08-25, with a one-pixel example), and a crossed outline blocks the
+scalpel. The repair keeps the trace's real loop and discards the artifact.
+
+The safety rule under test is his option 1 (2026-08-25): repair only when
+the discarded loops are tiny beside the kept one. A genuine figure 8 with
+two real lobes is skipped for the scissors, because keeping one lobe would
+silently delete the other.
+"""
+
+import pytest
+
+from PyReconstruct.modules.calc import repair_self_crossing
+
+pytestmark = pytest.mark.gui
+
+# A square whose boundary runs up a zero-width spike and back: exactly the
+# autoseg artifact from the report. Invalid as a polygon, one real loop.
+SPIKED_SQUARE = [
+    (0.0, 0.0), (10.0, 0.0), (10.0, 10.0),
+    (5.0, 10.0), (5.0, 10.5), (5.0, 10.0),
+    (0.0, 10.0),
+]
+
+# A bowtie with two equal lobes: a genuine figure 8, never auto-repaired.
+EQUAL_BOWTIE = [(0.0, 0.0), (10.0, 0.0), (0.0, 8.0), (10.0, 8.0)]
+
+
+# --------------------------------------------------------------------------
+# the calc layer
+# --------------------------------------------------------------------------
+
+def test_spike_is_repaired_to_the_real_loop():
+    from shapely.geometry import Polygon
+
+    assert not Polygon(SPIKED_SQUARE).is_valid          # the premise
+    repaired = repair_self_crossing(SPIKED_SQUARE)
+    assert repaired is not None
+    fixed = Polygon(repaired)
+    assert fixed.is_valid
+    assert fixed.area == pytest.approx(100.0)           # the square survived
+    assert (5.0, 10.5) not in repaired                  # the spike did not
+
+
+def test_equal_lobes_are_left_for_the_scissors():
+    assert repair_self_crossing(EQUAL_BOWTIE) is None
+
+
+def test_valid_and_degenerate_traces_are_untouched():
+    square = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]
+    assert repair_self_crossing(square) is None         # valid: nothing to do
+    assert repair_self_crossing(square[:2]) is None     # not a polygon at all
+
+
+def test_the_ratio_is_the_dial():
+    """The same bowtie flips from skipped to repaired when the caller accepts
+    a bigger discard, which pins the rule to the ratio and nothing else."""
+    lopsided = [(0.0, 0.0), (10.0, 0.0), (2.0, 3.0), (10.0, 3.0)]
+    assert repair_self_crossing(lopsided, max_discard_ratio=0.01) is None
+    assert repair_self_crossing(lopsided, max_discard_ratio=0.9) is not None
+
+
+# --------------------------------------------------------------------------
+# the series layer, on a real series
+# --------------------------------------------------------------------------
+
+@pytest.fixture
+def series_with_spike(real_series):
+    """A writable series carrying one spiked trace on its first section."""
+    from PyReconstruct.modules.datatypes import Trace
+
+    snum = sorted(real_series.sections)[0]
+    section = real_series.loadSection(snum)
+    trace = Trace("f8_spike_test", (255, 0, 0), closed=True)
+    trace.points = list(SPIKED_SQUARE)
+    section.addTrace(trace, log_event=False)
+    section.save()
+    return real_series, snum
+
+
+def test_scan_finds_the_spike_and_calls_it_repairable(series_with_spike):
+    series, snum = series_with_spike
+    records = series.findSelfCrossingTraces()
+    ours = [r for r in records if r["name"] == "f8_spike_test"]
+    assert len(ours) == 1
+    assert ours[0]["section"] == snum
+    assert ours[0]["repairable"] is True
+
+
+def test_repair_fixes_the_saved_trace(series_with_spike):
+    from shapely.geometry import Polygon
+
+    series, snum = series_with_spike
+    records = [
+        r for r in series.findSelfCrossingTraces() if r["name"] == "f8_spike_test"
+    ]
+    repaired = series.repairSelfCrossingTraces(records)
+    assert [r["name"] for r in repaired] == ["f8_spike_test"]
+
+    section = series.loadSection(snum)                  # fresh from disk
+    traces = list(section.contours["f8_spike_test"])
+    assert len(traces) == 1
+    assert Polygon(traces[0].points).is_valid
+    assert Polygon(traces[0].points).area == pytest.approx(100.0)
+
+
+def test_locked_objects_are_never_scanned(series_with_spike):
+    series, snum = series_with_spike
+    series.setAttr("f8_spike_test", "locked", True)
+    records = series.findSelfCrossingTraces()
+    assert not [r for r in records if r["name"] == "f8_spike_test"]
+
+
+def test_unrepairable_records_are_not_applied(series_with_spike):
+    """A repairable=False record passed in anyway (a stale or hand-built
+    list) must not be touched."""
+    series, snum = series_with_spike
+    records = [
+        r for r in series.findSelfCrossingTraces() if r["name"] == "f8_spike_test"
+    ]
+    records[0]["repairable"] = False
+    assert series.repairSelfCrossingTraces(records) == []

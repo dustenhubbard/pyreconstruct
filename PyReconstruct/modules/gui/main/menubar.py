@@ -226,6 +226,7 @@ def return_series_menu(self):
                     ("finddiffnamedduplicates_act", "Find duplicates named differently...", "", self.findDifferentlyNamedDuplicates),
                     ("removepixeldust_act", "Remove pixel-dust traces...", "", self.removePixelDustTraces),
                     ("removeempty_act", "Remove empty traces...", "", self.removeEmptyTraces),
+                    ("repairselfcrossings_act", "Repair self-crossing traces...", "", self.repairSelfCrossingTraces),
                 ]
             },
             None,

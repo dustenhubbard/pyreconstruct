@@ -45,6 +45,56 @@ def uncuttable_closed_traces(trace_list) -> List[int]:
     return uncuttable
 
 
+def repair_self_crossing(trace, max_discard_ratio=0.05):
+    """Repair a closed trace whose outline crosses itself, when that is safe.
+
+    Autoseg emits traces with tiny self-crossings (a one-pixel spike doubling
+    back), and a crossed outline blocks the scalpel (Patrick's report,
+    2026-08-25). shapely's make_valid splits a crossed outline into its loops;
+    the repair keeps the largest loop's exterior and discards the rest.
+
+    Safety rule (his option 1, 2026-08-25): repair only when the discarded
+    loops are tiny beside the kept one -- at most ``max_discard_ratio`` of its
+    area. A genuine figure 8 with two real lobes is left alone for the
+    scissors, because keeping one lobe would silently delete the other.
+
+        Params:
+            trace (list): the closed trace's points
+            max_discard_ratio (float): largest discardable area, as a fraction
+                of the kept loop's area
+        Returns:
+            (list | None): the repaired points, or None when the trace is
+                already valid, degenerate, or unsafe to repair
+    """
+    from shapely.validation import make_valid
+
+    if len(trace) < 3:
+        return None
+    poly = Polygon(trace)
+    if poly.is_valid:
+        return None
+
+    fixed = make_valid(poly)
+    if isinstance(fixed, Polygon):
+        pieces = [fixed]
+    elif isinstance(fixed, (MultiPolygon, GeometryCollection)):
+        pieces = [g for g in fixed.geoms if isinstance(g, Polygon)]
+    else:
+        pieces = []
+    pieces = [g for g in pieces if g.area > 0]
+    if not pieces:
+        return None
+
+    pieces.sort(key=lambda g: g.area, reverse=True)
+    kept, rest = pieces[0], pieces[1:]
+    if sum(g.area for g in rest) > max_discard_ratio * kept.area:
+        return None
+
+    # exterior.coords repeats the first point at the end; traces store the
+    # ring open
+    return [(x, y) for x, y in list(kept.exterior.coords)[:-1]]
+
+
 def cut_closed_traces(trace_list, cut_trace, del_threshold=0.0) -> List[Any]:
     """Cut closed polygons."""
 

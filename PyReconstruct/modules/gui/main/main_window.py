@@ -3444,6 +3444,53 @@ class MainWindow(QMainWindow):
         )
         self.pixel_dust_dialog.show()
 
+    def repairSelfCrossingTraces(self):
+        """Find and repair closed traces whose outline crosses itself.
+
+        The safe ones (a tiny crossing artifact beside one real loop) are
+        repaired in one undoable pass; a genuine figure 8 with two real lobes
+        is skipped and named, because only the scissors should decide which
+        lobe lives. Locked objects are left alone, like the other clean-ups.
+        """
+        self.saveAllData()
+
+        candidates = self.series.findSelfCrossingTraces()
+        if not candidates:
+            notify("No self-crossing traces found.")
+            return
+
+        safe = [r for r in candidates if r["repairable"]]
+        lobed = [r for r in candidates if not r["repairable"]]
+
+        lines = []
+        if safe:
+            noun = "trace" if len(safe) == 1 else "traces"
+            lines.append(
+                f"Repair {len(safe)} self-crossing {noun}? The tiny crossing "
+                "is removed and the trace's real outline is kept.\n"
+                "This can be undone (Ctrl+Z)."
+            )
+        if lobed:
+            shown = ", ".join(
+                f"{r['name']} (section {r['section']})" for r in lobed[:10]
+            )
+            more = "" if len(lobed) <= 10 else f", and {len(lobed) - 10} more"
+            lines.append(
+                f"Skipped, crossing separates real lobes: {shown}{more}.\n"
+                "Use the scissors tool on those."
+            )
+
+        if not safe:
+            notify(lines[0])
+            return
+        if not notifyConfirm("\n\n".join(lines), yn=True):
+            return
+
+        repaired = self.field.repairSelfCrossingContours(safe)
+        if repaired:
+            noun = "trace" if len(repaired) == 1 else "traces"
+            notify(f"Repaired {len(repaired)} self-crossing {noun}.")
+
     def removeEmptyTraces(self):
         """Find and remove empty / degenerate traces (no meaningful geometry).
 
