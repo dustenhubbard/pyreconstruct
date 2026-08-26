@@ -377,6 +377,14 @@ def test_dock_button_appears_only_while_floating(qapp, dock_mainwindow, manager)
     assert button is not None
     assert button.isVisible()
     assert not button.icon().isNull()          # an icon, not a text row
+    # painted at 2x from the palette, not a faint stock style icon
+    assert button.icon().pixmap(16, 16).devicePixelRatio() >= 1.0
+    image = button.icon().pixmap(16, 16).toImage()
+    opaque = sum(
+        1 for x in range(image.width()) for y in range(image.height())
+        if image.pixelColor(x, y).alpha() > 100
+    )
+    assert opaque > 30                         # a bold mark, not a wisp
     assert not button.text()
     assert button.toolTip() == "Dock this list"
     # the menubar's FIRST action: real layout space, so it pushes the first
