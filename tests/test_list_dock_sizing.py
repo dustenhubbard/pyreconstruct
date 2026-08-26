@@ -829,3 +829,21 @@ def test_theme_switch_remeasures_list_columns(qapp, main_window, gui_dialogs):
     assert switched == fresh
     main_window.setTheme("default")
     settle(qapp, rounds=6)
+
+
+def test_docked_table_never_overflows_its_viewport(qapp, dock_mainwindow, manager):
+    """The last rows of a docked list could not be scrolled to: an old
+    resizeEvent override sized the table to the DOCK's height minus a guessed
+    20px, past the space under the menu bar (his report, 2026-08-26). The
+    layout owns the size now, so the table must end inside its window."""
+    table = open_list(manager, "object", qapp)
+    settle(qapp)
+    body = table.main_widget
+    inner = table.table
+    assert inner.geometry().bottom() <= body.rect().bottom()
+    assert inner.geometry().top() >= body.menuBar().height() - 1
+
+    # and after the dock resizes, still true
+    dock_mainwindow.resize(1200, 700)
+    settle(qapp)
+    assert inner.geometry().bottom() <= body.rect().bottom()
