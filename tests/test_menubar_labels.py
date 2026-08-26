@@ -406,6 +406,7 @@ _HELP_HEAD_NEW = [
     (1, "sep", None),
     (1, "act", "checkupdates_act"),
     _TOGGLE_UPDATECHECK_ROW,
+    (1, "sep", None),
     _GET_OTHER_FLAVOR_ROW,
     (1, "sep", None),
     (1, "act", "whatsnew_act"),

@@ -502,6 +502,9 @@ def return_help_menu(self):
             # open series, not this window.
             ("toggleupdatecheck_act", "Automatically check for updates", "checkbox",
              self.toggleUpdateCheckOnStartup),
+            None,
+            # Its own group (his call, 2026-08-26): getting the OTHER build is
+            # a different errand from keeping this one current.
             # The other build's download page, labeled by what THIS build is:
             # the stable app offers Dev, the Dev app offers stable. Resolved
             # when clicked (updater.other_flavor_url), so it always points at

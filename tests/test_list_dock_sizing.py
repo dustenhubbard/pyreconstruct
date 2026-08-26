@@ -762,3 +762,59 @@ def test_toggle_on_a_bare_series_opens_the_object_list(qapp, dock_mainwindow, ma
     settle(qapp)
     assert manager.listsCollapsed()
     assert not table.isVisible()
+
+
+def test_tab_properties_survive_a_dock_rebuild(qapp, dock_mainwindow, manager):
+    """Qt resets tabsClosable and the context-menu policy on the tab bar it
+    reuses as docks come and go; the X went missing and reappeared on that
+    beat (his report, 2026-08-26). Both are re-applied on every wiring pass,
+    so a reset cannot outlive the next dock change."""
+    from PySide6.QtCore import Qt
+
+    open_list(manager, "object", qapp)
+    open_list(manager, "section", qapp)
+    settle(qapp)
+    bar = manager._dockTabBars()[0]
+
+    bar.setTabsClosable(False)                 # what a Qt rebuild leaves
+    bar.setContextMenuPolicy(Qt.DefaultContextMenu)
+    manager._syncTitleBars()                   # any dock change runs this
+    settle(qapp)
+
+    assert bar.tabsClosable()
+    assert bar.contextMenuPolicy() == Qt.CustomContextMenu
+
+
+def test_a_tab_drag_tears_the_list_out(qapp, dock_mainwindow, manager):
+    """Qt tears a dock out by its title bar, which a tabbed list hides, so
+    the gesture did nothing (his report, 2026-08-26). The tear-out is ours
+    now: past the drag threshold, the list floats."""
+    import shiboken6
+    from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QApplication
+
+    open_list(manager, "object", qapp)
+    second = open_list(manager, "section", qapp)
+    settle(qapp)
+    bar = manager._dockTabBars()[0]
+    ptr = shiboken6.getCppPointer(second)[0]
+    index = next(i for i in range(bar.count()) if bar.tabData(i) == ptr)
+    start = bar.tabRect(index).center()
+
+    def send(kind, pos, buttons):
+        event = QMouseEvent(
+            kind, QPointF(pos), QPointF(bar.mapToGlobal(pos)),
+            Qt.LeftButton, buttons, Qt.NoModifier,
+        )
+        QApplication.sendEvent(bar, event)
+        settle(qapp, rounds=2)
+
+    send(QEvent.MouseButtonPress, start, Qt.LeftButton)
+    # a wobble inside the slop must NOT tear it out
+    send(QEvent.MouseMove, start + QPoint(2, 2), Qt.LeftButton)
+    assert not second.isFloating()
+    # past the threshold it does
+    far = QApplication.startDragDistance() * 2 + 6
+    send(QEvent.MouseMove, start + QPoint(0, far), Qt.LeftButton)
+    assert second.isFloating()

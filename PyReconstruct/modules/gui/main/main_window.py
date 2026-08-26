@@ -294,11 +294,6 @@ class MainWindow(QMainWindow):
         # between the field and the "Search menus..." row that shares its
         # group (his Help layout call, 2026-08-26).
 
-        # Focus the field whenever Help opens, so typing goes straight into
-        # it without a click (his call, 2026-08-26). Connected once per
-        # menubar build, like the checkable resyncs below.
-        self.helpmenu.aboutToShow.connect(self.focusMenuSearchField)
-
         ## The Lists pill's hover names the collapse shortcut. Read from the
         ## live action each menubar build, so a rebind through the shortcuts
         ## dialog (which rebuilds the menubar) updates the hover too.
@@ -2615,23 +2610,6 @@ class MainWindow(QMainWindow):
             action = getattr(self, action_name, None)
             if action is not None:
                 action.setChecked(not hidden)
-
-    def focusMenuSearchField(self):
-        """Put the cursor in the Help menu's search field as Help opens.
-
-        Deferred by a zero timer: at aboutToShow the menu is not visible
-        yet, and a focus set before the show is dropped when Qt gives the
-        popup its own focus.
-        """
-        from PySide6.QtCore import QTimer
-
-        field = getattr(self, "menusearchfield_act", None)
-        if field is None:
-            return
-        widget = field.defaultWidget()
-        if widget is None:
-            return
-        QTimer.singleShot(0, widget.setFocus)
 
     def toggleLists(self):
         """Show or hide the docked lists (the Lists pill, View menu, or key)."""

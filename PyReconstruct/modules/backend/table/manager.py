@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, Qt
 
 from PyReconstruct.modules.gui.table import (
     ObjectTableWidget,
@@ -20,6 +20,49 @@ table_type_classes = {
     "flag": FlagTableWidget
 }
 
+class _TabDragFilter(QObject):
+    """Tears a list out of its tab group when the user drags the tab.
+
+    Qt's own tab tear-out drags the dock by its TITLE BAR, which a tabbed
+    list does not show, so the gesture did nothing. This watches the dock
+    area's tab bar, and once the pointer has travelled far enough to be a
+    drag rather than a click, floats that list under the cursor and asks the
+    window system to carry the drag on natively (``startSystemMove``), which
+    is what makes the window follow the mouse and drop where it is let go.
+    """
+
+    def __init__(self, manager):
+        super().__init__()
+        self.manager = manager
+        self._press_pos = None
+        self._press_index = -1
+
+    def eventFilter(self, obj, event):
+        from PySide6.QtCore import QEvent, Qt
+
+        etype = event.type()
+        if etype == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+            self._press_pos = event.position().toPoint()
+            self._press_index = obj.tabAt(self._press_pos)
+        elif etype == QEvent.MouseMove and self._press_pos is not None:
+            if not (event.buttons() & Qt.LeftButton):
+                self._press_pos = None
+            else:
+                from PySide6.QtWidgets import QApplication
+
+                travelled = (event.position().toPoint() - self._press_pos)
+                # twice the platform's click slop: a tab click that wobbles
+                # must never tear the list out
+                threshold = QApplication.startDragDistance() * 2
+                if max(abs(travelled.x()), abs(travelled.y())) >= threshold:
+                    index, self._press_pos = self._press_index, None
+                    self.manager.tearOutTab(obj, index, event.globalPosition().toPoint())
+                    return True
+        elif etype in (QEvent.MouseButtonRelease, QEvent.Leave):
+            self._press_pos = None
+        return super().eventFilter(obj, event)
+
+
 class TableManager():
 
     def __init__(self, series : Series, section : Section, series_states, mainwindow):
@@ -37,6 +80,7 @@ class TableManager():
         self.section = section
         self.mainwindow = mainwindow
         self.series_states = series_states
+        self._tab_drag_filter = _TabDragFilter(self)
         # the docked lists hidden by the collapse toggle, in hide order;
         # non-empty IS the collapsed state
         self._collapsed = []
@@ -165,8 +209,15 @@ class TableManager():
         of dragging the tab out. Wired at most once per tab bar; Qt reuses
         them, and the property guard keeps a rewire from stacking
         connections."""
+        from PySide6.QtCore import Qt as _Qt
+
         for tb in self._dockTabBars():
+            # Re-applied every pass, NOT guarded: Qt resets these on the tab
+            # bar it reuses as docks come and go, which is how the close
+            # buttons went missing and came back (his report, 2026-08-26).
+            # Only the signal connections are one-shot, below.
             tb.setTabsClosable(True)
+            tb.setContextMenuPolicy(_Qt.CustomContextMenu)
             if not tb.property("pyrecon_close_wired"):
                 tb.setProperty("pyrecon_close_wired", True)
                 tb.tabCloseRequested.connect(
@@ -175,11 +226,15 @@ class TableManager():
                 tb.tabBarDoubleClicked.connect(
                     lambda i, tb=tb: self._floatTabbedList(tb, i)
                 )
-                from PySide6.QtCore import Qt as _Qt
-                tb.setContextMenuPolicy(_Qt.CustomContextMenu)
                 tb.customContextMenuRequested.connect(
                     lambda pos, tb=tb: self._tabContextMenu(tb, pos)
                 )
+                # dragging a tab out: ours, not Qt's. A tabbed list hides its
+                # title bar, and Qt tears a dock out BY that title bar, so
+                # there is nothing left for it to drag (his report,
+                # 2026-08-26, twice). The filter below does the tear-out and
+                # hands the rest of the drag to the window system.
+                tb.installEventFilter(self._tab_drag_filter)
 
     def _floatTabbedList(self, tab_bar, index):
         """Float the list behind a double-clicked tab."""
@@ -197,6 +252,25 @@ class TableManager():
                 if shiboken6.getCppPointer(table)[0] == ptr:
                     return table
         return None
+
+    def tearOutTab(self, tab_bar, index, global_pos):
+        """Float the list behind ``index`` and let the system carry the drag.
+
+        The window becomes a real one immediately (not on mouse release, the
+        ordinary float's rule): startSystemMove needs a native window to
+        move, and the user is mid-gesture.
+        """
+        table = self._tableForTab(tab_bar, index)
+        if table is None:
+            return
+        table.setFloating(True)
+        table._becomeRealWindow()
+        # put the pointer over the new window's title bar, roughly where it
+        # was on the tab, so the drag reads as continuous
+        table.move(global_pos.x() - table.width() // 4, global_pos.y() - 12)
+        handle = table.windowHandle()
+        if handle is not None:
+            handle.startSystemMove()
 
     def _tabContextMenu(self, tab_bar, pos):
         """Right-click on a tab: float or close its list (his ask,
@@ -231,7 +305,15 @@ class TableManager():
                     return
 
     def _syncTitleBars(self):
-        """Re-decide every list's docked title bar; see syncDockedTitleBar."""
+        """Re-decide every list's docked title bar; see syncDockedTitleBar.
+
+        Re-wires the tab bars on the way through: Qt discards and rebuilds a
+        dock area's QTabBar as docks come and go, and a rebuilt bar arrives
+        with no close buttons and none of our handlers (his report,
+        2026-08-26: the tab X vanished, then came back). Wiring is
+        idempotent, so running it here is cheap insurance.
+        """
+        self._wireTabBars()
         for tables in self.tables.values():
             for table in tables:
                 if hasattr(table, "syncDockedTitleBar"):

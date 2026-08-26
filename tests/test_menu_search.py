@@ -338,3 +338,27 @@ def test_reveal_declines_right_click_paths(main_window):
     from PyReconstruct.modules.gui.main.menu_reveal import reveal_path
 
     assert reveal_path(main_window.menubar, "Right-click > Trace > Set open") is False
+
+
+def test_the_field_takes_focus_when_help_opens(qapp, main_window, qtbot):
+    """The cursor lands in the search field on every Help open (his call,
+    2026-08-26), with no click. Hooked to the field's own show rather than
+    the menu's aboutToShow: the window's menu attribute is not always the
+    menu the menubar shows, so a menu-side connect can fire for nobody."""
+    from PySide6.QtCore import QEvent
+    from PySide6.QtWidgets import QApplication
+
+    field = main_window.menusearchfield_act
+    container = field.defaultWidget()
+
+    # Asserted on the REQUEST, not on hasFocus(): offscreen the menu window
+    # is never activated, so Qt gives focus to nobody however correct the
+    # wiring is. focusField() is the thing this feature owns.
+    called = []
+    field.focusField = lambda: called.append(True)
+
+    QApplication.sendEvent(container, QEvent(QEvent.Type.Show))
+    for _ in range(6):
+        qapp.processEvents()
+
+    assert called == [True]

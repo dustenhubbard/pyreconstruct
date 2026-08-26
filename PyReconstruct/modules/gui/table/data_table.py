@@ -90,6 +90,7 @@ class DataTable(QDockWidget):
         # palette), a usable first-float size, and a way back to the dock
         self._float_size_applied = False
         self._dock_button = None
+        self._real_window = False
         self.topLevelChanged.connect(self._onTopLevelChanged)
 
         # set defaults
@@ -133,6 +134,7 @@ class DataTable(QDockWidget):
             # lists could not be dragged out at all). Wait for the release.
             self._whenMouseReleased(self._becomeRealWindow)
         else:
+            self._real_window = False
             self.setMinimumSize(self.MIN_WIDTH, self.MIN_HEIGHT)
         self._syncDockAction(floating)
         sync_all = getattr(self.manager, "_syncTitleBars", None)
@@ -167,13 +169,22 @@ class DataTable(QDockWidget):
         timer.start()
 
     def _becomeRealWindow(self):
-        """The floating half of _onTopLevelChanged, once it is safe.
+        """Turn this floating dock into an ordinary window. Idempotent.
+
+        Called from two places: the deferred path below (an ordinary float,
+        once the mouse is released) and the tab tear-out, which needs the
+        real window IMMEDIATELY so the system can carry on the drag. The
+        guard keeps the second call from re-showing and re-sizing what the
+        first already built.
 
         The title bar widget clears FIRST: setTitleBarWidget recreates the
         native window and Qt hands the fresh one default (tool) flags, so
         clearing it after setWindowFlags un-did the flags (caught by
         test_code_driven_float_is_still_immediate when the slim bar landed).
         """
+        if self._real_window and self.isFloating():
+            return
+        self._real_window = True
         if self.titleBarWidget() is not None:
             self.setTitleBarWidget(None)
         self.setWindowFlags(
