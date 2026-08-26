@@ -127,6 +127,10 @@ class DataTable(QDockWidget):
         dimension below the float minimum; later floats keep the user's size
         (Qt restores the last floating geometry on its own).
         """
+        # the dock-back icon first: _becomeRealWindow measures the menu bar
+        # for the width floor, and the icon widens that bar (measured
+        # 2026-08-26: 311px without it, 341px with)
+        self._syncDockAction(floating)
         if floating:
             # NEVER reflag mid-drag: swapping window flags destroys and
             # recreates the native window under the cursor, which kills the
@@ -136,7 +140,6 @@ class DataTable(QDockWidget):
         else:
             self._real_window = False
             self.setMinimumSize(self.MIN_WIDTH, self.MIN_HEIGHT)
-        self._syncDockAction(floating)
         sync_all = getattr(self.manager, "_syncTitleBars", None)
         if sync_all is not None:
             sync_all()
@@ -200,9 +203,14 @@ class DataTable(QDockWidget):
                 max(self.width(), self.FLOAT_MIN_WIDTH),
                 max(self.height(), self.FLOAT_MIN_HEIGHT)
             )
-        # a floated list may be shrunk by hand well below the docked floor
+        # A floated list may be shrunk by hand well below the docked floor
+        # in HEIGHT (Patrick's three-row list), but never so narrow that its
+        # own menu bar clips (his report, 2026-08-26): the width floor is
+        # the same menu-bar measure the docked hint uses.
+        menubar_width = self.main_widget.menuBar().sizeHint().width() + 8
         self.setMinimumSize(
-            self.FLOAT_SHRINK_MIN_WIDTH, self.FLOAT_SHRINK_MIN_HEIGHT
+            max(self.FLOAT_SHRINK_MIN_WIDTH, menubar_width),
+            self.FLOAT_SHRINK_MIN_HEIGHT,
         )
 
     def syncDockedTitleBar(self):
@@ -265,15 +273,13 @@ class DataTable(QDockWidget):
     def _dockIcon(self):
         """The dock-back icon: the restore glyph, bold and crisp.
 
-        The same two-overlapping-squares shape as the title bar's own
-        undock button, so the pair reads as one family (his call,
-        2026-08-26). Painted, not the stock style icon, which renders faint
-        and small in a menubar. Drawn in DEVICE pixels on a 2x canvas with
-        integer coordinates: the first version painted logical-size shapes
-        onto the 2x canvas, which landed the drawing in one corner and
-        scaled it up blurry (his report, 2026-08-26).
+        The same two-overlapping-squares shape as the title bar's own undock
+        button (his call, 2026-08-26). Drawn as plain strokes in device
+        pixels on a 2x canvas: a composition-mode punch-out was tried first
+        and rendered clipped (his report, 2026-08-26), so the back square is
+        four explicit lines that stop where the front square begins.
         """
-        from PySide6.QtCore import QRect
+        from PySide6.QtCore import QLineF, QRectF
         from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 
         pixmap = QPixmap(32, 32)          # device pixels; shown at 16 logical
@@ -281,20 +287,20 @@ class DataTable(QDockWidget):
         pixmap.fill(QColor(0, 0, 0, 0))
         color = self.palette().windowText().color()
 
-        back = QRect(11, 5, 16, 16)
-        front = QRect(5, 11, 16, 16)
-
         painter = QPainter(pixmap)
-        painter.setPen(QPen(color, 2))
-        painter.drawRect(back)
-        # punch the front square's area out of the back one, then stroke it:
-        # the overlap reads as one square sitting in front of the other
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
-        painter.fillRect(front.adjusted(-1, -1, 1, 1), QColor(0, 0, 0, 0))
-        painter.setCompositionMode(
-            QPainter.CompositionMode.CompositionMode_SourceOver
-        )
-        painter.drawRect(front)
+        pen = QPen(color, 2)
+        pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+        painter.setPen(pen)
+        # the back square's visible edges: top, right, and two stubs down to
+        # where the front square occludes it
+        painter.drawLines([
+            QLineF(11, 6, 27, 6),         # top
+            QLineF(26, 6, 26, 20),        # right
+            QLineF(12, 6, 12, 11),        # left stub
+            QLineF(21, 19, 26, 19),       # bottom stub
+        ])
+        # the front square, whole
+        painter.drawRect(QRectF(6, 12, 14, 14))
         painter.end()
         return QIcon(pixmap)
 

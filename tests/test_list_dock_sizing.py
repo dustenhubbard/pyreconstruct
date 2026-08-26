@@ -229,9 +229,11 @@ def test_squeezed_list_floats_usable(qapp, dock_mainwindow, manager):
 
 def test_hand_set_float_size_survives_refloat(qapp, dock_mainwindow, manager):
     """After the first float, the size belongs to the user -- bigger or
-    smaller than the default, refloating keeps it."""
+    smaller than the default, refloating keeps it. The one bound: width
+    never goes under the menu-bar floor (his call, 2026-08-26), so the
+    small example here sits just above it."""
     table = open_list(manager, "object", qapp)
-    for user_size in ((760, 820), (320, 300)):
+    for user_size in ((760, 820), (380, 300)):
         table.setFloating(True)
         settle(qapp)
         table.resize(*user_size)
@@ -275,17 +277,22 @@ def test_minimum_is_set_on_every_list_type(qapp, dock_mainwindow, manager):
 
 def test_floating_list_shrinks_to_the_float_floor_only(qapp, dock_mainwindow, manager):
     """Patrick's three-row list (2026-08-25): a floated list sized by hand may
-    go far below the docked floor, down to the float floor and no further."""
+    go far below the docked floor in HEIGHT. The WIDTH floor stayed higher on
+    his 2026-08-26 call: never so narrow that the list's own menu bar clips,
+    the same measure the docked width hint uses."""
     table = open_list(manager, "object", qapp)
     table.setFloating(True)
     settle(qapp)
-    table.resize(150, 140)              # a deliberate tiny list: allowed
+    menubar_floor = table.main_widget.menuBar().sizeHint().width() + 8
+
+    table.resize(150, 140)              # a deliberate tiny list
     settle(qapp)
-    assert table.width() == 150
-    assert table.height() == 140
-    table.resize(50, 50)                # below even the float floor: clamped
+    assert table.height() == 140        # three rows: allowed
+    assert table.width() >= menubar_floor   # menus never clip
+
+    table.resize(50, 50)                # below every floor: clamped
     settle(qapp)
-    assert table.width() >= table.FLOAT_SHRINK_MIN_WIDTH
+    assert table.width() >= menubar_floor
     assert table.height() >= table.FLOAT_SHRINK_MIN_HEIGHT
 
 

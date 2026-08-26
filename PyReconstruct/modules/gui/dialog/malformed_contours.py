@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
+from PyReconstruct.modules.gui.utils import undo_chord
 from PyReconstruct.modules.gui.utils import notifyConfirm
 
 
@@ -309,7 +310,7 @@ class MalformedContoursDialog(QDialog):
         noun = "trace" if count == 1 else "traces"
         if not notifyConfirm(
             f"Delete {count} {noun} from the series?\n\n"
-            "This can be undone (Ctrl+Z).",
+            f"This can be undone ({undo_chord()}).",
             yn=True,
         ):
             return
@@ -417,8 +418,7 @@ class RepairedCrossingsDialog(MalformedContoursDialog):
             f"Repaired {count} self-crossing {noun}: the crossing artifact "
             "was removed and each trace's real outline kept.\n\n"
             "Select a row and click \"Go to trace\" to spot-check a repair. "
-            "The whole pass is one undo (Cmd+Z; Ctrl+Z on Windows and "
-            "Linux)."
+            f"The whole pass is one undo ({undo_chord()})."
         )
 
 
@@ -646,7 +646,7 @@ class DifferentlyNamedDuplicatesDialog(MalformedContoursDialog):
             f"Delete {count} {noun} from the series?\n\n"
             "In each row you selected a name, the trace under the OTHER name "
             f"is deleted.{skipped_note}\n\n"
-            "This can be undone (Ctrl+Z).",
+            f"This can be undone ({undo_chord()}).",
             yn=True,
         ):
             return
@@ -767,5 +767,5 @@ class DifferentlyNamedDuplicatesDialog(MalformedContoursDialog):
             "Rows you leave unticked are left completely alone: nothing is "
             "chosen for you, and no rule decides which name wins. Nothing is "
             "deleted until you choose to delete, and it can be undone "
-            "(Ctrl+Z)."
+            f"({undo_chord()})."
         )
