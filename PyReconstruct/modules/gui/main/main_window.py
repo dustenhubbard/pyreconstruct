@@ -3496,9 +3496,9 @@ class MainWindow(QMainWindow):
         """Find and repair closed traces whose outline crosses itself.
 
         The safe ones (a tiny crossing artifact beside one real loop) are
-        repaired in one undoable pass; a genuine figure 8 with two real lobes
+        repaired in one undoable pass; a genuine figure 8 with two real loops
         is skipped and named, because only the scissors should decide which
-        lobe lives. Locked objects are left alone, like the other clean-ups.
+        loop lives. Locked objects are left alone, like the other clean-ups.
         """
         self.saveAllData()
 
@@ -3511,7 +3511,7 @@ class MainWindow(QMainWindow):
             return
 
         safe = [r for r in candidates if r["repairable"]]
-        lobed = [r for r in candidates if not r["repairable"]]
+        looped = [r for r in candidates if not r["repairable"]]
 
         if safe:
             noun = "trace" if len(safe) == 1 else "traces"
@@ -3520,10 +3520,10 @@ class MainWindow(QMainWindow):
                 "is removed and the trace's real outline is kept.\n"
                 f"This can be undone ({undo_chord()})."
             )
-            if lobed:
-                skipped_noun = "trace needs" if len(lobed) == 1 else "traces need"
+            if looped:
+                skipped_noun = "trace needs" if len(looped) == 1 else "traces need"
                 prompt += (
-                    f"\n\n{len(lobed)} more {skipped_noun} the scissors; "
+                    f"\n\n{len(looped)} more {skipped_noun} the scissors; "
                     "a review list opens after."
                 )
             if notifyConfirm(prompt, yn=True):
@@ -3542,7 +3542,7 @@ class MainWindow(QMainWindow):
                     )
                     self.repaired_crossings_dialog.show()
 
-        if lobed:
+        if looped:
             # a modeless review list, not a message: the user works the field
             # with the scissors while it stays open, and can copy the whole
             # set out (his report, 2026-08-26)
@@ -3551,7 +3551,7 @@ class MainWindow(QMainWindow):
             )
             self.skipped_crossings_dialog = SkippedCrossingsDialog(
                 self,
-                lobed,
+                looped,
                 navigate=self.field.focusMalformedContour,
             )
             self.skipped_crossings_dialog.show()

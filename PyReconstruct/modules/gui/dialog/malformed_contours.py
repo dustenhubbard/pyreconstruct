@@ -377,8 +377,8 @@ class SkippedCrossingsDialog(MalformedContoursDialog):
     """The self-crossing traces the repair left for the scissors.
 
     The bulk repair (Series > Clean up > Repair self-crossing traces...)
-    skips a trace whose crossing separates two real lobes, because only the
-    user can pick the right lobe. Naming them in a plain message was not
+    skips a trace whose crossing separates two real loops, because only the
+    user can pick the right loop. Naming them in a plain message was not
     actionable (his report, 2026-08-26): this review list keeps the window
     open while "Go to trace" walks the field to each one, and "Copy table
     list" takes the whole set to a notes app. No delete action on purpose;
@@ -392,7 +392,7 @@ class SkippedCrossingsDialog(MalformedContoursDialog):
         noun = "trace" if count == 1 else "traces"
         return (
             f"{count} self-crossing {noun} could not be repaired "
-            "automatically: the crossing separates two real lobes, and only "
+            "automatically: the crossing separates two real loops, and only "
             "you can pick the right one.\n\n"
             "Select a row and click \"Go to trace\" (or double-click it) to "
             "jump there, then cut out the crossing with the scissors tool. "

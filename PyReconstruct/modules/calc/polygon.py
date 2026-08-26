@@ -55,8 +55,8 @@ def repair_self_crossing(trace, max_discard_ratio=0.05):
 
     Safety rule (his option 1, 2026-08-25): repair only when the discarded
     loops are tiny beside the kept one -- at most ``max_discard_ratio`` of its
-    area. A genuine figure 8 with two real lobes is left alone for the
-    scissors, because keeping one lobe would silently delete the other.
+    area. A genuine figure 8 with two real loops is left alone for the
+    scissors, because keeping one loop would silently delete the other.
 
         Params:
             trace (list): the closed trace's points
