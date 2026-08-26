@@ -123,3 +123,64 @@ def test_unrepairable_records_are_not_applied(series_with_spike):
     ]
     records[0]["repairable"] = False
     assert series.repairSelfCrossingTraces(records) == []
+
+
+# --------------------------------------------------------------------------
+# The two review windows around the pass (his asks, 2026-08-26): skipped
+# lobed traces get an actionable list, repaired ones get a summary. Both
+# inherit navigation, copy-to-clipboard and save-as-CSV from the malformed-
+# contours review dialog, so only what is specific here is tested.
+# --------------------------------------------------------------------------
+
+def _lobed_record():
+    return {
+        "name": "figure8", "section": 4, "index": 0, "points": 4,
+        "location": (1.0, 2.0), "reason": "Outline crosses itself",
+        "match": {"color": (255, 0, 0), "points": []}, "repairable": False,
+    }
+
+
+def test_skipped_dialog_navigates_and_copies(qapp, gui_dialogs):
+    from PySide6.QtWidgets import QApplication, QPushButton
+    from PyReconstruct.modules.gui.dialog.malformed_contours import (
+        SkippedCrossingsDialog,
+    )
+
+    visited = []
+    dialog = SkippedCrossingsDialog(
+        None, [_lobed_record()],
+        navigate=lambda snum, name, index: visited.append((snum, name)),
+    )
+    try:
+        assert "scissors" in dialog._headingText()
+        dialog.table.selectRow(0)
+        dialog._navigateToRow(0)
+        assert visited == [(4, "figure8")]
+
+        labels = [b.text() for b in dialog.findChildren(QPushButton)]
+        assert "Copy table list" in labels
+        assert any(label.startswith("Save table as CSV") for label in labels)
+
+        dialog.copyToClipboard()
+        assert "figure8" in QApplication.clipboard().text()
+    finally:
+        dialog.deleteLater()
+
+
+def test_repaired_dialog_summarizes_with_the_same_roads(qapp, gui_dialogs):
+    from PySide6.QtWidgets import QPushButton
+    from PyReconstruct.modules.gui.dialog.malformed_contours import (
+        RepairedCrossingsDialog,
+    )
+
+    record = dict(_lobed_record(), repairable=True)
+    dialog = RepairedCrossingsDialog(None, [record], navigate=lambda *a: None)
+    try:
+        heading = dialog._headingText()
+        assert "Repaired 1 self-crossing trace" in heading
+        assert "one undo" in heading
+        labels = [b.text() for b in dialog.findChildren(QPushButton)]
+        assert "Copy table list" in labels
+        assert any(label.startswith("Save table as CSV") for label in labels)
+    finally:
+        dialog.deleteLater()
