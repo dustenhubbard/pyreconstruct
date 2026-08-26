@@ -197,6 +197,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write   # dispatches prune-betas and link-check after a publish
     steps:
       - uses: actions/checkout@v7          # needed for packaging/linux/ + release notes
         with:
@@ -319,6 +320,22 @@ jobs:
                 echo "pruning superseded pre-release: $t"
                 gh release delete "$t" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
               done
+
+      - name: Kick the publish-time workflows
+        # A release published with the workflow's own token never fires the
+        # `release: published` triggers (GitHub's recursion guard), so
+        # prune-betas and link-check only ran for hand-published releases;
+        # v1.23.0-beta-2 proved it by firing neither. workflow_dispatch is
+        # exempt from the guard, so the publish path dispatches them here.
+        # Skipped for drafts: nothing is public yet, so there is nothing to
+        # prune or check; the hand-publish of the draft fires the release
+        # triggers itself.
+        if: steps.rel.outputs.draft != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run prune-betas.yml --repo "$GITHUB_REPOSITORY"
+          gh workflow run link-check.yml --repo "$GITHUB_REPOSITORY"
 
       - name: Prune orphaned draft-placeholder tags
         # Staging a release as a draft makes GitHub mint a placeholder tag named
