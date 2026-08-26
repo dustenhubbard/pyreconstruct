@@ -13,9 +13,49 @@ geometry are the substance of a layout, so stubs would prove nothing.
 
 import pytest
 
-from test_list_dock_sizing import settle, open_list, dock_mainwindow  # noqa: F401
+from test_data_lists_real_widget import MenuStubField
+from test_list_dock_sizing import settle, open_list
 
 pytestmark = pytest.mark.gui
+
+
+@pytest.fixture
+def dock_mainwindow(qapp, real_series, gui_dialogs):
+    """The dock battery's real-QMainWindow recipe, duplicated deliberately:
+    importing the fixture by name trips the F811 gate (the test parameters
+    shadow the module-level import), and a fixture this small is cheaper to
+    own than to re-export through a conftest."""
+    from PySide6.QtWidgets import QMainWindow, QWidget
+
+    class DockMainWindow(QMainWindow):
+        def __init__(self):
+            super().__init__()
+            self.series = real_series
+            first = sorted(real_series.sections)[0]
+            self.section = real_series.loadSection(first)
+            self.field = MenuStubField(real_series, self.section)
+            self.viewer = None
+
+        def saveAllData(self):
+            pass
+
+        def seriesModified(self, modified=True):
+            pass
+
+        def checkActions(self, *args, **kwargs):
+            pass
+
+        def changeSection(self, snum, save=False):
+            pass
+
+    window = DockMainWindow()
+    window.setCentralWidget(QWidget())
+    window.resize(1600, 1000)
+    window.show()
+    settle(qapp)
+    yield window
+    window.close()
+    window.deleteLater()
 
 
 def _manager(dock_mainwindow):
