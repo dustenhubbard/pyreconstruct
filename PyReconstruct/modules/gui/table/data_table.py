@@ -263,41 +263,38 @@ class DataTable(QDockWidget):
         self.update()
 
     def _dockIcon(self):
-        """The dock-back icon: a bold panel with an arrow into its column.
+        """The dock-back icon: the restore glyph, bold and crisp.
 
-        Painted, not a stock style icon: SP_TitleBarNormalButton renders
-        faint and small in a menubar (his report, 2026-08-26). Drawn from
-        the palette's text color at 2x for crisp Retina rendering, in the
-        same visual family as the status bar's sidebar icon.
+        The same two-overlapping-squares shape as the title bar's own
+        undock button, so the pair reads as one family (his call,
+        2026-08-26). Painted, not the stock style icon, which renders faint
+        and small in a menubar. Drawn in DEVICE pixels on a 2x canvas with
+        integer coordinates: the first version painted logical-size shapes
+        onto the 2x canvas, which landed the drawing in one corner and
+        scaled it up blurry (his report, 2026-08-26).
         """
-        from PySide6.QtCore import QPointF, QRectF
-        from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap, QPolygonF
+        from PySide6.QtCore import QRect
+        from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 
-        size = 32                     # painted 2x; the bar shows it at 16
-        pixmap = QPixmap(size, size)
+        pixmap = QPixmap(32, 32)          # device pixels; shown at 16 logical
         pixmap.setDevicePixelRatio(2.0)
         pixmap.fill(QColor(0, 0, 0, 0))
         color = self.palette().windowText().color()
 
+        back = QRect(11, 5, 16, 16)
+        front = QRect(5, 11, 16, 16)
+
         painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setPen(QPen(color, 1.6))
-        panel = QRectF(1.5, 2.5, 13.0, 11.0)
-        painter.drawRoundedRect(panel, 1.5, 1.5)
-        split = panel.left() + panel.width() * 0.38
-        painter.fillRect(
-            QRectF(panel.left(), panel.top(), split - panel.left(), panel.height()),
-            color,
+        painter.setPen(QPen(color, 2))
+        painter.drawRect(back)
+        # punch the front square's area out of the back one, then stroke it:
+        # the overlap reads as one square sitting in front of the other
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+        painter.fillRect(front.adjusted(-1, -1, 1, 1), QColor(0, 0, 0, 0))
+        painter.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_SourceOver
         )
-        # the arrow pointing INTO the filled column: dock it back
-        painter.setPen(QPen(color, 1.6))
-        painter.drawLine(QPointF(14.5, 8.0), QPointF(split + 2.0, 8.0))
-        painter.setBrush(color)
-        painter.drawPolygon(QPolygonF([
-            QPointF(split + 1.0, 8.0),
-            QPointF(split + 4.5, 5.8),
-            QPointF(split + 4.5, 10.2),
-        ]))
+        painter.drawRect(front)
         painter.end()
         return QIcon(pixmap)
 
