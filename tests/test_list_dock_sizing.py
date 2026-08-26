@@ -847,3 +847,15 @@ def test_docked_table_never_overflows_its_viewport(qapp, dock_mainwindow, manage
     dock_mainwindow.resize(1200, 700)
     settle(qapp)
     assert inner.geometry().bottom() <= body.rect().bottom()
+
+
+def test_tabs_fill_the_full_bar_width(qapp, dock_mainwindow, manager):
+    """Two tabs over a wide list left a blank stump of tab bar beside them;
+    tabs expand to share the full width (his call, 2026-08-26)."""
+    open_list(manager, "object", qapp)
+    open_list(manager, "section", qapp)
+    settle(qapp)
+    bar = manager._dockTabBars()[0]
+    assert bar.expanding()
+    spanned = sum(bar.tabRect(i).width() for i in range(bar.count()))
+    assert spanned >= bar.width() - 4          # the bar, minus rounding slack

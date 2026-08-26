@@ -218,6 +218,9 @@ class TableManager():
             # Only the signal connections are one-shot, below.
             tb.setTabsClosable(True)
             tb.setContextMenuPolicy(_Qt.CustomContextMenu)
+            # tabs stretch to fill the bar: two tabs over a wide list left a
+            # blank stump of bar beside them (his call, 2026-08-26)
+            tb.setExpanding(True)
             if not tb.property("pyrecon_close_wired"):
                 tb.setProperty("pyrecon_close_wired", True)
                 tb.tabCloseRequested.connect(
