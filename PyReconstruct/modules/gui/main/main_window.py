@@ -3510,34 +3510,48 @@ class MainWindow(QMainWindow):
         safe = [r for r in candidates if r["repairable"]]
         lobed = [r for r in candidates if not r["repairable"]]
 
-        lines = []
         if safe:
             noun = "trace" if len(safe) == 1 else "traces"
-            lines.append(
+            prompt = (
                 f"Repair {len(safe)} self-crossing {noun}? The tiny crossing "
                 "is removed and the trace's real outline is kept.\n"
                 "This can be undone (Ctrl+Z)."
             )
+            if lobed:
+                skipped_noun = "trace needs" if len(lobed) == 1 else "traces need"
+                prompt += (
+                    f"\n\n{len(lobed)} more {skipped_noun} the scissors; "
+                    "a review list opens after."
+                )
+            if notifyConfirm(prompt, yn=True):
+                repaired = self.field.repairSelfCrossingContours(safe)
+                if repaired:
+                    # a summary window with copy and save-as-CSV, not a
+                    # message (his ask, 2026-08-26): a lab keeps a record of
+                    # what the bulk pass touched
+                    from PyReconstruct.modules.gui.dialog.malformed_contours import (
+                        RepairedCrossingsDialog,
+                    )
+                    self.repaired_crossings_dialog = RepairedCrossingsDialog(
+                        self,
+                        repaired,
+                        navigate=self.field.focusMalformedContour,
+                    )
+                    self.repaired_crossings_dialog.show()
+
         if lobed:
-            shown = ", ".join(
-                f"{r['name']} (section {r['section']})" for r in lobed[:10]
+            # a modeless review list, not a message: the user works the field
+            # with the scissors while it stays open, and can copy the whole
+            # set out (his report, 2026-08-26)
+            from PyReconstruct.modules.gui.dialog.malformed_contours import (
+                SkippedCrossingsDialog,
             )
-            more = "" if len(lobed) <= 10 else f", and {len(lobed) - 10} more"
-            lines.append(
-                f"Skipped, crossing separates real lobes: {shown}{more}.\n"
-                "Use the scissors tool on those."
+            self.skipped_crossings_dialog = SkippedCrossingsDialog(
+                self,
+                lobed,
+                navigate=self.field.focusMalformedContour,
             )
-
-        if not safe:
-            notify(lines[0])
-            return
-        if not notifyConfirm("\n\n".join(lines), yn=True):
-            return
-
-        repaired = self.field.repairSelfCrossingContours(safe)
-        if repaired:
-            noun = "trace" if len(repaired) == 1 else "traces"
-            notify(f"Repaired {len(repaired)} self-crossing {noun}.")
+            self.skipped_crossings_dialog.show()
 
     def removeEmptyTraces(self):
         """Find and remove empty / degenerate traces (no meaningful geometry).
