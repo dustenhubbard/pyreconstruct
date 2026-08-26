@@ -58,6 +58,14 @@ class TableManager():
         self.tables[table_type].append(new_table)
 
         anchor = self._dockedAnchor(new_table)
+        if hasattr(self.mainwindow, "setTabPosition"):
+            # tabs along the top of the list area, not Qt's bottom default
+            # (his call, 2026-08-25)
+            from PySide6.QtWidgets import QTabWidget
+            self.mainwindow.setTabPosition(
+                Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea,
+                QTabWidget.TabPosition.North,
+            )
         self.mainwindow.addDockWidget(Qt.LeftDockWidgetArea, new_table)
         if anchor is not None:
             self.mainwindow.tabifyDockWidget(anchor, new_table)
