@@ -1383,6 +1383,22 @@ class Series():
             # stored dict itself, which is exactly the aliasing the copy-on-read
             # work is closing, so restore it with a `setOption` call.
             "autoseg"          : {},
+            # Which object data the field's hover pop-up shows, and in what
+            # order. Ported from upstream 267c2625 (Michael, #100), which
+            # relies on this being a REGISTERED series option: setOption
+            # silently ignores an unknown name here, so without this entry
+            # the user's choice would never persist. Defaults match the
+            # pre-port hover content: everything except Name (the trace's
+            # name is already in the field) and Section Range.
+            "hover_columns": [  # MFO
+                ("Name", False),
+                ("Host", True),
+                ("Section Range", False),
+                ("Comment", True),
+                ("Object Alignment", True),
+                ("Object Groups", True),
+                ("Trace Tags", True),
+            ],
 
         }
 
