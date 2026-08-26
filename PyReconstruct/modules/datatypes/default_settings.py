@@ -306,4 +306,9 @@ default_series_settings = {
     # "manual_backup_dir": ""
     "autobackup": False,
     "backup_dir": "",
+    # which lists were open, floating, and where; written by the main window
+    # when a series closes and replayed when it opens (Patrick works with
+    # undocked lists; his layout should survive a restart). Not in any
+    # options dialog: the layout itself is the editor.
+    "list_layout": {},
 }

@@ -185,6 +185,48 @@ class TableManager():
                 if hasattr(table, "syncDockedTitleBar"):
                     table.syncDockedTitleBar()
 
+    def captureLayout(self):
+        """The open lists as a JSON-friendly dict, for the list_layout option.
+
+        Collapsed lists count as open (the collapse is part of the layout);
+        a closed list is simply absent. Geometry only matters for floating
+        lists; docked ones rejoin the tab group on restore.
+        """
+        entries = []
+        for ttype, tables in self.tables.items():
+            for t in tables:
+                if not t.isVisible() and t not in self._collapsed:
+                    continue
+                g = t.geometry()
+                entries.append({
+                    "type": ttype,
+                    "floating": bool(t.isFloating()),
+                    "geometry": [g.x(), g.y(), g.width(), g.height()],
+                })
+        return {"open": entries, "collapsed": self.listsCollapsed()}
+
+    def restoreLayout(self, layout, section=None):
+        """Reopen the lists a captureLayout dict describes.
+
+        Floating lists come back at their saved geometry; the first-float
+        default size is suppressed so a deliberately tiny list stays tiny.
+        Unknown types (a future flavor's layout) are skipped, never an error.
+        """
+        for entry in (layout or {}).get("open", []):
+            ttype = entry.get("type")
+            if ttype not in self.tables:
+                continue
+            self.newTable(ttype, section=section if ttype == "trace" else None)
+            table = self.tables[ttype][-1]
+            if entry.get("floating"):
+                table._float_size_applied = True
+                table.setFloating(True)
+                geometry = entry.get("geometry")
+                if geometry and len(geometry) == 4:
+                    table.setGeometry(*geometry)
+        if (layout or {}).get("collapsed"):
+            self.collapseLists()
+
     def _markViewerStale(self, obj_names=None, ztrace_names=None, all_objects=False):
         """Mark meshes in the open 3D scene whose 2D data was just edited.
 

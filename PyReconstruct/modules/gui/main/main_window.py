@@ -246,6 +246,7 @@ class MainWindow(QMainWindow):
         self.setGeometry(*self.defaultWindowGeometry())
 
         windowGeometrySettings().setValue("window/geometry", self.saveGeometry())
+        self._captureListLayout()
 
     def openWelcomeSeries(self):
         """Open a welcome series."""
@@ -946,6 +947,30 @@ class MainWindow(QMainWindow):
         self.field.reload()
         self.seriesModified(True)
 
+    def _captureListLayout(self):
+        """Remember the open lists for the current series (list_layout).
+
+        Runs when a series is about to close: a series switch and the app
+        close. Skipped for the welcome series and before the field exists.
+        """
+        field = getattr(self, "field", None)
+        if (
+            not self.series or self.series.isWelcomeSeries()
+            or field is None or not hasattr(field, "table_manager")
+        ):
+            return
+        self.series.setOption(
+            "list_layout", field.table_manager.captureLayout()
+        )
+
+    def _restoreListLayout(self):
+        """Reopen the lists the current series had open last time."""
+        if not self.series or self.series.isWelcomeSeries():
+            return
+        layout = self.series.getOption("list_layout")
+        if layout:
+            self.field.table_manager.restoreLayout(layout, self.field.section)
+
     def openSeries(self, series_obj=None, jser_fp=None, query_prev=True):
         """Open an existing series and create the field.
 
@@ -955,6 +980,10 @@ class MainWindow(QMainWindow):
         """
 
         if self.series:  # series open and save yes
+
+            # the outgoing series remembers its list layout before anything
+            # closes; the incoming series replays its own at the end
+            self._captureListLayout()
 
             first_open = False
 
@@ -1008,6 +1037,9 @@ class MainWindow(QMainWindow):
 
         # add the series to recently opened
         self.addToRecentSeries()
+
+        # reopen the lists this series had open last time, where they were
+        self._restoreListLayout()
 
     # ------------------------------------------------------------------
     # openSeries steps.
