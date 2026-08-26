@@ -202,7 +202,7 @@ class TableManager():
         from PySide6.QtWidgets import QMenu
         menu = QMenu(tab_bar)
         menu.aboutToHide.connect(menu.deleteLater)
-        menu.addAction("Float this list", lambda: table.setFloating(True))
+        menu.addAction("Undock this list", lambda: table.setFloating(True))
         menu.addAction("Close this list", table.close)
         menu.popup(tab_bar.mapToGlobal(pos))
         return menu

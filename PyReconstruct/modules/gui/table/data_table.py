@@ -16,47 +16,22 @@ from PyReconstruct.modules.gui.dialog import (
     TableColumnsDialog
 )
 
-class ListTitleBar(QWidget):
-    """A slim title bar for a lone docked list, dressed like a tab.
+class _ListBody(QMainWindow):
+    """The internal window each list renders into, with an honest width hint.
 
-    One docked list has no tab bar, so Qt shows its full title bar; two or
-    more show tabs and no title bar. The jump between the two looked drastic
-    and the buttons vanished (his click test, 2026-08-25). This bar keeps
-    the same vocabulary as a tab: the list's name on the left, a float
-    button and an X on the right, at tab height. Qt still drags the dock by
-    any non-button part of a custom title bar, so tear-out keeps working.
+    Qt sizes a docked QDockWidget from its CONTENT widget's sizeHint, so the
+    width floor lives here: the default hint (~256px) obscured the tail of
+    the object list's menu bar (his click test, 2026-08-26). Columns may
+    still overflow -- some are deliberately very wide -- but every menu in
+    the list's own bar is reachable at the default width.
     """
 
-    def __init__(self, table):
-        super().__init__(table)
-        from PySide6.QtWidgets import QHBoxLayout, QLabel, QStyle, QToolButton
-
-        self._label = QLabel(table.windowTitle(), self)
-        style = self.style()
-
-        def button(icon, tip, slot):
-            b = QToolButton(self)
-            b.setAutoRaise(True)
-            b.setIcon(style.standardIcon(icon))
-            b.setToolTip(tip)
-            b.clicked.connect(slot)
-            return b
-
-        self.float_button = button(
-            QStyle.StandardPixmap.SP_TitleBarNormalButton,
-            "Float this list", lambda: table.setFloating(True),
-        )
-        self.close_button = button(
-            QStyle.StandardPixmap.SP_TitleBarCloseButton,
-            "Close this list", table.close,
-        )
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 2, 2, 2)
-        layout.addWidget(self._label)
-        layout.addStretch(1)
-        layout.addWidget(self.float_button)
-        layout.addWidget(self.close_button)
+    def sizeHint(self):
+        hint = super().sizeHint()
+        needed = self.menuBar().sizeHint().width() + 8
+        if hint.width() < needed:
+            hint.setWidth(needed)
+        return hint
 
 
 class DataTable(QDockWidget):
@@ -114,7 +89,7 @@ class DataTable(QDockWidget):
         # floating behavior: a real window (not an always-on-top tool
         # palette), a usable first-float size, and a way back to the dock
         self._float_size_applied = False
-        self._dock_action = None
+        self._dock_button = None
         self.topLevelChanged.connect(self._onTopLevelChanged)
 
         # set defaults
@@ -131,7 +106,7 @@ class DataTable(QDockWidget):
         self.horizontal_headers = self.getHeaders()
 
         # create the main window widget
-        self.main_widget = QMainWindow()
+        self.main_widget = _ListBody()
         self.setWidget(self.main_widget)
 
         # save manager object
@@ -241,37 +216,40 @@ class DataTable(QDockWidget):
         tabbed = hasattr(mw, "tabifiedDockWidgets") and any(
             d.isVisible() for d in mw.tabifiedDockWidgets(self)
         )
-        current = self.titleBarWidget()
-        if tabbed:
+        if tabbed and self.titleBarWidget() is None:
             # tabs carry the name and the X; the title row disappears
-            if current is None or isinstance(current, ListTitleBar):
-                self.setTitleBarWidget(QWidget(self))
-        else:
-            # a lone list shows the tab-like slim bar, same buttons as a tab
-            if not isinstance(current, ListTitleBar):
-                self.setTitleBarWidget(ListTitleBar(self))
+            self.setTitleBarWidget(QWidget(self))
+        elif not tabbed and self.titleBarWidget() is not None:
+            # a lone list keeps Qt's ORIGINAL title bar. A slim tab-styled
+            # bar was tried and looked worse (his click test, 2026-08-25).
+            self.setTitleBarWidget(None)
 
     def _syncDockAction(self, floating : bool):
-        """Show a "Dock this list" menubar action while the list floats.
+        """Show an icon-only dock-back button while the list floats.
 
-        Created on the first float and re-attached on every one: the lists
-        rebuild their menubars (object list on column changes, for one), which
-        silently drops any action added earlier. Membership is re-checked
-        against the menubar each time rather than trusting a stored flag.
+        An icon, not a text menu item, matching the undock affordance's
+        vocabulary (his call, 2026-08-25). It lives in the list menubar's
+        corner, which survives the menubar rebuilds the lists run (the
+        object list rebuilds on column changes); the corner is re-checked
+        each float anyway rather than trusted.
         """
         if floating:
-            if self._dock_action is None:
-                from PySide6.QtGui import QAction
-                self._dock_action = QAction("Dock this list", self)
-                self._dock_action.triggered.connect(
-                    lambda: self.setFloating(False)
-                )
+            if self._dock_button is None:
+                from PySide6.QtWidgets import QStyle, QToolButton
+                button = QToolButton(self.main_widget)
+                button.setAutoRaise(True)
+                button.setIcon(self.style().standardIcon(
+                    QStyle.StandardPixmap.SP_TitleBarNormalButton
+                ))
+                button.setToolTip("Dock this list")
+                button.clicked.connect(lambda: self.setFloating(False))
+                self._dock_button = button
             menubar = self.main_widget.menuBar()
-            if self._dock_action not in menubar.actions():
-                menubar.addAction(self._dock_action)
-            self._dock_action.setVisible(True)
-        elif self._dock_action is not None:
-            self._dock_action.setVisible(False)
+            if menubar.cornerWidget(Qt.TopRightCorner) is not self._dock_button:
+                menubar.setCornerWidget(self._dock_button, Qt.TopRightCorner)
+            self._dock_button.setVisible(True)
+        elif self._dock_button is not None:
+            self._dock_button.setVisible(False)
 
     def createMenus(self):
         """Create the menubar and context menu for the widget.
@@ -543,7 +521,7 @@ class DataTable(QDockWidget):
 
         menu = QMenu(self)
         menu.aboutToHide.connect(menu.deleteLater)
-        menu.addAction("Float this list", lambda: self.setFloating(True))
+        menu.addAction("Undock this list", lambda: self.setFloating(True))
         menu.addAction("Close this list", self.close)
         self._titlebar_menu = menu
         menu.popup(event.globalPos())

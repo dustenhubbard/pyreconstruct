@@ -367,32 +367,39 @@ def test_floated_list_redocks_under_the_swapped_flags(qapp, dock_mainwindow, man
     assert table.width() >= table.MIN_WIDTH
 
 
-def test_dock_action_appears_only_while_floating(qapp, dock_mainwindow, manager):
+def test_dock_button_appears_only_while_floating(qapp, dock_mainwindow, manager):
+    from PySide6.QtCore import Qt
+
     table = open_list(manager, "object", qapp)
-    assert table._dock_action is None          # never floated: no action at all
+    assert table._dock_button is None          # never floated: no button at all
     table.setFloating(True)
     settle(qapp)
-    action = table._dock_action
-    assert action is not None
-    assert action.isVisible()
-    assert action in table.main_widget.menuBar().actions()
+    button = table._dock_button
+    assert button is not None
+    assert button.isVisible()
+    assert not button.icon().isNull()          # an icon, not a text row
+    assert not button.text()
+    assert button.toolTip() == "Dock this list"
+    assert table.main_widget.menuBar().cornerWidget(Qt.TopRightCorner) is button
     table.setFloating(False)
     settle(qapp)
-    assert not action.isVisible()
+    assert not button.isVisible()
 
 
-def test_dock_action_redocks_the_list(qapp, dock_mainwindow, manager):
+def test_dock_button_redocks_the_list(qapp, dock_mainwindow, manager):
     table = open_list(manager, "object", qapp)
     table.setFloating(True)
     settle(qapp)
-    table._dock_action.trigger()
+    table._dock_button.click()
     settle(qapp)
     assert not table.isFloating()
 
 
-def test_dock_action_survives_a_menubar_rebuild(qapp, dock_mainwindow, manager):
-    """The object list rebuilds its menubar on column changes, which drops
-    added actions; the next float must re-attach the action."""
+def test_dock_button_survives_a_menubar_rebuild(qapp, dock_mainwindow, manager):
+    """The object list rebuilds its menubar on column changes; the corner
+    widget is re-checked on every float rather than trusted."""
+    from PySide6.QtCore import Qt
+
     table = open_list(manager, "object", qapp)
     table.setFloating(True)
     settle(qapp)
@@ -401,8 +408,9 @@ def test_dock_action_survives_a_menubar_rebuild(qapp, dock_mainwindow, manager):
     settle(qapp)
     table.setFloating(True)
     settle(qapp)
-    assert table._dock_action in table.main_widget.menuBar().actions()
-    assert table._dock_action.isVisible()
+    menubar = table.main_widget.menuBar()
+    assert menubar.cornerWidget(Qt.TopRightCorner) is table._dock_button
+    assert table._dock_button.isVisible()
 
 
 def test_refloat_keeps_hand_set_size_with_real_window_flags(qapp, dock_mainwindow, manager):
@@ -542,18 +550,12 @@ def test_tabbed_lists_hide_their_title_bars(qapp, dock_mainwindow, manager):
     assert second.titleBarWidget() is not None
 
 
-def test_a_lone_docked_list_wears_the_tab_like_bar(qapp, dock_mainwindow, manager):
-    """A lone list has no tab bar, so it wears the slim tab-like bar: the
-    name plus the SAME float and close buttons the tabs carry, so going from
-    one list to two reads as one tab becoming two (his call, 2026-08-25)."""
-    from PyReconstruct.modules.gui.table.data_table import ListTitleBar
-
+def test_a_lone_docked_list_keeps_the_original_title_bar(qapp, dock_mainwindow, manager):
+    """A lone list keeps Qt's own title bar (a slim tab-styled bar was tried
+    and reverted on his click test, 2026-08-25): the drag, float and close
+    affordances stay exactly what stable users know."""
     only = open_list(manager, "object", qapp)
-    bar = only.titleBarWidget()
-    assert isinstance(bar, ListTitleBar)
-    bar.float_button.click()
-    settle(qapp)
-    assert only.isFloating()
+    assert only.titleBarWidget() is None
 
 
 def test_dock_tabs_carry_close_buttons(qapp, dock_mainwindow, manager):
@@ -581,16 +583,14 @@ def test_tab_x_closes_the_right_list(qapp, dock_mainwindow, manager):
     assert keeper.isVisible()
 
 
-def test_group_shrunk_to_one_gets_the_slim_bar_back(qapp, dock_mainwindow, manager):
-    from PyReconstruct.modules.gui.table.data_table import ListTitleBar
-
+def test_group_shrunk_to_one_gets_its_title_bar_back(qapp, dock_mainwindow, manager):
     keeper = open_list(manager, "object", qapp)
     goner = open_list(manager, "section", qapp)
     settle(qapp)
-    assert not isinstance(keeper.titleBarWidget(), ListTitleBar)
+    assert keeper.titleBarWidget() is not None
     goner.close()
     settle(qapp)
-    assert isinstance(keeper.titleBarWidget(), ListTitleBar)
+    assert keeper.titleBarWidget() is None
 
 
 def test_floated_list_never_keeps_the_empty_title_widget(qapp, dock_mainwindow, manager):
@@ -681,7 +681,7 @@ def test_tab_right_click_offers_float_and_close(qapp, dock_mainwindow, manager):
     index = next(i for i in range(bar.count()) if bar.tabData(i) == ptr)
     menu = manager._tabContextMenu(bar, bar.tabRect(index).center())
     labels = [a.text() for a in menu.actions()]
-    assert labels == ["Float this list", "Close this list"]
+    assert labels == ["Undock this list", "Close this list"]
     menu.actions()[0].trigger()
     settle(qapp)                      # the menu deletes itself on hide
     assert second.isFloating()
@@ -703,7 +703,14 @@ def test_title_bar_right_click_offers_float_and_close(qapp, dock_mainwindow, man
     )
     table.contextMenuEvent(event)
     labels = [a.text() for a in table._titlebar_menu.actions()]
-    assert labels == ["Float this list", "Close this list"]
+    assert labels == ["Undock this list", "Close this list"]
     table._titlebar_menu.actions()[0].trigger()
     settle(qapp)
     assert table.isFloating()
+
+
+def test_default_docked_width_clears_the_list_menu_bar(qapp, dock_mainwindow, manager):
+    """The default width must not obscure any of the list's own menus (his
+    click test, 2026-08-26). Columns may still overflow; the menu bar not."""
+    table = open_list(manager, "object", qapp)
+    assert table.width() >= table.main_widget.menuBar().sizeHint().width()
