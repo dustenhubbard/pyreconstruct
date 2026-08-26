@@ -289,7 +289,15 @@ class MainWindow(QMainWindow):
         self.menusearchfield_act = MenuSearchField(self, self.helpmenu)
         first_help_action = self.helpmenu.actions()[0]
         self.helpmenu.insertAction(first_help_action, self.menusearchfield_act)
-        self.helpmenu.insertSeparator(first_help_action)
+        # No separator inserted here any more: the menu definition already
+        # ends its first group with one, and adding a second put a divider
+        # between the field and the "Search menus..." row that shares its
+        # group (his Help layout call, 2026-08-26).
+
+        # Focus the field whenever Help opens, so typing goes straight into
+        # it without a click (his call, 2026-08-26). Connected once per
+        # menubar build, like the checkable resyncs below.
+        self.helpmenu.aboutToShow.connect(self.focusMenuSearchField)
 
         ## The Lists pill's hover names the collapse shortcut. Read from the
         ## live action each menubar build, so a rebind through the shortcuts
@@ -2451,6 +2459,10 @@ class MainWindow(QMainWindow):
             # route would otherwise be a third place to remember.
             self.field.updateStatusBar()
 
+    #: pixels between a status-bar pill and the menu it opens. Matches the
+    #: section popup's own lift, which is the spacing he approved.
+    PILL_MENU_GAP = 2
+
     def statusQuickSwitch(self, segment, names, current, switch, manage=None):
         """Pop a list of names up over a status-bar segment.
 
@@ -2504,9 +2516,16 @@ class MainWindow(QMainWindow):
         # exceeds-screen scrolling is the only scrolling it reliably has, and
         # sizeHint() ignores a maximum anyway, so the anchor bounds the hint by
         # the screen and lets popup() do its own clamping.
+        # The same 2px lift the section popup gives itself
+        # (SectionListPopup, status_readout.py): flush against the pill these
+        # two menus read as crowded, and he called the section spacing right
+        # (2026-08-26).
         top_left = segment.mapToGlobal(segment.rect().topLeft())
         screen_h = self.screen().availableGeometry().height()
-        menu.popup(top_left - QPoint(0, min(menu.sizeHint().height(), screen_h)))
+        menu.popup(
+            top_left
+            - QPoint(0, min(menu.sizeHint().height(), screen_h) + self.PILL_MENU_GAP)
+        )
         if current_act is not None:
             # after popup(), not before: activation set on an unshown menu is
             # not guaranteed to survive the show
@@ -2562,6 +2581,23 @@ class MainWindow(QMainWindow):
         """Switch alignment and repaint the readout."""
         self.changeAlignment(alignment)
         self.field.updateStatusBar()
+
+    def focusMenuSearchField(self):
+        """Put the cursor in the Help menu's search field as Help opens.
+
+        Deferred by a zero timer: at aboutToShow the menu is not visible
+        yet, and a focus set before the show is dropped when Qt gives the
+        popup its own focus.
+        """
+        from PySide6.QtCore import QTimer
+
+        field = getattr(self, "menusearchfield_act", None)
+        if field is None:
+            return
+        widget = field.defaultWidget()
+        if widget is None:
+            return
+        QTimer.singleShot(0, widget.setFocus)
 
     def toggleLists(self):
         """Show or hide the docked lists (the Lists pill, View menu, or key)."""

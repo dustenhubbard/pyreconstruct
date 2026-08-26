@@ -281,3 +281,24 @@ def test_pill_menus_offer_the_management_dialog(qapp, main_window):
         assert menu.actions()[-2].isSeparator()
     finally:
         menu.hide()
+
+
+def test_pill_menus_clear_the_pill_by_the_section_gap(qapp, main_window, qtbot):
+    """The alignment and B/C menus sat flush against their pill and read as
+    crowded; the section popup's own 2px lift is the approved spacing (his
+    call, 2026-08-26), so both menus use it."""
+    from PyReconstruct.modules.gui.main.main_window import MainWindow
+
+    for open_menu, segment in (
+        (main_window.quickSwitchAlignment,
+         main_window.status_readout.alignment_segment),
+        (main_window.quickSwitchBCProfile,
+         main_window.status_readout.bc_profile_segment),
+    ):
+        menu = open_menu()
+        try:
+            pill_top = segment.mapToGlobal(segment.rect().topLeft()).y()
+            gap = pill_top - (menu.pos().y() + menu.sizeHint().height())
+            assert gap == MainWindow.PILL_MENU_GAP
+        finally:
+            menu.hide()

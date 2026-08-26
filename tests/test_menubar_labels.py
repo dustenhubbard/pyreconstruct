@@ -342,7 +342,8 @@ _CLEAR_RECENTS_ROW = (2, "act", "clearrecents_act")
 _IMPORT_JSER_ALIGNMENTS_ROW = (2, "act", "import_jser_alignments_act")
 _RESET_WINDOW_ROW = (1, "act", "resetwindow_act")
 _TOGGLE_WHATSNEW_ROW = (1, "act", "togglewhatsnew_act")
-# Help > "Check for updates on startup": the checkable that replaced the
+# Help > "Automatically check for updates" (renamed 2026-08-26 with the
+# Help regroup): the checkable that replaced the
 # Series Options Updates tab (removed with the channel radio, 2026-08-21).
 # It sits directly under "Check for updates...", the action it governs.
 _TOGGLE_UPDATECHECK_ROW = (1, "act", "toggleupdatecheck_act")
@@ -374,26 +375,46 @@ MENUBAR_EXPECTED.insert(
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "act", "lefthanded_act")), _RESET_WINDOW_ROW
 )
-MENUBAR_EXPECTED.insert(
-    MENUBAR_EXPECTED.index((1, "act", "whatsnew_act")) + 1, _TOGGLE_WHATSNEW_ROW
-)
-MENUBAR_EXPECTED.insert(
-    MENUBAR_EXPECTED.index((1, "act", "checkupdates_act")) + 1,
-    _TOGGLE_UPDATECHECK_ROW,
-)
-MENUBAR_EXPECTED.insert(
-    MENUBAR_EXPECTED.index((1, "act", "checkupdates_act")) + 1,
-    _GET_OTHER_FLAVOR_ROW,
-)
+
+
+
 _i = MENUBAR_EXPECTED.index((1, "act", "copyscreen_act"))
 MENUBAR_EXPECTED[_i:_i] = [_TOGGLE_LISTS_ROW, (1, "sep", None)]
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((2, "act", "removeempty_act")) + 1,
     _REPAIR_SELF_CROSSINGS_ROW,
 )
-MENUBAR_EXPECTED.insert(
-    MENUBAR_EXPECTED.index((1, "act", "shortcutshelp_act")), _SEARCH_MENUS_ROW
-)
+# The second sanctioned MOVE (2026-08-26, his Help layout call): Help is
+# regrouped into five separated groups -- the search field, then what this
+# build IS, then updates, then the What's-new pop-up, then the rest exactly
+# as it was. Expressed as remove-then-rebuild of the Help rows rather than by
+# rewriting the frozen baseline, so the deviation stays visible;
+# test_no_baseline_action_was_lost still sees every Help action, which is what
+# makes this a move and not a loss.
+_HELP_HEAD_OLD = [
+    (1, "act", "repobranch_act"),
+    (1, "act", "checkupdates_act"),
+    (1, "act", "whatsnew_act"),
+    (1, "sep", None),
+    (1, "act", "shortcutshelp_act"),
+]
+_HELP_HEAD_NEW = [
+    _SEARCH_MENUS_ROW,
+    (1, "sep", None),
+    (1, "act", "repobranch_act"),
+    (1, "sep", None),
+    (1, "act", "checkupdates_act"),
+    _TOGGLE_UPDATECHECK_ROW,
+    _GET_OTHER_FLAVOR_ROW,
+    (1, "sep", None),
+    (1, "act", "whatsnew_act"),
+    _TOGGLE_WHATSNEW_ROW,
+    (1, "sep", None),
+    (1, "act", "shortcutshelp_act"),
+]
+_help_at = MENUBAR_EXPECTED.index((1, "act", "repobranch_act"))
+assert MENUBAR_EXPECTED[_help_at:_help_at + len(_HELP_HEAD_OLD)] == _HELP_HEAD_OLD
+MENUBAR_EXPECTED[_help_at:_help_at + len(_HELP_HEAD_OLD)] = _HELP_HEAD_NEW
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "act", "fillopacity_act")) + 1, _RECOLOR_ALL_ROW
 )

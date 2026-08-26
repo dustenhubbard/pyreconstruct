@@ -83,7 +83,11 @@ def test_the_field_is_embedded_at_the_top_of_the_help_menu(main_window):
     assert isinstance(field, MenuSearchField)
     help_actions = main_window.helpmenu.actions()
     assert help_actions[0] is field
-    assert help_actions[1].isSeparator()
+    # The "Search menus..." row shares the field's group (his Help regroup,
+    # 2026-08-26): field, then the keyed row that displays its shortcut, then
+    # the group separator. No divider between the field and that row.
+    assert help_actions[1].text() == "Search menus..."
+    assert help_actions[2].isSeparator()
     # the carrier row is still present and still labeled
     assert main_window.searchmenus_act.text() == "Search menus..."
     assert "Search menus..." in [a.text() for a in help_actions]
