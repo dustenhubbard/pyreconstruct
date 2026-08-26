@@ -312,3 +312,125 @@ def test_layout_state_roundtrip_keeps_lists_usable(qapp, dock_mainwindow, manage
     for table in tables:
         assert not table.isFloating()
         assert table.width() >= table.MIN_WIDTH
+
+
+# --------------------------------------------------------------------------
+# Floating lists are real windows (2026-08-25, his beta-2 report): a floated
+# list used to be a Qt TOOL window, pinned above the main window forever.
+# --------------------------------------------------------------------------
+
+def test_floated_list_is_a_real_window_not_a_tool(qapp, dock_mainwindow, manager):
+    from PySide6.QtCore import Qt
+
+    table = open_list(manager, "object", qapp)
+    table.setFloating(True)
+    settle(qapp)
+    flags = table.windowFlags()
+    assert not (flags & Qt.Tool) == Qt.Tool
+    assert flags & Qt.Window
+    assert flags & Qt.WindowMinimizeButtonHint
+    assert flags & Qt.WindowCloseButtonHint
+    assert table.isVisible()
+
+
+def test_floated_list_redocks_under_the_swapped_flags(qapp, dock_mainwindow, manager):
+    from PySide6.QtCore import Qt
+
+    table = open_list(manager, "object", qapp)
+    table.setFloating(True)
+    settle(qapp)
+    table.setFloating(False)
+    settle(qapp)
+    assert not table.isFloating()
+    assert dock_mainwindow.dockWidgetArea(table) == Qt.LeftDockWidgetArea
+    assert table.isVisible()
+    assert table.width() >= table.MIN_WIDTH
+
+
+def test_dock_action_appears_only_while_floating(qapp, dock_mainwindow, manager):
+    table = open_list(manager, "object", qapp)
+    assert table._dock_action is None          # never floated: no action at all
+    table.setFloating(True)
+    settle(qapp)
+    action = table._dock_action
+    assert action is not None
+    assert action.isVisible()
+    assert action in table.main_widget.menuBar().actions()
+    table.setFloating(False)
+    settle(qapp)
+    assert not action.isVisible()
+
+
+def test_dock_action_redocks_the_list(qapp, dock_mainwindow, manager):
+    table = open_list(manager, "object", qapp)
+    table.setFloating(True)
+    settle(qapp)
+    table._dock_action.trigger()
+    settle(qapp)
+    assert not table.isFloating()
+
+
+def test_dock_action_survives_a_menubar_rebuild(qapp, dock_mainwindow, manager):
+    """The object list rebuilds its menubar on column changes, which drops
+    added actions; the next float must re-attach the action."""
+    table = open_list(manager, "object", qapp)
+    table.setFloating(True)
+    settle(qapp)
+    table.main_widget.menuBar().clear()        # what a rebuild does to it
+    table.setFloating(False)
+    settle(qapp)
+    table.setFloating(True)
+    settle(qapp)
+    assert table._dock_action in table.main_widget.menuBar().actions()
+    assert table._dock_action.isVisible()
+
+
+def test_refloat_keeps_hand_set_size_with_real_window_flags(qapp, dock_mainwindow, manager):
+    """The flag swap must not break the size promise from the first fix."""
+    table = open_list(manager, "object", qapp)
+    table.setFloating(True)
+    settle(qapp)
+    table.resize(720, 780)
+    settle(qapp)
+    table.setFloating(False)
+    settle(qapp)
+    table.setFloating(True)
+    settle(qapp)
+    assert abs(table.width() - 720) <= 20
+    assert abs(table.height() - 780) <= 20
+
+
+def test_close_while_floating_still_unregisters(qapp, dock_mainwindow, manager):
+    """The native close button routes through closeEvent like the dock X."""
+    table = open_list(manager, "object", qapp)
+    table.setFloating(True)
+    settle(qapp)
+    table.close()
+    settle(qapp)
+    assert table not in manager.tables["object"]
+
+
+def test_float_from_tab_group_and_back(qapp, dock_mainwindow, manager):
+    """Float a tabbed list, dock it back, and the tab group takes it again."""
+    first = open_list(manager, "object", qapp)
+    second = open_list(manager, "section", qapp)
+    second.setFloating(True)
+    settle(qapp)
+    second.setFloating(False)
+    settle(qapp)
+    assert not second.isFloating()
+    assert first in dock_mainwindow.tabifiedDockWidgets(second)
+
+
+# --------------------------------------------------------------------------
+# Tabs sit along the top of the list area (his call, 2026-08-25)
+# --------------------------------------------------------------------------
+
+def test_list_tabs_sit_on_top(qapp, dock_mainwindow, manager):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QTabWidget
+
+    open_list(manager, "object", qapp)
+    open_list(manager, "section", qapp)
+    assert dock_mainwindow.tabPosition(Qt.LeftDockWidgetArea) == QTabWidget.TabPosition.North
+    assert dock_mainwindow.tabPosition(Qt.RightDockWidgetArea) == QTabWidget.TabPosition.North

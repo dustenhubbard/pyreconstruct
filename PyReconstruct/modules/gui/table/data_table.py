@@ -59,10 +59,11 @@ class DataTable(QDockWidget):
         self.setObjectName(f"{self.name}-list-{DataTable._name_counter}")
         self.setMinimumSize(self.MIN_WIDTH, self.MIN_HEIGHT)
 
-        # give the first float a usable size; later floats keep the size the
-        # user set (Qt restores the last floating geometry on its own)
+        # floating behavior: a real window (not an always-on-top tool
+        # palette), a usable first-float size, and a way back to the dock
         self._float_size_applied = False
-        self.topLevelChanged.connect(self._applyFloatSize)
+        self._dock_action = None
+        self.topLevelChanged.connect(self._onTopLevelChanged)
 
         # set defaults
         if "static_columns" not in dir(self): self.static_columns = []
@@ -84,20 +85,57 @@ class DataTable(QDockWidget):
         # save manager object
         self.manager = manager
     
-    def _applyFloatSize(self, floating : bool):
-        """Give a newly floated list a usable size.
+    def _onTopLevelChanged(self, floating : bool):
+        """Shape a list's floating life; runs on every float and re-dock.
 
-        Runs once per widget: the first time it floats, either dimension
-        smaller than the float minimum is raised to it. Later floats are left
-        alone so a size the user set by hand survives re-floating.
+        Floating: Qt makes a floating dock a TOOL window, which sits above its
+        parent forever -- the main window could never cover a floated list
+        even when focused (his report, 2026-08-25, beta-2). Swapping to plain
+        window flags makes it an ordinary window with a native title bar. The
+        cost is that dragging a native title bar cannot re-dock, so a "Dock
+        this list" menubar action appears while floating; setFloating(False)
+        still re-docks fine under the swapped flags. The flag change recreates
+        the native window, so show() must follow. First float also raises any
+        dimension below the float minimum; later floats keep the user's size
+        (Qt restores the last floating geometry on its own).
         """
-        if not floating or self._float_size_applied:
-            return
-        self._float_size_applied = True
-        self.resize(
-            max(self.width(), self.FLOAT_MIN_WIDTH),
-            max(self.height(), self.FLOAT_MIN_HEIGHT)
-        )
+        if floating:
+            self.setWindowFlags(
+                Qt.Window
+                | Qt.WindowMinimizeButtonHint
+                | Qt.WindowMaximizeButtonHint
+                | Qt.WindowCloseButtonHint
+            )
+            self.show()
+            if not self._float_size_applied:
+                self._float_size_applied = True
+                self.resize(
+                    max(self.width(), self.FLOAT_MIN_WIDTH),
+                    max(self.height(), self.FLOAT_MIN_HEIGHT)
+                )
+        self._syncDockAction(floating)
+
+    def _syncDockAction(self, floating : bool):
+        """Show a "Dock this list" menubar action while the list floats.
+
+        Created on the first float and re-attached on every one: the lists
+        rebuild their menubars (object list on column changes, for one), which
+        silently drops any action added earlier. Membership is re-checked
+        against the menubar each time rather than trusting a stored flag.
+        """
+        if floating:
+            if self._dock_action is None:
+                from PySide6.QtGui import QAction
+                self._dock_action = QAction("Dock this list", self)
+                self._dock_action.triggered.connect(
+                    lambda: self.setFloating(False)
+                )
+            menubar = self.main_widget.menuBar()
+            if self._dock_action not in menubar.actions():
+                menubar.addAction(self._dock_action)
+            self._dock_action.setVisible(True)
+        elif self._dock_action is not None:
+            self._dock_action.setVisible(False)
 
     def createMenus(self):
         """Create the menubar and context menu for the widget.
