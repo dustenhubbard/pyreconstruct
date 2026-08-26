@@ -372,6 +372,56 @@ class MalformedContoursDialog(QDialog):
             csv.writer(f).writerows(self._rows_for_export())
 
 
+class SkippedCrossingsDialog(MalformedContoursDialog):
+    """The self-crossing traces the repair left for the scissors.
+
+    The bulk repair (Series > Clean up > Repair self-crossing traces...)
+    skips a trace whose crossing separates two real lobes, because only the
+    user can pick the right lobe. Naming them in a plain message was not
+    actionable (his report, 2026-08-26): this review list keeps the window
+    open while "Go to trace" walks the field to each one, and "Copy table
+    list" takes the whole set to a notes app. No delete action on purpose;
+    the scissors in the field are the fix.
+    """
+
+    WINDOW_TITLE = "Self-crossing traces to fix with the scissors"
+
+    def _headingText(self):
+        count = len(self.records)
+        noun = "trace" if count == 1 else "traces"
+        return (
+            f"{count} self-crossing {noun} could not be repaired "
+            "automatically: the crossing separates two real lobes, and only "
+            "you can pick the right one.\n\n"
+            "Select a row and click \"Go to trace\" (or double-click it) to "
+            "jump there, then cut out the crossing with the scissors tool. "
+            "This window stays open while you work."
+        )
+
+
+class RepairedCrossingsDialog(MalformedContoursDialog):
+    """The summary after a self-crossing repair pass.
+
+    Lists every trace the pass repaired, with the same copy-to-clipboard and
+    save-as-CSV roads as the other review lists (his ask, 2026-08-26), so a
+    lab can keep a record of what a bulk pass touched. "Go to trace" works
+    here too, for spot-checking the results. The whole pass is one undo.
+    """
+
+    WINDOW_TITLE = "Repaired self-crossing traces"
+
+    def _headingText(self):
+        count = len(self.records)
+        noun = "trace" if count == 1 else "traces"
+        return (
+            f"Repaired {count} self-crossing {noun}: the crossing artifact "
+            "was removed and each trace's real outline kept.\n\n"
+            "Select a row and click \"Go to trace\" to spot-check a repair. "
+            "The whole pass is one undo (Cmd+Z; Ctrl+Z on Windows and "
+            "Linux)."
+        )
+
+
 class PixelDustDialog(MalformedContoursDialog):
     """Review tiny "pixel-dust" traces before removing them.
 
