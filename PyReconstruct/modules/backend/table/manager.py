@@ -369,6 +369,21 @@ class TableManager():
         if (layout or {}).get("collapsed"):
             self.collapseLists()
 
+    def refreshColumnWidths(self):
+        """Re-measure every open list's columns.
+
+        A theme switch changes fonts and cell padding, but the lists kept
+        the widths measured under the OLD theme, so dark-theme text crowded
+        its columns (his report, 2026-08-26; measured: a fresh dark list
+        wants 99/53/45 where a switched one kept 91/36/28). The main window
+        calls this after applying a theme.
+        """
+        for tables in self.tables.values():
+            for table in tables:
+                view = getattr(table, "table", None)
+                if view is not None:
+                    view.resizeColumnsToContents()
+
     def _markViewerStale(self, obj_names=None, ztrace_names=None, all_objects=False):
         """Mark meshes in the open 3D scene whose 2D data was just edited.
 

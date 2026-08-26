@@ -4262,7 +4262,14 @@ class MainWindow(QMainWindow):
                 qdarkstyle.load_stylesheet_pyside6() + 
                 qdark_addon
             )
-    
+
+        # the lists measured their columns under the old theme's font and
+        # padding; re-measure so the new theme's text is not crowded
+        # (his report, 2026-08-26)
+        field = getattr(self, "field", None)
+        if field is not None and hasattr(field, "table_manager"):
+            field.table_manager.refreshColumnWidths()
+
     def addToRecentSeries(self, series_fp : str = None):
         """Add a series to the recently opened series list."""
         if series_fp is None:

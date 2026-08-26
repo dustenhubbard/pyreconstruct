@@ -798,3 +798,27 @@ def test_a_tab_drag_tears_the_list_out(qapp, dock_mainwindow, manager):
     far = QApplication.startDragDistance() * 2 + 6
     send(QEvent.MouseMove, start + QPoint(0, far), Qt.LeftButton)
     assert second.isFloating()
+
+
+def test_theme_switch_remeasures_list_columns(qapp, main_window, gui_dialogs):
+    """A theme switch changes fonts and padding, but the lists kept the OLD
+    theme's column widths and the new theme's text crowded them (his report,
+    2026-08-26). setTheme now re-measures every open list."""
+    mgr = main_window.field.table_manager
+    mgr.newTable("object")
+    settle(qapp)
+    view = mgr.tables["object"][0].table
+    ncols = view.model().columnCount()
+
+    main_window.setTheme("qdark")
+    settle(qapp, rounds=10)
+    switched = [view.columnWidth(c) for c in range(ncols)]
+
+    mgr.newTable("object")
+    settle(qapp)
+    fresh_view = mgr.tables["object"][1].table
+    fresh = [fresh_view.columnWidth(c) for c in range(ncols)]
+
+    assert switched == fresh
+    main_window.setTheme("default")
+    settle(qapp, rounds=6)
