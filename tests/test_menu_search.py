@@ -63,7 +63,10 @@ def test_every_menubar_command_is_collected_with_its_path(main_window):
 
     assert len(commands) > 50, "the walker is not seeing the real menubar"
     # a known deep command, with the trail that leads to it
-    assert any(p.startswith("Help > ") and "Search menus" in p for p in paths)
+    assert any(p == "Help > Check for updates" for p in paths)
+    # "Search menus..." has no row since the consolidation (2026-08-27), so
+    # the walk must not see it; the chord lives on the field's own hint
+    assert not any("Search menus" in p for p in paths)
     # separators and submenu titles are not commands
     assert all(" > " in p or p for p in paths)
     assert not any(p.endswith(" > ") for p in paths)
@@ -76,21 +79,75 @@ def test_the_field_is_embedded_at_the_top_of_the_help_menu(main_window):
 
     The keyed action and the field are two actions by design: a QWidgetAction
     cannot carry the series-form configurable shortcut, so searchmenus_act
-    stays the remappable carrier (asserted last) while the field does the
-    searching.
+    stays the remappable carrier (test_the_chord_survives_off_the_menu) while
+    the field does the searching.
     """
     field = main_window.menusearchfield_act
     assert isinstance(field, MenuSearchField)
     help_actions = main_window.helpmenu.actions()
     assert help_actions[0] is field
-    # The "Search menus..." row shares the field's group (his Help regroup,
-    # 2026-08-26): field, then the keyed row that displays its shortcut, then
-    # the group separator. No divider between the field and that row.
-    assert help_actions[1].text() == "Search menus..."
-    assert help_actions[2].isSeparator()
-    # the carrier row is still present and still labeled
-    assert main_window.searchmenus_act.text() == "Search menus..."
-    assert "Search menus..." in [a.text() for a in help_actions]
+    # Since the consolidation (2026-08-27) the field IS the whole first
+    # group: the group separator sits directly under it, and no "Search
+    # menus..." row remains anywhere in the menu.
+    assert help_actions[1].isSeparator()
+    assert "Search menus..." not in [a.text() for a in help_actions]
+
+
+def test_the_chord_survives_off_the_menu(main_window):
+    """The remappable key must keep working with its row gone (2026-08-27).
+
+    A QWidgetAction cannot carry the series-form configurable shortcut, so
+    searchmenus_act stays the carrier: built from its definition tuple every
+    rebuild, attached to the WINDOW by newAction, and only its menu row is
+    removed. Off the window too and the chord would go dead silently.
+    """
+    act = main_window.searchmenus_act
+    assert act.text() == "Search menus..."          # the shortcuts dialog's label
+    assert not act.shortcut().isEmpty()             # the chord is still bound
+    assert act in main_window.actions()             # the window carries it
+    assert act not in main_window.helpmenu.actions()
+
+
+def test_rebuilds_leave_exactly_one_chord_carrier(main_window):
+    """One carrier on the window, however many times the menubar rebuilds.
+
+    Off the menu, the carrier is invisible to clearMenuBar's teardown walk,
+    and newAction's remove-previous can be defeated by the dead-wrapper trap,
+    so createMenuBar sweeps stale carriers itself. Unswept, each rebuild
+    stacked another live Ctrl+K action on the window and the shortcuts
+    dialog refused every OK as a collision.
+    """
+    def carriers():
+        return [
+            a for a in main_window.actions()
+            if a.objectName() == "searchmenus_act"
+        ]
+    assert len(carriers()) == 1
+    main_window.createMenuBar()
+    main_window.createMenuBar()
+    assert len(carriers()) == 1
+    assert carriers()[0] is main_window.searchmenus_act
+    assert not carriers()[0].shortcut().isEmpty()
+
+
+def test_the_field_shows_the_chord_as_a_hint(main_window):
+    """The field advertises the key the row used to show (his consolidation
+    call, 2026-08-27): the platform-native chord, grayed, right edge. Typing
+    hides it, because the clear button appears in the same corner; clearing
+    brings it back."""
+    from PySide6.QtGui import QKeySequence
+
+    field = main_window.menusearchfield_act
+    native = main_window.searchmenus_act.shortcut().toString(
+        QKeySequence.SequenceFormat.NativeText
+    )
+    assert field._hint.text() == native
+    assert not field._hint.isEnabled()              # palette grays it
+    assert field._hint.isVisibleTo(field._query)
+    field._query.setText("und")
+    assert not field._hint.isVisibleTo(field._query)
+    field._query.clear()
+    assert field._hint.isVisibleTo(field._query)
 
 
 def _snapshotted_field(main_window):
@@ -102,10 +159,10 @@ def _snapshotted_field(main_window):
 
 def test_typing_filters_into_the_popup(main_window):
     field = _snapshotted_field(main_window)
-    field._query.setText("search menus")
+    field._query.setText("check updates")
     assert field._results.count() >= 1
     labels = [field._results.item(i).text() for i in range(field._results.count())]
-    assert any("Help > Search menus" in l for l in labels)
+    assert any("Help > Check for updates" in l for l in labels)
     # the top hit is preselected so Enter can run it immediately
     assert field._results.currentRow() == 0
     field._query.clear()
@@ -114,7 +171,7 @@ def test_typing_filters_into_the_popup(main_window):
 def test_an_empty_field_shows_no_popup(main_window):
     """Nothing typed, nothing shown: the plain Help menu is the empty state."""
     field = _snapshotted_field(main_window)
-    field._query.setText("search menus")
+    field._query.setText("check updates")
     assert field._results.count() >= 1
     field._query.setText("")
     assert field._results.count() == 0
@@ -215,7 +272,9 @@ def test_a_disabled_command_is_visible_but_not_runnable(main_window):
 
 def test_shortcut_text_rides_along_in_the_result_row(main_window):
     field = _snapshotted_field(main_window)
-    field._query.setText("search menus")
+    # "Show/hide lists" carries a remappable default chord, so its row must
+    # show one; the old probe ("Search menus...") has no menu row any more
+    field._query.setText("hide lists")
     labels = [field._results.item(i).text() for i in range(field._results.count())]
     # the key's spelling is platform- and configuration-dependent; what the
     # row must show is that A shortcut rides along in parentheses

@@ -361,8 +361,13 @@ _TOGGLE_LISTS_ROW = (1, "act", "togglelists_act")
 # report): autoseg's zero-width spikes block the scalpel; the safe ones are
 # repaired in bulk, real figure 8s are skipped for the scissors.
 _REPAIR_SELF_CROSSINGS_ROW = (2, "act", "repairselfcrossings_act")
-# Help > "Search menus...": the in-window menubar never gets macOS's native
-# Help search, so the app carries its own palette (stable ship, 2026-08-21).
+# Help > "Search menus...": present in the DEFINITIONS this file walks, but
+# absent from the live menu since the consolidation (2026-08-27). The tuple
+# stays because it is the remappable chord's only carrier (a QWidgetAction
+# cannot take the series-form shortcut lookup); createMenuBar strips the row
+# from the live Help menu after the embedded field, which shows the chord
+# itself, is inserted. The live-menu absence, and the chord surviving it,
+# are pinned by test_menu_search.py.
 _SEARCH_MENUS_ROW = (1, "act", "searchmenus_act")
 _RECOLOR_ALL_ROW = (1, "act", "recolorallfrompalette_act")
 MENUBAR_EXPECTED = list(MENUBAR_BASELINE)
