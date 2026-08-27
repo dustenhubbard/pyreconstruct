@@ -34,9 +34,11 @@ back to a no-op and the search works without the reveal.
 """
 
 from PySide6.QtCore import QTimer, QEvent, QPoint, Qt
+from PySide6.QtGui import QKeySequence
 from shiboken6 import getCppPointer, isValid
 from PySide6.QtWidgets import (
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
@@ -238,8 +240,13 @@ class MenuSearchField(QWidgetAction):
     shortcut machinery (newAction's series-form lookup builds plain QActions
     from the menu definition tuples, which are pure data that tests construct
     without a QApplication). So the remappable key (default Ctrl+K) stays on
-    searchmenus_act, the visible "Search menus..." row, whose handler opens
-    the Help menu and calls focusField() here.
+    searchmenus_act, whose handler opens the Help menu and calls focusField()
+    here. That action no longer shows as a menu row (its row and this field
+    said the same thing twice, so the row was dropped 2026-08-27); it rides
+    the window as a pure shortcut carrier, and the field advertises the
+    chord itself with a grayed hint at its right edge. The hint stands aside
+    while there is text: typing summons the clear button into the same
+    corner, and the two must not overlap.
 
     Lifetime: one instance is built per menubar rebuild (createMenuBar),
     parented to the Help menu, and dies with it; the popup is a window-flagged
@@ -269,6 +276,27 @@ class MenuSearchField(QWidgetAction):
         layout.setContentsMargins(8, 4, 8, 4)
         layout.addWidget(self._query)
         self.setDefaultWidget(container)
+
+        # The remappable chord, shown inside the field's right edge (his
+        # consolidation call, 2026-08-27: the field replaced the "Search
+        # menus..." row, so the field carries the row's one useful fact).
+        # Read from the live searchmenus_act each build: the field is rebuilt
+        # per createMenuBar pass, which is also how a rebind through the
+        # shortcuts dialog reaches it. NativeText renders the platform's own
+        # chord. Disabled, so the palette grays it like a placeholder;
+        # mouse-transparent, so clicks land in the field under it.
+        act = getattr(mainwindow, "searchmenus_act", None)
+        chord = (
+            act.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
+            if act is not None and not act.shortcut().isEmpty()
+            else ""
+        )
+        self._hint = QLabel(chord, self._query)
+        self._hint.setEnabled(False)
+        self._hint.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents
+        )
+        self._hint.setVisible(bool(chord))
 
         # ToolTip-flagged: shows without activating and without taking the
         # menu's popup grab, so the Help menu stays open while results are up.
@@ -303,6 +331,16 @@ class MenuSearchField(QWidgetAction):
         """Put the cursor in the field (the Ctrl+K landing point)."""
         self._query.setFocus()
         self._query.selectAll()
+
+    def _placeHint(self):
+        """Tuck the chord hint against the field's right edge, centered."""
+        if not self._hint.text():
+            return
+        self._hint.adjustSize()
+        self._hint.move(
+            self._query.width() - self._hint.width() - 6,
+            (self._query.height() - self._hint.height()) // 2,
+        )
 
     # ----------------------------------------------------------------- #
     # menu lifecycle
@@ -341,6 +379,9 @@ class MenuSearchField(QWidgetAction):
     # filtering
     # ----------------------------------------------------------------- #
     def _refilter(self, text):
+        # the chord hint yields its corner to the clear button while there
+        # is text (see the class docstring)
+        self._hint.setVisible(bool(self._hint.text()) and not text)
         # rendered from the walk-time snapshot only: the stored wrappers may
         # already be untouchable (see collect_menu_commands)
         self._results.clear()
@@ -390,6 +431,13 @@ class MenuSearchField(QWidgetAction):
         ):
             # Help just opened; see the container's installEventFilter above
             QTimer.singleShot(0, self.focusField)
+            return False
+        if obj is self._query and event.type() in (
+            QEvent.Type.Resize, QEvent.Type.Show
+        ):
+            # the hint has no layout slot (it floats over the field), so it
+            # is re-tucked whenever the field gets its geometry
+            self._placeHint()
             return False
         if obj is self._query and event.type() == QEvent.Type.KeyPress:
             key = event.key()

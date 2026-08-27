@@ -487,8 +487,11 @@ def return_help_menu(self):
         [
             # 1. the search field's remappable keyboard carrier. The visible
             # field is a QWidgetAction inserted above this row in
-            # createMenuBar; a QWidgetAction cannot take the series-form
-            # shortcut lookup, so the key lives here.
+            # createMenuBar, and createMenuBar then takes THIS row back off
+            # the menu (his consolidation call, 2026-08-27: the field shows
+            # the chord itself). The tuple stays because a QWidgetAction
+            # cannot take the series-form shortcut lookup, so the remappable
+            # key lives here, riding the window with no visible row.
             # series form: the key is user-configurable, looked up by act_name
             ("searchmenus_act", "Search menus...", self.series, self.openMenuSearch),
             None,
