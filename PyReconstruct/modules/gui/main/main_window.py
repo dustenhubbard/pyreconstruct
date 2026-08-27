@@ -281,18 +281,43 @@ class MainWindow(QMainWindow):
         ## Built here rather than in return_help_menu: the menu definitions
         ## are pure data that tests construct without a QApplication, and a
         ## QWidgetAction needs live widgets. The remappable key (Ctrl+K)
-        ## stays on searchmenus_act, the visible "Search menus..." row in the
-        ## definitions, whose handler (openMenuSearch) opens Help and focuses
-        ## this field. Rebuilt per createMenuBar pass and parented to the
-        ## Help menu, so it dies with the menu it decorates.
+        ## stays on searchmenus_act in the definitions, whose handler
+        ## (openMenuSearch) opens Help and focuses this field. Rebuilt per
+        ## createMenuBar pass and parented to the Help menu, so it dies with
+        ## the menu it decorates.
+        from shiboken6 import getCppPointer
         from PyReconstruct.modules.gui.main.menu_search import MenuSearchField
         self.menusearchfield_act = MenuSearchField(self, self.helpmenu)
         first_help_action = self.helpmenu.actions()[0]
         self.helpmenu.insertAction(first_help_action, self.menusearchfield_act)
-        # No separator inserted here any more: the menu definition already
-        # ends its first group with one, and adding a second put a divider
-        # between the field and the "Search menus..." row that shares its
-        # group (his Help layout call, 2026-08-26).
+        ## The "Search menus..." row itself comes OFF the menu (his
+        ## consolidation call, 2026-08-27): the row and the field said the
+        ## same thing twice, and the field now shows the chord at its right
+        ## edge. The action must outlive its row: newAction attached it to
+        ## this window besides the menu, so the remappable chord still fires
+        ## openMenuSearch with no visible row anywhere, and the shortcuts
+        ## dialog still lists and rebinds it by act_name. The definition
+        ## tuple stays so every rebuild keeps building the carrier. An
+        ## invisible row is no substitute: a setVisible(False) action's
+        ## shortcut goes dead (measured on this PySide6).
+        self.helpmenu.removeAction(self.searchmenus_act)
+        ## Off the menu, the carrier is also off clearMenuBar's teardown
+        ## walk, and newAction's remove-previous cannot be trusted to catch
+        ## it: the stored wrapper can read as dead while the C++ action
+        ## lives on (the trap _submenus_by_title_action documents).
+        ## Unswept, every rebuild leaked one more live Ctrl+K action onto
+        ## the window, and the shortcuts dialog reported the pile-up as a
+        ## collision. Swept by objectName through fresh wrappers from
+        ## actions(), which are always valid; matched by C++ pointer, since
+        ## two wrappers of one action need not be one object.
+        self.searchmenus_act.setObjectName("searchmenus_act")
+        keep = getCppPointer(self.searchmenus_act)[0]
+        for stale in self.actions():
+            if (
+                stale.objectName() == "searchmenus_act"
+                and getCppPointer(stale)[0] != keep
+            ):
+                self.removeAction(stale)
 
         ## The Lists pill's hover names the collapse shortcut. Read from the
         ## live action each menubar build, so a rebind through the shortcuts
@@ -820,10 +845,10 @@ class MainWindow(QMainWindow):
         The keyboard split: the field itself is a QWidgetAction and cannot
         carry the configurable-shortcut machinery (newAction's series-form
         lookup builds plain QActions from the pure-data menu definitions), so
-        the remappable key stays on searchmenus_act, the visible "Search
-        menus..." row, which delegates here. Clicking that row lands here
-        too: the click has already closed the Help menu, so reopening it with
-        the field focused is the row doing its job.
+        the remappable key stays on searchmenus_act, which delegates here.
+        That action has no menu row since the consolidation (2026-08-27); it
+        rides the window as a pure shortcut carrier, and the field shows the
+        chord itself.
         """
         help_action = self.helpmenu.menuAction()
         corner = self.menubar.actionGeometry(help_action).bottomLeft()
