@@ -79,6 +79,29 @@ def test_meta_keys_are_never_copied(ini_settings):
     assert dev.value("auto_merge") is not None
 
 
+def test_popup_suppression_never_crosses_flavors(ini_settings):
+    """The stable app suppresses the What's-new startup popup, but a fresh Dev
+    install must come up with the popup on: Dev exists to show what changed
+    (2026-08-26). The key sits on UNSEEDED_KEYS, so the Help-menu toggle
+    starts unticked whatever the stable domain holds."""
+    from PyReconstruct.modules.gui.main.first_launch import (
+        WHATSNEW_SUPPRESS_KEY, whats_new_suppressed,
+    )
+    from PyReconstruct.modules.constants.settings_domain import UNSEEDED_KEYS
+
+    assert WHATSNEW_SUPPRESS_KEY in UNSEEDED_KEYS   # the literal stays in sync
+
+    stable = ini_settings("stable")
+    stable.setValue(WHATSNEW_SUPPRESS_KEY, True)
+    stable.setValue("auto_merge", True)
+    stable.sync()
+    dev = ini_settings("dev")
+    assert seed_flavor_settings_once(flavored=dev, stable=stable) is True
+    assert dev.value(WHATSNEW_SUPPRESS_KEY) is None
+    assert not whats_new_suppressed(dev.value(WHATSNEW_SUPPRESS_KEY))
+    assert dev.value("auto_merge") is not None      # the rest still rides
+
+
 def test_stable_app_never_seeds(monkeypatch):
     """Resolved from the environment: the stable app is a no-op and never
     even opens a stable-domain handle to copy from."""
