@@ -29,6 +29,14 @@ def settings_domain():
 # future bookkeeping key) between flavors.
 SEED_MARKER = "meta/settings_seeded"
 
+# Keys the seed must never copy between flavors, on top of meta/. The stable
+# app suppresses the What's-new startup popup, but a Dev install exists to
+# surface what changed, so inheriting the suppression silenced the popup on
+# every fresh Dev install (found 2026-08-26). Mirrors
+# WHATSNEW_SUPPRESS_KEY in gui/main/first_launch.py as a literal: constants
+# cannot import from gui.
+UNSEEDED_KEYS = frozenset({"suppress_whatsnew"})
+
 
 def seed_flavor_settings_once(flavored=None, stable=None):
     """First launch of a flavored build: copy the stable app's stored settings.
@@ -60,7 +68,7 @@ def seed_flavor_settings_once(flavored=None, stable=None):
         from PySide6.QtCore import QSettings
         stable = QSettings(org, "PyReconstruct")
     for key in stable.allKeys():
-        if not key.startswith("meta/"):
+        if not key.startswith("meta/") and key not in UNSEEDED_KEYS:
             flavored.setValue(key, stable.value(key))
     flavored.setValue(SEED_MARKER, True)
     flavored.sync()
