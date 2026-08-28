@@ -389,7 +389,13 @@ def test_press_right_after_popup_close_is_swallowed(main_window, qtbot):
     press()
     assert fired == [1]
     seg.popupOpened()
-    seg.popupClosed()          # popup just hid: the very next press is the dismisser
+    # A real dismissal closes the popup WHILE the outside press is down;
+    # popupClosed arms the swallow only in that state (a close by selection
+    # or Escape must not eat the user's next click, found 2026-08-28).
+    from unittest.mock import patch
+    with patch.object(QApplication, "mouseButtons",
+                      staticmethod(lambda: Qt.LeftButton)):
+        seg.popupClosed()
     press()
     assert fired == [1], "the dismissing press reopened the popup"
     seg._popup_hidden_at = 0.0  # far in the past: presses work again

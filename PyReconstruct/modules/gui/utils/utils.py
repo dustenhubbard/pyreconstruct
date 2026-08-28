@@ -532,6 +532,22 @@ def clearMenuBar(widget : QWidget, menubar : QMenuBar):
         if id(value) in doomed_ids:
             delattr(widget, attr_name)
 
+    # clear() removes only the menu ACTIONS; the QMenu widgets addMenu made
+    # stay parented to the menubar, so every rebuild left a whole generation
+    # (the full tree of actions, the Help search field's live QLineEdit, its
+    # aboutToShow connections) alive as menubar children -- unboundedly, and
+    # createMenuBar runs on every series open and every add-to-a-new-group
+    # (found 2026-08-28). Detached BEFORE the clear, while the wrappers are
+    # still reliably alive, so the child list is clean immediately rather
+    # than whenever deferred deletion drains.
+    for menu in doomed_menus:
+        try:
+            if isValid(menu):
+                menu.setParent(None)
+                menu.deleteLater()
+        except RuntimeError:
+            pass
+
     menubar.clear()
 
 
