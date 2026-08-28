@@ -456,11 +456,17 @@ class FlagTableWidget(DataTable):
             message="Deleting flag(s)...",
             series_states=self.series_states
         ):
+            removed_any = False
             for section_flag in section.flags.copy():
                 if section_flag.name in names:
                     section.removeFlag(section_flag)
+                    removed_any = True
+            # once per SECTION, and only a touched one: these two sat inside
+            # the flag loop, so a delete-by-name rewrote every section once
+            # per flag it held, matches or not (found 2026-08-28);
+            # deleteFlags above has always done it this way
+            if removed_any:
                 section.save()
-                # update the tables
                 self.manager.updateFlags(section)
         
         # update the view

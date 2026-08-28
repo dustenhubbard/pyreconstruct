@@ -355,6 +355,21 @@ class DataTable(QDockWidget):
         self.menubar = self.main_widget.menuBar()
         self.context_menu = QMenu(self)
 
+    def _retireContextMenu(self):
+        """Drop the previous context menu before a rebuild replaces it.
+
+        Every subclass's createMenus assigns a fresh QMenu(self) and
+        abandoned the old one as a live child of the dock. The trace list is
+        the hot path: EVERY section step recreates it, so a tracing session
+        stacked one full copy of the big trace menu per section stepped
+        (found 2026-08-28).
+        """
+        from shiboken6 import isValid
+        stale = getattr(self, "context_menu", None)
+        if isinstance(stale, QMenu) and isValid(stale):
+            stale.setParent(None)
+            stale.deleteLater()
+
     def rebuildMenus(self):
         """Rebuild the menubar and put back what the rebuild is not aware of.
 
@@ -374,6 +389,7 @@ class DataTable(QDockWidget):
         through _onTopLevelChanged and left the window half-transitioned
         (found 2026-08-27, shipped in 1.23.0-beta-3).
         """
+        self._retireContextMenu()
         self.createMenus()
         self._syncDockAction(self.isFloating())
     
@@ -698,8 +714,13 @@ class DataTable(QDockWidget):
         if not file_path:
             return
         
-        csv_file = open(file_path, "w")
-        
+        ## A with-block: the handle leaked on any mid-export exception and
+        ## the partial file stayed locked on Windows (found 2026-08-28)
+        with open(file_path, "w") as csv_file:
+            self._writeCsv(csv_file)
+
+    def _writeCsv(self, csv_file):
+        """Write the visible table into an open file object."""
         ## Headers first
         items = []
         checkable = []
@@ -748,8 +769,6 @@ class DataTable(QDockWidget):
                 
             csv_file.write(",".join(items) + "\n")
 
-        csv_file.close()
-    
     def backspace(self):
         """Called when user hits delete or backspace.
         
@@ -772,4 +791,12 @@ class DataTable(QDockWidget):
         sync_all = getattr(self.manager, "_syncTitleBars", None)
         if sync_all is not None:
             sync_all()
+        # A closed list is GONE: newTable always builds fresh, so nothing
+        # ever reshows this one, and without the deleteLater every closed
+        # list (and every list a series switch closes) stayed a hidden child
+        # of the window for the app's lifetime, pinning its table, its
+        # menus, and the whole old manager/series graph (found 2026-08-28).
+        # Deferred, so the sync above and Qt's own close handling finish
+        # against a live widget.
+        self.deleteLater()
 

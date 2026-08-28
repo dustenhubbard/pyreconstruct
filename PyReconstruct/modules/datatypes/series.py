@@ -373,6 +373,23 @@ def _atomicWrite(fp : str, data : bytes):
         raise
 
 
+def renamedSeriesFile(filename : str, old_name : str, new_name : str) -> str:
+    """The filename with its series-name PREFIX swapped, else unchanged.
+
+    Section files are named "<series name>.<section number>" (plus the
+    "<series name>.ser" index). A plain str.replace also rewrote the numeric
+    suffix wherever the old name's text occurred in it: Save-As a series
+    named "5" turned file "5.55" into "6.66" (section silently renumbered)
+    and collided with the real "5.66", overwriting one section outright
+    (found 2026-08-28). Only the prefix before the LAST dot is compared and
+    swapped, and only for section-number or .ser suffixes.
+    """
+    stem, sep, suffix = filename.rpartition(".")
+    if sep and stem == old_name and (suffix.isdigit() or suffix == "ser"):
+        return f"{new_name}.{suffix}"
+    return filename
+
+
 class Series():
     
     qsettings_defaults = default_settings.copy()
@@ -999,15 +1016,14 @@ class Series():
             import subprocess
             subprocess.check_call(["attrib", "+H", new_hidden_dir])
 
-        ## Rename all files
+        ## Rename all files (prefix-only: see renamedSeriesFile)
         for f in os.listdir(new_hidden_dir):
-            if old_name in f:
-                new_f = f.replace(old_name, new_name)
-                if new_f != f:
-                    os.rename(
-                        os.path.join(new_hidden_dir, f),
-                        os.path.join(new_hidden_dir, new_f)
-                    )
+            new_f = renamedSeriesFile(f, old_name, new_name)
+            if new_f != f:
+                os.rename(
+                    os.path.join(new_hidden_dir, f),
+                    os.path.join(new_hidden_dir, new_f)
+                )
         
         ## Rename series
         self.rename(new_name)
@@ -1762,7 +1778,11 @@ class Series():
                     continue
                 if old_p is None and new_p in old_profiles and new_p not in profiles_dict.values():
                     self.addLog(None, None, f"Delete brightness/contrast profile {new_p}")
-                elif old_p == self.alignment:
+                # against the CURRENT PROFILE, not self.alignment: the branch
+                # was copied from modifyAlignments with its comparand intact,
+                # so profile creation was essentially never logged as such and
+                # the history misrecorded it (found 2026-08-28)
+                elif old_p == self.bc_profile:
                     self.addLog(None, None, f"Create brightness/contrast profile {new_p} from {old_p}")
                 elif old_p in old_profiles and new_p not in old_profiles:
                     self.addLog(None, None, f"Rename brightness/contrast profile {old_p} to {new_p}")
@@ -1990,7 +2010,8 @@ class Series():
         old_name = self.name
         for snum in self.sections:
             sname = self.sections[snum]
-            self.sections[snum] = sname.replace(old_name, new_name)
+            # prefix-only, matching the on-disk renames (see renamedSeriesFile)
+            self.sections[snum] = renamedSeriesFile(sname, old_name, new_name)
         self.name = new_name
 
     #### Series-wide trace functions ###############################################################
@@ -2457,9 +2478,13 @@ class Series():
             return []
 
         deleted = []
+        # section_numbers: only the sections the records name. Without it a
+        # single-trace delete loaded every section in the series from disk
+        # (found 2026-08-28); _forEachObjectSection set the precedent.
         for snum, section in self.enumerateSections(
             message=message,
-            series_states=series_states
+            series_states=series_states,
+            section_numbers=sorted(by_section)
         ):
             removed_any = False
             for record in by_section.get(snum, []):
@@ -2661,9 +2686,12 @@ class Series():
             return []
 
         repaired_records = []
+        # section_numbers, for the same reason deleteMalformedTraces passes
+        # it: a one-trace repair must not load the whole series
         for snum, section in self.enumerateSections(
             message=message,
-            series_states=series_states
+            series_states=series_states,
+            section_numbers=sorted(by_section)
         ):
             changed = False
             for record in by_section.get(snum, []):

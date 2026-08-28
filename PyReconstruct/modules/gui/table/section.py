@@ -195,7 +195,10 @@ class SectionTableWidget(DataTable):
         """User checked a lock checkbox."""
         if not self.process_check_event:
             return
-        snum = int(self.table.item(item.row(), 0).text())
+        # split first: the calgrid row's cell reads "0 (calgrid)", and a bare
+        # int() raised, leaving the checkbox flipped on screen with the real
+        # lock unchanged (found 2026-08-28); every sibling reader here splits
+        snum = int(self.table.item(item.row(), 0).text().split()[0])
         lock = item.checkState() == Qt.CheckState.Checked
         self.lockSections(lock, section_numbers=[snum])
     
