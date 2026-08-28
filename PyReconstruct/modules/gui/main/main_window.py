@@ -4761,6 +4761,10 @@ class MainWindow(QMainWindow):
                 self._cleanupUpdateDir(self._pending_update_dir)
                 self._pending_installer = None
                 self._pending_update_dir = None
+            # and neither must a pending restart: the flag survived the
+            # canceled close, so a normal quit hours later relaunched the
+            # app instead of exiting (found 2026-08-28)
+            self.restart_mainwindow = False
             return
         # persist window geometry so size/position survive a restart
         windowGeometrySettings().setValue("window/geometry", self.saveGeometry())

@@ -233,9 +233,18 @@ class ShortcutsDialog(QDialog):
         )
 
     def resetDefaults(self):
-        """Reset the defaults for all fields."""
+        """Reset every field to the SHIPPED default binding.
+
+        get_default=True is the whole button: without it the rows were set
+        from the stored values they already showed, so "Reset Defaults" only
+        reverted unsaved edits and the factory bindings were unreachable
+        from this dialog (found 2026-08-28). The modifier rows keep their
+        resolved-stored semantics deliberately: their stored value can be
+        merely unreachable on this platform rather than wrong, and the
+        constructor's comment explains why the row shows the fallback.
+        """
         for act, w in self.act_widgets.items():
-            w.setKeySequence(self.series.getOption(act))
+            w.setKeySequence(self.series.getOption(act, get_default=True))
         for name, w in self.modifier_widgets.items():
             # `effectiveBinding`, not the raw option, for the same reason the
             # constructor uses it: this button is a second way to land an

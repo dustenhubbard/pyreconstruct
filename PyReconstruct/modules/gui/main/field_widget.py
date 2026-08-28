@@ -60,8 +60,13 @@ class FieldWidget(QWidget, FieldWidgetView):
 
         self.setMouseTracking(True)
 
-        # enable touch gestures
-        Qt.WA_AcceptTouchEvents = True
+        # Enable touch gestures. setAttribute, not an assignment: the line
+        # here used to read `Qt.WA_AcceptTouchEvents = True`, which rebinds
+        # the ENUM on the Qt namespace process-wide and enables nothing
+        # (found 2026-08-28). Pinch has therefore always ridden Qt's native-
+        # gesture path on macOS; the attribute now actually says what the
+        # grabGesture below needs on touch platforms.
+        self.setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents)
         gestures = [Qt.GestureType.PinchGesture]
         for g in gestures:
             self.grabGesture(g)
