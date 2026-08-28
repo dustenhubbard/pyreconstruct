@@ -19,6 +19,8 @@ pytestmark = pytest.mark.gui
 def test_group_names_with_spaces_survive_into_the_command(main_window, monkeypatch, main_window_dialogs, tmp_path):
     import subprocess
 
+    from PyReconstruct.modules.gui.main import main_window as mw
+
 
     launched = []
     monkeypatch.setattr(
