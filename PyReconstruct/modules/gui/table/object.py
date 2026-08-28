@@ -651,7 +651,7 @@ class ObjectTableWidget(DataTable):
 
         # set the title and menus
         self.updateTitle()
-        self.createMenus()
+        self.rebuildMenus()
 
     def updateData(self, names : list):
         """Update the data for a set of objects.
@@ -863,7 +863,7 @@ class ObjectTableWidget(DataTable):
         self.series.setOption("object_columns", self.columns)
         
         if recreate:
-            self.createMenus()
+            self.rebuildMenus()
             self.mainwindow.createContextMenus()
             if update_table:
                 self.createTable()
