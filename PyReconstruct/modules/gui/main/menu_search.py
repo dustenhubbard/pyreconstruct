@@ -33,7 +33,7 @@ branch help-search/reveal); until it lands, the guarded import below falls
 back to a no-op and the search works without the reveal.
 """
 
-from PySide6.QtCore import QEvent, QPoint, Qt
+from PySide6.QtCore import QTimer, QEvent, QPoint, Qt
 from shiboken6 import getCppPointer, isValid
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -283,6 +283,15 @@ class MenuSearchField(QWidgetAction):
         self._results.setMouseTracking(True)  # itemEntered needs it
         self._results.setAlternatingRowColors(True)
 
+        # The cursor lands in the field whenever Help opens (his call,
+        # 2026-08-26). Hooked to the CONTAINER's show, not the menu's
+        # aboutToShow: the menu attribute the window holds is not always the
+        # menu the menubar shows (measured on the View menu, 2026-08-26), and
+        # the widget cannot be shown without its menu being open. The focus
+        # is deferred one tick because the menu takes its own focus after the
+        # show, and an earlier setFocus is simply dropped.
+        container.installEventFilter(self)
+
         self._query.textChanged.connect(self._refilter)
         self._query.installEventFilter(self)
         self._results.itemEntered.connect(self._hover)
@@ -375,6 +384,13 @@ class MenuSearchField(QWidgetAction):
     # selection, reveal, run
     # ----------------------------------------------------------------- #
     def eventFilter(self, obj, event):
+        if (
+            event.type() == QEvent.Type.Show
+            and obj is self.defaultWidget()
+        ):
+            # Help just opened; see the container's installEventFilter above
+            QTimer.singleShot(0, self.focusField)
+            return False
         if obj is self._query and event.type() == QEvent.Type.KeyPress:
             key = event.key()
             popup_up = self._results.isVisible()
