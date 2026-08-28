@@ -715,9 +715,18 @@ class MousePalette():
     }
 
     def installHideMenus(self):
-        """Give every palette group a right-click "Hide ..." menu."""
+        """Give every palette group a right-click "Hide ..." menu.
+
+        The trace-palette BUTTONS are deliberately not armed: right-click on
+        a button already opens its attributes dialog (rc_act in buttons.py,
+        and the palette help documents it), and arming both on one widget
+        made the two fight -- on macOS the hide menu's grab swallowed the
+        release so the documented editor stopped opening, on Windows both
+        fired from a single click (found 2026-08-28). The palette's LABEL
+        carries the hide menu for that group instead.
+        """
         groups = (
-            ("palette", self.palette_buttons + [self.label], self.togglePalette),
+            ("palette", [self.label], self.togglePalette),
             ("inc", list(self.inc_buttons), self.toggleIncrement),
             ("bc", [w for pair in self.bc_widgets for w in pair], self.toggleBC),
             ("sb", [self.sb], self.toggleSB),
