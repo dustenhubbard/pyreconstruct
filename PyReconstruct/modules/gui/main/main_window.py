@@ -1019,6 +1019,10 @@ class MainWindow(QMainWindow):
 
             first_open = False
 
+            # where the outgoing series lives on disk, read before it is
+            # closed: an abandoned open needs it to put the window back
+            prev_jser_fp = self.series.jser_fp
+
             if query_prev:
 
                 response = self.saveToJser(notify=True, close=True)
@@ -1032,10 +1036,18 @@ class MainWindow(QMainWindow):
         else:
 
             first_open = True
+            prev_jser_fp = None
 
         if not series_obj:  # if series is not provided
             new_series = self._acquireSeries(jser_fp)
             if new_series is _OPEN_ABORTED:
+                # The outgoing series was closed above, so its hidden dir is
+                # gone. Returning here left the window holding a series whose
+                # files no longer exist: every later save raised
+                # FileNotFoundError and no edit could ever be persisted
+                # (found 2026-08-27). Put a live series back instead.
+                if not first_open:
+                    self._restoreAfterAbortedOpen(prev_jser_fp)
                 return
         # else series already provided
         else:
@@ -1128,6 +1140,49 @@ class MainWindow(QMainWindow):
                     return _OPEN_ABORTED
 
         return new_series
+
+    def _restoreAfterAbortedOpen(self, prev_jser_fp):
+        """Put a working series back after an open was abandoned.
+
+        By the time an open aborts, the series that was in the window has
+        already been closed and its hidden dir deleted, so the window cannot
+        keep it: the object is still there but its files are not, and the
+        first save after that raises. Reopening the .jser is the honest
+        undo, because closing is exactly what the save prompt above just
+        committed to disk (or, on "no", what the user chose to discard).
+
+        A series that was never saved has no .jser to come back to, so the
+        window lands on the welcome series, the app's own empty state.
+
+        The reopen is handed a Series object rather than a filepath: that
+        path cannot abort in turn, so a corrupt or vanished .jser cannot
+        bounce back into here.
+
+            Params:
+                prev_jser_fp (str): the outgoing series' .jser, "" if it was
+                    never saved
+        """
+        recovered = None
+        if prev_jser_fp and os.path.isfile(prev_jser_fp):
+            try:
+                recovered = Series.openJser(prev_jser_fp)
+            except SeriesOpenError:
+                recovered = None
+
+        if recovered is None:
+            w_ser, w_secs, w_src = get_welcome_setup()
+            recovered = Series(w_ser, w_secs)
+            recovered.src_dir = w_src
+
+        # The outgoing series names the same hidden dir as the copy just
+        # reopened into it, so the close() inside openSeries would delete the
+        # files that copy needs. It has been closed once already; there is
+        # nothing left of it to clean up.
+        self.series.leave_open = True
+
+        # query_prev=False: there is nothing left to save, and asking would
+        # run saveAllData against the dir that was just deleted
+        self.openSeries(series_obj=recovered, query_prev=False)
 
     def _recoverUnsavedSeries(self, jser_fp):
         """Offer the unsaved work in the hidden series dir, if there is any.
@@ -1321,8 +1376,14 @@ class MainWindow(QMainWindow):
         """
 
         ## Save existing backend series
-        self.saveToJser(notify=True, close=False)
-        
+        # Cancel at the save prompt means abort, the same as it does when
+        # opening a series. Ignoring it carried on through the whole wizard
+        # and ended at openSeries(query_prev=False), which closed the series
+        # unconditionally and deleted the very edits the user pressed Cancel
+        # to protect (found 2026-08-27).
+        if self.saveToJser(notify=True, close=False) == "cancel":
+            return
+
         ## Query user for images
         if not image_locations:
             if from_zarr:
@@ -2191,10 +2252,15 @@ class MainWindow(QMainWindow):
     
     def saveToJser(self, notify=False, close=False):
         """Store data in JSER file.
-        
+
         Params:
             notify (bool): If true, display notification.
             close (bool): If true, delete hidden series files.
+        Returns:
+            (str): "cancel" when nothing was written because the user backed
+                out, either at the save prompt or at the Save As dialog. Every
+                caller that goes on to close or discard the series must treat
+                that as an abort.
         """
 
         ## If welcome series, close without saving
@@ -2221,7 +2287,12 @@ class MainWindow(QMainWindow):
 
         ## Save-as if no jser filepath
         if not self.series.jser_fp:
-            self.saveAsToJser(close=close)
+            # A dismissed Save As wrote nothing, so it must not fall through
+            # to seriesModified(False) below: that dropped the asterisk and
+            # left the series looking saved, and the next close then deleted
+            # the hidden dir holding the only copy of the work.
+            if self.saveAsToJser(close=close) == "cancel":
+                return "cancel"
         else:
             # save the real jser once, then copy those bytes to the backup
             # (avoids a second full serialization of the whole series)
@@ -2234,7 +2305,14 @@ class MainWindow(QMainWindow):
         self.seriesModified(False)
     
     def saveAsToJser(self, close=False):
-        """Prompt user for save location."""
+        """Prompt user for save location.
+
+        Returns:
+            (str): "cancel" if the user dismissed the dialog. Nothing was
+                written in that case, and saveToJser relies on hearing about
+                it; None on success (and for the welcome series, which has
+                nothing to save either way).
+        """
         ## Store series data in hidden files
         self.saveAllData()
 
@@ -2250,9 +2328,10 @@ class MainWindow(QMainWindow):
             filter="*.jser",
             file_name=f"{self.series.name}.jser"
         )
-        if not new_jser_fp: return
-        
-        ## Move hidden folder to new jser directory        
+        if not new_jser_fp:
+            return "cancel"
+
+        ## Move hidden folder to new jser directory
         self.series.move(
             new_jser_fp,
             self.field.section,
