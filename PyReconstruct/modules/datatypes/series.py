@@ -1983,19 +1983,20 @@ class Series():
             modified = False
             for obj_name in obj_names:
                 if obj_name in section.contours:
-                    for trace in section.contours[obj_name]:
+                    # Iterate a COPY: removeTrace removes from the very list
+                    # being walked, and walking it live skips every other
+                    # trace. The skipped ones died anyway (the del below), but
+                    # the columnar store never heard, and the end-of-section
+                    # resync that repaired it came too late for a multi-object
+                    # delete: the guard fired on the NEXT object's first
+                    # removal, mid-edit, on the same section (Patrick's
+                    # report, 2026-08-28, deleting every object on beta-3).
+                    # With every trace routed through removeTrace the store
+                    # keeps step by itself and no resync is needed at all.
+                    for trace in list(section.contours[obj_name]):
                         section.removeTrace(trace)
                     del(section.contours[obj_name])
                     modified = True
-            if modified:
-                # The `del` above drops a contour key from outside `Section`,
-                # and the loop it follows removes from a list it is iterating,
-                # so `removeTrace` is not reached for every trace in a contour
-                # holding more than one. Either alone leaves the columnar store
-                # holding rows for traces the object model no longer has.
-                # Rebuild it from the result; without this the next edit on this
-                # section raises `ColumnarDualWriteMismatch`.
-                section.resyncColumnarStore()
             return modified  # deleting object will automatically be logged
 
         self._forEachObjectSection(

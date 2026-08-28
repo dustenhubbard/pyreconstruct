@@ -445,7 +445,11 @@ def test_section_py_neither_reads_nor_writes_the_environment():
 ## and the `state_manager.py` row carries two:
 ##
 ##   state_manager.py         undoState, redoState        whole-dict / per-key rebind
-##   series.py                deleteObjects               contour key deleted
+##   series.py                deleteObjects               NO LONGER: every trace now
+##                                                        goes through removeTrace and
+##                                                        only an EMPTY key is deleted
+##                                                        (the mass-delete regression,
+##                                                        2026-08-28)
 ##   series.py                hideObjects                 trace.setHidden in place
 ##   series.py                hideAllTraces               trace.setHidden in place
 ##   series.py                restoreObjectVisibility     trace.setHidden in place
@@ -485,8 +489,10 @@ def test_section_py_neither_reads_nor_writes_the_environment():
 REPAIR_SITES = {
     "modules/backend/func/state_manager.py": "undoState / redoState",
     "modules/datatypes/series.py": (
-        "deleteObjects / hideObjects / hideAllTraces / "
+        "hideObjects / hideAllTraces / "
         "restoreObjectVisibility / smoothObject / deleteDuplicateTraces"
+        # deleteObjects left this list 2026-08-28: it now routes every trace
+        # through removeTrace and deletes only the emptied key
     ),
     "modules/backend/autoseg/conversions.py": "seriesToLabels group deletion",
     "modules/gui/main/field_widget_2_trace.py": (
@@ -2969,9 +2975,10 @@ def test_merging_tags_across_a_selection_leaves_the_section_saveable(
 def test_deleting_an_object_leaves_every_touched_section_consistent(real_series):
     """`Series.deleteObjects` drops a contour key from outside `Section`.
 
-    It also removes from a list it is iterating, so `removeTrace` is not reached
-    for every trace of a multi-trace contour. Either alone leaves rows in the
-    store for traces the object model no longer has.
+    The traces themselves each go through `removeTrace` now (over a COPY of
+    the contour's list; the next test is the regression that forced that), so
+    the only thing outside `Section` is the deletion of an already-empty key,
+    and an empty key has no rows for the store to disagree about.
     """
     name = sorted(real_series.data["objects"])[0]
 
@@ -2991,6 +2998,46 @@ def test_deleting_an_object_leaves_every_touched_section_consistent(real_series)
         ## user does next and what used to fail.
         section.addTrace(_aTrace(section))
         section.save()
+
+
+def test_mass_delete_of_several_objects_on_one_section(real_series):
+    """Patrick's beta-3 report (2026-08-28): select every object, delete, raise.
+
+    The shape that raised needs two ingredients on ONE section: an object
+    whose contour holds MORE than one trace, deleted BEFORE another object.
+    `deleteObjects` iterated the contour's live list while `removeTrace`
+    removed from it, so every other trace was skipped; the skipped traces died
+    with the `del` of the contour key, but their rows stayed live in the
+    store. The end-of-section resync would have repaired that, but the NEXT
+    object's first `removeTrace` ran first, and its live-count guard saw the
+    stale rows: `ColumnarDualWriteMismatch`, mid-delete, dialog in the user's
+    face, deletion aborted partway. One object at a time never raised, which
+    is why it shipped.
+
+    The fix iterates a copy, so every trace goes through `removeTrace` and
+    the store keeps step trace by trace; the resync is gone because there is
+    nothing left for it to repair.
+    """
+    snum = sorted(real_series.sections)[0]
+    section = real_series.loadSection(snum)
+    for name in ("mass_del_a", "mass_del_b"):
+        for i in range(3):
+            section.addTrace(
+                _aTrace(section, name=name,
+                        points=[(i, 0.0), (i + 0.5, 0.0), (i + 0.5, 0.5)]),
+                log_event=False,
+            )
+    section.save()
+
+    real_series.deleteObjects(["mass_del_a", "mass_del_b"])  # used to raise
+
+    section = real_series.loadSection(snum)
+    assert "mass_del_a" not in section.contours or section.contours["mass_del_a"].isEmpty()
+    assert "mass_del_b" not in section.contours or section.contours["mass_del_b"].isEmpty()
+    section._assertColumnsMatchObjectModel("after a mass delete")
+    ## and the section takes the user's next edit without raising
+    section.addTrace(_aTrace(section))
+    section.save()
 
 
 def test_a_section_edited_after_an_undo_does_not_raise(real_section, real_series):
