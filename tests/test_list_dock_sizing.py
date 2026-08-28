@@ -502,8 +502,11 @@ def test_close_all_closes_every_list_including_same_type_pairs(
     manager.closeAll()
     settle(qapp)
 
+    from shiboken6 import isValid
     for table in tables:
-        assert not table.isVisible()
+        # a closed list is destroyed outright now (the hidden-dock leak fix);
+        # destroyed or merely hidden, it must not be on screen
+        assert not isValid(table) or not table.isVisible()
     for per_type in manager.tables.values():
         assert per_type == []
 
@@ -601,9 +604,10 @@ def test_list_closed_while_collapsed_stays_closed(qapp, dock_mainwindow, manager
     settle(qapp)
     manager.toggleListsCollapsed()
     settle(qapp)
+    from shiboken6 import isValid
     assert keeper.isVisible()
     assert goner not in manager.tables["section"]
-    assert not goner.isVisible()
+    assert not isValid(goner) or not goner.isVisible()
 
 
 def test_collapse_with_nothing_docked_is_a_noop(qapp, dock_mainwindow, manager):
