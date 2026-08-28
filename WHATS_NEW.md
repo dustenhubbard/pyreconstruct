@@ -6,6 +6,23 @@ full release notes on GitHub (linked from the dialog).
 
 ## [Unreleased]
 
+## [1.22.2] - 2026-08-28
+
+#### New
+
+- **Download the other build from the Help menu.** The stable app links to
+  the newest Dev beta, and the Dev app links to the newest stable release.
+
+#### Changed
+
+- **The Help menu is reorganized into five groups,** with the search bar
+  focused when it opens.
+
+#### Fixed
+
+- **Docked lists scroll all the way to the bottom.** A sizing bug could hide
+  the last row or two, and undocking was the only way around it.
+
 ## [1.22.1] - 2026-08-25
 
 #### Changed
