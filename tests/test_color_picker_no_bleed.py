@@ -17,6 +17,11 @@ pytestmark = pytest.mark.gui
 
 SWATCH = (0, 249, 0)   # the lurid green from the original report
 
+# How much of the picker may be painted in the swatch color. A scoped rule
+# measures exactly 0.0 here; the bleed measures 0.53. The margin is for
+# antialiasing on platforms with a different style, not for a real bleed.
+MAX_SWATCH_FRACTION = 0.01
+
 
 @pytest.fixture
 def button(qapp):
@@ -29,7 +34,20 @@ def button(qapp):
     button.deleteLater()
 
 
-def _dialog_center_is_not_swatch(button):
+def swatch_fraction(button):
+    """How much of the picker dialog is painted in the swatch color.
+
+    Counted across the whole grab rather than sampled at one point, and that
+    is the whole point of this helper. This file used to read the dialog's
+    center pixel, which lands on the hue-gradient child: that child paints
+    its own content over anything it inherits, so the pixel read (200, 183,
+    190) whether or not the bleed was there. Three of the four tests below
+    therefore passed with the bug present, against what this module's
+    docstring promised (found 2026-08-27).
+
+    Measured on this branch, same dialog, strided by 3: a scoped rule gives
+    0.0, and the pre-#329 unscoped rule gives 0.53.
+    """
     from PySide6.QtWidgets import QColorDialog
 
     dialog = QColorDialog(button)
@@ -38,10 +56,25 @@ def _dialog_center_is_not_swatch(button):
     dialog.show()
     try:
         image = dialog.grab().toImage()
-        center = image.pixelColor(image.width() // 2, image.height() // 2)
-        return (center.red(), center.green(), center.blue()) != SWATCH
+        hits = total = 0
+        for y in range(0, image.height(), 3):
+            for x in range(0, image.width(), 3):
+                color = image.pixelColor(x, y)
+                total += 1
+                if (color.red(), color.green(), color.blue()) == SWATCH:
+                    hits += 1
+        return hits / total if total else 0.0
     finally:
         dialog.deleteLater()
+
+
+def assert_no_bleed(button, where):
+    fraction = swatch_fraction(button)
+    assert fraction <= MAX_SWATCH_FRACTION, (
+        f"{fraction:.0%} of the picker is painted in the swatch color "
+        f"({where}); the style rule lost its class scope and cascaded into "
+        "the dialog parented to the button"
+    )
 
 
 def test_the_style_rule_is_scoped_to_the_class(button):
@@ -54,7 +87,7 @@ def test_the_style_rule_is_scoped_to_the_class(button):
 
 
 def test_the_picker_does_not_inherit_the_swatch_color(qapp, button):
-    assert _dialog_center_is_not_swatch(button)
+    assert_no_bleed(button, "default theme")
 
 
 def test_no_bleed_under_the_dark_theme_either(qapp, button):
@@ -69,7 +102,7 @@ def test_no_bleed_under_the_dark_theme_either(qapp, button):
         app.setStyleSheet(qdarkstyle.load_stylesheet_pyside6())
         qapp.processEvents()
         button.setColor(SWATCH)
-        assert _dialog_center_is_not_swatch(button)
+        assert_no_bleed(button, "qdark theme")
     finally:
         app.setStyleSheet(old)
         qapp.processEvents()
@@ -78,4 +111,17 @@ def test_no_bleed_under_the_dark_theme_either(qapp, button):
 def test_mixed_split_rule_is_scoped_too(qapp, button):
     button.setColor(SWATCH, mixed=True)
     assert button.styleSheet().strip().startswith("ColorButton {")
-    assert _dialog_center_is_not_swatch(button)
+    assert_no_bleed(button, "mixed split rule")
+
+
+def test_the_probe_can_actually_see_a_bleed(qapp, button):
+    """The guard on the guard: prove the probe fails when the bug is present.
+
+    Without this, a probe that always reads clean is indistinguishable from
+    a picker that is always clean, which is exactly the trap the center-pixel
+    version fell into. The pre-#329 rule is applied here deliberately, on a
+    throwaway button, and the probe must light up.
+    """
+    button.setStyleSheet(f"background-color: rgb{SWATCH}")  # unscoped: the bug
+
+    assert swatch_fraction(button) > 0.25
