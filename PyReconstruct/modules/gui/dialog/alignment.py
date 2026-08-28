@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
 )
 
 from PyReconstruct.modules.gui.utils import notify
-from PyReconstruct.modules.datatypes.objects import Objects, SeriesObject
 
 class AlignmentDialog(QDialog):
 
@@ -202,25 +201,22 @@ class AlignmentList(QTableWidget):
                 alignment (str): the alignment to rename
                 new_name (str): the new name for the alignment
         """
-        if (alignment not in self.adict or 
-            (new_name in self.adict and self.adict[alignment] is not None) or 
+        if (alignment not in self.adict or
+            (new_name in self.adict and self.adict[alignment] is not None) or
             alignment == "no-alignment"):
             return
         self.adict[new_name] = self.adict[alignment]
 
-        ## Set objs to new alignment name
-        
-        series_objs = Objects(self.series).getNames()
-
-        for obj in series_objs:
-
-            obj_data = SeriesObject(self.series, obj)
-
-            if not obj_data.alignment == alignment:
-                continue
-
-            self.series.setAttr(obj, "alignment", new_name)
+        ## No object writes here, deliberately. A loop used to run
+        ## series.setAttr(obj, "alignment", new_name) at the moment Rename
+        ## was clicked, but this dialog only PROPOSES changes: the rename is
+        ## real when the dialog is accepted, and Series.modifyAlignments then
+        ## carries every object's and z-trace's alignment attribute across
+        ## via remapStoredAlignments. Writing early meant Cancel left every
+        ## such object pinned to an alignment that existed nowhere, with no
+        ## undo recorded, and on OK the write was redundant anyway (found
+        ## 2026-08-28).
 
         self.adict[alignment] = None
-        
+
         self.createTable()
