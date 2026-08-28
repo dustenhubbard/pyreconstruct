@@ -15,6 +15,10 @@ class HistoryTableWidget(QDockWidget):
         self.setFloating(True)
         self.setAllowedAreas(Qt.NoDockWidgetArea)
         self.setWindowTitle("History")
+        # closing destroys it: nothing tracks or reshows these, so without
+        # this every history view left a hidden dock holding the whole
+        # materialized series log until the app exited (found 2026-08-28)
+        self.setAttribute(Qt.WA_DeleteOnClose)
 
         # filter the logs
         self.filterLogs(log_set, obj_names)
