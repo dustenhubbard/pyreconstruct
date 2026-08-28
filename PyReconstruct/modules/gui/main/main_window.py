@@ -3,6 +3,8 @@
 
 import shutil
 
+from shiboken6 import isValid
+
 from .main_imports import *
 
 from PyReconstruct.modules.datatypes.series import SeriesOpenError
@@ -349,8 +351,36 @@ class MainWindow(QMainWindow):
         self.helpmenu.aboutToShow.connect(self.syncWhatsNewPopupToggle)
         self.helpmenu.aboutToShow.connect(self.syncUpdateCheckToggle)
 
+        ## The context menus REUSE this menubar's QActions (the cut/copy/
+        ## paste rows, gated through trace_actions in checkActions), so a
+        ## menubar rebuild orphans them: the old generation dies with the
+        ## clear, and the next field click raised RuntimeError from
+        ## checkActions until something else happened to rebuild the context
+        ## menus (found 2026-08-28; Clear recents and add-to-a-new-group were
+        ## the reachable paths). Rebuilding them here makes the pair one
+        ## operation. Guarded: the very first createMenuBar of a window runs
+        ## before the field exists, and openSeries builds the context menus
+        ## itself right after this returns.
+        if getattr(self, "field_menu", None) is not None:
+            self.createContextMenus()
+
     def createContextMenus(self):
         """Create right-click menus used in the field."""
+        ## Both menus are parented to the window, so without this the old
+        ## generation outlived every rebuild (one pair per series open, per
+        ## menubar rebuild). The actions inside them belong to the menubar
+        ## generations and die with those; only the QMenu shells linger.
+        ## Detached BEFORE the deferred delete, so the old shells leave the
+        ## window's child list now rather than whenever the event loop next
+        ## drains deferred deletions.
+        ## isinstance, not a bare None-check: test stubs (and any embedder)
+        ## may carry these names as something other than a QMenu.
+        for stale in (getattr(self, "field_menu", None),
+                      getattr(self, "label_menu", None)):
+            if isinstance(stale, QMenu) and isValid(stale):
+                stale.setParent(None)
+                stale.deleteLater()
+
         ## Create user columns options
         field_menu_list = get_field_menu_list(self)
         self.field_menu = QMenu(self)
