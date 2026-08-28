@@ -419,20 +419,71 @@ def test_dock_button_redocks_the_list(qapp, dock_mainwindow, manager):
 
 
 def test_dock_button_survives_a_menubar_rebuild(qapp, dock_mainwindow, manager):
-    """The object list rebuilds its menubar on column changes, which drops
-    menubar actions; membership is re-checked on every float."""
+    """A real rebuild, on a list that stays floating throughout.
 
+    This test used to call `menuBar().clear()` and re-float in between, and
+    it passed while the app was broken. A rebuild is not a bare clear: it
+    goes through `clearMenuBar`, which ALSO deletes every attribute pointing
+    at a menubar action, and the dock button is one while the list floats.
+    Re-floating then hid the damage, because the float is what re-inserts
+    the button. Neither shortcut is taken here.
+    """
     table = open_list(manager, "object", qapp)
     table.setFloating(True)
     settle(qapp)
-    table.main_widget.menuBar().clear()        # what a rebuild does to it
-    table.setFloating(False)
+
+    manager.recreateTable(table)               # what List > Refresh does
     settle(qapp)
-    table.setFloating(True)
-    settle(qapp)
+
     menubar = table.main_widget.menuBar()
+    assert table._dock_button is not None      # the attribute was not lost
     assert menubar.actions()[0] is table._dock_button
     assert table._dock_button.isVisible()
+
+
+def test_a_rebuilt_floating_list_can_still_be_docked(
+    qapp, dock_mainwindow, manager
+):
+    """The point of the button, after the rebuild that used to remove it.
+
+    Before the fix the button was gone from the bar and its attribute was
+    deleted, so this list was stranded: floating with no road back, and the
+    next transition raised AttributeError inside _onTopLevelChanged and left
+    it half-docked at the floating minimum size.
+    """
+    table = open_list(manager, "object", qapp)
+    table.setFloating(True)
+    settle(qapp)
+
+    manager.recreateTable(table)
+    settle(qapp)
+
+    table._dock_button.trigger()
+    settle(qapp)
+
+    assert not table.isFloating()
+    assert table.minimumWidth() == table.MIN_WIDTH   # the dock branch ran
+    assert table._real_window is False
+
+
+@pytest.mark.parametrize("list_type", ["object", "trace", "section", "ztrace"])
+def test_every_list_type_keeps_its_dock_button_through_a_rebuild(
+    qapp, dock_mainwindow, manager, list_type
+):
+    """The invariant belongs to DataTable, so it holds for all of them.
+
+    Each subclass owns its own createMenus and each one clears the bar, so
+    a fix applied per subclass would be one forgotten line away from this
+    coming back. Callers go through `rebuildMenus`, which is what this pins.
+    """
+    table = open_list(manager, list_type, qapp)
+    table.setFloating(True)
+    settle(qapp)
+
+    manager.recreateTable(table)
+    settle(qapp)
+
+    assert table.main_widget.menuBar().actions()[0] is table._dock_button
 
 
 def test_refloat_keeps_hand_set_size_with_real_window_flags(qapp, dock_mainwindow, manager):
