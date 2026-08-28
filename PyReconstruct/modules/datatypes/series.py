@@ -4181,8 +4181,15 @@ class Series():
                     if col_name not in new_cols:
                         new_cols[col_name] = opt
 
-            self.obj_attrs[new_name] = self.obj_attrs[old_name].copy()
-        
+            ## No wholesale copy here. One stood for years -- it predated the
+            ## merge loops above and made them dead code: renaming B onto an
+            ## existing A (the routine way to merge two objects) replaced A's
+            ## whole attribute dict with B's, so A's comment, curation, lock,
+            ## alignment pin, and user-column values were silently lost. The
+            ## loops above ARE the rename: everything A lacks comes across,
+            ## and everything A already says about itself wins (found
+            ## 2026-08-28).
+
         # rename obj hosts
         self.host_tree.renameObject(old_name, new_name)
     

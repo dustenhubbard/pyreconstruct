@@ -87,7 +87,17 @@ def repair_self_crossing(trace, max_discard_ratio=0.05):
 
     pieces.sort(key=lambda g: g.area, reverse=True)
     kept, rest = pieces[0], pieces[1:]
-    if sum(g.area for g in rest) > max_discard_ratio * kept.area:
+    ## The repair returns kept.exterior, so anything inside the exterior that
+    ## the valid geometry EXCLUDES is discarded area exactly like the loose
+    ## pieces: make_valid turns a shell wound around an inner loop into one
+    ## polygon with a hole, and returning the exterior FILLS that hole.
+    ## Counting only `rest` let a one-stroke donut (a myelin sheath is traced
+    ## exactly like this) through with 16% of its geometry silently flipped
+    ## from excluded to included (found 2026-08-28). The hole rides the same
+    ## dial as everything else, so a real donut is skipped for the scissors.
+    hole_area = Polygon(kept.exterior).area - kept.area
+    discarded = sum(g.area for g in rest) + hole_area
+    if discarded > max_discard_ratio * kept.area:
         return None
 
     # exterior.coords repeats the first point at the end; traces store the
