@@ -87,8 +87,18 @@ class StatusSegment(QLabel):
 
     def popupClosed(self):
         import time
+        from PySide6.QtWidgets import QApplication
         self._popup_open = False
-        self._popup_hidden_at = time.monotonic()
+        # Stamp only a dismissal BY an outside press (the button is still
+        # down when that close arrives): that is the one case the platform
+        # replays the press at this widget. A close by selection, Enter, or
+        # Escape replays nothing, and stamping those made the press-swallow
+        # below eat an ordinary quick re-click after picking a row (found
+        # 2026-08-28).
+        if QApplication.mouseButtons() & Qt.LeftButton:
+            self._popup_hidden_at = time.monotonic()
+        else:
+            self._popup_hidden_at = 0.0
         self.update()
 
     def event(self, e):
