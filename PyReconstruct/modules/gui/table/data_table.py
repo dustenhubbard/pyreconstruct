@@ -61,6 +61,14 @@ class DataTable(QDockWidget):
     # restore a dock widget without one
     _name_counter = 0
 
+    # A CLASS default, not only the instance one set in __init__, because
+    # clearMenuBar deletes the instance attribute out from under us: it drops
+    # every attribute pointing at a menubar action, and while the list floats
+    # the dock button IS one. The class default shows through the hole that
+    # leaves, so the readers below see None (rebuild it) rather than raising
+    # AttributeError mid-transition (found 2026-08-27).
+    _dock_button = None
+
     def __init__(self, data_name : str, series : Series, mainwindow : QWidget, manager):
         """Create the object table dock widget.
         
@@ -346,6 +354,28 @@ class DataTable(QDockWidget):
         """
         self.menubar = self.main_widget.menuBar()
         self.context_menu = QMenu(self)
+
+    def rebuildMenus(self):
+        """Rebuild the menubar and put back what the rebuild is not aware of.
+
+        Call this rather than createMenus. Subclasses own createMenus and
+        every one of them starts by clearing the bar, which also takes the
+        dock-back button: it lives in the menubar while the list floats but
+        is not part of any menu definition, so nothing in createMenus knows
+        to put it back.
+
+        It used to simply stay gone. A floating list rebuilds its menus for
+        ordinary reasons (List > Refresh, any filter or column change, and
+        every section step for trace lists), and after any of them the list
+        had no way back to the dock: the button was the only one, since a
+        floating list's native title bar cannot re-dock it and its title-bar
+        context menu is suppressed while floating. Worse, the attribute went
+        with it, so the next float or dock raised AttributeError partway
+        through _onTopLevelChanged and left the window half-transitioned
+        (found 2026-08-27, shipped in 1.23.0-beta-3).
+        """
+        self.createMenus()
+        self._syncDockAction(self.isFloating())
     
     def getHeaders(self):
         """Get the column headers for the table.
@@ -487,8 +517,8 @@ class DataTable(QDockWidget):
         self.updateTitle()
 
         # update the menus
-        self.createMenus()
-    
+        self.rebuildMenus()
+
     def updateTitle(self):
         """Update the title of the widget."""
         self.setWindowTitle(f"{self.name.capitalize()} List")
