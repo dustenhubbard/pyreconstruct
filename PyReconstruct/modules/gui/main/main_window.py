@@ -98,6 +98,7 @@ class MainWindow(QMainWindow):
         self.is_zooming             =  False
         self.restart_mainwindow     =  False
         self._updater_pool          =  None   # in-flight update guard
+        self._flavor_pool           =  None   # in-flight other-build lookup
         self._pending_installer     =  None   # launched on the accepted close
         self._pending_update_dir    =  None
         self.check_actions_enabled  =  False
@@ -203,7 +204,9 @@ class MainWindow(QMainWindow):
         self.menusearchfield_act = MenuSearchField(self, self.helpmenu)
         first_help_action = self.helpmenu.actions()[0]
         self.helpmenu.insertAction(first_help_action, self.menusearchfield_act)
-        self.helpmenu.insertSeparator(first_help_action)
+        # No second separator: the menu definition ends its first group with
+        # one, and another would divide the field from the "Search menus..."
+        # row that shares its group (his Help layout call, ported for 1.22.2).
 
         ## Seed menubar checkables that have no aboutToShow resync hook from the
         ## live option, so they are correct on first show. checkActions keeps
@@ -689,8 +692,9 @@ class MainWindow(QMainWindow):
             WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT, whats_new_suppressed,
         )
         settings = QSettings("KHLab", "PyReconstruct")
+        # checked means OFF, matching the row's wording (his call, 2026-08-26)
         self.togglewhatsnew_act.setChecked(
-            not whats_new_suppressed(
+            whats_new_suppressed(
                 settings.value(WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT)
             )
         )
@@ -732,7 +736,11 @@ class MainWindow(QMainWindow):
         )
 
     def toggleWhatsNewPopup(self):
-        """Persist the Help-menu toggle: checked means the popup may show.
+        """Persist the Help-menu toggle: CHECKED means the popup is off.
+
+        The row reads "Turn off What's new pop-up", so a tick is the disabled
+        state (his call, 2026-08-26, ported for 1.22.2); the tick IS the
+        stored suppression flag.
 
         Writes only the suppression preference. The once-per-version record is
         deliberately untouched, so re-enabling hands back the ordinary rules:
@@ -742,7 +750,7 @@ class MainWindow(QMainWindow):
         from PyReconstruct.modules.gui.main.first_launch import WHATSNEW_SUPPRESS_KEY
         settings = QSettings("KHLab", "PyReconstruct")
         settings.setValue(
-            WHATSNEW_SUPPRESS_KEY, not self.togglewhatsnew_act.isChecked()
+            WHATSNEW_SUPPRESS_KEY, self.togglewhatsnew_act.isChecked()
         )
 
     def changeUsername(self, new_name : str = None):
@@ -3286,6 +3294,50 @@ class MainWindow(QMainWindow):
         """Copy current commit or repo."""
         clipboard = QApplication.clipboard()
         clipboard.setText(repo_info["commit"])
+
+    def openOtherFlavorPage(self):
+        """Open the download page for the other build (Help menu).
+
+        The stable app points at the newest beta, the Dev app at the newest
+        stable; the URL is resolved at click time so it never goes stale.
+
+        Resolved OFF the GUI thread, in the same worker pattern the update
+        check uses. From stable that resolution is a GitHub API call, and
+        making it inline froze the whole window until the timeout, longer
+        still when DNS stalled (found 2026-08-27). The Dev build answers
+        without touching the network, so this costs it nothing.
+        """
+        from PyReconstruct.modules.backend.updater import (
+            other_flavor_url,
+            releases_index_url,
+        )
+
+        if self._flavor_pool is not None:
+            return  # already looking; a second click must not race the first
+
+        progbar = getProgbar(
+            "Finding the download page…", cancel=False, maximum=0
+        )
+        pool = ThreadPool()
+        self._flavor_pool = pool
+        worker = pool.createWorker(other_flavor_url)
+
+        def _done(url):
+            self._flavor_pool = None
+            progbar.close()
+            self.openWebsite(url)
+
+        def _err(err):
+            # other_flavor_url swallows its own network failures and returns
+            # the index, so reaching here means something unexpected. The
+            # index is still the right place to land: it lists every build.
+            self._flavor_pool = None
+            progbar.close()
+            self.openWebsite(releases_index_url())
+
+        worker.signals.result.connect(_done)
+        worker.signals.error.connect(_err)
+        pool.start(worker)
 
     def checkForUpdates(self):
         """Manual update check (Help -> Check for updates).

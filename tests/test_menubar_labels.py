@@ -340,6 +340,11 @@ _TOGGLE_WHATSNEW_ROW = (1, "act", "togglewhatsnew_act")
 # Series Options Updates tab (removed with the channel radio, 2026-08-21).
 # It sits directly under "Check for updates...", the action it governs.
 _TOGGLE_UPDATECHECK_ROW = (1, "act", "toggleupdatecheck_act")
+# Help > the cross-flavor download row (2026-08-25): each build links to the
+# OTHER build's latest download, right under "Check for updates...". Stable
+# offers the Dev beta, Dev offers stable; legacy Beta-channel users hold a
+# lone beta install and this is their road back to stable.
+_GET_OTHER_FLAVOR_ROW = (1, "act", "getotherflavor_act")
 # Help > "Search menus...": the in-window menubar never gets macOS's native
 # Help search, so the app carries its own palette (stable ship, 2026-08-21).
 _SEARCH_MENUS_ROW = (1, "act", "searchmenus_act")
@@ -352,16 +357,41 @@ MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "menu", "importalignmentsmenu")) + 1,
     _IMPORT_JSER_ALIGNMENTS_ROW,
 )
-MENUBAR_EXPECTED.insert(
-    MENUBAR_EXPECTED.index((1, "act", "whatsnew_act")) + 1, _TOGGLE_WHATSNEW_ROW
-)
-MENUBAR_EXPECTED.insert(
-    MENUBAR_EXPECTED.index((1, "act", "checkupdates_act")) + 1,
+# The sanctioned MOVE: Help is regrouped into five separated groups, the
+# search field first, then what this build IS, then updates and the other
+# build's download, then the What's-new pop-up, then the rest exactly as it
+# was. Expressed as remove-then-rebuild of the Help rows rather than by
+# rewriting the frozen baseline, so the deviation stays visible;
+# test_no_baseline_action_was_lost still sees every Help action, which is
+# what makes this a move and not a loss. Four separate inserts stood here
+# and encoded the OLD flat order, which left this suite red on the branch
+# (found 2026-08-27). Same shape as the Dev branch's splice, so the two
+# read alike when this folds forward.
+_HELP_HEAD_OLD = [
+    (1, "act", "repobranch_act"),
+    (1, "act", "checkupdates_act"),
+    (1, "act", "whatsnew_act"),
+    (1, "sep", None),
+    (1, "act", "shortcutshelp_act"),
+]
+_HELP_HEAD_NEW = [
+    _SEARCH_MENUS_ROW,
+    (1, "sep", None),
+    (1, "act", "repobranch_act"),
+    (1, "sep", None),
+    (1, "act", "checkupdates_act"),
     _TOGGLE_UPDATECHECK_ROW,
-)
-MENUBAR_EXPECTED.insert(
-    MENUBAR_EXPECTED.index((1, "act", "shortcutshelp_act")), _SEARCH_MENUS_ROW
-)
+    (1, "sep", None),
+    _GET_OTHER_FLAVOR_ROW,
+    (1, "sep", None),
+    (1, "act", "whatsnew_act"),
+    _TOGGLE_WHATSNEW_ROW,
+    (1, "sep", None),
+    (1, "act", "shortcutshelp_act"),
+]
+_help_at = MENUBAR_EXPECTED.index((1, "act", "repobranch_act"))
+assert MENUBAR_EXPECTED[_help_at:_help_at + len(_HELP_HEAD_OLD)] == _HELP_HEAD_OLD
+MENUBAR_EXPECTED[_help_at:_help_at + len(_HELP_HEAD_OLD)] = _HELP_HEAD_NEW
 MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((1, "act", "fillopacity_act")) + 1, _RECOLOR_ALL_ROW
 )
@@ -393,7 +423,9 @@ def test_menubar_action_and_submenu_counts():
     series-wide recolor each took the count up one, 116 to 118 together.
     """
     rows = _rows()
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 120
+    # 121 on this line: the 120 at the 1.22.1 hotfix plus the cross-flavor
+    # download row ported for 1.22.2 (stable offers PyReconstruct Dev).
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 121
     assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 32
 
 
