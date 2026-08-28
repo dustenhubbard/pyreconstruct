@@ -22,7 +22,20 @@ def generateVolumes(series_like : Series_like_obj, objs : dict, ztraces : dict):
     """
     # option to use fp instead of series
     if isinstance(series_like, str):
-        series = Series.openJser(series_like)
+        ## Null progress and notifier, not the Qt defaults: this function
+        ## runs inside the 3D worker thread, and the default reporter builds
+        ## a QProgressDialog parented to the main window -- a Qt widget
+        ## constructed and driven off the GUI thread, which Qt forbids
+        ## (intermittent cross-thread warnings and crashes while
+        ## "Generating 3D..." ran; found 2026-08-28). The worker already
+        ## shows its own progress bar on the GUI side.
+        from PyReconstruct.modules.backend.notifier import NullNotifier
+        from PyReconstruct.modules.backend.progress import NullProgressReporter
+        series = Series.openJser(
+            series_like,
+            progress=NullProgressReporter,
+            notifier=NullNotifier(),
+        )
     else:
         series = series_like
 
@@ -103,10 +116,17 @@ def generateVolumes(series_like : Series_like_obj, objs : dict, ztraces : dict):
         mesh_data_list.append(mesh_data)
     
     # convert snum extremes to z extremes
-    t = series.avg_thickness
-    extremes[4] *= t
-    extremes[5] *= t
-    
+    ## Guarded: every requested object or z-trace may have been renamed or
+    ## deleted since the request was saved (restoring an old 3D scene is the
+    ## reachable path), and then extremes is [] and indexing raised
+    ## IndexError in the worker, so the scene never loaded at all (found
+    ## 2026-08-28). An empty scene is a valid answer; the return value never
+    ## carried the extremes anyway.
+    if extremes:
+        t = series.avg_thickness
+        extremes[4] *= t
+        extremes[5] *= t
+
     # return list tuples (volume, opengl objects)
     # return global bounding box to set view
     return (

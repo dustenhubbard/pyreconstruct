@@ -135,17 +135,10 @@ class TraceDialog(QDialog):
         # way through editing is not the row they left off on
         self.tags_input = MultiInput(self, sorted(tags))
 
+        # created here, SEEDED after the radios below: the radios' toggled
+        # handler reaches these, so they must exist before any radio flips
         self.selected_input = QCheckBox("Fill when selected")
-        if fill_condition in ("selected", "always"):
-            self.selected_input.setChecked(True)
-        else:
-            self.selected_input.setChecked(False)
-
         self.unselected_input = QCheckBox("Fill when unselected")
-        if fill_condition in ("unselected", "always"):
-            self.unselected_input.setChecked(True)
-        else:
-            self.unselected_input.setChecked(False)
 
         style_row = QHBoxLayout()
         style_text = QLabel(self, text="Fill:")
@@ -163,6 +156,17 @@ class TraceDialog(QDialog):
             self.style_solid.setChecked(True)
         else:
             self.checkDisplayCondition()
+
+        # The condition is seeded LAST. Seeding the radios above fired
+        # checkDisplayCondition, whose force-check of both boxes is the reset
+        # a real style switch wants -- but during construction it clobbered
+        # the trace's stored condition, so a trace filled "when selected"
+        # opened with both boxes ticked and an untouched OK silently wrote
+        # "always" onto every selected trace (found 2026-08-28).
+        self.selected_input.setChecked(fill_condition in ("selected", "always"))
+        self.unselected_input.setChecked(
+            fill_condition in ("unselected", "always")
+        )
         style_row.addWidget(style_text)
         style_row.addWidget(self.style_none)
         style_row.addWidget(self.style_transparent)
