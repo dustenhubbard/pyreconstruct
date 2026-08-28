@@ -334,6 +334,14 @@ class SectionStates():
             # restore ztraces
             modified_ztraces = self.current_state.getModifiedZtraces()
             for zname in modified_ztraces:
+                # A z-trace created AFTER this section's states were
+                # initialized is absent from the initial snapshot (series-
+                # level creation never calls addState), and indexing it here
+                # raised KeyError on the user's first Ctrl+Z instead of
+                # undoing (found 2026-08-28). The multi-state branch below
+                # already tolerates the missing name; this branch matches it.
+                if zname not in state.ztraces:
+                    continue
                 series.ztraces[zname] = restoreZtraceOnSection(
                     series.ztraces[zname],
                     state.ztraces[zname],

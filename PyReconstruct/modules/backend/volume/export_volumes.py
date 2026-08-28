@@ -66,6 +66,7 @@ def export3DObjects(series: Series, obj_names : list, output_dir : str, export_t
 
     output_directory = Path(output_dir)
 
+    skipped = []
     for obj_name, obj_3D in obj_data.items():
 
         output_file = output_directory / f"{obj_name}.{export_type}"
@@ -76,10 +77,23 @@ def export3DObjects(series: Series, obj_names : list, output_dir : str, export_t
                 output_file,
                 export_type,
             )
+        else:
+            # a contours-mode object has no mesh to write; claiming success
+            # for it sent users hunting for files that were never made
+            # (found 2026-08-28)
+            skipped.append(obj_name)
 
     if notify_user:
-        
-        notify(f"Object(s) exported to directory:\n\n{Path(output_directory).absolute()}\n")
+
+        message = f"Object(s) exported to directory:\n\n{Path(output_directory).absolute()}\n"
+        if skipped:
+            names = ", ".join(sorted(skipped))
+            message += (
+                f"\nNot exported (3D mode is 'contours', which has no mesh): "
+                f"{names}. Switch their 3D mode to surface or spheres to "
+                f"export them."
+            )
+        notify(message)
 
 
 def export3DData(series: Series, obj_names: list, output_fp: str, notify_user: bool=True) -> None:

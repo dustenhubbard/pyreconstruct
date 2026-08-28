@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Union
 from tempfile import mkstemp
@@ -155,17 +156,24 @@ def export_svg(section_data, svg_fp) -> Union[str, Path]:
 def export_png(section_data, png_fp, scale: float=1.0):
     """Export untransformed section with traces as a png."""
 
-    _, tmp_svg = mkstemp(suffix=".svg")
-    export_svg(section_data, tmp_svg)
+    ## The descriptor is closed at once and the unlink rides a finally: the
+    ## open fd leaked per export, and on Windows it also made the unlink
+    ## raise PermissionError AFTER the png was written, so the user saw an
+    ## error for an export that succeeded and the temp svg (with the whole
+    ## embedded image) stayed behind (found 2026-08-28).
+    fd, tmp_svg = mkstemp(suffix=".svg")
+    os.close(fd)
+    try:
+        export_svg(section_data, tmp_svg)
 
-    from cairosvg import svg2png
+        from cairosvg import svg2png
 
-    svg2png(
-        url=tmp_svg,
-        write_to=png_fp,
-        scale=scale
-    )
+        svg2png(
+            url=tmp_svg,
+            write_to=png_fp,
+            scale=scale
+        )
+    finally:
+        Path(tmp_svg).unlink(missing_ok=True)
 
-    Path(tmp_svg).unlink()
-    
     return png_fp

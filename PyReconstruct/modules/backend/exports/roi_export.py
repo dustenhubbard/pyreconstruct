@@ -15,8 +15,12 @@ class RoiExporter:
 
     def __init__(self, trace: Trace, mag: float, img_height: int):
 
+        ## Raise, never half-construct: returning early left the instance
+        ## with no roi/coords, and the caller's next call crashed with an
+        ## AttributeError right after the missing-package notice (found
+        ## 2026-08-28). Callers check modules_available BEFORE building one.
         if not modules_available("roifile"):
-            return
+            raise ModuleNotFoundError("roifile is required to export .roi files")
 
         import roifile
         self.roi_mod = roifile
@@ -25,18 +29,28 @@ class RoiExporter:
         self.coords = self.get_coords(mag, img_height)
         self.roi = self.get_roi()
 
-    def export_roi(self, directory: filepath) -> None:
-        """Export an ImageJ .roi file to a directory."""
+    def export_roi(self, directory: filepath) -> Path:
+        """Export an ImageJ .roi file to a directory.
+
+        The filename dodges collisions with a numeric suffix: every trace in
+        a contour carries the contour's name by construction, so naming the
+        file from the trace name alone made a contour's N traces write the
+        same file N times, and only the last survived while the user was
+        told everything exported (found 2026-08-28).
+        """
 
         if not isinstance(directory, Path):
             directory = Path(directory)
 
-        ## Assume each trace uniquely named for now
         output_fp = directory / f"{self.trace.name}-exported.roi"
+        n = 1
+        while output_fp.exists():
+            n += 1
+            output_fp = directory / f"{self.trace.name}-{n}-exported.roi"
 
         self.roi.tofile(output_fp)
 
-        return None
+        return output_fp
 
     def get_roi(self): 
         """Get an ImageJ roi object."""

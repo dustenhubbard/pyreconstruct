@@ -1,5 +1,6 @@
 import os
 import shutil
+import threading
 import numpy as np
 from pathlib import Path
 from datetime import datetime
@@ -14,6 +15,16 @@ from PyReconstruct.modules.backend.threading import ThreadPoolProgBar
 from PyReconstruct.modules.calc import reducePoints
 
 from .palette import AUTOSEG_TRACE_PREFIX, DEFAULT_AUTOSEG_PALETTE, palette_color
+
+## Serializes every write importSection makes into SHARED series state. The
+## import fans out over up to ten workers, and both mutations below are races
+## without it: object_groups.add is check-then-act (two workers creating the
+## same seg_ group each install a fresh set, one worker's objects vanish from
+## the group), and section.save rewrites per-object aggregates in SeriesData
+## that other workers' sections are rewriting at the same time (found
+## 2026-08-28). The heavy work -- contour extraction, trace building -- stays
+## outside the lock, so the parallelism the pool exists for is kept.
+_SHARED_SERIES_LOCK = threading.Lock()
 
 
 dt = None
@@ -209,6 +220,17 @@ def groupsToVolume(series: Series, groups: list=None, padding: float=None, restr
                 x_vals += [xmin, xmax]
                 y_vals += [ymin, ymax]
 
+    ## Named errors instead of bare min()-of-empty ValueErrors: a typo'd
+    ## group name (or a filter that excludes everything) used to die with
+    ## "min() arg is an empty sequence" and no hint of which input was
+    ## empty (found 2026-08-28).
+    if not x_vals:
+        names = ", ".join(groups) if groups else "(no groups given)"
+        raise ValueError(
+            f"no traces found for the requested group(s): {names}. Check the "
+            "group names and that their objects have traces."
+        )
+
     x = min(x_vals)
     w = max(x_vals) - x
     y = min(y_vals)
@@ -217,6 +239,14 @@ def groupsToVolume(series: Series, groups: list=None, padding: float=None, restr
     if restrict_to_sections:
         start, end = restrict_to_sections
         sec_range = [sec for sec in sec_range if sec >= start and sec <= end]
+        if not sec_range:
+            raise ValueError(
+                f"the requested group(s) have no traces between sections "
+                f"{start} and {end}."
+            )
+        sec_range = [min(sec_range), max(sec_range) + 1]
+    else:
+        ## the documented contract: [start, end], not a raw set
         sec_range = [min(sec_range), max(sec_range) + 1]
 
     if padding:
@@ -281,7 +311,23 @@ def seriesToZarr(series : Series,
             
         data_fp = os.path.join(output_dir, zarr_name)
         
-    if os.path.isdir(data_fp): shutil.rmtree(data_fp)  # delete existing zarr
+    ## Delete only something that IS a zarr. data_fp is caller-supplied (the
+    ## CLI wires --output straight through), and an unconditional rmtree
+    ## recursively deleted whatever existing directory the user pointed at,
+    ## no confirmation asked (found 2026-08-28).
+    if os.path.isdir(data_fp):
+        looks_like_zarr = data_fp.rstrip("/").endswith(".zarr") or any(
+            os.path.exists(os.path.join(data_fp, marker))
+            for marker in (".zgroup", ".zattrs", "zarr.json")
+        )
+        if not looks_like_zarr:
+            raise ValueError(
+                f"refusing to overwrite {data_fp}: it exists and does not "
+                "look like a zarr (no .zgroup/.zattrs and no .zarr suffix). "
+                "Choose an output path that does not exist or points at a "
+                "zarr to replace."
+            )
+        shutil.rmtree(data_fp)  # delete existing zarr
         
     data_zg = zarr.open(data_fp, "a")
     
@@ -491,7 +537,15 @@ def labelsToObjects(series : Series, data_fp : str, group : str, ids: list = Non
     setDT()
     threadpool = ThreadPoolProgBar()
 
-    for snum in range(section_start, max(sections) + 1):
+    ## The real section numbers, NOT range(section_start, ...):
+    ## section_start is a Z-SLICE offset into the labels array, while
+    ## `sections` holds actual section numbers, and the standard export
+    ## skips the cal grid so the two disagree on almost every zarr. The old
+    ## range made every default import fail its first worker (ValueError on
+    ## a section below the export window) and, with a windowed export,
+    ## silently imported the WRONG slice via negative-index wraparound
+    ## (found 2026-08-28). importSection itself guards the bounds now.
+    for snum in sections:
         threadpool.createWorker(
             importSection,
             data_zg,
@@ -665,7 +719,10 @@ def exportTraces(data_zg,
             for trace in traces:
                 trace.setHidden(True)
                 section.addTrace(trace)
-            section.save()
+            # under the shared lock for the same reason importSection's save
+            # is: this runs on the export pool's workers too
+            with _SHARED_SERIES_LOCK:
+                section.save()
 
 
 def importSection(data_zg, group, snum, series, ids=None):
@@ -701,13 +758,29 @@ def importSection(data_zg, group, snum, series, ids=None):
 
     if snum not in series.sections:  # section not in the current series
         return
+    if snum not in sections:  # section not in the zarr's export window
+        return
 
     ## Load section and corresponding data
-    section = series.loadSection(snum)
     z = sections.index(snum)
 
+    ## Explicit bounds, both ends: a z below the labels dataset's offset used
+    ## to reach zarr as a NEGATIVE index, which wraps to the far end of the
+    ## array and silently imported another section's labels (found
+    ## 2026-08-28). Only the high end ever raised.
+    zi = z - z_offset
+    if zi < 0:
+        return
+    # the high bound stays best-effort: array-likes without a shape fall
+    # through to the BoundsCheckError catch below, as they always did
+    shape = getattr(labels_array, "shape", None)
+    if shape is not None and zi >= shape[0]:
+        return
+
+    section = series.loadSection(snum)
+
     try:
-        arr = labels_array[z - z_offset]
+        arr = labels_array[zi]
     except zarr.errors.BoundsCheckError:  # return if out of bounds
         return
 
@@ -785,11 +858,14 @@ def importSection(data_zg, group, snum, series, ids=None):
             
             section.addTrace(trace)
 
-        ## Add trace to group
-        series.object_groups.add(f"seg_{dt}", f"{AUTOSEG_TRACE_PREFIX}{id}")
-        series.object_groups.add(f"seg_{group}", f"{AUTOSEG_TRACE_PREFIX}{id}")
+        ## Add trace to group (under the shared lock: add is check-then-act)
+        with _SHARED_SERIES_LOCK:
+            series.object_groups.add(f"seg_{dt}", f"{AUTOSEG_TRACE_PREFIX}{id}")
+            series.object_groups.add(f"seg_{group}", f"{AUTOSEG_TRACE_PREFIX}{id}")
 
-    section.save()
+    ## save rewrites shared per-object aggregates, so it takes the lock too
+    with _SHARED_SERIES_LOCK:
+        section.save()
 
 
 def zarrToNewSeries(zarr_fp : str, label_groups : list, name : str):
