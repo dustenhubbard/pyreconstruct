@@ -1880,6 +1880,11 @@ class MainWindow(QMainWindow):
     def importROIFiles(self):
         """Import traces from ImageJ .roi files."""
 
+        # checked up front: Roi() now refuses to half-construct without the
+        # package, so the old path (notice, then a crash) cannot recur
+        if not modules_available("roifile", notify=True):
+            return None
+
         fps = FileDialog.get("files", self, "Select .roi file(s)", filter="*.roi")
 
         if not fps:
@@ -1968,6 +1973,12 @@ class MainWindow(QMainWindow):
 
     def exportROIFiles(self):
         """Export traces as ImageJ .roi files."""
+
+        # checked up front: the exporter now refuses to half-construct
+        # without the package, so the old path (notice, then a crash per
+        # trace) cannot recur
+        if not modules_available("roifile", notify=True):
+            return
 
         directory = FileDialog.get("dir", self, "Select directory to export .roi files.")
 
