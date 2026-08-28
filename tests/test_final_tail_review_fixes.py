@@ -25,6 +25,10 @@ def test_group_names_with_spaces_survive_into_the_command(main_window, monkeypat
         subprocess, "Popen",
         lambda cmd, **kw: launched.append(cmd) or None,
     )
+    # CI has no dask; the availability check would prompt, and a prompt
+    # under pytest's capture reads stdin and dies. The check is not what
+    # this test is about.
+    monkeypatch.setattr(mw, "modules_available", lambda *a, **k: True)
     # the wizard's answers: sections, padding, the group, export-all
     main_window_dialogs.responses.append((
         [0, 5, 50, ["dendrite 1"], [("Export all tissue", False)]], True
