@@ -162,6 +162,18 @@ class QuickDialog(QDialog):
         """
         QDialog.__init__(self, parent)
 
+        # A CONFIRMABLE quick dialog is destroyed on close, not merely
+        # hidden: those are one-shot popups parented to the main window,
+        # fired once per gesture from ~54 call sites, and without this each
+        # one survived as a dead child for the whole session (found
+        # 2026-08-28). Deletion is DEFERRED, so the exec-then-harvest
+        # pattern every caller uses still reads its widgets first;
+        # malformed_contours.py documents the same arrangement. The
+        # include_confirm=False flavor is exempt: OptionWidget embeds it as
+        # a persistent page inside the options dialog.
+        if include_confirm:
+            self.setAttribute(Qt.WA_DeleteOnClose)
+
         vlayout, self.inputs = getLayout(self, structure, grid, spacing)
 
         if include_confirm:

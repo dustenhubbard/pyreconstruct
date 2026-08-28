@@ -115,7 +115,11 @@ class TableColumnsDialog(QDialog):
         """Reset the widget containing all the columns (called when order is changed)."""
         self.columns_widget.close()
         pos = self.qsa.verticalScrollBar().value()
-        self.qsa.close()
+        # removed and destroyed, not just closed: every reorder click used to
+        # leave the old scroll area (checkboxes, buttons, connections and
+        # all) hidden inside the layout (found 2026-08-28)
+        self.vlayout.removeWidget(self.qsa)
+        self.qsa.deleteLater()
         self.createColumnsWidget()
         self.qsa.verticalScrollBar().setValue(pos)
         self.vlayout.insertWidget(0, self.qsa)

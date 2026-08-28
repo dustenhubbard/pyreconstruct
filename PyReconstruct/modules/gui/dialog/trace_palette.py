@@ -178,7 +178,22 @@ class TracePaletteDialog(QuickTabDialog):
         response, confirmed = super().exec()
         if not confirmed:
             return None, False
-        
+
+        # A stamp radius must be positive BEFORE anything is written: zero
+        # collapses a palette trace onto its centroid and a negative mirrors
+        # it, silently, on OK (found 2026-08-28). TraceDialog rejects the
+        # same input; this dialog had no equivalent check.
+        for palette_name, inputs in response.items():
+            if palette_name == "current_tab_text":
+                continue
+            for i in range(6, len(inputs), 7):
+                if inputs[i] <= 0:
+                    notify(
+                        "Every stamp radius must be a positive number. "
+                        "Nothing was changed."
+                    )
+                    return None, False
+
         # modify the series directly
         self.series.palette_index[0] = response["current_tab_text"]
         del(response["current_tab_text"])

@@ -322,6 +322,23 @@ class MalformedContoursDialog(QDialog):
         if not deleted:
             return
         deleted_ids = {id(r) for r in deleted}
+        # The surviving records' scan-time indexes shift when earlier traces
+        # of the SAME contour on the SAME section are deleted: "Go to trace"
+        # then framed a different trace than the row named, and the user
+        # could delete a legitimate one believing they had inspected it
+        # (found 2026-08-28). Decrement each survivor by how many deleted
+        # records sat below its index in its own contour.
+        for record in self._records_by_key.values():
+            if id(record) in deleted_ids:
+                continue
+            shift = sum(
+                1 for d in deleted
+                if d["section"] == record["section"]
+                and d["name"] == record["name"]
+                and d["index"] < record["index"]
+            )
+            if shift:
+                record["index"] -= shift
         # remove bottom-up so earlier row indices stay valid
         for row in range(self.table.rowCount() - 1, -1, -1):
             item = self.table.item(row, 0)

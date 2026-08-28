@@ -3000,6 +3000,12 @@ class MainWindow(QMainWindow):
             if os.path.isdir(os.path.join(zarr_dir, g)):
                 groups.append(g)
 
+        # the previous palette comes down first: without this its widgets
+        # stayed visible on top of the new ones, and its combobox was still
+        # wired to setLayerGroup, writing an OLD zarr's group name against
+        # the NEW zarr's filepath (found 2026-08-28)
+        if getattr(self, "zarr_palette", None):
+            self.zarr_palette.close()
         self.zarr_palette = ZarrPalette(groups, self)
     
     def setLayerGroup(self, group_name):
@@ -3051,7 +3057,10 @@ class MainWindow(QMainWindow):
         if not confirmed: return
         
         start, end, padding = response[0:3]
-        groups = " ".join(response[3])
+        # a LIST, end to end: joining with spaces and re-splitting later cut
+        # a group named "dendrite 1" into two arguments, and the exported
+        # zarr silently omitted it (found 2026-08-28)
+        groups = list(response[3])
         max_tissue = response[4][0][1]
 
         ## Ask for save location
@@ -3112,6 +3121,12 @@ class MainWindow(QMainWindow):
                             "--output",
                             str(arg)
                         ]
+
+                    elif isinstance(arg, (list, tuple)):
+
+                        # one literal argv element per value: group names
+                        # carry spaces, and a re-split destroyed them
+                        convert_cmd += [argname] + [str(a) for a in arg]
 
                     else:
 
