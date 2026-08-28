@@ -1,10 +1,13 @@
 import os
+import math
+
 import zarr
 import numpy as np
 
 from PySide6.QtCore import (
     Qt,
     QPoint,
+    QPointF,
     QRect
 )
 from PySide6.QtGui import (
@@ -250,56 +253,77 @@ class ImageLayer():
             blank_image.fill(Qt.black)
             return blank_image
         # unpack values otherwise
-        xmin, ymin, xmax, ymax = bounds
+        fxmin, fymin, fxmax, fymax = bounds        # floats: see adjustBounds
         xminp, yminp, xmaxp, ymaxp = filling
-        
-        # step 6: get crop from image
+
+        # Step 6: crop OUTWARD to whole pixels (floor the mins, ceil the
+        # maxes), so the crop always covers the window's float span. The old
+        # round() could shrink it by a pixel, which scaled to a multi-pixel
+        # shortfall and painted the deficit black at the field's edge -- the
+        # intermittent 1px line parked 2026-08-26, root-caused by the review
+        # fleet (3029 of 4000 views showed it).
         if self.is_zarr_file:
-            # scale the cropping values accordingly
-            xmins, ymins, xmaxs, ymaxs = (round(n / scale_level) for n in bounds)
-            ihs = round(ih / scale_level)
-            zarr_saved = self.image[
-                ihs - ymaxs: ihs - ymins,
-                xmins:xmaxs
-            ]
+            zh_total, zw_total = self.image.shape
+            zx0 = max(0, math.floor(fxmin / scale_level))
+            zy0 = max(0, math.floor(fymin / scale_level))
+            zx1 = min(zw_total, math.ceil(fxmax / scale_level))
+            zy1 = min(zh_total, math.ceil(fymax / scale_level))
+            # Dimensions come from the SLICE, never re-derived by rounding
+            # the full-resolution bounds: the pyramid levels are written by
+            # iterated halving, so round(full/scale) disagrees with the
+            # stored size for many images, and a QImage declared bigger than
+            # its buffer reads past the numpy allocation (found 2026-08-28).
+            zarr_saved = self.image[zh_total - zy1: zh_total - zy0, zx0:zx1]
+            zh, zw = zarr_saved.shape
             im_crop = QImage(
                 zarr_saved.data,
-                xmaxs-xmins,
-                ymaxs-ymins,
+                zw,
+                zh,
                 zarr_saved.strides[0],
                 QImage.Format.Format_Grayscale8
             )
+            # the crop's full-resolution footprint, for placement below
+            cx0, cy1 = zx0 * scale_level, zy1 * scale_level
+            crop_w_full = zw * scale_level
+            crop_h_full = zh * scale_level
         else:
-            crop_rect = QRect(
-                xmin,
-                ih-ymax,
-                xmax-xmin,
-                ymax-ymin
-            )
-            im_crop = self.image.copy(crop_rect)
-        
+            cx0 = max(0, math.floor(fxmin))
+            cy0 = max(0, math.floor(fymin))
+            cx1 = min(iw, math.ceil(fxmax))
+            cy1 = min(ih, math.ceil(fymax))
+            im_crop = self.image.copy(QRect(cx0, ih - cy1, cx1 - cx0, cy1 - cy0))
+            crop_w_full = cx1 - cx0
+            crop_h_full = cy1 - cy0
+
         if get_crop_only:  # only for use with brightness/contrast functions
             # copy so the returned image owns its data (the zarr crop wraps
             # a local numpy buffer that dies with this scope)
             return im_crop.copy() if self.is_zarr_file else im_crop
-        
-        # setp 7: scale the cropped image
+
+        # step 7: scale the cropped image (ceil: never come up short)
         im_scaled = im_crop.scaled(
-            im_crop.width() * s * scale_level,
-            im_crop.height() * s * scale_level
+            math.ceil(crop_w_full * s),
+            math.ceil(crop_h_full * s)
         )
-        
-        # step 8: fill the image (continue to account for scaling)
+
+        # Step 8: fill the image. The canvas spans exactly the window
+        # (filling included), and the scaled crop is placed by its exact
+        # fractional offset from the window edge -- the outward margins from
+        # the floor/ceil above hang off the canvas instead of shifting the
+        # content. With an identity transform this canvas IS pixmap-sized,
+        # so the rip below is exact.
         im_filled = QImage(
-            (xminp + (xmax - xmin) + xmaxp) * s,
-            (ymaxp + (ymax - ymin) + yminp) * s,
+            round((xminp + (fxmax - fxmin) + xmaxp) * s),
+            round((ymaxp + (fymax - fymin) + yminp) * s),
             QImage.Format.Format_ARGB32_Premultiplied
         )
         im_filled.fill(Qt.black)
         painter = QPainter(im_filled)
         painter.drawImage(
-            xminp * s,
-            ymaxp * s,
+            QPointF(
+                (xminp - (fxmin - cx0)) * s,
+                (ymaxp - (cy1 - fymax)) * s,
+            ),
             im_scaled
         )
         painter.end()
@@ -309,20 +333,29 @@ class ImageLayer():
             tform.imageTransform().getQTransform()
         )
 
-        # step 10: rip the visible region from the transformed image
+        # Step 10: rip the visible region from the transformed image. The
+        # origin is clamped at zero: a negative origin makes QImage.copy
+        # invent black source columns, which was the other half of the edge
+        # line (see step 7).
         im_ripped = im_tformed.copy(
-            (im_tformed.width() - pmw) / 2,
-            (im_tformed.height() - pmh) / 2,
+            max(0, round((im_tformed.width() - pmw) / 2)),
+            max(0, round((im_tformed.height() - pmh) / 2)),
             pmw,
             pmh
         )
-        
-        # step 11: add blank space to account for rounding errors
+
+        # Step 11: add blank space to account for rounding errors. CENTERED,
+        # not anchored top-left: anchoring pushed the whole shortfall onto
+        # the right and bottom edges as a visible black line.
         if (im_ripped.width(), im_ripped.height()) != pixmap_dim:
             image_layer = QImage(*pixmap_dim, QImage.Format.Format_ARGB32_Premultiplied)
             image_layer.fill(Qt.black)
             painter = QPainter(image_layer)
-            painter.drawImage(0, 0, im_ripped)
+            painter.drawImage(
+                (pmw - im_ripped.width()) // 2,
+                (pmh - im_ripped.height()) // 2,
+                im_ripped
+            )
             painter.end()
         else:
             image_layer = im_ripped
@@ -427,7 +460,12 @@ def adjustBounds(bounds, w, h):
     else:
         ymax_filling = 0
 
+    ## FLOATS, deliberately. This used to round, and the rounding was the
+    ## root of the parked 1px edge line: a crop rounded up to a whole image
+    ## pixel scales to less than the pixmap, and the pipeline paints the
+    ## deficit black. The caller floors/ceils for the actual crop rect and
+    ## places the result by the exact fractional offsets (found 2026-08-28).
     return (
-        tuple(round(n) for n in (xmin, ymin, xmax, ymax)),
-        tuple(round(n) for n in (xmin_filling, ymin_filling, xmax_filling, ymax_filling))
+        (xmin, ymin, xmax, ymax),
+        (xmin_filling, ymin_filling, xmax_filling, ymax_filling)
     )
