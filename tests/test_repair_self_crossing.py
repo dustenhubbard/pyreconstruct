@@ -63,6 +63,30 @@ def test_the_ratio_is_the_dial():
     assert repair_self_crossing(lopsided, max_discard_ratio=0.9) is not None
 
 
+def test_a_one_stroke_donut_is_left_for_the_scissors():
+    """A shell wound around an inner loop must not be silently filled.
+
+    make_valid turns this into ONE polygon with a hole, so the loose-pieces
+    sum saw nothing discarded, and the repair returned the exterior with the
+    hole filled: 16% of the geometry flipped from excluded to included with
+    no bound at all (found 2026-08-28). A myelin sheath traced in one stroke
+    is exactly this shape. The hole now counts as discarded area, so the
+    default dial refuses it.
+    """
+    from shapely.geometry import Polygon
+
+    donut = [
+        (0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0), (0.0, 5.0),
+        (3.0, 7.0), (7.0, 7.0), (7.0, 3.0), (3.0, 3.0), (3.0, 7.0), (0.0, 5.0),
+    ]
+    assert not Polygon(donut).is_valid                  # the premise
+    assert repair_self_crossing(donut) is None
+
+    # and the same dial governs it: a caller accepting a 20% discard may fill
+    # this 16% hole, which pins the refusal to the ratio and nothing else
+    assert repair_self_crossing(donut, max_discard_ratio=0.2) is not None
+
+
 # --------------------------------------------------------------------------
 # the series layer, on a real series
 # --------------------------------------------------------------------------

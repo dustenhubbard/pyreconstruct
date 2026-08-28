@@ -555,7 +555,15 @@ class TableManager():
         self.recreateTables(refresh_data=True)
     
     def closeAll(self):
-        """Close all tables."""
+        """Close all tables.
+
+        Over COPIES of the per-type lists: closeEvent removes each table from
+        the very list being walked, so a live walk skipped every second table
+        of a type. closeAll runs on every series switch, and a skipped list
+        survived into the new session still bound to the CLOSED series,
+        showing its stale data and writing edits into an object no file ever
+        sees again (found 2026-08-28).
+        """
         for n, l in self.tables.items():
-            for t in l:
+            for t in list(l):
                 t.close()

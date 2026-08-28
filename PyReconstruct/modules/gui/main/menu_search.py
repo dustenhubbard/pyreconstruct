@@ -280,23 +280,19 @@ class MenuSearchField(QWidgetAction):
         # The remappable chord, shown inside the field's right edge (his
         # consolidation call, 2026-08-27: the field replaced the "Search
         # menus..." row, so the field carries the row's one useful fact).
-        # Read from the live searchmenus_act each build: the field is rebuilt
-        # per createMenuBar pass, which is also how a rebind through the
-        # shortcuts dialog reaches it. NativeText renders the platform's own
-        # chord. Disabled, so the palette grays it like a placeholder;
-        # mouse-transparent, so clicks land in the field under it.
-        act = getattr(mainwindow, "searchmenus_act", None)
-        chord = (
-            act.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
-            if act is not None and not act.shortcut().isEmpty()
-            else ""
-        )
-        self._hint = QLabel(chord, self._query)
+        # NativeText renders the platform's own chord. Disabled, so the
+        # palette grays it like a placeholder; mouse-transparent, so clicks
+        # land in the field under it. The TEXT is refreshed on every Help
+        # open (_refreshHint from _snapshot), not only here: the shortcuts
+        # dialog rebinds the live action in place with no menubar rebuild,
+        # so a build-time read went stale the moment the user remapped the
+        # key (found 2026-08-28).
+        self._hint = QLabel("", self._query)
         self._hint.setEnabled(False)
         self._hint.setAttribute(
             Qt.WidgetAttribute.WA_TransparentForMouseEvents
         )
-        self._hint.setVisible(bool(chord))
+        self._refreshHint()
 
         # ToolTip-flagged: shows without activating and without taking the
         # menu's popup grab, so the Help menu stays open while results are up.
@@ -342,6 +338,24 @@ class MenuSearchField(QWidgetAction):
             (self._query.height() - self._hint.height()) // 2,
         )
 
+    def _refreshHint(self):
+        """Read the chord from the LIVE action and show it, or nothing.
+
+        Called at build time and again on every Help open: the shortcuts
+        dialog rebinds searchmenus_act in place, with no menubar rebuild, so
+        the hint must ask again rather than trust what it read when the menu
+        was built. An unbound chord shows no hint at all.
+        """
+        act = getattr(self._mainwindow, "searchmenus_act", None)
+        chord = (
+            act.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
+            if act is not None and isValid(act) and not act.shortcut().isEmpty()
+            else ""
+        )
+        self._hint.setText(chord)
+        self._hint.setVisible(bool(chord) and not self._query.text())
+        self._placeHint()
+
     # ----------------------------------------------------------------- #
     # menu lifecycle
     # ----------------------------------------------------------------- #
@@ -357,6 +371,9 @@ class MenuSearchField(QWidgetAction):
             for path, shortcut, enabled, _action
             in collect_all_commands(self._mainwindow)
         ]
+        # the chord hint re-reads its action for the same reason the walk
+        # re-collects: what was true at build time need not be true now
+        self._refreshHint()
 
     def _menuHiding(self):
         if self._reveal_active:

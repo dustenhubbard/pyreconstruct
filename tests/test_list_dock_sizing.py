@@ -486,6 +486,28 @@ def test_every_list_type_keeps_its_dock_button_through_a_rebuild(
     assert table.main_widget.menuBar().actions()[0] is table._dock_button
 
 
+def test_close_all_closes_every_list_including_same_type_pairs(
+    qapp, dock_mainwindow, manager
+):
+    """closeAll walks lists that its own closes mutate; a live walk skipped
+    every second table of a type. It runs on every series switch, and a
+    skipped list stayed bound to the CLOSED series -- stale rows on screen,
+    edits written where no file ever sees them (found 2026-08-28)."""
+    tables = [
+        open_list(manager, tt, qapp)
+        for tt in ("object", "object", "section", "section", "ztrace")
+    ]
+    assert len(manager.tables["object"]) == 2
+
+    manager.closeAll()
+    settle(qapp)
+
+    for table in tables:
+        assert not table.isVisible()
+    for per_type in manager.tables.values():
+        assert per_type == []
+
+
 def test_refloat_keeps_hand_set_size_with_real_window_flags(qapp, dock_mainwindow, manager):
     """The flag swap must not break the size promise from the first fix."""
     table = open_list(manager, "object", qapp)

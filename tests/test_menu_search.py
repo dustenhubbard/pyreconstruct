@@ -108,6 +108,30 @@ def test_the_chord_survives_off_the_menu(main_window):
     assert act not in main_window.helpmenu.actions()
 
 
+def test_the_hint_follows_a_rebind(main_window):
+    """Remap the key and the hint must say the new chord on the next open.
+
+    The shortcuts dialog rebinds the live action in place, with no menubar
+    rebuild, so a hint read only at build time went stale the moment the
+    user remapped the key (found 2026-08-28). The hint re-reads its action
+    on every Help open, the same moment the command list re-collects.
+    """
+    from PySide6.QtGui import QKeySequence
+
+    field = main_window.menusearchfield_act
+    original = field._hint.text()
+    assert original
+
+    main_window.searchmenus_act.setShortcut(QKeySequence("Ctrl+Shift+F9"))
+    field._snapshot()               # what the Help menu's aboutToShow does
+
+    expected = QKeySequence("Ctrl+Shift+F9").toString(
+        QKeySequence.SequenceFormat.NativeText
+    )
+    assert field._hint.text() == expected
+    assert field._hint.text() != original
+
+
 def test_rebuilds_leave_exactly_one_chord_carrier(main_window):
     """One carrier on the window, however many times the menubar rebuilds.
 
