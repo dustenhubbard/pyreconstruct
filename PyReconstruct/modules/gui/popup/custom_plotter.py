@@ -540,7 +540,17 @@ class VPlotter(vedo.Plotter):
         """Called by addToScene after thread is completed"""
         # add objects and ztraces to scene
         mesh_data_list, series = result
-        
+
+        ## A series the 3D flow opened for itself gets its hidden dir removed
+        ## the moment the meshes exist. Left open, that dir survived the app
+        ## and later greeted whoever opened that jser normally with "an
+        ## unsaved version has been found" -- a stale snapshot frozen at 3D
+        ## time, which overwrote real edits if they said yes (found
+        ## 2026-08-28). The in-memory Series object stays usable for the
+        ## scene's attribute lookups; only the on-disk working copy goes.
+        if series is not None and series is not self.series:
+            series.close()
+
         for md in mesh_data_list:
             vm = vedo.Mesh([md["vertices"], md["faces"]], md["color"], md["alpha"])
             obj = self.objs.add(vm, series, md["name"], md["type"], md["color"], md["alpha"])
@@ -1154,6 +1164,9 @@ class CustomPlotter(QVTKRenderWindowInteractor):
         ]
         response, confirmed = QuickDialog.get(self, structure, "Add to Scene")
         if not confirmed:
+            # opened above just to list its names; the hidden working copy
+            # must not outlive the canceled dialog
+            series.close()
             return
 
         # get the object and ztrace names

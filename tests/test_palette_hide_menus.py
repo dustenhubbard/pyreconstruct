@@ -24,13 +24,30 @@ def _menu_for(palette, widget):
     return palette._hide_menu
 
 
+def test_palette_buttons_keep_their_edit_right_click(qapp, main_window, gui_dialogs):
+    """A palette button's right-click is the attributes editor, documented in
+    the palette help. Arming the hide menu on the buttons too made the two
+    fight over one click (macOS: the editor silently stopped opening;
+    Windows: both fired). The buttons must carry NO custom context menu."""
+    from PySide6.QtCore import Qt
+
+    palette = main_window.mouse_palette
+    for button in palette.palette_buttons:
+        assert button.contextMenuPolicy() != Qt.CustomContextMenu, (
+            "a palette button was armed with the hide menu"
+        )
+        assert not button.property("pyrecon_hide_menu")
+
+
 def test_every_group_offers_its_own_hide(qapp, main_window, gui_dialogs):
     palette = main_window.mouse_palette
     cases = [
         (palette.sb, "Hide the scale bar"),
         (palette.inc_buttons[0], "Hide the section increment buttons"),
         (palette.bc_widgets[0][1], "Hide the brightness/contrast sliders"),
-        (palette.palette_buttons[0], "Hide the trace palette"),
+        # the LABEL, not a button: buttons keep their documented right-click
+        # (edit attributes), so the hide menu must never be armed on them
+        (palette.label, "Hide the trace palette"),
     ]
     for widget, label in cases:
         menu = _menu_for(palette, widget)
@@ -92,7 +109,7 @@ def test_view_checkmarks_follow_a_right_click_hide(qapp, main_window, gui_dialog
 def test_every_palette_group_stays_in_sync(qapp, main_window, gui_dialogs):
     palette = main_window.mouse_palette
     cases = (
-        (palette.palette_buttons[0], "togglepalette_act", "palette_hidden"),
+        (palette.label, "togglepalette_act", "palette_hidden"),
         (palette.inc_buttons[0], "toggleinc_act", "inc_hidden"),
         (palette.bc_widgets[0][1], "togglebc_act", "bc_hidden"),
     )
