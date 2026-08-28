@@ -214,12 +214,13 @@ class DataTable(QDockWidget):
         """Update the title of the widget."""
         self.setWindowTitle(f"{self.name.capitalize()} List")
         
-    def resizeEvent(self, event):
-        """Resize the table when window is resized."""
-        super().resizeEvent(event)
-        w = event.size().width()
-        h = event.size().height()
-        self.table.resize(w, h-20)
+    # No resizeEvent override on purpose. The table is main_widget's CENTRAL
+    # WIDGET (createTable), so the layout already sizes it to the space under
+    # the menu bar. An old override resized it by hand to the DOCK's height
+    # minus a guessed 20px, which ignored the real title bar and menu bar:
+    # docked, the table ran past its viewport and the last rows could not be
+    # scrolled to (reported 2026-08-26; undocking changed the geometry enough
+    # to hide it). The layout needs no help.
 
     def selectedRows(self):
         """Get the indices of the rows the user has selected, without repeats.

@@ -450,43 +450,68 @@ def return_view_menu(self):
     return view_menu
 
 
+def _other_flavor_label(self=None):
+    """Menu text for the cross-flavor download row, decided by this build."""
+    from PyReconstruct.modules.datatypes.series_owner import app_display_name
+    if "Dev" in app_display_name():
+        return "Download PyReconstruct (stable)..."
+    return "Download PyReconstruct Dev (beta)..."
+
+
 def return_help_menu(self):
-    """Return help menu."""
+    """Return help menu.
+
+    Ordered in five groups, separator between each (his layout call,
+    2026-08-26): the search field, then what this build IS, then updates,
+    then the What's-new pop-up, then everything else unchanged. The search
+    field itself is inserted at the very top by MainWindow.createMenuBar,
+    which also focuses it when Help opens.
+    """
 
     return {
         "attr_name": "helpmenu",
         "text": "Help",
         "opts":
         [
+            # 1. the search field's remappable keyboard carrier. The visible
+            # field is a QWidgetAction inserted above this row in
+            # createMenuBar; a QWidgetAction cannot take the series-form
+            # shortcut lookup, so the key lives here.
+            # series form: the key is user-configurable, looked up by act_name
+            ("searchmenus_act", "Search menus...", self.series, self.openMenuSearch),
+            None,
+            # 2. what this build is: version and commit, copied on click
             ("repobranch_act", repo_string, "", self.copyCommit),
+            None,
+            # 3. updates
             ("checkupdates_act", "Check for updates...", "", self.checkForUpdates),
-            # Checkable, mirroring the update_check_on_startup series option
-            # that used to live on the Series Options Updates tab (removed with
-            # the channel radio: everything update-related lives here now). It
-            # resyncs on every Help open because the option follows the open
-            # series, not this window.
-            ("toggleupdatecheck_act", "Check for updates on startup", "checkbox",
+            # Checkable, mirroring the update_check_on_startup series option.
+            # It resyncs on every Help open because the option follows the
+            # open series, not this window.
+            ("toggleupdatecheck_act", "Automatically check for updates", "checkbox",
              self.toggleUpdateCheckOnStartup),
+            None,
+            # Its own group (his call, 2026-08-26): getting the OTHER build is
+            # a different errand from keeping this one current.
+            # The other build's download page, labeled by what THIS build is:
+            # the stable app offers Dev, the Dev app offers stable. Resolved
+            # when clicked (updater.other_flavor_url), so it always points at
+            # the latest of the other flavor.
+            ("getotherflavor_act", _other_flavor_label(), "", self.openOtherFlavorPage),
+            None,
+            # 4. the What's-new pop-up
             ("whatsnew_act", "What's new?", "", self.showWhatsNew),
             # Checkable, mirroring the stored suppress_whatsnew preference the
             # dialog's "Don't show again" button also writes. Unlike the
             # menubar's other checkables this one resyncs on every Help open
             # (see MainWindow.createMenuBar), because the dialog can flip the
-            # preference behind the menu's back. It sits directly under
-            # "What's new": it governs when that dialog appears unasked.
-            ("togglewhatsnew_act", "Show what's new after updates", "checkbox",
+            # preference behind the menu's back.
+            # Checked means OFF, matching the wording (his call, 2026-08-26):
+            # the tick IS the stored suppression flag.
+            ("togglewhatsnew_act", "Turn off What's new pop-up", "checkbox",
              self.toggleWhatsNewPopup),
             None,
-            # The Qt-drawn in-window menubar never gets macOS's native Help
-            # search, so the app carries its own: a search field embedded at
-            # the top of this menu (a QWidgetAction, inserted in createMenuBar
-            # because these definitions are pure data built without a
-            # QApplication). This row is the field's remappable keyboard
-            # carrier: a QWidgetAction cannot take the series-form shortcut
-            # lookup, so the key lives here and the handler opens Help and
-            # focuses the field.
-            # series form: the key is user-configurable, looked up by act_name
-            ("searchmenus_act", "Search menus...", self.series, self.openMenuSearch),
+            # 5. the rest, unchanged
             ("shortcutshelp_act", "Shortcuts list", "?", self.displayShortcuts),
             None,
             {
