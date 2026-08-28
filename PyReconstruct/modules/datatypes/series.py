@@ -729,6 +729,14 @@ class Series():
         except BaseException:
             shutil.rmtree(hidden_dir, ignore_errors=True)
             raise
+        finally:
+            # The dialog closes only at 100%, which a failure never reaches:
+            # the raise above used to leave the window-modal "Opening
+            # series..." dialog standing behind the error that follows it
+            # (found 2026-08-28) -- the same shape saveJser's finally already
+            # fixes. Cancel returns pass through here too; finishing a
+            # reporter twice is harmless.
+            reporter.finish()
 
         return series
 
@@ -1554,9 +1562,24 @@ class Series():
                     numbers (used to avoid loading every section for operations
                     that only touch a few objects)
             Returns:
-                (SeriesIterator): an iterable object for for loops
+                (generator): yielding (section number, Section) pairs
         """
-        return SeriesIterator(self, show_progress, message, series_states, breakable, section_numbers)
+        iterator = SeriesIterator(
+            self, show_progress, message, series_states, breakable,
+            section_numbers
+        )
+        ## A generator around the iterator, for the finally alone. The
+        ## iterator's window-modal progress dialog has no cancel button and
+        ## closes only at 100%, which it reached only on natural exhaustion:
+        ## a loop body that raised, or a caller that broke out early, left
+        ## the dialog up permanently, blocking the whole window with
+        ## force-quit as the only exit (found 2026-08-28). Abandoning a
+        ## generator closes it (GeneratorExit), so the finally runs on every
+        ## road out: exhaustion, break, and an exception in the body.
+        try:
+            yield from iterator
+        finally:
+            iterator.finishProgress()
 
     def getObjectSections(self, obj_names) -> set:
         """Return the set of section numbers that contain any of the objects.
@@ -5092,6 +5115,20 @@ class SeriesIterator():
                 # requested section was invalid), where it would be 0/0
                 self.reporter.set_progress(100)
             raise StopIteration
+
+    def finishProgress(self):
+        """Close the progress dialog, however the iteration ended.
+
+        Idempotent, and called by enumerateSections' finally: the dialog is
+        window-modal with no cancel button and closes only at 100%, so an
+        iteration abandoned partway (a raise in the loop body, an early
+        break) used to leave it blocking the window forever. Finishing an
+        already-finished reporter just sets 100 again, which is harmless.
+        """
+        reporter = getattr(self, "reporter", None)
+        if self.show_progress and reporter is not None:
+            reporter.finish()
+            self.reporter = None
 
 
 def updateDictLists(d1 : dict, d2 : dict):
