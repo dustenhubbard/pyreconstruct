@@ -6,6 +6,34 @@ full release notes on GitHub (linked from the dialog).
 
 ## [Unreleased]
 
+## [1.23.0-beta-4] — 2026-08-28
+
+#### Changed
+
+- **The Help menu's redundant "Search menus" row is gone.** The search box does
+  its job and now shows the Ctrl+K shortcut at its right edge (Cmd+K on macOS).
+
+#### Fixed
+
+- **Deleting many objects at once works again.** Selecting several objects and
+  deleting them could fail partway with a "columnar store diverged" error.
+  Thanks Patrick for reporting this!
+- **A fresh Dev install starts with the What's new popup on.** It used to copy
+  the stable app's popup-off setting along with everything else.
+- **Right-clicking a palette button opens its attributes again.** The new
+  Right-click-to-hide menu had claimed that click; it lives on the palette's
+  label now.
+- **Editing trace attributes no longer resets the fill condition.** The dialog
+  opened with both fill boxes ticked, and an untouched OK wrote that onto the
+  trace.
+- **Canceling the alignment dialog cancels all of it.** Renaming an alignment
+  and then canceling used to leave objects pointed at a name that no longer
+  existed.
+- **A full-codebase review fixed dozens of smaller bugs.** Mass deletes,
+  switching to a new series with several lists open, ImageJ ROI import and
+  export, stuck progress dialogs, and memory the app never gave back during
+  long sessions.
+
 ## [1.23.0-beta-3] — 2026-08-26
 
 #### New
