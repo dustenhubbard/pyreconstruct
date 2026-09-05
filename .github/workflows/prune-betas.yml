@@ -6,7 +6,8 @@
 #   2. SUPERSEDED: within the current line, only the newest TWO betas stay --
 #      the one the updater offers plus one rollback (his call, 2026-08-28).
 #
-# Runs when a release publishes and by hand. Deletes the release AND its tag.
+# Runs when a release publishes and by hand. Deletes releases and their assets,
+# retaining Git tags as historical evidence for the release-notes checks.
 # Guardrails: only prereleases, only tags shaped vX.Y.Z-beta-N, never drafts,
 # never stables, and nothing at all when no stable release exists.
 
@@ -37,7 +38,7 @@ jobs:
           while read -r tag; do
             [ -n "$tag" ] || continue
             echo "pruning $tag"
-            gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+            gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes
             pruned=$((pruned + 1))
           done < <(python3 scripts/prune_betas.py <<<"$releases")
           echo "pruned $pruned beta release(s)"

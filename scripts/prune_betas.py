@@ -7,7 +7,8 @@ Usage:
 
 Input lines are "<tag> <true|false>", as `gh api .../releases` emits them
 (drafts already excluded by the caller). Printed, one per line: the beta
-tags to delete. Two rules, in order:
+tags identifying releases to delete. Git tags themselves are retained as
+release-history evidence. Two rules, in order:
 
 1. OVERTAKEN: a beta whose base version is at or below the newest stable
    is stale; nobody should install a beta of a version that already
