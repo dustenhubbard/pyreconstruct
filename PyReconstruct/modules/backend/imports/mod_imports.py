@@ -296,6 +296,63 @@ def no_pip_message(pip_install_name: str) -> str:
     )
 
 
+def _run_pip(cmd) -> subprocess.CompletedProcess:
+    """Run pip to completion without freezing the window.
+
+    A plain subprocess.run on the GUI thread locked the whole app at "Not
+    Responding" for the length of the download and build -- minutes for a
+    heavy package -- with no indicator and no way out (found 2026-08-28).
+    With a user present, pip runs on a worker thread while an application-modal
+    busy dialog blocks further user actions. A local event loop keeps Qt
+    responsive, including processing timers and queued signals. The call stays
+    synchronous: every caller imports the module right after.
+
+    With nobody present (tests, scripts, offscreen), this IS subprocess.run,
+    which is also the seam the install_module contract tests stub.
+    """
+    from PyReconstruct.modules.gui.utils.utils import user_is_present
+
+    if not user_is_present():
+        return subprocess.run(cmd, capture_output=True, text=True)
+
+    from PySide6.QtCore import QEventLoop, Qt
+    from PySide6.QtWidgets import QProgressDialog
+
+    from PyReconstruct.modules.backend.threading import ThreadPool
+    from PyReconstruct.modules.gui.utils.utils import getProgbar
+
+    progbar = getProgbar(
+        f"Installing {cmd[-1]}\u2026", cancel=False, maximum=0
+    )
+    if isinstance(progbar, QProgressDialog):
+        progbar.setWindowModality(Qt.ApplicationModal)
+        # An indeterminate dialog receives no progress updates to auto-show it.
+        progbar.show()
+    loop = QEventLoop()
+    outcome = {}
+
+    def work():
+        return subprocess.run(cmd, capture_output=True, text=True)
+
+    pool = ThreadPool()
+    worker = pool.createWorker(work)
+    worker.signals.result.connect(
+        lambda r: (outcome.setdefault("result", r), loop.quit())
+    )
+    worker.signals.error.connect(
+        lambda e: (outcome.setdefault("error", e), loop.quit())
+    )
+    pool.start(worker)
+    loop.exec()
+    progbar.close()
+
+    if "error" in outcome:
+        err = outcome["error"]
+        exc = err[1] if isinstance(err, (tuple, list)) and len(err) >= 2 else err
+        raise exc if isinstance(exc, BaseException) else RuntimeError(str(exc))
+    return outcome["result"]
+
+
 def install_module(module: Union[str, Tuple[str, str]]) -> bool:
     """Interactively install a pip module."""
 
@@ -337,10 +394,8 @@ def install_module(module: Union[str, Tuple[str, str]]) -> bool:
     ## `sys.executable -m pip`, never a bare `pip`: the install has to target
     ## the same interpreter that is about to do the import. The argument list
     ## with `shell=False` also keeps the package name out of a shell.
-    output = subprocess.run(
-        [sys.executable, "-m", "pip", "install", pip_install_name],
-        capture_output=True,
-        text=True,
+    output = _run_pip(
+        [sys.executable, "-m", "pip", "install", pip_install_name]
     )
 
     if output.returncode == 0:
@@ -441,4 +496,3 @@ def is_conda_package_installed(package_name: str) -> bool:
     except subprocess.CalledProcessError:
         
         return False
-
