@@ -73,6 +73,66 @@ def test_with_a_user_pip_runs_off_the_gui_thread(qapp, monkeypatch):
     assert progbars and progbars[0].closed, "the busy bar never came down"
 
 
+@pytest.mark.parametrize("fails", [False, True], ids=["success", "failure"])
+def test_install_shows_a_modal_dialog_until_worker_finishes(
+    qapp, qtbot, monkeypatch, fails
+):
+    """Check the real dialog during the wait, including error-path teardown."""
+    from PySide6.QtCore import QTimer, Qt
+    from PySide6.QtWidgets import QProgressDialog, QWidget
+
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    parent.show()
+    monkeypatch.setattr(gui_utils, "mainwindow", parent)
+    monkeypatch.setattr(gui_utils, "user_is_present", lambda: True)
+
+    release_worker = threading.Event()
+    worker_threads = []
+    observed = {}
+
+    def fake_run(cmd, **kwargs):
+        worker_threads.append(threading.get_ident())
+        if not release_worker.wait(timeout=5):
+            raise TimeoutError("the GUI timer did not release the pip worker")
+        if fails:
+            raise OSError("test install failed")
+        return subprocess.CompletedProcess(cmd, 0, "installed", "")
+
+    def inspect_dialog():
+        try:
+            dialog = parent.findChild(QProgressDialog)
+            observed["dialog"] = dialog
+            if dialog is not None:
+                observed["visible"] = dialog.isVisible()
+                observed["modal"] = qapp.activeModalWidget() is dialog
+                observed["modality"] = dialog.windowModality()
+                observed["range"] = (dialog.minimum(), dialog.maximum())
+        finally:
+            release_worker.set()
+
+    monkeypatch.setattr(mod_imports.subprocess, "run", fake_run)
+    timer = QTimer()
+    timer.setSingleShot(True)
+    timer.timeout.connect(inspect_dialog)
+    timer.start(50)
+
+    cmd = ["python", "-m", "pip", "install", "x"]
+    if fails:
+        with pytest.raises(OSError, match="test install failed"):
+            mod_imports._run_pip(cmd)
+    else:
+        assert mod_imports._run_pip(cmd).stdout == "installed"
+
+    assert worker_threads and worker_threads[0] != threading.get_ident()
+    assert observed.get("visible"), "the install progress dialog was never shown"
+    assert observed["modal"], "the parent window remained interactive during install"
+    assert observed["modality"] == Qt.ApplicationModal
+    assert observed["range"] == (0, 0)
+    assert not observed["dialog"].isVisible()
+    assert qapp.activeModalWidget() is None
+
+
 def test_a_worker_failure_reaches_the_caller(qapp, monkeypatch):
     monkeypatch.setattr(gui_utils, "user_is_present", lambda: True)
 

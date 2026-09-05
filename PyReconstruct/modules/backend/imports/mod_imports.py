@@ -302,23 +302,21 @@ def _run_pip(cmd) -> subprocess.CompletedProcess:
     A plain subprocess.run on the GUI thread locked the whole app at "Not
     Responding" for the length of the download and build -- minutes for a
     heavy package -- with no indicator and no way out (found 2026-08-28).
-    With a user present, pip now runs on a worker thread while a busy bar
-    holds the screen in a local event loop, the same arrangement the update
-    check uses. The call stays synchronous either way: every caller imports
-    the module right after.
+    With a user present, pip runs on a worker thread while an application-modal
+    busy dialog blocks further user actions. A local event loop keeps Qt
+    responsive, including processing timers and queued signals. The call stays
+    synchronous: every caller imports the module right after.
 
     With nobody present (tests, scripts, offscreen), this IS subprocess.run,
-    which is also the seam the install_module contract tests stub. The
-    worker path was tried first as an event-loop pump on the GUI thread and
-    REVERTED: re-entering the main loop mid-install fires unrelated timers.
-    A worker thread blocks nothing and re-enters nothing.
+    which is also the seam the install_module contract tests stub.
     """
     from PyReconstruct.modules.gui.utils.utils import user_is_present
 
     if not user_is_present():
         return subprocess.run(cmd, capture_output=True, text=True)
 
-    from PySide6.QtCore import QEventLoop
+    from PySide6.QtCore import QEventLoop, Qt
+    from PySide6.QtWidgets import QProgressDialog
 
     from PyReconstruct.modules.backend.threading import ThreadPool
     from PyReconstruct.modules.gui.utils.utils import getProgbar
@@ -326,6 +324,10 @@ def _run_pip(cmd) -> subprocess.CompletedProcess:
     progbar = getProgbar(
         f"Installing {cmd[-1]}\u2026", cancel=False, maximum=0
     )
+    if isinstance(progbar, QProgressDialog):
+        progbar.setWindowModality(Qt.ApplicationModal)
+        # An indeterminate dialog receives no progress updates to auto-show it.
+        progbar.show()
     loop = QEventLoop()
     outcome = {}
 
@@ -494,4 +496,3 @@ def is_conda_package_installed(package_name: str) -> bool:
     except subprocess.CalledProcessError:
         
         return False
-
