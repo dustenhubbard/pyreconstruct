@@ -39,7 +39,7 @@ privately as described in [`SECURITY.md`](SECURITY.md).
 ## Development setup
 
 PyReconstruct targets **Python 3.11** (`requires-python = ">=3.11,<3.12"`) and
-**PySide6 6.5.2**.
+**PySide6 6.9.3**.
 
 ### uv (canonical)
 
