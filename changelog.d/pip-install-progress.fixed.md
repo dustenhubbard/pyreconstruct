@@ -1,3 +1,3 @@
-- **Installing an optional package keeps the window responsive and shows a busy
-  dialog.** Installation runs in the background while the dialog blocks further
-  actions, then closes when installation succeeds or fails.
+- **Saying yes to "install this package?" no longer freezes the window.** The
+  app asks when a feature needs an extra package, such as ImageJ ROI import.
+  The install now runs in the background behind a busy dialog.

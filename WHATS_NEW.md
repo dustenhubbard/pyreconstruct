@@ -6,6 +6,24 @@ full release notes on GitHub (linked from the dialog).
 
 ## [Unreleased]
 
+## [1.23.0-beta-5] — 2026-09-09
+
+#### Changed
+
+- **The app runs on a newer Qt (6.9).** Windows users who saw the window come
+  up double or half size after moving it between screens: please try this build
+  and tell us if that is fixed.
+
+#### Fixed
+
+- **Editing a scale cube in the 3D scene works again.** Edit attributes crashed
+  in beta-4. Thanks Lyndsey for the report!
+- **The scale cube keeps its edge length field when other objects are selected
+  with it.** Hovering the cube now shows its current size.
+- **Saying yes to "install this package?" no longer freezes the window.** The
+  app asks when a feature needs an extra package, such as ImageJ ROI import.
+  The install now runs in the background behind a busy dialog.
+
 ## [1.23.0-beta-4] — 2026-08-28
 
 #### Changed
