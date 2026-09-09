@@ -1011,6 +1011,29 @@ class CustomPlotter(QVTKRenderWindowInteractor):
         self.show()
         self.container.show()
 
+    def _syncRenderWindowSize(self):
+        """Resize the render window if it no longer matches this widget.
+
+        Returns True when a resize was needed. Qt sends a resizeEvent only
+        when the LOGICAL size changes. Dragging the scene from a 2x display
+        to a 1x one (or the reverse) keeps the logical size, so the render
+        window kept the old screen's pixel size while _setEventInformation
+        scaled every mouse position by the new ratio. Every pick then landed
+        off by the ratio between the two screens: hover text named the wrong
+        object, double-click went nowhere, right-click selected nothing.
+        Checked before each paint, which Qt does request on a screen change.
+        """
+        scale = self._getPixelRatio()
+        expected = (int(round(scale * self.width())), int(round(scale * self.height())))
+        if tuple(self._RenderWindow.GetSize()) == expected:
+            return False
+        self.resizeEvent(None)
+        return True
+
+    def paintEvent(self, ev):
+        self._syncRenderWindowSize()
+        super().paintEvent(ev)
+
     def _getPixelRatio(self):
         """Return the device pixel ratio of the screen this widget is on.
 
@@ -1512,7 +1535,12 @@ class SceneObject():
         """Returns the side length of the object ONLY if it is of type scale_cube."""
         if self.type == "scale_cube":
             self.msh : vedo.Cube
-            return self.msh.GetScale()[0]
+            ## The cube is built with side 1 and only ever scaled uniformly,
+            ## so its edge length is the scale factor of its own transform.
+            ## Read from vedo's LinearTransform: since vedo 2024 a Mesh is no
+            ## longer a vtkActor, so the old msh.GetScale() raised
+            ## AttributeError on every Edit attributes of a scale cube.
+            return float(self.msh.transform.get_scale()[0])
     
     def getExportDict(self):
         """Get the export dictionary describing the object."""
