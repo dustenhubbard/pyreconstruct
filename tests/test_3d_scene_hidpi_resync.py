@@ -3,10 +3,8 @@
 Qt sends a resizeEvent only when the logical size changes. Dragging the scene
 between a 2x and a 1x display keeps the logical size, so VTK's render window
 stayed at the old screen's pixel size while mouse positions were scaled by
-the new ratio: hover named the wrong object, double-click went nowhere,
-right-click selected nothing (the "1x vs 2x display" reports, September
-2026). CustomPlotter now checks the size before each paint and re-runs the
-resize when it drifted. Exercised against a duck-typed stub, the way the
+the new ratio, so every pick would land off by that ratio. CustomPlotter now
+checks the size before each paint and re-runs the resize when it drifted. Exercised against a duck-typed stub, the way the
 other plotter tests do; the real widget needs a GL context.
 """
 import inspect

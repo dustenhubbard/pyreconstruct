@@ -108,6 +108,10 @@ class VPlotter(vedo.Plotter):
         pt = event.picked3d                # 3d coords of point under mouse
         x, y, s = self.getFieldCoords(msh, pt)
         txt = f"{name}\nsection {s}\nx={x:.3f} y={y:.3f}"
+        if obj.type == "scale_cube":
+            ## Nothing else in the scene states the cube's size, so the
+            ## hover does. Plain "um": the overlay font has no micro sign.
+            txt += f"\nedge {obj.getSideLength():.3f} um"
         self.pos_text.text(txt)                    # update text message
 
         self.render()
@@ -332,11 +336,31 @@ class VPlotter(vedo.Plotter):
                 ["Color:", ("color", color)],
                 ["Opacity (0-1):", ("float", alpha)],
             ]
-            response, confirmed = QuickDialog.get(None, structure, "Scale Cube")
+            ## A scale cube selected alongside traces used to lose its edge
+            ## length field entirely, and the dialog gave no hint that it
+            ## had (the lab, September 2026). The field is present whenever
+            ## a cube is in the selection and applies to the cubes only. Its
+            ## default is the shared length when every cube agrees, else
+            ## blank, like the color and opacity fields above.
+            cubes = [obj for obj in self.selected if obj.type == "scale_cube"]
+            if cubes:
+                lengths = {round(c.getSideLength(), 6) for c in cubes}
+                side_len = lengths.pop() if len(lengths) == 1 else None
+                structure.insert(0, [
+                    "Edge length (μm):",
+                    ("float", round(side_len, 4) if side_len is not None else None),
+                ])
+            response, confirmed = QuickDialog.get(None, structure, "Selected objects")
             if not confirmed:
                 return
             self.saveState()
             
+            response = list(response)
+            if cubes:
+                side_len = response.pop(0)
+                if side_len:
+                    for sc_obj in cubes:
+                        sc_obj.msh.scale(side_len / sc_obj.getSideLength())
             color = response[0]
             alpha = response[1]
             for obj in self.selected:
@@ -1018,10 +1042,9 @@ class CustomPlotter(QVTKRenderWindowInteractor):
         when the LOGICAL size changes. Dragging the scene from a 2x display
         to a 1x one (or the reverse) keeps the logical size, so the render
         window kept the old screen's pixel size while _setEventInformation
-        scaled every mouse position by the new ratio. Every pick then landed
-        off by the ratio between the two screens: hover text named the wrong
-        object, double-click went nowhere, right-click selected nothing.
-        Checked before each paint, which Qt does request on a screen change.
+        scaled every mouse position by the new ratio, so every pick would
+        land off by the ratio between the two screens. Checked before each
+        paint, which Qt does request on a screen change.
         """
         scale = self._getPixelRatio()
         expected = (int(round(scale * self.width())), int(round(scale * self.height())))
