@@ -318,7 +318,7 @@ def test_derive_for_section_hands_its_own_index_to_every_derivation(monkeypatch)
     handed = []
     real_derive = trace_id_module.deriveTraceID
 
-    def spying_derive(section_number, cname, row, taken):
+    def spying_derive(section_number, cname, row, taken, **kwargs):
         handed.append(taken is index)
         return real_derive(section_number, cname, row, taken)
 
@@ -484,7 +484,7 @@ def test_migration_walks_contour_names_in_canonical_sorted_order():
     seen = []
     real_derive = trace_id_module.deriveTraceID
 
-    def spy(section_number, contour_name, row, taken=()):
+    def spy(section_number, contour_name, row, taken=(), **kwargs):
         seen.append(contour_name)
         return real_derive(section_number, contour_name, row, taken)
 
