@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QApplication
 )
+from PySide6.QtCore import Qt
 from PySide6.QtGui import (
     QPainter,
     QPalette
@@ -42,6 +43,12 @@ def cpuSliderReadout(percent : int) -> str:
     total = os.cpu_count() or 1
     return f"{percent}% ({workers} of {total} workers)"
 
+# The options window's opening size, in logical pixels, before the screen
+# clamps it. Wide enough for the lists tab's columns, tall enough for the
+# colors page's embedded picker.
+DEFAULT_SIZE = (1100, 850)
+
+
 class AllOptionsDialog(QDialog):
 
     def __init__(self, parent, series : Series):
@@ -72,6 +79,26 @@ class AllOptionsDialog(QDialog):
         full_vlayout.addWidget(buttonbox)
 
         self.setLayout(full_vlayout)
+
+        # A real window, not a fixed-size sheet (his ask, 2026-09-14): the
+        # zoom and minimize buttons in the title bar, and a default size that
+        # fits the taller pages (the colors page carries a picker) without
+        # scrolling on an ordinary laptop screen.
+        self.setWindowFlags(
+            self.windowFlags() | Qt.WindowType.WindowMinMaxButtonsHint
+        )
+        self.resize(*self.defaultSize())
+
+    def defaultSize(self):
+        """The opening size: large, but never past the screen it opens on."""
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return DEFAULT_SIZE
+        avail = screen.availableGeometry()
+        return (
+            min(DEFAULT_SIZE[0], int(avail.width() * 0.75)),
+            min(DEFAULT_SIZE[1], int(avail.height() * 0.85)),
+        )
     
     def getWidgetsLayout(self, structure : list):
         """Create a layout from a predifined widget structure
@@ -112,8 +139,10 @@ class AllOptionsDialog(QDialog):
                 ["fill_opacity"],
                 ["find_zoom"],
                 ["hover_columns"],
-                ["autoseg_colors"],
                 ["smoothing_3D"]
+            ],
+            "Colors": [
+                ["autoseg_colors"],
             ],
             "User/Series": [
                 ["user"],
