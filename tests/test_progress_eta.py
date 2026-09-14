@@ -1,10 +1,11 @@
-"""Progress dialogs say how long is left.
+"""The recolor progress dialog says how long is left; nothing else does.
 
 His ask (2026-09-14), from recoloring every object in a series: the bar
 showed a percentage but no time. The estimate lives in the GUI-free
-ProgressReporter base, so every operation that reports progress gets it,
-and QtProgressReporter puts it on the dialog's label once the job has run
-long enough to say anything true.
+ProgressReporter base but is opt-in (``eta=True``): his correction the same
+day, on seeing one while a series opened, was that only the recolor was
+meant to have it. reapplyAutosegColors asks; openJser and everything else
+do not.
 """
 import types
 
@@ -73,7 +74,7 @@ def test_qt_reporter_writes_the_estimate_on_the_label(monkeypatch):
     monkeypatch.setattr(
         "PyReconstruct.modules.gui.utils.getProgbar", lambda text, cancel: fake_bar
     )
-    r = QtProgressReporter("Recoloring 40 objects")
+    r = QtProgressReporter("Recoloring 40 objects", eta=True)
     clock = FakeClock(); r._clock = clock
     r.set_progress(0)
     clock.now += 20
@@ -83,12 +84,28 @@ def test_qt_reporter_writes_the_estimate_on_the_label(monkeypatch):
     assert ("value", 50) in calls
 
 
+def test_qt_reporter_shows_no_estimate_unless_asked(monkeypatch):
+    calls = []
+    fake_bar = types.SimpleNamespace(
+        setValue=lambda v: calls.append(("value", v)),
+        setLabelText=lambda t: calls.append(("label", t)),
+        wasCanceled=lambda: False,
+    )
+    monkeypatch.setattr(
+        "PyReconstruct.modules.gui.utils.getProgbar", lambda text, cancel: fake_bar
+    )
+    r = QtProgressReporter("Opening series...")          # the default
+    clock = FakeClock(); r._clock = clock
+    r.set_progress(0); clock.now += 60; r.set_progress(50)
+    assert [k for k, _ in calls] == ["value", "value"]
+
+
 def test_text_mode_bar_without_a_label_is_left_alone(monkeypatch):
     fake_bar = types.SimpleNamespace(setValue=lambda v: None, wasCanceled=lambda: False)
     monkeypatch.setattr(
         "PyReconstruct.modules.gui.utils.getProgbar", lambda text, cancel: fake_bar
     )
-    r = QtProgressReporter("Saving")
+    r = QtProgressReporter("Saving", eta=True)
     clock = FakeClock(); r._clock = clock
     r.set_progress(0); clock.now += 20; r.set_progress(50)   # must not raise
 
@@ -97,3 +114,31 @@ def test_null_reporter_still_reports_nothing():
     r = NullProgressReporter("x")
     r.set_progress(50)
     assert r.eta_text() is None
+
+
+# --- who asks for one ------------------------------------------------------
+
+class Capturing(NullProgressReporter):
+    made = []
+
+    def __init__(self, text="", cancel=True, eta=False):
+        super().__init__(text, cancel, eta)
+        Capturing.made.append((text, eta))
+
+
+def test_only_the_recolor_asks_for_an_estimate(series_jser):
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyReconstruct.modules.datatypes import Series
+    Capturing.made = []
+    s = Series.openJser(str(series_jser), progress=Capturing)
+    try:
+        assert Capturing.made and all(eta is False for _, eta in Capturing.made)
+        Capturing.made = []
+        s.setProgressReporter(Capturing)
+        names = sorted(s.data["objects"].keys())[:2]
+        assert names, "the fixture series has no objects to recolor"
+        s.reapplyAutosegColors(names, log_event=False)
+        assert Capturing.made == [("Reapplying custom color palette...", True)]
+    finally:
+        s.close()
