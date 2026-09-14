@@ -157,3 +157,49 @@ class HoverColumnsDialog(QDialog):
             return self.columns, True
         else:
             return None, False
+
+
+class HoverColumnsOptionWidget(QWidget):
+    """The "Hover display columns: Configure..." row of Series > Options.
+
+    Every page the options dialog holds must answer accept(close=False) and
+    set(): OK calls the first on all pages, then the second. This row used to
+    be a bare QWidget, so OK raised AttributeError on it and the whole dialog
+    failed to close (reported from 1.23.0-beta-5, September 2026; present
+    since the row landed in beta-3). It also wrote the option the moment the
+    inner dialog closed, so Cancel on the outer dialog could not undo it.
+    The choice now waits for OK like every other option.
+    """
+
+    def __init__(self, parent, series):
+        super().__init__(parent)
+        self.series = series
+        stored = series.getOption("hover_columns")
+        self.columns = (
+            [tuple(c) for c in stored] if stored
+            else [(col, True) for col in HoverColumnsDialog.AVAILABLE_COLUMNS]
+        )
+        self._changed = False
+
+        layout = QHBoxLayout()
+        layout.addWidget(QLabel("Hover display columns:", self))
+        button = QPushButton("Configure...", self)
+        button.clicked.connect(self.configure)
+        layout.addWidget(button)
+        layout.addStretch()
+        self.setLayout(layout)
+
+    def configure(self):
+        columns, confirmed = HoverColumnsDialog(self, self.columns).exec()
+        if confirmed:
+            self.columns = columns
+            self._changed = True
+
+    # --- options-dialog protocol (accept -> set) -----------------------------
+
+    def accept(self, close=True):
+        return True
+
+    def set(self):
+        if self._changed:
+            self.series.setOption("hover_columns", self.columns)

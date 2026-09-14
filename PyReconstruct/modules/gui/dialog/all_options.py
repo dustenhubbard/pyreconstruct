@@ -9,8 +9,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QPushButton,
     QScrollArea,
-    QApplication,
-    QLabel
+    QApplication
 )
 from PySide6.QtGui import (
     QPainter,
@@ -414,26 +413,12 @@ class AllOptionsDialog(QDialog):
             self.series.setOption("find_zoom", response[0])
         self.addOptionWidget("find_zoom", structure, setOption)
 
-        # hover columns configuration
-        from .hover_columns import HoverColumnsDialog
-        hover_columns = self.series.getOption("hover_columns")
-        if not hover_columns:
-            hover_columns = [(col, True) for col in HoverColumnsDialog.AVAILABLE_COLUMNS]
-
-        hover_widget = QWidget(self)
-        hover_layout = QHBoxLayout()
-        hover_label = QLabel("Hover display columns:")
-        hover_button = QPushButton("Configure...")
-        def openHoverConfig():
-            columns, confirmed = HoverColumnsDialog(self, hover_columns).exec()
-            if confirmed:
-                self.series.setOption("hover_columns", columns)
-        hover_button.clicked.connect(openHoverConfig)
-        hover_layout.addWidget(hover_label)
-        hover_layout.addWidget(hover_button)
-        hover_layout.addStretch()
-        hover_widget.setLayout(hover_layout)
-        self.addOptionWidget("hover_columns", hover_widget)
+        # hover columns configuration: a real page, so OK can call accept()
+        # and set() on it like every other row
+        from .hover_columns import HoverColumnsOptionWidget
+        self.addOptionWidget(
+            "hover_columns", HoverColumnsOptionWidget(self, self.series)
+        )
 
         # autoseg import colors (seed + editable palette)
         autoseg_widget = AutosegColorsWidget(self, self.series, use_defaults)
