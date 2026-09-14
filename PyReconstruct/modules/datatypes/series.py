@@ -1588,7 +1588,7 @@ class Series():
         section = Section(section_num, self)
         return section
     
-    def enumerateSections(self, show_progress : bool = True, message : str = "Loading series data...", series_states=None, breakable=True, section_numbers=None):
+    def enumerateSections(self, show_progress : bool = True, message : str = "Loading series data...", series_states=None, breakable=True, section_numbers=None, eta=False):
         """Allow iteration through the sections.
 
         Proper use in a for loop: for snum, section in series.enumerateSections():
@@ -1606,7 +1606,7 @@ class Series():
         """
         iterator = SeriesIterator(
             self, show_progress, message, series_states, breakable,
-            section_numbers
+            section_numbers, eta=eta,
         )
         ## A generator around the iterator, for the finally alone. The
         ## iterator's window-modal progress dialog has no cancel button and
@@ -1640,7 +1640,7 @@ class Series():
                 snums.update(obj_data.traces.keys())
         return snums
 
-    def _forEachObjectSection(self, obj_names, message, edit, series_states=None):
+    def _forEachObjectSection(self, obj_names, message, edit, series_states=None, eta=False):
         """Run an edit on every section a set of objects appears on.
 
         The loop the bulk object operations all need: visit only the sections
@@ -1666,7 +1666,8 @@ class Series():
         for snum, section in self.enumerateSections(
             message=message,
             series_states=series_states,
-            section_numbers=self.getObjectSections(obj_names)
+            section_numbers=self.getObjectSections(obj_names),
+            eta=eta,
         ):
             if edit(section):
                 section.save()
@@ -3267,7 +3268,8 @@ class Series():
 
         ## Touch only the sections the selected objects appear on.
         self._forEachObjectSection(
-            obj_names, "Reapplying custom color palette...", edit, series_states
+            obj_names, "Reapplying custom color palette...", edit, series_states,
+            eta=True,   # the one progress bar he wanted a time estimate on
         )
 
         if log_event:
@@ -5096,7 +5098,7 @@ class Series():
     
 class SeriesIterator():
 
-    def __init__(self, series : Series, show_progress : bool, message : str, series_states, breakable=True, section_numbers=None):
+    def __init__(self, series : Series, show_progress : bool, message : str, series_states, breakable=True, section_numbers=None, eta=False):
         """Create the series iterator object.
 
             Params:
@@ -5114,6 +5116,7 @@ class SeriesIterator():
         self.message = message
         self.series_states = series_states
         self.section_subset = None if section_numbers is None else set(section_numbers)
+        self.eta = eta
         if self.series_states is not None:
             self.series_states.addState(breakable)
 
@@ -5128,10 +5131,17 @@ class SeriesIterator():
             )
         self.sni = 0
         if self.show_progress:
-            self.reporter = self.series._progressReporterFactory()(
-                text=self.message,
-                cancel=False
-            )
+            factory = self.series._progressReporterFactory()
+            if self.eta:
+                # asked for only by the operations that want a time estimate
+                # (reapplyAutosegColors); a factory that predates the flag
+                # still works, without one
+                try:
+                    self.reporter = factory(text=self.message, cancel=False, eta=True)
+                except TypeError:
+                    self.reporter = factory(text=self.message, cancel=False)
+            else:
+                self.reporter = factory(text=self.message, cancel=False)
         return self
     
     def __next__(self):
