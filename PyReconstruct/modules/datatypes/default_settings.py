@@ -212,6 +212,7 @@ default_settings = {
     "usepointer_act": "P",
     "usepanzoom_act": "Z",
     "useknife_act": "K",
+    "usescissors_act": "Shift+K",
     "usectrace_act": "C",
     "useotrace_act": "O",
     "usestamp_act": "S",

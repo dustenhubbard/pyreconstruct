@@ -599,6 +599,7 @@ class MainWindow(QMainWindow):
             ("usepointer_act", lambda : self.mouse_palette.activateModeButton("Pointer")),
             ("usepanzoom_act", lambda : self.mouse_palette.activateModeButton("Pan/Zoom")),
             ("useknife_act", lambda : self.mouse_palette.activateModeButton("Knife")),
+            ("usescissors_act", lambda : self.mouse_palette.activateModeButton("Scissors")),
             ("usectrace_act", lambda : self.mouse_palette.activateModeButton("Closed Trace")),
             ("useotrace_act", lambda : self.mouse_palette.activateModeButton("Open Trace")),
             ("usestamp_act", lambda : self.mouse_palette.activateModeButton("Stamp")),
