@@ -59,15 +59,19 @@ class ProgressReporter(ABC):
     ``text`` is the label shown to the user and ``cancel`` whether the operation
     can be canceled; both mirror the corresponding ``getProgbar`` arguments.
 
-    The reporter also keeps a time estimate. ``set_progress`` records when the
-    first report arrived; ``eta_text()`` then reads "about 40 seconds left"
-    once enough of the job has run to say (see ``estimate_remaining``), and is
-    None before that. Subclasses that show a label call it.
+    The reporter can also keep a time estimate, when asked (``eta=True``).
+    ``set_progress`` records when the first report arrived; ``eta_text()``
+    then reads "about 40 seconds left" once enough of the job has run to say
+    (see ``estimate_remaining``), and is None before that. Only the operations
+    that ask for it show one: his call (2026-09-14) was the recolor of many
+    objects, not every progress dialog in the app, and an opening series must
+    not carry one.
     """
 
-    def __init__(self, text: str = "", cancel: bool = True):
+    def __init__(self, text: str = "", cancel: bool = True, eta: bool = False):
         self.text = text
         self.cancel = cancel
+        self.eta = eta
         self._started = None
         self._clock = time.monotonic
 
@@ -119,17 +123,18 @@ class QtProgressReporter(ProgressReporter):
     is preserved.
     """
 
-    def __init__(self, text: str = "", cancel: bool = True):
-        super().__init__(text, cancel)
+    def __init__(self, text: str = "", cancel: bool = True, eta: bool = False):
+        super().__init__(text, cancel, eta)
         from PyReconstruct.modules.gui.utils import getProgbar
         self._progbar = getProgbar(text=text, cancel=cancel)
 
     def set_progress(self, percent):
-        self.note_progress(percent)
-        eta = self.eta_text()
-        # the text-mode BasicProgbar has no label to update
-        if eta and hasattr(self._progbar, "setLabelText"):
-            self._progbar.setLabelText(f"{self.text}\n{eta}")
+        if self.eta:
+            self.note_progress(percent)
+            eta = self.eta_text()
+            # the text-mode BasicProgbar has no label to update
+            if eta and hasattr(self._progbar, "setLabelText"):
+                self._progbar.setLabelText(f"{self.text}\n{eta}")
         self._progbar.setValue(percent)
 
     def was_canceled(self):
