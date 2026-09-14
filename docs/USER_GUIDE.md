@@ -435,12 +435,11 @@ Slices a selected trace along a freehand line.
 - A trace whose outline crosses itself cannot be cut. The knife says so and
   leaves the object alone; smooth or redraw the trace and cut again.
 
-### Scissors
+### Scissors (`Shift+K`)
 
 Re-traces an existing trace. **Click a trace** and the tool reopens it as a live
 line starting at the clicked point, so you can re-draw it; **right-click** to
 finish. Useful for fixing part of a contour without redrawing the whole thing.
-(Scissors has no default keyboard shortcut.)
 
 ### Closed Trace (`C`) and Open Trace (`O`)
 
@@ -935,6 +934,7 @@ These are the defaults; rebind them under **Help ▸ Shortcuts list** (`?`).
 | `P` | Pointer |
 | `Z` | Pan/Zoom |
 | `K` | Knife |
+| `Shift+K` | Scissors |
 | `C` | Closed Trace |
 | `O` | Open Trace |
 | `S` | Stamp |
@@ -942,7 +942,7 @@ These are the defaults; rebind them under **Help ▸ Shortcuts list** (`?`).
 | `F` | Flag |
 | `Q` | Host |
 
-(Scissors and the Z-trace tool are selected from the palette.)
+(The Z-trace tool is selected from the palette.)
 
 ### Files and series
 

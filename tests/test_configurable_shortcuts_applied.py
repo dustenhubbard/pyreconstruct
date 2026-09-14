@@ -335,7 +335,7 @@ def test_known_unapplied_registry_is_current(qapp, scoped_series, menu_stub):
 # 3. the palette mode keys, which are bound outside the menus
 # --------------------------------------------------------------------------- #
 def test_palette_mode_shortcuts_are_read_from_settings(qapp, scoped_series, menu_stub):
-    """The nine ``use*_act`` mode keys never appear in a menu tuple.
+    """The ten ``use*_act`` mode keys never appear in a menu tuple.
 
     They are bound in ``MainWindow.createPaletteShortcuts`` via
     ``self.addAction("", self.series.getOption(act_name), act)``, which is a
@@ -345,7 +345,7 @@ def test_palette_mode_shortcuts_are_read_from_settings(qapp, scoped_series, menu
     from PyReconstruct.modules.gui.main.main_window import MainWindow
 
     modes = [name for name in _configurable() if name.startswith("use")]
-    assert len(modes) == 9, f"expected the nine mouse-mode keys, got {modes}"
+    assert len(modes) == 10, f"expected the ten mouse-mode keys, got {modes}"
 
     sentinels = _sentinels(modes)
     for name, key in sentinels.items():
