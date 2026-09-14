@@ -6,6 +6,13 @@ full release notes on GitHub (linked from the dialog).
 
 ## [Unreleased]
 
+## [1.22.3] - 2026-09-14
+
+#### Fixed
+
+- **Scale cubes can be edited again in the 3D scene.** Edit attributes on a
+  scale cube crashed instead of opening the dialog.
+
 ## [1.22.2] - 2026-08-28
 
 #### New
