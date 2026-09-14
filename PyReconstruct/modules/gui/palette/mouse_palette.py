@@ -139,6 +139,14 @@ class MousePalette():
         self.createModeButton("Flag", 8)
         self.createModeButton("Host", 9)
         self.createModeButton("Ztool", 10)
+        # Placed only now, once every button exists, the z-trace tool's
+        # included. The column's bounds shrink by one button height per
+        # button already made (getBounds), so placing
+        # each one as it was created gave every button a different origin:
+        # with the column dragged down from its default the buttons piled up
+        # at half spacing until the next resize (his users' "squished tool
+        # bar" at startup, September 2026).
+        self.placeModeButtons()
 
         # create palette buttons
         traces = self.series.palette_traces[self.series.palette_index[0]]
@@ -180,6 +188,11 @@ class MousePalette():
         self.applyVisibilityState()
         self.installHideMenus()
     
+    def placeModeButtons(self):
+        """Place every mode button; the bounds depend on the full count."""
+        for button, mode, pos in self.mode_buttons.values():
+            self.placeModeButton(button, pos)
+
     def placeModeButton(self, button, pos : int):
         """Place the mode button in the main window.
         
@@ -210,8 +223,6 @@ class MousePalette():
         # open the icon file
         icon_fp = os.path.join(loc.img_dir, stripped_name + ".png")
         pixmap = QPixmap(icon_fp)
-
-        self.placeModeButton(b, pos)
 
         # format the button
         b.setIcon(QIcon(pixmap))
@@ -1031,9 +1042,7 @@ class MousePalette():
         # (the trace palette on a series change, the sliders on a B/C reset)
         # gets its right-click hide menu here
         self.installHideMenus()
-        for mbname in self.mode_buttons:
-            button, mode, pos = self.mode_buttons[mbname]
-            self.placeModeButton(button, pos)
+        self.placeModeButtons()
         for i, pb in enumerate(self.palette_buttons):
             self.placePaletteButton(pb, i)
         self.placePaletteSideButtons()
