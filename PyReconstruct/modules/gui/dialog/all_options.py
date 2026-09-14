@@ -58,7 +58,17 @@ class AllOptionsDialog(QDialog):
                 parent (QWidget): the parent widget
                 series (Series): the series with options to view/modify
         """
-        super().__init__(parent)
+        # The title bar's zoom and minimize buttons come in through the
+        # constructor's flags. Setting them afterwards with setWindowFlags
+        # recreates the native window under a dialog that already holds an
+        # embedded color picker, and that crashed on Linux (CI, 2026-09-14).
+        super().__init__(
+            parent,
+            Qt.WindowType.Dialog
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowCloseButtonHint
+            | Qt.WindowType.WindowMinMaxButtonsHint,
+        )
         self.series = series
         self.tabs = QTabWidget(self)
         self.createWidgets()
@@ -80,18 +90,14 @@ class AllOptionsDialog(QDialog):
 
         self.setLayout(full_vlayout)
 
-        # A real window, not a fixed-size sheet (his ask, 2026-09-14): the
-        # zoom and minimize buttons in the title bar, and a default size that
-        # fits the taller pages (the colors page carries a picker) without
-        # scrolling on an ordinary laptop screen.
-        self.setWindowFlags(
-            self.windowFlags() | Qt.WindowType.WindowMinMaxButtonsHint
-        )
+        # A default size that fits the taller pages (the colors page carries
+        # a picker) without scrolling on an ordinary laptop screen.
         self.resize(*self.defaultSize())
 
     def defaultSize(self):
         """The opening size: large, but never past the screen it opens on."""
-        screen = self.screen() or QApplication.primaryScreen()
+        owner = self.parentWidget()
+        screen = owner.screen() if owner is not None else QApplication.primaryScreen()
         if screen is None:
             return DEFAULT_SIZE
         avail = screen.availableGeometry()

@@ -54,7 +54,7 @@ def test_title_bar_offers_maximize_and_minimize(qapp, series):
 
 def test_opens_large_but_inside_the_screen(qapp, series):
     dlg = AllOptionsDialog(None, series)
-    avail = (dlg.screen() or QApplication.primaryScreen()).availableGeometry()
+    avail = QApplication.primaryScreen().availableGeometry()
     assert dlg.width() == min(DEFAULT_SIZE[0], int(avail.width() * 0.75))
     assert dlg.height() == min(DEFAULT_SIZE[1], int(avail.height() * 0.85))
     assert dlg.width() <= avail.width() and dlg.height() <= avail.height()
