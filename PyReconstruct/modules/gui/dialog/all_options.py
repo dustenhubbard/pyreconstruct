@@ -368,6 +368,10 @@ class AllOptionsDialog(QDialog):
                 self.series.setOption("scale_bar_length_um", float(response[3]))
 
         self.addOptionWidget("scale_bar", structure, setOption)
+        # the size slider previews on the field as it moves (see _previewScaleBar)
+        for field in self.all_widgets["scale_bar"].inputs:
+            if field.type == "slider":
+                field.widget.slider.valueChanged.connect(self._previewScaleBar)
 
         # show_ztraces
         structure = [
@@ -557,6 +561,31 @@ class AllOptionsDialog(QDialog):
         else:
             self.all_widgets[name] = OptionWidget(self, title, structure, self.series, setOption, grid)
     
+    def _palette(self):
+        """The main window's mouse palette, or None when there is no window."""
+        return getattr(self.parent(), "mouse_palette", None)
+
+    def _previewScaleBar(self, percent):
+        """Resize the field's scale bar as the slider moves; nothing is stored.
+
+        The size could only be judged after OK closed the window (his click
+        test, 2026-09-14). OK stores the option and the caller rebuilds the
+        palette; Cancel puts the bar back through restoreScaleBar.
+        """
+        palette = self._palette()
+        if palette is not None:
+            palette.previewScaleBarWidth(percent)
+            self._scale_bar_previewed = True
+
+    def reject(self):
+        """Overwritten: a previewed scale bar goes back to its stored size."""
+        if getattr(self, "_scale_bar_previewed", False):
+            palette = self._palette()
+            if palette is not None:
+                palette.restoreScaleBar()
+            self._scale_bar_previewed = False
+        super().reject()
+
     def accept(self):
         """Overwritten--called when OK is pressed"""
         widgets = self.all_widgets.values()

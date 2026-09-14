@@ -1031,6 +1031,28 @@ class MousePalette():
         self.placeSB()
         self.sb.show()
 
+    def previewScaleBarWidth(self, percent):
+        """Show the bar at `percent` of the field width without storing it.
+
+        Series > Options drives this from its slider as the handle moves
+        (his ask, 2026-09-14: the size could only be judged after OK closed
+        the window). Nothing is written: OK stores the option and rebuilds
+        the palette; Cancel calls restoreScaleBar. A bar pinned to a micron
+        length ignores the width, exactly as the stored option does.
+        """
+        if self.sb.micron_length:
+            return
+        sb_w = int(percent / 100 * self.mainwindow.field.width())
+        if sb_w > 0 and sb_w != self.sb.width():
+            self.sb.resize(sb_w, self.sb.height())
+            self.placeSB()
+            self.sb.update()
+
+    def restoreScaleBar(self):
+        """Rebuild the bar from the stored options, dropping any preview."""
+        self.sb.close()
+        self.createSB()
+
     def placeSB(self):
         """Place the scale bar."""
         x, y = self.getButtonCoords("sb")
