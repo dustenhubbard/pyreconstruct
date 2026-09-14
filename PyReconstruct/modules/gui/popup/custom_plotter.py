@@ -1497,7 +1497,12 @@ class SceneObject():
         """Returns the side length of the object ONLY if it is of type scale_cube."""
         if self.type == "scale_cube":
             self.msh : vedo.Cube
-            return self.msh.GetScale()[0]
+            ## The cube is built with side 1 and only ever scaled uniformly,
+            ## so its edge length is the scale factor of its own transform.
+            ## Read from vedo's LinearTransform: since vedo 2024 a Mesh is no
+            ## longer a vtkActor, so the old msh.GetScale() raised
+            ## AttributeError on every Edit attributes of a scale cube.
+            return float(self.msh.transform.get_scale()[0])
     
     def getExportDict(self):
         """Get the export dictionary describing the object."""
