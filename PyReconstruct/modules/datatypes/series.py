@@ -512,44 +512,14 @@ class Series():
     
     ## OPENING, LOADING, AND MOVING THE JSER FILE
     @staticmethod
-    def openJser(fp : str, progress=None, notifier=None):
-        """Process the file containing all section and series information.
+    def _readJserForOpen(fp : str, notifier):
+        """Read, parse, migrate and validate a .jser for openJser.
 
-            Params:
-                fp (str): the filepath to the jser
-                progress: an optional ProgressReporter factory (callable
-                    (text, cancel) -> ProgressReporter); defaults to the
-                    Qt-backed reporter. Headless callers may pass
-                    NullProgressReporter.
-                notifier: an optional Notifier used to ask before folding
-                    distinct objects together (see contourNameCollisions);
-                    defaults to the Qt-backed notifier, which asks nothing when
-                    no GUI is up and the load proceeds as before.
-            Returns:
-                (Series): the series object created from the jser, or None if
-                    the user declined the object merge
+        Everything openJser does before the hidden directory exists, so the
+        caller can hold one progress dialog over it. Returns (jser data,
+        contour-name collisions), or (None, None) when the user declined the
+        contour-name merge.
         """
-        # check for existing hidden folder
-        sdir = os.path.dirname(fp)
-        sname = os.path.basename(fp)
-        sname = sname[:sname.rfind(".")]
-        hidden_dir = os.path.join(sdir, f".{sname}")
-        ser_filepath = os.path.join(hidden_dir, f"{sname}.ser")
-        if os.path.isdir(hidden_dir) and os.path.isfile(ser_filepath):
-            # gather sections
-            sections = {}
-            for f in os.listdir(hidden_dir):
-                if "." not in f:
-                    continue
-                ext = f[f.rfind(".")+1:]
-                if ext.isnumeric():
-                    snum = int(ext)
-                    sections[snum] = f
-            series = Series(ser_filepath, sections)
-            series.jser_fp = fp
-            series.leave_open = True
-            return series
-
         # load json
         try:
             with open(fp, "rb") as f:
@@ -617,11 +587,65 @@ class Series():
         if collisions:
             asker = notifier if notifier is not None else _default_notifier()
             if asker.confirm(contourMergeWarning(collisions)) is False:
-                return None
+                return None, None
 
-        # creating loading bar
+        return jser_data, collisions
+
+    @staticmethod
+    def openJser(fp : str, progress=None, notifier=None):
+        """Process the file containing all section and series information.
+
+            Params:
+                fp (str): the filepath to the jser
+                progress: an optional ProgressReporter factory (callable
+                    (text, cancel) -> ProgressReporter); defaults to the
+                    Qt-backed reporter. Headless callers may pass
+                    NullProgressReporter.
+                notifier: an optional Notifier used to ask before folding
+                    distinct objects together (see contourNameCollisions);
+                    defaults to the Qt-backed notifier, which asks nothing when
+                    no GUI is up and the load proceeds as before.
+            Returns:
+                (Series): the series object created from the jser, or None if
+                    the user declined the object merge
+        """
+        # check for existing hidden folder
+        sdir = os.path.dirname(fp)
+        sname = os.path.basename(fp)
+        sname = sname[:sname.rfind(".")]
+        hidden_dir = os.path.join(sdir, f".{sname}")
+        ser_filepath = os.path.join(hidden_dir, f"{sname}.ser")
+        if os.path.isdir(hidden_dir) and os.path.isfile(ser_filepath):
+            # gather sections
+            sections = {}
+            for f in os.listdir(hidden_dir):
+                if "." not in f:
+                    continue
+                ext = f[f.rfind(".")+1:]
+                if ext.isnumeric():
+                    snum = int(ext)
+                    sections[snum] = f
+            series = Series(ser_filepath, sections)
+            series.jser_fp = fp
+            series.leave_open = True
+            return series
+
+        # The progress dialog exists BEFORE the file is read. Reading and
+        # parsing a large series off a lab file server took seconds with
+        # nothing on screen (the 249 MB, 99,207-trace report of September
+        # 2026); the bar itself only appears after Qt's minimum duration, so a
+        # small local file still opens without a flash.
         factory = progress if progress is not None else _default_progress_reporter_factory()
         reporter = factory(text="Opening series...")
+        try:
+            jser_data, collisions = Series._readJserForOpen(fp, notifier)
+        except BaseException:
+            reporter.finish()
+            raise
+        if jser_data is None:
+            reporter.finish()
+            return None
+
         progress = 0
         final_value = 0
         for sdata in jser_data["sections"]:
