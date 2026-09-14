@@ -417,6 +417,7 @@ help_shortcuts = [
     ("usepointer_act", "Use pointer tool"),
     ("usepanzoom_act", "Use pan/zoom tool"),
     ("useknife_act", "Use knife tool"),
+    ("usescissors_act", "Use scissors tool"),
     ("usectrace_act", "Use closed trace tool"),
     ("useotrace_act", "Use open trace tool"),
     ("usestamp_act", "Use stamp tool"),
