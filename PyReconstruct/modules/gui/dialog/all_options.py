@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QApplication
 )
+from PySide6.QtCore import Qt
 from PySide6.QtGui import (
     QPainter,
     QPalette
@@ -42,6 +43,12 @@ def cpuSliderReadout(percent : int) -> str:
     total = os.cpu_count() or 1
     return f"{percent}% ({workers} of {total} workers)"
 
+# The options window's opening size, in logical pixels, before the screen
+# clamps it. Wide enough for the lists tab's columns, tall enough for the
+# colors page's embedded picker.
+DEFAULT_SIZE = (1100, 850)
+
+
 class AllOptionsDialog(QDialog):
 
     def __init__(self, parent, series : Series):
@@ -51,7 +58,17 @@ class AllOptionsDialog(QDialog):
                 parent (QWidget): the parent widget
                 series (Series): the series with options to view/modify
         """
-        super().__init__(parent)
+        # The title bar's zoom and minimize buttons come in through the
+        # constructor's flags. Setting them afterwards with setWindowFlags
+        # recreates the native window under a dialog that already holds an
+        # embedded color picker, and that crashed on Linux (CI, 2026-09-14).
+        super().__init__(
+            parent,
+            Qt.WindowType.Dialog
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowCloseButtonHint
+            | Qt.WindowType.WindowMinMaxButtonsHint,
+        )
         self.series = series
         self.tabs = QTabWidget(self)
         self.createWidgets()
@@ -72,6 +89,22 @@ class AllOptionsDialog(QDialog):
         full_vlayout.addWidget(buttonbox)
 
         self.setLayout(full_vlayout)
+
+        # A default size that fits the taller pages (the colors page carries
+        # a picker) without scrolling on an ordinary laptop screen.
+        self.resize(*self.defaultSize())
+
+    def defaultSize(self):
+        """The opening size: large, but never past the screen it opens on."""
+        owner = self.parentWidget()
+        screen = owner.screen() if owner is not None else QApplication.primaryScreen()
+        if screen is None:
+            return DEFAULT_SIZE
+        avail = screen.availableGeometry()
+        return (
+            min(DEFAULT_SIZE[0], int(avail.width() * 0.75)),
+            min(DEFAULT_SIZE[1], int(avail.height() * 0.85)),
+        )
     
     def getWidgetsLayout(self, structure : list):
         """Create a layout from a predifined widget structure
@@ -112,8 +145,10 @@ class AllOptionsDialog(QDialog):
                 ["fill_opacity"],
                 ["find_zoom"],
                 ["hover_columns"],
-                ["autoseg_colors"],
                 ["smoothing_3D"]
+            ],
+            "Colors": [
+                ["autoseg_colors"],
             ],
             "User/Series": [
                 ["user"],
