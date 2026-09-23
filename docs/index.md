@@ -6,22 +6,20 @@ hide:
 template: home.html
 ---
 
-<span id="pyreconstruct"></span>
-
 <div class="pr-hero" markdown>
 <div class="pr-hero-copy" markdown>
 
 <p class="pr-eyebrow">OPEN SOURCE · ELECTRON MICROSCOPY</p>
 
-# Every section.<br> A new dimension.
+# PyReconstruct
 
-Trace, annotate, and reconstruct the structures that matter. PyReconstruct brings your serial sections and volume EM data into three dimensions.
+An open-source desktop application for tracing, annotating, and 3D reconstruction of serial-section and volume electron microscopy (EM) data.
 { .pr-lead }
 
 <div class="pr-actions" markdown>
 
 [Download PyReconstruct :material-arrow-down:](#install){ .md-button .md-button--primary }
-[Explore the guide :material-arrow-right:](USER_GUIDE.md){ .md-button }
+[User guide :material-arrow-right:](USER_GUIDE.md){ .md-button }
 
 </div>
 
@@ -30,17 +28,14 @@ Trace, annotate, and reconstruct the structures that matter. PyReconstruct bring
 </div>
 <div class="pr-hero-visual" role="img" aria-label="Electron microscopy image with colorful segmented structures, from the PyReconstruct welcome artwork">
   <div class="pr-visual-label"><span class="pr-status-dot"></span> ELECTRON MICROSCOPY / SEGMENTATION</div>
-  <div class="pr-visual-caption"><span>LOOK CLOSER.</span><span>SEE MORE.</span></div>
 </div>
 </div>
 
 <div class="pr-intro" markdown>
 
-<p class="pr-eyebrow">BUILT FOR A CLOSER LOOK</p>
+## Who it's for
 
-## Follow the structure. See the whole.
-
-For neuroscientists and EM researchers working across cells, organelles, and synapses. Move from a stack of sections to a reconstruction you can explore and measure.
+Neuroscientists and EM researchers who trace neural structures across stacks of serial sections, measure morphology, and build 3D reconstructions of cells, organelles, and synapses.
 
 </div>
 
@@ -73,7 +68,7 @@ Align your image stack and build 3D views to understand how structures connect a
 
 ### Measure & explore
 
-Inspect object measurements and work with large autosegmented series in the familiar `.jser` format.
+Inspect object measurements and work with large autosegmented series in the `.jser` series format.
 
 [Work with your data :material-arrow-right:](USER_GUIDE.md#9-data-lists)
 
@@ -82,8 +77,6 @@ Inspect object measurements and work with large autosegmented series in the fami
 
 <section class="pr-download-section" markdown>
 <div class="pr-section-heading" markdown>
-
-<p class="pr-eyebrow">YOUR NEXT RECONSTRUCTION STARTS HERE</p>
 
 ## Install
 
@@ -102,7 +95,7 @@ Stable release **v1.22.3**. Choose the build for your computer.
 
 [Download for Windows :material-arrow-down:](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.22.3/PyReconstruct-1.22.3-Windows-x86_64-Setup.exe){ .md-button }
 
-Includes Python. Run the installer to get started.
+Includes Python. Builds are unsigned; see the [first-launch instructions](USER_GUIDE.md#1-installing-pyreconstruct) if Windows shows a SmartScreen warning.
 { .pr-small }
 
 </div>
@@ -147,11 +140,9 @@ Requires Python 3.11. Extract and run `bash install.sh`.
 <div class="pr-resources" markdown>
 <div markdown>
 
-<p class="pr-eyebrow">KEEP EXPLORING</p>
+## Documentation {#where-to-go-next}
 
-## Where to go next
-
-Everything you need, from your first series to contributing code.
+The user guide, performance notes, and developer setup.
 
 </div>
 <div class="pr-resource-links" markdown>
@@ -170,7 +161,7 @@ Everything you need, from your first series to contributing code.
 <div class="pr-project-note" markdown>
 <div markdown>
 
-## Who it's for
+## About this distribution
 
 PyReconstruct is the modern successor to *Reconstruct*. This site documents an independently maintained distribution that tracks [SynapseWeb/PyReconstruct](https://github.com/SynapseWeb/PyReconstruct), with performance improvements, installers, and ongoing interface updates.
 
@@ -179,7 +170,7 @@ PyReconstruct is the modern successor to *Reconstruct*. This site documents an i
 
 ## Citation
 
-Developed in the Kristen Harris Lab at **The University of Texas at Austin** and introduced in *PNAS* (2025).
+The upstream PyReconstruct project was developed in the Kristen Harris Lab at **The University of Texas at Austin** and introduced in *PNAS* (2025).
 
 [Read the paper :material-arrow-top-right:](https://doi.org/10.1073/pnas.2505822122) · [Project credits](https://github.com/dustenhubbard/PyReconstruct/blob/main/README.md#credits)
 
