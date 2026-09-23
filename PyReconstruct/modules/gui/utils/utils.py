@@ -26,7 +26,7 @@ from PySide6.QtGui import (
     QFont,
     QScreen
 )
-from PySide6.QtCore import Qt, QEvent, QObject
+from PySide6.QtCore import Qt, QEvent, QObject, QEventLoop
 
 from PyReconstruct.modules.constants import welcome_series_dir
 
@@ -867,13 +867,14 @@ class BasicProgbar():
         print()
 
 
-def getProgbar(text, cancel=True, maximum=100):
-    """Create a progress bar (either for pyqt or in cmd text).
+def getProgbar(text, cancel=True, maximum=100, window_modality=Qt.WindowModal):
+    """Create and immediately display progress, before the caller starts work.
     
         Params:
             text (str): the text for the progress bar
             cancel (bool): True if progress bar is cancelable
             maximum (int): the max value for the progress bar
+            window_modality: which windows to block while the dialog is shown
     """
     use_basic = False
 
@@ -882,15 +883,17 @@ def getProgbar(text, cancel=True, maximum=100):
         use_basic = True
     else:
         try:
+            # A hidden owner may already have closed its series. Attaching a
+            # visible dialog to it can make Qt deliver another close event.
             progbar = QProgressDialog(
                     text,
                     "Cancel",
                     0, maximum,
-                    mainwindow
+                    mainwindow if mainwindow is not None and mainwindow.isVisible() else None
                 )
-            progbar.setMinimumDuration(1500)
+            progbar.setMinimumDuration(0)
             progbar.setWindowTitle("PyReconstruct")
-            progbar.setWindowModality(Qt.WindowModal)
+            progbar.setWindowModality(window_modality)
             if not cancel:
                 progbar.setCancelButton(None)
         except:
@@ -898,6 +901,15 @@ def getProgbar(text, cancel=True, maximum=100):
 
     if use_basic:
         progbar = BasicProgbar(text, maximum)
+    else:
+        # Showing only after the first increment leaves the user waiting
+        # through preparation and the first item. Paint now, before control
+        # returns to potentially blocking work. Exclude queued user input so
+        # another command cannot start during this initial paint.
+        if maximum > 0:
+            progbar.setValue(0)
+        progbar.show()
+        QApplication.processEvents(QEventLoop.ExcludeUserInputEvents)
     
     return progbar
 

@@ -760,10 +760,8 @@ def test_the_dialog_refuses_a_sequence_a_static_action_already_owns(
     """Rebinding onto a hardcoded shortcut is rejected, with a notice.
 
     `accept` collects the sequences held by actions the dialog cannot edit and
-    refuses an entry that duplicates one. `Align by correlation` is such an
-    action: its `Ctrl+\\` is written into `menubar.py` rather than stored as an
-    option, so no row exists for it and nothing else stops a user from typing it
-    into the box for something else.
+    refuses an entry that duplicates one. Add a static action here so the test
+    remains independent of which commands currently allow customization.
 
     Given `test_two_actions_sharing_a_sequence_fire_neither`, letting this
     through would cost the user both keys.
@@ -777,8 +775,12 @@ def test_the_dialog_refuses_a_sequence_a_static_action_already_owns(
         lambda message, *args, **kwargs: notices.append(message),
     )
 
-    static = main_window.aligncorrelation_act.shortcut()
-    assert static.toString() == "Ctrl+\\"
+    from PySide6.QtGui import QAction
+
+    action = QAction("Static test action", main_window)
+    static = QKeySequence("Ctrl+Alt+F10")
+    action.setShortcut(static)
+    main_window.addAction(action)
 
     dialog = ShortcutsDialog(main_window, main_window.series)
     try:
@@ -790,6 +792,8 @@ def test_the_dialog_refuses_a_sequence_a_static_action_already_owns(
         assert dialog.result() == 0  # not accepted
     finally:
         dialog.deleteLater()
+        main_window.removeAction(action)
+        action.deleteLater()
 
 
 def test_rebinding_home_survives_the_next_menubar_rebuild(

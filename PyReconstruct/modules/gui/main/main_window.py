@@ -1795,12 +1795,18 @@ class MainWindow(QMainWindow):
                 ("Rectangle", current_shape == "rect"),
                 ("Ellipse", current_shape == "circle")
             )],
-            [("check", ("Automatically merge overlapping traces", self.series.getOption("auto_merge")))],
+            [("check", ("Automatically merge overlapping traces", self.series.getOption("auto_merge"))),
+             ("check", ("Only merge selected traces", self.series.getOption("auto_merge_selected_only")))],
             [("check", ("Apply rolling average while scribbling", self.series.getOption("roll_average"))),
              ("int", self.series.getOption("roll_window"))]
         ]
 
-        response, confirmed = QuickDialog.get(self, structure, "Closed Trace Mode")
+        dialog = QuickDialog(self, structure, "Closed Trace Mode")
+        auto_merge = dialog.inputs[2].widget.layout().itemAt(0).widget()
+        selected_only = dialog.inputs[3].widget.layout().itemAt(0).widget()
+        selected_only.setEnabled(auto_merge.isChecked())
+        auto_merge.toggled.connect(selected_only.setEnabled)
+        response, confirmed = dialog.exec()
 
         if not confirmed:
             return
@@ -1827,8 +1833,9 @@ class MainWindow(QMainWindow):
         self.field.closed_trace_shape = new_shape
         
         self.series.setOption("auto_merge", response[2][0][1])
-        self.series.setOption("roll_average", response[3][0][1])
-        self.series.setOption("roll_window", response[4])
+        self.series.setOption("auto_merge_selected_only", response[3][0][1])
+        self.series.setOption("roll_average", response[4][0][1])
+        self.series.setOption("roll_window", response[5])
 
     def changeTracingTrace(self, trace):
         """Change trace utilized by the user.

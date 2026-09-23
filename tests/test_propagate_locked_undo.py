@@ -50,6 +50,52 @@ def _patch_confirm(monkeypatch, answer):
     return calls
 
 
+@pytest.mark.parametrize("outcome", ["success", "decline", "error"])
+def test_propagation_reports_its_preparation_and_closes_on_every_exit(monkeypatch, outcome):
+    stub, sections = _prop_stub(
+        monkeypatch, {n: [1, 0, 0, 0, 1, 0] for n in (1, 2, 3)},
+        current_section=1, locked=(2,) if outcome == "decline" else (),
+    )
+    bars = []
+
+    class Bar:
+        def __init__(self, text, **kwargs):
+            self.text = text
+            self.values = []
+            self.closed = False
+            bars.append(self)
+
+        def setValue(self, value):
+            self.values.append(value)
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(fw, "getProgbar", Bar)
+
+    def load(snum):
+        assert bars and not bars[-1].closed, "section scanning started without feedback"
+        if outcome == "error":
+            raise OSError("section unavailable")
+        return sections[snum]
+
+    stub.series.loadSection = load
+
+    def confirm(*args):
+        assert all(bar.closed for bar in bars), "preparation must close before the prompt"
+        return False
+
+    monkeypatch.setattr(fw, "notifyConfirm", confirm)
+    if outcome == "error":
+        with pytest.raises(OSError, match="section unavailable"):
+            fw.FieldWidgetData.propagateTo(stub)
+    else:
+        fw.FieldWidgetData.propagateTo(stub)
+    assert bars and all(bar.closed for bar in bars)
+    if outcome != "error":
+        assert bars[0].values[-1] == 100
+
+
 # ---------------------------------------------------------------------------
 # stub-level: locked sections are skipped
 # ---------------------------------------------------------------------------

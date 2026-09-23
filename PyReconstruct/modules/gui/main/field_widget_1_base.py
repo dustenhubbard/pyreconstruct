@@ -491,7 +491,11 @@ class FieldWidgetBase:
             new_section_num not in self.propagated_sections):
             current_tform = self.section.tform
             new_tform = self.stored_tform * current_tform
-            self.section_layer.changeTform(new_tform)
+            # Replay the recorded delta without recording it again through
+            # changeTform, which would compound it on subsequent sections.
+            self.section.tform = new_tform
+            self.series.addLog(None, self.section.n, "Modify transform")
+            self.saveState()
             self.propagated_sections.add(new_section_num)
 
         # generate view and update status bar
