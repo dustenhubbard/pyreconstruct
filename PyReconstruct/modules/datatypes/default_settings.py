@@ -74,6 +74,7 @@ default_settings = {
     # mouse tools
     "pointer": ["lasso", "exc"],  # MFO
     "auto_merge": False,  # MFO
+    "auto_merge_selected_only": True,
     "roll_average": False,
     "roll_window": 10,
     "roll_knife_average": False,
@@ -145,6 +146,8 @@ default_settings = {
     "pastetopalettewithshape_act": "Ctrl+Shift+G",
     "unlocksection_act": "Ctrl+Shift+U",
     "changetform_act": "Ctrl+T",
+    # Keep the existing binding, but allow remapping conflicts with 1Password.
+    "aligncorrelation_act": "Ctrl+\\",
     "undo_act": "Ctrl+Z",
     "redo_act": "Ctrl+Y",
     "copy_act": "Ctrl+C",
