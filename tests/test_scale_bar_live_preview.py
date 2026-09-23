@@ -79,3 +79,42 @@ def test_a_dialog_with_no_window_behind_it_does_not_mind(qapp, main_window):
     dlg = AllOptionsDialog(None, series)   # tests build it this way
     _slider(dlg).setValue(50)
     dlg.reject()                            # must not raise
+
+
+@pytest.mark.parametrize("hidden", [False, True])
+@pytest.mark.parametrize("pinned", [False, True])
+def test_cancel_preserves_scale_bar_and_visibility(main_window, qapp, qtbot, hidden, pinned):
+    """Cancel restores size without replacing the bar or losing its hide menu."""
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    series = main_window.series
+    if pinned:
+        series.setOption("scale_bar_mode", "micron_pinned")
+        series.setOption("scale_bar_length_um", 5.0)
+        main_window.mouse_palette.reset()
+    palette = main_window.mouse_palette
+    if palette.sb_hidden != hidden:
+        palette.toggleSB()
+    original = palette.sb
+    original_width = original.width()
+    original_policy = original.contextMenuPolicy()
+    count = len(main_window.findChildren(type(original)))
+    assert original.property("pyrecon_hide_menu")
+    assert original.isHidden() == hidden
+
+    for _ in range(3):
+        dialog = AllOptionsDialog(main_window, series)
+        qtbot.addWidget(dialog)
+        slider = _slider(dialog)
+        slider.setValue(70 if slider.value() != 70 else 40)
+        dialog.reject()
+        qapp.processEvents()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+
+        assert palette.sb.isHidden() == hidden
+        assert palette.sb_hidden == hidden
+        assert len(main_window.findChildren(type(original))) == count
+        assert palette.sb is original
+        assert original.width() == original_width
+        assert original.contextMenuPolicy() == original_policy
+        assert original.property("pyrecon_hide_menu")

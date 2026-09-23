@@ -1049,9 +1049,8 @@ class MousePalette():
             self.sb.update()
 
     def restoreScaleBar(self):
-        """Rebuild the bar from the stored options, dropping any preview."""
-        self.sb.close()
-        self.createSB()
+        """Restore stored width in place, preserving visibility and hide controls."""
+        self.previewScaleBarWidth(self.series.getOption("scale_bar_width"))
 
     def placeSB(self):
         """Place the scale bar."""
