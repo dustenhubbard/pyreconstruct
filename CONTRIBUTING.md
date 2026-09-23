@@ -108,13 +108,16 @@ provides the `PyReconstruct` console command (the entry point declared in
 
 ## Running the tests
 
-The test suite lives in `tests/` and runs headless. It needs a Qt platform plugin
-because a couple of tests construct a `QApplication`, so set the **offscreen**
-platform. With uv, which installs exactly what CI installs (runtime plus the `test`
-extra):
+Run `make check` before pushing, or `make test` for the full suite. Use
+`make gui` for real Qt widget tests and `PYTEST_ARGS='tests/test_transform.py -x'`
+to select tests. See [the developer workflow](docs/DEV_UV.md#4-run-the-tests)
+for debugging and worktree guidance.
+
+The test suite lives in `tests/` and runs headless using Qt's **offscreen**
+platform. Without `make`, use the same locked runtime and test dependencies as CI:
 
 ```bash
-QT_QPA_PLATFORM=offscreen uv run --no-default-groups --extra test python -m pytest
+QT_QPA_PLATFORM=offscreen uv run --locked --no-default-groups --extra test python -m pytest
 ```
 
 Or, in an activated conda environment, from the repository root:

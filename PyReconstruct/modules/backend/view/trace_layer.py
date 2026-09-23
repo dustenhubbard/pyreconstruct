@@ -1,4 +1,5 @@
 import math
+from collections import defaultdict
 from itertools import starmap
 
 import numpy as np
@@ -563,12 +564,21 @@ class TraceLayer():
             # trace_list can still hold the old, replaced object and would draw
             # its stale color. Detect any cached trace that is no longer a live
             # member of its contour and fall back to a full rebuild so current
-            # attributes are drawn. Only the on-screen traces are checked, so a
-            # selection-only refresh (the common generate_image=False case)
-            # stays on the fast path and never rebuilds.
+            # attributes are drawn. Check each contour in one scan, stopping
+            # once all cached traces are found. This avoids quadratic scans
+            # when many visible traces share a name, without building a set of
+            # every off-screen trace when only a few are visible.
+            cached_traces_by_name = defaultdict(set)
             for trace in trace_list:
-                contour = self.section.contours.get(trace.name)
-                if contour is None or trace not in contour:
+                cached_traces_by_name[trace.name].add(trace)
+            for name, remaining in cached_traces_by_name.items():
+                contour = self.section.contours.get(name)
+                if contour is not None:
+                    for trace in contour:
+                        remaining.discard(trace)
+                        if not remaining:
+                            break
+                if remaining:
                     trace_list = self.section.tracesAsList()
                     break
 

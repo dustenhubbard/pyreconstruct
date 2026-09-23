@@ -337,7 +337,7 @@ def return_alignments_menu(self):
             ("unlocksection_act", "Unlock current section", self.series, self.field.unlockSection),
             ("changetform_act", "Edit transformation...", self.series, self.changeTform),
             ("linearalign_act", "Estimate affine transform", "", self.field.affineAlign),
-            ("aligncorrelation_act", "Align by correlation", "Ctrl+\\", self.field.corrAlign),
+            ("aligncorrelation_act", "Align by correlation", self.series, self.field.corrAlign),
             # ("quickalign_act", "Auto-align", "Ctrl+\\", self.field.quickAlign)
         ]
     }

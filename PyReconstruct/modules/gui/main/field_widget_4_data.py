@@ -199,25 +199,31 @@ class FieldWidgetData(FieldWidgetObject):
             Params:
                 to_end (bool): True propagates to the end, False propagates to beginning
         """
-        # save the current section
-        self.section.save()
-        
-        included_sections = []
-        for snum in self.series.sections:
-            if snum not in self.propagated_sections:
-                modify_section = (
-                    (to_end and snum > self.series.current_section)
-                    or
-                    (not to_end and snum < self.series.current_section)
-                )
-                if modify_section: included_sections.append(snum)
-        
-        # locked sections are left untouched: warn the user, then exclude them
-        locked_sections = set()
-        for snum in included_sections:
-            section = self.series.loadSection(snum)
-            if section.align_locked:
-                locked_sections.add(snum)
+        # Reading each candidate section can take time before propagation
+        # itself begins. Acknowledge the command before even this preparation.
+        checking = getProgbar("Checking sections for propagation...", cancel=False)
+        try:
+            self.section.save()
+            included_sections = []
+            for snum in self.series.sections:
+                if snum not in self.propagated_sections:
+                    modify_section = (
+                        (to_end and snum > self.series.current_section)
+                        or
+                        (not to_end and snum < self.series.current_section)
+                    )
+                    if modify_section: included_sections.append(snum)
+
+            locked_sections = set()
+            for index, snum in enumerate(included_sections):
+                section = self.series.loadSection(snum)
+                if section.align_locked:
+                    locked_sections.add(snum)
+                checking.setValue((index + 1) / len(included_sections) * 100)
+        finally:
+            checking.close()
+
+        # Close preparation feedback before asking for confirmation.
         if locked_sections:
             if not notifyConfirm("Locked sections will not be modified.\nWould you still like to propagate the transform?"):
                 return

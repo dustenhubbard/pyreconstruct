@@ -22,8 +22,7 @@ os.environ['QT_IMAGEIO_MAXALLOC'] = "0"  # disable max image size
 
 from PyReconstruct.modules.datatypes import (
     Series,
-    Section,
-    Transform
+    Section
 )
 from PyReconstruct.modules.calc import fieldPointToPixmap
 
@@ -83,43 +82,6 @@ class ImageLayer():
                 self.bw, self.bh = self.image.width(), self.image.height()
                 self.base_corners = [(0, 0), (0, self.bh), (self.bw, self.bh), (self.bw, 0)]
                 self.image_found = True
-    
-    def _calcTformCorners(self, base_pixmap : QPixmap, tform : Transform) -> tuple:
-        """Calculate the vector for each corner of a transformed image.
-        
-            Params:
-                base_pixmap (QPixmap): untransformed image
-                tform (QTransform): transform to apply to the image
-            Returns:
-                (tuple) the four corners (starting from bottom left moving clockwise)
-        """
-        base_coords = base_pixmap.size() # base image dimensions
-        height_vector = tform.map(0, base_coords.height()) # create a vector for base height and transform
-        width_vector = tform.map(base_coords.width(), 0) # create a vector for base width and transform
-        # calculate coordinates for the top left corner of image
-        if height_vector[0] < 0:
-            tl_x = -height_vector[0]
-        else:
-            tl_x = 0
-        if width_vector[1] < 0:
-            tl_y = -width_vector[1]
-        else:
-            tl_y = 0
-        tl = (tl_x, tl_y)
-        # calculate coordinates for the bottom left corner of the image
-        bl_x = tl_x + height_vector[0]
-        bl_y = tl_y + height_vector[1]
-        bl = (bl_x, bl_y)
-        # calculate coordinates for top right corner of the image
-        tr_x = tl_x + width_vector[0]
-        tr_y = tl_y + width_vector[1]
-        tr = (tr_x, tr_y)
-        # calculate coordinates for bottom right corner of the image
-        br_x = bl_x + width_vector[0]
-        br_y = bl_y + width_vector[1]
-        br = (br_x, br_y)
-
-        return bl, tl, tr, br
     
     def _drawBrightness(self, image_layer):
         """Draw the brightness on the image field.

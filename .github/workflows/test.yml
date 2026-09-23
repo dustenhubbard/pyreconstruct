@@ -123,10 +123,10 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
 
-      - name: Install project (frozen against uv.lock)
+      - name: Install project (locked against uv.lock)
         # Same flags as the Makefile's UV variable, so `make type` and this job
         # resolve the same environment and cannot report different counts.
-        run: uv sync --frozen --no-default-groups --extra test
+        run: uv sync --locked --no-default-groups --extra test
 
       - name: mypy (Qt-free core, non-strict, reporting only)
         # mypy is pinned: an unpinned type checker changes its findings under
@@ -155,7 +155,7 @@ jobs:
         # for a real run and can only mean the wrapper never reached mypy. The
         # condition below reads it as a non-run. It is worth guarding because
         # the pin is genuinely re-resolved every time: it lives only in the
-        # `--with` string and in the Makefile, never in `uv.lock`, so `--frozen`
+        # `--with` string and in the Makefile, never in `uv.lock`, so `--locked`
         # does not cover it and it sits outside setup-uv's `uv.lock` cache key.
         # (An unreachable index exits 2 and was already caught.)
         #
@@ -171,7 +171,7 @@ jobs:
         # literal cannot go stale if there is no literal.
         #
         # The base is checked out into its own worktree and run through its own
-        # `uv run --frozen`, so it resolves the environment its own `uv.lock`
+        # `uv run --locked`, so it resolves the environment its own `uv.lock`
         # describes rather than borrowing the head's. mypy's findings depend on
         # which packages are importable (see above), so a pull request that
         # moves the lock would otherwise have that effect attributed to nothing.
@@ -199,7 +199,7 @@ jobs:
           # Run the pinned mypy in the checkout $1, writing its output to $2.
           # Sets `status`, `errors` and `files` for the caller.
           run_mypy() {
-            ( cd "$1" && uv run --frozen --no-default-groups --extra test \
+            ( cd "$1" && uv run --locked --no-default-groups --extra test \
                 --with mypy==2.3.0 \
                 python -m mypy --no-color-output --no-error-summary ) > "$2" 2>&1
             status=$?
@@ -352,11 +352,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libcairo2
 
-      - name: Install project + test deps (frozen against uv.lock)
-        # --frozen: use the committed lock exactly, fail if it drifted from pyproject.toml.
+      - name: Install project + test deps (locked against uv.lock)
+        # --locked: use the committed lock exactly, fail if it drifted from pyproject.toml.
         # uv provisions Python 3.11 itself from requires-python; --no-default-groups skips
         # the git-built `dev` group (funlib) the suite does not need; --extra test adds pytest.
-        run: uv sync --frozen --no-default-groups --extra test
+        run: uv sync --locked --no-default-groups --extra test
 
       - name: Widget tests are present (fail if the gui marker collects nothing)
         # The failure this catches is a green run with the widget tests silently
@@ -377,7 +377,7 @@ jobs:
           # also keeps collect-only output in node-id form. Count node ids, and
           # keep the old per-file "tests/x.py: N" summing as the fallback so the
           # counter reads both formats.
-          count=$(uv run --frozen --no-default-groups --extra test \
+          count=$(uv run --locked --no-default-groups --extra test \
                     python -m pytest --collect-only -q -m gui \
                   | awk -F': ' '/^tests\/.*::/ {ids += 1} /^tests\/[^:]*: [0-9]+$/ {sum += $2} END {print (ids ? ids : sum) + 0}')
           echo "gui-marked tests collected: $count"
@@ -389,4 +389,4 @@ jobs:
       - name: Run test suite (headless / offscreen)
         env:
           QT_QPA_PLATFORM: offscreen
-        run: uv run --frozen --no-default-groups --extra test python -m pytest -ra   # -ra surfaces xfail/xpass/skip reasons if the gate goes red
+        run: uv run --locked --no-default-groups --extra test python -m pytest -ra   # -ra surfaces xfail/xpass/skip reasons if the gate goes red
