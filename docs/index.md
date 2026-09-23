@@ -1,58 +1,178 @@
+---
+title: Home
+hide:
+  - navigation
+  - toc
+template: home.html
+---
+
+<div class="pr-hero" markdown>
+<div class="pr-hero-copy" markdown>
+
+<p class="pr-eyebrow">OPEN SOURCE · ELECTRON MICROSCOPY</p>
+
 # PyReconstruct
 
-PyReconstruct is an open-source desktop application for tracing, annotating, and
-3D-reconstructing serial-section and volume electron-microscopy (EM) data. It is
-the modern, actively maintained successor to *Reconstruct*.
+An open-source desktop application for tracing, annotating, and 3D reconstruction of serial-section and volume electron microscopy (EM) data.
+{ .pr-lead }
 
-This site documents an independently developed and maintained distribution of
-PyReconstruct. It tracks the upstream
-[SynapseWeb/PyReconstruct](https://github.com/SynapseWeb/PyReconstruct) project
-and builds on it with 3-4x faster opens on large series, one-click installers,
-an in-app updater with Stable and Beta channels, and ongoing quality-of-life
-fixes and features.
+<div class="pr-actions" markdown>
+
+[Download PyReconstruct :material-arrow-down:](#install){ .md-button .md-button--primary }
+[User guide :material-arrow-right:](USER_GUIDE.md){ .md-button }
+
+</div>
+
+<p class="pr-platforms">Windows, macOS & Linux <span aria-hidden="true">/</span> Free and open source</p>
+
+</div>
+<div class="pr-hero-visual" role="img" aria-label="Electron microscopy image with colorful segmented structures, from the PyReconstruct welcome artwork">
+  <div class="pr-visual-label"><span class="pr-status-dot"></span> ELECTRON MICROSCOPY / SEGMENTATION</div>
+</div>
+</div>
+
+<div class="pr-intro" markdown>
 
 ## Who it's for
 
-Neuroscientists and EM researchers who trace neural structures across stacks of
-serial sections - segmenting objects, aligning sections, measuring morphology,
-and building 3D reconstructions of cells, organelles, and synapses from
-volume-EM datasets. It reads and writes the `.jser` series format and handles
-large autosegmented series with hundreds of thousands of traces.
+Neuroscientists and EM researchers who trace neural structures across stacks of serial sections, measure morphology, and build 3D reconstructions of cells, organelles, and synapses.
+
+</div>
+
+<div class="pr-features" markdown>
+<div markdown>
+
+<span class="pr-feature-number">01</span>
+
+### Trace & annotate
+
+Outline structures across serial sections. Refine segmentation, organize objects, and keep your annotations together.
+
+[Learn the tracing tools :material-arrow-right:](USER_GUIDE.md#8-working-with-traces)
+
+</div>
+<div markdown>
+
+<span class="pr-feature-number">02</span>
+
+### Align & reconstruct
+
+Align your image stack and build 3D views to understand how structures connect across sections.
+
+[Explore 3D reconstruction :material-arrow-right:](USER_GUIDE.md#11-3d-reconstruction)
+
+</div>
+<div markdown>
+
+<span class="pr-feature-number">03</span>
+
+### Measure & explore
+
+Inspect object measurements and work with large autosegmented series in the `.jser` series format.
+
+[Work with your data :material-arrow-right:](USER_GUIDE.md#9-data-lists)
+
+</div>
+</div>
+
+<section class="pr-download-section" markdown>
+<div class="pr-section-heading" markdown>
 
 ## Install
 
-Download a one-click build for the current stable release, **v1.21.1** - no
-Python required.
+Stable release **v1.22.3**. Choose the build for your computer.
 
-| Platform | Download |
-| -------- | -------- |
-| Windows (x86_64) | [PyReconstruct-1.21.1-Windows-x86_64-Setup.exe](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.21.1/PyReconstruct-1.21.1-Windows-x86_64-Setup.exe) |
-| macOS (Apple Silicon) | [PyReconstruct-1.21.1-macOS-arm64.dmg](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.21.1/PyReconstruct-1.21.1-macOS-arm64.dmg) |
-| macOS (Intel) | [PyReconstruct-1.21.1-macOS-x86_64.dmg](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.21.1/PyReconstruct-1.21.1-macOS-x86_64.dmg) |
-| Linux (x86_64) | [PyReconstruct-1.21.1-Linux-installer.tar.gz](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.21.1/PyReconstruct-1.21.1-Linux-installer.tar.gz) |
+</div>
+<div class="pr-downloads" markdown>
+<div class="pr-download" markdown>
 
-All builds, checksums, and past versions are on the
-**[Releases page](https://github.com/dustenhubbard/PyReconstruct/releases/latest)**.
-Developers can install from source with `pip` or `uv`.
+:fontawesome-brands-windows:
+{ .pr-os-icon }
 
-Full instructions, including the macOS Gatekeeper step and the in-app updater,
-are in the [User Guide](USER_GUIDE.md#1-installing-pyreconstruct).
+### Windows
 
-## Where to go next
+64-bit · Windows 10 or later
 
-- **[User Guide](USER_GUIDE.md)** - install, open a series, the tracing tools,
-  data lists, alignment, 3D reconstruction, and backups.
-- **[Performance](performance.md)** - benchmarks for the fork's speed work.
-- **[Developing with uv](DEV_UV.md)** - the uv-based development workflow.
-- **[Contributing](https://github.com/dustenhubbard/PyReconstruct/blob/main/CONTRIBUTING.md)**
-  - dev setup, branch/commit conventions, tests, and the PR process.
-- **[Source code](https://github.com/dustenhubbard/PyReconstruct)** and
-  **[issues](https://github.com/dustenhubbard/PyReconstruct/issues)** on GitHub.
+[Download for Windows :material-arrow-down:](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.22.3/PyReconstruct-1.22.3-Windows-x86_64-Setup.exe){ .md-button }
+
+Includes Python. Builds are unsigned; see the [first-launch instructions](USER_GUIDE.md#1-installing-pyreconstruct) if Windows shows a SmartScreen warning.
+{ .pr-small }
+
+</div>
+<div class="pr-download" markdown>
+
+:fontawesome-brands-apple:
+{ .pr-os-icon }
+
+### macOS
+
+macOS 12 or later
+
+[Apple Silicon :material-arrow-down:](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.22.3/PyReconstruct-1.22.3-macOS-arm64.dmg){ .md-button }
+[Intel :material-arrow-down:](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.22.3/PyReconstruct-1.22.3-macOS-x86_64.dmg){ .md-button }
+
+Includes Python. See the [first-launch instructions](USER_GUIDE.md#1-installing-pyreconstruct).
+{ .pr-small }
+
+</div>
+<div class="pr-download" markdown>
+
+:fontawesome-brands-linux:
+{ .pr-os-icon }
+
+### Linux
+
+64-bit · glibc 2.28 or later
+
+[Download for Linux :material-arrow-down:](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.22.3/PyReconstruct-1.22.3-Linux-installer.tar.gz){ .md-button }
+
+Requires Python 3.11. Extract and run `bash install.sh`.
+{ .pr-small }
+
+</div>
+</div>
+
+[Installation help](USER_GUIDE.md#1-installing-pyreconstruct) · [All releases & checksums](https://github.com/dustenhubbard/PyReconstruct/releases/latest) · [Stable & Beta channels](RELEASE_CHANNELS.md)
+{ .pr-download-help }
+
+</section>
+
+<div class="pr-resources" markdown>
+<div markdown>
+
+## Documentation {#where-to-go-next}
+
+The user guide, performance notes, and developer setup.
+
+</div>
+<div class="pr-resource-links" markdown>
+
+[**User guide** <span>Installation, tools, alignment, and backups ↗</span>](USER_GUIDE.md)
+
+[**Performance** <span>Benchmarks and working with large series ↗</span>](performance.md)
+
+[**Developer resources** <span>Set up a source install with uv ↗</span>](DEV_UV.md)
+
+[**Contribute on GitHub** <span>Source code, issues, and contributions ↗</span>](https://github.com/dustenhubbard/PyReconstruct)
+
+</div>
+</div>
+
+<div class="pr-project-note" markdown>
+<div markdown>
+
+## About this distribution
+
+PyReconstruct is the modern successor to *Reconstruct*. This site documents an independently maintained distribution that tracks [SynapseWeb/PyReconstruct](https://github.com/SynapseWeb/PyReconstruct), with performance improvements, installers, and ongoing interface updates.
+
+</div>
+<div markdown>
 
 ## Citation
 
-PyReconstruct was developed in the Kristen Harris Lab at **The University of
-Texas at Austin** and introduced in *PNAS* (2025),
-[doi:10.1073/pnas.2505822122](https://doi.org/10.1073/pnas.2505822122). See the
-[README](https://github.com/dustenhubbard/PyReconstruct/blob/main/README.md)
-for full provenance, performance notes, and citation details.
+The upstream PyReconstruct project was developed in the Kristen Harris Lab at **The University of Texas at Austin** and introduced in *PNAS* (2025).
+
+[Read the paper :material-arrow-top-right:](https://doi.org/10.1073/pnas.2505822122) · [Project credits](https://github.com/dustenhubbard/PyReconstruct/blob/main/README.md#credits)
+
+</div>
+</div>

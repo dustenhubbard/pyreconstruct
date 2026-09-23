@@ -2,7 +2,7 @@ site_name: PyReconstruct
 site_description: >-
   Tracing, annotation, and 3D reconstruction for serial-section and volume
   electron microscopy.
-site_url: https://dustenhubbard.github.io/PyReconstruct/
+site_url: https://pyreconstruct.org/
 repo_url: https://github.com/dustenhubbard/PyReconstruct
 repo_name: dustenhubbard/PyReconstruct
 edit_uri: edit/main/docs/
@@ -10,34 +10,45 @@ docs_dir: docs
 
 theme:
   name: material
+  custom_dir: docs/overrides
+  logo: assets/images/logo.svg
+  favicon: assets/images/logo.png
+  font: false
   icon:
     repo: fontawesome/brands/github
   features:
     - navigation.instant
     - navigation.top
     - navigation.sections
+    - navigation.tabs
     - search.suggest
     - content.code.copy
   palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: teal
-      accent: teal
-      toggle:
-        icon: material/weather-night
-        name: Switch to dark mode
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
-      primary: teal
-      accent: teal
+    - scheme: slate
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-sunny
         name: Switch to light mode
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
 
 plugins:
   - search
 
+extra_css:
+  - stylesheets/extra.css
+
 markdown_extensions:
+  - attr_list
+  - md_in_html
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   # GitHub-style heading slugs, so in-page anchors written for the GitHub
   # rendering of these files (e.g. #source--pip-installs) resolve here too.
   - toc:
