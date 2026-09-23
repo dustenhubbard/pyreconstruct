@@ -1162,6 +1162,7 @@ class FieldWidgetTrace(FieldWidgetBase):
         t, confirmed = TraceDialog(
             self,
             traces,
+            tag_sets=self.series.tag_sets,
         ).exec()
         if not confirmed:
             return

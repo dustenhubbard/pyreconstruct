@@ -137,10 +137,12 @@ class PaletteButton(MoveableButton):
     
     def openDialog(self):
         """Change the attributes of a trace on the palette."""
+        series = getattr(self.manager, "series", None)
         t, confirmed = TraceDialog(
             self,
             [self.trace],
-            is_palette=True
+            is_palette=True,
+            tag_sets=getattr(series, "tag_sets", None),
         ).exec()
         if not confirmed:
             return

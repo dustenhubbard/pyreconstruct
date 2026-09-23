@@ -30,15 +30,19 @@ class TraceDialog(QDialog):
             tags=None,
             is_palette=False,
             is_obj_list=False,
-            pos=None):
+            pos=None,
+            tag_sets=None):
         """Create an attribute dialog.
         
             Params:
                 parent (QWidget): the parent widget
                 traces (list): a list of traces
                 pos (tuple): the point to create the dialog
+                tag_sets (TagSets): the series' tag sets; their values are
+                    offered in the Tags rows. None or empty keeps plain rows.
         """
         super().__init__(parent)
+        self.tag_sets = tag_sets
 
         # move to desired position
         if pos:
@@ -133,7 +137,21 @@ class TraceDialog(QDialog):
         # sorted because trace.tags is a set: unsorted, a tag lands on a
         # different row each time the dialog opens, so the row a user is part
         # way through editing is not the row they left off on
-        self.tags_input = MultiInput(self, sorted(tags))
+        known_tags = tag_sets.allTags() if tag_sets is not None else []
+        if known_tags:
+            # dropdown rows: every known tag with completion and its
+            # description as a tooltip. Typed text outside the sets is still
+            # accepted (pick many allows user values).
+            self.tags_input = MultiInput(
+                self,
+                sorted(tags),
+                combo=True,
+                combo_items=known_tags,
+                restrict_to_opts=False,
+                combo_tooltips={t: tag_sets.describe(t) for t in known_tags},
+            )
+        else:
+            self.tags_input = MultiInput(self, sorted(tags))
 
         # created here, SEEDED after the radios below: the radios' toggled
         # handler reaches these, so they must exist before any radio flips

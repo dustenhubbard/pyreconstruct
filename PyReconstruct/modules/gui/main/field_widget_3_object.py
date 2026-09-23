@@ -222,7 +222,8 @@ class FieldWidgetObject(FieldWidgetTrace):
             color=displayed_color,
             color_mixed=color_mixed,
             tags=tags,
-            is_obj_list=True
+            is_obj_list=True,
+            tag_sets=self.series.tag_sets,
         ).exec()
 
         if not confirmed:
