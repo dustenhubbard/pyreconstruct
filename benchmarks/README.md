@@ -5,9 +5,10 @@ compared against originally (`SynapseWeb/PyReconstruct@7b2c92f`).
 
 > **This directory cannot gate anything.** Per `dev/REFACTOR_PLAN.md`, equivalence
 > and performance gating live in the pytest suite against in-repo fixtures
-> (`tests/test_perf_equivalence.py`, `tests/test_geometry.py`). These scripts need
-> multi-hundred-MB private series that are not in the repo, so they are an
-> optional local study, run by hand. See `REPORT.md` for results and for the
+> (`tests/test_perf_equivalence.py`, `tests/test_geometry.py`). The full-series
+> scripts need private datasets and are an optional local study, run by hand.
+> `bench_trace_redraw.py` uses synthetic traces and needs no external data.
+> See `REPORT.md` for results and for the
 > correction history of the figures this directory once published.
 
 ## What it measures
@@ -52,6 +53,7 @@ every checkout and condition. "cold" therefore means application-cold.
 | `aggregate.py` | `results.jsonl` → `summary.json` + `summary.csv`, grouped by condition and refusing to pool cold with warm |
 | `build_report.py` | `summary.json` → `report.md` + `report.html` |
 | `profile_interactive.py` | scripted offscreen interactive session (pan/zoom/hover/lasso/knife/merge) for cProfile or py-spy |
+| `bench_trace_redraw.py` | synthetic full/incremental trace rendering; raw timings and pixel hashes, with `--source` to compare a historical implementation under the same dependencies; run `--help` for examples |
 | `rank_hotspots.py` | py-spy speedscope JSON → ranked self-time table |
 | `make_scaled_series.py` | build a larger `.jser` from a real one by replicating sections, for the >700 MB size class |
 | `fork_requirements.txt` | the historical shared-venv deps (superseded by `uv.lock`) |

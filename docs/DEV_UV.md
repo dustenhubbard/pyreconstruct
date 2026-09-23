@@ -69,10 +69,12 @@ the PNG raster, naming this requirement in the skip message. CI installs
 
 ## 2. Create the environment with `uv sync`
 
-`uv sync` creates `.venv/` in the repo (git-ignored), installs PyReconstruct in
-editable mode, and applies the committed `uv.lock` (re-resolving only if
-`pyproject.toml` has drifted from the lock). What *else* it installs depends on
-which groups/extras you select:
+`make env` creates the lean test environment from the committed lockfile and
+rejects a lockfile that is out of date. It runs
+`uv sync --locked --no-default-groups --extra test`.
+
+`uv sync` creates `.venv/` in the repo (git-ignored) and installs PyReconstruct
+in editable mode. What else it installs depends on which groups/extras you select:
 
 | Want | Command |
 | --- | --- |
@@ -95,29 +97,20 @@ editable mode, which the conda env does not do.
 ## 3. Run the app
 
 ```bash
-uv run PyReconstruct/run.py
+uv run --locked --no-default-groups --extra test PyReconstruct/run.py
 ```
 
-`uv run` syncs the environment first (so you can skip a separate `uv sync`), then
-launches the GUI. Because the project declares a console script, this also works:
+This uses the same environment selection as `make env` and the test commands.
+`uv run` checks the environment first, then launches the GUI. Because the project
+declares a console script, this also works:
 
 ```bash
-uv run PyReconstruct          # entry point -> PyReconstruct.cli:main
+uv run --locked --no-default-groups --extra test PyReconstruct
 ```
 
-Both pull the `dev` group by default (the funlib git build). To launch without it:
-
-```bash
-uv run --no-default-groups PyReconstruct/run.py
-```
-
-> **Note: each `uv run` re-syncs `.venv` to match the flags you pass it**, adding
-> or removing packages so the environment exactly matches the request. Alternating
-> between `uv run PyReconstruct/run.py` (pulls the `dev` group) and the test
-> command below (`--no-default-groups`, which drops it) will reinstall/remove the
-> `dev` group each time. To avoid the churn, pick one environment shape (e.g.
-> `uv sync --no-default-groups --extra test` once) and pass the same flags to
-> every `uv run`.
+Keep these group/extra flags consistent across commands: omitting
+`--no-default-groups` requests the git-built dev tooling, and `uv sync` removes
+packages that are outside the selected environment.
 
 ### Driving the GUI from a script (`PYRECON_UNATTENDED`)
 
@@ -125,7 +118,7 @@ A launch that nobody is sitting in front of — a click-test harness, a screensh
 run, a computer-use agent — should set this:
 
 ```bash
-PYRECON_UNATTENDED=1 uv run PyReconstruct/run.py path/to/series.jser
+PYRECON_UNATTENDED=1 uv run --locked --no-default-groups --extra test PyReconstruct/run.py path/to/series.jser
 ```
 
 Opening a series is allowed to ask questions: where the images went if the
@@ -143,22 +136,55 @@ dialogs a real user wants to see.
 
 ## 4. Run the tests
 
-The suite imports `gui.main` (PySide6), so it runs under the offscreen Qt
-platform. No X server or `xvfb` is needed. The lean test environment (runtime +
-pytest, no dev tooling) installs exactly what CI installs (`pip install -e ".[test]"`):
+Run these from the checkout you are editing:
 
 ```bash
-QT_QPA_PLATFORM=offscreen uv run --no-default-groups --extra test pytest -ra
+make check                              # lint + tests except those marked slow
+make test                               # full suite, as in CI
+make gui                                # real Qt widget tests
+make test PYTEST_ARGS='tests/test_transform.py -x'
+make gui PYTEST_ARGS='tests/test_section_list_real_widget.py'
+make test PYTEST_ARGS='--lf --durations=10'
 ```
 
-`-ra` (what CI runs) surfaces xfail/xpass/skip reasons; `pytest.ini` already sets
-`addopts = -q`, so a quiet run needs no extra flag. The suite is expected to be
-green with a handful of documented `xfail`s (orjson NaN/Inf JSON divergence).
+The Makefile uses the same locked dependency selection as CI and sets Qt to
+`offscreen`; no X server or `xvfb` is needed. The `gui` marker selects tests
+that construct real Qt widgets. Full application tests can use the existing
+`main_window` fixture in `tests/conftest.py`, which opens a writable copy of
+the checked-in series and isolates application preferences. That fixture has
+no image data, so image rendering and native display behavior still need
+separate verification.
+
+Without `make` (including Windows), the equivalent full suite command is:
+
+```bash
+uv run --locked --no-default-groups --extra test python -m pytest -ra
+```
+
+`-ra` surfaces xfail/xpass/skip reasons. Each test that runs for more than
+60 seconds prints all thread stacks to help diagnose a modal dialog or deadlock.
+This is a diagnostic, not a time limit: teardown still runs if the test returns.
+For a deliberately long test, override it with
+`PYTEST_ARGS='-o faulthandler_timeout=300'`; use `-vv -s` to see which test is
+running and its uncaptured output.
 
 > pytest lives in the `test` **extra**, not the default `dev` group, so a bare
 > `uv sync` does not install it. Always pass `--extra test` to run the suite.
 > pytest is constrained to the `9.x` line the suite is verified against (8.x is
 > untested; 10 drops a config shim deprecated in 9.1).
+
+### Worktrees
+
+Run `make env` inside each worktree so it gets its own `.venv`. To confirm
+which checkout an interpreter imports:
+
+```bash
+uv run --locked --no-default-groups --extra test python -c 'import PyReconstruct; print(PyReconstruct.__file__)'
+```
+
+The printed path must be in the worktree being edited. For a shared conda
+interpreter, `dev/dev-run.sh --check` performs this check with the worktree
+prepended to `PYTHONPATH`; `dev/dev-run.sh` launches that checkout.
 
 ## 5. Preview scripts (`uv run --script`)
 
@@ -176,10 +202,12 @@ display**. Run it on macOS/Windows or a Linux box with a desktop, not offscreen.
 ## 6. The lockfile
 
 `uv.lock` **is committed**: PyReconstruct ships as an application, so a pinned,
-reproducible dependency set is what we want. `uv sync` (and `uv run`) apply it as
-is, and `uv sync --frozen` errors out rather than silently re-resolving if the
-lock and `pyproject.toml` have diverged. That is what CI and reproducible setups
-should use.
+reproducible dependency set is what we want. Use `--locked` in verification
+commands: it errors out if the lock and
+`pyproject.toml` have diverged and leaves the lockfile unchanged. `--frozen`
+also leaves it unchanged, but skips the freshness check and can therefore
+test an environment that omits a newly declared dependency. See
+[uv's lockfile semantics](https://docs.astral.sh/uv/concepts/projects/sync/#automatic-lock-and-sync).
 
 Bumping dependencies is a **maintainer** action: edit the pin in `pyproject.toml`
 (or not, for a plain refresh), then re-resolve and commit the new lock:
@@ -198,8 +226,8 @@ Commit the resulting `uv.lock` alongside the `pyproject.toml` change.
 | Task | conda (`pyrecon_dev`) | uv |
 | --- | --- | --- |
 | Create / update env | `conda env create -f dev/environment_dev.yaml` | `uv sync` |
-| Run the app | `python PyReconstruct/run.py` | `uv run PyReconstruct/run.py` |
-| Run tests | `QT_QPA_PLATFORM=offscreen python -m pytest -ra` | `QT_QPA_PLATFORM=offscreen uv run --no-default-groups --extra test pytest -ra` |
+| Run the app | `python PyReconstruct/run.py` | `uv run --locked --no-default-groups --extra test PyReconstruct/run.py` |
+| Run tests | `QT_QPA_PLATFORM=offscreen python -m pytest -ra` | `make test` (or the equivalent uv command in section 4) |
 | Preview script | `python dev/update_dialog_preview.py` | `uv run --script dev/update_dialog_preview.py` |
 
 The conda workflow remains fully supported. One practical difference: the conda

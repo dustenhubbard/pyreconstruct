@@ -362,6 +362,7 @@ help_shortcuts = [
     ("pastetopalettewithshape_act", "Modify current palette button to match attributes and shape of first selected trace"),
     ("unlocksection_act", "Unlock current section"),
     ("changetform_act", "Modify transform on current section"),
+    ("aligncorrelation_act", "Align by correlation"),
     ("sethosts_act", "Set host(s) for selected trace(s)"),
     None,
     "Edit",

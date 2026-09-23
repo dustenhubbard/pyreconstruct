@@ -150,11 +150,11 @@ green, one line of "N passed" with the widget tests silently absent, and a
 reviewer reads green as tested.
 
 Install the test extra:
-    uv sync --frozen --no-default-groups --extra test
+    uv sync --locked --no-default-groups --extra test
 
 Or run the suite the way `make test` and CI run it, which cannot reach this
 state:
-    uv run --frozen --no-default-groups --extra test python -m pytest
+    uv run --locked --no-default-groups --extra test python -m pytest
 
 To exclude the widget tests deliberately, pass -m "not gui". That is a
 supported invocation and it does not trip this guard.

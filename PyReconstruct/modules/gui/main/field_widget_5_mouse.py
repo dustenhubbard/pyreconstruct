@@ -124,14 +124,10 @@ class FieldWidgetMouse(FieldWidgetData):
 
         Called by pencilRelease and lineRelease right after newTrace, so the
         freshly drawn trace is the last trace in its contour (and selected,
-        which newTrace guarantees). The trigger is geometric: the new trace
-        merges with every same-name closed trace on this section that actually
-        overlaps it, whether or not that trace is selected. It used to key on
-        the selection instead, which made the two tracing gestures disagree
-        (upstream issue #138): the point-to-point mode often left the
-        pre-existing trace unselected, so nothing merged. Non-overlapping
-        same-name traces are left alone -- drawing them apart is the
-        documented way to keep separate traces under one name.
+        which newTrace guarantees). Only overlapping same-name closed traces
+        are eligible. By default existing traces must also be selected; turning
+        off auto_merge_selected_only allows unselected overlap targets too.
+        Non-overlapping traces always remain separate.
 
         The existing traces go first in the merge list, so the merged trace
         keeps the pre-existing trace's attributes (mergeTraces takes them from
@@ -155,9 +151,12 @@ class FieldWidgetMouse(FieldWidgetData):
         if not new_trace.closed or new_trace not in self.section.selected_traces:
             return
 
+        selected_only = self.series.getOption("auto_merge_selected_only")
         traces_to_merge = []
         for t in contour:
             if t is new_trace or not t.closed:
+                continue
+            if selected_only and t not in self.section.selected_traces:
                 continue
             # bounds pre-filter plus rasterized polygon intersection;
             # threshold=0 asks "do these overlap at all"

@@ -10,7 +10,6 @@ import sys
 import traceback
 
 from PySide6.QtWidgets import (
-    QProgressDialog,
     QProgressBar,
     QApplication,
     QLabel,
@@ -146,18 +145,12 @@ class ThreadPoolProgBar(ThreadPool):
 
         lbl = None
         if status_bar is None:
-            progbar = getProgbar(text, cancel=False, maximum=maximum)
-            if isinstance(progbar, QProgressDialog):
-                # show immediately and block interaction with the rest of
-                # the app so the series cannot be mutated mid-run
-                progbar.setWindowModality(Qt.ApplicationModal)
-                progbar.setMinimumDuration(0)
-                if maximum == 0:
-                    # indeterminate: setValue(0) would hit the maximum and
-                    # auto-reset the dialog, so show it directly
-                    progbar.show()
-                else:
-                    progbar.setValue(0)
+            # Establish application modality before the helper shows it, so
+            # other windows cannot mutate the series while workers run.
+            progbar = getProgbar(
+                text, cancel=False, maximum=maximum,
+                window_modality=Qt.ApplicationModal,
+            )
         else:  # custom progbar for status bar
             lbl = QLabel()
             lbl.setText(text)
