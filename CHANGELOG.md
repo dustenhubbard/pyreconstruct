@@ -13,6 +13,63 @@ the README's *From source (developers)* section).
 
 ## [Unreleased]
 
+## [1.23.0-beta-6] - 2026-09-23
+
+### Added
+- **Bulk recoloring reports an estimated time remaining.** The estimate
+  appears after at least two seconds and five percent completion, based on
+  the rate so far. It is enabled only for recoloring objects, not opening,
+  saving, or importing a series.
+- **The scissors tool has a remappable shortcut.** The default is Shift+K,
+  and the tool now appears in Help > Shortcuts list.
+
+### Changed
+- **More feedback and shortcut control when aligning sections.** The section
+  list shows progress as soon as it starts building. The Align by correlation
+  keyboard shortcut can now be changed in the shortcuts dialog.
+- **Auto-merge can require selected traces.** The new "Only merge selected
+  traces" checkbox appears beside "Automatically merge overlapping traces"
+  in both tracing settings dialogs and defaults to checked. Uncheck it to
+  include unselected traces. Both modes require overlapping closed traces
+  with the same name; separate traces remain separate. The selection checkbox
+  is disabled while auto-merge is off and remembers its value.
+- **Autoseg colors have a dedicated Options tab with a live picker.** Edit
+  swatches in place, paste multiple colors, duplicate or remove selections,
+  and preview the palette on sample labels. Changes are saved only with OK;
+  Revert and undo restore edits. The page warns when changing the palette
+  length reassigns label colors on future imports.
+- **Dependency updates address reported advisories.** GitPython is updated
+  to 3.1.62, tornado to 6.5.8, and the documentation theme mkdocs-material
+  to 9.7.7.
+- **Progress dialogs appear immediately.** Removed the delay before shared
+  progress dialogs open, so commands show feedback before processing their
+  first item. Transform propagation also reports progress while checking
+  sections, before asking about locked sections or applying the alignment.
+  Repeated completion updates no longer reopen a finished progress dialog.
+  Section lists retain keyboard focus, and progress opened after a series
+  closes no longer attaches to its closed window.
+- **Scale-bar size previews while adjusting the slider.** Series Options now
+  shows width changes immediately without saving them until OK. Cancel restores
+  the stored width while preserving whether the bar is hidden and its hide
+  controls. Pinned micron lengths remain unchanged by the width slider.
+- **Large series open faster and show progress before reading the file.**
+  Trace-ID canonical text is generated once, using the faster serializer
+  only where its output matches the existing representation. Trace IDs
+  remain unchanged. A 249 MB, 99,207-trace series opened in 8.3 seconds
+  instead of 16.8 seconds in testing; early exits close the progress dialog.
+
+### Fixed
+- **Switching sections during alignment propagation works again.** Fixed an
+  error when switching sections while recording transform propagation.
+  Propagated alignment changes can be undone.
+- **Series Options accepts and closes correctly.** The hover-columns widget
+  now participates in the Options page contract instead of raising an
+  AttributeError on OK. Hover-column changes are staged until the outer
+  dialog is accepted, so Cancel discards them.
+- **Tool-palette buttons are spaced correctly at startup.** All buttons
+  are created before their positions are calculated, avoiding overlapping
+  buttons when restoring a palette moved below its default position.
+
 ## [1.21.0] — 2026-08-05
 
 ### Added

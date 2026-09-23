@@ -6,6 +6,47 @@ full release notes on GitHub (linked from the dialog).
 
 ## [Unreleased]
 
+## [1.23.0-beta-6] - 2026-09-23
+
+#### New
+
+- **The scissors tool has a keyboard shortcut: Shift+K.** Change it in Help ▸ Shortcuts list if
+  another key suits you better.
+- **Align by correlation has a remappable shortcut.** Change it in Help ▸ Shortcuts list if the
+  default conflicts with another app, such as 1Password.
+
+#### Improved
+
+- **Progress dialogs appear immediately.** Opening the section list and propagating an alignment
+  now show progress during preparation, so you can see that the command was received. Thanks to
+  Kristen for reporting this.
+- **Large series open faster.** A test series with about 99,000 traces opened in about 8 seconds,
+  down from 17, and the progress dialog now appears before the file is read.
+- **Recoloring objects shows an estimate of the time remaining.** View ▸ Recolor all objects from
+  palette displays the estimate once enough work has finished to calculate one.
+- **Preview the scale-bar size as you move the slider.** In Series ▸ Options ▸ View, the bar changes
+  size while the dialog stays open. OK saves the size; Cancel restores it, and bars set to a fixed
+  length in microns keep that length.
+
+#### Changed
+
+- **Auto-merge now requires selected traces by default.** The new "Only merge selected traces"
+  checkbox sits beside "Automatically merge overlapping traces" in the tracing settings, including
+  Series ▸ Options ▸ Mouse Tools. Uncheck it to include unselected traces; both modes still require
+  overlapping closed traces with the same name. Thanks to Patrick for reporting this.
+- **The autoseg color palette has its own Colors tab.** In Series ▸ Options ▸ Colors, edit colors
+  with a live picker, paste several at once, and preview them on sample labels. Changes are saved
+  with OK; adding or removing colors warns that future imports will assign colors differently.
+
+#### Fixed
+
+- **OK in Series ▸ Options works again.** It could show an error and leave the dialog open in
+  beta-5. Changes to the hover display columns now wait for OK too, so Cancel discards them.
+- **Tool buttons keep their spacing when the app opens.** A palette moved down the window could
+  reopen with its buttons crowded together until you dragged it.
+- **Switching sections while recording alignment propagation works again.** This could fail with
+  an error instead of carrying the alignment change to the next section.
+
 ## [1.23.0-beta-5] — 2026-09-09
 
 #### Changed
