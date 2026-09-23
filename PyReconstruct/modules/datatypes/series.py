@@ -14,6 +14,7 @@ from .trace import Trace, normalizeObjectName
 from .trace_id import TraceIDIssuer
 from .transform import Transform
 from .obj_group_dict import ObjGroupDict
+from .tag_sets import TagSets
 from .series_data import SeriesData
 from .objects import Objects
 from .default_settings import default_settings, default_series_settings
@@ -493,6 +494,9 @@ class Series():
 
         # user-defined columns
         self.user_columns = series_data["user_columns"]
+
+        # tag sets: the vocabularies behind the tags dropdown
+        self.tag_sets = TagSets(series_data["tag_sets"])
 
         # host tree
         self.host_tree = HostTree(series_data["host_tree"], self)
@@ -1303,6 +1307,7 @@ class Series():
         d["code"] = self.code
         d["user_columns"] = self.user_columns
         d["host_tree"] = self.host_tree.getDict()
+        d["tag_sets"] = self.tag_sets.getDict()
 
         return d
     
@@ -1457,6 +1462,7 @@ class Series():
         series_data["code"] = ""
         series_data["user_columns"] = {}
         series_data["host_tree"] = {}
+        series_data["tag_sets"] = {}
 
         return series_data
     
@@ -3513,6 +3519,42 @@ class Series():
                         ## is there a better way to handle this?
                         self_uc[name] = value
     
+    def importTagSets(self, other, log_event=True):
+        """Import the tag sets from another series.
+
+        A set on both sides keeps this series' mode and gains the other's
+        values; a set only on the other side is copied whole. Nothing is
+        removed. See TagSets.merge.
+
+            Params:
+                other (Series): the other series
+        """
+        if self.tag_sets.merge(other.tag_sets) and log_event:
+            self.addLog(None, None, "Import tag sets from another series")
+
+    def addTagSet(self, name : str, mode : str, tags : list, descriptions : dict = None, log_event=True) -> bool:
+        """Add a tag set to the series. False if the name is taken or unusable."""
+        added = self.tag_sets.add(name, mode, tags, descriptions)
+        if added and log_event:
+            self.addLog(None, None, f"Add tag set {name.strip()}")
+        return added
+
+    def editTagSet(self, name : str, new_name : str = None, mode : str = None,
+                   tags : list = None, descriptions : dict = None, log_event=True) -> bool:
+        """Edit a tag set. Arguments left None keep their value. False if refused."""
+        edited = self.tag_sets.edit(name, new_name, mode, tags, descriptions)
+        if edited and log_event:
+            shown = name if not new_name or new_name.strip() == name else f"{name} as {new_name.strip()}"
+            self.addLog(None, None, f"Edit tag set {shown}")
+        return edited
+
+    def removeTagSet(self, name : str, log_event=True) -> bool:
+        """Remove a tag set. The tags already on traces are untouched."""
+        removed = self.tag_sets.remove(name)
+        if removed and log_event:
+            self.addLog(None, None, f"Delete tag set {name}")
+        return removed
+
     def importObjAttrs(self, other, regex_filters=[], restrict_to=[]):
         """Import the object attributes from another series.
         
@@ -3655,6 +3697,7 @@ class Series():
             self.importHostTree(other, regex_filters, restrict_to)
             self.importObjAttrs(other, regex_filters, restrict_to)
             self.importUserCols(other, regex_filters, restrict_to)
+            self.importTagSets(other)
 
         ## Import history
         if log_event:

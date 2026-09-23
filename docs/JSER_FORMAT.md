@@ -726,6 +726,7 @@ that differs between the two files, and it is marked as such below.
 | `code` | string | Series code: a short identifier independent of the filename. Used as the leading field of exported object tables and as the namespace for per-series computer settings. `""` means unset, and it is the only value the UI rejects. Any other string is accepted, including one containing the delimiters used by the exporters. A configurable regex (default `[0-9A-Za-z]+`) is a *detection* pattern applied to the file name to pre-fill a suggestion; it does not validate what the user enters. |
 | `user_columns` | object | Column name -> array of permitted option strings. See [5.4](#54-user_columns). |
 | `host_tree` | object | Object name -> array of its host names. Object names and host lists are both written **sorted**. See [5.3](#53-groups-hosts-and-attributes). |
+| `tag_sets` | object | Set name -> `{"mode", "tags", "descriptions"}`. The vocabularies offered in the tags dropdown. See [5.5](#55-tag_sets). |
 
 ### 5.1 `src_dir`
 
@@ -823,6 +824,24 @@ Per-object selection lives elsewhere, in `obj_attrs[name]["user_columns"]`, wher
 same key name maps a column name to a **single option string**. The list lives at series
 level; the scalar choice lives at object level. Editing a column's option list deletes any
 per-object value that is no longer a valid option.
+
+### 5.5 `tag_sets`
+
+`series.tag_sets` maps a set name to an object with three keys: `mode`, either `"one"`
+(pick one: the dialog restricts input and choosing a value removes the set's other values
+from the trace) or `"many"` (pick many: the dialog offers the values and still accepts typed
+text); `tags`, an **array** of value strings in display order; and `descriptions`, an object
+mapping a value to its definition text, shown as a tooltip. Names and values keep their
+spaces.
+
+A tag set does not change how a tag is stored. A tag remains a plain string in each trace's
+tag array in the section files, so a file written by a build with tag sets opens in any
+older build. An older build drops `tag_sets` on save, the same way it drops any series key
+it does not know; the tags on the traces survive.
+
+The reader is lenient: an entry that is not an object, a name that is blank, or a value that
+is not a string is dropped on load and the remaining sets are kept. An unknown `mode` reads
+as `"many"`.
 
 ---
 
@@ -1158,7 +1177,8 @@ substitute real files in `src_dir` to see an image behind the traces.
     "editors": [],
     "code": "",
     "user_columns": {},
-    "host_tree": {}
+    "host_tree": {},
+    "tag_sets": {}
   },
   "log": "Date, Time, User, Obj, Sections, Event"
 }

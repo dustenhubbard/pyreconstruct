@@ -10,6 +10,7 @@ from .points import Points
 from .columnar_store import SectionColumns, SegmentedCoordinates
 
 from .obj_group_dict import ObjGroupDict
+from .tag_sets import TagSets
 
 from .series_data import SeriesData, ObjectData, TraceData
 
