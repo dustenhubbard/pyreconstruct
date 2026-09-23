@@ -2,8 +2,9 @@
 
 The editor backs the ``autoseg_color_palette`` / ``autoseg_color_seed`` options.
 These tests exercise its save path (accept -> set), reset-to-default, the
-minimum-color floor, and that what it persists is exactly what the import
-preview and shuffle consume -- without opening real Qt dialogs.
+minimum-color floor, that what it persists is exactly what the import preview
+and shuffle consume, and the live embedded picker that replaced the modal
+dialog in September 2026 -- all offscreen, no real dialogs.
 """
 
 import pytest
@@ -202,120 +203,164 @@ def test_accept_rejects_non_integer_seed(qapp, monkeypatch):
 # --- add / edit via the color dialog (stubbed) ------------------------------
 
 
-def _stub_color(monkeypatch, rgb):
-    """Make ``_pick_color`` return ``rgb``, or act cancelled when it is None.
+# --- the live picker: one, embedded, bound to the selected swatch -----------
+#
+# The old page opened a modal QColorDialog per swatch (his bug report,
+# 2026-09-14: "picking a color dismisses the color picker window every time").
+# The picker is now a child widget of the page; these pin the mechanics the
+# design pass called load-bearing.
 
-    Stubs the dialog *class*, not ``QColorDialog.getColor``. The editor no
-    longer calls that static: on macOS it opens the shared system "Colors"
-    panel, whose close button returns an invalid ``QColor`` and silently
-    discarded the color the user picked (the bug reported against the trace
-    swatch, which this editor had too). ``_pick_color`` now constructs and owns
-    a Qt dialog, so that is what has to be stood in for.
-
-    ``getColor`` is still overridden, as a trap: if ``_pick_color`` ever routes
-    back through the static, ``static_calls`` records it and the test below
-    fails on a real regression rather than hanging on a modal loop.
-    """
-    from PySide6.QtCore import Qt
-    from PySide6.QtGui import QColor
-    from PySide6.QtWidgets import QColorDialog, QDialog
-
-    class _StubColorDialog(QColorDialog):
-        static_calls = []
-        execs = []
-
-        def setOption(self, option, on=True):
-            """Model cocoa discarding the seed when native is switched off.
-
-            A dialog constructed while the native path is still allowed hands
-            its initial color to the platform helper; flipping
-            ``DontUseNativeDialog`` on afterwards switches to the Qt widget
-            implementation, which was never seeded and sits at white. The
-            offscreen platform this suite runs on has no native dialog, so
-            there the flip is a no-op and every ordering looks correct --
-            which is exactly why it has to be modelled to be tested. Measured
-            on cocoa, PySide6 6.5.2; see tests/test_color_picker_dismissal.py.
-            """
-            super().setOption(option, on)
-            if on and option == QColorDialog.ColorDialogOption.DontUseNativeDialog:
-                super().setCurrentColor(QColor(Qt.white))
-
-        def exec(self):
-            type(self).execs.append(
-                {
-                    "options": self.options(),
-                    "parent": self.parent(),
-                    "currentColor": self.currentColor().getRgb()[:3],
-                }
-            )
-            if rgb is not None:
-                self.setCurrentColor(QColor(*rgb))
-                self.done(QDialog.DialogCode.Accepted)
-                return QDialog.DialogCode.Accepted
-            self.done(QDialog.DialogCode.Rejected)
-            return QDialog.DialogCode.Rejected
-
-        @staticmethod
-        def getColor(*a, **k):
-            _StubColorDialog.static_calls.append(a)
-            return QColor()
-
-    monkeypatch.setattr(ape, "QColorDialog", _StubColorDialog)
-    return _StubColorDialog
+def _rgb(color):
+    return [color.red(), color.green(), color.blue()]
 
 
-def test_add_color_appends_picked_color(qapp, monkeypatch):
-    _stub_color(monkeypatch, (11, 22, 33))
+def test_picker_is_embedded_and_qt_owned(qapp):
+    from PySide6.QtWidgets import QColorDialog
     w = _widget(qapp, _SeriesStub(palette=[[1, 2, 3], [4, 5, 6]]))
-    w._add_color()
-    assert w.colors[-1] == [11, 22, 33]
-    assert w.list.count() == 3
+    assert w.picker.parent() is w
+    assert not w.picker.isWindow(), "the picker must be part of the page, not a window"
+    assert w.picker.testOption(QColorDialog.ColorDialogOption.DontUseNativeDialog)
+    assert w.picker.testOption(QColorDialog.ColorDialogOption.NoButtons)
 
 
-def test_edit_color_replaces_selected(qapp, monkeypatch):
-    _stub_color(monkeypatch, (99, 88, 77))
+def test_selecting_a_swatch_binds_the_picker_without_writing(qapp):
     w = _widget(qapp, _SeriesStub(palette=[[1, 2, 3], [4, 5, 6]]))
     w.list.setCurrentRow(1)
-    w._edit_selected()
+    assert _rgb(w.picker.currentColor()) == [4, 5, 6]
+    assert w.colors == [[1, 2, 3], [4, 5, 6]]      # binding is not an edit
+    assert not w.revert_btn.isEnabled()
+
+
+def test_a_live_change_recolors_only_the_bound_swatch(qapp):
+    from PySide6.QtGui import QColor
+    w = _widget(qapp, _SeriesStub(palette=[[1, 2, 3], [4, 5, 6]]))
+    w.list.setCurrentRow(1)
+    w.picker.setCurrentColor(QColor(99, 88, 77))     # what a slider drag emits
     assert w.colors == [[1, 2, 3], [99, 88, 77]]
+    assert w.list.count() == 2                         # no rebuild mid-drag
+    assert w.list.item(1).text() == "#63584D"
+    assert w.revert_btn.isEnabled()
 
 
-def test_cancelled_color_dialog_leaves_palette_unchanged(qapp, monkeypatch):
-    _stub_color(monkeypatch, None)  # cancelled
+def test_retargeting_does_not_bleed_the_previous_color(qapp):
+    from PySide6.QtGui import QColor
     w = _widget(qapp, _SeriesStub(palette=[[1, 2, 3], [4, 5, 6]]))
-    before = [list(c) for c in w.colors]
-    w._add_color()
-    assert w.colors == before
-
-
-# --- the picker this editor opens is its own, and opens on the right color --
-#
-# Same two defects as the trace swatch, and the same fix; see
-# tests/test_color_picker_dismissal.py, which pins them for ``ColorButton``.
-
-
-def test_picker_is_a_dialog_this_code_owns(qapp, monkeypatch):
-    """Not the platform's panel, whose close button discards the pick."""
-    from PySide6.QtWidgets import QColorDialog
-
-    stub = _stub_color(monkeypatch, (11, 22, 33))
-    w = _widget(qapp, _SeriesStub(palette=[[1, 2, 3], [4, 5, 6]]))
-
     w.list.setCurrentRow(0)
-    w._edit_selected()
-    opened = stub.execs
+    w.picker.setCurrentColor(QColor(200, 100, 50))
+    w.list.setCurrentRow(1)                            # programmatic setCurrentColor fires too
+    assert w.colors == [[200, 100, 50], [4, 5, 6]]
+    assert _rgb(w.picker.currentColor()) == [4, 5, 6]
 
-    assert not stub.static_calls, (
-        "_pick_color went back through the static QColorDialog.getColor(), "
-        "which on macOS opens the system Colors panel instead of a Qt dialog"
-    )
-    assert len(opened) == 1
-    assert opened[0]["options"] & QColorDialog.ColorDialogOption.DontUseNativeDialog
-    assert opened[0]["parent"] is w
-    assert opened[0]["currentColor"] == (1, 2, 3), (
-        "the picker did not open on the color being edited -- set "
-        "DontUseNativeDialog before seeding the color, not after"
-    )
+
+def test_revert_and_escape_put_the_swatch_back(qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor
+    from PySide6.QtTest import QTest
+    w = _widget(qapp, _SeriesStub(palette=[[1, 2, 3], [4, 5, 6]]))
+    w.list.setCurrentRow(1)
+    w.picker.setCurrentColor(QColor(99, 88, 77))
+    w._revert_current()
+    assert w.colors == [[1, 2, 3], [4, 5, 6]]
+    w.picker.setCurrentColor(QColor(9, 9, 9))
+    QTest.keyClick(w.picker, Qt.Key.Key_Escape)
+    assert w.colors == [[1, 2, 3], [4, 5, 6]]
+    assert w.picker.isVisibleTo(w), "Esc must not hide the embedded picker"
+
+
+def test_nothing_reaches_the_series_before_set(qapp):
+    from PySide6.QtGui import QColor
+    series = _SeriesStub(palette=[[1, 2, 3], [4, 5, 6]])
+    w = _widget(qapp, series)
+    w.list.setCurrentRow(0)
+    w.picker.setCurrentColor(QColor(7, 7, 7))
+    assert series.writes == []
+    assert w.accept(close=False) is True
+    w.set()
+    assert series.store["autoseg_color_palette"] == [[7, 7, 7], [4, 5, 6]]
+
+
+# --- bulk entry, copy, duplicate, undo, preview ----------------------------
+
+def test_add_colors_field_takes_hex_and_rgb_tokens(qapp):
+    w = _widget(qapp, _SeriesStub(palette=[[1, 2, 3], [4, 5, 6]]))
+    w.add_edit.setText("#1B9E77 D95F02 27,158,119 junk 300,0,0")
+    w._add_from_text()
+    assert w.colors[2:] == [[27, 158, 119], [217, 95, 2], [27, 158, 119]]
+    assert w.list.currentRow() == 4                    # the last one added is bound
+    assert "Added 3" in w.status.text() and "skipped 2" in w.status.text()
+    assert w.add_edit.text() == ""
+
+
+def test_add_with_an_empty_field_copies_the_selected_swatch(qapp):
+    w = _widget(qapp, _SeriesStub(palette=[[1, 2, 3], [4, 5, 6]]))
+    w.list.setCurrentRow(1)
+    w._add_from_text_or_copy()
+    assert w.colors == [[1, 2, 3], [4, 5, 6], [4, 5, 6]]
+
+
+def test_copy_puts_one_hex_per_line_on_the_clipboard(qapp):
+    from PySide6.QtWidgets import QApplication
+    w = _widget(qapp, _SeriesStub(palette=[[1, 2, 3], [4, 5, 6]]))
+    w._copy_palette()
+    assert QApplication.clipboard().text() == "#010203\n#040506"
+
+
+def test_remove_several_at_once_stops_at_the_floor(qapp, monkeypatch):
+    notes = []
+    monkeypatch.setattr(ape, "notify", lambda msg: notes.append(msg))
+    w = _widget(qapp, _SeriesStub(palette=[[1, 1, 1], [2, 2, 2], [3, 3, 3], [4, 4, 4]]))
+    for row in (1, 2, 3):
+        w.list.item(row).setSelected(True)
+    w.list.item(0).setSelected(False)
+    w._remove_selected()
+    assert w.colors == [[1, 1, 1], [2, 2, 2], [3, 3, 3], [4, 4, 4]] and notes
+    w.list.clearSelection()
+    for row in (1, 2):
+        w.list.item(row).setSelected(True)
+    w._remove_selected()
+    assert w.colors == [[1, 1, 1], [4, 4, 4]]
+
+
+def test_undo_steps_back_through_edits(qapp):
+    from PySide6.QtGui import QColor
+    w = _widget(qapp, _SeriesStub(palette=[[1, 2, 3], [4, 5, 6]]))
+    w.list.setCurrentRow(0)
+    w.picker.setCurrentColor(QColor(7, 7, 7))
+    w.picker.setCurrentColor(QColor(8, 8, 8))          # same swatch: one undo step
+    w._add_colors([[9, 9, 9]])
+    w._undo_last()
+    assert w.colors == [[8, 8, 8], [4, 5, 6]]
+    w._undo_last()
+    assert w.colors == [[1, 2, 3], [4, 5, 6]]
+
+
+def test_preview_strip_is_what_import_will_do(qapp):
+    custom = [[10, 0, 0], [0, 10, 0], [0, 0, 10]]
+    w = _widget(qapp, _SeriesStub(palette=custom, seed=5))
+    assert w._preview_colors() == [palette_color(i, custom, 5) for i in range(1, 17)]
+    w.seed_edit.setText("6")
+    assert w._preview_colors() == [palette_color(i, custom, 6) for i in range(1, 17)]
+
+
+def test_status_says_when_a_length_change_reassigns_every_label(qapp):
+    w = _widget(qapp, _SeriesStub(palette=[[1, 2, 3], [4, 5, 6], [7, 8, 9]]))
+    assert "3 colors" in w.status.text() and "length changed" not in w.status.text()
+    w._add_colors([[0, 0, 0]])
+    assert "Palette length changed 3 to 4" in w.status.text()
+    assert "Recolor all objects from palette" in w.status.text()
+
+
+def test_shuffle_changes_the_seed_field(qapp):
+    w = _widget(qapp, _SeriesStub(palette=[[1, 2, 3], [4, 5, 6]], seed=1))
+    w._shuffle()
+    assert w.seed_edit.text() != "1"
+    assert w.accept(close=False) is True
+
+
+def test_parse_colors_pure():
+    from PyReconstruct.modules.gui.dialog.autoseg_palette import parse_colors
+    assert parse_colors("#FFffFF; 000000\n1,2,3  nope 256,0,0") == ([[255, 255, 255], [0, 0, 0], [1, 2, 3]], 2)
+    assert parse_colors("") == ([], 0)
 
 
 if __name__ == "__main__":
