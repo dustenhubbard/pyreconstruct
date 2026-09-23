@@ -7,8 +7,8 @@ overlap. It merged whenever two or more SELECTED closed traces shared the
 tracing trace's name, so whether finishing a trace merged into the existing
 same-name trace depended on whether that trace happened to be selected --
 which differs between the pencil and point-to-point gestures. The trigger is
-now geometric: after a closed trace is drawn, it merges with every same-name
-closed trace on the section that actually overlaps it, selected or not, and
+geometric when the selection filter is disabled: after a closed trace is drawn,
+it merges with overlapping same-name closed traces, selected or not, and
 non-overlapping same-name traces are left alone (that remains the documented
 way to keep separate same-name traces).
 
@@ -62,6 +62,7 @@ def _contour(field):
 def merge_field(main_window):
     """The live field widget with the auto_merge option switched on."""
     main_window.series.setOption("auto_merge", True)
+    main_window.series.setOption("auto_merge_selected_only", False)
     field = main_window.field
     field.setTracingTrace(_tracing_trace())
     return field
@@ -135,12 +136,15 @@ def test_open_trace_is_never_a_merge_target(merge_field):
     assert sorted(t.closed for t in contour) == [False, True]
 
 
-def test_one_undo_restores_the_pre_draw_section(merge_field):
+@pytest.mark.parametrize("selected_only", [False, True])
+def test_one_undo_restores_the_pre_draw_section(merge_field, selected_only):
     """#137: the auto-merged draw is one undo step, and one redo step."""
     field = merge_field
+    field.series.setOption("auto_merge_selected_only", selected_only)
 
     _draw(field, SQ_BASE)
-    field.section.selected_traces = []
+    if not selected_only:
+        field.section.selected_traces = []
 
     before_points = [list(t.points) for t in _contour(field)]
     assert len(before_points) == 1
@@ -206,14 +210,17 @@ def _finish_poly(field, pix_points):
     field.lineRelease(override=True)
 
 
-def test_polygon_gesture_reaches_automerge(merge_field):
+@pytest.mark.parametrize("selected_only", [False, True])
+def test_polygon_gesture_reaches_automerge(merge_field, selected_only):
     """An overlapping point-to-point draw merges through the real release."""
     field = merge_field
+    field.series.setOption("auto_merge_selected_only", selected_only)
 
     _finish_poly(field, SQ_BASE)
     assert len(_contour(field)) == 1
 
-    field.section.selected_traces = []
+    if not selected_only:
+        field.section.selected_traces = []
     _finish_poly(field, SQ_OVERLAPPING)
     assert len(_contour(field)) == 1, (
         "lineRelease did not reach autoMerge for an overlapping polygon draw"
@@ -227,3 +234,51 @@ def test_polygon_gesture_leaves_disjoint_traces_alone(merge_field):
     _finish_poly(field, SQ_BASE)
     _finish_poly(field, SQ_DISJOINT)
     assert len(_contour(field)) == 2
+
+
+@pytest.mark.parametrize("selected_only", [False, True])
+@pytest.mark.parametrize("selected", [False, True])
+@pytest.mark.parametrize("overlaps", [False, True])
+def test_selection_filter_preserves_overlap_requirement(merge_field, selected_only, selected, overlaps):
+    field = merge_field
+    field.series.setOption("auto_merge_selected_only", selected_only)
+    _draw(field, SQ_BASE)
+    original = _contour(field)[0]
+    field.section.selected_traces = [original] if selected else []
+    _draw(field, SQ_OVERLAPPING if overlaps else SQ_DISJOINT)
+    should_merge = overlaps and (selected or not selected_only)
+    assert len(_contour(field)) == (1 if should_merge else 2)
+    if not should_merge:
+        assert original in _contour(field).getTraces()
+
+
+def test_selected_only_is_default(main_window):
+    assert main_window.series.getOption("auto_merge_selected_only", get_default=True) is True
+
+
+@pytest.mark.parametrize("selected_only", [False, True])
+def test_auto_merge_off_preserves_both_traces(merge_field, selected_only):
+    field = merge_field
+    field.series.setOption("auto_merge", False)
+    field.series.setOption("auto_merge_selected_only", selected_only)
+    _draw(field, SQ_BASE)
+    _draw(field, SQ_OVERLAPPING)
+    assert len(_contour(field)) == 2
+
+
+@pytest.mark.parametrize("selected_only", [False, True])
+@pytest.mark.parametrize("selected", [False, True])
+def test_pencil_release_respects_selection_filter(merge_field, selected_only, selected):
+    from PyReconstruct.modules.gui.main.field_widget_5_mouse import CLOSEDTRACE
+
+    field = merge_field
+    field.series.setOption("auto_merge_selected_only", selected_only)
+    field.series.setOption("roll_average", False)
+    _draw(field, SQ_BASE)
+    original = _contour(field)[0]
+    field.section.selected_traces = [original] if selected else []
+    field.setMouseMode(CLOSEDTRACE)
+    field.lclick = True
+    field.current_trace = list(SQ_OVERLAPPING)
+    field.pencilRelease(None)
+    assert len(_contour(field)) == (1 if selected or not selected_only else 2)

@@ -127,8 +127,15 @@ class QtProgressReporter(ProgressReporter):
         super().__init__(text, cancel, eta)
         from PyReconstruct.modules.gui.utils import getProgbar
         self._progbar = getProgbar(text=text, cancel=cancel)
+        self._finished = False
 
     def set_progress(self, percent):
+        # Each reporter belongs to one operation. Qt resets the dialog at
+        # 100%; reporting completion again from a finally block would show
+        # it a second time now that the display delay is zero.
+        if self._finished:
+            return
+        self._finished = percent >= 100
         if self.eta:
             self.note_progress(percent)
             eta = self.eta_text()

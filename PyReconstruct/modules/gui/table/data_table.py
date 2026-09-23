@@ -470,7 +470,7 @@ class DataTable(QDockWidget):
         This must be overwritten in child classes.
         """
 
-    def createTable(self):
+    def createTable(self, progress=None):
         """Create the table widget.
         
         This function is primarily involved in creating the GUI. It does not handle a significant amount of logic.
@@ -516,8 +516,15 @@ class DataTable(QDockWidget):
         self.table.verticalHeader().hide()  # no veritcal header
         
         # fill in object data
+        if progress is not None:
+            progress.setLabelText(f"Building {self.name} list...")
         for r, n in enumerate(filtered_data):
             self.setRow(n, r, resize=False)
+            if progress is not None:
+                # Keep the dialog open through sizing and menu construction.
+                percent = (r + 1) * 99 // len(filtered_data)
+                if percent != progress.value():
+                    progress.setValue(percent)
 
         # format rows and columns
         self.table.resizeColumnsToContents()

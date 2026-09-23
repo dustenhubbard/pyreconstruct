@@ -4,9 +4,11 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, 
     QWidget, 
     QInputDialog, 
-    QMenu, 
+    QMenu,
+    QApplication,
+    QProgressDialog,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QEventLoop
 
 from .data_table import DataTable
 
@@ -35,6 +37,27 @@ class SectionTableWidget(DataTable):
         self.createTable()
 
         self.show()
+
+    def createTable(self):
+        """Show feedback before preparing and populating the section list."""
+        active_window = QApplication.activeWindow()
+        progress = QProgressDialog("Preparing section list...", "", 0, 100, self.mainwindow)
+        progress.setWindowTitle("PyReconstruct")
+        progress.setCancelButton(None)
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        try:
+            progress.setValue(0)
+            progress.show()
+            QApplication.processEvents(QEventLoop.ExcludeUserInputEvents)
+            super().createTable(progress=progress)
+            progress.setValue(100)
+        finally:
+            progress.close()
+            progress.deleteLater()
+            # Return keyboard shortcuts to the window after the modal dialog.
+            if active_window is not None and active_window.isVisible():
+                active_window.activateWindow()
     
     def createMenus(self):
         """Create the menu for the trace table widget."""

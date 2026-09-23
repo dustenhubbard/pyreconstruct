@@ -178,7 +178,8 @@ class AllOptionsDialog(QDialog):
                 ("Poly", trace_mode == "poly"),
                 ("Combo", trace_mode == "combo")
             )],
-            [("check", ("Automatically merge overlapping traces", self.series.getOption("auto_merge", use_defaults)))]
+            [("check", ("Automatically merge overlapping traces", self.series.getOption("auto_merge", use_defaults))),
+             ("check", ("Only merge selected traces", self.series.getOption("auto_merge_selected_only", use_defaults)))]
         ]
         def setOption(response):
             if response[0][0][1]:
@@ -189,7 +190,13 @@ class AllOptionsDialog(QDialog):
                 new_mode = "combo"
             self.series.setOption("trace_mode", new_mode)
             self.series.setOption("auto_merge", response[1][0][1])
+            self.series.setOption("auto_merge_selected_only", response[2][0][1])
         self.addOptionWidget("trace", structure, setOption)
+        inputs = self.all_widgets["trace"].inputs
+        auto_merge = inputs[1].widget.layout().itemAt(0).widget()
+        selected_only = inputs[2].widget.layout().itemAt(0).widget()
+        selected_only.setEnabled(auto_merge.isChecked())
+        auto_merge.toggled.connect(selected_only.setEnabled)
 
         # grid
         w, h, dx, dy, nx, ny = self.series.getOption("grid", use_defaults)
