@@ -839,6 +839,12 @@ tag array in the section files, so a file written by a build with tag sets opens
 older build. An older build drops `tag_sets` on save, the same way it drops any series key
 it does not know; the tags on the traces survive.
 
+A value belongs to at most one `"one"` set. A tag is a single string on the trace, so a
+value shared by two pick-one sets could not say which set it answers, and clearing one set
+would remove the other's choice. The editor refuses such a duplicate. A file that carries one
+anyway loads with the earlier set keeping the value and the later set losing it. `"many"`
+sets may share values with any set.
+
 The reader is lenient: an entry that is not an object, a name that is blank, or a value that
 is not a string is dropped on load and the remaining sets are kept. An unknown `mode` reads
 as `"many"`.

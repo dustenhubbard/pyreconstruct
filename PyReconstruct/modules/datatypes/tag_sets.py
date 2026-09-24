@@ -27,6 +27,13 @@ Modes:
 - ``"many"``: pick many. The dialog offers the values with completion and
   still accepts typed text. This is what tags are today.
 
+A value belongs to at most one pick-one set. A tag is one plain string on
+the trace, so "shaft" cannot say whether it answers "Protrusion type" or
+"Location", and clearing one set would wipe the other's choice (found
+2026-09-23 on Kristen's vocabulary). ``add``, ``edit`` and ``renameTag``
+refuse such a duplicate; loading and merging keep the earlier set's claim and
+drop the value from the later one. Pick-many sets are free to share values.
+
 Loading is lenient on purpose. An entry that is not shaped like the example is
 dropped and the rest of the sets load, because a set is convenience vocabulary
 and the tags already on traces are the data. Losing a set costs a retype; a
@@ -79,7 +86,33 @@ class TagSets():
         for name, entry in data.items():
             normalized = self._normalize(name, entry)
             if normalized is not None:
+                self._dropClaimed(normalized)
                 self._sets[name.strip()] = normalized
+
+    def _claims(self, exclude : str = None) -> dict:
+        """value -> the pick-one set that holds it, skipping one set by name."""
+        claims = {}
+        for name, entry in self._sets.items():
+            if name == exclude or entry["mode"] != MODE_ONE:
+                continue
+            for tag in entry["tags"]:
+                claims.setdefault(tag, name)
+        return claims
+
+    def _dropClaimed(self, entry : dict, exclude : str = None):
+        """Strip from a pick-one entry the values another pick-one set holds."""
+        if entry["mode"] != MODE_ONE:
+            return
+        claims = self._claims(exclude)
+        entry["tags"] = [t for t in entry["tags"] if t not in claims]
+        entry["descriptions"] = _cleanDescriptions(entry["descriptions"], entry["tags"])
+
+    def _collides(self, mode : str, tags : list, exclude : str = None) -> bool:
+        """True if a pick-one set with these values would share one with another."""
+        if mode != MODE_ONE:
+            return False
+        claims = self._claims(exclude)
+        return any(t in claims for t in tags)
 
     @staticmethod
     def _normalize(name, entry):
@@ -177,13 +210,16 @@ class TagSets():
     # ----------------------------------------------------------------- writes
 
     def add(self, name : str, mode : str, tags : list, descriptions : dict = None) -> bool:
-        """Add a set. Refused (False) if the name is taken or unusable."""
+        """Add a set. Refused (False) if the name is taken or unusable, or a
+        pick-one set would share a value with another pick-one set."""
         if not isinstance(name, str) or not name.strip() or name.strip() in self._sets:
             return False
         if mode not in MODES:
             return False
         name = name.strip()
         tags = _cleanTags(tags)
+        if self._collides(mode, tags):
+            return False
         self._sets[name] = {
             "mode": mode,
             "tags": tags,
@@ -196,7 +232,8 @@ class TagSets():
         """Change a set in place, keeping its position in the order.
 
         Any argument left None keeps its current value. Refused (False) if the
-        set does not exist, the new name is taken, or the mode is unknown.
+        set does not exist, the new name is taken, the mode is unknown, or a
+        pick-one set would share a value with another pick-one set.
         """
         if name not in self._sets:
             return False
@@ -212,6 +249,8 @@ class TagSets():
         elif mode not in MODES:
             return False
         tags = _cleanTags(tags) if tags is not None else list(entry["tags"])
+        if self._collides(mode, tags, exclude=name):
+            return False
         if descriptions is None:
             descriptions = entry["descriptions"]
         new_entry = {
@@ -295,16 +334,22 @@ class TagSets():
 
         A set present on both sides keeps this side's mode and description text
         and gains the other side's tags, first-seen order. A set present only on
-        the other side is copied whole.
+        the other side is copied whole. A pick-one value this side already
+        claims in another set is not taken.
         """
         changed = False
         for name, theirs in other._sets.items():
             if name not in self._sets:
-                self._sets[name] = deepcopy(theirs)
+                copied = deepcopy(theirs)
+                self._dropClaimed(copied)
+                self._sets[name] = copied
                 changed = True
                 continue
             mine = self._sets[name]
             tags = _cleanTags(mine["tags"] + theirs["tags"])
+            if mine["mode"] == MODE_ONE:
+                claims = self._claims(exclude=name)
+                tags = [t for t in tags if t not in claims]
             descriptions = dict(theirs["descriptions"])
             descriptions.update(mine["descriptions"])
             descriptions = _cleanDescriptions(descriptions, tags)
@@ -323,6 +368,8 @@ class TagSets():
         if old not in entry["tags"] or not new:
             return False
         if new != old and new in entry["tags"]:
+            return False
+        if new != old and self._collides(entry["mode"], [new], exclude=name):
             return False
         entry["tags"] = [new if t == old else t for t in entry["tags"]]
         if old in entry["descriptions"]:

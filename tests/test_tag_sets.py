@@ -252,6 +252,59 @@ def test_section_edit_resolves_each_trace_from_its_own_tags(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# a value belongs to one pick-one set (his pick A, 2026-09-23)
+# ---------------------------------------------------------------------------
+LOCATION = {"mode": "one", "tags": ["shaft", "base", "neck"], "descriptions": {"shaft": "On the dendritic shaft."}}
+
+
+def test_load_keeps_the_earlier_sets_claim_and_drops_the_later_one():
+    ts = TagSets({"Protrusion type": PROTRUSION, "Location": LOCATION})
+    assert ts.tags("Protrusion type") == ["spine", "shaft", "branched"]
+    assert ts.tags("Location") == ["base", "neck"]
+    assert ts.description("Location", "shaft") == "", "the dropped value loses its description too"
+
+
+def test_load_lets_a_pick_many_set_share_a_value():
+    ts = TagSets({"Protrusion type": PROTRUSION, "Notes": {"mode": "many", "tags": ["shaft", "odd"]}})
+    assert ts.tags("Notes") == ["shaft", "odd"]
+
+
+def test_add_refuses_a_pick_one_value_another_pick_one_set_holds():
+    ts = _sets()
+    assert ts.add("Location", MODE_ONE, ["shaft", "base"]) is False
+    assert "Location" not in ts
+    assert ts.add("Location", MODE_ONE, ["on shaft", "base"]) is True
+    assert ts.add("Notes", MODE_MANY, ["shaft"]) is True, "pick many may share"
+
+
+def test_edit_refuses_the_collision_and_allows_the_sets_own_values():
+    ts = _sets()
+    ts.add("Location", MODE_ONE, ["base"])
+    assert ts.edit("Location", tags=["base", "shaft"]) is False
+    assert ts.tags("Location") == ["base"]
+    assert ts.edit("Protrusion type", tags=["spine", "shaft"]) is True, "keeping its own value is fine"
+    ts.add("Notes", MODE_MANY, ["spine"])
+    assert ts.edit("Notes", mode=MODE_ONE) is False, "turning pick many into pick one checks too"
+
+
+def test_rename_tag_refuses_a_name_another_pick_one_set_holds():
+    ts = _sets()
+    ts.add("Location", MODE_ONE, ["base"])
+    assert ts.renameTag("Location", "base", "shaft") is False
+    assert ts.renameTag("Location", "base", "on shaft") is True
+
+
+def test_merge_does_not_take_a_value_this_side_already_claims():
+    mine = TagSets({"Protrusion type": PROTRUSION, "Location": {"mode": "one", "tags": ["base"]}})
+    theirs = TagSets({"Location": {"mode": "one", "tags": ["base", "neck"]}, "Extra": {"mode": "one", "tags": ["spine", "zzz"]}})
+    # theirs loads with shaft-free Location already; add the collision by hand
+    theirs._sets["Location"]["tags"].append("shaft")
+    assert mine.merge(theirs) is True
+    assert mine.tags("Location") == ["base", "neck"], "shaft stays with Protrusion type"
+    assert mine.tags("Extra") == ["zzz"], "spine stays with Protrusion type"
+
+
+# ---------------------------------------------------------------------------
 # merge
 # ---------------------------------------------------------------------------
 def test_merge_unions_tags_keeps_my_mode_and_fills_descriptions():
