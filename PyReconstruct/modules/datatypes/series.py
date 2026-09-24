@@ -1652,8 +1652,9 @@ class Series():
     _OVERLAP_CEILING_MARGIN = 0.05
 
     @classmethod
-    def _duplicatePairs(cls, entries : list, threshold : float):
-        """Yield every pair of differently-named traces on a section that overlap.
+    def _duplicatePairs(cls, entries : list, threshold : float,
+                        cross_name_only=False):
+        """Yield every pair of traces on a section that overlap.
 
         ``entries`` is one tuple per trace,
         ``(xmin, ymin, xmax, ymax, area, name, index, trace)``, where the bounds
@@ -1662,6 +1663,11 @@ class Series():
         ``(entry_a, entry_b, ratio, points_match)`` per overlapping pair, ``a``
         before ``b`` in (name, index) order so the output does not depend on
         which order the section's contours were walked in.
+
+        ``cross_name_only`` restricts the output to pairs whose object names
+        differ. The unified duplicates scan wants both cases and leaves it False;
+        it exists because the two are genuinely different situations to a reader,
+        not because the comparison differs.
 
         Comparing across names means comparing every trace on the section with
         every other, and a dense autosegmented section carries enough traces
@@ -1699,6 +1705,8 @@ class Series():
                 entries (list): per-trace tuples, described above
                 threshold (float): the overlap ratio above which two traces
                     count as duplicates, as in Trace.overlaps
+                cross_name_only (bool): True to skip pairs that share an object
+                    name
             Yields:
                 (tuple): (entry_a, entry_b, ratio, points_match)
         """
@@ -1715,8 +1723,8 @@ class Series():
                 bxmin, bymin, bxmax, bymax, barea, bname, bindex, btrace = b
                 if bxmin > axmax + tol:
                     break  # sorted by xmin: nothing further can reach a
-                if aname == bname:
-                    continue  # same-name duplicates are deleteDuplicateTraces'
+                if cross_name_only and aname == bname:
+                    continue  # caller asked for differing names only
                 if atrace.closed != btrace.closed:
                     continue  # as in Trace.overlaps
                 if aymax + tol < bymin or bymax + tol < aymin:
@@ -1755,39 +1763,51 @@ class Series():
                 if Trace.ratioIsOverlap(ratio, threshold):
                     yield first, second, ratio, False
 
-    def findDifferentlyNamedDuplicates(self, threshold : float,
-                                       include_locked=False) -> list:
-        """Find traces that duplicate each other under two different names.
+    def findDuplicateTraces(self, threshold : float,
+                            include_locked=False) -> list:
+        """Find groups of traces that duplicate each other on a section.
 
-        The same-name case is Series.deleteDuplicateTraces, and it stays exactly
-        as it is: that comparison only ever sees traces already grouped under one
-        contour name, so two people tracing one structure under two names produce
-        a duplicate it cannot find. This scans across names instead, comparing
-        every trace on a section with every other one, and reports what it finds.
+        One scan for both cases the user thinks of as a duplicate: one shape
+        traced twice under a single object name, and one shape traced twice under
+        two names, which happens when two people trace the same structure. The
+        second is the case a per-contour comparison cannot see at all, because
+        the two traces never end up in the same ``section.contours`` entry.
 
-        Reports only; nothing is modified. Which of the two names is the right
-        one is a judgment about the data rather than something geometry can
-        settle, so this operation does not choose, and the review list it feeds
-        offers no delete. Locked objects are skipped unless ``include_locked``
-        is True, matching findPixelDustTraces and findEmptyTraces.
+        Overlapping traces are grouped rather than paired. Three traces of one
+        structure produce three overlapping pairs, and reporting them as three
+        rows asks the user to answer the same question three times; as one group
+        it is one question, which is the question "combine these into a single
+        trace, under which name?".
 
-        Overlap is decided exactly as it is for same-name duplicates, by
-        Trace.overlaps' two tests: an identical point sequence, or an overlap
-        ratio above ``threshold``. See _duplicatePairs for how the comparison is
-        kept affordable across a whole section.
+        Grouping is transitive: A overlaps B and B overlaps C puts all three in
+        one group even when A and C do not quite clear the threshold against each
+        other. That follows from what a group is for. A duplicate is a claim
+        about one structure, and a chain of overlaps is one structure.
+
+        This only scans; nothing is modified. Locked objects are skipped unless
+        ``include_locked`` is True, matching findPixelDustTraces and
+        findEmptyTraces. Overlap is decided exactly as it is for the same-name
+        pass, by Trace.overlaps' two tests: an identical point sequence, or an
+        overlap ratio above ``threshold``.
 
             Params:
                 threshold (float): the overlap ratio above which two traces
                     count as duplicates
                 include_locked (bool): True to also consider locked objects
             Returns:
-                (list): one record per pair (see _cleanupRecord), describing the
-                    first trace of the pair, with the second carried alongside
-                    under the "other_" keys, plus the measured "ratio"
+                (list): one record per group. Each carries "members" (one
+                    per-trace record, see _cleanupRecord, plus "name" and
+                    "index"), "names" (the distinct object names in the group),
+                    "keep" (the name combining would keep, see
+                    _defaultKeepName), "ratio" (the lowest measured overlap in
+                    the group) and "count". The keys the review dialog's base
+                    class reads ("name", "section", "points", "location",
+                    "area", "match", "index") describe the kept member, so a
+                    group behaves like a single record wherever it has to.
         """
-        candidates = []
+        groups = []
         for snum, section in self.enumerateSections(
-            message="Scanning for duplicates named differently...",
+            message="Scanning for duplicate traces...",
         ):
             tform = section.tform
             entries = []
@@ -1801,43 +1821,248 @@ class Series():
                     ## the untransformed polygon area, in the same coordinates
                     ## getOverlapRatio rasterizes, for the ceiling in
                     ## _duplicatePairs. Not the physical area: that is measured
-                    ## through the section transform, below, for the pairs that
-                    ## survive.
+                    ## through the section transform, below, for the traces that
+                    ## survive into a group.
                     entries.append((
                         xmin, ymin, xmax, ymax, abs(area(trace.points)),
                         cname, index, trace
                     ))
 
-            for first, second, ratio, points_match in self._duplicatePairs(
+            ## union-find over (name, index): the overlapping pairs are edges and
+            ## a group is a connected component
+            parent = {}
+
+            def find(key):
+                parent.setdefault(key, key)
+                while parent[key] != key:
+                    parent[key] = parent[parent[key]]  # path compression
+                    key = parent[key]
+                return key
+
+            def union(a, b):
+                ra, rb = find(a), find(b)
+                if ra != rb:
+                    parent[rb] = ra
+
+            traces_by_key = {}
+            ## the lowest measured overlap ratio touching each key, so a group
+            ## can report the weakest link in the chain that put it together
+            ratio_by_key = {}
+            for first, second, ratio, _points_match in self._duplicatePairs(
                 entries, threshold
             ):
-                fname, findex, ftrace = first[5], first[6], first[7]
-                sname, sindex, strace = second[5], second[6], second[7]
-                if points_match:
-                    reason = f"Point-for-point match with '{sname}'"
-                else:
-                    reason = (
-                        f"Overlap {ratio:.4g} with '{sname}' "
-                        f"(above {threshold:.4g})"
-                    )
-                record = self._cleanupRecord(
-                    fname, snum, findex, ftrace, reason=reason,
-                    area=self._traceArea(ftrace, tform),
-                )
-                other = self._cleanupRecord(
-                    sname, snum, sindex, strace, reason=reason,
-                    area=self._traceArea(strace, tform),
-                )
-                record["ratio"] = ratio
-                record["other_name"] = other["name"]
-                record["other_index"] = other["index"]
-                record["other_points"] = other["points"]
-                record["other_location"] = other["location"]
-                record["other_area"] = other["area"]
-                record["other_match"] = other["match"]
-                candidates.append(record)
+                fkey = (first[5], first[6])
+                skey = (second[5], second[6])
+                traces_by_key[fkey] = first[7]
+                traces_by_key[skey] = second[7]
+                for key in (fkey, skey):
+                    if key not in ratio_by_key or ratio < ratio_by_key[key]:
+                        ratio_by_key[key] = ratio
+                union(fkey, skey)
 
-        return candidates
+            members_by_root = {}
+            for key in traces_by_key:
+                members_by_root.setdefault(find(key), []).append(key)
+
+            for keys in members_by_root.values():
+                if len(keys) < 2:
+                    continue  # a group is two traces or more, by definition
+                keys.sort()  # (name, index): stable, independent of walk order
+                members = []
+                for cname, index in keys:
+                    trace = traces_by_key[(cname, index)]
+                    member = self._cleanupRecord(
+                        cname, snum, index, trace, reason="",
+                        area=self._traceArea(trace, tform),
+                    )
+                    members.append(member)
+                groups.append(
+                    self._duplicateGroupRecord(snum, members, ratio_by_key, keys)
+                )
+
+        return groups
+
+    @classmethod
+    def _duplicateGroupRecord(cls, snum, members, ratio_by_key, keys) -> dict:
+        """Build one group record for findDuplicateTraces.
+
+        The record doubles as a single-trace record describing the member that
+        combining would keep, so MalformedContoursDialog's navigation, export and
+        signature handling work on a group without knowing it is one.
+        """
+        names = sorted({m["name"] for m in members})
+        ratios = [ratio_by_key[k] for k in keys if k in ratio_by_key]
+        ratio = min(ratios) if ratios else 1.0
+
+        keep = cls._defaultKeepName(members)
+        kept = cls._keptMember(members, keep)
+
+        if len(names) == 1:
+            reason = (
+                f"{len(members)} traces of '{names[0]}' on this section overlap"
+            )
+        else:
+            reason = "Traced under " + ", ".join(f"'{n}'" for n in names)
+
+        record = dict(kept)  # name/section/index/points/location/area/match
+        record["reason"] = reason
+        record["members"] = members
+        record["names"] = names
+        record["names_text"] = ", ".join(names)
+        record["keep"] = keep
+        record["ratio"] = ratio
+        record["count"] = len(members)
+        record["total_area"] = sum(m.get("area", 0.0) for m in members)
+        return record
+
+    @staticmethod
+    def _defaultKeepName(members : list) -> str:
+        """The name combining keeps unless the user picks another.
+
+        The most detailed trace in the group: most points first, then the
+        alphabetically first name, then the lowest index. A duplicate pair is
+        usually one careful tracing and one rougher one, and keeping the careful
+        one loses the least. It is only a default -- which name is right is a
+        question about the data, so the review list asks.
+        """
+        best = min(
+            members,
+            key=lambda m: (-m["points"], m["name"], m["index"])
+        )
+        return best["name"]
+
+    @staticmethod
+    def _keptMember(members : list, keep : str):
+        """The member combining keeps, given the object name chosen.
+
+        The Keep column names an OBJECT, and one object can hold several traces
+        in the same group -- a contour is many traces -- so the name alone does
+        not name a trace. The most detailed trace of that object is the one
+        kept, by the same rule and for the same reason as _defaultKeepName: it
+        loses the least. Taking the first trace of the name instead would delete
+        the very trace the default was chosen for.
+
+            Params:
+                members (list): the group's member records
+                keep (str): the chosen object name, one of the group's own
+            Returns:
+                (dict) the member record to keep, or None if the name is not in
+                    the group at all
+        """
+        candidates = [m for m in members if m["name"] == keep]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda m: (-m["points"], m["index"]))
+
+    def combineDuplicateTraces(self, groups : list, series_states=None,
+                               log_event=True) -> int:
+        """Combine each group of duplicate traces into a single trace.
+
+        The group's ``keep`` name names the trace that survives; the rest of the
+        group is removed from the section, and the survivor takes on the tags of
+        every trace removed. Tags are kept because a tag on a trace is not
+        something the user asked to lose by combining it with its duplicate --
+        the same reason deleteDuplicateTraces merges them.
+
+        Traces are re-found by the ``match`` signature rather than by identity,
+        as in deleteMalformedTraces, so the sections can be reloaded from disk in
+        between the scan and this call. A member that can no longer be found is
+        skipped; a group whose kept trace has gone is left entirely alone rather
+        than half-combined.
+
+            Params:
+                groups (list): group records from findDuplicateTraces, each with
+                    a "keep" name that is one of its own "names"
+                series_states (dict): optional dict of undo states for the GUI
+                log_event (bool): True if the event should be logged
+            Returns:
+                (list): the group records actually combined, so a caller can
+                    tell which rows are gone rather than only how many
+        """
+        by_section = {}
+        for group in groups:
+            by_section.setdefault(group["section"], []).append(group)
+
+        if not by_section:
+            return []
+
+        combined = []
+        for snum, section in self.enumerateSections(
+            message="Combining duplicate traces...",
+            series_states=series_states
+        ):
+            changed = False
+            for group in by_section.get(snum, []):
+                keep = group["keep"]
+                kept_member = self._keptMember(group["members"], keep)
+                if kept_member is None:
+                    continue  # the chosen name is not in the group
+
+                ## Claim one distinct trace object per member. The signature is
+                ## color plus rounded points, which is exactly equal for the
+                ## traces this operation exists to collapse: a duplicate under
+                ## one name is point-identical by definition. Matching without
+                ## claiming handed every member the SAME first trace, which
+                ## removed one trace twice (ValueError out of Contour.remove,
+                ## mid-loop, with earlier sections already saved) and made the
+                ## kept trace its own doomed twin, so its tags went out with it.
+                claimed = []
+                kept_trace = self._findTraceBySignature(
+                    section, kept_member, claimed
+                )
+                if kept_trace is None:
+                    continue  # the survivor is gone: leave the group whole
+                claimed.append(kept_trace)
+
+                doomed = []
+                for member in group["members"]:
+                    if member is kept_member:
+                        continue
+                    trace = self._findTraceBySignature(section, member, claimed)
+                    if trace is None:
+                        continue
+                    claimed.append(trace)
+                    doomed.append(trace)
+
+                if not doomed:
+                    continue  # nothing left to combine it with
+
+                for trace in doomed:
+                    kept_trace.mergeTags(trace)
+                    section.removeTrace(trace)
+                ## the kept trace is edited in place (its tags), so the section
+                ## has to be told the contour changed for the field to redraw it
+                section.modified_contours.add(keep)
+                changed = True
+                combined.append(group)
+
+            if changed:
+                section.save()
+
+        if combined:
+            self.modified = True
+            if log_event:
+                self.addLog(None, None, "Combine duplicate traces")
+
+        return combined
+
+    @classmethod
+    def _findTraceBySignature(cls, section, record, claimed=()):
+        """The trace on a section matching a record's signature, or None.
+
+        ``claimed`` is the trace objects already matched for this group, by
+        identity. Point-identical traces share a signature, so without it two
+        members of one group resolve to the same object.
+        """
+        contour = section.contours.get(record["name"])
+        if not contour:
+            return None
+        for trace in contour:
+            if any(trace is c for c in claimed):
+                continue
+            if cls._traceMatchesSignature(trace, record["match"]):
+                return trace
+        return None
 
     def editObjectRadius(self, obj_names : list, new_rad : float, series_states=None):
         """Change the radii of all traces of an object.

@@ -2477,54 +2477,81 @@ class MainWindow(QMainWindow):
         self.field.reload()
         self.seriesModified(True)
 
-    def findDifferentlyNamedDuplicates(self):
-        """Report traces that duplicate each other under two different names.
+    def findDuplicateTraces(self):
+        """Find duplicate traces and offer to combine each group into one.
 
-        The sibling of "Remove duplicate traces...", for the case that one
-        cannot see: two people tracing the same structure give it two names, so
-        the two traces never end up in the same contour and the same-name
-        comparison never puts them side by side.
+        One entry for both cases the user thinks of as a duplicate: a structure
+        traced twice under one name, and the same traced under two names, which
+        the per-contour comparison cannot see because the two traces never land
+        in one contour. Overlapping traces are reported as groups, so a structure
+        traced three times is one row and one decision.
 
-        This reports and does not delete. Which of the two names survives is a
-        question about the data rather than about geometry, so the review list
-        opens without a delete callback and nothing in the series is touched.
+        The decision is which trace to keep, and it cannot be made from geometry:
+        two objects can carry different hosts, groups or curation. So this opens
+        a review list with a Keep drop-down per group and changes nothing until
+        the user combines.
         """
         self.saveAllData()
 
-        # the same two controls as "Remove duplicate traces...", so the pair of
-        # operations reads the same way
         structure = [
             ["Overlap threshold:", ("float", 0.95, (0, 1))],
             [("check", ("check locked traces", False))]
         ]
         response, confirmed = QuickDialog.get(
-            self, structure, "Find duplicates named differently"
+            self, structure, "Find duplicate traces"
         )
         if not confirmed:
             return
         threshold = response[0]
         include_locked = response[1][0][1]
 
-        pairs = self.series.findDifferentlyNamedDuplicates(
-            threshold, include_locked
-        )
-        if not pairs:
-            notify(
-                "No differently-named duplicate traces found at that overlap "
-                "threshold."
-            )
+        groups = self.series.findDuplicateTraces(threshold, include_locked)
+        if not groups:
+            notify("No duplicate traces found at that overlap threshold.")
             return
 
-        # review list only: no delete callback, so the dialog shows no Delete
-        # buttons and this operation cannot change the series
-        self.differently_named_duplicates_dialog = (
-            DifferentlyNamedDuplicatesDialog(
-                self,
-                pairs,
-                navigate=self.field.focusMalformedContour,
-            )
+        self.duplicate_traces_dialog = DuplicateTracesDialog(
+            self,
+            groups,
+            navigate=self.field.focusMalformedContour,
+            combine=self.combineDuplicateTraces,
         )
-        self.differently_named_duplicates_dialog.show()
+        self.duplicate_traces_dialog.show()
+
+    def combineDuplicateTraces(self, groups : list) -> list:
+        """Combine duplicate groups, as the review list's Combine buttons.
+
+        Returns the groups actually combined so the dialog drops exactly those
+        rows. A group whose traces have moved on since the scan is left whole
+        and stays listed, rather than being half-combined or silently dropped.
+
+            Params:
+                groups (list): group records from Series.findDuplicateTraces
+            Returns:
+                (list): the groups that were combined
+        """
+        if not groups:
+            return []
+
+        combined = self.series.combineDuplicateTraces(
+            groups, series_states=self.field.series_states
+        )
+        self.field.reload()
+        self.seriesModified(True)
+
+        if not combined:
+            notify(
+                "None of these groups could be combined: their traces have "
+                "changed since the scan. Run the scan again."
+            )
+        elif len(combined) < len(groups):
+            notify(
+                f"{len(combined)} of {len(groups)} groups were combined. The "
+                "rest have changed since the scan and are still listed; run "
+                "the scan again to see them as they are now."
+            )
+
+        return combined
 
     def removePixelDustTraces(self):
         """Find tiny "pixel-dust" traces and remove them through a review list.

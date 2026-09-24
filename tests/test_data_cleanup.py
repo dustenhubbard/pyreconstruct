@@ -363,12 +363,17 @@ def series_menu(qapp):
     return list(_menu_rows(return_series_menu(_Stub())))
 
 
-def test_the_clean_up_submenu_holds_the_four_operations(series_menu):
+def test_the_clean_up_submenu_holds_the_three_operations(series_menu):
+    """One Duplicates entry, not two.
+
+    The same-name and cross-name scans were two rows and are now one: to the
+    person reading the menu they are the same question, and answering it needs
+    the same review list either way.
+    """
     rows = [r for p, r in series_menu if "Clean up" in p]
 
     assert [r[0] for r in rows] == [
-        "removeduplicates_act",
-        "finddiffnamedduplicates_act",
+        "duplicates_act",
         "removepixeldust_act",
         "removeempty_act",
     ]
@@ -379,8 +384,7 @@ def test_each_clean_up_row_is_wired_to_its_own_handler(series_menu):
     from PyReconstruct.modules.gui.main.main_window import MainWindow
 
     expected = {
-        "removeduplicates_act": "deleteDuplicateTraces",
-        "finddiffnamedduplicates_act": "findDifferentlyNamedDuplicates",
+        "duplicates_act": "findDuplicateTraces",
         "removepixeldust_act": "removePixelDustTraces",
         "removeempty_act": "removeEmptyTraces",
     }
@@ -391,11 +395,17 @@ def test_each_clean_up_row_is_wired_to_its_own_handler(series_menu):
         assert hasattr(MainWindow, handler), f"{handler} missing on MainWindow"
 
 
-def test_removing_duplicates_is_reachable_only_from_the_clean_up_submenu(
-    series_menu
-):
-    """It moved into the submenu rather than being duplicated into it."""
-    rows = [(p, r) for p, r in series_menu if r[0] == "removeduplicates_act"]
+def test_duplicates_is_reachable_only_from_the_clean_up_submenu(series_menu):
+    """One entry, inside the submenu, rather than one in each place."""
+    rows = [(p, r) for p, r in series_menu if r[0] == "duplicates_act"]
 
     assert len(rows) == 1
     assert "Clean up" in rows[0][0]
+
+
+def test_the_old_two_duplicate_entries_are_gone(series_menu):
+    """The collapse has to remove them, not merely add a third alongside."""
+    acts = {r[0] for p, r in series_menu}
+
+    assert "removeduplicates_act" not in acts
+    assert "finddiffnamedduplicates_act" not in acts
