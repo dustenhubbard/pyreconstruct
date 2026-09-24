@@ -944,11 +944,12 @@ def test_teeth_tag_wiping_sentinel_is_caught(rich_series, monkeypatch):
     honest = Section.editTraceAttributes
 
     def defective(self, traces, name, color, tags, mode, add_tags=False,
-                  log_event=True):
+                  log_event=True, tag_choices=None):
         if tags is None:
             tags, add_tags = set(), False
         return honest(self, traces, name, color, tags, mode,
-                      add_tags=add_tags, log_event=log_event)
+                      add_tags=add_tags, log_event=log_event,
+                      tag_choices=tag_choices)
 
     before_tags = tags_by_object(rich_series)
     monkeypatch.setattr(Section, "editTraceAttributes", defective)
