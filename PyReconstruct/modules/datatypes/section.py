@@ -2265,9 +2265,9 @@ class Section():
             if log_event:
                 self.series.addLog(None, self.n, "Delete flag(s)")
 
-    def editTraceAttributes(self, traces : list[Trace], name : str, color : tuple, tags : set, mode : tuple, add_tags=False, log_event=True):
+    def editTraceAttributes(self, traces : list[Trace], name : str, color : tuple, tags : set, mode : tuple, add_tags=False, log_event=True, tag_choices : dict = None):
         """Change the name and/or color of a trace or set of traces.
-        
+
             Params:
                 traces (list): the list of traces to modify
                 name (str): the new name
@@ -2281,6 +2281,10 @@ class Section():
                 mode (tuple): the new fill mode for the traces
                 add_tags (bool): True if tags should be added (rather than replaced)
                 log_event (bool): true if the event should be logged
+                tag_choices (dict): the attribute dialog's pick-one answers
+                    (see TagSets.resolve). When given, each trace's tags are
+                    worked out from its own old tags, so a pick-one row the
+                    selection disagreed on leaves every trace's value alone.
         """
         for trace in traces.copy():
             # check if trace was highlighted
@@ -2297,7 +2301,11 @@ class Section():
                 new_trace.name = name
             if color is not None:
                 new_trace.color = color
-            if tags is not None:
+            if tag_choices:
+                new_trace.tags = self.series.tag_sets.resolve(
+                    trace.tags, tags, tag_choices, add_tags=add_tags
+                )
+            elif tags is not None:
                 if add_tags:
                     for tag in tags:
                         new_trace.tags.add(tag)

@@ -2272,7 +2272,8 @@ class Series():
             sections : list = None, 
             series_states=None,
             add_tags : bool = True,
-            log_event=True):
+            log_event=True,
+            tag_choices : dict = None):
         """Edit the attributes of objects.
         
             Params:
@@ -2292,6 +2293,8 @@ class Series():
                     selection whose tags it never displayed cannot ask for a
                     replacement without discarding tags the user never saw.
                 log_event (bool): True if event should be logged
+                tag_choices (dict): the attribute dialog's pick-one answers,
+                    passed through to Section.editTraceAttributes
         """
         ## Preemptively create log
         if log_event:
@@ -2339,7 +2342,8 @@ class Series():
             if traces:
                 
                 section.editTraceAttributes(
-                    traces, name, color, tags, mode, add_tags=add_tags, log_event=False
+                    traces, name, color, tags, mode, add_tags=add_tags, log_event=False,
+                    tag_choices=tag_choices,
                 )
                 
                 ## Gather new traces

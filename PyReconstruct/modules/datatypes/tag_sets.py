@@ -260,6 +260,36 @@ class TagSets():
                 result.add(value)
         return result
 
+    def resolve(self, old_tags : set, tags, choices : dict, add_tags=False) -> set:
+        """A trace's tags after the attribute dialog's whole answer.
+
+            Params:
+                old_tags (set): the trace's tags before the dialog
+                tags (set): the free Tags rows' answer: a set to replace the
+                    trace's tags (or add to them, with add_tags), or None to
+                    leave them alone
+                choices (dict): the pick-one rows' answer, as for ``apply``
+                add_tags (bool): True if ``tags`` adds instead of replacing
+            Returns:
+                (set) a NEW set; the inputs are not modified
+
+        A pick-one set answered None keeps its old value even when the free
+        rows replace everything else. That row was blank because the selection
+        disagreed, so the user saw nothing there to keep or drop, and a
+        replacement must not reach a value the dialog never displayed.
+        """
+        if tags is None:
+            result = set(old_tags)
+        elif add_tags:
+            result = set(old_tags) | set(tags)
+        else:
+            result = set(tags)
+            for name, value in choices.items():
+                entry = self._sets.get(name)
+                if value is None and entry is not None and entry["mode"] == MODE_ONE:
+                    result |= set(old_tags) & set(entry["tags"])
+        return self.apply(result, choices)
+
     def merge(self, other) -> bool:
         """Union another series' sets into this one. True if anything changed.
 

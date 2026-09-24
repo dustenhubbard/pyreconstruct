@@ -1159,14 +1159,15 @@ class FieldWidgetTrace(FieldWidgetBase):
         #     self.ztraceDialog()
         #     return
         
-        t, confirmed = TraceDialog(
+        dialog = TraceDialog(
             self,
             traces,
             tag_sets=self.series.tag_sets,
-        ).exec()
+        )
+        t, confirmed = dialog.exec()
         if not confirmed:
             return
-        
+
         name, color, tags, mode = (
             t.name, t.color, t.tags, t.fill_mode
         )
@@ -1181,7 +1182,8 @@ class FieldWidgetTrace(FieldWidgetBase):
             name=name,
             color=color,
             tags=tags,
-            mode=mode
+            mode=mode,
+            tag_choices=dialog.tag_choices,
         )
 
         return True

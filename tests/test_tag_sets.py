@@ -176,6 +176,82 @@ def test_chosen_reads_the_value_a_trace_holds():
 
 
 # ---------------------------------------------------------------------------
+# resolve: the dialog's whole answer, per trace
+# ---------------------------------------------------------------------------
+def test_resolve_replaces_the_free_tags_and_applies_the_choices():
+    ts = _sets()
+    old = {"shaft", "estimated", "mine"}
+    assert ts.resolve(old, {"partial"}, {"Protrusion type": "spine"}) == {"spine", "partial"}
+    assert old == {"shaft", "estimated", "mine"}, "the input set is not modified"
+
+
+def test_resolve_none_free_tags_leaves_them_and_still_applies_the_choices():
+    ts = _sets()
+    assert ts.resolve({"shaft", "mine"}, None, {"Protrusion type": "spine"}) == {"spine", "mine"}
+    assert ts.resolve({"shaft", "mine"}, None, {"Protrusion type": None}) == {"shaft", "mine"}
+
+
+def test_resolve_add_tags_adds_instead_of_replacing():
+    ts = _sets()
+    assert ts.resolve({"mine"}, {"partial"}, {"Protrusion type": ""}, add_tags=True) == {"mine", "partial"}
+
+
+def test_resolve_keeps_an_undisplayed_pick_one_value_through_a_replacement():
+    """The pin from the plan: a pick-one row the selection disagreed on (None)
+    must not lose its value on a trace just because the free rows were edited.
+    The dialog never showed that value, so the user could not have kept it."""
+    ts = _sets()
+    assert ts.resolve({"shaft", "old"}, {"new"}, {"Protrusion type": None}) == {"shaft", "new"}
+    assert ts.resolve({"spine", "old"}, {"new"}, {"Protrusion type": None}) == {"spine", "new"}
+
+
+def test_resolve_with_no_choices_is_the_old_contract():
+    ts = _sets()
+    assert ts.resolve({"a"}, {"b"}, {}) == {"b"}
+    assert ts.resolve({"a"}, None, {}) == {"a"}
+    assert ts.resolve({"a"}, set(), {}) == set()
+
+
+def test_section_edit_resolves_each_trace_from_its_own_tags(tmp_path):
+    """Section.editTraceAttributes with tag_choices works per trace, so two
+    traces that disagree on a pick-one set each keep their own value."""
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication(["test"])
+    from PyReconstruct.modules.datatypes import Series, Trace
+
+    fp = str(tmp_path / "shapes1.jser")
+    shutil.copyfile(FIXTURE, fp)
+    series = Series.openJser(fp)
+    series.tag_sets = _sets()
+    section = series.loadSection(min(series.sections))
+
+    a = Trace("probe", (1, 2, 3), True)
+    a.points = [(0, 0), (1, 0), (1, 1)]
+    a.tags = {"shaft", "old"}
+    b = a.copy()
+    b.tags = {"spine", "old"}
+    section.addTrace(a, log_event=False)
+    section.addTrace(b, log_event=False)
+
+    section.editTraceAttributes(
+        [a, b], None, None, {"new"}, None, log_event=False,
+        tag_choices={"Protrusion type": None},
+    )
+    got = sorted(sorted(t.tags) for t in section.contours["probe"])
+    assert got == [["new", "shaft"], ["new", "spine"]]
+
+    traces = list(section.contours["probe"])
+    section.editTraceAttributes(
+        traces, None, None, None, None, log_event=False,
+        tag_choices={"Protrusion type": "branched"},
+    )
+    got = [set(t.tags) for t in section.contours["probe"]]
+    assert got == [{"branched", "new"}, {"branched", "new"}]
+    assert got[0] is not got[1]
+    series.close()
+
+
+# ---------------------------------------------------------------------------
 # merge
 # ---------------------------------------------------------------------------
 def test_merge_unions_tags_keeps_my_mode_and_fills_descriptions():

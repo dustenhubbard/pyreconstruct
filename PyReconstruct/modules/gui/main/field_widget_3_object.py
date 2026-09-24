@@ -216,7 +216,7 @@ class FieldWidgetObject(FieldWidgetTrace):
 
         displayed_color, color_mixed = object_color_seed(self.series.data, obj_names)
 
-        response, confirmed = TraceDialog(
+        dialog = TraceDialog(
             self,
             name=displayed_name,
             color=displayed_color,
@@ -224,7 +224,8 @@ class FieldWidgetObject(FieldWidgetTrace):
             tags=tags,
             is_obj_list=True,
             tag_sets=self.series.tag_sets,
-        ).exec()
+        )
+        response, confirmed = dialog.exec()
 
         if not confirmed:
             return False
@@ -254,6 +255,7 @@ class FieldWidgetObject(FieldWidgetTrace):
             sections,
             series_states=self.series_states,
             add_tags=not tags_displayed,
+            tag_choices=dialog.tag_choices,
         )
 
         ## Decorator will not know to update new name and host trees if name is changed
