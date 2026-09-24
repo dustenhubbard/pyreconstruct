@@ -1,12 +1,14 @@
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QWidget, 
-    QDialog, 
-    QDialogButtonBox, 
-    QHBoxLayout, 
-    QLabel, 
-    QLineEdit, 
-    QVBoxLayout, 
+    QWidget,
+    QDialog,
+    QDialogButtonBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QVBoxLayout,
     QCheckBox,
+    QComboBox,
     QRadioButton
 )
 
@@ -30,15 +32,36 @@ class TraceDialog(QDialog):
             tags=None,
             is_palette=False,
             is_obj_list=False,
-            pos=None):
+            pos=None,
+            tag_sets=None):
         """Create an attribute dialog.
         
             Params:
                 parent (QWidget): the parent widget
                 traces (list): a list of traces
                 pos (tuple): the point to create the dialog
+                tag_sets (TagSets): the series' tag sets. Each pick-one set
+                    gets its own labeled dropdown; the pick-many values are
+                    offered in the Tags rows. None or empty keeps plain rows.
+
+        After exec(), ``tag_choices`` holds the pick-one rows' answer as
+        ``TagSets.apply`` reads it: set name -> value, "" for cleared, None
+        for a row the selection disagreed on and the user left alone. It is
+        empty when the series has no pick-one set. The returned trace's
+        ``tags`` is the free Tags rows' answer only, so a consumer combines
+        the two with ``TagSets.resolve``.
         """
         super().__init__(parent)
+        self.tag_sets = tag_sets
+        self.tag_choices = {}
+
+        # the pick-one sets, and every value they hold. Those values are shown
+        # in their own dropdowns and hidden from the free Tags rows, so the
+        # free rows carry only what no pick-one set governs.
+        pick_one_names = tag_sets.pickOneSets() if tag_sets is not None else []
+        pick_one_values = set()
+        for set_name in pick_one_names:
+            pick_one_values.update(tag_sets.tags(set_name))
 
         # move to desired position
         if pos:
@@ -55,6 +78,13 @@ class TraceDialog(QDialog):
         # an empty set as one empty row.
         self.tags_mixed = False
 
+        # Same distinction per pick-one set: the value to seed its dropdown
+        # with, and whether a blank seed means "the selection disagrees" (so an
+        # untouched blank is "leave alone") rather than "no value" (so a blank
+        # on OK clears the set).
+        pick_one_seed = {}
+        self.pick_one_mixed = {}
+
         # get the display values if traces have been provided
         if traces:
             trace = traces[0]
@@ -63,8 +93,12 @@ class TraceDialog(QDialog):
             ct = trace.copy()
             ct.resize(1)
             points = ct.points
-            tags = trace.tags
+            # the free part only: the pick-one values have their own rows
+            tags = trace.tags - pick_one_values
             fill_style, fill_condition = trace.fill_mode
+            for set_name in pick_one_names:
+                pick_one_seed[set_name] = tag_sets.chosen(set_name, trace.tags)
+                self.pick_one_mixed[set_name] = False
 
             # keep track of the traces passed
             self.traces = traces
@@ -72,7 +106,7 @@ class TraceDialog(QDialog):
             # only include radius for editing single palette traces
             if self.is_palette:
                 assert(len(traces) == 1)
-            
+
             for trace in traces[1:]:
                 if trace.name != name:
                     name = "*"
@@ -80,9 +114,13 @@ class TraceDialog(QDialog):
                     color = None
                 if trace.points != points:
                     points = None
-                if trace.tags != tags:
+                if trace.tags - pick_one_values != tags:
                     tags = set()
                     self.tags_mixed = True
+                for set_name in pick_one_names:
+                    if tag_sets.chosen(set_name, trace.tags) != pick_one_seed[set_name]:
+                        pick_one_seed[set_name] = ""
+                        self.pick_one_mixed[set_name] = True
                 if trace.fill_mode[0] != fill_style:
                     fill_style = None
                 if trace.fill_mode[1] != fill_condition:
@@ -95,6 +133,23 @@ class TraceDialog(QDialog):
                 # passes tags=None for a multi-object selection, which is the
                 # same "selection disagrees" case as the loop above.
                 self.tags_mixed = True
+                for set_name in pick_one_names:
+                    pick_one_seed[set_name] = ""
+                    self.pick_one_mixed[set_name] = True
+            else:
+                # The object list passes the union of an object's tags across
+                # its traces. One value of a set means the traces agree on it;
+                # two or more means they do not, so the row shows blank and
+                # an untouched OK leaves every trace's own value alone.
+                for set_name in pick_one_names:
+                    present = [t for t in tag_sets.tags(set_name) if t in tags]
+                    if len(present) == 1:
+                        pick_one_seed[set_name] = present[0]
+                        self.pick_one_mixed[set_name] = False
+                    else:
+                        pick_one_seed[set_name] = ""
+                        self.pick_one_mixed[set_name] = len(present) > 1
+                tags = set(tags) - pick_one_values
             if not tags:
                 tags = set()
             fill_style = None
@@ -129,11 +184,54 @@ class TraceDialog(QDialog):
             shape_row.addWidget(self.shape_input)
             shape_row.addStretch()
 
+        # one labeled, restricted dropdown per pick-one set, blank allowed.
+        # Seeded BEFORE the change signals are connected, so only the user can
+        # mark a row touched; a mixed row left untouched answers None.
+        self.pick_one_inputs = {}
+        self.pick_one_touched = {}
+        pick_one_rows = QVBoxLayout()
+        for set_name in pick_one_names:
+            row = QHBoxLayout()
+            row.addWidget(QLabel(self, text=f"{set_name}:"))
+            combo = QComboBox(self)
+            combo.addItem("")
+            for value in tag_sets.tags(set_name):
+                combo.addItem(value)
+                tip = tag_sets.description(set_name, value)
+                if tip:
+                    combo.setItemData(combo.count() - 1, tip, Qt.ToolTipRole)
+            combo.setCurrentText(pick_one_seed[set_name])
+            self.pick_one_touched[set_name] = False
+            combo.activated.connect(
+                lambda _, n=set_name: self.pick_one_touched.__setitem__(n, True)
+            )
+            combo.currentIndexChanged.connect(
+                lambda _, n=set_name: self.pick_one_touched.__setitem__(n, True)
+            )
+            row.addWidget(combo)
+            self.pick_one_inputs[set_name] = combo
+            pick_one_rows.addLayout(row)
+
         tags_text = QLabel(self, text="Tags:")
         # sorted because trace.tags is a set: unsorted, a tag lands on a
         # different row each time the dialog opens, so the row a user is part
         # way through editing is not the row they left off on
-        self.tags_input = MultiInput(self, sorted(tags))
+        known_tags = tag_sets.allTags() if tag_sets is not None else []
+        known_tags = [t for t in known_tags if t not in pick_one_values]
+        if known_tags:
+            # dropdown rows: every pick-many tag with completion and its
+            # description as a tooltip. Typed text outside the sets is still
+            # accepted (pick many allows user values).
+            self.tags_input = MultiInput(
+                self,
+                sorted(tags),
+                combo=True,
+                combo_items=known_tags,
+                restrict_to_opts=False,
+                combo_tooltips={t: tag_sets.describe(t) for t in known_tags},
+            )
+        else:
+            self.tags_input = MultiInput(self, sorted(tags))
 
         # created here, SEEDED after the radios below: the radios' toggled
         # handler reaches these, so they must exist before any radio flips
@@ -207,6 +305,7 @@ class TraceDialog(QDialog):
         vlayout.addLayout(name_row)
         vlayout.addLayout(color_row)
         if self.is_palette: vlayout.addLayout(shape_row)
+        if self.pick_one_inputs: vlayout.addLayout(pick_one_rows)
         vlayout.addWidget(tags_text)
         vlayout.addWidget(self.tags_input)
         vlayout.addLayout(style_row)
@@ -294,6 +393,22 @@ class TraceDialog(QDialog):
                 # would erase the tags of every selected trace.
                 tags = None
             trace.tags = tags
+
+            # pick-one rows: value, "" for cleared, None for a mixed row the
+            # user never touched. A pick-one value typed into a free Tags row
+            # stands in for a blank dropdown, so the typed word is not undone
+            # by the empty row beside it.
+            self.tag_choices = {}
+            for set_name, combo in self.pick_one_inputs.items():
+                value = combo.currentText()
+                if not value and self.pick_one_mixed[set_name] and not self.pick_one_touched[set_name]:
+                    value = None
+                if not value:
+                    for typed in self.tag_sets.tags(set_name):
+                        if tags is not None and typed in tags:
+                            value = typed
+                            break
+                self.tag_choices[set_name] = value
 
             # shape
             if self.is_palette:

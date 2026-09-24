@@ -1048,7 +1048,7 @@ class FieldWidgetTrace(FieldWidgetBase):
                 data_table = self.table_manager.hasFocus()
 
                 if isinstance(data_table, TraceTableWidget):
-                    selected_traces = data_table.getTraces(data_table.getSelected())
+                    selected_traces = data_table.getTraces(data_table.getSelected() or [])
 
                     vscroll = data_table.table.verticalScrollBar()  # track scroll bar pos
                     scroll_pos = vscroll.value()
@@ -1159,13 +1159,15 @@ class FieldWidgetTrace(FieldWidgetBase):
         #     self.ztraceDialog()
         #     return
         
-        t, confirmed = TraceDialog(
+        dialog = TraceDialog(
             self,
             traces,
-        ).exec()
+            tag_sets=self.series.tag_sets,
+        )
+        t, confirmed = dialog.exec()
         if not confirmed:
             return
-        
+
         name, color, tags, mode = (
             t.name, t.color, t.tags, t.fill_mode
         )
@@ -1180,7 +1182,8 @@ class FieldWidgetTrace(FieldWidgetBase):
             name=name,
             color=color,
             tags=tags,
-            mode=mode
+            mode=mode,
+            tag_choices=dialog.tag_choices,
         )
 
         return True
