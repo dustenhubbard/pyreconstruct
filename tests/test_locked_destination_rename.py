@@ -84,6 +84,7 @@ class _FakeTraceDialog:
 
     name = None
     is_obj_list = False
+    tag_choices = {}  # no pick-one tag sets: the callers read this after exec()
 
     def __init__(self, parent, *args, **kwargs):
         pass

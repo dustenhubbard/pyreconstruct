@@ -137,14 +137,18 @@ class PaletteButton(MoveableButton):
     
     def openDialog(self):
         """Change the attributes of a trace on the palette."""
-        t, confirmed = TraceDialog(
+        series = getattr(self.manager, "series", None)
+        tag_sets = getattr(series, "tag_sets", None)
+        dialog = TraceDialog(
             self,
             [self.trace],
-            is_palette=True
-        ).exec()
+            is_palette=True,
+            tag_sets=tag_sets,
+        )
+        t, confirmed = dialog.exec()
         if not confirmed:
             return
-        
+
         name, color, points, tags, mode, radius = (
             t.name, t.color, t.points, t.tags, t.fill_mode, t.getRadius()
         )
@@ -156,7 +160,9 @@ class PaletteButton(MoveableButton):
             original_radius = self.trace.getRadius()
             self.trace.points = points
             self.trace.resize(original_radius)
-        if tags is not None:
+        if dialog.tag_choices:
+            self.trace.tags = tag_sets.resolve(self.trace.tags, tags, dialog.tag_choices)
+        elif tags is not None:
             self.trace.tags = tags
         fill_mode = list(self.trace.fill_mode)
         style, condition = mode

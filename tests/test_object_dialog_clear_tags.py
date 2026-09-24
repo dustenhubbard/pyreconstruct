@@ -193,6 +193,7 @@ class _FakeTraceDialog:
 
     seen = None      # kwargs the object list constructed it with
     returns = None   # (tags, sections) to report as the user's input
+    tag_choices = {} # no pick-one tag sets: the object list reads this after exec()
 
     def __init__(self, parent, **kwargs):
         type(self).seen = kwargs

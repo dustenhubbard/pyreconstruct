@@ -70,8 +70,17 @@ class BrowseWidget(QWidget):
 
 class MultiInput(QWidget):
 
-    def __init__(self, parent : QWidget, entries : list = None, combo=False, combo_items : list = [], restrict_to_opts=True):
-        """Create the multi line edit widget."""
+    def __init__(self, parent : QWidget, entries : list = None, combo=False, combo_items : list = [], restrict_to_opts=True, combo_tooltips : dict = None):
+        """Create the multi line edit widget.
+
+            Params:
+                parent (QWidget): the widget that holds the field
+                entries (list): the starting rows
+                combo (bool): True for dropdown rows instead of line edits
+                combo_items (list): the options every dropdown row offers
+                restrict_to_opts (bool): True to refuse text outside the options
+                combo_tooltips (dict): option -> tooltip shown on that option
+        """
         super().__init__(parent)
         self.container = parent
         self.is_combo = combo
@@ -79,6 +88,7 @@ class MultiInput(QWidget):
         # attributes only applicable to combobox
         self.combo_items = combo_items
         self.restrict_to_opts = restrict_to_opts
+        self.combo_tooltips = combo_tooltips or {}
 
         vbl = QVBoxLayout()
         self.input_layout = QVBoxLayout()
@@ -89,7 +99,7 @@ class MultiInput(QWidget):
         self.inputs = []
         for entry in entries:
             if self.is_combo:
-                w = CompleterBox(self, self.combo_items, allow_new=(not restrict_to_opts))
+                w = self.makeCombo()
                 w.setCurrentText(entry)
             else:
                 w = QLineEdit(self, text=entry)
@@ -116,10 +126,24 @@ class MultiInput(QWidget):
 
         self.setLayout(vbl)
     
+    def makeCombo(self):
+        """One dropdown row: the options, their tooltips, blank when free text is allowed."""
+        w = CompleterBox(self, self.combo_items, allow_new=(not self.restrict_to_opts))
+        for i in range(w.count()):
+            tip = self.combo_tooltips.get(w.itemText(i))
+            if tip:
+                w.setItemData(i, tip, Qt.ToolTipRole)
+        if not self.restrict_to_opts:
+            # an editable combobox opens on its first option; a free-text row
+            # starts empty, like the line edit it replaces, so "+" does not
+            # silently propose the alphabetically first tag
+            w.setCurrentText("")
+        return w
+
     def add(self):
         """Add a line edit row to the field."""
         if self.is_combo:
-            w = CompleterBox(self, self.combo_items, allow_new=(not self.restrict_to_opts))
+            w = self.makeCombo()
         else:
             w = QLineEdit(self)
         self.input_layout.addWidget(w)
