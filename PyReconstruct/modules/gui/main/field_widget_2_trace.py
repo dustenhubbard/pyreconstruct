@@ -1048,7 +1048,7 @@ class FieldWidgetTrace(FieldWidgetBase):
                 data_table = self.table_manager.hasFocus()
 
                 if isinstance(data_table, TraceTableWidget):
-                    selected_traces = data_table.getTraces(data_table.getSelected())
+                    selected_traces = data_table.getTraces(data_table.getSelected() or [])
 
                     vscroll = data_table.table.verticalScrollBar()  # track scroll bar pos
                     scroll_pos = vscroll.value()
