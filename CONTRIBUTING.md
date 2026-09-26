@@ -1,315 +1,114 @@
 # Contributing to PyReconstruct
 
-Thanks for your interest in improving PyReconstruct! This repository is an
-independently developed and maintained distribution of PyReconstruct that tracks
-the upstream [SynapseWeb/PyReconstruct](https://github.com/SynapseWeb/PyReconstruct)
-project (developed in the Kristen Harris Lab at **The University of Texas at
-Austin**). Contributions of bug reports, fixes, features, docs, and screenshots are
-all welcome.
+Thanks for helping out. Bug reports, fixes, docs, and screenshots are all welcome.
 
-- **Found a bug or have an idea?** [Open an issue](#filing-issues).
-- **Want to write code or docs?** See [development setup](#development-setup) and
-  [branch and commit conventions](#branch-and-commit-conventions).
+This is my distribution of [SynapseWeb/PyReconstruct](https://github.com/SynapseWeb/PyReconstruct),
+the tracing and 3D reconstruction app from the Kristen Harris Lab at The University
+of Texas at Austin. Issues and pull requests for this build go here, not to SynapseWeb.
 
-By contributing, you agree that your contributions are licensed under the project's
-[GPL-3.0-or-later](LICENSE.md) license.
+By contributing, you agree that your work is licensed under
+[GPL-3.0-or-later](LICENSE.md).
 
----
+## Reporting a bug
 
-## Filing issues
+Open an [issue](https://github.com/dustenhubbard/PyReconstruct/issues). The app links
+there from **Help ▸ Report issues (GitHub)**.
 
-Open issues on this distribution's
-**[GitHub Issues](https://github.com/dustenhubbard/PyReconstruct/issues)**, which the
-in-app **Help ▸ Report issues (GitHub)** submenu also links to. Three issue
-templates are available from the "New issue" chooser:
+In that same menu, **Copy diagnostic report** gives me your version and OS in one
+paste. Then tell me what you did, what you expected, and what happened instead.
+The log from **View log file** usually saves a round trip.
 
-- **Bug report**: please include the **version or commit** you're running. Find it
-  at the top of the **Help** menu in the app (clicking it copies the commit hash to
-  your clipboard), along with your OS, Python version, steps to reproduce, and any
-  console error output.
-- **Feature request**: describe the problem you're trying to solve, not only a
-  proposed solution.
-- **Documentation request**: tell us what's missing or unclear.
+If you can share the `.jser`, that helps most of all.
 
-For a **security vulnerability**, please don't open a public issue. Report it
-privately as described in [`SECURITY.md`](SECURITY.md).
+For a feature request, tell me the problem you're trying to solve, not only the fix
+you have in mind.
 
----
+For a security problem, don't open a public issue. See [SECURITY.md](SECURITY.md).
 
-## Development setup
+## Setup
 
-PyReconstruct targets **Python 3.11** (`requires-python = ">=3.11,<3.12"`) and
-**PySide6 6.9.3**.
-
-### uv (canonical)
-
-The canonical developer setup uses [uv](https://docs.astral.sh/uv/). It reads the
-Python 3.11 pin from `pyproject.toml`, provisions the interpreter, and installs
-the exact dependency set recorded in the committed `uv.lock`:
+PyReconstruct runs on Python 3.11 and PySide6 6.9.3. I use [uv](https://docs.astral.sh/uv/):
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh   # once; or: brew install uv
 git clone https://github.com/dustenhubbard/PyReconstruct
 cd PyReconstruct
-uv sync                            # creates .venv from uv.lock (exact pinned deps)
-uv run PyReconstruct               # launch (installs PyReconstruct editable)
+uv sync
+uv run PyReconstruct
 ```
 
-`uv sync` installs PyReconstruct in editable mode into `.venv/` (git-ignored), so
-`import PyReconstruct` works with no `PYTHONPATH` fiddling. The update loop is
-`git pull` then `uv run PyReconstruct`, which re-syncs `.venv` to the lockfile
-automatically. To bump a dependency, edit its pin in `pyproject.toml` and run
-`uv lock --upgrade` (or `uv lock --upgrade-package <name>`), then commit the
-refreshed `uv.lock`. See [docs/DEV_UV.md](docs/DEV_UV.md) for the group/extra
-matrix (runtime vs. `test` extra vs. `dev` group) and the full uv reference.
+`uv sync` builds `.venv` from the committed `uv.lock`, so you get the same packages
+I do. [docs/DEV_UV.md](docs/DEV_UV.md) has the rest.
 
-### Conda environment (alternative)
-
-A conda environment named **`pyrecon_dev`** remains supported as a parallel
-workflow, created by the `Makefile` in `dev/`:
-
-```bash
-cd dev
-make env              # create the `pyrecon_dev` conda env and link the source tree
-conda activate pyrecon_dev
-```
-
-`make env` creates the environment from `dev/environment_dev.yaml` (conda-forge,
-Python 3.11, plus the runtime dependencies from `requirements.txt`) and runs
-`dev/link_shell.sh`, which puts the repository root on the environment's import
-path (so the source checkout is importable without installing) and registers the
-helper scripts in `dev/scripts/` on `PATH`.
-
-Other `Makefile` targets (run from `dev/`):
-
-| Command | What it does |
-|---|---|
-| `make help` | Show the available commands (the default target) |
-| `make env` | Create the `pyrecon_dev` environment and link the source tree |
-| `make update` | Update the environment from `environment_dev.yaml` (`--prune`) |
-| `make clean` | Remove the `pyrecon_dev` environment (alias: `make remove`) |
-
-You can change the environment name by editing `ENV_NAME` in `dev/Makefile`.
-
-### Running the app from a checkout
-
-With uv, `uv run PyReconstruct` (above) launches the app. In an activated conda
-environment, run it from the repository root instead:
-
-```bash
-python PyReconstruct/run.py
-```
-
-Either way, an editable install (`uv sync`, or a plain `pip install -e .`)
-provides the `PyReconstruct` console command (the entry point declared in
-`pyproject.toml`, `PyReconstruct.cli:main`).
-
----
+If you prefer conda, run `make env` in `dev/`, activate `pyrecon_dev`, and start
+the app with `python PyReconstruct/run.py`.
 
 ## Running the tests
 
-The test suite lives in `tests/` and runs headless. It needs a Qt platform plugin
-because a couple of tests construct a `QApplication`, so set the **offscreen**
-platform. With uv, which installs exactly what CI installs (runtime plus the `test`
-extra):
+This is what CI runs:
 
 ```bash
-QT_QPA_PLATFORM=offscreen uv run --no-default-groups --extra test python -m pytest
+QT_QPA_PLATFORM=offscreen uv run --frozen --no-default-groups --extra test python -m pytest
+uvx ruff@0.15.20 check .
 ```
 
-Or, in an activated conda environment, from the repository root:
+In a conda env, the tests run with
+`QT_QPA_PLATFORM=offscreen PYTHONPATH="$PWD" python -m pytest`.
+
+If you fix a bug, add a test for it, and check that the test fails without your fix
+before you push.
+
+Keep logic in `backend/`, `datatypes/`, and `calc/` where you can. Those import
+without a window, so they're easy to test. `gui/` should mostly be presentation.
+
+## Pull requests
+
+Please keep each PR to one change. It's easier to review and easier to revert.
+
+PRs are squash merged, so the title becomes the commit. Write it as a
+[Conventional Commit](https://www.conventionalcommits.org/) header, like
+`fix: the scale bar keeps its width after Cancel`. Branches follow the same types:
+`fix/`, `feat/`, `docs/`, `perf/`, `refactor/`, `test/`, `build/`, `ci/`, `chore/`.
+
+The body is a short paragraph. Say what someone using the app will do and see
+differently, and why. Name code only when the sentence needs it.
+
+If it changes anything on screen, add before and after screenshots. If it depends on
+timing or motion, add a short video. That's the fastest way for me to see what
+changed.
+
+### Check every place it shows up
+
+Most commands live in more than one spot. If you add or change one, check:
+
+- the menubar
+- the right-click menus on the field and in each list
+- the shortcuts dialog, if it has a shortcut
+- the Options dialog, if it has a setting
+- macOS and Windows. Test on the one you have and say which in the PR.
+
+### Changelog
+
+If your PR changes anything under `PyReconstruct/`, add a changelog entry:
 
 ```bash
-QT_QPA_PLATFORM=offscreen PYTHONPATH="$PWD" python -m pytest
-```
-
-The suite is fast and requires no display or network. `pytest.ini` restricts
-collection to `tests/` and runs quietly (`-q`). (Under `uv sync` and in an
-environment created by `make env`, the package is importable, so `PYTHONPATH` is
-redundant there, but it's needed for a bare checkout.)
-
-What the tests cover, as a representative selection (the suite has grown well
-beyond these):
-
-| Test file | Focus |
-|---|---|
-| `test_geometry.py` | Pins the combined NumPy `traceGeometry()` pass to the scalar reference geometry functions (length/area/centroid/radius) over fixed and random polygons. |
-| `test_transform.py` | The vectorized affine point map (`Transform.map` / `mapPointsArray`) against per-point `QTransform.map`, including inverted round-trips. |
-| `test_transform_qt_equivalence.py` | The Qt-free affine against the `QTransform` it replaced, bit-for-bit (map / mapPointsArray / inverted / compose / determinant) over fixtures, 550 random transforms and 400k coordinates, plus the one characterized divergence (Qt's 1e-12 fuzzy type classification). |
-| `test_qt_free_core.py` | The guarantee that `modules/constants` and `modules/datatypes` import and run (including opening a jser) with any `PySide6` import blocked and no Qt platform set. |
-| `test_perf_equivalence.py` | Broad equivalence/property suite for the performance rewrite: geometry, transforms, the `orjson` JSON wrapper (with documented `xfail` divergences), lazy Feret caching, and section lookups. |
-| `test_updater.py` | The in-app updater's pure functions (release/asset selection, version comparison, checksum parsing) with the network monkeypatched. |
-| `test_affine_align_guard.py` | Regression test: "estimate affine transform" must warn and do nothing with fewer than three matched traces. |
-| `test_edit_object_attributes.py` | Regression test: editing object attributes with `sections=None` means "all sections the object is on." |
-| `test_missing_return_guards.py` | Regression tests for missing `return`-after-guard bugs in several `main_window` actions. |
-| `test_set_series_mag.py` | Regression test: a non-positive series magnification is rejected. |
-
-Several of these are regression tests for specific fixes. When you fix a bug or
-change behavior, please add a headless test alongside it where practical.
-
----
-
-## Project layout
-
-PyReconstruct is a PySide6 desktop app. The Python package is `PyReconstruct/`:
-
-```
-PyReconstruct/
-├── run.py                  # Qt bootstrap + restart loop + frozen-build dispatch
-├── cli.py                  # `PyReconstruct` console entry point
-└── modules/
-    ├── backend/            # non-GUI logic, grouped by concern
-    │   ├── view/           #   field rendering layers (image, section, trace, zarr)
-    │   ├── volume/         #   3D mesh generation and export
-    │   ├── table/          #   data-list/table manager
-    │   ├── func/           #   transforms, imports, undo/redo state, conversions
-    │   ├── imports/        #   ImageJ ROI and other imports
-    │   ├── exports/        #   SVG / ROI export
-    │   ├── autoseg/        #   auto-segmentation conversions
-    │   ├── remote/         #   remote/example-data access
-    │   ├── threading/      #   QThreadPool worker helpers
-    │   └── updater/        #   in-app updater (release/asset/checksum logic)
-    ├── gui/                # Qt / PySide6 UI
-    │   ├── main/           #   main window, menubar, field-widget mixins, context menus
-    │   ├── dialog/         #   dialogs (options, alignment, trace, grid, flag, updater, …)
-    │   ├── palette/        #   floating tool/trace palettes and overlays
-    │   ├── popup/          #   3D scene window, about, help
-    │   ├── table/          #   the list/table widgets (object, trace, section, ztrace, flag, history)
-    │   └── utils/          #   UI helpers (notifications, progress bars, colors)
-    ├── datatypes/          # core domain model (Series, Section, Trace, Transform,
-    │                       #   Ztrace, Flag, HostTree, defaults, log, …)
-    ├── datatypes_legacy/   # readers/writers for the legacy Reconstruct XML format
-    ├── calc/               # pure numeric/geometry (quantification, polygon, Feret, …)
-    ├── constants/          # constants and small helpers (paths, repo info, websites, JSON)
-    └── assets/             # bundled data (icons/cursors, welcome series, test fixtures)
-```
-
-Top-level directories outside the package:
-
-- `tests/`: the pytest suite (see above).
-- `dev/`: developer tooling (`Makefile`, `environment_dev.yaml`, `link_shell.sh`,
-  helper `scripts/`).
-- `packaging/`: PyInstaller spec, runtime hooks, and the macOS, Windows, and Linux
-  installer build files.
-- `launch/`: clone-and-run scripts for end users.
-- `benchmarks/`: the performance harness, results, and report.
-- `manual/`: the older upstream user manual (kept for reference; superseded by
-  [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)).
-- `docs/`: this distribution's user-facing documentation.
-- `.github/`: issue templates and CI workflows.
-
-Where it's practical, keep computation and data-model logic in `backend/`,
-`datatypes/`, and `calc/` (GUI-free and testable), and keep `gui/` focused on
-presentation.
-
----
-
-## Branch and commit conventions
-
-This repository follows a lightweight, conventional workflow. (You can see it in the
-existing branch names and commit history.)
-
-### Branches
-
-Use short `type/slug` branch names, where `type` matches the change:
-
-```
-feat/…   fix/…   docs/…   perf/…   refactor/…   test/…   build/…   ci/…   chore/…
-```
-
-For example: `feat/ui-theme`, `fix/knife-small-piece`, `docs/guides`,
-`perf/object-list-virtualization`, `chore/uv-migration`.
-
-### Commits
-
-Write commit messages as [Conventional Commits](https://www.conventionalcommits.org/):
-
-```
-type(optional-scope): short summary in the imperative mood
-
-Optional body explaining what and why.
-```
-
-Examples from this repo's history: `perf(jser): 3-4x faster open & refresh on large
-autoseg series`, `feat(updater): in-app updater polish`, `docs: rewrite README and
-add CHANGELOG`.
-
-Keep messages **measured and factual**: describe the change and its rationale;
-avoid hyperbole. Don't add automated co-author or attribution trailers (for example,
-trailers crediting AI assistants) to commits or pull requests.
-
-### Pull requests
-
-- Open pull requests **against this repository** (`dustenhubbard/PyReconstruct`,
-  `main` branch), not the upstream `SynapseWeb/PyReconstruct` repository.
-- Keep a PR focused on one logical change.
-- PRs are **squash-merged**, so the **PR title becomes the squashed commit
-  subject**. Write the PR title as a Conventional Commit header. The merged commit
-  keeps the `(#N)` PR reference.
-- Make sure the test suite passes (`QT_QPA_PLATFORM=offscreen python -m pytest`) and
-  add tests for fixes and behavioral changes where practical.
-- If the PR changes anything under `PyReconstruct/`, add a changelog fragment. See
-  the next section.
-
-## Changelog entries
-
-Changes are recorded one file per change in `changelog.d/`, and collated into
-`CHANGELOG.md` when a release is assembled. **Do not edit `CHANGELOG.md`
-directly.**
-
-```sh
 python3 scripts/changelog_fragments.py new fixed
 ```
 
-That prints a path such as `changelog.d/stale-color-render-9c1f04.fixed.md` and
-writes a template into it. Put the entry in the file and commit it alongside the
-code. The category is the argument, and is one of `added`, `changed`, `fixed`,
-`removed`, matching the four headings `CHANGELOG.md` uses.
+The category is `added`, `changed`, `fixed`, or `removed`. Write the bullet in the
+file it creates and commit it with your change. Don't edit `CHANGELOG.md`.
+[changelog.d/README.md](changelog.d/README.md) shows what a good entry looks like.
 
-The file holds the markdown bullet itself, exactly as it will appear in
-`CHANGELOG.md`: a bold lead sentence naming the user-visible effect, then the
-mechanism, then the resolution, hard-wrapped at 80 columns with continuation lines
-indented by two spaces. Nothing reformats it, so multi-paragraph prose comes
-through as written. [`changelog.d/README.md`](changelog.d/README.md) has a worked
-example taken from the file.
-
-Two reasons this is a directory rather than one shared file. Nothing shares a
-file, so two PRs landing near each other cannot conflict over a `### Fixed`
-heading; and nothing is filed under a release until the release is assembled, so
-an entry written before a tag and merged after it cannot end up inside a section
-for a build that does not contain it.
-
-A PR that changes `PyReconstruct/` and records nothing gets a warning annotation
-from the `notes` workflow. It is report-only and never blocks a merge. If there is
-genuinely nothing to record, put a line in the PR body saying so and why:
+If there's nothing to record, start a line in the PR body with this:
 
 ```
-No changelog entry: internal refactor, no user-visible behavior change
+No changelog entry: internal refactor, nothing a user would notice
 ```
 
-Changes confined to `tests/` and `.github/` are exempt automatically.
+A missing entry only gets a warning and never blocks the merge. Changes that only
+touch `tests/` or `.github/` don't need one.
 
-Release assembly, which maintainers run and contributors do not:
+## Credits
 
-```sh
-python3 scripts/changelog_fragments.py list                      # what is waiting
-python3 scripts/changelog_fragments.py assemble 1.21.0 --dry-run # preview
-python3 scripts/changelog_fragments.py assemble 1.21.0           # write it
-```
-
-`WHATS_NEW.md` is a separate, curated, per-release document and is not part of
-this.
-
----
-
-## Credits and license
-
-PyReconstruct was created in the Kristen Harris Lab at **The University of Texas at
-Austin** (Michael A. Chirillo, Julian N. Falco, Michael D. Musslewhite, Larry F.
-Lindsey, and Kristen M. Harris) and introduced in *PNAS* (2025); the upstream
-project lives at [SynapseWeb/PyReconstruct](https://github.com/SynapseWeb/PyReconstruct).
-This distribution is independently developed and maintained by **Dusten Hubbard**
-(Kristen Harris Lab, **The University of Texas at Austin**). See the
-[README](README.md) for full provenance and citation details.
-
-PyReconstruct is licensed under [GPL-3.0-or-later](LICENSE.md).
+PyReconstruct was created in the Kristen Harris Lab by Michael A. Chirillo,
+Julian N. Falco, Michael D. Musslewhite, Larry F. Lindsey, and Kristen M. Harris,
+and introduced in *PNAS* (2025). The [README](README.md) has citation details.
