@@ -300,19 +300,46 @@ GENERIC_WELCOME_NOTES = (
 
 # Appended to the welcome framing only -- the one showing that greets someone
 # who has never run PyReconstruct before. The app checks for updates on its own,
-# and the switches for that (including the Beta channel) live in Series ▸
-# Options, where nothing points a newcomer at them. Saying it here is the honest
-# moment: it is the first thing the app says to them.
+# the switch for that lives in the Help menu, and the nightly build is a second
+# app (PyReconstruct Dev) rather than a channel this one can switch to. Nothing
+# else points a newcomer at any of that, so saying it here is the honest moment:
+# it is the first thing the app says to them.
 #
 # Deliberately not shown across an update -- someone updating already knows the
 # check exists, having just used it -- nor on the Help-menu re-open, where the
 # reader went looking for the notes rather than needing to be oriented. Nor on
 # an install that does not run the check at all; see ``_is_installed_app``.
-WELCOME_UPDATE_NOTE = (
+_UPDATE_CHECK_SENTENCES = (
     "PyReconstruct checks once a day for a new version and tells you when one "
-    "is out. You can turn this off under Series ▸ Options, where you can also "
-    "switch to the Beta channel to get fixes and new features sooner."
+    "is out. You can turn this off under Help ▸ Automatically check for "
+    "updates. "
 )
+
+# The stable app's note. Kept under this name for anything that imports it; the
+# dialog itself goes through ``welcome_update_note()`` so the Dev app gets its
+# own last two sentences.
+WELCOME_UPDATE_NOTE = _UPDATE_CHECK_SENTENCES + (
+    "PyReconstruct Dev is the nightly build. It installs beside this app, and "
+    "the Help menu has a link to download it."
+)
+
+WELCOME_UPDATE_NOTE_DEV = _UPDATE_CHECK_SENTENCES + (
+    "This is the nightly build. PyReconstruct, the stable app, installs beside "
+    "it, and the Help menu has a link to download it."
+)
+
+
+def welcome_update_note():
+    """The update-checks note for THIS build, decided when the dialog opens.
+
+    Reads ``app_display_name`` at call time, the way the other flavored helpers
+    do (``updater.pinned_channel``, ``menubar._other_flavor_label``), so a test
+    can flip the flavor without reloading the module.
+    """
+    from PyReconstruct.modules.datatypes.series_owner import app_display_name
+    if "Dev" in app_display_name():
+        return WELCOME_UPDATE_NOTE_DEV
+    return WELCOME_UPDATE_NOTE
 
 
 def _is_installed_app():
@@ -347,9 +374,10 @@ def _with_welcome_note(body):
     shown when the running version has no section bundled -- a first-run reader
     on such a build is exactly who most needs the orienting.
     """
+    note = welcome_update_note()
     if not body:
-        return WELCOME_UPDATE_NOTE
-    return f"{body}\n\n---\n\n{WELCOME_UPDATE_NOTE}"
+        return note
+    return f"{body}\n\n---\n\n{note}"
 
 
 def _read_whats_new():
@@ -395,7 +423,7 @@ def whats_new_content(current, last_seen=None, cap=3, text=None, on_demand=False
                          has no section at all, which under the welcome framing
                          greets rather than thanks. In the installed app under
                          the welcome framing, and only there,
-                         ``WELCOME_UPDATE_NOTE`` is appended to whichever of
+                         ``welcome_update_note()`` is appended to whichever of
                          those two bodies was built.
       * ``byline``    -- the maintainer provenance line (``MAINTAINER_BYLINE``),
                          the same on every framing; the dialog renders it once,

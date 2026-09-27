@@ -115,9 +115,13 @@ def test_first_launch_dialog_renders_the_update_checks_note(
     assert "Added the shiny new thing." in notes         # release notes still there
     assert "checks once a day" in notes                  # the app checks on its own
     assert "turn this off" in notes                      # and it can be turned off
-    assert "Beta channel" in notes                       # and there is a second channel
+    assert "nightly build" in notes                      # and there is a nightly app
+    assert "PyReconstruct Dev" in notes                  # named, so it can be found
     # the menu path survives markdown rendering into the browser, arrow and all
-    assert "Series ▸ Options" in notes
+    assert "Help ▸ Automatically check for updates" in notes
+    # the stale story: a channel switch under Series Options that no longer exists
+    assert "Beta" not in notes
+    assert "Series ▸ Options" not in notes
     # the note is an aside under the release history, not another release bullet
     assert notes.index("Added the shiny new thing.") < notes.index("checks once a day")
 
@@ -139,7 +143,7 @@ def test_running_from_source_first_launch_is_welcomed_without_the_note(
     assert "Welcome to PyReconstruct" in labels          # still welcomed
     assert "Added the shiny new thing." in notes         # still shown the notes
     assert "checks once a day" not in notes
-    assert "Beta channel" not in notes
+    assert "nightly build" not in notes
 
     main_window._whatsnew_dialog.close()
 
@@ -154,7 +158,7 @@ def test_update_dialog_does_not_render_the_note(
     assert "What's new since 1.20.3" in labels
     assert "Added the shiny new thing." in notes
     assert "checks once a day" not in notes
-    assert "Beta channel" not in notes
+    assert "nightly build" not in notes
 
     main_window._whatsnew_dialog.close()
 
@@ -175,6 +179,6 @@ def test_help_menu_reopen_does_not_render_the_note(
     assert "Welcome to PyReconstruct" not in labels
     assert "Added the shiny new thing." in notes
     assert "checks once a day" not in notes
-    assert "Beta channel" not in notes
+    assert "nightly build" not in notes
 
     main_window._whatsnew_dialog.close()
