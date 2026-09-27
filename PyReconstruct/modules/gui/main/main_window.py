@@ -843,11 +843,13 @@ class MainWindow(QMainWindow):
         thing now, so the dialog's button and this row always agree.
         """
         from PyReconstruct.modules.gui.main.first_launch import (
-            WHATSNEW_SUPPRESS_KEY, whats_new_suppressed,
+            WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT, whats_new_suppressed,
         )
         settings = QSettings(*settings_domain())
         self.togglewhatsnew_act.setChecked(
-            whats_new_suppressed(settings.value(WHATSNEW_SUPPRESS_KEY))
+            whats_new_suppressed(
+                settings.value(WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT)
+            )
         )
 
     def syncUpdateCheckToggle(self):
