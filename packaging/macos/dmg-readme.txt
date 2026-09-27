@@ -7,7 +7,8 @@ Install and open @APP_NAME@
 2. Hold the Command key and press the space bar. A search box opens.
    Type Terminal, then press Return. A window with a text prompt opens.
 
-3. Copy this entire line, including the quotation marks:
+3. Select the entire line below, including the quotation marks.
+   Hold Command and press C to copy it:
 
    xattr -dr com.apple.quarantine "/Applications/@APP_NAME@.app"
 
