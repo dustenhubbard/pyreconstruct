@@ -32,9 +32,10 @@ SEED_MARKER = "meta/settings_seeded"
 # Keys the seed must never copy between flavors, on top of meta/. The stable
 # app suppresses the What's-new startup popup, but a Dev install exists to
 # surface what changed, so inheriting the suppression silenced the popup on
-# every fresh Dev install (found 2026-08-26). Mirrors
-# WHATSNEW_SUPPRESS_KEY in gui/main/first_launch.py as a literal: constants
-# cannot import from gui.
+# every fresh Dev install (found 2026-08-26). The popup now defaults to off in
+# both flavors (WHATSNEW_SUPPRESS_DEFAULT), and the key stays unseeded so each
+# app keeps its own explicit choice. Mirrors WHATSNEW_SUPPRESS_KEY in
+# gui/main/first_launch.py as a literal: constants cannot import from gui.
 UNSEEDED_KEYS = frozenset({"suppress_whatsnew"})
 
 

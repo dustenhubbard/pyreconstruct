@@ -80,10 +80,10 @@ def test_meta_keys_are_never_copied(ini_settings):
 
 
 def test_popup_suppression_never_crosses_flavors(ini_settings):
-    """The stable app suppresses the What's-new startup popup, but a fresh Dev
-    install must come up with the popup on: Dev exists to show what changed
-    (2026-08-26). The key sits on UNSEEDED_KEYS, so the Help-menu toggle
-    starts unticked whatever the stable domain holds."""
+    """The stable app's stored popup choice never rides into a fresh Dev
+    install (2026-08-26). The key sits on UNSEEDED_KEYS, so the Dev domain
+    starts with it unset, and the Help-menu toggle shows the default
+    (WHATSNEW_SUPPRESS_DEFAULT) whatever the stable domain holds."""
     from PyReconstruct.modules.gui.main.first_launch import (
         WHATSNEW_SUPPRESS_KEY, whats_new_suppressed,
     )
