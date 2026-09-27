@@ -14,7 +14,7 @@ keeps the stable app available for everyday work.
 The updater reads GitHub Releases from the repository named in `GITHUB_REPO`
 (`PyReconstruct/modules/backend/updater/updater.py`). Both feeds skip drafts.
 Nightly also excludes the retired rolling release tagged `prerelease`.
-Neither feed offers a release from the other channel. If no nightly is
+Neither feed offers a release from the other channel. If no pre-release is
 published, Dev reports that no Nightly update is available.
 
 Selection follows GitHub's release order: `pick_release` takes the first
@@ -115,7 +115,7 @@ release does not publish to PyPI.
 also dispatch it explicitly, because a publish performed with the workflow
 token does not trigger the release event workflow.
 
-The retention helper removes published pre-releases whose base version has
+The retention helper removes published nightlies whose base version has
 been overtaken by Stable. Of the remaining nightlies, it keeps the newest
 seven. It also recognizes the retired `vX.Y.Z-beta-N` tags for cleanup of
 releases overtaken by Stable. Drafts and stable releases are excluded.

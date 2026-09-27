@@ -102,8 +102,8 @@ Update loop: `git pull`, then `uv run PyReconstruct`, which re-syncs `.venv`
 to the lockfile automatically, so pulled code runs immediately with no manual
 reinstall. You can also update from inside the app, or from the command line with
 `PyReconstruct --update` (`PyReconstruct --switch <branch>` to change branch
-first). On a source install, **Help ▸ Check for updates** reinstalls the branch
-set under **Series ▸ Options ▸ Updates** (default `main`).
+first). On a source install, **Help ▸ Check for updates** prompts for a branch,
+starting with your saved choice or `main`, then reinstalls it.
 
 <details>
 <summary>Alternative: a plain <code>venv</code> without uv</summary>
