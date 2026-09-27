@@ -15,11 +15,22 @@ name: build-installers
 # install instead of a per-commit installer rebuild (see the README's
 # developer-install section). The pytest suite still runs on every main push via
 # the separate `tests` workflow (.github/workflows/test.yml).
+#
+# Flavor: main carries packaging/FLAVOR = dev, so a build is the Dev app unless
+# the "Pick the build flavor" step removes that file. It does so for a clean
+# vX.Y.Z tag (stable by promotion, no release branch) and for a manual run
+# with flavor=stable (a stable dry run from any branch).
 
 on:
   push:
     tags: ["v*.*.*"]
   workflow_dispatch:
+    inputs:
+      flavor:
+        description: "Build flavor. stable removes packaging/FLAVOR, as a vX.Y.Z tag does."
+        type: choice
+        options: [dev, stable]
+        default: dev
 
 permissions:
   contents: write   # create / update GitHub Releases
@@ -61,6 +72,23 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0          # setuptools-scm needs full history + tags
+
+      - name: Pick the build flavor
+        # Runs before anything reads packaging/FLAVOR. A clean vX.Y.Z tag, or a
+        # manual run with flavor=stable, builds the stable app by removing the
+        # file. skip-worktree comes first because a plain delete leaves the tree
+        # dirty, and setuptools-scm then turns v1.23.0 into 1.23.1.dev0.
+        shell: bash
+        env:
+          FLAVOR_INPUT: ${{ inputs.flavor }}
+        run: |
+          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || "$FLAVOR_INPUT" == "stable" ]]; then
+            if [ -f packaging/FLAVOR ]; then
+              git update-index --skip-worktree packaging/FLAVOR
+              rm packaging/FLAVOR
+            fi
+          fi
+          echo "flavor: $(cat packaging/FLAVOR 2>/dev/null || echo stable)"
 
       - uses: actions/setup-python@v7
         with:
@@ -115,6 +143,10 @@ jobs:
               echo "::error::setuptools-scm produced a fallback version ($V) — missing tags or fetch-depth:0?"
               exit 1 ;;
           esac
+          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ && "$V" != "${GITHUB_REF_NAME#v}" ]]; then
+            echo "::error::setuptools-scm produced $V for the stable tag $GITHUB_REF_NAME; is the tree dirty?"
+            exit 1
+          fi
           echo "PYR_VERSION=$V" >> "$GITHUB_ENV"
           echo "PYR_PUBLIC=${V%%+*}" >> "$GITHUB_ENV"
 
@@ -202,6 +234,22 @@ jobs:
       - uses: actions/checkout@v7          # needed for packaging/linux/ + release notes
         with:
           fetch-depth: 0                   # full history + tags for the changelog link
+      - name: Pick the build flavor
+        # Runs before anything reads packaging/FLAVOR. A clean vX.Y.Z tag, or a
+        # manual run with flavor=stable, builds the stable app by removing the
+        # file. skip-worktree comes first because a plain delete leaves the tree
+        # dirty, and setuptools-scm then turns v1.23.0 into 1.23.1.dev0.
+        shell: bash
+        env:
+          FLAVOR_INPUT: ${{ inputs.flavor }}
+        run: |
+          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || "$FLAVOR_INPUT" == "stable" ]]; then
+            if [ -f packaging/FLAVOR ]; then
+              git update-index --skip-worktree packaging/FLAVOR
+              rm packaging/FLAVOR
+            fi
+          fi
+          echo "flavor: $(cat packaging/FLAVOR 2>/dev/null || echo stable)"
       - uses: actions/download-artifact@v7
         with:
           path: dist

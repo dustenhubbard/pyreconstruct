@@ -30,7 +30,9 @@ def test_dev_flavor_is_fully_isolated(monkeypatch):
 
 
 def test_flavor_file_marks_this_branch_dev():
-    """main carries packaging/FLAVOR=dev; the release line carries none."""
+    """main carries packaging/FLAVOR=dev. A stable build comes from the same
+    commit: build-installers.yml removes the file for a clean vX.Y.Z tag or a
+    flavor=stable dispatch (pinned in test_build_flavor_from_tag.py)."""
     import os
     here = os.path.join(os.path.dirname(__file__), "..", "packaging", "FLAVOR")
     assert open(here).read().strip() == "dev"

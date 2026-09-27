@@ -92,8 +92,9 @@ def classify_headings(text, tag_versions):
     ``tag_versions`` is a set of parsed versions. Returns a dict with:
 
       ``released``    heading names that match a tag
-      ``staged``      heading names above every tag: written, not yet cut
-      ``missing``     heading names at or below the newest tag with no tag
+      ``staged``      heading names above the newest tag that sets their bar
+                      (see below): written, not yet cut
+      ``missing``     heading names at or below that bar with no tag
       ``unparseable`` heading names that are not versions at all
 
     ``[Unreleased]`` is skipped: it is the Keep a Changelog holding area and is
@@ -101,6 +102,15 @@ def classify_headings(text, tag_versions):
     """
     result = {"released": [], "staged": [], "missing": [], "unparseable": []}
     newest_tag = max(tag_versions) if tag_versions else None
+    # A final heading is measured against the newest FINAL tag, not the newest
+    # tag of any kind. Pre-releases and nightlies are tagged from main while a
+    # stable hotfix can still be cut from an older tag, so a tag like
+    # v1.24.0.dev3 is newer than a freshly written 1.23.1 heading, and comparing
+    # against it made that heading look like a section whose tag never
+    # happened. A pre-release heading keeps the newest tag of any kind as its
+    # bar, which is what still catches an abandoned 1.20.5rc1.
+    finals = {v for v in tag_versions if not v.is_prerelease}
+    newest_final = max(finals) if finals else newest_tag
 
     for section in parse_all_sections(text):
         name = section["version"]
@@ -111,11 +121,31 @@ def classify_headings(text, tag_versions):
             result["unparseable"].append(name)
         elif parsed in tag_versions:
             result["released"].append(name)
-        elif newest_tag is not None and parsed > newest_tag:
+        elif newest_tag is not None and parsed > (
+            newest_tag if parsed.is_prerelease else newest_final
+        ):
             result["staged"].append(name)
         else:
             result["missing"].append(name)
     return result
+
+
+@pytest.mark.parametrize("heading,tags,bucket", [
+    # a stable hotfix heading written while a newer nightly is already tagged
+    ("1.23.1", ["v1.23.0", "v1.24.0.dev3"], "staged"),
+    # an abandoned pre-release is still caught once any newer tag exists
+    ("1.20.5rc1", ["v1.20.4", "v1.21.0-beta-1"], "missing"),
+    # a pre-release heading written before its own tag is cut
+    ("1.24.0b1", ["v1.23.0", "v1.24.0.dev3"], "staged"),
+    # a final heading below the newest final with no tag
+    ("1.22.9", ["v1.23.0", "v1.24.0.dev3"], "missing"),
+])
+def test_classify_headings_bar(heading, tags, bucket):
+    """Final headings are measured against the newest final tag, pre-releases
+    against the newest tag of any kind."""
+    versions = {_safe_version(_normalize_version(t)) for t in tags}
+    found = classify_headings(f"## [{heading}]\n\n- A change.\n", versions)
+    assert found[bucket] == [heading]
 
 
 @pytest.fixture(scope="module")
