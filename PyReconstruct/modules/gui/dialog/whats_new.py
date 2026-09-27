@@ -30,12 +30,15 @@ from PyReconstruct.modules.gui.main.first_launch import (
 )
 
 from PyReconstruct.modules.constants.settings_domain import (
-    SETTINGS_ORG as ORG, settings_app,
+    SETTINGS_ORG, SHARED_APP, domain_for,
 )
-# The unflavored default, kept as a module name because tests and the
-# isolation suite address the store through it; the live QSettings sites
-# below resolve through settings_app() so the Dev flavor gets its own store.
-APP = "PyReconstruct"
+# ORG/APP name the shared store, kept as module names because tests and the
+# isolation suite address the store through them. The live QSettings sites
+# below resolve through domain_for(): both What's new keys are per app, so
+# under the Dev flavor they land in the Dev app's own store, and the stable
+# app's popup state is never touched by a nightly.
+ORG = SETTINGS_ORG
+APP = SHARED_APP
 
 
 def _space_after_headings(browser, extra=10):
@@ -387,7 +390,7 @@ class WhatsNewDialog(QDialog):
         record is left alone, so a user who later re-enables the popup from the
         Help menu picks the ordinary rules back up where they stood.
         """
-        settings = self._settings if self._settings is not None else QSettings(ORG, settings_app())
+        settings = self._settings if self._settings is not None else QSettings(*domain_for(WHATSNEW_SUPPRESS_KEY))
         settings.setValue(WHATSNEW_SUPPRESS_KEY, True)
         self.accept()
 
@@ -422,7 +425,7 @@ def maybe_show_whats_new(parent, settings=None, current=None, show=None,
     once-per-version rules back intact, pending bump included.
     """
     if settings is None:
-        settings = QSettings(ORG, settings_app())
+        settings = QSettings(*domain_for(WHATSNEW_SUPPRESS_KEY, key))
     if current is None:
         current = current_version_str()
     if whats_new_suppressed(settings.value(WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT)):

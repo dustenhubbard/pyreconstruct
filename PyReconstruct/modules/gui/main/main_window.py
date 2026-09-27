@@ -13,18 +13,21 @@ from PyReconstruct.modules.backend.func.window_geometry import (
     window_geometry_is_usable,
 )
 from .status_readout import FieldStatusReadout
-from PyReconstruct.modules.constants.settings_domain import settings_domain
+from PyReconstruct.modules.constants.settings_domain import (
+    domain_for, fold_series_settings_once,
+)
 from PyReconstruct.modules.datatypes.series_owner import app_display_name
 
 
 def windowGeometrySettings():
-    """The global settings object the window geometry is saved in.
+    """The settings object the window geometry is saved in.
 
     One place rather than three inline constructors, so a test can redirect the
     geometry read/write to a scratch file without going near the developer's
-    real `KHLab/PyReconstruct` domain.
+    real `KHLab/PyReconstruct` domain. Per app: the two flavors run side by
+    side, and a shared blob would put one window exactly over the other.
     """
-    return QSettings(*settings_domain())
+    return QSettings(*domain_for("window/geometry"))
 
 
 def remappedBCProfile(current : str, profiles_dict : dict) -> str:
@@ -760,7 +763,7 @@ class MainWindow(QMainWindow):
         ``self.series.user``.
         """
         from PyReconstruct.modules.gui.main.first_launch import resolve_username
-        resolve_username(QSettings(*settings_domain()), self.series)
+        resolve_username(QSettings(*domain_for("username")), self.series)
         self.notifyNewEditor()
 
     def applyUpdateCheckDefaultStartup(self):
@@ -845,7 +848,7 @@ class MainWindow(QMainWindow):
         from PyReconstruct.modules.gui.main.first_launch import (
             WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT, whats_new_suppressed,
         )
-        settings = QSettings(*settings_domain())
+        settings = QSettings(*domain_for(WHATSNEW_SUPPRESS_KEY))
         self.togglewhatsnew_act.setChecked(
             whats_new_suppressed(
                 settings.value(WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT)
@@ -901,7 +904,7 @@ class MainWindow(QMainWindow):
         next launch, and a version already seen stays seen.
         """
         from PyReconstruct.modules.gui.main.first_launch import WHATSNEW_SUPPRESS_KEY
-        settings = QSettings(*settings_domain())
+        settings = QSettings(*domain_for(WHATSNEW_SUPPRESS_KEY))
         settings.setValue(
             WHATSNEW_SUPPRESS_KEY, self.togglewhatsnew_act.isChecked()
         )
@@ -917,12 +920,12 @@ class MainWindow(QMainWindow):
                 self,
                 "Username",
                 "Enter your username:",
-                text=QSettings(*settings_domain()).value("username", self.series.user),
+                text=QSettings(*domain_for("username")).value("username", self.series.user),
             )
             if not confirmed or not new_name:
                 return
         
-        QSettings(*settings_domain()).setValue("username", new_name)
+        QSettings(*domain_for("username")).setValue("username", new_name)
         self.series.user = new_name
 
         self.notifyNewEditor()
@@ -1100,6 +1103,7 @@ class MainWindow(QMainWindow):
         self._buildFieldAndPalette()
         self._ensureImagesAvailable()
         self._ensureSeriesCode()
+        self._foldSeriesSettings()
 
         # notify new users of any warnings
         if not first_open:
@@ -1333,7 +1337,7 @@ class MainWindow(QMainWindow):
         """Point the file explorer at the folder the series was opened from."""
         # set explorer filepath
         if not self.series.isWelcomeSeries() and self.series.jser_fp:
-            settings = QSettings(*settings_domain())
+            settings = QSettings(*domain_for("last_folder"))
             settings.setValue("last_folder", os.path.dirname(self.series.jser_fp))
 
     def _buildFieldAndPalette(self):
@@ -1377,6 +1381,22 @@ class MainWindow(QMainWindow):
             )
             if reply == QMessageBox.Yes:
                 self.srcToZarr(create_new=False)
+
+    def _foldSeriesSettings(self):
+        """Fold this series' old Dev per-series settings into the shared store.
+
+        The Dev flavor used to keep ``PyReconstruct Dev-<code>`` for
+        ``autobackup``, ``backup_dir`` and ``list_layout``; both apps now read
+        ``PyReconstruct-<code>``. Runs after the code is settled and before the
+        first per-series read (``_restoreListLayout``), so what the Dev app
+        stored is what it sees. A no-op in the stable app and once folded.
+        Never raises: a settings carry-over must not stop a series opening.
+        """
+        try:
+            if not self.series.isWelcomeSeries():
+                fold_series_settings_once(self.series.code)
+        except Exception:
+            pass
 
     def _ensureSeriesCode(self):
         """Derive the series code from the name, or ask the user for one."""
@@ -4094,7 +4114,7 @@ class MainWindow(QMainWindow):
             if not self.series.getOption("update_check_on_startup"):
                 return
             import time
-            settings = QSettings(*settings_domain())
+            settings = QSettings(*domain_for("last_update_check_epoch"))
             try:
                 last = float(settings.value("last_update_check_epoch", 0) or 0)
             except (TypeError, ValueError):

@@ -11,6 +11,11 @@ Two scopes are preserved exactly, matching the prior `QSettings` usage:
     ``"PyReconstruct-{code}"``)
   - global settings (org ``"KHLab"``, app ``"PyReconstruct"``)
 
+Both scopes are the SHARED domain (`constants/settings_domain.py`): the
+stable app and the Dev app read and write the same store, so a preference
+set in one is what the other sees. The few keys that stay per app never
+pass through here; they are raw `QSettings` sites routed by `domain_for`.
+
 Pass ``code=None`` to address the global scope; pass a series ``code`` to
 address that series' per-series scope.
 """
@@ -47,14 +52,18 @@ class QSettingsStore(SettingsStore):
     A fresh ``QSettings`` is created per operation, exactly as before.
     """
 
-    ORG = "KHLab"
+    @property
+    def ORG(self):
+        from PyReconstruct.modules.constants.settings_domain import SETTINGS_ORG
+        return SETTINGS_ORG
 
     @property
     def APP(self):
-        # flavored: "PyReconstruct Dev" carries its own store, so the two
-        # side-by-side builds never fight over stored state (agenda item 5)
-        from PyReconstruct.modules.constants.settings_domain import settings_app
-        return settings_app()
+        # the shared store, whatever flavor is running: since 2026-09-27 the
+        # two side-by-side builds hold one set of preferences, and for the
+        # stable app this name is exactly the one it always used
+        from PyReconstruct.modules.constants.settings_domain import SHARED_APP
+        return SHARED_APP
 
     def _settings(self, code: Optional[str]):
         from PySide6.QtCore import QSettings

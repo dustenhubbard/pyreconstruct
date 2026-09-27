@@ -5,7 +5,7 @@ import math
 from PySide6.QtWidgets import QWidget, QSlider
 from PySide6.QtGui import QIcon, QPixmap, QFont
 from PySide6.QtCore import QSize, Qt, QSettings
-from PyReconstruct.modules.constants.settings_domain import settings_domain
+from PyReconstruct.modules.constants.settings_domain import domain_for
 
 # Palette-visibility preferences are global (a UI choice, not per-series) and
 # persist across launches. Map each in-memory flag to its QSettings key.
@@ -15,6 +15,11 @@ PALETTE_VIS_KEYS = {
     "bc_hidden":      "palette/bc_hidden",
     "sb_hidden":      "palette/sb_hidden",
 }
+
+
+def _visibility_settings():
+    """The store the visibility flags live in (shared between the two apps)."""
+    return QSettings(*domain_for(*PALETTE_VIS_KEYS.values()))
 
 
 def load_palette_visibility(settings : QSettings) -> dict:
@@ -39,6 +44,17 @@ PALETTE_POS_GROUPS = ("mode", "trace", "inc", "bc", "sb")
 
 def _palette_pos_key(group : str, axis : str) -> str:
     return f"palette/{group}_{axis}"
+
+
+PALETTE_POS_KEYS = tuple(
+    _palette_pos_key(group, axis)
+    for group in PALETTE_POS_GROUPS for axis in ("x", "y")
+)
+
+
+def _position_settings():
+    """The store the palette positions live in (shared between the two apps)."""
+    return QSettings(*domain_for(*PALETTE_POS_KEYS))
 
 
 def load_palette_positions(settings : QSettings) -> dict:
@@ -689,20 +705,20 @@ class MousePalette():
 
     def loadVisibilityState(self):
         """Restore palette-visibility flags from the persisted preferences."""
-        for attr, value in load_palette_visibility(QSettings(*settings_domain())).items():
+        for attr, value in load_palette_visibility(_visibility_settings()).items():
             setattr(self, attr, value)
 
     def saveVisibilityState(self):
         """Persist the current palette-visibility flags so they survive a restart."""
         state = {attr: getattr(self, attr) for attr in PALETTE_VIS_KEYS}
-        save_palette_visibility(QSettings(*settings_domain()), state)
+        save_palette_visibility(_visibility_settings(), state)
         # every toggle road ends here, so this is where the View menu's
         # checkboxes learn about a change they did not make
         self.notifyVisibilityChanged()
 
     def loadPositionState(self):
         """Restore persisted palette positions over the in-memory defaults."""
-        saved = load_palette_positions(QSettings(*settings_domain()))
+        saved = load_palette_positions(_position_settings())
         for attr, value in saved.items():
             setattr(self, attr, value)
 
@@ -712,7 +728,7 @@ class MousePalette():
             f"{group}_{axis}": getattr(self, f"{group}_{axis}")
             for group in PALETTE_POS_GROUPS for axis in ("x", "y")
         }
-        save_palette_positions(QSettings(*settings_domain()), positions)
+        save_palette_positions(_position_settings(), positions)
 
     # Right-click to hide, group by group (his ask, 2026-08-26): the View
     # menu keeps every toggle, and this adds the direct road from the widget
@@ -826,7 +842,7 @@ class MousePalette():
         self.inc_x,   self.inc_y   = 0.99, 0.99
         self.bc_x,    self.bc_y    = 0.99, 0.8
         self.sb_x,    self.sb_y    = 0.01, 0.99
-        clear_palette_positions(QSettings(*settings_domain()))
+        clear_palette_positions(_position_settings())
         self.resize()
     
     def setPaletteIncMode(self, all : bool):
