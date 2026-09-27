@@ -132,9 +132,15 @@ def whats_new_due(stored, current):
     Fresh install (no stored value) or an upgrade (stored < current) -> show.
     Re-launch of a seen version, a downgrade, or an indeterminate ``current``
     version -> don't. A corrupt stored value shows once and then self-heals.
+
+    A dev release never shows it: a nightly (``1.24.0.dev20260928``) or a
+    source install of main (``1.23.1.dev5+g...``) runs ahead of the notes,
+    which are written for the stable it previews, and a build that changes
+    every day would otherwise ask every day. Nothing is recorded either, so
+    the stable that follows still gets its one showing.
     """
     cur = _safe_version(current)
-    if cur is None:
+    if cur is None or cur.is_devrelease:
         return False
     if not stored:
         return True

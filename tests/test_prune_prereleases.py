@@ -21,8 +21,9 @@ prune = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(prune)
 
 # Every same-line pre-release form the repo has used or planned:
-# PEP 440 compact (rcN / aN / bN) and dashed semver (-rc.N / -alpha.N / -beta.N),
-# including the hyphen-number spelling -beta-N (the fork's chosen beta scheme).
+# PEP 440 compact (rcN / aN / bN), dashed semver (-rc.N / -alpha.N / -beta.N,
+# including the hyphen-number spelling -beta-N the retired channel used), and
+# the dated nightlies (.devYYYYMMDD) that nightly.yml cuts from main.
 SUPERSEDED = [
     "v1.21.0rc1",
     "v1.21.0rc2",
@@ -33,6 +34,8 @@ SUPERSEDED = [
     "v1.21.0-beta-3",
     "v1.21.0a1",
     "v1.21.0b2",
+    "v1.21.0.dev20260928",
+    "v1.21.0.dev3",
 ]
 
 # Must survive: the stable itself, other version lines (stable or pre-release),
@@ -48,7 +51,9 @@ SURVIVORS = [
     "v1.20.4rc2",
     "v1.22.0rc1",
     "v1.22.0-beta-1",
+    "v1.22.0.dev20260928",
     "v1.21.10rc1",
+    "v1.21.10.dev20260928",
     "prerelease",
 ]
 

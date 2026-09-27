@@ -1,0 +1,52 @@
+# Prune nightly releases nobody should install anymore.
+#
+# Two rules, decided by scripts/prune_nightlies.py (stdlib, unit-tested):
+#   1. OVERTAKEN: a nightly whose base version is at or below the newest
+#      stable. v1.24.0.dev20260928 is a preview of 1.24.0; once v1.24.0 ships
+#      the preview has nothing left to preview.
+#   2. SUPERSEDED: of the nightlies still ahead of stable, only the newest
+#      SEVEN stay, a week of rollback room. Older ones serve nobody and
+#      clutter the releases sidebar.
+#
+# The retired vX.Y.Z-beta-N shape is still recognized for rule 1 only, so the
+# pre-releases left over from that channel go away as their stables ship.
+#
+# Runs when a release publishes and by hand. build-installers.yml also
+# dispatches it after every publish it makes, because a release created with
+# the workflow token never fires the `release: published` trigger. Deletes
+# releases and their assets, retaining Git tags as historical evidence for the
+# release-notes checks. Guardrails: only prereleases, only tags shaped
+# vX.Y.Z.devYYYYMMDD (or the old vX.Y.Z-beta-N), never drafts, never stables,
+# and nothing at all when no stable release exists.
+
+name: prune-nightlies
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Delete overtaken and superseded nightlies
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          releases=$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate \
+            --jq '.[] | select(.draft==false) | "\(.tag_name) \(.prerelease)"')
+
+          pruned=0
+          while read -r tag; do
+            [ -n "$tag" ] || continue
+            echo "pruning $tag"
+            gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes
+            pruned=$((pruned + 1))
+          done < <(python3 scripts/prune_nightlies.py <<<"$releases")
+          echo "pruned $pruned nightly release(s)"

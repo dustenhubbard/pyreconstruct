@@ -11,6 +11,7 @@ repo has tagged them:
 
   * PEP 440-normalized:  v1.21.0rc1, v1.21.0a1, v1.21.0b2
   * dashed semver:       v1.21.0-rc.1, v1.21.0-alpha.1, v1.21.0-beta.2
+  * nightlies:           v1.21.0.dev20260928 (any dev release of the line)
 
 The stable tag itself is never selected (a pre-release suffix is required),
 and tags of any other version line (v1.20.5rc1, v1.22.0rc1, v1.21.10rc1)
@@ -29,7 +30,10 @@ STABLE_RE = re.compile(r"^v(\d+\.\d+\.\d+)$")
 #   PEP 440 compact: a<N> / b<N> / rc<N>
 #   dashed semver:   -alpha / -beta / -rc, optionally followed by a number with
 #                    either a '.' or '-' separator (-beta.2 or -beta-2).
-PRERELEASE_SUFFIX = r"(?:(?:a|b|rc)\d+|-(?:alpha|beta|rc)(?:[-.]\d+)?)"
+#   nightly:         .dev<N>, the dated nightlies nightly.yml cuts
+#                    (v1.21.0.dev20260928); any dev release of the exact
+#                    X.Y.Z is superseded once that X.Y.Z ships.
+PRERELEASE_SUFFIX = r"(?:(?:a|b|rc)\d+|-(?:alpha|beta|rc)(?:[-.]\d+)?|\.dev\d+)"
 
 
 def select_superseded(stable_tag: str, tags: list[str]) -> list[str]:
