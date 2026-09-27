@@ -48,7 +48,7 @@ def test_pick_release_prerelease_falls_back_to_newest_prerelease():
 @pytest.mark.parametrize("legacy,canonical", [
     ("stable", "release"),
     ("edge", "prerelease"),
-    ("developer", "prerelease"),   # removed channel remaps to Beta (graceful degradation)
+    ("developer", "prerelease"),   # removed channel remaps to Nightly (graceful degradation)
 ])
 def test_pick_release_maps_legacy_channels(legacy, canonical):
     assert U.pick_release(RELEASES, legacy) == U.pick_release(RELEASES, canonical)
@@ -62,10 +62,10 @@ def test_pick_release_empty():
     assert U.pick_release(None, "prerelease") is None
 
 
-# ---- pick_release: removed Developer channel remaps; Beta/rolling separation -
+# ---- pick_release: removed Developer channel remaps; Nightly/rolling separation
 def test_pick_release_stored_developer_channel_behaves_like_prerelease():
     # The Developer channel was removed. A config still storing "developer" (the
-    # maintainer's, at minimum) must degrade to Beta: normalize_channel remaps it
+    # maintainer's, at minimum) must degrade to Nightly: normalize_channel remaps it
     # to "prerelease", so it takes the prerelease branch -- picking the curated
     # semver pre-release and NOT the excluded rolling tag, never erroring.
     rels = [
@@ -78,15 +78,13 @@ def test_pick_release_stored_developer_channel_behaves_like_prerelease():
 def test_pick_release_stored_developer_never_returns_rolling_tag():
     # Belt-and-suspenders: even when the ONLY prerelease-flagged release is the
     # rolling tag, a stored "developer" must never be served the rolling build
-    # that the removed channel used to serve. It gets what Beta gets, which since
-    # 2026-08-05 is the newest stable rather than nothing.
+    # that the removed channel used to serve. It gets what Nightly gets, which
+    # with no nightly published is nothing (strict feeds, 2026-09-27).
     rels = [_rel("prerelease", prerelease=True), _rel("v1.20.0")]
-    picked = U.pick_release(rels, "developer")
-    assert picked["tag_name"] == "v1.20.0"
-    assert picked["tag_name"] != U.ROLLING_TAG
+    assert U.pick_release(rels, "developer") is None
 
 def test_pick_release_prerelease_excludes_rolling_when_rolling_is_newest():
-    # rolling 'prerelease' listed FIRST (newest); Beta must still skip it and
+    # rolling 'prerelease' listed FIRST (newest); Nightly must still skip it and
     # take the curated semver rc, proving the exclusion is not ordering-luck.
     rels = [
         _rel("prerelease", prerelease=True),
@@ -103,19 +101,17 @@ def test_pick_release_prerelease_excludes_rolling_when_rolling_is_oldest():
     ]
     assert U.pick_release(rels, "prerelease")["tag_name"] == "v1.20.4-rc.1"
 
-def test_pick_release_prerelease_falls_back_to_stable_never_to_rolling():
+def test_pick_release_prerelease_offers_nothing_rather_than_rolling_or_stable():
     # The invariant this has always guarded: the rolling build must NOT be
-    # offered on Beta. That is unchanged.
+    # offered on Nightly. That is unchanged.
     #
-    # What changed on 2026-08-05: Beta now falls back to the newest STABLE
-    # release instead of returning None. This test asserted None until then, and
-    # that None was a live bug rather than a contract -- after v1.21.0 shipped
-    # and its betas were pruned, every Beta user was offered nothing, with no
-    # prompt and no error. See tests/test_beta_channel_offers_stable.py.
+    # Between 2026-08-05 and 2026-09-27 this fell back to the newest STABLE
+    # release, which suited a single install with a channel setting. With two
+    # side-by-side apps that fallback handed the Dev app the stable installer,
+    # so the feed is strict again: no nightly, no offer. See
+    # tests/test_nightly_channel_is_strict.py.
     rels = [_rel("prerelease", prerelease=True), _rel("v1.20.0")]
-    picked = U.pick_release(rels, "prerelease")
-    assert picked["tag_name"] == "v1.20.0"
-    assert picked["tag_name"] != U.ROLLING_TAG
+    assert U.pick_release(rels, "prerelease") is None
 
 
 # ---- the pinned per-build channel --------------------------------------------
@@ -132,44 +128,44 @@ def test_normalize_channel():
     assert U.normalize_channel("edge") == "prerelease"
     assert U.normalize_channel("release") == "release"
     assert U.normalize_channel("prerelease") == "prerelease"
-    # The removed Developer channel remaps to Beta so a stored "developer" option
-    # never lands on a nonexistent channel (graceful degradation).
+    # The removed Developer channel remaps to Nightly so a stored "developer"
+    # option never lands on a nonexistent channel (graceful degradation).
     assert U.normalize_channel("developer") == "prerelease"
 
 
-# ---- check_for_update: end-to-end resolution on the Beta channel -------------
-def test_check_for_update_prerelease_offers_curated_prerelease(monkeypatch):
-    # Beta resolves the newest curated semver pre-release (excluding the rolling
-    # tag) and reads it as an available update against an older local build.
+# ---- check_for_update: end-to-end resolution on the Nightly channel ----------
+def test_check_for_update_prerelease_offers_the_newest_nightly(monkeypatch):
+    # Nightly resolves the newest prerelease-flagged release (excluding the
+    # rolling tag), takes its -Dev asset, and reads it as an available update
+    # against an older local build.
     monkeypatch.setattr(II, "platform_asset_tag", lambda: "Windows-x86_64")
     monkeypatch.setattr(II, "current_version", lambda: Version("1.20.0"))
     rels = [
-        _rel("prerelease", prerelease=True, assets=["PyReconstruct-9.9.9-Windows-x86_64.exe"]),
-        _rel("v1.21.0rc1", prerelease=True, assets=["PyReconstruct-1.21.0rc1-Windows-x86_64.exe"]),
+        _rel("prerelease", prerelease=True, assets=["PyReconstruct-9.9.9-Windows-x86_64-Dev.exe"]),
+        _rel("v1.21.0rc1", prerelease=True, assets=["PyReconstruct-1.21.0rc1-Windows-x86_64-Dev.exe"]),
         _rel("v1.20.0", assets=["PyReconstruct-1.20.0-Windows-x86_64.exe"]),
     ]
     info = U.check_for_update("prerelease", releases=rels)
     assert info["release"]["tag_name"] == "v1.21.0rc1"   # NOT the rolling tag
     assert info["status"] == "newer"
 
-def test_check_for_update_never_offers_the_rolling_build_on_beta(monkeypatch):
+def test_check_for_update_never_offers_the_rolling_build_on_nightly(monkeypatch):
     # The rolling tag carries a 9.9.9 asset on purpose: if it were ever offered,
     # this test would see "newer" and a 9.9.9 asset. It must not be.
     #
-    # Beta now resolves to the newest stable instead of to nothing (changed
-    # 2026-08-05, see test_beta_channel_offers_stable.py). Here that stable is
-    # the version already installed, so the user-visible outcome is what it
-    # always was: no update on offer.
+    # With the rolling tag excluded and no nightly published, the strict feed
+    # offers nothing at all: the stable release is the OTHER app's update.
     monkeypatch.setattr(II, "platform_asset_tag", lambda: "Windows-x86_64")
     monkeypatch.setattr(II, "current_version", lambda: Version("1.20.0"))
     rels = [
-        _rel("prerelease", prerelease=True, assets=["PyReconstruct-9.9.9-Windows-x86_64.exe"]),
+        _rel("prerelease", prerelease=True, assets=["PyReconstruct-9.9.9-Windows-x86_64-Dev.exe"]),
         _rel("v1.20.0", assets=["PyReconstruct-1.20.0-Windows-x86_64.exe"]),
     ]
     info = U.check_for_update("prerelease", releases=rels)
-    assert info["release"]["tag_name"] == "v1.20.0"
-    assert info["remote_version"] == "1.20.0"
-    assert info["status"] == "same"
+    assert info["release"] is None
+    assert info["asset"] is None
+    assert info["remote_version"] is None
+    assert info["status"] == "unknown"
 
 
 # ---- pick_asset -------------------------------------------------------------
@@ -235,6 +231,8 @@ def test_pick_asset_arm64_only_release_gives_intel_mac_no_false_update():
     ("PyReconstruct-1.20.0-Windows-x86_64.exe", "1.20.0"),
     ("PyReconstruct-1.21.dev3-macOS-arm64.dmg", "1.21.dev3"),
     ("PyReconstruct-2.0.0rc1-Linux-x86_64.AppImage", "2.0.0rc1"),
+    ("PyReconstruct-1.24.0.dev20260928-macOS-arm64-Dev.dmg", "1.24.0.dev20260928"),
+    ("PyReconstruct-1.24.0.dev20260928-Windows-x86_64-Dev-Setup.exe", "1.24.0.dev20260928"),
 ])
 def test_asset_version_parses(name, ver):
     assert U.asset_version(name) == Version(ver)

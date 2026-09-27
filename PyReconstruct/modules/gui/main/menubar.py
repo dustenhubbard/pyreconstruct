@@ -467,7 +467,7 @@ def _other_flavor_label(self=None):
     from PyReconstruct.modules.datatypes.series_owner import app_display_name
     if "Dev" in app_display_name():
         return "Download PyReconstruct (stable)..."
-    return "Download PyReconstruct Dev (beta)..."
+    return "Download PyReconstruct Dev (nightly)..."
 
 
 def return_help_menu(self):

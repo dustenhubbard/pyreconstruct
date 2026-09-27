@@ -3998,9 +3998,9 @@ class MainWindow(QMainWindow):
     def openOtherFlavorPage(self):
         """Open the download page for the other build (Help menu).
 
-        The stable app points at the newest beta, the Dev app at the newest
-        stable; the URL is resolved by the updater at click time so it never
-        goes stale.
+        The stable app points at the newest nightly, the Dev app at the
+        newest stable; the URL is resolved by the updater at click time so it
+        never goes stale.
         """
         from PyReconstruct.modules.backend.updater import other_flavor_url
         self.openWebsite(other_flavor_url())
@@ -4046,10 +4046,21 @@ class MainWindow(QMainWindow):
         pool.start(worker)
 
     def _onCheckResult(self, info, channel, manual):
-        """Open the update dialog (or, for a manual check, report status)."""
+        """Open the update dialog (or, for a manual check, report status).
+
+        ``asset is None`` is the strict feed saying "nothing to offer": no
+        release on this build's channel (a Dev app before the first nightly is
+        published), or none with an installer for this platform and flavor. It
+        is not a failure, so it never reaches an error dialog; the background
+        check stays silent and the manual check says which of the two it was.
+        """
         if info["asset"] is None:
+            name = self._noteNothingToOffer(info, channel)
             if manual:
-                notify("No installer is available for your platform on this channel yet.")
+                if info.get("release"):
+                    notify(f"No installer is available for your platform on the {name} channel yet.")
+                else:
+                    notify(f"No {name} update is available for this app yet.")
             return
         if info["status"] == "same":
             if manual:
@@ -4069,8 +4080,8 @@ class MainWindow(QMainWindow):
 
         Frozen builds only, gated to once per 24h via QSettings so it never burns
         the anonymous GitHub rate limit. Any failure is swallowed — a background
-        convenience must never disrupt startup. On by default, and switchable in
-        Series > Options > Updates.
+        convenience must never disrupt startup. On by default, and switchable
+        under Help > Automatically check for updates.
 
         The stamp is written *before* the check is dispatched, deliberately: a
         check that fails has still spent the day, so a refused connection or a
@@ -4109,8 +4120,26 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    @staticmethod
+    def _noteNothingToOffer(info, channel):
+        """One log line saying why the check found nothing; returns the
+        channel's display name for the caller's own wording."""
+        from PyReconstruct.modules.backend.func.logging_setup import log_note
+        from PyReconstruct.modules.backend.updater.updater import channel_display_name
+        name = channel_display_name(channel)
+        tag = (info.get("release") or {}).get("tag_name")
+        why = (f"newest {name} release is {tag}, no installer for this platform and build"
+               if tag else f"no {name} release is published")
+        log_note(f"Update check: nothing to offer on the {name} channel ({why})")
+        return name
+
     def _onStartupCheck(self, info, channel):
-        if not (info.get("asset") and info.get("status") == "newer"):
+        if not info.get("asset"):
+            # Strict feed with nothing on this build's channel: log it, show
+            # nothing. A Dev app before the first nightly lands sits here.
+            self._noteNothingToOffer(info, channel)
+            return
+        if info.get("status") != "newer":
             return
         remote = info["remote_version"]
         if self.statusbar:
