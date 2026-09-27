@@ -70,13 +70,14 @@ at runtime rather than at startup.
   `venv`) and targets x86_64. To update, re-run `install.sh` (the in-app updater
   below is for the frozen Windows/macOS builds).
 
-The frozen Windows and macOS builds can update themselves from within the app via
-**Help ▸ Check for updates**, on the **Stable** channel (stable, tagged
-`vX.Y.Z`) or the **Beta** channel (experimental; the latest pre-release build,
-tagged `vX.Y.Z-beta-N`, e.g. `v1.21.0-beta-7`). Updates are downloaded from
-GitHub Releases and verified against a published SHA-256 checksum before they are
-applied. An optional once-per-day check on startup is available too, off by
-default.
+The frozen Windows and macOS builds update through **Help ▸ Check for updates**.
+**PyReconstruct** follows **Stable** releases (`vX.Y.Z`). **PyReconstruct Dev**
+follows **Nightly** builds (`vX.Y.Z.devYYYYMMDD`, such as
+`v1.24.0.dev20260927`). The two apps install side by side and each updates only
+from its own channel. Use the **Help** menu's download link to install the
+other app. Downloads are verified against a published SHA-256 checksum before
+installation. A once-per-day startup check is on by default; turn it off under
+**Help ▸ Automatically check for updates**.
 
 ### From source (developers)
 
@@ -101,8 +102,8 @@ Update loop: `git pull`, then `uv run PyReconstruct`, which re-syncs `.venv`
 to the lockfile automatically, so pulled code runs immediately with no manual
 reinstall. You can also update from inside the app, or from the command line with
 `PyReconstruct --update` (`PyReconstruct --switch <branch>` to change branch
-first). On a source install, **Help ▸ Check for updates** reinstalls the branch
-set under **Series ▸ Options ▸ Updates** (default `main`).
+first). On a source install, **Help ▸ Check for updates** prompts for a branch,
+starting with your saved choice or `main`, then reinstalls it.
 
 <details>
 <summary>Alternative: a plain <code>venv</code> without uv</summary>
@@ -179,7 +180,7 @@ What this distribution adds over upstream, all in the current stable release:
   Silicon *and* Intel builds, on an updated 3D stack: vtk 9.4.2 + vedo 2025.5.4),
   and Linux, built in CI.
 - **In-app updater** that updates the frozen Windows/macOS builds from GitHub
-  Releases, on a stable or beta channel and verified by checksum (see
+  Releases, on the Stable or Nightly channel and verified by checksum (see
   [Install](#install)).
 - **3–4× faster large-series open & refresh**: the performance work above, with
   verified geometry equivalence.
