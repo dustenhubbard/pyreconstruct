@@ -402,3 +402,48 @@ def test_per_series_fold_preserves_existing_layout(ini_settings):
 
     assert fold_series_settings_once("SER1", flavored=dev, shared=shared) is False
     assert shared.value("list_layout") == '{}'
+
+
+@pytest.mark.parametrize("scope", ["global", "series"])
+def test_failed_shared_write_retries_on_next_process(tmp_path, scope):
+    """A durable Dev marker must never outlive a failed shared-store write."""
+    import json
+    import subprocess
+    import sys
+
+    # These subprocesses use only explicit INI files inside tmp_path. They
+    # cannot touch the application's native preference stores.
+    script = '''
+import json
+import sys
+from PySide6.QtCore import QSettings
+from PyReconstruct.modules.constants.settings_domain import (
+    FOLD_MARKER, fold_flavor_settings_once, fold_series_settings_once,
+)
+dev = QSettings(sys.argv[1], QSettings.IniFormat)
+shared = QSettings(sys.argv[2], QSettings.IniFormat)
+if not dev.contains("backup_dir"):
+    dev.setValue("backup_dir", "/dev/backups")
+    dev.sync()
+if sys.argv[3] == "global":
+    fold_flavor_settings_once(flavored=dev, shared=shared)
+else:
+    fold_series_settings_once("SER1", flavored=dev, shared=shared)
+print(json.dumps({
+    "marked": dev.contains(FOLD_MARKER),
+    "status": shared.status().value,
+    "backup_dir": shared.value("backup_dir"),
+}))
+'''
+    blocked_parent = tmp_path / "blocked"
+    blocked_parent.write_text("not a directory")
+    args = [sys.executable, "-c", script, str(tmp_path / "dev.ini"),
+            str(blocked_parent / "shared.ini"), scope]
+    failed = json.loads(subprocess.check_output(args, text=True))
+    assert failed["status"] != 0
+    assert failed["marked"] is False
+
+    blocked_parent.unlink()
+    blocked_parent.mkdir()
+    retried = json.loads(subprocess.check_output(args, text=True))
+    assert retried == {"marked": True, "status": 0, "backup_dir": "/dev/backups"}

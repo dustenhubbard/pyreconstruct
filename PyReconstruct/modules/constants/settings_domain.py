@@ -166,7 +166,12 @@ def _fold(flavored, shared, mark_always, validate_list_layout=False):
         shared.setValue(key, value)
         copied.append(key)
     if copied:
+        from PySide6.QtCore import QSettings
         shared.sync()
+        if shared.status() != QSettings.NoError:
+            # Leave the Dev domain unmarked so a later launch can retry
+            # when the shared store is writable again.
+            return []
     if copied or mark_always:
         flavored.setValue(FOLD_MARKER, True)
         flavored.sync()
