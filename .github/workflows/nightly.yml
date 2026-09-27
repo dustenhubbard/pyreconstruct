@@ -1,0 +1,136 @@
+name: nightly
+
+# The nightly release train. Once a day, if main has moved since the last
+# release on either channel, tag main's HEAD as tonight's nightly and hand the
+# tag to build-installers.yml, which builds the Dev flavor and publishes it as
+# a GitHub pre-release. Stable stays a promotion: a clean vX.Y.Z tag on main,
+# cut by hand (see build-installers.yml).
+#
+# Tag shape: vX.Y.Z.devYYYYMMDD, a PEP 440 dev release of the NEXT stable, so
+# v1.24.0.dev20260928 sorts above v1.23.0 and below the v1.24.0 that will
+# replace it. X.Y.Z is the newest stable with the minor bumped, or the
+# `version` input for a planned major or a patch line. At most one nightly a
+# day: a second run on the same date finds its tag already there and stops.
+#
+# Why this pushes the tag AND dispatches the build, rather than letting the
+# tag push trigger build-installers.yml on its own: GitHub does not create a
+# workflow run for an event caused by the workflow's own GITHUB_TOKEN, and the
+# only exceptions to that rule are workflow_dispatch and repository_dispatch
+# (docs: "Automatic token authentication", the GITHUB_TOKEN section). So the
+# push below is invisible to the `push: tags:` trigger, and the build has to be
+# dispatched by name on the tag ref. build-installers.yml reads the ref name
+# either way, so the dispatched run is the same build a hand-pushed tag gets.
+#
+# Every skip is a green run with a notice, not a failure: a quiet day on main
+# is the normal case, and a red badge for it would train everyone to ignore
+# the badge.
+#
+# Actions are pinned to full commit SHAs, as in test.yml; the version rides in
+# the trailing comment.
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # 06:00 UTC, after the US workday and before the EU one
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Base version X.Y.Z for tonight's tag. Blank means the newest stable with the minor bumped."
+        required: false
+        default: ""
+
+permissions:
+  contents: write   # push the nightly tag
+  actions: write    # dispatch build-installers.yml on that tag
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0     # every tag and the full history behind them
+          fetch-tags: true
+
+      - name: Pick tonight's tag
+        # Decides the tag and whether there is anything to build. Writes an
+        # empty `tag` output on a skip, which the next step reads as "stop".
+        id: pick
+        shell: bash
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          STABLE_RE='^v[0-9]+\.[0-9]+\.[0-9]+$'
+          NIGHTLY_RE='^v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]{8}$'
+
+          newest_stable="$(git tag --list 'v*' | grep -E "$STABLE_RE" | sort -V | tail -n 1 || true)"
+          if [ -z "$newest_stable" ]; then
+            echo "::error::no stable vX.Y.Z tag found; the nightly base version comes from one"
+            exit 1
+          fi
+
+          # Newest nightly by its date field, then by version for a same-day
+          # tie across base versions.
+          newest_nightly="$(git tag --list 'v*' | grep -E "$NIGHTLY_RE" \
+            | awk -F'[.]dev' '{ print $2, $0 }' | sort -k1,1n -k2,2V | tail -n 1 | cut -d' ' -f2 || true)"
+
+          if [ -n "$VERSION_INPUT" ]; then
+            base="${VERSION_INPUT#v}"
+            if ! [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::version must be X.Y.Z, got '$VERSION_INPUT'"
+              exit 1
+            fi
+          else
+            IFS=. read -r major minor _patch <<<"${newest_stable#v}"
+            base="$major.$((minor + 1)).0"
+          fi
+
+          today="$(date -u +%Y%m%d)"
+          tag="v${base}.dev${today}"
+          echo "newest stable:  $newest_stable"
+          echo "newest nightly: ${newest_nightly:-none}"
+          echo "tonight's tag:  $tag"
+
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "::notice::$tag already exists; one nightly a day"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Nothing new since the last release on either channel. Checking
+          # both tags and skipping if EITHER already contains HEAD is the same
+          # as checking "whichever is newer" without having to decide which
+          # that is: a stable cut from a hotfix branch is not an ancestor of
+          # main, so only the nightly can match; a stable cut from main today
+          # matches on its own.
+          for prev in $newest_stable $newest_nightly; do
+            if [ "$(git rev-list --count "$prev..HEAD")" -eq 0 ]; then
+              echo "::notice::main has no commits since $prev; no nightly tonight"
+              echo "tag=" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Tag main and dispatch the build
+        if: steps.pick.outputs.tag != ''
+        shell: bash
+        env:
+          TAG: ${{ steps.pick.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Nightly build $TAG from main $(git rev-parse --short HEAD)"
+          git push origin "refs/tags/$TAG"
+          # The push above never fires build-installers.yml's tag trigger (see
+          # the header), so run it by name on the new tag.
+          gh workflow run build-installers.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+          echo "::notice::tagged $TAG and dispatched build-installers.yml on it"
