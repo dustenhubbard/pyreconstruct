@@ -6,211 +6,258 @@ full release notes on GitHub (linked from the dialog).
 
 ## [Unreleased]
 
-## [1.23.0-beta-6] - 2026-09-23
+## [1.23.0] - 2026-09-27
 
 #### New
 
-- **The scissors tool has a keyboard shortcut: Shift+K.** Change it in Help ▸ Shortcuts list if
-  another key suits you better.
-- **Align by correlation has a remappable shortcut.** Change it in Help ▸ Shortcuts list if the
-  default conflicts with another app, such as 1Password.
+- **Double-click a `.jser` file to open it in PyReconstruct.** This works on Windows, macOS, and
+  Linux once this version is installed, and the command line takes the path directly:
+  `pyreconstruct series.jser`.
+- **Hide the lists with one click.** Use the sidebar button in the status bar, View ▸ Show/hide
+  lists, or Cmd+Option+S (Ctrl+Alt+S on Windows and Linux), and the same toggle brings them back.
+- **The status bar has clickable buttons.** Section, alignment, and B/C profile open their menus
+  where you clicked, and the alignment and B/C profile menus can create a new entry.
+- **Series ▸ Clean up can repair self-crossing traces.** It removes the small autoseg spikes that
+  block the knife and lists true figure 8s so you can fix them with the scissors.
+- **Choose what the trace hover shows.** Series ▸ Options ▸ View picks which object data appears,
+  and in what order, for each series.
+- **Pin the scale bar to a length in microns.** In Series ▸ Options ▸ View, a new sizing mode keeps
+  the bar at a fixed µm length as you zoom, and the size slider previews on the field as you move it.
+- **New and remappable shortcuts.** Shift+K picks the scissors and Cmd+Shift+R (Ctrl+Shift+R on
+  Windows and Linux) smooths the selected traces. Align by correlation and the focus-mode edit
+  click can now be changed in Help ▸ Shortcuts list.
 
 #### Improved
 
-- **Progress dialogs appear immediately.** Opening the section list and propagating an alignment
-  now show progress during preparation, so you can see that the command was received. Thanks to
-  Kristen for reporting this.
-- **Large series open faster.** A test series with about 99,000 traces opened in about 8 seconds,
-  down from 17, and the progress dialog now appears before the file is read.
-- **Recoloring objects shows an estimate of the time remaining.** View ▸ Recolor all objects from
-  palette displays the estimate once enough work has finished to calculate one.
-- **Preview the scale-bar size as you move the slider.** In Series ▸ Options ▸ View, the bar changes
-  size while the dialog stays open. OK saves the size; Cancel restores it, and bars set to a fixed
-  length in microns keep that length.
+- **Large series open faster.** A series with about 99,000 traces opens in about half the time, and
+  the progress dialog appears before the file is read.
+- **Progress appears right away and says how long is left.** Opening the section list and
+  propagating an alignment show progress while they prepare, and recoloring objects from the
+  palette shows an estimate of the time remaining.
+- **Lists are easier to arrange.** New lists open as tabs with close buttons, floating lists are
+  real windows with a "Dock this list" button, and each series remembers its list layout.
+- **Fewer clicks to show and hide the palettes.** Right-click the scale bar, section buttons, B/C
+  sliders, or trace palette to hide it. Their toggles now sit directly in the View menu, and a
+  checkable menu item no longer closes its menu.
+- **The window opens at 70% of the screen.** View ▸ Reset window puts it back there any time,
+  including when it ends up off screen.
+- **Smaller installers.** About 13 MB less to download on macOS and Windows, with nothing removed.
 
 #### Changed
 
 - **Auto-merge now requires selected traces by default.** The new "Only merge selected traces"
-  checkbox sits beside "Automatically merge overlapping traces" in the tracing settings, including
-  Series ▸ Options ▸ Mouse Tools. Uncheck it to include unselected traces; both modes still require
-  overlapping closed traces with the same name. Thanks to Patrick for reporting this.
+  checkbox sits beside "Automatically merge overlapping traces", including in Series ▸ Options ▸
+  Mouse Tools. Uncheck it to merge any overlapping closed trace with the same name, as in 1.22.
+- **Eight default shortcuts moved so common keys stop colliding.** For example, Options is now
+  Cmd+comma, and Hide and Merge traces moved from Cmd+H and Cmd+M, which macOS reserves, to Shift+H
+  and Shift+M. Help ▸ Shortcuts list shows every current key (read Cmd as Ctrl on Windows and Linux).
 - **The autoseg color palette has its own Colors tab.** In Series ▸ Options ▸ Colors, edit colors
-  with a live picker, paste several at once, and preview them on sample labels. Changes are saved
-  with OK; adding or removing colors warns that future imports will assign colors differently.
+  with a live picker, paste several at once, and preview them on sample labels.
+- **The Help menu's search box replaces the Search menus row.** It shows Cmd+K at its right edge
+  (Ctrl+K on Windows and Linux).
+- **An import that cannot use the history check now says so first.** Without it, deleted objects
+  can come back and renamed ones can appear under both names, so the import asks before it runs.
 
 #### Fixed
 
-- **OK in Series ▸ Options works again.** It could show an error and leave the dialog open in
-  beta-5. Changes to the hover display columns now wait for OK too, so Cancel discards them.
-- **Tool buttons keep their spacing when the app opens.** A palette moved down the window could
-  reopen with its buttons crowded together until you dragged it.
-- **Switching sections while recording alignment propagation works again.** This could fail with
-  an error instead of carrying the alignment change to the next section.
+- **Alignment edits do what you asked.** Switching sections while recording alignment propagation
+  no longer fails, canceling the alignment dialog also cancels a rename, and OK on an untouched
+  "Edit alignment..." no longer clears the objects' alignment.
+- **Attributes are no longer lost.** Editing trace attributes no longer resets the fill condition,
+  and objects whose names contain a space or a comma keep their groups, comments, curation, and
+  hosts when the series opens.
+- **Locked objects stay protected.** "Duplicate object" and "Split into separate objects" no longer
+  write into a locked object, and the scissors no longer ask "unlock it?" only to ignore the answer.
+- **Shortcuts that did nothing now work.** Cmd+A, Cmd+D, and Cmd+Shift+I act on the list that has
+  focus, Cmd+Shift+H runs Set hosts..., Cmd+Shift+D works with the object list open, and a rebound
+  Home key stays rebound (Ctrl in place of Cmd on Windows and Linux).
+- **Fixes in the 3D scene.** An opacity of 0 is kept, the scale cube keeps its edge length field
+  when other objects are selected with it, and the scene redraws at the right size after moving to
+  a screen with different scaling.
+- **Flags and series history are sturdier.** Older flags keep the same identity on every open,
+  so importing another user's copy merges them instead of duplicating, and a damaged row in the
+  series log no longer takes good rows with it.
+- **A full-codebase review fixed dozens of smaller bugs.** Among them: installing an optional
+  package no longer freezes the window, resizing no longer zooms the view out, the z-trace commands
+  are no longer grayed out, and ImageJ ROI export no longer drops traces that share a name.
 
-## [1.23.0-beta-5] — 2026-09-09
-
-#### Changed
-
-- **The app runs on a newer Qt (6.9).** Windows users who saw the window come
-  up double or half size after moving it between screens: please try this build
-  and tell us if that is fixed.
-
-#### Fixed
-
-- **Editing a scale cube in the 3D scene works again.** Edit attributes crashed
-  in beta-4. Thanks Lyndsey for the report!
-- **The scale cube keeps its edge length field when other objects are selected
-  with it.** Hovering the cube now shows its current size.
-- **Saying yes to "install this package?" no longer freezes the window.** The
-  app asks when a feature needs an extra package, such as ImageJ ROI import.
-  The install now runs in the background behind a busy dialog.
-
-## [1.23.0-beta-4] — 2026-08-28
-
-#### Changed
-
-- **The Help menu's redundant "Search menus" row is gone.** The search box does
-  its job and now shows the Ctrl+K shortcut at its right edge (Cmd+K on macOS).
+## [1.22.3] - 2026-09-14
 
 #### Fixed
 
-- **Deleting many objects at once works again.** Selecting several objects and
-  deleting them could fail partway with a "columnar store diverged" error.
-  Thanks Patrick for reporting this!
-- **A fresh Dev install starts with the What's new popup on.** It used to copy
-  the stable app's popup-off setting along with everything else.
-- **Right-clicking a palette button opens its attributes again.** The new
-  Right-click-to-hide menu had claimed that click; it lives on the palette's
-  label now.
-- **Editing trace attributes no longer resets the fill condition.** The dialog
-  opened with both fill boxes ticked, and an untouched OK wrote that onto the
-  trace.
-- **Canceling the alignment dialog cancels all of it.** Renaming an alignment
-  and then canceling used to leave objects pointed at a name that no longer
-  existed.
-- **A full-codebase review fixed dozens of smaller bugs.** Mass deletes,
-  switching to a new series with several lists open, ImageJ ROI import and
-  export, stuck progress dialogs, and memory the app never gave back during
-  long sessions.
+- **Scale cubes can be edited again in the 3D scene.** Edit attributes on a
+  scale cube crashed instead of opening the dialog.
 
-## [1.23.0-beta-3] — 2026-08-26
+## [1.22.2] - 2026-08-28
 
 #### New
 
-- **Hide the lists with one click:** the sidebar button in the status bar,
-  View ▸ Show/hide lists, or Cmd+Option+S (Ctrl+Alt+S on Windows and Linux).
-- **List layout is remembered per series.** Reopening a series brings back the
-  same lists, docked, tabbed, floating, or collapsed.
-- **Right-click the scale bar, section buttons, B/C sliders, or trace palette
-  to hide them.** The View menu checkmarks stay in sync.
-- **Series ▸ Clean up can repair self-crossing traces.** Removes the autoseg
-  spikes that block the scalpel; true figure 8s are skipped and listed for the
-  scissors. Thanks Patrick for reporting this!
-- **Hover columns are configurable.** Series ▸ Options picks which object data
-  the trace hover shows.
-- **The alignment and B/C profile buttons can create new entries** from their
-  status bar menus.
+- **Download the other build from the Help menu.** The stable app links to
+  the newest Dev beta, and the Dev app links to the newest stable release.
 
 #### Changed
 
-- **List tabs have close buttons,** replacing the double title bar.
 - **The Help menu is reorganized into five groups,** with the search bar
   focused when it opens.
 
 #### Fixed
 
-- **Floating lists can be resized small again.** Thanks to Patrick for
-  flagging this one.
-- **The "trace crosses itself" message now recommends the scissors for figure
-  8s.** Another good catch from Patrick.
-- **PyReconstruct Dev's first launch copies your stable settings** instead of
-  starting from defaults. Thanks again, Patrick!
-- **Resizing the window no longer zooms the view out.**
-- **Docked lists scroll all the way to the bottom.**
-- **Switching themes no longer crowds list columns.**
-- **Prompts say Cmd+Z on macOS, not Ctrl+Z.**
+- **Docked lists scroll all the way to the bottom.** A sizing bug could hide
+  the last row or two, and undocking was the only way around it.
 
-## [1.23.0-beta-2] — 2026-08-25
-
-#### New
-
-- **Double-click a `.jser` file to open it in PyReconstruct.** The command line
-  also takes a jser path directly: `pyreconstruct series.jser`.
-- **Find any menu command by typing its name.** Help ▸ Search menus (Cmd+K on
-  macOS, Ctrl+K on Windows and Linux) shows where it lives and its shortcut,
-  and runs it with Enter.
-- **The bottom status bar now has clickable buttons.** Section, alignment, and
-  B/C profile open their menus where you clicked.
-- **Object colors can be changed inside the 3D scene, independently of the
-  object's attributes.**
-- **Bulk section edits show a progress bar.**
-- **Smoothing has a keyboard shortcut.**
-- **The window opens at 70% of the screen,** and View ▸ Reset window puts it
-  back there any time.
-- **The What's New popup grew up.** It shows the last three releases, links to
-  every version's notes on GitHub, and has a "Don't show again" button with a
-  Help-menu toggle to turn it back on.
-- **Download the other build from the Help menu.** The Dev app links to the
-  newest stable release, and the stable app links to the newest Dev beta.
-- **PyReconstruct Dev installs beside stable.** Its own app, install location,
-  and updates, so testing a beta never touches your stable install.
+## [1.22.1] - 2026-08-25
 
 #### Changed
 
-- **Eight default shortcuts changed** so common actions stop colliding. Every
-  one is remappable, and Help ▸ Shortcuts list shows the current keys.
-- **The right-click menus follow the stable app's organization, for now.**
-- **Recoloring objects from the palette is easier to find,** is no longer
-  labeled autoseg-only, and can run over the whole series.
-- **Marking an object as needing curation no longer asks anything.** A separate
-  row assigns someone else.
-- **A checkable menu item no longer closes its menu,** so a set of toggles can
-  be set in one trip.
-- **The "this series has multiple alignments" popup is gone.**
-- **Clearer messages.** The knife's "trace crosses itself" refusal says what to
-  try, "series in use" names the app holding the series, and an import that
-  cannot use the history check says so before it runs.
-- **Smaller installers.** About 13 MB less to download on macOS and Windows,
-  nothing removed.
-- **The CPU usage slider stops at the worker count that is actually fastest.**
+- **The "this series has multiple alignments" note no longer pops up.** It was
+  there to help longtime users transition to alignments, and it read as a
+  warning to everyone else. Nothing else changed.
 
 #### Fixed
 
-- **Lists no longer spawn or float tiny.** New lists open as tabs on the
-  existing list, and a list dragged out gets a usable size.
-- **Tagging one trace no longer tags every trace edited alongside it.**
-- **Auto-merge works the same in polygon mode as in pencil mode,** and one undo
-  fully reverts an auto-merged trace.
-- **Keyboard shortcuts now appear in the right-click menus on macOS.**
-- **Cmd+A, Cmd+D and Cmd+Shift+I act on whichever list has focus** instead of
-  always acting on the field (Ctrl on Windows and Linux).
-- **Cmd+Shift+H now runs Set hosts...,** which it never did from a fresh
-  install (Ctrl+Shift+H on Windows and Linux).
-- **Rebinding Home now sticks** instead of reverting on the next series open.
-- **The z-trace commands are no longer greyed out almost all the time,** and
-  the z-trace list no longer crashes after an alignment was renamed or deleted.
-- **Fixed crashes:** smoothing a trace on macOS 12, toggling curation columns
-  from the Lists menu, undo after an earlier undo, and opening a section with
-  an empty contour name.
-- **The Beta update channel offers a stable release when it is the newest one.**
-- **Settings behave.** A never-saved setting can no longer overwrite the
-  shipped default for every series, editing a column list no longer corrupts
-  the stored value, a malformed column setting says which one it is, and Reset
-  Defaults now resets everything it claims to.
-- **Flags keep their identity.** Flags from before flags had IDs stay the same
-  on every open, so importing another user's copy merges instead of
-  duplicating. The resolved-flags filter turns back off and shows its
-  checkmark, and hidden flags and traces are released from memory.
-- **Opening a series whose object names contain a space or a comma no longer
-  loses those objects' groups, comments, curation status, and host links.**
-- **Confirming "Edit alignment..." without touching it no longer clears the
-  selected objects' alignment.**
-- **"Duplicate object" and "Split into separate objects" no longer write into
-  a locked object,** and the scissors tool no longer asks "unlock it?" only to
-  ignore the answer.
-- **Series history is sturdier.** A damaged row in the edit log no longer takes
-  good rows, or an editor's entry, down with it.
-- **An opacity of 0 in the 3D scene is no longer discarded.**
+- **PyReconstruct now has support for even older versions of macOS (macOS 12
+  Monterey, 2022).** The builds now use a version that runs on macOS 12 and
+  up. The README lists the minimum system for each platform.
+
+## [1.22.0] - 2026-08-21
+
+#### New
+
+- **Search the menus.** Help ▸ Search menus (Cmd+K on macOS, Ctrl+K
+  elsewhere) finds any command, including the right-click ones, shows its
+  shortcut, and runs it with Enter. Pick a menu-bar result and it opens the
+  menus to show you where it lives. The shortcut is remappable like any other.
+- **Recolor objects inside the 3D scene.** A new Object Colors submenu changes
+  colors without leaving the scene, or reverts them to the series color.
+- **Progress bars for bulk section edits.** Setting thickness or
+  brightness/contrast across many sections now shows its progress instead of a
+  frozen window.
+
+#### Changed
+
+- **"Needs curation" assigns to you, instantly.** No dialog. A new "Needs
+  curation (assign to)..." row assigns someone else. The object list now shows
+  who assigned each status and when.
+- **The What's-new popup is off by default.** Help ▸ Show what's new after
+  updates turns it back on; Help ▸ What's new? opens the notes any time.
+- **Right-click menus follow the classic layout again.** The redesigned menus
+  move to the PyReconstruct Dev app. Shortcuts now display beside right-click
+  commands on macOS too.
+- **Your update channel comes with the app.** The stable app follows stable
+  releases; PyReconstruct Dev follows the beta channel. The Series Options
+  Updates tab has been removed; "Check for updates on startup" now lives in
+  the Help menu, under "Check for updates...".
+- **The "series in use" message says which app has the series open.** With two
+  builds installed, "another window" was no longer an answer.
+
+#### Fixed
+
+- **Auto-merge works in point-by-point tracing.** It merges what actually
+  overlaps, selected or not, keeps the existing trace's color and tags, and
+  one Ctrl+Z removes the drawn trace and its merge together.
+- **Tags stay where you put them.** Tagging one trace no longer tags every
+  trace edited alongside it, and a refused knife cut no longer brings deleted
+  tags back.
+- **A crash toggling curation columns from the Lists menu.**
+- **The Beta channel offers a stable release when it is the newest build.**
+  Beta means earlier access, not a separate lane.
+
+## [1.21.3] — 2026-08-13
+
+- **New: Tired of "What's new" popups? Turn them off.** Click "Don't show
+  again", and if you miss the notes later, **Help ▸ Show what's new after
+  updates** turns them back on. **Help ▸ What's new** still works any time.
+  The window is also a bit roomier, with the extra space going to the notes.
+- **Changed: "Reapply autoseg colors" is now "Reapply custom color palette to
+  existing objects...", easier to find, and available for the whole series at
+  once.** It never was only for autoseg objects: it recolors whatever you
+  select using the current palette. It now sits directly in the object
+  right-click menu instead of a submenu, and a new **View ▸ Recolor all
+  objects from palette** recolors every object in the series in one undoable
+  step, skipping locked objects and telling you how many it will touch before
+  it does anything.
+- **Changed: The "trace crosses itself" message now tells you what to try.**
+  Instead of only reporting that the cut could not be made, it points you at
+  **Series ▸ Clean up**, which removes the stray traces automatic segmentation
+  leaves behind, a common cause of the problem.
+- **Fixed: A crash opening the z-trace list after an alignment was renamed or
+  deleted.** A z-trace or an object can be set to follow a particular
+  alignment, but renaming or deleting that alignment left them pointing at one
+  that no longer existed. The z-trace list works out a length for every row as
+  it opens, so a single z-trace in that state stopped the whole list from
+  opening, and the same problem broke smoothing that z-trace and adding it to
+  a 3D scene. Renaming an alignment now carries those settings across, deleting
+  one clears them, and anything still pointing at a missing alignment falls
+  back to the series alignment instead of failing. A series already in that
+  state repairs itself the next time you edit its alignments.
+- **Fixed: A crash when using undo or redo after an earlier undo.** When both a
+  series-wide undo and an undo for just this section are available, and they
+  are not part of the same operation, PyReconstruct compares the two to work
+  out which one Ctrl+Z should take. Some saved states were missing the
+  timestamp that comparison needs, so undoing and then pressing Ctrl+Z again
+  could fail instead of undoing anything.
+
+## [1.21.2] — 2026-08-13
+
+- **Fixed: Picking a color no longer paints the whole picker window that color.** Choosing a color for
+  a trace or a flag quietly attached that color to the picker itself, so the next time it opened, the
+  entire window came up solid yellow, green, or purple with the controls floating on top of it. The
+  picker now opens looking like a normal window, every time, on every platform.
+- **Fixed: The attributes window now shows your object's color.** Opening "Set Attributes" on an object
+  always left the color swatch blank and opened the picker on white, even when the object had a
+  perfectly good color. The swatch now shows the object's color, checked across every section it
+  appears on. If its traces do not all agree, wherever the odd ones out live, the swatch splits
+  diagonally, the most common color against a blank half, so you can see there is a mix before deciding
+  to repaint. And the shown color is just a preview: unless you actually pick a color, pressing OK
+  leaves every trace's color exactly as it was.
+- **Fixed: A crash while editing an object's attributes with the Object List open.** Renaming an
+  object, or making any attribute edit that moves a row, could crash with a "can only join an iterable"
+  error while the list was updating. The list now handles the moment an object's row is on its way out,
+  whatever columns you have enabled.
+
+## [1.21.1] — 2026-08-07
+
+- **Improved: Every slider in Series ▸ Options shows what it is set to.** The sliders were a bare handle
+  on a blank groove, so the only way to learn a setting's value was to close the dialog and watch what
+  the program did. **CPU usage** now reads as `50% (5 of 10 workers)`, scale bar size and 3D XY
+  resolution read as percentages, and every slider carries tick marks.
+- **Changed: The scale bar width setting actually moves the scale bar.** The bar could only be drawn at
+  a few set lengths, so most of the 81 positions on the slider drew exactly the same bar; it
+  now has many more lengths to choose from, and tick marks divide each one into readable steps. Lengths
+  also print one way now, so the same bar no longer reads `10 µm` at one zoom and `10.0 µm` at another.
+- **Fixed: A section that fails to load no longer leaves the field stuck and unclosable.** Jumping to a
+  section PyReconstruct could not read left the view with nothing to draw, so every redraw raised the
+  same error and reopened the error window as fast as you could close it, with Task Manager the only way
+  out. A jump that fails now leaves you on the section you were already viewing.
+- **Fixed: An error that keeps happening opens one window instead of an endless stream.** An error
+  raised while the view redrew came back on every redraw, and each occurrence opened another window on
+  top of the last. Each fault now opens a single window per session, and every occurrence is still
+  written to the log file, which **Help ▸ View log file** shows.
+- **Fixed: On macOS, a color picked for a trace is no longer thrown away.** Clicking a color swatch
+  opened the shared system "Colors" panel, where picking a color changed nothing on screen and closing
+  the panel discarded the choice, leaving the swatch blank. Swatches now open PyReconstruct's own color
+  dialog, the one Windows and Linux already used, with **OK** inside its own window.
+- **Fixed: Canceling the flag list's color filter no longer empties the list.** Under
+  **Filter ▸ Color filter ▸ Set filter...**, a canceled picker was read as a choice of black, so the
+  list hid every flag that was not pure black and "Remove filter" was the only way back. Cancel now
+  leaves the filter alone, on every platform.
+- **Fixed: The autoseg color editor keeps the color you pick, and opens on the right one.** Add and
+  Edit under **Series ▸ Options ▸ View ▸ Autoseg import colors** had the same macOS problem as the trace
+  swatch, and the picker opened on white rather than on the color being edited, so pressing OK without
+  changing anything wrote white over it.
+- **Fixed: Opening Series ▸ Options no longer shrinks the scale bar on its own.** The dialog squeezed
+  the stored width into a wider slider range and back again, and that round trip lost a point for most
+  values, the shipped default among them, so pressing OK on a dialog nobody had touched made the bar
+  narrower every time.
+- **Fixed: Reset Defaults moves the sliders in Series ▸ Options.** Three of them, 3D XY resolution,
+  scale bar size and CPU usage, read the stored value rather than the shipped default, so they stayed
+  exactly where you had left them while the rest of the dialog reset.
+- **Fixed: Exporting a section to SVG works again.** Under **File ▸ Export**, saving a section as SVG
+  relied on a drawing package that was never actually included, so instead of exporting the feature
+  could only prompt you to install it yourself, and on the one-click installers it could not run at
+  all. That package now ships with PyReconstruct. (Exporting to PNG needs the same package plus a
+  system graphics library; that piece is included too, and the app now tells you what is missing
+  instead of failing silently.)
 
 ## [1.21.0] — 2026-08-05
 
