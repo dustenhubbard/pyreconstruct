@@ -165,23 +165,23 @@ by re-running `install.sh`; see [Installing PyReconstruct](#1-installing-pyrecon
 
 ### Update channels
 
-PyReconstruct offers two update channels, selected under **Series ▸ Options…**
-(`Shift+O`) in the **Updates** section:
+Two apps install side by side, each following its own update channel:
 
-- **Stable (recommended)**: stable builds, tagged `vX.Y.Z`.
-- **Beta (early features, may be unstable)**: the latest pre-release build, tagged
-  `vX.Y.Z-beta-N` (for example `v1.21.0-beta-7`); newer features, less testing.
+- **PyReconstruct: Stable.** Stable builds tagged `vX.Y.Z`, for everyday work.
+- **PyReconstruct Dev: Nightly.** Early features with less testing, tagged
+  `vX.Y.Z.devYYYYMMDD` (for example `v1.24.0.dev20260927`). A new build is
+  scheduled daily when there are new commits.
 
-The default channel is **Stable**. (Developers who want the newest unreleased code
-run a source install instead of a frozen build; see
-[Source / `pip` installs](#source--pip-installs) below.)
-
-> 📸 *Screenshot: Series ▸ Options ▸ Updates, showing the Stable / Beta radio buttons and the "Check for updates on startup" checkbox.*
+The channel follows the app and cannot be changed in a series. Use
+the **Help** menu's download link to install the other app. Each app
+only offers updates from its own channel, so updating Dev keeps Stable in
+place. Nightlies skip the What's New popup; their release notes list the
+changes since the previous nightly.
 
 ### Checking for updates
 
 Choose **Help ▸ Check for updates…**. On an installed build, PyReconstruct checks
-GitHub Releases on your selected channel (off the main thread, so the UI stays
+GitHub Releases on the app's channel (off the main thread, so the UI stays
 responsive). If a newer build is found, an update dialog opens showing the new
 version, the download size, and the release notes, with a **Download & Install**
 button. The download is verified, then applied when you close the app, and
@@ -194,8 +194,8 @@ message; if no installer exists for your platform on that channel, it tells you 
 
 ### Checking automatically on startup
 
-Under **Series ▸ Options ▸ Updates** you can enable **Check for updates on
-startup**. It is **off by default**. When enabled, an installed build does a quiet
+Under **Help ▸ Automatically check for updates** you can turn the startup
+check on or off. It is **on by default**. When enabled, an installed build does a quiet
 background check at most **once per day**; if an upgrade is available it shows a
 status-bar notice and asks whether you'd like to view it.
 

@@ -4,12 +4,12 @@ All notable changes to this distribution of PyReconstruct are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 the project uses [semantic versioning](https://semver.org/).
 
-Builds come on two channels: **Stable** (final releases, tagged `vX.Y.Z`) and
-**Beta** (curated pre-releases, tagged e.g. `vX.Y.Z-beta-N` / `vX.Y.ZrcN`).
-Entries under [Unreleased] have landed on `main` but are not yet tagged; they
-reach the Beta channel once cut as a pre-release tag, ahead of the next stable
-release. To run unreleased `main` before it is tagged, use a source install (see
-the README's *From source (developers)* section).
+Builds come on two channels: **Stable** (PyReconstruct, tagged `vX.Y.Z`) and
+**Nightly** (PyReconstruct Dev, tagged `vX.Y.Z.devYYYYMMDD`). Entries under
+[Unreleased] have landed on `main` but are not yet part of a stable release.
+Nightlies build new commits daily ahead of the next stable release. To run
+`main` before the next nightly, use a source install (see the README's
+*From source (developers)* section).
 
 ## [Unreleased]
 
