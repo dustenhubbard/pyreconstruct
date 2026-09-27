@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Open @APP_NAME@ for the first time</title>
+<style>
+  :root { --blue: #1f6fd6; --ink: #111827; --muted: #4b5563; --line: #e5e7eb; --stop: #b91c1c; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #f5f6f8; color: var(--ink);
+         font: 17px/1.5 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; }
+  header { background: var(--blue); color: #fff; padding: 14px 32px; display: flex; align-items: center; gap: 14px; }
+  header .appicon { width: 44px; height: 44px; }
+  header span { font-size: 22px; font-weight: 600; }
+  main { max-width: 1040px; margin: 0 auto; padding: 28px 32px 48px; }
+  h1 { font-size: 34px; line-height: 1.2; margin: 0 0 6px; }
+  .lead { font-size: 20px; color: var(--muted); margin: 0 0 24px; }
+  .appicon { display: inline-block; background: url("@ICON_DATA@") center / contain no-repeat; }
+  .step { display: grid; grid-template-columns: 56px minmax(0, 1fr) minmax(0, 520px); gap: 20px; align-items: start;
+          background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 22px; margin-bottom: 16px; }
+  .num { width: 48px; height: 48px; border-radius: 50%; background: var(--blue); color: #fff;
+         font-size: 24px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  h2 { font-size: 24px; margin: 4px 0 8px; }
+  .step p { margin: 0 0 10px; }
+  .cmd { display: block; font: 15px/1.4 Menlo, Monaco, monospace; background: #f3f4f6; border: 1px solid #d1d5db;
+         border-radius: 8px; padding: 10px 12px; margin: 6px 0 10px; user-select: all; -webkit-user-select: all;
+         white-space: pre-wrap; overflow-wrap: normal; overflow-x: auto; }
+  button { font: inherit; font-weight: 600; color: #fff; background: var(--blue); border: 0; border-radius: 8px;
+           padding: 8px 16px; cursor: pointer; margin-bottom: 10px; }
+  .copied { color: #047857; font-weight: 600; margin-left: 10px; }
+  /* Screenshots from macOS 27. */
+  .pic { margin: 0; }
+  .pic img { display: block; max-width: 100%; height: auto; border: 1px solid #d1d5db; border-radius: 10px;
+             box-shadow: 0 4px 14px #0000001a; background: #fff; }
+  .pic figcaption { display: inline-block; background: #dbeafe; color: #1e3a8a; border-radius: 8px;
+                    padding: 6px 10px; font-weight: 600; font-size: 15px; margin-top: 10px; }
+  .stop { background: #fef2f2; border: 2px solid #fecaca; border-radius: 14px; padding: 18px 22px; margin: 24px 0 16px; }
+  .stop h2 { color: var(--stop); margin-top: 0; }
+  .help { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 18px 22px; margin-bottom: 12px; }
+  .help h3 { margin: 0 0 8px; font-size: 19px; }
+  .help ol { margin: 0; padding-left: 22px; }
+  .help-row { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
+  .help-row ol { flex: 1 1 360px; }
+  .help-row .pic img { box-shadow: none; border: 0; background: none; }
+  .help code { font: 15px Menlo, Monaco, monospace; background: #f3f4f6; padding: 1px 5px; border-radius: 4px; }
+  @media (max-width: 900px) { .step { grid-template-columns: 56px minmax(0, 1fr); } .step .pic { grid-column: 1 / -1; } }
+  @media print { body { background: #fff; } button, .copied { display: none; } .step, .help { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<header><span class="appicon" role="img" aria-label="@APP_NAME@ icon"></span><span>@APP_NAME@</span></header>
+<main>
+  <h1>Open @APP_NAME@ for the first time</h1>
+  <p class="lead">Do these steps in order. Keep @APP_NAME@ closed until step 3.</p>
+
+  <section class="step">
+    <div class="num">1</div>
+    <div>
+      <h2>Copy the app</h2>
+      <p>Drag @APP_NAME@ onto the Applications folder in the installer window.</p>
+      <p>Wait for the copy to finish.</p>
+    </div>
+    <figure class="pic"><img src="@SHOT_1@" alt="The installer window. An arrow shows @APP_NAME@ dragged onto Applications."></figure>
+  </section>
+
+  <section class="step">
+    <div class="num">2</div>
+    <div>
+      <h2>Run one command in Terminal</h2>
+      <p>Hold Command and press the space bar. Type Terminal, then press Return.</p>
+      <p>Copy this command. Click Copy command, or click the line and hold Command and press C.</p>
+      <code class="cmd" id="cmd">xattr -dr com.apple.quarantine "/Applications/@APP_NAME@.app"</code>
+      <button type="button" id="copy">Copy command</button><span class="copied" id="copied" aria-live="polite"></span>
+      <p>Click inside the Terminal window. Hold Command and press V to paste. Press Return.</p>
+      <p>A new line with no message means it worked. You can close Terminal.</p>
+    </div>
+    <figure class="pic"><img src="@SHOT_2@" alt="Terminal after the command. The next line shows no message."><figcaption>No message? It worked.</figcaption></figure>
+  </section>
+
+  <section class="step">
+    <div class="num">3</div>
+    <div>
+      <h2>Open the app</h2>
+      <p>Open the Applications folder and double-click @APP_NAME@.</p>
+      <p>Next time, open it from Applications the normal way.</p>
+    </div>
+    <figure class="pic"><img src="@SHOT_3@" alt="@APP_NAME@ selected in the Applications folder."></figure>
+  </section>
+
+  <section class="stop">
+    <h2>Did Terminal show a message?</h2>
+    <p>Do not open the app yet. Find the message or problem below.</p>
+  </section>
+
+  <section class="help" id="missing">
+    <h3>No such file or directory</h3>
+    <p>@APP_NAME@ is not in the Applications folder. The copy did not finish, or the app went to the Trash.</p>
+    <ol>
+      <li>Drag @APP_NAME@ from the installer window onto Applications again.</li>
+      <li>Wait for the copy to finish.</li>
+      <li>Do step 2 again.</li>
+    </ol>
+  </section>
+
+  <section class="help" id="stuck">
+    <h3>I opened the app too early, or it is stuck</h3>
+    <div class="help-row">
+      <ol>
+        <li>If macOS shows this box, click Done. Do not click Move to Trash.</li>
+        <li>If the app is still open, hold Command and Option and press Esc. Select @APP_NAME@, then click Force Quit.</li>
+        <li>Do step 2 again, then step 3.</li>
+      </ol>
+      <figure class="pic"><img src="@SHOT_4@" alt="The macOS box that says @APP_NAME@.app Not Opened, with the buttons Move to Trash and Done."></figure>
+    </div>
+  </section>
+</main>
+<script>
+  // Copy needs a fallback: some browsers block the clipboard for local files.
+  document.getElementById("copy").addEventListener("click", function () {
+    var cmd = document.getElementById("cmd"), note = document.getElementById("copied");
+    var range = document.createRange();
+    range.selectNodeContents(cmd);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    function done() { note.textContent = "Copied"; }
+    function manual() { note.textContent = "Hold Command and press C to copy"; }
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(cmd.textContent).then(done, function () {
+        try { document.execCommand("copy") ? done() : manual(); } catch (e) { manual(); }
+      });
+    } else {
+      try { document.execCommand("copy") ? done() : manual(); } catch (e) { manual(); }
+    }
+  });
+</script>
+</body>
+</html>

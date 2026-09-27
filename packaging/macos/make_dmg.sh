@@ -14,9 +14,13 @@ ARCH="${ARCH:-x86_64}"
 FLAVOR="$(cat packaging/FLAVOR 2>/dev/null | tr -d '[:space:]' || true)"
 if [ "$FLAVOR" = "dev" ]; then
     APP_NAME="PyReconstruct Dev"
+    GUIDE="dev"
+    ICON="PyReconstruct/assets/img/PyReconstructDev.png"
     OUT="PyReconstruct-${PYR_PUBLIC}-macOS-${ARCH}-Dev.dmg"
 else
     APP_NAME="PyReconstruct"
+    GUIDE="stable"
+    ICON="PyReconstruct/assets/img/PyReconstruct.png"
     OUT="PyReconstruct-${PYR_PUBLIC}-macOS-${ARCH}.dmg"
 fi
 APP="dist/${APP_NAME}.app"
@@ -29,8 +33,8 @@ mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"   # drag-and-drop target in the mounted dmg
 # Render the first-launch help for the app actually included in this image.
-sed "s/@APP_NAME@/${APP_NAME}/g" "$(dirname "$0")/dmg-readme.txt" \
-    > "$STAGE/Read Before First Launch.txt"
+"${PYTHON:-python3}" "$(dirname "$0")/render_first_launch.py" "$APP_NAME" "$GUIDE" "$ICON" \
+    "$STAGE/Read Before First Launch.html"
 
 # hdiutil create intermittently fails with "Resource busy" on CI runners when a
 # stale diskimages-helper still holds a disk image. Retry with cleanup + backoff.
