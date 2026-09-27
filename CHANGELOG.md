@@ -13,62 +13,698 @@ the README's *From source (developers)* section).
 
 ## [Unreleased]
 
-## [1.23.0-beta-6] - 2026-09-23
+## [1.23.0] - 2026-09-27
 
 ### Added
-- **Bulk recoloring reports an estimated time remaining.** The estimate
-  appears after at least two seconds and five percent completion, based on
-  the rate so far. It is enabled only for recoloring objects, not opening,
-  saving, or importing a series.
-- **The scissors tool has a remappable shortcut.** The default is Shift+K,
-  and the tool now appears in Help > Shortcuts list.
+- **Double-click a `.jser` file to open it in PyReconstruct.** The Windows,
+  macOS, and Linux installers register the file type. On macOS a double-click
+  also reaches a PyReconstruct window that is already open.
+- **The command line takes a jser path positionally: `pyreconstruct
+  series.jser`.** The `-f` form still works, and naming the same file both ways
+  is accepted. Naming two different files is refused, and a path that does not
+  exist is reported before the app starts instead of opening the welcome series.
+- **Hide the lists with one click.** A sidebar button in the status bar, View >
+  Show/hide lists, or Cmd+Option+S (Ctrl+Alt+S on Windows and Linux) collapses
+  the whole list area. The same toggle brings back exactly the lists you had
+  open, tabs intact. Floating lists stay where they are.
+- **PyReconstruct remembers your list layout for each series.** Close a series
+  with lists open, docked, tabbed, floating, or collapsed, and opening it again
+  brings the same lists back where they were.
+- **The status bar's section, alignment, and B/C profile are buttons.** Each
+  draws as a small rounded button and opens its menu just above itself, with
+  the current entry checked. The section menu is a scrollable list with a jump
+  field on top: type a number and press Enter. Right-clicking the section
+  button opens the Go To Section dialog. The alignment and B/C profile menus end
+  with a row that opens the matching edit dialog, so you can create a new entry
+  from there.
+- **Series > Clean up can repair self-crossing traces.** Autoseg sometimes
+  leaves a tiny spike that crosses the outline and blocks the knife. The repair
+  removes the spike and keeps the trace's real shape, in one undo. A true
+  figure 8 with two real loops is skipped and listed in a review window that
+  jumps to each one for the scissors, and every repair pass ends in a summary
+  you can copy or save.
+- **Choose what the trace hover shows.** Hover over a trace and the pop-up
+  shows object data. A new option in Series > Options > View picks which
+  columns appear and in what order, for each series.
+- **The scale bar can hold a fixed length in microns.** Series > Options > View
+  has a sizing mode: a fixed share of the screen (the µm figure changes as you
+  zoom, as before) or a fixed length in µm (the bar's width changes as you
+  zoom). Each mode keeps its own value, so switching modes and back is
+  lossless. When a fixed length will not fit the field legibly, the bar steps
+  by whole decades and the label follows.
+- **Right-click the scale bar, the section increment buttons, the B/C sliders,
+  or the trace palette to hide them.** The View menu keeps every toggle, and its
+  checkmarks match whichever way you use.
+- **The scissors tool has a remappable shortcut.** The default is Shift+K, and
+  the tool now appears in Help > Shortcuts list.
+- **Smoothing has a keyboard shortcut.** Cmd+Shift+R (Ctrl+Shift+R on Windows
+  and Linux) smooths the selected traces on this section. Over the object list
+  the same key smooths the selected objects on every section. It is remappable
+  like any other shortcut.
+- **The focus-mode edit click can use a different modifier.** Help > Shortcuts
+  list has a row for it. The default stays Cmd-click (Ctrl-click on Windows and
+  Linux), and clearing the row turns the edit click off.
+- **The Align by correlation shortcut can be changed** in Help > Shortcuts list.
+- **The main window opens at 70% of the screen, and View > Reset window puts it
+  back there at any time.** The first-launch size was 50% in each direction.
+  Reset window also replaces the saved size and position, so a window parked
+  off screen or shrunk too small to grab can be recovered without quitting.
+- **Recoloring objects from the palette shows an estimate of the time
+  remaining.** It appears once enough of the work has finished to calculate
+  one.
+- **A saved `.jser` now states which document schema wrote it.** A
+  `schema_version` key leads the series object, currently `1`. It is a hint for
+  tools that read `.jser` files without PyReconstruct, not a version gate: older
+  builds open the file normally and drop the key on save.
+- **Trace ids in keyed `.jser` rows are kept when a file opens.** A trace row
+  written as a JSON object may carry its trace's `id`, and opening the file now
+  keeps it instead of deriving a new one. Two traces claiming the same id, or an
+  id that cannot be read, are recorded and given ids of their own rather than
+  stopping the file from opening. Undo now reads sections stored this way
+  correctly.
+- **Saving keyed rows with ids is available behind a switch, off by default.**
+  `PYRECON_JSER_KEYED_ROWS=1` makes the writer save each trace row as a keyed
+  object that carries its id. Builds older than this one cannot open a file
+  saved this way. With the switch off, saved files are byte-identical to
+  before.
 
 ### Changed
-- **More feedback and shortcut control when aligning sections.** The section
-  list shows progress as soon as it starts building. The Align by correlation
-  keyboard shortcut can now be changed in the shortcuts dialog.
-- **Auto-merge can require selected traces.** The new "Only merge selected
-  traces" checkbox appears beside "Automatically merge overlapping traces"
-  in both tracing settings dialogs and defaults to checked. Uncheck it to
-  include unselected traces. Both modes require overlapping closed traces
-  with the same name; separate traces remain separate. The selection checkbox
-  is disabled while auto-merge is off and remembers its value.
-- **Autoseg colors have a dedicated Options tab with a live picker.** Edit
-  swatches in place, paste multiple colors, duplicate or remove selections,
-  and preview the palette on sample labels. Changes are saved only with OK;
-  Revert and undo restore edits. The page warns when changing the palette
-  length reassigns label colors on future imports.
-- **Dependency updates address reported advisories.** GitPython is updated
-  to 3.1.62, tornado to 6.5.8, and the documentation theme mkdocs-material
-  to 9.7.7.
-- **Progress dialogs appear immediately.** Removed the delay before shared
-  progress dialogs open, so commands show feedback before processing their
-  first item. Transform propagation also reports progress while checking
-  sections, before asking about locked sections or applying the alignment.
-  Repeated completion updates no longer reopen a finished progress dialog.
-  Section lists retain keyboard focus, and progress opened after a series
-  closes no longer attaches to its closed window.
-- **Scale-bar size previews while adjusting the slider.** Series Options now
-  shows width changes immediately without saving them until OK. Cancel restores
-  the stored width while preserving whether the bar is hidden and its hide
-  controls. Pinned micron lengths remain unchanged by the width slider.
-- **Large series open faster and show progress before reading the file.**
-  Trace-ID canonical text is generated once, using the faster serializer
-  only where its output matches the existing representation. Trace IDs
-  remain unchanged. A 249 MB, 99,207-trace series opened in 8.3 seconds
-  instead of 16.8 seconds in testing; early exits close the progress dialog.
+- **Auto-merge requires selected traces by default.** The new "Only merge
+  selected traces" checkbox sits beside "Automatically merge overlapping
+  traces" in both tracing settings dialogs, including Series > Options > Mouse
+  Tools, and starts checked. Uncheck it to include unselected traces, as in
+  1.22. Both modes require overlapping closed traces with the same name, and
+  separate traces remain separate. The checkbox is disabled while auto-merge is
+  off and remembers its value.
+- **Autoseg colors have their own Colors tab in Series > Options, with a live
+  picker.** Edit swatches in place, paste several colors at once, duplicate or
+  remove a selection, and preview the palette on sample labels. Changes are
+  saved only with OK, and Revert and undo restore edits. The page warns when a
+  change to the palette length will reassign label colors on future imports.
+- **Eight default shortcuts moved off keys that collide.** Chords are named for
+  macOS; on Windows and Linux read Cmd as Ctrl and Option as Alt. Palette
+  increment leaves the zoom keys for Cmd+] and Cmd+[. The z-trace list leaves
+  the redo chord Cmd+Shift+Z for Cmd+Option+Z. Restart leaves the refresh key
+  Cmd+R for Cmd+Option+R. Options moves to the standard preferences key,
+  Cmd+comma. Paste attributes moves to Cmd+Shift+V. Hide selected traces and
+  Merge traces leave Cmd+H and Cmd+M, which macOS reserves for Hide and
+  Minimize, for Shift+H and Shift+M. The freed chords stay unbound, and Cmd+B
+  still pastes attributes until you bind it to something else. Every shortcut
+  remains remappable.
+- **Progress dialogs appear immediately.** Commands show progress before they
+  process their first item. The section list shows progress as soon as it
+  starts building, and alignment propagation reports progress while it checks
+  sections, before it asks about locked sections. A finished progress dialog no
+  longer reopens, and section lists keep keyboard focus.
+- **Large series open faster and show progress before the file is read.** A
+  series with about 99,000 traces opens in about half the time. Trace ids are
+  unchanged.
+- **A checkable menu item no longer closes its menu,** so a set of toggles can
+  be set in one trip. Esc, clicking away, and every keyboard shortcut work as
+  before.
+- **The trace palette, section increment buttons, B/C sliders, and scale bar
+  toggles sit directly in the View menu,** after Show z-traces, instead of
+  under View > Palette > Visibility.
+- **List tabs sit along the top of the list area and have close buttons.** The
+  tab names the list and its X closes it, replacing the double title bar. A
+  list docked alone keeps its title bar so it can still be dragged out.
+- **The scale bar size previews on the field while you move the slider.**
+  Series > Options > View applies the width as you drag and saves it only with
+  OK. Cancel restores the stored width, and a bar pinned to a length in microns
+  keeps that length.
+- **Help > What's new shows the last three releases,** and its link goes to the
+  release notes for every version on GitHub. The closing "and earlier releases"
+  line no longer renders underlined like a broken link.
+- **The Help menu's search box replaces the Search menus row.** The box shows
+  Cmd+K at its right edge (Ctrl+K on Windows and Linux).
+- **The "trace crosses itself" knife message recommends the scissors for figure
+  8s.**
+- **An import that cannot use the history check says so before it runs.** When
+  the two series' logs share no opening run, the check has nothing to compare,
+  and the import would go ahead as a plain merge: deleted objects can come back
+  and renamed ones can land under both names. The import now names the reason,
+  explains the risk, and asks whether to continue. Answering no leaves the
+  series as it was.
+- **The CPU usage slider stops at the worker count that is fastest.** Image to
+  zarr conversion now uses at most 5 workers, because more workers ran slower
+  while using more CPU. The slider keeps its full range, and its readout shows
+  the worker count that will actually start, for example `100% (5 of 10
+  workers)`.
+- **Smaller installers.** The macOS and Windows installers are about 13 MB
+  smaller to download and 18 MB smaller once installed, with nothing removed.
+- **Selection redraws and per-trace geometry are faster** on sections with many
+  visible traces. Length, area, centroid, and radius read the same at every
+  displayed digit.
+- **Each section keeps an internal columnar copy of its traces.** Nothing in
+  the `.jser` changes. Saving a section on a very large series takes somewhat
+  longer, and a mismatch between the copy and the traces is written to the log
+  (Help > View log file) instead of stopping the save.
+- **The app runs on Qt 6.9** (PySide6 6.9.3, the newest release with macOS 12
+  support).
+- **Dependency updates.** GitPython 3.1.62, tornado 6.5.8, and the
+  documentation theme mkdocs-material 9.7.7 address reported advisories.
+  Pillow, which section export uses, is now a declared dependency.
 
 ### Fixed
-- **Switching sections during alignment propagation works again.** Fixed an
-  error when switching sections while recording transform propagation.
+- **Switching sections while recording alignment propagation works again.** It
+  could fail with an error instead of carrying the change to the next section.
   Propagated alignment changes can be undone.
-- **Series Options accepts and closes correctly.** The hover-columns widget
-  now participates in the Options page contract instead of raising an
-  AttributeError on OK. Hover-column changes are staged until the outer
-  dialog is accepted, so Cancel discards them.
-- **Tool-palette buttons are spaced correctly at startup.** All buttons
-  are created before their positions are calculated, avoiding overlapping
-  buttons when restoring a palette moved below its default position.
+- **Canceling the alignment dialog cancels all of it.** Renaming an alignment
+  and then canceling left objects pointed at a name that no longer existed.
+- **Confirming "Edit alignment..." without touching it no longer clears the
+  selected objects' alignment.** The dialog now opens on the selection's current
+  alignment, or blank when the selection disagrees. Choosing the blank entry on
+  purpose still clears it.
+- **Editing trace attributes no longer resets the fill condition.** The dialog
+  opened with both fill boxes checked, and an untouched OK wrote that onto the
+  trace.
+- **Opening a series whose object names contain a space or a comma no longer
+  drops those objects' groups, comments, curation, and hosts.** Such names are
+  rewritten on open, and the rename now carries the series' records along. When
+  two names differ only by a space or a comma and would become one object, the
+  app lists them and asks first; declining leaves the file untouched.
+- **Flags saved before flags had IDs keep the same identity on every open,** so
+  importing them from another user's copy merges them instead of stacking
+  duplicates.
+- **The flag list's Display resolved flags turns back off and shows its
+  checkmark.** It and the object list's categorical column filters also no
+  longer raise an error on the first click.
+- **The flag and trace lists release flags and traces a filter hides,** instead
+  of holding them in memory.
+- **"Duplicate object" and "Split into separate objects" no longer write traces
+  into a locked object.** When the generated name belongs to a locked object,
+  both stop with "Cannot modify locked objects" before anything is written.
+- **The scissors tool no longer asks "unlock it?" and then ignores the
+  answer.** A locked object now gets the same notice every other refused edit
+  shows, and its lock is left alone.
+- **Cmd+A, Cmd+D, and Cmd+Shift+I act on whichever list has focus** (Ctrl on
+  Windows and Linux). Over a list they select, clear, and invert its rows; over
+  the field they act on the section's traces as before.
+- **Cmd+Shift+H runs Set hosts..., which it never did from a fresh install,**
+  and Cmd+Shift+D runs Add to 3D scene while the object list is open (Ctrl on
+  Windows and Linux).
+- **Rebinding Home in the shortcuts list sticks** instead of reverting the next
+  time a series opens.
+- **Prompts name your platform's undo keys.** On macOS they say Cmd+Z.
+- **The z-trace commands are no longer grayed out almost all the time.** They
+  act on the selection, so the selection now decides whether they are
+  available.
+- **Accepting "install the packages this feature needs" no longer freezes or
+  crashes the app.** The install runs in the background behind a busy dialog
+  and targets the Python that is running the app. In an environment with no
+  pip, such as one made by uv, the notice gives commands that work there. The
+  packaged app explains that optional packages need a from-source install
+  instead of offering an install that cannot work.
+- **An opacity of 0 in the 3D scene is no longer discarded,** whether set with
+  the `[` shortcut or typed into Edit attributes, and a saved scene reopens it
+  at 0.
+- **The scale cube keeps its edge length field when other objects are selected
+  with it,** and hovering the cube shows its current size.
+- **The 3D scene redraws at the right size after it moves to a screen with
+  different scaling.**
+- **Moving the cursor from the field to the menu bar no longer blanks the
+  status readout.** The section, alignment, B/C profile, cursor coordinates,
+  and closest trace stay on screen while you use the menus.
+- **Resizing no longer zooms the view out.** Collapsing the lists or resizing
+  the main window nudged the zoom outward a little each time.
+- **Tool palette buttons are spaced correctly at startup.** A palette moved
+  below its default position could open with its buttons crowded together
+  until it was dragged.
+- **Switching themes no longer crowds list columns.**
+- **Lists no longer spawn or float tiny.** A new list opens as a tab on the
+  existing list, a list dragged out to float gets a usable size, and no list
+  can shrink below a readable minimum.
+- **Floating lists no longer sit on top of everything.** A floated list is a
+  real window with its own title bar, and a "Dock this list" button in its menu
+  bar puts it back.
+- **Settings behave.** Reading a setting that was never saved no longer lets one
+  series overwrite the shipped default for every other series, and editing a
+  returned column list no longer changes the stored value. Reset Defaults in
+  Series > Options now also resets trace mode, the sampling frame grid,
+  smoothing iterations, screenshot resolution, theme, and the series code
+  pattern.
+- **A malformed column setting in a series file says which setting is wrong
+  and how to fix it,** instead of failing later inside a list. The error window
+  also keeps the line breaks in a message that has them.
+- **Series history is sturdier.** One unreadable row in a series' log no longer
+  empties the editors list in Series > About, and a row that stops partway no
+  longer takes the next good row with it. A name pasted with a line break no
+  longer creates a false editor entry, and Series > Export Log History and
+  Offload log history handle logs already damaged this way.
+- **Saved files stay consistent from save to save.** An empty `log_set` key is
+  no longer written into the `.jser`, and a two-point trace's closed flag is
+  corrected in the file when it opens rather than at some later save.
+- **A section whose contour list holds an empty name opens again** instead of
+  crashing.
+- **Setting an object's comment, curation, last user, or alignment from a
+  script takes effect,** and reading `opacity_3D` returns the opacity instead
+  of the 3D mode. Calling `Section.setGroupVisibility` without its optional
+  argument no longer raises. None of this affected the windows and menus.
+- **A full-codebase review fixed dozens of smaller bugs.** Among them: switching
+  to a new series with several lists open, ImageJ ROI import and export
+  (same-named traces, open polylines, point ROIs), stuck progress dialogs, a
+  thin black line at the edge of the field, and memory the app never gave back
+  during long sessions.
+
+### Removed
+- **The Help menu's Search menus row.** The search box at the top of the Help
+  menu does the same job.
+- **The View > Palette > Visibility submenu.** Its four toggles now sit directly
+  in the View menu.
+
+## [1.22.1] - 2026-08-25
+
+### Changed
+- **The "this series has multiple alignments" popup is gone.** It was written
+  long ago to help users transition to working with alignments, and for
+  everyone since it read as a warning about something that is not a problem.
+  The Alignments menu is unchanged.
+
+### Fixed
+- **Fixed a crash on macOS 12 the first time a trace was smoothed.** The Mac
+  builds picked a scipy build that needs the newer Accelerate math library,
+  which only exists on macOS 13.3 and up, so on an older Mac the app started
+  normally and then died with "Symbol not found: _dstevr$NEWLAPACK" as soon as
+  anything called smoothing. The builds now pick the scipy that runs on macOS
+  12, and the build fails if that ever regresses. The README states the
+  minimum supported systems.
+
+## [1.22.0] - 2026-08-21
+
+### Added
+- **Find any menu command by typing its name.** Help > Search menus (Ctrl+K;
+  Cmd+K on macOS) searches every menu, shows where the command lives and its
+  shortcut, and runs it with Enter.
+- **Object colors can be changed from inside the 3D scene.** A new Object Colors
+  submenu recolors the selected objects, or reverts them to the color stored in
+  the series.
+- **Bulk section edits now show a progress bar.** Setting thickness or
+  brightness/contrast across many sections used to run for up to a minute with
+  nothing on screen. The edit is no faster, but the app now says what it is
+  doing while it works.
+
+### Changed
+- **Marking an object as needing curation no longer asks anything.** It assigns
+  to you and says so in the status bar. Assigning to somebody else moved to its
+  own row, "Needs curation (assign to)...", which keeps the dialog and
+  pre-fills your name. The record now also keeps who set each status, shown as
+  a tooltip on the object list's curation columns.
+- **The What's-new popup no longer opens on launch unless you ask for it.**
+  Turn on "Show what's new after updates" in the Help menu and release notes
+  will appear once per version, the way they used to. Help > What's new? still
+  opens them any time.
+- **The right-click menus follow the classic organization again.** The
+  reorganized menus from the recent betas move to the PyReconstruct Dev build
+  while that design settles. The keyboard shortcuts, and their display fix on
+  macOS, stay.
+- **The update channel now comes with the build.** Series Options kept a
+  Stable/Beta radio per series, but with two apps installed side by side the
+  channel is a property of the app, not the series. The stable app follows
+  stable releases and PyReconstruct Dev follows the beta channel. With the
+  radio gone the Updates tab held one checkbox, so the tab is gone too:
+  "Check for updates on startup" is now a Help item, under "Check for
+  updates...", and a source install's reinstall prompt asks for the GitHub
+  branch instead of reading a stored-only setting.
+- **The "series in use" message now says which app has the series open.** With
+  two PyReconstruct builds installed side by side, "another window" was no
+  longer an answer.
+
+### Fixed
+- **Auto-merge now works the same in polygon mode as in pencil mode.** The
+  auto-merge option merged whenever two or more selected closed traces shared
+  the new trace's name, without ever testing whether they touched. Whether the
+  pre-existing trace happened to be selected differs between the two tracing
+  gestures, so a closed polygon trace often refused to merge where a pencil
+  trace merged, and two selected same-name traces drawn far apart merged when
+  neither should have. Finishing a closed trace now merges it with every
+  same-name closed trace on the section that actually overlaps it, selected or
+  not, and leaves non-overlapping ones alone, so drawing traces apart is still
+  the way to keep separate traces under one name. The merged trace keeps the
+  existing trace's color and tags rather than the palette's fresh copy.
+- **One undo now fully reverts an auto-merged trace.** Drawing a trace and the
+  merge it triggered were recorded as separate undo states, so one Ctrl+Z
+  landed on the in-between state: the original trace plus the un-merged new
+  one, a composite that was never on screen. The draw and its auto-merge are
+  now a single undo step, so one undo restores the section exactly as it was
+  before the trace was drawn and one redo brings the merged result back.
+- **Tagging one trace no longer tags every other trace edited alongside it.**
+  Setting tags on a selection goes through `Section.editTraceAttributes`, whose
+  replace branch assigned the caller's set object itself once per trace, so all
+  of them ended up holding the same `set` rather than one each. Tags are added in
+  place elsewhere (`Trace.addTag` is `self.tags.add(tag)`, and the import
+  conflict flagger calls `trace.tags.add(...)`), so a later single-trace tag
+  appeared on the whole group. Pasting attributes aliased the clipboard trace's
+  own set as well, which put the stray tag back on the clipboard. Each trace now
+  gets its own copy.
+- **A refused knife cut no longer puts deleted tags back on the trace.**
+  `cutTrace` combined every selected trace's tags onto the first one, in place,
+  before it had decided whether the cut could happen at all. When the cut was
+  then refused (a self-intersecting outline, a knife click with no drag, a
+  threshold that discards every piece), the message said the object was left
+  unchanged, but the first trace had already absorbed the others' tags, so a
+  tag just deleted from it reappeared. The tags are now combined on a copy that
+  only the pieces of a completed cut are built from.
+- **Fixed a crash toggling curation columns from the Lists menu.** The command
+  had been broken all along; the new menu search made it reachable, and the
+  first real use crashed it.
+- **Keyboard shortcuts now appear in the right-click menus on macOS.** Qt hides
+  shortcut text in context menus when the platform asks it to, and macOS asks by
+  default. So Ctrl+H showed beside "Hide selected traces" in the menubar and
+  nothing beside the same row in the field menu, which is the surface where that
+  row is actually used. Every menu row the app builds now opts in, so the keys
+  read the same on Windows, Linux and macOS.
+- **The Beta update channel now offers a stable release when it is the newest one.**
+  The Beta channel only ever looked at pre-releases, so once v1.21.0 shipped as a
+  stable build and the superseded 1.21.0 betas were retired, a Beta-channel user was
+  offered nothing at all: `pick_release` returned `None`, `check_for_update` reported
+  `status="unknown"` with no asset, and the app showed neither an update prompt nor an
+  error. Testers were silently cut off from the release everyone else had, and the
+  only way out was to know, unprompted, to switch channels. The channel now offers
+  whichever of the newest pre-release and the newest stable release is actually newer,
+  so Beta means earlier access rather than a separate lane. The retired rolling
+  developer build is still never offered on Beta, which is what the previous behavior
+  was protecting.
+
+## [1.21.3] - 2026-08-13
+
+### Added
+- **The What's new dialog has a "Don't show again" button, and the Help menu
+  has a matching "Show what's new after updates" toggle to switch the popup
+  back on.** The button closes the dialog and stops the startup popup for
+  good, including across later updates. It suppresses only the unasked popup:
+  Help > What's new stays an explicit request and always opens. The two
+  controls read and write one stored preference, next to the dialog's
+  once-per-version record, so they can never disagree, and the toggle rereads
+  it every time the Help menu opens. While the popup is off the last-seen
+  version is deliberately not advanced, so switching it back on picks the
+  ordinary rules up intact: a release missed while it was off shows on the
+  next launch, and a release already seen stays seen.
+
+### Changed
+- **Recoloring objects from the palette is easier to find, is no longer
+  labeled as autoseg-only, and can now run over the whole series.** The
+  context row "Reapply autoseg colors..." sat inside `Object attributes >` on
+  the object list (and one menu deeper in the field), and its name undersold
+  it: the palette assigns a stable color to any object name, with only
+  unmodified `autoseg_<id>` names recovering their exact import color, so
+  users without autoseg objects had no reason to try it. The row now reads
+  "Reapply palette colors..." and sits at the top level of the object menus'
+  settings section, directly below the `Object attributes >` submenu it left.
+  A new `View > Recolor all objects from palette...` action applies the same
+  recoloring to every object in the series as one undoable pass; locked
+  objects are skipped rather than blocking the operation, and the
+  confirmation dialog states how many objects will be recolored and how many
+  locked ones will be skipped. The renamed row keeps its internal action
+  name, so a stored keyboard shortcut still binds.
+- **The "trace crosses itself" knife refusal now says what to try and where
+  to find it.** The old dialog told the user a selected trace crosses itself
+  and cannot be cut, and stopped there; users hitting it on automatically
+  segmented traces had no idea the app ships a clean-up tool for the stray
+  traces that segmentation leaves behind. The message
+  now explains that the outline crosses over itself so the cut cannot tell
+  inside from outside, confirms nothing was changed, and points at
+  Series > Clean up to remove the stray traces automatic segmentation
+  leaves behind, a common cause of the refusal. A test reads
+  the menu path off the live menus, so renaming them fails the suite instead
+  of leaving the message pointing at a menu that no longer exists.
+- **The maintainer byline in the What's new dialog now sits in a footer row
+  beside the "Full release notes on GitHub" link, instead of stacking above
+  it.** The byline and the link are the dialog's two small-text footer items,
+  and stacked one over the other they read as a single block and cost a row of
+  vertical space each. The footer now puts the byline bottom-left, on two
+  lines broken at the comma, and the link bottom-right of one row, below the
+  scrollable notes and above the action buttons, so the provenance line is
+  still on screen from the moment the dialog opens. The byline keeps its italic and the project-name link to the
+  home page, and now shares the release date line's quieter secondary style:
+  both lines are italic and paint in a color derived from the theme's palette,
+  a step darker than the near-invisible disabled gray the date line borrowed
+  before, so they read as asides that are still comfortably legible.
+
+### Fixed
+- **Fixed a crash (`AttributeError`) using undo or redo after an earlier
+  undo.** When a series-wide undo and a section-only undo are both available
+  and are not part of the same operation, the app compares the two to work out
+  which one Ctrl+Z should take. That comparison reads a timestamp off each
+  saved state, and section states were only being stamped on one of the three
+  paths that put them on an undo stack, so undoing and then pressing Ctrl+Z
+  again could hit a state with no timestamp at all and fail instead of undoing
+  anything. Every state is now stamped when it is created and re-stamped
+  whenever it moves onto a stack.
+- **Fixed a crash (`KeyError`) opening the z-trace list after an alignment was
+  renamed or deleted.** A z-trace or object can be pinned to a named alignment,
+  but renaming or deleting that alignment rewrote every section without
+  updating those pins, so they kept naming an alignment that no longer existed.
+  Objects shrugged that off, because their drawing path already resets a
+  missing name, while the z-trace path did not: the list computes a distance
+  for every row as it is built, so one pinned z-trace made the whole list
+  impossible to open, and the same pin also broke smoothing that z-trace and
+  adding it to a 3D scene. Renaming an alignment now carries the pins with it,
+  deleting one clears them, and a pin that names something missing falls back
+  to the series alignment instead of failing. A series already carrying a
+  broken pin is repaired the next time its alignments are edited.
+
+## [1.21.2] - 2026-08-13
+
+### Fixed
+- **Fixed the color picker opening painted in the last color that was
+  applied.** Setting a color painted the swatch button with a selector-less
+  `background-color` style rule, and Qt style rules cascade into every
+  descendant widget. The picker dialog is a child of the swatch (on purpose:
+  that parenting keeps it modal and in front of the dialog that opened it), so
+  reopening it showed a solid yellow, green, or purple window instead of a
+  normally styled one. Reported with screenshots on Windows and macOS. The
+  rule is now scoped to the swatch alone, and a swatch handed a blank color
+  now clears its old color instead of keeping it.
+- **Fixed the object attributes dialog opening with a gray color swatch (and
+  a white picker) for objects that have a color.** The dialog was never given
+  the selection's color, only its name and tags. The swatch now shows the
+  selection's color, checked across every section the objects appear on:
+  when all their traces agree it shows solid, and when any trace anywhere
+  disagrees it shows a diagonal split, the predominant color against a blank
+  half, so the discrepancy is visible while the attributes are being edited.
+  The shown color is display only: confirming the dialog without using the
+  picker leaves every trace's color exactly as it was, so an object whose
+  colors vary cannot be accidentally repainted to the one color the swatch
+  happened to show.
+- **Fixed a crash (`TypeError: can only join an iterable`) when editing an
+  object's attributes with the Object List open.** An attribute edit that
+  renames or removes an object deletes its data before the table removes its
+  row, and Qt re-queries the departing row in between, so the table was
+  computing columns for an object that no longer existed: the Trace tags
+  column joined the `None` that `getTags` returned for an unknown object, and
+  the Flat area, Volume, and Radius columns would have failed the same way on
+  rounding `None`. `getTags` now returns an empty set, and the Object List
+  answers a blank row for an object whose data is already gone.
+
+## [1.21.1] — 2026-08-07
+
+### Added
+- **A small confetti burst when you copy an error report.** Clicking **Copy
+  report to clipboard** in the error window now throws a dozen small colored
+  dots out of the button for about half a second, fading them out before they
+  reach the edge of the window, alongside the "Copied ✓" label it already
+  showed. It fires only on a copy that actually reached the clipboard, so it is
+  feedback and not decoration: where the clipboard is unavailable the label
+  still changes and nothing is thrown. The
+  particles are ordinary child widgets of the error window, animated with Qt's
+  own property animations and deleted when they land, so repeating the click
+  leaves nothing behind. The log viewer's own copy button is deliberately
+  untouched.
+
+### Changed
+- **The scale bar width setting moves the scale bar.** The bar is drawn at the
+  longest round length that fits the width you set, and the list of lengths it
+  was allowed to pick from held four values per decade: 1, 2.5, 5 and 10. The
+  width setting holds 81 values. Sweeping all 81 through a real render of the
+  widget, at six zoom levels from a dense view out to a whole section, only
+  three or four of them drew a different bar, and as many as 51 positions in a
+  row drew the same bar to the pixel. The list now carries every whole number
+  from 1 to 10 plus 1.5 and 2.5, which puts 8 to 10 different bars in the same
+  sweep, and every length it can print is still a number you would put in a
+  figure: 3 µm, 40 µm, 250 µm. Tick marks divide each length by a count picked
+  for that length rather than always by five, so a 20 µm bar reads 5, 10, 15
+  instead of 4, 8, 12, 16.
+
+  **A length prints one way now.** The same 10 µm bar printed `10 µm` or
+  `10.0 µm` depending on which side of a decade the zoom happened to be on,
+  because the arithmetic behind it returned a whole number in one case and a
+  decimal in the other and the label was whatever that came out as. Tick labels
+  carried a trailing `.0` on every value. Both go through one formatter now,
+  which drops trailing zeros and does nothing else.
+- **Help ▸ What's new opens on the release you are running instead of five
+  releases at once.** The on-demand re-open reused the fresh-install framing,
+  which lists the current version plus the four before it; on a long set of
+  notes that meant the release you opened it for was the only part most readers
+  reached. It now renders that release and marks the body truncated, appending
+  the line that points at the full notes on GitHub, and the dialog carries that
+  link of its own besides, so nothing became unreachable. The post-update
+  showing is unchanged and still lists every release you missed.
+- **How you close the color picker is now recorded in the log.** Every way of
+  closing the picker without OK -- the Cancel button, the title-bar close, Esc --
+  returns the same invalid color, so a report of "I set a color and nothing
+  happened" could not be told apart from a deliberate Cancel or a misbehaving OK,
+  in the app or in the log. `ColorButton.selectColor` now writes one line per
+  picker interaction to the log that `Help ▸ View log file` opens: OK logs the
+  color it applied; the Cancel button is named as Cancel, read from the dialog's
+  own button, the one place it differs from a window close; and any other
+  dismissal logs the color the picker was showing at that moment together with
+  the fact that it was not applied. That showing-color is the discriminator the
+  earlier trace-swatch report lacked. Behavior is unchanged -- the picker looks
+  the same and a dismissal still applies nothing; only the log gains a line.
+
+### Fixed
+- **A color picked for a trace is no longer thrown away on macOS.** Clicking a
+  color swatch called `QColorDialog.getColor()`, which on macOS does not open a
+  Qt dialog: it opens the shared system "Colors" panel, the live-apply picker
+  every other Mac app uses. Picking a color there changed nothing on screen,
+  and closing the panel -- the gesture that picker invites -- returned an
+  invalid color, so the choice was discarded silently and the swatch stayed
+  blank. (Qt bolts an OK button onto that panel and it does work, but the panel
+  opens wherever the system last left it, nowhere near the dialog that asked for
+  it.) The swatch now opens Qt's own color dialog: modal, parented to the
+  button, with OK inside its own window. This is the picker Windows and Linux
+  already got. Nothing stored was ever wrong -- the color simply never reached
+  the trace -- and it affected any color, not only the green in the report.
+- **Canceling the flag list's color filter no longer filters the list to
+  black.** "Filter > Color filter > Set filter..." guarded its picker with
+  `if not c: return`, which never fired: `QColor` defines no `__bool__`, so a
+  dismissed picker's invalid color is still truthy. Cancel therefore fell
+  through and set the filter to `(0, 0, 0)`, hiding every flag that was not
+  pure black -- a flag list that emptied itself on Cancel, with a filter the
+  user never chose and had to find "Remove filter" to clear. This one was not
+  macOS-specific; it happened everywhere, Cancel included.
+
+- **The autoseg import-colors editor no longer discards the color you pick on
+  macOS.** Series > Options > View > "Autoseg import colors" called
+  `QColorDialog.getColor()` for Add and Edit, the same static behind the trace
+  swatch bug: on macOS it opens the shared system "Colors" panel, and closing
+  that panel returns an invalid color that was then silently dropped. Both
+  call sites now open Qt's own dialog, as the trace swatch does.
+
+  Both pickers also open on the color being edited rather than on white. A
+  `QColorDialog` seeded before the native path is switched off loses its seed
+  on macOS, so pressing OK without changing anything would have written white
+  over the color that was already there.
+- **An error that keeps happening now opens one window instead of an endless
+  stream of them.** The exception hook opened an error window per occurrence,
+  which is fine for a failure the user can stop provoking and a trap for one they
+  cannot. An exception raised while a widget paints recurs on every repaint, and
+  a repaint is not something a user can decline: the window's own event loop
+  delivered the next paint event, which raised, which opened another window on
+  top; and closing one exposed the widget underneath, which repainted, which
+  raised again. Reported on 1.21.0 as "a neverending stream of these windows and
+  I can't close them", with Task Manager the only way out. A report can no longer
+  open from inside another one's window, and a fault -- identified by its type
+  and the line that raised it -- opens a window once per session. A second,
+  unrelated error that happens while a window is up is held back rather than
+  spent: it does not stack on top, and it still gets its own window the next time
+  it occurs with nothing in the way. Every occurrence is still written to the log
+  file, so nothing is lost: `Help > View log file` shows the repeats, and the
+  window now says so.
+- **A section change that cannot read its section file no longer leaves the field
+  permanently broken.** `changeSection` moved the field onto the new section
+  first and read the section and its image afterwards, so for the length of that
+  read the field held no section layer at all -- the move swaps it with the B
+  section's, which is empty until the first section change of a session -- and a
+  read that failed left it that way for good. `paintText` reads the section layer
+  on every paint event, so from that point every repaint raised `AttributeError:
+  'NoneType' object has no attribute 'getTrace'`, and because a window cannot be
+  asked to stop repainting, the error window reopened as fast as it was closed;
+  the app had to be killed from Task Manager. Reported against 1.21.0 on Windows
+  after double-clicking an object in the object list, a jump that saves every
+  section immediately before reading one back, where the file can still be held.
+  The section and its view are now built before anything moves, so a failure
+  leaves the field on the section it was already showing and the underlying error
+  is reported once, in the ordinary way.
+- **The maintainer line in "What's new" is now visible without scrolling.** The
+  provenance line -- "An independent build of PyReconstruct, maintained by
+  Dusten Hubbard." -- was appended to the end of the release-notes markdown,
+  below a rule, which put it inside the scrollable notes browser. On any release
+  with more than a screenful of notes, which is the normal case, a reader had to
+  scroll to the very bottom to reach it, and most never did: the line naming who
+  maintains this build was the one part of the dialog that reliably went unread.
+
+  It is now its own label between the notes and the "Full release notes on
+  GitHub" link, so it is on screen from the moment the dialog opens. The wording
+  is unchanged, and so is the italic the markdown had given it. What has changed
+  is that it is no longer dimmed: it sits at the dialog's ordinary text color
+  rather than the muted one. Who maintains this build is what a lab needs in
+  order to report an issue to the right person, so it is set to be read rather
+  than skimmed past.
+
+  The project name in that line links to pyreconstruct.org. Just the name is the
+  link, styled the ordinary way -- blue and underlined -- while the rest of the
+  sentence stays plain italic text and is not clickable. A blank line now
+  separates the byline from the "Full release notes on GitHub" link below it, so
+  the two no longer read as one block of small text.
+
+  Both links in the dialog also recolor properly when the theme is switched
+  from Help ▸ Theme while the dialog is open. Qt fixes a link's color when the
+  text is set rather than when it is drawn, so they used to keep the old theme's
+  blue until the dialog was closed and reopened -- barely visible against the
+  dark background.
+- **Fixed: Reset Defaults now moves the sliders in `Series ▸ Options`.** The
+  dialog rebuilds itself with `use_defaults=True` when Reset Defaults is
+  pressed, and an option that passes that flag to
+  `series.getOption(name, use_defaults)` comes back at the shipped default.
+  Three sliders did not pass it: 3D XY resolution, scale bar size and CPU
+  usage. They read the stored value unconditionally, so those three stayed
+  exactly where the user had left them. Six non-slider options in the same
+  dialog share the same cause and are not covered here.
+
+  Also guards `determine_cpus` against `os.cpu_count()` returning `None`, which
+  Python documents as possible. The dialog does not call it; its only caller is
+  the image-to-zarr conversion, which is where a `None` would otherwise raise.
+- **Every slider in `Series ▸ Options` shows its value while you drag it, in the
+  units the setting is actually stored in.** The sliders were a handle on a blank
+  groove with no number anywhere, so the only way to find out what a setting was
+  set to was to close the dialog and watch what the program did. The **CPU usage**
+  slider is the one that cost someone real time: it reads as a share of the
+  machine's cores, and a setting that looked like four workers ran eight, with
+  nothing on screen to check it against. It now reads `50% (5 of 10 workers)`,
+  resolved through the same `determine_cpus` the image-to-zarr converter calls, so
+  the worker count on the label is the worker count that will start. **Scale bar
+  size** reads as a percentage of the field width and **XY Resolution** in the 3D
+  section as the percentage of the way from the coarsest voxel to the finest. All
+  of them carry tick marks now, so the distance the handle has traveled is
+  readable at a glance, and so does the **Overlap threshold** slider in the series
+  import dialog, which already showed its number.
+
+  **Opening `Series ▸ Options` no longer shrinks the scale bar by itself.** The
+  width is stored from 20 to 100 but the slider ran from 0 to 100, so the dialog
+  squeezed the value on the way in and squeezed it back on the way out. The
+  squeeze does not round trip: 60 of the 81 values it can hold came back one
+  lower than they went in, the shipped default of 25 among them, so pressing OK
+  on a dialog nobody had touched made the scale bar a point narrower, every time.
+  The slider carries the 20 to 100 range itself now and the squeeze is gone, so
+  what you set is what is stored. The stored range, the default and the drawn
+  scale bar are unchanged.
+- **Exporting a section as SVG or PNG no longer nags every user to install
+  missing packages.** `File ▸ Export ▸ SVG`/`PNG` renders through
+  `svg_conversion.py`, which imports `svgwrite` (SVG) and `cairosvg` (PNG), but
+  neither package was declared in `pyproject.toml`, `requirements.txt` or
+  `uv.lock`. Every export therefore tripped the "this feature requires
+  additional Python packages" prompt before it would run, and in the frozen
+  installers -- where there is no pip on hand to accept that offer, and the
+  packages were never bundled because they were never installed into the build
+  environment -- SVG/PNG export could not proceed at all. Both packages are now
+  declared and ride with the build, so SVG export works out of the box. PNG
+  additionally needs a native Cairo library present on the system (`cairosvg`
+  reaches it through `cairocffi`'s runtime `dlopen`, which no wheel supplies);
+  `docs/DEV_UV.md` documents the per-platform requirement, and the guard in
+  `mod_imports.py` was widened to report a missing native library with the exact
+  remedy instead of crashing. Bundling Cairo into the frozen Windows/macOS
+  installers remains a separate, still-open packaging task.
+- **A "What's new" dialog that fails to reach you now says so in the log instead
+  of leaving no trace at all.** `MainWindow.showWhatsNewStartup` wrapped the whole
+  startup showing in a bare `except Exception: pass`, so a failure could only ever
+  be noticed as an absence, with nothing anywhere to say which step declined. The
+  handler still swallows everything -- a first-launch convenience must never
+  disrupt a launch -- but it now writes the exception and its traceback to the log
+  first, and it records the outcome when nothing failed so that "dialog shown" and
+  "not due for this version" can be told apart. `Help ▸ What's new` logs its own
+  failures the same way. The lines go to the log `Help ▸ View log file` already
+  opens.
 
 ## [1.21.0] — 2026-08-05
 
@@ -192,7 +828,7 @@ the README's *From source (developers)* section).
   moment you isolated, per trace, so an object you had hidden stays hidden and
   everything else returns. It sits directly under `Hide other objects` on all
   three menus that offer the isolate -- the field's `Object ▸` submenu, the object
-  list's right-click menu, and the object list's own `Selection` menu -- is greyed
+  list's right-click menu, and the object list's own `Selection` menu -- is grayed
   out until an isolate has left something to restore, and a single Ctrl+Z undoes it
   like any other volume-wide visibility change.
 
@@ -1037,7 +1673,7 @@ the README's *From source (developers)* section).
   nothing is driving the window by hand. Both now answer for themselves, and
   both answer the way that cannot lose anything: the exit prompt saves, because
   declining deletes the hidden working directory holding every unsaved edit and
-  cancelling stops the close entirely, and the recovery prompt opens the
+  canceling stops the close entirely, and the recovery prompt opens the
   recovered series, because declining deletes it.
 - **Importing transforms adds the new alignment to the alignment menu.** Both
   `Alignments > Import alignments` entries, `From .txt file...` and
@@ -1886,7 +2522,7 @@ the README's *From source (developers)* section).
   hooks; a Mesa software-OpenGL fallback on Windows for RDP/VM sessions; and a
   frozen-Windows multiprocessing fix so the Zarr conversion runs.
 
-[Unreleased]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.21.0...HEAD
+[Unreleased]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.23.0...HEAD
+[1.23.0]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.22.3...v1.23.0
 [1.21.0]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.20.0...v1.21.0
-[1.21.0-beta-6]: https://github.com/dustenhubbard/PyReconstruct/compare/v1.21.0-beta-5...v1.21.0-beta-6
 [1.20.0]: https://github.com/dustenhubbard/PyReconstruct/releases/tag/v1.20.0
