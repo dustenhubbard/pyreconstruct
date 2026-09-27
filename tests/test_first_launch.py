@@ -555,8 +555,9 @@ def test_help_menu_offers_whats_new_reopen():
 
 # ---- the welcome-only update-checks note ------------------------------------
 # A newcomer has no way to discover that PyReconstruct checks for updates at
-# all, or that the switches for it -- the check itself and the Beta channel --
-# are in Series ▸ Options. The welcome showing is the one place that says so.
+# all, that the switch for it is in the Help menu, or that the nightly build is
+# a second app (PyReconstruct Dev) rather than a setting in this one. The
+# welcome showing is the one place that says so.
 # The other two framings must stay clear of it: someone updating has just used
 # the check, and someone reopening the notes from the Help menu went looking
 # rather than needing to be oriented.
@@ -564,15 +565,19 @@ def test_help_menu_offers_whats_new_reopen():
 # These assert on distinctive fragments rather than the whole paragraph, so the
 # copy can be reworded without failing a test for no reason -- but they do hold
 # both facts the note exists to deliver: that the check can be turned off, and
-# that a Beta channel exists.
+# that a nightly build exists as its own app.
 def test_welcome_carries_the_update_checks_note():
     c = F.whats_new_content("1.20.3", last_seen=None, text=WN, installed_app=True)
     assert c["orienter"] == "Welcome to PyReconstruct"
     body = c["body"]
     assert "checks once a day" in body       # the app checks on its own
     assert "turn this off" in body           # and the check can be turned off
-    assert "Beta channel" in body            # and there is a second channel
-    assert "Series ▸ Options" in body        # where both of those live
+    assert "Help ▸ Automatically check for updates" in body   # where
+    assert "nightly build" in body           # and there is a nightly app
+    assert "PyReconstruct Dev" in body       # named, so it can be found
+    # the pre-#348 story of a channel switch under Series Options is gone
+    assert "Beta" not in body
+    assert "Series ▸ Options" not in body
     # an aside after the release history, set off by a rule -- not mistakable
     # for one more release bullet
     assert body.index("Bullet three-A.") < body.index("checks once a day")
@@ -589,7 +594,7 @@ def test_update_framing_never_carries_the_note(last_seen):
     c = F.whats_new_content("1.20.3", last_seen=last_seen, text=WN, installed_app=True)
     assert c["orienter"] == f"What's new since {last_seen}"
     assert "checks once a day" not in c["body"]
-    assert "Beta channel" not in c["body"]
+    assert "nightly build" not in c["body"]
 
 
 @pytest.mark.parametrize("last_seen", [None, "1.20.2", "garbage"])
@@ -605,7 +610,7 @@ def test_on_demand_reopen_never_carries_the_note(last_seen):
                             installed_app=True)
     assert c["orienter"] == "Recent releases"
     assert "checks once a day" not in c["body"]
-    assert "Beta channel" not in c["body"]
+    assert "nightly build" not in c["body"]
 
 
 def test_welcome_note_survives_the_generic_fallback_body():
@@ -620,12 +625,12 @@ def test_welcome_note_survives_the_generic_fallback_body():
     assert "All release notes on GitHub" in c["body"]   # the generic body
     assert "Bullet" not in c["body"]                     # still leaks no sections
     assert "checks once a day" in c["body"]
-    assert "Series ▸ Options" in c["body"]
+    assert "Help ▸ Automatically check for updates" in c["body"]
 
     # nothing bundled at all -- the generic body is the whole body
     c2 = F.whats_new_content("1.20.3", last_seen=None, text="", installed_app=True)
     assert "All release notes on GitHub" in c2["body"]
-    assert "Beta channel" in c2["body"]
+    assert "nightly build" in c2["body"]
 
 
 @pytest.mark.parametrize("kwargs", [{"last_seen": "1.20.1"}, {"on_demand": True}])
@@ -1557,3 +1562,28 @@ def test_whats_new_on_demand_with_unknown_version_omits_it_and_still_opens(
     finally:
         dlg.close()
         dlg.deleteLater()
+
+
+# ---- the note is flavored: each app describes the OTHER one ------------------
+def test_welcome_note_in_the_stable_app_points_at_dev(monkeypatch):
+    import PyReconstruct.modules.datatypes.series_owner as owner
+    monkeypatch.setattr(owner, "app_display_name", lambda: "PyReconstruct")
+    c = F.whats_new_content("1.20.3", last_seen=None, text=WN, installed_app=True)
+    body = c["body"]
+    assert F.welcome_update_note() == F.WELCOME_UPDATE_NOTE
+    assert "PyReconstruct Dev is the nightly build." in body
+    assert "It installs beside this app" in body
+    assert "This is the nightly build" not in body
+
+
+def test_welcome_note_in_the_dev_app_points_at_stable(monkeypatch):
+    import PyReconstruct.modules.datatypes.series_owner as owner
+    monkeypatch.setattr(owner, "app_display_name", lambda: "PyReconstruct Dev")
+    c = F.whats_new_content("1.20.3", last_seen=None, text=WN, installed_app=True)
+    body = c["body"]
+    assert F.welcome_update_note() == F.WELCOME_UPDATE_NOTE_DEV
+    assert "checks once a day" in body                    # the shared first half
+    assert "Help ▸ Automatically check for updates" in body
+    assert "This is the nightly build." in body
+    assert "PyReconstruct, the stable app, installs beside it" in body
+    assert "PyReconstruct Dev is the nightly build" not in body

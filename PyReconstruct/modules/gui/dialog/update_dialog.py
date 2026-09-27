@@ -23,7 +23,7 @@ from PySide6.QtCore import Qt
 
 from PyReconstruct.modules.backend.threading import ThreadPool
 from PyReconstruct.modules.backend.updater.updater import (
-    download_asset, fetch_checksum, UpdateCancelled,
+    download_asset, fetch_checksum, channel_display_name, UpdateCancelled,
 )
 from PyReconstruct.modules.gui.main.first_launch import github_release_url
 
@@ -53,6 +53,8 @@ class UpdateDialog(QDialog):
         self._asset = info["asset"]
         self._release = info["release"]
         self._channel = channel
+        # What the user reads: "Stable" or "Nightly", never the stored value.
+        self._channel_name = channel_display_name(channel)
         self._pool = None
         self._cancel = threading.Event()
         self._tmpdir = None
@@ -65,14 +67,14 @@ class UpdateDialog(QDialog):
         remote, local = info["remote_version"], info["local_version"]
         head = {
             "newer": f"<b>Update available:</b> {remote}",
-            "older": f"<b>Downgrade:</b> {self._channel} build is {remote}",
+            "older": f"<b>Downgrade:</b> {self._channel_name} build is {remote}",
             "same": f"<b>Reinstall {remote}</b>",
-            "unknown": f"<b>{self._channel} build:</b> {remote}",
-        }.get(status, f"<b>{self._channel} build:</b> {remote}")
+            "unknown": f"<b>{self._channel_name} build:</b> {remote}",
+        }.get(status, f"<b>{self._channel_name} build:</b> {remote}")
         self._headline = QLabel(head)
         lay.addWidget(self._headline)
 
-        sub = f"You have {local}  ·  channel: {self._channel}  ·  download: {human_size(self._asset.get('size'))}"
+        sub = f"You have {local}  ·  channel: {self._channel_name}  ·  download: {human_size(self._asset.get('size'))}"
         lay.addWidget(QLabel(sub))
 
         # No notes body here. Rendering them at this point showed the user the

@@ -37,13 +37,24 @@ _ASSET_VERSION_RE = re.compile(r"PyReconstruct-(?P<ver>.+?)-(?:Windows|macOS|Lin
 # on every push to main. That build (and the "Developer" update channel that
 # selected it) has been retired -- developers now run source installs to track
 # main (see the developer-install docs in the README). The constant is KEPT
-# deliberately: the Beta (prerelease) channel still excludes this tag as defense
-# in depth. Old clients (v1.21.0-beta-2 and earlier) predate this exclusion and
-# relied on release ordering, which a recreate-on-every-push rolling build
-# defeated -- that was the field regression that prompted the removal. If a
-# rolling-style release under this tag ever reappears, the exclusion guarantees a
-# current client's Beta channel can never be shadowed by it.
+# deliberately: the Nightly (prerelease) channel still excludes this tag as
+# defense in depth. Old clients (v1.21.0-beta-2 and earlier) predate this
+# exclusion and relied on release ordering, which a recreate-on-every-push
+# rolling build defeated -- that was the field regression that prompted the
+# removal. If a rolling-style release under this tag ever reappears, the
+# exclusion guarantees a current client's Nightly channel can never be shadowed
+# by it.
 ROLLING_TAG = "prerelease"
+
+# The flavor marker the packaging scripts put on every Dev-build asset, right
+# after the platform tag: 'PyReconstruct-1.24.0.dev20260928-macOS-arm64-Dev.dmg',
+# '...-Windows-x86_64-Dev-Setup.exe', '...-Linux-installer-Dev.tar.gz'. The
+# updater keys the two feeds apart on it (see ``pick_asset``), so the stable app
+# never downloads a Dev installer and the Dev app never downloads a stable one.
+# Case-sensitive on purpose: the PEP 440 '.devYYYYMMDD' segment in a nightly's
+# version sits BEFORE the platform tag and is lowercase.
+DEV_ASSET_MARKER = "-Dev"
+_DEV_MARKER_RE = re.compile(r"-Dev(?=[-.]|$)")
 
 # Channel values in the order their radios appear in Series > Options > Updates.
 # Position is the contract between the dialog's radios and the stored value; keep
@@ -56,9 +67,14 @@ UPDATE_CHANNELS = ("release", "prerelease")
 # lands on index 0). Sources:
 #   stable/edge -> the pre-rename names (stable->release, edge->prerelease).
 #   developer   -> the removed Developer channel; the maintainer (at minimum) has
-#                  it stored, so it must remap to Beta (prerelease), the closest
-#                  surviving channel, rather than falling back to Stable.
+#                  it stored, so it must remap to Nightly (prerelease), the
+#                  closest surviving channel, rather than falling back to Stable.
 _LEGACY_CHANNELS = {"stable": "release", "edge": "prerelease", "developer": "prerelease"}
+
+# What the user sees when a channel is named on screen. The stored values stay
+# "release"/"prerelease" (they are the contract with saved options and with the
+# GitHub flag they select on); only the wording is Stable/Nightly.
+_CHANNEL_DISPLAY_NAMES = {"release": "Stable", "prerelease": "Nightly"}
 
 
 def normalize_channel(channel):
@@ -66,20 +82,29 @@ def normalize_channel(channel):
     return _LEGACY_CHANNELS.get(channel, channel)
 
 
+def channel_display_name(channel):
+    """'Stable' or 'Nightly': the user-facing name for a channel value.
+
+    Accepts the legacy values too (via :func:`normalize_channel`). Anything
+    unrecognized falls back to Stable rather than leaking a raw internal string
+    such as ``prerelease`` into a dialog.
+    """
+    return _CHANNEL_DISPLAY_NAMES.get(normalize_channel(channel), "Stable")
+
+
 def other_flavor_url(timeout=6):
-    """The download page for the OTHER build: stable from Dev, the newest beta
-    from stable.
+    """The download page for the OTHER build: stable from Dev, the newest
+    nightly from stable.
 
     Resolved when clicked, never stored, so the link cannot go stale:
 
     * From the Dev build the answer is GitHub's own ``releases/latest``
       redirect, which always lands on the newest stable release. No API call.
     * From the stable build there is no such redirect for pre-releases, so the
-      newest curated beta is looked up through the same release list the
-      updater reads (drafts and the rolling tag excluded, exactly as
-      ``pick_release`` does). Any failure -- offline, rate-limited, no beta
-      right after a final ships -- falls back to the releases index, which
-      lists everything.
+      newest nightly is looked up through the same release list the updater
+      reads (drafts and the rolling tag excluded, exactly as ``pick_release``
+      does). Any failure -- offline, rate-limited, no nightly published yet --
+      falls back to the releases index, which lists everything.
     """
     base = f"https://github.com/{GITHUB_REPO}/releases"
     if pinned_channel() == "prerelease":
@@ -146,20 +171,26 @@ def fetch_releases(timeout=15):
 # --- Selection (pure) ---------------------------------------------------------
 
 def pick_release(releases, channel):
-    """Pick the release for a channel.
+    """Pick the release for a channel. Strict: nothing crosses channels.
 
-    release    -> newest non-prerelease, non-draft release.
+    release    -> newest non-prerelease, non-draft release. Never a pre-release.
     prerelease -> newest release flagged ``prerelease`` (drafts excluded),
-                  EXCLUDING any release under ``ROLLING_TAG``. The pipeline
-                  publishes curated semver pre-releases (v1.30.0-alpha.N -> -rc
-                  -> final), each flagged ``prerelease=true`` by CI, so the
-                  newest such release is the current pre-release. The rolling
-                  Developer build that once used ``ROLLING_TAG`` is gone, but the
-                  exclusion stays as defense in depth: excluding that tag
-                  explicitly (rather than relying on newest-first ordering)
-                  guarantees a rolling-style release can never shadow a curated
-                  semver pre-release, even if GitHub's ordering shifts or such a
-                  release reappears.
+                  EXCLUDING any release under ``ROLLING_TAG``. Never a stable
+                  release, even when the stable one is newer: the Dev app is the
+                  only build on this channel, and a stable installer offered to
+                  it installs a second app beside it instead of updating it.
+                  When no nightly is published, the answer is None and the
+                  caller reads that as "no update", not as an error.
+
+    The nightly pipeline publishes PEP 440 dev versions
+    (``v1.24.0.dev20260928``), each flagged ``prerelease=true`` by CI, so the
+    newest such release is the current nightly. Older test builds were
+    ``vX.Y.Z-beta-N``; they parse the same way and sort below any dev version
+    of the next release. The rolling Developer build that once used
+    ``ROLLING_TAG`` is gone, but the exclusion stays as defense in depth:
+    excluding that tag explicitly (rather than relying on newest-first
+    ordering) guarantees a rolling-style release can never shadow a nightly,
+    even if GitHub's ordering shifts or such a release reappears.
 
     The removed ``developer`` channel (and legacy ``stable``/``edge`` values)
     are remapped by :func:`normalize_channel` before this dispatch, so a stored
@@ -167,26 +198,25 @@ def pick_release(releases, channel):
     """
     channel = normalize_channel(channel)
     rels = [r for r in (releases or []) if not r.get("draft")]
-    newest_stable = next((r for r in rels if not r.get("prerelease")), None)
     if channel == "prerelease":
-        newest_pre = next(
+        return next(
             (r for r in rels
              if r.get("prerelease") and r.get("tag_name") != ROLLING_TAG),
             None,
         )
-        return _newer_of(newest_pre, newest_stable)
     # release (stable)
-    return newest_stable
+    return next((r for r in rels if not r.get("prerelease")), None)
 
 
 def _tag_version(release):
     """The release's tag parsed as a version, or None if it is not one.
 
-    Tags in this project are `vX.Y.Z` and `vX.Y.Z-beta-N` / `-alpha.N` / `rcN`,
-    all of which `packaging` parses once the leading `v` is dropped. A tag that
-    is not a version at all (the retired rolling `prerelease` tag, or anything
-    hand-made) yields None, and the caller treats that as "cannot compare"
-    rather than as "older".
+    Tags in this project are `vX.Y.Z` for stable releases and
+    `vX.Y.Z.devYYYYMMDD` for nightlies (older test builds were `vX.Y.Z-beta-N`
+    / `-alpha.N` / `rcN`), all of which `packaging` parses once the leading `v`
+    is dropped. A tag that is not a version at all (the retired rolling
+    `prerelease` tag, or anything hand-made) yields None, and the caller
+    treats that as "cannot compare" rather than as "older".
     """
     if not release:
         return None
@@ -197,53 +227,54 @@ def _tag_version(release):
         return None
 
 
-def _newer_of(pre, stable):
-    """The newer of a pre-release and a stable release, preferring `pre` on ties.
+def is_dev_asset(asset_name):
+    """True when an asset name carries the Dev flavor marker (``-Dev``).
 
-    This is what makes the Beta channel a SUPERSET of Stable rather than a set
-    disjoint from it. A tester on Beta wants the newest thing that exists; when
-    a stable release is the newest thing, withholding it strands them.
-
-    That is not hypothetical. v1.21.0 shipped as a stable cut from a release
-    branch, its superseded betas were retired at publish, and every Beta-channel
-    user was then offered NOTHING: `pick_release` returned None, so there was no
-    prompt and no error either. The bug is invisible from the inside, which is why
-    it wants a test rather than a comment.
-
-    Ties go to the pre-release deliberately. When a pre-release and a stable
-    release carry the same version, the pre-release is the one with the narrower
-    audience, and a Beta user asked for that audience.
+    The marker follows the platform tag and is itself followed by a separator
+    or the end of the name, so ``...-macOS-arm64-Dev.dmg`` and
+    ``...-Windows-x86_64-Dev-Setup.exe`` are Dev assets while a hypothetical
+    ``...-Development.exe`` is not.
     """
-    if pre is None:
-        return stable
-    if stable is None:
-        return pre
-    pv, sv = _tag_version(pre), _tag_version(stable)
-    if pv is None or sv is None:
-        return pre
-    return stable if sv > pv else pre
+    return bool(_DEV_MARKER_RE.search(asset_name or ""))
 
 
-def pick_asset(release, platform_tag):
-    """Pick the installer asset matching this platform tag (e.g. 'Windows-x86_64').
+def pick_asset(release, platform_tag, dev=False):
+    """Pick the installer asset for this platform tag AND this build flavor.
 
-    The substring match is unambiguous because ``platform_asset_tag`` always
-    carries the OS label and the arch tokens are not substrings of each other:
-    'macOS-x86_64' and 'macOS-arm64' (and 'Windows-x86_64') each match exactly
-    one asset and never another arch's or OS's. If asset tags are ever shortened
-    to bare 'x86_64'/'arm64', that guarantee is lost -- keep the OS-label prefix.
+    ``platform_tag`` is e.g. 'Windows-x86_64' (see ``platform_asset_tag``).
+    ``dev`` says which flavor is asking: the Dev app (``dev=True``) accepts only
+    assets carrying the ``-Dev`` marker, the stable app (``dev=False``) accepts
+    only assets without it. A release that has no asset for this platform and
+    flavor yields None, which callers read as "no update available", never as
+    an error: an installer for the OTHER flavor would install a second app
+    beside this one rather than update it, so it must not be offered.
+
+    The platform substring match is unambiguous because ``platform_asset_tag``
+    always carries the OS label and the arch tokens are not substrings of each
+    other: 'macOS-x86_64' and 'macOS-arm64' (and 'Windows-x86_64') each match
+    exactly one asset and never another arch's or OS's. If asset tags are ever
+    shortened to bare 'x86_64'/'arm64', that guarantee is lost -- keep the
+    OS-label prefix.
     """
     if not release:
         return None
     for a in release.get("assets", []):
         name = a.get("name", "")
-        if platform_tag in name and not name.endswith(".sha256"):
-            return a
+        if platform_tag not in name or name.endswith(".sha256"):
+            continue
+        if is_dev_asset(name) != bool(dev):
+            continue
+        return a
     return None
 
 
 def asset_version(asset_name):
-    """Parse the version out of an asset filename, or None."""
+    """Parse the version out of an asset filename, or None.
+
+    The version is everything between 'PyReconstruct-' and the platform tag, so
+    'PyReconstruct-1.24.0.dev20260928-macOS-arm64-Dev.dmg' yields
+    ``1.24.0.dev20260928`` and the ``-Dev`` marker after the tag is ignored.
+    """
     m = _ASSET_VERSION_RE.match(asset_name or "")
     if not m:
         return None
@@ -276,14 +307,23 @@ def check_for_update(channel, releases=None):
     """Resolve what update (if any) is available on ``channel``.
 
     Returns a dict: release, asset, remote_version, local_version, status.
+
+    Strict per-channel feed. The channel picks the release (stable or nightly,
+    see ``pick_release``) and also the asset flavor: the Dev app is the only
+    build pinned to the prerelease channel (``pinned_channel``), so the
+    prerelease channel takes ``-Dev`` assets and the release channel takes the
+    plain ones (``pick_asset``). With no matching release or asset the result
+    carries ``asset=None`` and ``status="unknown"``, and callers treat that as
+    "nothing to offer".
     """
     from PyReconstruct.modules.backend.updater.install_info import (
         current_version, platform_asset_tag,
     )
     if releases is None:
         releases = fetch_releases()
+    channel = normalize_channel(channel)
     release = pick_release(releases, channel)
-    asset = pick_asset(release, platform_asset_tag())
+    asset = pick_asset(release, platform_asset_tag(), dev=(channel == "prerelease"))
     remote_v = asset_version(asset["name"]) if asset else None
     local_v = current_version()
     return {

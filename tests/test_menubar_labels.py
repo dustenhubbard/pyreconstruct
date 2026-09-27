@@ -350,8 +350,8 @@ _TOGGLE_WHATSNEW_ROW = (1, "act", "togglewhatsnew_act")
 _TOGGLE_UPDATECHECK_ROW = (1, "act", "toggleupdatecheck_act")
 # Help > the cross-flavor download row (2026-08-25): each build links to the
 # OTHER build's latest download, right under "Check for updates...". Stable
-# offers the Dev beta, Dev offers stable; legacy Beta-channel users hold a
-# lone beta install and this is their road back to stable.
+# offers the Dev nightly, Dev offers stable; legacy test-channel users hold a
+# lone Dev install and this is their road back to stable.
 _GET_OTHER_FLAVOR_ROW = (1, "act", "getotherflavor_act")
 # View > Show/hide lists (2026-08-25, his stage 1 of the sidebar): the
 # collapse toggle, also the sidebar pill in the status bar. Remappable,
