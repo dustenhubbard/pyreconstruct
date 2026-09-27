@@ -6,6 +6,7 @@ reviews:
   request_changes_workflow: false
   commit_status: false
   high_level_summary: false
+  high_level_summary_placeholder: "no-summary-placeholder-7f3a9c"
   changed_files_summary: false
   sequence_diagrams: false
   estimate_code_review_effort: false
