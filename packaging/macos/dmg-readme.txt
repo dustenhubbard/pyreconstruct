@@ -1,35 +1,24 @@
-How to open PyReconstruct (first launch)
-========================================
+Install and open @APP_NAME@
+==========================
 
-PyReconstruct is not yet code-signed by Apple (this is a preview build), so the
-first time you open it macOS will block it with a dialog like:
+1. Drag @APP_NAME@ onto the Applications folder in this window.
 
-    "PyReconstruct" Not Opened
-    Apple could not verify "PyReconstruct" is free of malware that may harm
-    your Mac or compromise your privacy.
-                                              [ Move to Trash ]   [ Done ]
+2. Double-click that Applications folder. Find @APP_NAME@ and
+   double-click it. If the app opens, you are done.
 
-This is expected for an unsigned app. Click "Done" -- do NOT click "Move to
-Trash" -- then allow it to run one of these two ways:
+3. If your Mac says it cannot verify the app, click Done (or Cancel).
+   Keep the app. Do not choose Move to Trash.
 
-Option A -- Terminal (most reliable)
-  1. Drag PyReconstruct onto the Applications folder (the alias in this window).
-  2. Open Terminal (Applications > Utilities > Terminal), paste this line, and
-     press Return:
+4. Click the Apple menu at the top-left of your screen, then System Settings.
 
-         xattr -dr com.apple.quarantine /Applications/PyReconstruct.app
+5. Click Privacy & Security on the left. Scroll down to Security.
+   Find the message about @APP_NAME@ and click Open Anyway.
 
-     (No output means it worked. If it says "Operation not permitted," put
-     "sudo " in front and enter your password.)
-  3. Open PyReconstruct from Applications or Launchpad as usual.
+6. If asked, enter the password you use to log in to your Mac or use Touch ID.
+   Click Open when asked again.
 
-Option B -- no Terminal
-  1. Drag PyReconstruct onto the Applications folder, double-click it, and click
-     "Done" on the dialog above.
-  2. Open System Settings > Privacy & Security, scroll down to the Security
-     section, and click "Open Anyway" next to the PyReconstruct message.
-  3. Confirm, then open PyReconstruct again.
+Next time, open @APP_NAME@ normally from Applications.
 
-You only need to do this once per install.
-
-This step goes away once PyReconstruct is code-signed and notarized.
+Cannot find Open Anyway? Try opening the app again as in step 2, then return
+to Privacy & Security. If it is still missing, ask the person who sent you
+this installer for help.

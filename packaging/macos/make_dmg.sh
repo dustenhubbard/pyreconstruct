@@ -28,7 +28,9 @@ STAGE="$(mktemp -d)/${APP_NAME}"
 mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"   # drag-and-drop target in the mounted dmg
-cp "$(dirname "$0")/dmg-readme.txt" "$STAGE/Read Before First Launch.txt"  # unsigned-app first-launch help
+# Render the first-launch help for the app actually included in this image.
+sed "s/@APP_NAME@/${APP_NAME}/g" "$(dirname "$0")/dmg-readme.txt" \
+    > "$STAGE/Read Before First Launch.txt"
 
 # hdiutil create intermittently fails with "Resource busy" on CI runners when a
 # stale diskimages-helper still holds a disk image. Retry with cleanup + backoff.
