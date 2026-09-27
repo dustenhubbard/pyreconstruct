@@ -77,9 +77,30 @@ def test_resolve_username_default_of_last_resort():
     ("1.20.2", None, False),         # indeterminate current -> don't show
     (None, None, False),
     (None, "", False),
+    ("1.23.0", "1.24.0.dev20260928", False),   # a nightly, after an update
+    (None, "1.24.0.dev20260928", False),       # a nightly, fresh install
+    ("garbage", "1.24.0.dev20260928", False),  # a nightly, corrupt stored
+    ("1.23.0", "1.23.1.dev5+g0123abc", False), # a source install of main
 ])
 def test_whats_new_due(stored, current, expected):
     assert F.whats_new_due(stored, current) is expected
+
+
+def test_whats_new_is_never_due_on_a_dev_release():
+    """A nightly skips the dialog on every launch, whatever is stored.
+
+    The notes a nightly carries are written for the stable it previews, and a
+    build that changes every day would otherwise ask every day. The same
+    stored value against the stable still shows, so the gate is the version's
+    dev marker and nothing else.
+    """
+    nightly = "1.24.0.dev20260928"
+    for stored in (None, "", "garbage", "1.23.0", "1.24.0.dev20260927", nightly):
+        assert F.whats_new_due(stored, nightly) is False, stored
+    # the same inputs with the stable it previews behave as before
+    assert F.whats_new_due(None, "1.24.0") is True
+    assert F.whats_new_due("1.23.0", "1.24.0") is True
+    assert F.whats_new_due("1.24.0.dev20260928", "1.24.0") is True
 
 
 # ---- changelog parsing ------------------------------------------------------

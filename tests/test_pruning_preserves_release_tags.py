@@ -25,17 +25,24 @@ def workflow_script(filename, step):
     return textwrap.dedent("\n".join(lines))
 
 
+NIGHTLIES = [f"v1.23.0.dev202609{d:02d}" for d in range(1, 10)]   # nine nights
+
+
 @pytest.mark.parametrize("workflow,step,stable,deleted", [
-    ("prune-betas.yml", "Delete overtaken and superseded betas", "v1.22.2",
-     {"v1.23.0-beta-1", "v1.23.0-beta-2"}),
+    # Ten nightlies ahead of v1.22.2 (nine of 1.23.0, one of 1.24.0): the three
+    # oldest go, and so does the retired-shape leftover of a shipped version.
+    ("prune-nightlies.yml", "Delete overtaken and superseded nightlies", "v1.22.2",
+     set(NIGHTLIES[:3]) | {"v1.22.1-beta-1"}),
+    # v1.23.0 ships: every pre-release of exactly 1.23.0 goes, in either shape.
     ("build-installers.yml", "Prune superseded pre-releases", "v1.23.0",
-     {f"v1.23.0-beta-{i}" for i in range(1, 5)}),
+     set(NIGHTLIES) | {"v1.23.0-beta-1"}),
 ])
 def test_pruning_removes_downloads_but_keeps_historical_tags(
     tmp_path, workflow, step, stable, deleted,
 ):
-    releases = {"v1.22.2": False, "v1.24.0-beta-1": True}
-    releases.update({f"v1.23.0-beta-{i}": True for i in range(1, 5)})
+    releases = {"v1.22.2": False, "v1.24.0.dev20261001": True,
+                "v1.22.1-beta-1": True, "v1.23.0-beta-1": True}
+    releases.update({t: True for t in NIGHTLIES})
     releases[stable] = False
     state = tmp_path / "releases.json"
     state.write_text(json.dumps(releases))

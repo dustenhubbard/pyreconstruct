@@ -1,25 +1,40 @@
 name: build-installers
 
 # Builds unsigned one-click installers and publishes them to THIS repo's GitHub
-# Releases for a cut release: a tag vX.Y.Z -> stable Release; a pre-release tag
-# (vX.Y.Z-beta-N / vX.Y.ZrcN / vX.Y.ZaN) -> GitHub pre-release (the Beta
-# channel). The in-app updater (updater.GITHUB_REPO) reads these. Runs on the
-# fork as-is (no hardcoded owner). Signing is deferred (proof of concept).
+# Releases for a cut release. Two channels:
+#
+#   * stable:  a clean vX.Y.Z tag on main -> a GitHub Release, the latest one,
+#              with the WHATS_NEW.md body for that version.
+#   * nightly: a vX.Y.Z.devYYYYMMDD tag, cut by nightly.yml from main when main
+#              has new commits -> a GitHub pre-release, never marked latest,
+#              with GitHub's auto-generated notes against the previous nightly
+#              (or the newest stable, when no nightly exists yet).
+#
+# Any other tag shape that reaches here (vX.Y.ZrcN, vX.Y.ZaN, a dashed
+# pre-release) publishes as a pre-release with the WHATS_NEW body, as before.
+# The in-app updater (updater.GITHUB_REPO) reads these. Runs on the fork as-is
+# (no hardcoded owner). Signing is deferred (proof of concept).
 #
 # Installers are built ONLY for a tag (or a manual workflow_dispatch), NOT on
 # every push to main. The former rolling "latest main" build that republished a
 # 'prerelease' release on each push -- and the in-app Developer channel it fed --
-# has been removed: it caused a field regression (old clients predating the Beta
-# channel's ROLLING_TAG exclusion were offered dev builds when the rolling build
-# recreated its release out of order). Developers now track main via a source
-# install instead of a per-commit installer rebuild (see the README's
-# developer-install section). The pytest suite still runs on every main push via
-# the separate `tests` workflow (.github/workflows/test.yml).
+# has been removed: it caused a field regression (old clients predating the
+# pre-release channel's ROLLING_TAG exclusion were offered dev builds when the
+# rolling build recreated its release out of order). The nightly train replaces
+# it with one dated, immutable tag a day, built through this same path. The
+# pytest suite still runs on every main push via the separate `tests` workflow
+# (.github/workflows/test.yml).
 #
 # Flavor: main carries packaging/FLAVOR = dev, so a build is the Dev app unless
 # the "Pick the build flavor" step removes that file. It does so for a clean
 # vX.Y.Z tag (stable by promotion, no release branch) and for a manual run
-# with flavor=stable (a stable dry run from any branch).
+# with flavor=stable (a stable dry run from any branch). A nightly tag is not
+# a clean vX.Y.Z, so it keeps the file and builds PyReconstruct Dev.
+#
+# A workflow_dispatch may run on a tag ref (nightly.yml does exactly that,
+# because a tag pushed with GITHUB_TOKEN never fires the `push: tags:` trigger
+# below). Every step here reads GITHUB_REF_NAME, which is the tag name in both
+# cases, so a dispatched tag build is the same build a hand-pushed tag gets.
 
 on:
   push:
@@ -143,8 +158,11 @@ jobs:
               echo "::error::setuptools-scm produced a fallback version ($V) — missing tags or fetch-depth:0?"
               exit 1 ;;
           esac
-          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ && "$V" != "${GITHUB_REF_NAME#v}" ]]; then
-            echo "::error::setuptools-scm produced $V for the stable tag $GITHUB_REF_NAME; is the tree dirty?"
+          # A stable tag (v1.23.0) and a nightly tag (v1.24.0.dev20260928) both
+          # spell the exact version the build must carry; anything else means a
+          # dirty tree or a tag that is not on HEAD.
+          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(\.dev[0-9]{8})?$ && "$V" != "${GITHUB_REF_NAME#v}" ]]; then
+            echo "::error::setuptools-scm produced $V for the tag $GITHUB_REF_NAME; is the tree dirty?"
             exit 1
           fi
           echo "PYR_VERSION=$V" >> "$GITHUB_ENV"
@@ -229,7 +247,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      actions: write   # dispatches prune-betas and link-check after a publish
+      actions: write   # dispatches prune-nightlies and link-check after a publish
     steps:
       - uses: actions/checkout@v7          # needed for packaging/linux/ + release notes
         with:
@@ -260,7 +278,8 @@ jobs:
         run: |
           # Name the asset with the PEP 440 public version (what setuptools-scm
           # bakes in, and what the frozen mac/Windows assets use) rather than the
-          # raw tag, so a v1.21.0-beta-1 tag yields 1.21.0b1 like the others. The
+          # raw tag, so a v1.21.0-rc.1 tag yields 1.21.0rc1 like the others (a
+          # nightly's v1.24.0.dev20260928 is already normalized). The
           # install-source pin below still uses the exact tag ref.
           python3 -m pip install --quiet --disable-pip-version-check packaging
           VERSION="$(python3 -c "from packaging.version import Version; print(Version('${GITHUB_REF_NAME#v}'))")"
@@ -285,10 +304,44 @@ jobs:
           tar -czf "dist/PyReconstruct-${VERSION}-Linux-installer${SUFFIX}.tar.gz" "$STAGE"
       - name: Generate checksums
         run: cd dist && for f in *; do [ -f "$f" ] && sha256sum "$f" > "$f.sha256"; done
+      - name: Build nightly release notes
+        # A nightly gets GitHub's auto-generated notes (the merged pull requests
+        # and a compare link), measured against the previous release on the
+        # same channel: the newest OTHER nightly by date, or the newest stable
+        # when this is the first nightly. Nobody curates a nightly's notes, and
+        # the dev audience reads the pull-request list fine. The stable step
+        # below is skipped for a nightly and vice versa; both write
+        # release_body.md.
+        #
+        # softprops/action-gh-release can generate notes itself but cannot be
+        # told the previous tag, so this asks the releases API directly.
+        if: contains(github.ref_name, '.dev')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          NIGHTLY_RE='^v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]{8}$'
+          STABLE_RE='^v[0-9]+\.[0-9]+\.[0-9]+$'
+          PREV="$(git tag --list 'v*' | grep -E "$NIGHTLY_RE" | grep -vxF "$GITHUB_REF_NAME" \
+            | awk -F'[.]dev' '{ print $2, $0 }' | sort -k1,1n -k2,2V | tail -n 1 | cut -d' ' -f2 || true)"
+          if [ -z "$PREV" ]; then
+            PREV="$(git tag --list 'v*' | grep -E "$STABLE_RE" | sort -V | tail -n 1 || true)"
+          fi
+          echo "previous release on the nightly channel: ${PREV:-none}"
+          {
+            echo "Nightly build of PyReconstruct Dev from main at $(git rev-parse --short HEAD)."
+            echo ""
+            gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+              -f tag_name="$GITHUB_REF_NAME" -f target_commitish="$GITHUB_SHA" \
+              ${PREV:+-f previous_tag_name="$PREV"} --jq '.body'
+          } > release_body.md
+          echo "----- release_body.md -----"; cat release_body.md
       - name: Build friendly release notes
         # User-facing highlights from WHATS_NEW.md + a single link to the technical
         # changelog -- deliberately NOT GitHub's auto-generated "What's Changed" list,
-        # which reads as developer jargon to general users.
+        # which reads as developer jargon to general users. Not for a nightly,
+        # which has no WHATS_NEW section and takes the step above instead.
+        if: ${{ !contains(github.ref_name, '.dev') }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           {
@@ -309,28 +362,40 @@ jobs:
           echo "----- release_body.md -----"; cat release_body.md
       - name: Classify release
         # Only a clean vX.Y.Z tag is a stable release; anything else -- a
-        # PEP 440-normalized pre-release (v1.20.4rc1), a dashed one (v1.20.4-rc.1),
-        # or an alpha (v1.30.0a1) -- publishes as a GitHub pre-release. A plain
-        # contains('-') check misclassifies the dashless v1.20.4rc1 as stable.
+        # nightly (v1.24.0.dev20260928), a PEP 440-normalized pre-release
+        # (v1.20.4rc1), a dashed one (v1.20.4-rc.1), or an alpha (v1.30.0a1) --
+        # publishes as a GitHub pre-release. A plain contains('-') check
+        # misclassifies the dashless v1.20.4rc1 as stable. A nightly is also
+        # flagged on its own so the publish step can keep it off "latest" and
+        # the prune step can tell it from a stable.
         id: rel
         env:
           STAGE: ${{ vars.STAGE_RELEASE_AS_DRAFT }}
         run: |
+          IS_NIGHTLY=false
           if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
             IS_STABLE=true
           else
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
             IS_STABLE=false
+            [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]{8}$ ]] && IS_NIGHTLY=true
           fi
+          echo "nightly=$IS_NIGHTLY" >> "$GITHUB_OUTPUT"
+          # "Latest" is the release GitHub's /releases/latest redirect and the
+          # README's download links point at. Only a stable may hold it; a
+          # pre-release cannot by GitHub's own rule, and saying so explicitly
+          # keeps a nightly from ever being offered as the download.
+          echo "make_latest=$IS_STABLE" >> "$GITHUB_OUTPUT"
           # Draft policy, decided once here so the publish step and the prune step
           # cannot disagree. Default: stage a STABLE release as a hidden draft, and
           # publish a PRE-RELEASE immediately. Rationale: the draft is an
           # asset-completeness gate (did all 8 installers actually attach?), which
-          # matters most where the release reaches every user; testers want betas fast.
+          # matters most where the release reaches every user; a nightly should be
+          # on the page by morning with nobody in the loop.
           # Override with the repo variable STAGE_RELEASE_AS_DRAFT:
           #   unset / "auto" -> draft iff stable   (the default)
-          #   "true"         -> always draft       (e.g. staging a beta for a live demo)
+          #   "true"         -> always draft       (e.g. staging a pre-release for a live demo)
           #   "false"        -> never draft
           case "${STAGE:-auto}" in
             true)  DRAFT=true ;;
@@ -342,16 +407,23 @@ jobs:
         with:
           files: dist/*
           prerelease: ${{ steps.rel.outputs.prerelease }}
+          # Only a stable becomes the repository's latest release; a nightly
+          # (or any other pre-release) never does, so the /releases/latest
+          # redirect and the in-app stable channel keep pointing at the stable.
+          make_latest: ${{ steps.rel.outputs.make_latest }}
           # Draft decision is computed in the `rel` step above (stable -> draft,
           # pre-release -> publish now, overridable via STAGE_RELEASE_AS_DRAFT).
           # A staged draft is invisible to the in-app updater until published;
           # assets are pre-built, so publishing goes live instantly.
           draft: ${{ steps.rel.outputs.draft == 'true' }}
+          # release_body.md comes from whichever notes step ran: the generated
+          # notes for a nightly, the WHATS_NEW highlights for everything else.
           body_path: release_body.md
       - name: Prune superseded pre-releases
-        # A published stable vX.Y.Z supersedes its own pre-releases (v1.21.0rc1,
-        # v1.21.0-rc.1, v1.21.0a1, ...): delete their GitHub Releases and assets
-        # so the Releases page and the in-app updater only offer the stable.
+        # A published stable vX.Y.Z supersedes its own pre-releases (the
+        # nightlies v1.21.0.devYYYYMMDD, and v1.21.0rc1, v1.21.0-rc.1,
+        # v1.21.0a1, ...): delete their GitHub Releases and assets so the
+        # Releases page and the in-app updater only offer the stable.
         # Keep Git tags as release-history evidence for the notes checks.
         # scripts/prune_prereleases.py scopes the selection to the
         # exact X.Y.Z line -- the stable itself and every other version line
@@ -373,17 +445,19 @@ jobs:
       - name: Kick the publish-time workflows
         # A release published with the workflow's own token never fires the
         # `release: published` triggers (GitHub's recursion guard), so
-        # prune-betas and link-check only ran for hand-published releases;
-        # v1.23.0-beta-2 proved it by firing neither. workflow_dispatch is
-        # exempt from the guard, so the publish path dispatches them here.
-        # Skipped for drafts: nothing is public yet, so there is nothing to
-        # prune or check; the hand-publish of the draft fires the release
+        # prune-nightlies and link-check only ran for hand-published releases;
+        # the 1.23.0 pre-release cycle proved it by firing neither.
+        # workflow_dispatch is exempt from the guard, so the publish path
+        # dispatches them here. For a nightly this is also what enforces the
+        # keep-the-newest-seven policy, since every nightly publishes from
+        # here. Skipped for drafts: nothing is public yet, so there is nothing
+        # to prune or check; the hand-publish of the draft fires the release
         # triggers itself.
         if: steps.rel.outputs.draft != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh workflow run prune-betas.yml --repo "$GITHUB_REPOSITORY"
+          gh workflow run prune-nightlies.yml --repo "$GITHUB_REPOSITORY"
           gh workflow run link-check.yml --repo "$GITHUB_REPOSITORY"
 
       - name: Prune orphaned draft-placeholder tags
@@ -428,9 +502,10 @@ jobs:
     # table still said v1.21.2). This opens that PR automatically. It edits
     # only the three shapes the table uses -- the bold version callout, the
     # /releases/download/vX.Y.Z/ path, and the versioned asset filenames --
-    # so prose examples elsewhere in the README (a beta tag named in the
-    # updater section) are left alone. Label and merge stay human steps, per
-    # the repo's gate discipline. Pre-release tags skip this entirely.
+    # so prose examples elsewhere in the README (a pre-release tag named in
+    # the updater section) are left alone. Label and merge stay human steps,
+    # per the repo's gate discipline. Pre-release tags, nightlies included,
+    # skip this entirely.
     needs: release
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
