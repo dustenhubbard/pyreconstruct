@@ -4,6 +4,7 @@ language: en-US
 reviews:
   profile: chill
   request_changes_workflow: false
+  review_status: false
   commit_status: false
   high_level_summary: false
   high_level_summary_placeholder: "no-summary-placeholder-7f3a9c"
