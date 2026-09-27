@@ -1,6 +1,7 @@
 """The staged DMG instructions must name the app shipped beside them."""
 
 import os
+import shlex
 from pathlib import Path
 import shutil
 import subprocess
@@ -46,9 +47,11 @@ Path(sys.argv[-1]).touch()
     assert text.startswith(f"Install and open {app_name}")
     assert "@APP_NAME@" not in text
     assert "PyReconstruct" not in text.replace(app_name, "")
-    assert f"Find the message about {app_name} and click Open Anyway." in text
-    assert "System Settings" in text
-    assert "Privacy & Security" in text
-    assert "Terminal" not in text
-    assert "xattr" not in text
-    assert "sudo" not in text
+    assert "System Settings" not in text
+    assert "Hold the Command key and press the space bar" in text
+    command = next(line.strip() for line in text.splitlines()
+                   if line.strip().startswith("xattr "))
+    assert shlex.split(command) == [
+        "xattr", "-dr", "com.apple.quarantine", f"/Applications/{app_name}.app"
+    ]
+    assert "no message, it worked" in text

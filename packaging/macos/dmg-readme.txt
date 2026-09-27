@@ -2,23 +2,24 @@ Install and open @APP_NAME@
 ==========================
 
 1. Drag @APP_NAME@ onto the Applications folder in this window.
+   Wait for copying to finish.
 
-2. Double-click that Applications folder. Find @APP_NAME@ and
-   double-click it. If the app opens, you are done.
+2. Hold the Command key and press the space bar. A search box opens.
+   Type Terminal, then press Return. A window with a text prompt opens.
 
-3. If your Mac says it cannot verify the app, click Done (or Cancel).
-   Keep the app. Do not choose Move to Trash.
+3. Copy this entire line, including the quotation marks:
 
-4. Click the Apple menu at the top-left of your screen, then System Settings.
+   xattr -dr com.apple.quarantine "/Applications/@APP_NAME@.app"
 
-5. Click Privacy & Security on the left. Scroll down to Security.
-   Find the message about @APP_NAME@ and click Open Anyway.
+4. Click inside the Terminal window. Hold Command and press V to paste.
+   Press Return to run the command.
 
-6. If asked, enter the password you use to log in to your Mac or use Touch ID.
-   Click Open when asked again.
+5. If another prompt appears with no message, it worked. Close Terminal.
 
-Next time, open @APP_NAME@ normally from Applications.
+6. Double-click the Applications folder, then double-click @APP_NAME@.
 
-Cannot find Open Anyway? Try opening the app again as in step 2, then return
-to Privacy & Security. If it is still missing, ask the person who sent you
-this installer for help.
+Next time, open the app normally from Applications.
+
+If Terminal shows an error, copy the message and send it to the person who
+sent you this installer. If it says "No such file or directory," check that
+step 1 finished and that the app is in Applications.
