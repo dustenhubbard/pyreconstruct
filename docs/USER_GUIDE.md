@@ -183,14 +183,16 @@ changes since the previous nightly.
 Choose **Help ▸ Check for updates…**. On an installed build, PyReconstruct checks
 GitHub Releases on the app's channel (off the main thread, so the UI stays
 responsive). If a newer build is found, an update dialog opens showing the new
-version, the download size, and the release notes, with a **Download & Install**
-button. The download is verified, then applied when you close the app, and
-PyReconstruct restarts on the new version.
+version, the download size, and a link to the release notes, with a
+**Download & Install** button. After verifying the download, PyReconstruct
+asks to save any unsaved work, closes, and opens the installer. Complete
+installation, then launch the app again. Canceling the close also cancels
+the installation.
 
 If you are already current, you'll see a brief "You're already up to date"
 message; if no installer exists for your platform on that channel, it tells you so.
 
-> 📸 *Screenshot: the "PyReconstruct — Update" dialog with release notes and the Download & Install button.*
+> 📸 *Screenshot: the update dialog with its release-notes link and Download & Install button.*
 
 ### Checking automatically on startup
 
@@ -202,9 +204,9 @@ status-bar notice and asks whether you'd like to view it.
 ### Source / `pip` installs
 
 For a from-source install, **Help ▸ Check for updates…** instead reinstalls
-PyReconstruct from a chosen Git branch with `pip` and then restarts. The branch is
-configured under **Series ▸ Options ▸ Updates** (the **Branch:** field, default
-`main`). The channel/installer machinery above applies only to packaged builds.
+PyReconstruct from a chosen Git branch with `pip` and then restarts. A prompt
+asks for the branch, starting with your saved choice or `main`. The
+channel/installer machinery above applies only to packaged builds.
 
 The same reinstall is available from the command line: `PyReconstruct --update`
 (reinstall the current branch) or `PyReconstruct --switch <branch>` (change branch,
