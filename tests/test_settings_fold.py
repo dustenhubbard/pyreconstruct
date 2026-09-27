@@ -280,8 +280,7 @@ def test_per_series_settings_fold_with_the_same_rule(ini_settings):
     shared.sync()
 
     assert fold_series_settings_once("SER1", flavored=dev, shared=shared) is True
-    assert shared.value("autobackup") == dev.value("autobackup") or \
-        shared.value("autobackup") in (False, "false")   # stable's stays
+    assert shared.value("autobackup") in (False, "false")   # stable's stays
     assert shared.value("backup_dir") == "/dev/backups"
     assert shared.value("list_layout") == '{"objects": "floating"}'
     assert dev.value(FOLD_MARKER, type=bool) is True
@@ -376,3 +375,30 @@ def test_the_window_hook_never_raises(main_window, monkeypatch):
 
     monkeypatch.setattr(MW, "fold_series_settings_once", boom)
     main_window._foldSeriesSettings()   # no exception
+
+
+@pytest.mark.parametrize("layout", ["not json", "[]", "null", "42", '"text"'])
+def test_per_series_fold_skips_invalid_layouts(ini_settings, layout):
+    dev = ini_settings("dev-invalid-layout")
+    shared = ini_settings("shared-invalid-layout")
+    dev.setValue("list_layout", layout)
+    dev.setValue("backup_dir", "/dev/backups")
+    dev.sync()
+
+    assert fold_series_settings_once("SER1", flavored=dev, shared=shared) is True
+    assert not shared.contains("list_layout")
+    assert shared.value("backup_dir") == "/dev/backups"
+    assert dev.value("list_layout") == layout
+    assert dev.value(FOLD_MARKER, type=bool) is True
+
+
+def test_per_series_fold_preserves_existing_layout(ini_settings):
+    dev = ini_settings("dev-layout-conflict")
+    shared = ini_settings("shared-layout-conflict")
+    dev.setValue("list_layout", '{"objects": "floating"}')
+    shared.setValue("list_layout", '{}')
+    dev.sync()
+    shared.sync()
+
+    assert fold_series_settings_once("SER1", flavored=dev, shared=shared) is False
+    assert shared.value("list_layout") == '{}'

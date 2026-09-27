@@ -33,6 +33,7 @@ Read at call time, not import time, so tests can flip the environment
 without reimporting, and so import order against the runtime hook cannot
 matter.
 """
+import json
 import os
 
 SETTINGS_ORG = "KHLab"
@@ -128,7 +129,7 @@ SEED_MARKER = "meta/settings_seeded"
 FOLD_MARKER = "meta/folded_into_shared"
 
 
-def _fold(flavored, shared, mark_always):
+def _fold(flavored, shared, mark_always, validate_list_layout=False):
     """Copy ``flavored``'s shareable keys into ``shared`` where missing.
 
     The stable value wins where both hold a key: the user set most things
@@ -152,7 +153,17 @@ def _fold(flavored, shared, mark_always):
     for key in flavored.allKeys():
         if is_per_app_key(key) or shared.contains(key):
             continue
-        shared.setValue(key, flavored.value(key))
+        value = flavored.value(key)
+        if validate_list_layout and key == "list_layout":
+            # Series.getOption decodes this as a JSON dictionary. Do not
+            # carry a damaged Dev layout into the stable app's store.
+            try:
+                layout = json.loads(value)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(layout, dict):
+                continue
+        shared.setValue(key, value)
         copied.append(key)
     if copied:
         shared.sync()
@@ -219,4 +230,6 @@ def fold_series_settings_once(code, flavored=None, shared=None):
     if shared is None:
         from PySide6.QtCore import QSettings
         shared = QSettings(SETTINGS_ORG, f"{SHARED_APP}-{code}")
-    return bool(_fold(flavored, shared, mark_always=False))
+    return bool(_fold(
+        flavored, shared, mark_always=False, validate_list_layout=True
+    ))
