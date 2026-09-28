@@ -1,4 +1,5 @@
 import os
+import uuid
 import re
 import json
 import shutil
@@ -500,6 +501,8 @@ class Series():
 
         # user-defined columns
         self.user_columns = series_data["user_columns"]
+        # button values changed by the last custom column edit (for undo)
+        self.palette_column_changes = []
 
         # tag sets: the vocabularies behind the tags dropdown
         self.tag_sets = TagSets(series_data["tag_sets"])
@@ -3955,6 +3958,7 @@ class Series():
         for palette, new_name in import_as:
             trace_list = other.palette_traces[palette]
             self.palette_traces[new_name] = trace_list.copy()
+            self.forgetPaletteToken(new_name)
         
         if log_event:
             palettes_str = " ".join(p[0] for p in import_as)
@@ -4713,6 +4717,7 @@ class Series():
             trace_list.append(t)
         
         self.palette_traces[palette_name] = trace_list
+        self.forgetPaletteToken(palette_name)
 
     def exportObjectsCSV(self, output_fp: Union[str, Path]="", notify: bool=False) -> None:
         """Export all object data as CSV file."""
@@ -4864,6 +4869,8 @@ class Series():
             Params:
                 col_name (str): the name of the column to remove
         """
+        # reset first, so undo reverses only what this call changed
+        self.palette_column_changes = []
         if col_name in self.user_columns:
             del(self.user_columns[col_name])
 
@@ -4871,10 +4878,59 @@ class Series():
         for attrs in self.obj_attrs.values():
             if "user_columns" in attrs and col_name in attrs["user_columns"]:
                 del(attrs["user_columns"][col_name])
+        # a palette button's saved value for a deleted column goes with it
+        for button, columns in list(self._paletteColumnDefaults()):
+            if col_name in columns:
+                self._notePaletteChange(button, (col_name, columns[col_name]), None)
+                del columns[col_name]
+                self._dropEmptyPaletteDefaults(button)
         
         if log_event:
             self.addLog(None, None, f"Delete user column {col_name}")
         
+    def paletteToken(self, name : str) -> str:
+        """An in-memory identity for the palette now called ``name``.
+
+        It follows a palette through a tab rename and changes when a palette
+        is created or replaced, so undo can tell the palette it edited from a
+        new one that took its name. Never saved to the file.
+        """
+        tokens = self.__dict__.setdefault("palette_tokens", {})
+        if name not in tokens:
+            tokens[name] = uuid.uuid4().hex
+        return tokens[name]
+
+    def forgetPaletteToken(self, name : str):
+        """Called when the palette under ``name`` is replaced."""
+        self.__dict__.setdefault("palette_tokens", {}).pop(name, None)
+
+    def _paletteColumnDefaults(self):
+        """Every palette button's saved custom-column values (fork #419), as
+        the dicts to edit in place, with the button's place in the palette."""
+        for name, palette in self.palette_traces.items():
+            for index, trace in enumerate(palette):
+                defaults = getattr(trace, "obj_defaults", None)
+                if defaults and defaults.get("user_columns"):
+                    yield (name, index, trace), defaults["user_columns"]
+
+    def _dropEmptyPaletteDefaults(self, button):
+        _, _, trace = button
+        trace.obj_defaults = copyObjDefaults(trace.obj_defaults)
+
+    def _notePaletteChange(self, button, before, after):
+        """Remember one button value a column edit changed, for undo.
+
+        Kept by the button's place (palette name, index), not the Trace
+        object: the palette editor and paste-to-button both put new Trace
+        objects in place of the old ones, and undo must still find the button.
+        ``before`` and ``after`` are (column, value) pairs, ``after`` None for
+        a value removed. The GUI hands the list to the undo state right after
+        the edit (SeriesStates.recordPaletteChanges), so undo reverses exactly
+        these values and nothing else on the buttons.
+        """
+        name, index, _ = button
+        self.palette_column_changes.append((self.paletteToken(name), index, before, after))
+
     def editUserCol(self, col_name : str, new_name : str, new_opts : list, log_event=True):
         """Edit a user-defined column.
         
@@ -4883,6 +4939,8 @@ class Series():
                 new_name (str): the new name for the column
                 new_opts (list): the new options for the column
         """
+        # reset first, so a refused edit leaves nothing for undo to reverse
+        self.palette_column_changes = []
         new_name = new_name.replace(" ", "_")
         for i, opt in enumerate(new_opts):
             new_opts[i] = opt.replace(" ", "_")
@@ -4902,6 +4960,19 @@ class Series():
                 if "user_columns" in attrs and col_name in attrs["user_columns"]:
                     attrs["user_columns"][new_name] = attrs["user_columns"][col_name]
                     del(attrs["user_columns"][col_name])
+            # and in every palette button's saved values, so a rename does not
+            # quietly drop them
+            for button, columns in list(self._paletteColumnDefaults()):
+                if col_name in columns:
+                    value = columns.pop(col_name)
+                    # carry only a value that is still an option; a stale one
+                    # would otherwise come back if the option is added again
+                    if value in self.user_columns[new_name]:
+                        columns[new_name] = value
+                        self._notePaletteChange(button, (col_name, value), (new_name, value))
+                    else:
+                        self._notePaletteChange(button, (col_name, value), None)
+                    self._dropEmptyPaletteDefaults(button)
         col_name = new_name
 
         if self.user_columns[col_name] != new_opts:
@@ -4912,6 +4983,13 @@ class Series():
                 if "user_columns" in attrs and col_name in attrs["user_columns"]:
                     if attrs["user_columns"][col_name] not in new_opts:
                         del(attrs["user_columns"][col_name])
+            # and from palette buttons, by the same rule: a value that is no
+            # longer an option is cleared everywhere (his call, 2026-09-28)
+            for button, columns in list(self._paletteColumnDefaults()):
+                if col_name in columns and columns[col_name] not in new_opts:
+                    self._notePaletteChange(button, (col_name, columns[col_name]), None)
+                    del columns[col_name]
+                    self._dropEmptyPaletteDefaults(button)
         
         if log_event:
             self.addLog(None, None, f"Edit user column {new_name}")

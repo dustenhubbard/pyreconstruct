@@ -11,6 +11,7 @@ from PyReconstruct.modules.datatypes import (
     Ztrace,
     Trace
 )
+from PyReconstruct.modules.datatypes.trace import copyObjDefaults
 
 from PyReconstruct.modules.constants import keyed_trace_row_to_positional
 
@@ -572,6 +573,32 @@ def restoreZtraceOnSection(orig_ztrace : Ztrace, new_ztrace : Ztrace, snum : int
         restored_points
     )
 
+def applyColumnChange(trace, remove=None, add=None) -> bool:
+    """Change one custom column value on a palette button, only if the button
+    still holds what the change expects.
+
+        Params:
+            trace (Trace): the palette button's trace
+            remove (tuple): (column, value) to take off, or None
+            add (tuple): (column, value) to put on, or None
+        Returns:
+            (bool): False, touching nothing, if the button was edited since
+    """
+    defaults = copyObjDefaults(getattr(trace, "obj_defaults", None)) or {}
+    columns = dict(defaults.get("user_columns", {}))
+    if remove is not None and columns.get(remove[0]) != remove[1]:
+        return False
+    if add is not None and add[0] in columns and columns[add[0]] != add[1]:
+        return False
+    if remove is not None:
+        del columns[remove[0]]
+    if add is not None:
+        columns[add[0]] = add[1]
+    defaults["user_columns"] = columns
+    trace.obj_defaults = copyObjDefaults(defaults)
+    return True
+
+
 class SeriesState():
 
     def __init__(self, breakable=True):
@@ -585,6 +612,47 @@ class SeriesState():
         # does not live in FieldState alongside tforms and flags: see
         # recordBCProfiles.
         self.bc_profiles = {}
+        # Button values a custom column edit changed (recordPaletteChanges);
+        # empty for every other kind of series state.
+        self.palette_changes = []
+        self.palette_changes_applied = True
+
+    def recordPaletteChanges(self, changes : list):
+        """Keep the button values a custom column edit changed, to reverse on
+        undo and reapply on redo. Only those values: palette button edits
+        make no undo state of their own, so anything wider would roll back a
+        button edit made after this one."""
+        self.palette_changes = list(changes)
+        self.palette_changes_applied = True
+
+    def swapPaletteChanges(self, series : Series):
+        """Undo or redo the recorded button changes, whichever is due. Each
+        change names a button by its place in the palette, looked up now."""
+        if not getattr(self, "palette_changes", None):
+            return
+
+        tokens = getattr(series, "palette_tokens", {})
+        by_token = {token: name for name, token in tokens.items()}
+
+        def button(token, index):
+            """The button at this place in the palette the change was made
+            in, found by token so a renamed tab still matches and a new
+            palette under the old name does not."""
+            name = by_token.get(token)
+            palette = series.palette_traces.get(name, []) if name else []
+            return palette[index] if 0 <= index < len(palette) else None
+
+        if self.palette_changes_applied:
+            for token, index, before, after in reversed(self.palette_changes):
+                trace = button(token, index)
+                if trace is not None:
+                    applyColumnChange(trace, remove=after, add=before)
+        else:
+            for token, index, before, after in self.palette_changes:
+                trace = button(token, index)
+                if trace is not None:
+                    applyColumnChange(trace, remove=before, add=after)
+        self.palette_changes_applied = not self.palette_changes_applied
 
     def recordBCProfiles(self, snum : int, bc_profiles : dict):
         """Store a section's brightness/contrast profiles as they were before the action.
@@ -685,6 +753,7 @@ class SeriesState():
                 series (Series): the series to apply attributes to
         """
         pre_series_attrs = SeriesState.getSeriesAttributes(series)
+        self.swapPaletteChanges(series)
         for attr, value in self.series_attrs.items():
             if attr == "object_columns":
                 continue  # only replace obj columns under specific circumstances (below)
@@ -783,6 +852,12 @@ class SeriesStates():
         """
         if self.undos:
             self.undos[-1].recordBCProfiles(snum, bc_profiles)
+
+    def recordPaletteChanges(self, changes : list):
+        """Attach the button values a custom column edit changed to the
+        newest series state. Called right after the edit."""
+        if self.undos and changes:
+            self.undos[-1].recordPaletteChanges(changes)
 
     def addSectionUndo(self, snum : int):
         """Flag the section's latest undo state as part of the most recent series undo.

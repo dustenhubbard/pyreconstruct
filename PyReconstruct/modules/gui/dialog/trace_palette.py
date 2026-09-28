@@ -42,9 +42,13 @@ class TracePaletteDialog(QuickTabDialog):
         # palette from its cells on OK, and the cells hold no defaults, so they
         # ride here under the tab's current name and follow renames/removals.
         self.obj_defaults = {}
+        # and each palette's identity token (Series.paletteToken), carried the
+        # same way; a tab added here has none and gets a new one on OK
+        self.palette_tokens = {}
         for name, palette in self.series.palette_traces.items():
             structures[name] = self.getStructure(palette)
             self.obj_defaults[name] = [copyObjDefaults(t.obj_defaults) for t in palette]
+            self.palette_tokens[name] = self.series.paletteToken(name)
         
         QuickTabDialog.__init__(self, parent, structures, "Trace Palette", grid=True)
 
@@ -130,6 +134,8 @@ class TracePaletteDialog(QuickTabDialog):
             self.inputs = new_inputs
             if text in self.obj_defaults:
                 self.obj_defaults[new_text] = self.obj_defaults.pop(text)
+            if text in self.palette_tokens:
+                self.palette_tokens[new_text] = self.palette_tokens.pop(text)
 
             self.tab_widget.setTabText(index, new_text)
     
@@ -175,6 +181,7 @@ class TracePaletteDialog(QuickTabDialog):
         
         del(self.inputs[text])
         self.obj_defaults.pop(text, None)
+        self.palette_tokens.pop(text, None)
         self.tab_widget.removeTab(index)
 
         if self.tab_widget.count() > 1:
@@ -208,6 +215,12 @@ class TracePaletteDialog(QuickTabDialog):
         del(response["current_tab_text"])
         
         self.series.palette_traces = {}
+        # carried tokens for the tabs that came from the series; a new tab gets
+        # a fresh one from paletteToken on first use
+        self.series.palette_tokens = {
+            name: token for name, token in self.palette_tokens.items()
+            if name in response
+        }
         for palette_name, inputs in response.items():
             palette_traces = []
             defaults = list(self.obj_defaults.get(palette_name, []))
