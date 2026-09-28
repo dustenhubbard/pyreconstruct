@@ -16,6 +16,8 @@ stack is bundled. If the 3D viewport ever renders blank in a frozen build, the
 fallback is to build that platform via conda constructor.
 """
 
+import os
+import re
 import sys
 from pathlib import Path
 
@@ -58,6 +60,24 @@ for _p in ASSETS.rglob("*"):
 _version_file = PKG_DIR / "_version.py"
 if _version_file.exists():
     datas.append((str(_version_file), "PyReconstruct"))
+
+
+# --- Bundle version for the macOS Info.plist. Without it every bundle reads as
+#     0.0.0 to Finder and to anything that asks the bundle for its version.
+#     CI's "Compute version" step exports PYR_PUBLIC (the setuptools-scm
+#     version without its +local part) before the freeze. A local build falls
+#     back to the _version.py that `pip install -e .` writes, then to 0.0.0.
+def _bundle_version():
+    v = os.environ.get("PYR_PUBLIC", "").strip() or os.environ.get("PYR_VERSION", "").strip()
+    if not v and _version_file.exists():
+        m = re.search(r"""^(?:__version__\s*=\s*)?version\s*=\s*['"]([^'"]+)['"]""",
+                      _version_file.read_text(encoding="utf-8"), re.MULTILINE)
+        if m:
+            v = m.group(1)
+    return v.split("+", 1)[0].strip() or "0.0.0"
+
+
+BUNDLE_VERSION = _bundle_version()
 
 # --- WHATS_NEW.md: the friendly highlights the first-launch "What's new" dialog
 #     shows offline (no network). CHANGELOG.md (technical) is bundled too for
@@ -324,6 +344,8 @@ if is_mac:
                            if IS_DEV else "edu.utexas.synapseweb.pyreconstruct"),
         info_plist={
             "NSHighResolutionCapable": True,
+            "CFBundleShortVersionString": BUNDLE_VERSION,
+            "CFBundleVersion": BUNDLE_VERSION,
             # Claim .jser so Finder offers this app for double-clicked series.
             # macOS delivers the file as an open-document event, handled by
             # the FileOpen watcher in run.py, never as argv. Both flavors
