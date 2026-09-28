@@ -370,10 +370,264 @@ jobs:
           path: dist-assets/*
           if-no-files-found: error
 
+  build-linux:
+    # The frozen Linux app, packaged as an AppImage. It is built inside an
+    # AlmaLinux 8 container, so it links glibc 2.28, the README's Linux minimum
+    # (Ubuntu 20.04, Debian 10, RHEL 8 and later); every pinned wheel (PySide6
+    # 6.9.3 and pillow at manylinux_2_28, the rest at manylinux_2_17) installs
+    # there. AlmaLinux's own python3.11 is used rather than a manylinux image's
+    # Python, because PyInstaller needs the shared libpython that the manylinux
+    # interpreters do not ship. The Linux installer tarball is still assembled
+    # in the release job, unchanged.
+    concurrency:
+      group: build-installers-build-${{ github.ref }}-Linux-x86_64
+      cancel-in-progress: true
+    runs-on: ubuntu-24.04
+    container: almalinux:8
+    steps:
+      - name: Install the build system's packages
+        # git before checkout, so it clones a real repository (setuptools-scm
+        # reads the tags). The X and xcb libraries are the ones Qt's xcb
+        # platform plugin links; PyInstaller copies those a desktop may lack
+        # (libxcb-cursor, the xcb-util family, libxkbcommon-x11) into the
+        # bundle, and the spec leaves the desktop's base libraries out.
+        # xcb-util-cursor comes from EPEL.
+        run: |
+          dnf -y install epel-release
+          dnf -y install git python3.11 python3.11-devel python3.11-pip \
+            findutils file which desktop-file-utils \
+            mesa-libGL mesa-libEGL libglvnd-opengl fontconfig freetype glib2 dbus-libs \
+            libX11 libX11-xcb libXext libXrender libXi libXcursor libXrandr libXfixes libSM libICE \
+            libxcb libxkbcommon libxkbcommon-x11 \
+            xcb-util xcb-util-wm xcb-util-image xcb-util-keysyms xcb-util-renderutil xcb-util-cursor \
+            libwayland-client libwayland-cursor libwayland-egl
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0          # setuptools-scm needs full history + tags
+
+      - name: Trust the checkout
+        # The container runs as root over a workspace the runner owns; without
+        # this, git refuses the repository and setuptools-scm finds no tags.
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Pick the build flavor
+        # Runs before anything reads packaging/FLAVOR. A clean vX.Y.Z tag, or a
+        # manual run with flavor=stable, builds the stable app by removing the
+        # file. skip-worktree comes first because a plain delete leaves the tree
+        # dirty, and setuptools-scm then stamps the version with a dirty-tree
+        # date suffix, which the tag check below refuses.
+        shell: bash
+        env:
+          FLAVOR_INPUT: ${{ inputs.flavor }}
+        run: |
+          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || "$FLAVOR_INPUT" == "stable" ]]; then
+            if [ -f packaging/FLAVOR ]; then
+              git update-index --skip-worktree packaging/FLAVOR
+              rm packaging/FLAVOR
+            fi
+          fi
+          echo "flavor: $(cat packaging/FLAVOR 2>/dev/null || echo stable)"
+
+      - name: Install project, build tools, PyInstaller
+        run: |
+          python3.11 -m venv /opt/pyr
+          echo /opt/pyr/bin >> "$GITHUB_PATH"
+          /opt/pyr/bin/python -m pip install --upgrade pip
+          /opt/pyr/bin/python -m pip install setuptools-scm "pyinstaller>=6,<7" pytest
+          /opt/pyr/bin/python -m pip install -e .
+
+      - name: Compute version
+        shell: bash
+        run: |
+          V="$(python -m setuptools_scm)"
+          case "$V" in
+            0.0.0*|*unknown*)
+              echo "::error::setuptools-scm produced a fallback version ($V) — missing tags or fetch-depth:0?"
+              exit 1 ;;
+          esac
+          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(\.dev[0-9]{8})?$ && "$V" != "${GITHUB_REF_NAME#v}" ]]; then
+            echo "::error::setuptools-scm produced $V for the tag $GITHUB_REF_NAME; is the tree dirty?"
+            exit 1
+          fi
+          echo "PYR_VERSION=$V" >> "$GITHUB_ENV"
+          echo "PYR_PUBLIC=${V%%+*}" >> "$GITHUB_ENV"
+
+      - name: Test the AppImage installer script
+        run: python -m pytest -q -p no:cacheprovider tests/test_install_appimage_script.py tests/test_appimage_asset_names.py
+
+      - name: Smoke test (imports; offscreen render skipped on headless CI)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYRECON_SMOKE_SKIP_RENDER: "1"
+        run: python packaging/smoke_test.py
+
+      - name: PyInstaller freeze
+        shell: bash
+        run: |
+          set -o pipefail
+          pyinstaller --noconfirm packaging/PyReconstruct.spec 2>&1 | tee pyinstaller.log
+          echo "----- libraries PyInstaller could not find -----"
+          grep -i "library not found\|could not find\|not found in" pyinstaller.log | sort -u || true
+
+      - name: Frozen self-test (Linux)
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          FLAVOR="$(cat packaging/FLAVOR 2>/dev/null | tr -d '[:space:]' || true)"
+          if [ "$FLAVOR" = "dev" ]; then APP_NAME="PyReconstruct Dev"; else APP_NAME="PyReconstruct"; fi
+          "dist/${APP_NAME}/${APP_NAME}" --selftest
+          echo "frozen self-test OK"
+
+      - name: Build the AppImage
+        # appimagetool and its runtime are pinned by release and checksum.
+        shell: bash
+        run: |
+          curl -fsSL -o /tmp/appimagetool https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          curl -fsSL -o /tmp/runtime-x86_64 https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+          echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  /tmp/appimagetool" | sha256sum -c -
+          echo "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  /tmp/runtime-x86_64" | sha256sum -c -
+          chmod +x /tmp/appimagetool
+          APPIMAGETOOL=/tmp/appimagetool APPIMAGE_RUNTIME=/tmp/runtime-x86_64 bash packaging/linux/make_appimage.sh
+          cd dist-assets && sha256sum *.AppImage
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: installer-Linux-x86_64
+          path: dist-assets/*.AppImage
+          if-no-files-found: error
+
+  test-appimage:
+    # The AppImage on the distributions people run, each with only the base
+    # libraries a desktop already has (the list per distribution is below).
+    # --appimage-extract-and-run needs no FUSE, which containers lack. Nothing
+    # here publishes, and the release job does not wait on it.
+    needs: build-linux
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Desktop baseline: GL (libglvnd + Mesa), EGL, fontconfig/freetype,
+          # glib, dbus, X11/xcb, expat, zlib, libstdc++. A GNOME or KDE desktop
+          # has all of these; a bare container has almost none.
+          - image: ubuntu:20.04
+            install: apt
+            pkgs: libgl1 libegl1 libopengl0 libfontconfig1 libfreetype6 libglib2.0-0 libdbus-1-3 libx11-6 libx11-xcb1 libxcb1 libexpat1 zlib1g
+          - image: ubuntu:22.04
+            install: apt
+            pkgs: libgl1 libegl1 libopengl0 libfontconfig1 libfreetype6 libglib2.0-0 libdbus-1-3 libx11-6 libx11-xcb1 libxcb1 libexpat1 zlib1g
+          - image: ubuntu:24.04
+            install: apt
+            pkgs: libgl1 libegl1 libopengl0 libfontconfig1 libfreetype6 libglib2.0-0t64 libdbus-1-3 libx11-6 libx11-xcb1 libxcb1 libexpat1 zlib1g
+          - image: debian:12
+            install: apt
+            pkgs: libgl1 libegl1 libopengl0 libfontconfig1 libfreetype6 libglib2.0-0 libdbus-1-3 libx11-6 libx11-xcb1 libxcb1 libexpat1 zlib1g
+          - image: fedora:latest
+            install: dnf
+            pkgs: mesa-libGL mesa-libEGL libglvnd-opengl fontconfig freetype glib2 dbus-libs libX11 libX11-xcb libxcb expat zlib-ng-compat
+    name: test-appimage (${{ matrix.image }})
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    steps:
+      # No git in these images, so checkout downloads the tree through the
+      # API; only the installer script and its test harness are used.
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: installer-Linux-x86_64
+          path: appimage
+
+      - name: Install the desktop baseline
+        env:
+          PKGS: ${{ matrix.pkgs }}
+        run: |
+          if [ "${{ matrix.install }}" = apt ]; then
+            apt-get update -qq
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends $PKGS
+          else
+            dnf -y -q install $PKGS
+          fi
+          chmod +x appimage/*.AppImage
+          ls -l appimage
+
+      - name: Libraries this system still lacks (report only)
+        run: |
+          AI="$PWD/$(ls appimage/*.AppImage)"
+          mkdir -p /tmp/x && cd /tmp/x && "$AI" --appimage-extract >/dev/null
+          INTERNAL="$(find /tmp/x/squashfs-root/usr/lib -maxdepth 2 -name _internal -type d | head -n 1)"
+          find /tmp/x/squashfs-root/usr/lib -name '*.so*' -type f | while read -r f; do
+            LD_LIBRARY_PATH="$INTERNAL" ldd "$f" 2>/dev/null | grep "not found" | sed "s|^|$(basename "$f"): |"
+          done | sort -u > /tmp/missing.txt || true
+          echo "Qt platform plugins:"
+          grep -E "^libq(xcb|offscreen|wayland)" /tmp/missing.txt || echo "  nothing missing"
+          echo "Everything (plugins for optional features included):"
+          awk -F': ' '{print $2}' /tmp/missing.txt | sort | uniq -c | sort -rn || true
+          rm -rf /tmp/x
+
+      - name: Frozen self-test inside the AppImage
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          AI="$(ls appimage/*.AppImage)"
+          "$AI" --appimage-extract-and-run --selftest
+          echo "AppImage self-test OK on ${{ matrix.image }}"
+
+      - name: Install it with install-appimage.sh and run the launcher
+        # The installer against a local stand-in for the releases API, serving
+        # the AppImage just built, then the self-test through the launcher it
+        # wrote. python3 is for the stand-in server only.
+        run: |
+          if [ "${{ matrix.install }}" = apt ]; then
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends python3 curl
+          else
+            dnf -y -q install python3 curl
+          fi
+          AI="$(ls appimage/*.AppImage)"
+          case "$AI" in *-Dev.AppImage) FLAVOR=dev; FLAG=--dev; CMD=pyreconstruct-dev ;; *) FLAVOR=stable; FLAG=; CMD=pyreconstruct ;; esac
+          SRC="$(mktemp -d)"
+          cp packaging/linux/install-appimage.sh tests/linux_installer_harness.py "$SRC"/
+          python3 "$SRC/linux_installer_harness.py" --appimage "$AI" --flavor "$FLAVOR" \
+            --version 1.99.0.dev20260101 --port-file "$SRC/api" &
+          for i in $(seq 50); do [ -s "$SRC/api" ] && break; sleep 0.2; done
+          export HOME="$(mktemp -d)"
+          PYRECON_RELEASES_API="$(cat "$SRC/api")" sh "$SRC/install-appimage.sh" $FLAG
+          ls -la "$HOME/.local/share"/*/ "$HOME/.local/bin" "$HOME/.local/share/applications"
+          cat "$HOME/.local/share/applications/"*.desktop
+          QT_QPA_PLATFORM=offscreen "$HOME/.local/bin/$CMD" --selftest
+          PYRECON_RELEASES_API="$(cat "$SRC/api")" sh "$SRC/install-appimage.sh" $FLAG
+          sh "$SRC/install-appimage.sh" --uninstall $FLAG
+          test ! -e "$HOME/.local/bin/$CMD"
+
+      - name: Start the GUI on the xcb platform under Xvfb (report only)
+        # --selftest never opens a window, so it cannot show that Qt's xcb
+        # plugin loads. This starts the real app on a virtual X display and
+        # passes when it is still running after 40 seconds. Xvfb pulls in more
+        # X libraries than a desktop needs, so it runs after the tests above.
+        continue-on-error: true
+        run: |
+          if [ "${{ matrix.install }}" = apt ]; then
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends xvfb procps
+          else
+            dnf -y -q install xorg-x11-server-Xvfb procps-ng
+          fi
+          Xvfb :99 -screen 0 1280x1024x24 >/dev/null 2>&1 &
+          sleep 3
+          AI="$(ls appimage/*.AppImage)"
+          set +e
+          DISPLAY=:99 QT_QPA_PLATFORM=xcb QT_DEBUG_PLUGINS=0 timeout 40 "$AI" --appimage-extract-and-run > /tmp/gui.log 2>&1
+          rc=$?
+          set -e
+          tail -n 40 /tmp/gui.log
+          if [ "$rc" = 124 ]; then echo "GUI still running after 40 s on xcb: OK"; exit 0; fi
+          echo "::warning::GUI exited with $rc on xcb (${{ matrix.image }})"
+          exit 1
+
   release:
-    needs: build
+    needs: [build, build-linux]
     # publish whatever built, even if one matrix leg failed (don't hide a good installer)
-    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') && (needs.build.result == 'success' || needs.build.result == 'failure') }}
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') && (needs.build.result == 'success' || needs.build.result == 'failure') && (needs.build-linux.result == 'success' || needs.build-linux.result == 'failure') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -9,6 +9,8 @@ Python 3.11 environment (`pip install -e .` writes PyReconstruct/_version.py):
 Output:
     Windows : dist/PyReconstruct/PyReconstruct.exe
     macOS   : dist/PyReconstruct.app   (needs packaging/PyReconstruct.icns first)
+    Linux   : dist/PyReconstruct/PyReconstruct   (packaging/linux/make_appimage.sh
+              wraps it in an AppImage)
 
 NOTE on VTK: vtk is on 9.4.2, which pyinstaller-hooks-contrib covers. The explicit
 hiddenimports below are kept as belt-and-suspenders to guarantee the OpenGL render
@@ -309,6 +311,38 @@ a = Analysis(
     cipher=block_cipher,
     noarchive=False,
 )
+
+# --- Linux: leave the desktop's own base libraries to the desktop ------------
+#     PyInstaller collects every shared library the bundle links, except glibc,
+#     the GL stack and libxcb. That is right for the libraries a desktop may not
+#     have (libxkbcommon-x11, the xcb-util family, libxcb-cursor for Qt's xcb
+#     plugin), but wrong for the ones the GPU driver and the GTK theme plugin
+#     load into the same process: a copy from the build machine (glibc 2.28)
+#     shadows the host's newer one, and the host's Mesa or GTK then fails on a
+#     missing symbol version (the classic "GLIBCXX_3.4.30 not found"). Every
+#     desktop that can run this build already has these, in a version at least
+#     as new as the build machine's. This follows the AppImage project's
+#     excludelist. Names with a hash suffix (libz-1a2b3c4d.so.1, vendored into
+#     a wheel by auditwheel) do not match and stay bundled, as they must.
+if sys.platform.startswith("linux"):
+    import re as _re
+    _HOST_LIBS = _re.compile(
+        r"^lib("
+        r"stdc\+\+|gcc_s|z|expat|uuid|"
+        r"fontconfig|freetype|harfbuzz|fribidi|"
+        r"glib-2\.0|gobject-2\.0|gio-2\.0|gmodule-2\.0|gthread-2\.0|"
+        r"X11|X11-xcb|ICE|SM|dbus-1|asound|"
+        r"gpg-error|com_err|gssapi_krb5|krb5|k5crypto|krb5support|keyutils|p11-kit|"
+        r"GLdispatch|gbm|glapi|usb-1\.0"
+        r")\.so(\..*)?$"
+    )
+    _kept = []
+    for _entry in a.binaries:
+        if _HOST_LIBS.match(Path(_entry[0]).name):
+            print(f"[spec] linux: leaving {Path(_entry[0]).name} to the host")
+            continue
+        _kept.append(_entry)
+    a.binaries = _kept
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
