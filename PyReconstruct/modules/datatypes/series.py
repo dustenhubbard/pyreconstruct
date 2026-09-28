@@ -2235,6 +2235,54 @@ class Series():
 
         return copied_to, skipped
 
+    def deleteTracesFromSections(self, names, section_numbers, series_states=None):
+        """Delete every trace with one of the given names from the chosen sections only.
+
+        The twin of ``copyTracesToSections`` (fork issue #422): a trace or stamp
+        misplaced on a subset of sections can be removed from just those, where
+        ``deleteObjects`` would take it off every section. Only the chosen sections
+        that hold one of the names are loaded, so a wide range over a large series
+        costs no more than the sections that change.
+
+        The object lock is checked by the caller (the field's ``trace_function``),
+        the same as every other trace edit.
+
+            Params:
+                names (iterable): the trace (object) names to delete
+                section_numbers (iterable): the sections to delete them from
+                series_states (dict): section number : SectionStates (GUI undo)
+            Returns:
+                (tuple): (sorted list of section numbers a trace was deleted from,
+                          sorted list of chosen sections that held none of the names)
+        """
+        names = set(names)
+        chosen = set(section_numbers)
+        holding = chosen & self.getObjectSections(names)
+        deleted_from = []
+
+        for snum, section in self.enumerateSections(
+            message="Deleting trace(s) from sections...",
+            series_states=series_states,
+            section_numbers=sorted(holding)
+        ):
+            modified = False
+            for name in names:
+                if name in section.contours:
+                    # a copy of the list: removeTrace edits the list being walked
+                    # (see deleteObjects)
+                    for trace in list(section.contours[name]):
+                        section.removeTrace(trace)
+                    del(section.contours[name])
+                    modified = True
+            if modified:
+                section.save()
+                deleted_from.append(snum)
+
+        if deleted_from:
+            self.modified = True
+
+        return sorted(deleted_from), sorted(chosen - set(deleted_from))
+
     def deleteAllTraces(self, trace_name : str, tags : set = None, series_states=None):
         """Delete all traces with a certain name and tag set.
         
