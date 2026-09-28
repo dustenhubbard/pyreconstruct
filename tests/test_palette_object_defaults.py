@@ -118,7 +118,7 @@ def _accept(monkeypatch):
     monkeypatch.setattr(QDialog, "exec", lambda self: QDialog.Accepted)
 
 
-def test_palette_dialog_shows_groups_and_a_row_per_column(tmp_path, monkeypatch):
+def test_palette_dialog_shows_groups_and_column_rows(tmp_path, monkeypatch):
     from PyReconstruct.modules.gui.dialog.trace import TraceDialog
 
     s = _open(tmp_path)
@@ -131,21 +131,42 @@ def test_palette_dialog_shows_groups_and_a_row_per_column(tmp_path, monkeypatch)
         item.obj_defaults = {"groups": ["axons"], "user_columns": {"Stage": "draft"}}
 
         dlg = TraceDialog(None, [item], is_palette=True, series=s)
-        assert dlg.groups_input is not None
         assert dlg.groups_input.getEntries() == ["axons"]
-        assert sorted(dlg.column_inputs) == ["Reviewer", "Stage"]
-        assert dlg.column_inputs["Stage"].currentText() == "draft"
-        assert dlg.column_inputs["Reviewer"].currentText() == ""
-        combo = dlg.column_inputs["Reviewer"]
-        assert [combo.itemText(i) for i in range(combo.count())] == ["", "KH", "DH"]
+        # one row, seeded from the item's defaults
+        assert dlg.columns_input.getValues() == {"Stage": "draft"}
+        _, col, val = dlg.columns_input.rows[0]
+        assert [col.itemText(i) for i in range(col.count())] == ["", "Reviewer", "Stage"]
+        assert [val.itemText(i) for i in range(val.count())] == ["", "draft", "final"]
+        # picking another column refills the values
+        col.setCurrentText("Reviewer")
+        assert [val.itemText(i) for i in range(val.count())] == ["", "KH", "DH"]
         dlg.close()
 
-        # no series: no rows, as every other caller of the palette dialog has it
         plain = TraceDialog(None, [item], is_palette=True)
-        assert plain.groups_input is None and plain.column_inputs == {}
+        assert plain.groups_input is None and plain.columns_input is None
         plain.close()
     finally:
         s.close()
+
+
+def test_column_rows_add_and_remove_like_groups(tmp_path):
+    from PyReconstruct.modules.gui.dialog.helper import ColumnValueInput
+    from PySide6.QtWidgets import QWidget, QVBoxLayout
+
+    QApplication.instance() or QApplication(["test"])
+    host = QWidget()
+    host.setLayout(QVBoxLayout())
+    w = ColumnValueInput(host, {"A": ["1", "2"], "B": ["x"]})
+    host.layout().addWidget(w)
+    assert len(w.rows) == 1 and w.getValues() == {}
+    w.add()
+    w.rows[0][1].setCurrentText("A"); w.rows[0][2].setCurrentText("2")
+    w.rows[1][1].setCurrentText("B"); w.rows[1][2].setCurrentText("x")
+    assert w.getValues() == {"A": "2", "B": "x"}
+    w.remove()                      # the last row by default
+    assert w.getValues() == {"A": "2"} and len(w.rows) == 1
+    w.remove()                      # the last row clears instead of vanishing
+    assert len(w.rows) == 1 and w.getValues() == {}
 
 
 def test_palette_dialog_returns_the_defaults(tmp_path, monkeypatch):
@@ -157,16 +178,35 @@ def test_palette_dialog_returns_the_defaults(tmp_path, monkeypatch):
         item = Trace("item", (1, 2, 3), True)
         item.points = [(0, 0), (1, 0), (1, 1), (0, 1)]
         dlg = TraceDialog(None, [item], is_palette=True, series=s)
-        dlg.column_inputs["Reviewer"].setCurrentText("DH")
+        _, col, val = dlg.columns_input.rows[0]
+        col.setCurrentText("Reviewer"); val.setCurrentText("DH")
         _accept(monkeypatch)
         t, confirmed = dlg.exec()
         assert confirmed
         assert t.obj_defaults == {"user_columns": {"Reviewer": "DH"}}
 
-        # everything cleared: None, not an empty dict
         dlg2 = TraceDialog(None, [item], is_palette=True, series=s)
         t2, _ = dlg2.exec()
         assert t2.obj_defaults is None
+    finally:
+        s.close()
+
+
+def test_headings_carry_tooltips(tmp_path):
+    from PyReconstruct.modules.gui.dialog.trace import TraceDialog
+    from PySide6.QtWidgets import QLabel
+
+    s = _open(tmp_path)
+    try:
+        s.addUserCol("Reviewer", ["KH"], log_event=False)
+        item = Trace("item", (1, 2, 3), True)
+        item.points = [(0, 0), (1, 0), (1, 1), (0, 1)]
+        dlg = TraceDialog(None, [item], is_palette=True, series=s)
+        tips = {w.text(): w.toolTip() for w in dlg.findChildren(QLabel)}
+        dlg.close()
+        assert tips["Trace Tags:"].startswith("Labels stored on each trace")
+        assert tips["Object Groups:"].startswith("Groups a new object joins")
+        assert tips["Custom Columns:"].startswith("Values for the object list's custom columns")
     finally:
         s.close()
 
@@ -305,8 +345,7 @@ def test_palette_dialog_puts_tags_below_radius_and_above_groups(tmp_path):
         i_tags = order.index("Trace Tags:")
         i_groups = order.index("Object Groups:")
         i_header = order.index("Custom Columns:")
-        i_col = order.index("Reviewer:")
-        assert i_stamp < i_tags < i_groups < i_header < i_col, order
+        assert i_stamp < i_tags < i_groups < i_header, order
     finally:
         s.close()
 

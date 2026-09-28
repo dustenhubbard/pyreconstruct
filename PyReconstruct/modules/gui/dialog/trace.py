@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 
 from .color_button import ColorButton
 from .shape_button import ShapeButton
-from .helper import resizeLineEdit
+from .helper import resizeLineEdit, ColumnValueInput
 from .quick_dialog import MultiInput
 
 from PyReconstruct.modules.datatypes import Trace
@@ -218,6 +218,11 @@ class TraceDialog(QDialog):
             pick_one_rows.addLayout(row)
 
         tags_text = QLabel(self, text="Trace Tags:")
+        tags_text.setToolTip(
+            "Labels stored on each trace, used to sort and filter traces with "
+            "the trace list's Tag filter. A palette button gives its tags to "
+            "every trace drawn with it."
+        )
         # sorted because trace.tags is a set: unsorted, a tag lands on a
         # different row each time the dialog opens, so the row a user is part
         # way through editing is not the row they left off on
@@ -289,12 +294,16 @@ class TraceDialog(QDialog):
         # only a palette item with a series in hand shows them.
         self.series = series
         self.groups_input = None
-        self.column_inputs = {}
+        self.columns_input = None
         defaults_rows = QVBoxLayout()
         if self.is_palette and series is not None:
             seed = trace.obj_defaults or {}
             known_groups = sorted(series.object_groups.getGroupList())
             groups_text = QLabel(self, text="Object Groups:")
+            groups_text.setToolTip(
+                "Groups a new object joins when you draw its first trace with "
+                "this button. Objects that already exist are not changed."
+            )
             defaults_rows.addWidget(groups_text)
             self.groups_input = MultiInput(
                 self,
@@ -304,24 +313,23 @@ class TraceDialog(QDialog):
                 restrict_to_opts=False,
             )
             defaults_rows.addWidget(self.groups_input)
-            seed_columns = seed.get("user_columns", {})
             self.columns_text = None
+            self.columns_input = None
             if series.user_columns:
                 # the object list's categorical columns (Columns > Create
-                # categorical column...), one dropdown each
+                # categorical column...), one row per column chosen
                 self.columns_text = QLabel(self, text="Custom Columns:")
+                self.columns_text.setToolTip(
+                    "Values for the object list's custom columns, set on a new "
+                    "object when you draw its first trace with this button. Add "
+                    "columns in the object list under Columns > Create "
+                    "categorical column..."
+                )
                 defaults_rows.addWidget(self.columns_text)
-            for col_name, opts in sorted(series.user_columns.items()):
-                row = QHBoxLayout()
-                row.addWidget(QLabel(self, text=f"{col_name}:"))
-                combo = QComboBox(self)
-                combo.addItem("")
-                for value in opts:
-                    combo.addItem(str(value))
-                combo.setCurrentText(str(seed_columns.get(col_name, "")))
-                row.addWidget(combo)
-                self.column_inputs[col_name] = combo
-                defaults_rows.addLayout(row)
+                self.columns_input = ColumnValueInput(
+                    self, series.user_columns, seed.get("user_columns", {})
+                )
+                defaults_rows.addWidget(self.columns_input)
         
         if self.is_obj_list:
             range_row = QHBoxLayout()
@@ -471,11 +479,10 @@ class TraceDialog(QDialog):
             if self.groups_input is not None:
                 trace.obj_defaults = copyObjDefaults({
                     "groups": [g for g in self.groups_input.getEntries() if g],
-                    "user_columns": {
-                        col: combo.currentText()
-                        for col, combo in self.column_inputs.items()
-                        if combo.currentText()
-                    },
+                    "user_columns": (
+                        self.columns_input.getValues()
+                        if self.columns_input is not None else {}
+                    ),
                 })
             
             # fill mode
