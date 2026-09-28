@@ -82,7 +82,13 @@ def export3DObjects(series: Series, obj_names : list, output_dir : str, export_t
     output_directory = Path(output_dir)
 
     skipped = []
-    with _objectProgress(series, "Writing 3D meshes...") as progress:
+    # finish() in a finally, not through the reporter's context manager: the
+    # bar has no Cancel button and closes only at 100%, and __exit__ skips
+    # finish() when the block raises. A failed write (unwritable folder, disk
+    # full, a degenerate mesh) would otherwise leave the window blocked behind
+    # it, the hang found 2026-08-28 in saveJser and enumerateSections.
+    progress = _objectProgress(series, "Writing 3D meshes...")
+    try:
         for i, (obj_name, obj_3D) in enumerate(obj_data.items()):
             progress.set_progress(100 * i / max(len(obj_data), 1))
 
@@ -99,6 +105,8 @@ def export3DObjects(series: Series, obj_names : list, output_dir : str, export_t
                 # for it sent users hunting for files that were never made
                 # (found 2026-08-28)
                 skipped.append(obj_name)
+    finally:
+        progress.finish()
 
     if notify_user:
 
@@ -125,7 +133,9 @@ def export3DData(series: Series, obj_names: list, output_fp: str, notify_user: b
     ## Build all meshes in a single pass over the sections
     meshes = get_3D_meshes(series, obj_names)
 
-    with _objectProgress(series, "Measuring 3D meshes...") as progress:
+    # same shape as the write loop above, so the bar closes on every road out
+    progress = _objectProgress(series, "Measuring 3D meshes...")
+    try:
         for i, obj in enumerate(obj_names):
             progress.set_progress(100 * i / max(len(obj_names), 1))
 
@@ -143,6 +153,8 @@ def export3DData(series: Series, obj_names: list, output_fp: str, notify_user: b
             except Exception as e:
 
                 errors[obj] = e
+    finally:
+        progress.finish()
 
     if not errors:
 

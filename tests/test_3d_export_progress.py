@@ -109,3 +109,29 @@ def test_a_factory_without_the_eta_flag_still_works(tmp_path, monkeypatch):
         assert "Measuring 3D meshes..." in OldStyle.made
     finally:
         s.close()
+
+
+def test_a_failed_mesh_write_still_closes_the_bar(tmp_path, monkeypatch):
+    """The bar has no Cancel button and closes only at 100%. A write that
+    raises must not leave it parked below that, blocking the window."""
+    from PyReconstruct.modules.backend.volume import export_volumes as ev
+    from PyReconstruct.modules.backend.volume.objects_3D import Surface
+
+    s = _open(tmp_path)
+    try:
+        monkeypatch.setattr(ev, "notify", lambda *a, **k: None)
+        name = sorted(s.data["objects"].keys())[0]
+        s.setAttr(name, "3D_mode", "surface")
+
+        def boom(self, *a, **k):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(Surface, "exportTrimesh", boom)
+        with pytest.raises(OSError):
+            ev.export3DObjects(s, [name], str(tmp_path), "stl")
+
+        assert "Writing 3D meshes..." in Capturing.finished, (
+            "the write bar was left open after the failure"
+        )
+    finally:
+        s.close()
