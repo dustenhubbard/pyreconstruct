@@ -1328,7 +1328,8 @@ class FieldWidgetTrace(FieldWidgetBase):
             if not merged_traces:
                 notify(
                     "The merge produced no outline, so the traces were left "
-                    "as they are. Zoom in on very small traces before merging."
+                    "as they are. Traces this small are usually leftover "
+                    "specks; delete them or redraw them larger."
                 )
                 return False
             
