@@ -6,7 +6,8 @@ from PyReconstruct.modules.constants import (
     gh_repo,
     gh_wiki,
     gh_issues,
-    gh_submit,
+    gh_bug_form,
+    gh_feature_form,
     developers_mailto_str,
     repo_string
 )
@@ -533,11 +534,18 @@ def return_help_menu(self):
             None,
             # 6. reporting a problem, one flat list in the order the steps
             # happen (his call, 2026-09-27, #459). The old "Report issues
-            # (GitHub)" submenu is gone; its five rows sit here directly.
+            # (GitHub)" submenu is gone; its rows sit here directly.
             # Copy the report first, then send it to us or file it...
             ("copydiag_act", "Copy diagnostic report...", "", self.copyDiagnosticReport),
             ("emailteam_act", "Email developers", "", lambda : self.openWebsite(developers_mailto_str)),
-            ("submitissue_act", "Report bug / Request feature", "", lambda : self.openWebsite(gh_submit)),
+            # One row per issue form (2026-09-28). The old single row opened
+            # GitHub's chooser page, which cannot take prefilled fields; a
+            # direct form link can, so each row opens its own form with the
+            # version/OS/Python lines already filled in (MainWindow.openIssueForm).
+            # The bug row keeps the old act_name so the menubar baseline sees
+            # no loss.
+            ("submitissue_act", "Report a bug...", "", lambda : self.openIssueForm(gh_bug_form)),
+            ("requestfeature_act", "Request a feature...", "", lambda : self.openIssueForm(gh_feature_form)),
             ("seeissues_act", "See unresolved issues", "", lambda : self.openWebsite(gh_issues)),
             # ...then the log tools for anyone who needs them...
             ("viewlog_act", "View log file...", "", self.viewLogFile),

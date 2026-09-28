@@ -4011,6 +4011,17 @@ class MainWindow(QMainWindow):
         """Open website in user's browser."""
         webbrowser.open(site)
 
+    def openIssueForm(self, form_url):
+        """Open a GitHub issue form with the setup field already filled in.
+
+        Help > Report issues (GitHub) > "Report a bug..." / "Request a
+        feature...". The form's "About your setup" field receives the same
+        version/OS/Python lines as the diagnostic report, so the filer does
+        not have to look them up or paste them.
+        """
+        from PyReconstruct.modules.backend.func.error_report import prefilled_issue_url
+        self.openWebsite(prefilled_issue_url(form_url))
+
     def copyCommit(self):
         """Copy current commit or repo."""
         clipboard = QApplication.clipboard()

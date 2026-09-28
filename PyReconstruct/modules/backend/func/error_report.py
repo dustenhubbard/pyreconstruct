@@ -7,6 +7,7 @@ throws while handling an error would mask the original problem.
 """
 import platform
 import traceback as _traceback
+from urllib.parse import quote as _quote
 
 
 def _context_lines() -> list:
@@ -62,3 +63,27 @@ def build_error_report_from_exception(err: BaseException) -> str:
     uses the exception's own ``__traceback__``.
     """
     return build_error_report(type(err), err, getattr(err, "__traceback__", None))
+
+
+# The issue forms' prefillable field (.github/ISSUE_TEMPLATE/bug.yml and
+# feature.yml both declare a textarea with this id). GitHub fills a form
+# field from a query parameter of the same name.
+ISSUE_FORM_SETUP_FIELD = "setup"
+
+
+def prefilled_issue_url(form_url: str) -> str:
+    """``form_url`` with the setup field prefilled from the diagnostic lines.
+
+    ``form_url`` already names its form (``...?template=bug.yml``), so the
+    field rides along as ``&setup=``. Never raises: with nothing to add, or on
+    any failure, the plain form URL comes back and the filer fills the field by
+    hand.
+    """
+    try:
+        lines = _context_lines()
+        if not lines:
+            return form_url
+        joiner = "&" if "?" in form_url else "?"
+        return f"{form_url}{joiner}{ISSUE_FORM_SETUP_FIELD}={_quote(chr(10).join(lines), safe='')}"
+    except Exception:
+        return form_url

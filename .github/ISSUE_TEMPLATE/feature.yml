@@ -1,0 +1,26 @@
+name: Request a feature
+description: A change or a new feature you want in PyReconstruct.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What do you want?
+      placeholder: Describe the change. Say what problem it solves if that helps.
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      placeholder: Screenshots, examples, or where in the menus it should go.
+    validations:
+      required: false
+  - type: textarea
+    id: setup
+    attributes:
+      label: About your setup
+      description: PyReconstruct fills this in when you open this form from the Help menu.
+      render: text
+    validations:
+      required: false

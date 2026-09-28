@@ -31,7 +31,8 @@ from .websites import (
     gh_repo,
     gh_wiki,
     gh_issues,
-    gh_submit
+    gh_bug_form,
+    gh_feature_form,
 )
 
 from .developers import (

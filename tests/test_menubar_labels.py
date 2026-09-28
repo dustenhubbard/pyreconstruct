@@ -370,6 +370,14 @@ _REPAIR_SELF_CROSSINGS_ROW = (2, "act", "repairselfcrossings_act")
 # are pinned by test_menu_search.py.
 _SEARCH_MENUS_ROW = (1, "act", "searchmenus_act")
 _RECOLOR_ALL_ROW = (1, "act", "recolorallfrompalette_act")
+# Help > "Request a feature..." (2026-09-28, his
+# call): the single "Report bug / Request feature" row, which opened GitHub's
+# chooser page, became one row per issue form, because only a direct form
+# link can carry the prefilled version/OS/Python field. The bug row kept the
+# baseline act_name (submitissue_act, now "Report a bug..."); this is the
+# feature row, directly under it, at depth 1 because #463 had already
+# flattened the reporting submenu into Help itself.
+_REQUEST_FEATURE_ROW = (1, "act", "requestfeature_act")
 MENUBAR_EXPECTED = list(MENUBAR_BASELINE)
 MENUBAR_EXPECTED.insert(
     MENUBAR_BASELINE.index((1, "menu", "openrecentmenu")) + 1, _CLEAR_RECENTS_ROW
@@ -495,6 +503,9 @@ _HELP_TAIL_NEW = [
 _tail_at = MENUBAR_EXPECTED.index((1, "menu", "onlinemenu"))
 assert MENUBAR_EXPECTED[_tail_at:_tail_at + len(_HELP_TAIL_OLD)] == _HELP_TAIL_OLD
 MENUBAR_EXPECTED[_tail_at:_tail_at + len(_HELP_TAIL_OLD)] = _HELP_TAIL_NEW
+MENUBAR_EXPECTED.insert(
+    MENUBAR_EXPECTED.index((1, "act", "submitissue_act")) + 1, _REQUEST_FEATURE_ROW
+)
 
 
 def test_menubar_structure_matches_the_baseline_plus_additions():
@@ -527,7 +538,7 @@ def test_menubar_action_and_submenu_counts():
     each took the count up one, 117 to 119 together.
     """
     rows = _rows()
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 124
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 125
     assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 30
 
 

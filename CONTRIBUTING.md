@@ -11,13 +11,14 @@ By contributing, you agree that your work is licensed under
 
 ## Reporting a bug
 
-Open an [issue](https://github.com/dustenhubbard/PyReconstruct/issues). The app links
-there from **Help ▸ Report bug / Request feature**.
+Open an [issue](https://github.com/dustenhubbard/PyReconstruct/issues). PyReconstruct
+links there from **Help ▸ Report a bug...** and **Help ▸ Request a feature...**, and
+fills in your version and OS for you.
 
-In that same menu, **Copy diagnostic report** gives me your version and OS in one
-paste. Then tell me what you did, what you expected, and what happened instead.
-The log from **View log file** usually saves a round trip. If you would rather
-write than file an issue, **Help ▸ Email developers** reaches me too.
+Tell me what you did, what you expected, and what happened instead. The log from
+**View log file** usually saves a round trip. If you would rather write than file an
+issue, **Help ▸ Email developers** reaches me too, and **Copy diagnostic report**
+gives me your version and OS in one paste.
 
 If you can share the `.jser`, that helps most of all.
 

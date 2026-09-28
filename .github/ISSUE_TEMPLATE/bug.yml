@@ -1,0 +1,27 @@
+name: Report a bug
+description: Something in PyReconstruct did not work.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      placeholder: Tell us what you did and what went wrong. A screenshot helps.
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: Error report
+      placeholder: If PyReconstruct showed an error report, paste it here.
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: setup
+    attributes:
+      label: About your setup
+      description: PyReconstruct fills this in when you open this form from the Help menu.
+      render: text
+    validations:
+      required: false
