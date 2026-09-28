@@ -87,3 +87,49 @@ def prefilled_issue_url(form_url: str) -> str:
         return f"{form_url}{joiner}{ISSUE_FORM_SETUP_FIELD}={_quote(chr(10).join(lines), safe='')}"
     except Exception:
         return form_url
+
+
+# The bug form's error textarea (.github/ISSUE_TEMPLATE/bug.yml, id "error").
+ISSUE_FORM_ERROR_FIELD = "error"
+# Ceiling for the whole prefilled link. GitHub answers a request line past
+# about 8 KB with 414 and browsers cap URLs of their own, while a traceback
+# through Qt can run to tens of KB, so the report is trimmed to fit under this.
+ISSUE_URL_MAX_CHARS = 7000
+# Marks the cut when a report is trimmed. The full text is still on the
+# clipboard button and in the log file.
+REPORT_TRIM_MARKER = "\n[...]\n"
+
+
+def issue_url_for_report(form_url: str, report: str) -> str:
+    """The bug form with the setup field prefilled and ``report`` in the error field.
+
+    Keeps the link under ``ISSUE_URL_MAX_CHARS`` by cutting the middle of the
+    report: the head keeps the version lines and where the traceback starts, the
+    tail keeps the raise site and the message, which is the part that names the
+    bug. Never raises: on any failure the setup-only link comes back, and failing
+    that the plain form.
+    """
+    try:
+        base = prefilled_issue_url(form_url)
+        if not report:
+            return base
+        joiner = "&" if "?" in base else "?"
+        prefix = f"{base}{joiner}{ISSUE_FORM_ERROR_FIELD}="
+        budget = ISSUE_URL_MAX_CHARS - len(prefix)
+        encoded = _quote(report, safe="")
+        keep = len(report)
+        while len(encoded) > budget:
+            # Shrink by a quarter each pass and re-measure: percent-encoding
+            # inflates unevenly, so the fit is checked on the encoded text.
+            keep = int(keep * 0.75)
+            if keep < 200:
+                return base
+            head = report[: keep // 3]
+            tail = report[-(keep - keep // 3):]
+            encoded = _quote(head + REPORT_TRIM_MARKER + tail, safe="")
+        return prefix + encoded
+    except Exception:
+        try:
+            return prefilled_issue_url(form_url)
+        except Exception:
+            return form_url

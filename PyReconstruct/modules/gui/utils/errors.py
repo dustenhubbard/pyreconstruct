@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QPushButton,
 )
 
-from PyReconstruct.modules.constants import gh_issues
+from PyReconstruct.modules.constants import gh_issues, gh_bug_form
 
 # Sibling module, relative like the package's own re-exports: an absolute import
 # here would re-enter `gui.utils.__init__`, which is what imports this file.
@@ -26,16 +26,32 @@ from .confetti import burst_confetti
 from PyReconstruct.modules.backend.func.error_report import (
     build_error_report,
     build_diagnostic_report,
+    issue_url_for_report,
+    prefilled_issue_url,
 )
 
 
-def _standard_summary(lead_html: str) -> str:
-    """Wrap a lead line with the standard copy-and-report instructions + link."""
+def _standard_summary(lead_html: str, report: str = None) -> str:
+    """Wrap a lead line with the standard copy-and-report instructions + link.
+
+    The link opens the GitHub bug form (Help > Report a bug... goes to the same
+    place) with the setup field prefilled. Given ``report`` -- the crash or
+    save-failure text the dialog is showing -- the form's error field is
+    prefilled with it too, trimmed to fit a URL; without one (the diagnostic
+    report, which is only the setup lines) the setup field alone is filled.
+    """
+    if report is None:
+        url = prefilled_issue_url(gh_bug_form)
+        filled = "your version and OS"
+    else:
+        url = issue_url_for_report(gh_bug_form, report)
+        filled = "this report"
     return (
         f"{lead_html}<br><br>"
         "Click <b>Copy report to clipboard</b> below, then paste it into a bug "
         "report or email so we can help.<br><br>"
-        f'Report bugs at <a href="{gh_issues}">{gh_issues}</a>'
+        f'Or <a href="{html.escape(url, quote=True)}">open a bug report on GitHub</a> '
+        f"with {filled} already filled in."
     )
 
 
@@ -181,7 +197,7 @@ def show_save_error(message: str, report: str, parent=None):
     ``report`` carries the traceback + environment for pasting into a bug report.
     """
     lead = html.escape(message).replace("\n", "<br>")
-    show_error_report(_standard_summary(lead), report, parent, title="Save failed")
+    show_error_report(_standard_summary(lead, report), report, parent, title="Save failed")
 
 
 class LogViewerDialog(QDialog):
@@ -357,5 +373,5 @@ def customExcepthook(exctype, value, tb):
         "(<b>Help &gt; View log file</b>) instead of opening another window."
     )
     # Only spend this fault's one window once one has actually opened.
-    if show_error_report(_standard_summary(lead), report) and signature is not None:
+    if show_error_report(_standard_summary(lead, report), report) and signature is not None:
         _reported_signatures.add(signature)

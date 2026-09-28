@@ -87,3 +87,48 @@ def test_email_developers_writes_to_the_fork_address():
     assert developers.developers_email == "issues@pyreconstruct.org"
     assert developers.developers_mailto_str == "mailto:issues@pyreconstruct.org"
     assert "utexas.edu" not in developers.developers_mailto_str
+
+
+def test_issue_url_for_report_fills_both_fields(monkeypatch):
+    monkeypatch.setattr(error_report, "_context_lines", lambda: ["Version:  1.24.0"])
+    report = "PyReconstruct error report\nVersion:  1.24.0\n\nTraceback...\nValueError: boom"
+    url = error_report.issue_url_for_report(websites.gh_bug_form, report)
+    query = parse_qs(urlsplit(url).query, strict_parsing=True)
+    assert query["template"] == ["bug.yml"]
+    assert query["setup"] == ["Version:  1.24.0"]
+    # the whole report, untrimmed, in the form's error field
+    assert query["error"] == [report]
+    assert "id: error" in (_FORMS_DIR / "bug.yml").read_text(encoding="utf-8")
+
+
+def test_issue_url_for_report_trims_a_long_report_to_fit(monkeypatch):
+    monkeypatch.setattr(error_report, "_context_lines", lambda: ["Version:  1.24.0"])
+    head = "PyReconstruct error report\nVersion:  1.24.0\n\nTraceback (most recent call last):\n"
+    frames = "".join(f'  File "deep/module_{i}.py", line {i}, in step\n    do_thing({i})\n' for i in range(600))
+    tail = "ValueError: the raise site names the bug"
+    report = head + frames + tail
+    url = error_report.issue_url_for_report(websites.gh_bug_form, report)
+    assert len(url) <= error_report.ISSUE_URL_MAX_CHARS
+    error = parse_qs(urlsplit(url).query, strict_parsing=True)["error"][0]
+    # the head (version lines, start of the traceback) and the tail (the raise
+    # site and message) both survive; the cut is marked in the middle
+    assert error.startswith(head)
+    assert error.endswith(tail)
+    assert error_report.REPORT_TRIM_MARKER in error
+
+
+def test_issue_url_for_report_without_a_report_is_the_setup_link(monkeypatch):
+    monkeypatch.setattr(error_report, "_context_lines", lambda: ["Version:  1.24.0"])
+    assert (error_report.issue_url_for_report(websites.gh_bug_form, "")
+            == error_report.prefilled_issue_url(websites.gh_bug_form))
+
+
+def test_issue_url_for_report_survives_a_broken_context(monkeypatch):
+    def boom():
+        raise RuntimeError("no platform")
+    monkeypatch.setattr(error_report, "_context_lines", boom)
+    url = error_report.issue_url_for_report(websites.gh_bug_form, "ValueError: x")
+    query = parse_qs(urlsplit(url).query, strict_parsing=True)
+    assert query["template"] == ["bug.yml"]
+    assert "setup" not in query
+    assert query["error"] == ["ValueError: x"]
