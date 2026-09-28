@@ -189,6 +189,57 @@ jobs:
       - name: PyInstaller freeze
         run: pyinstaller --noconfirm packaging/PyReconstruct.spec
 
+      - name: Report the frozen app's size (Windows)
+        # Informational, for sizing in-place updates: bytes on disk, file
+        # count, and the longest path inside the install folder (Windows path
+        # limits apply to the install folder plus this). Never fails the build.
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          try {
+            $flavor = ""
+            if (Test-Path "packaging\FLAVOR") { $flavor = (Get-Content "packaging\FLAVOR" -Raw).Trim() }
+            $app = if ($flavor -eq "dev") { "PyReconstruct Dev" } else { "PyReconstruct" }
+            $root = (Resolve-Path -LiteralPath "dist\$app").Path.TrimEnd('\')
+            $items = @(Get-ChildItem -LiteralPath $root -Recurse -Force)
+            $files = @($items | Where-Object { -not $_.PSIsContainer })
+            $bytes = ($files | Measure-Object -Property Length -Sum).Sum
+            $longest = $items | ForEach-Object { $_.FullName.Substring($root.Length + 1) } |
+              Sort-Object -Property Length -Descending | Select-Object -First 1
+            Write-Host "frozen app: dist\$app"
+            Write-Host "installed size: $bytes bytes"
+            Write-Host "file count: $($files.Count)"
+            Write-Host "longest relative path: $($longest.Length) characters ($longest)"
+          } catch {
+            Write-Host "::warning::could not measure the frozen app: $_"
+          }
+          exit 0
+
+      - name: Report the frozen app's size (macOS)
+        # Informational, as above, measured inside the .app bundle. Never
+        # fails the build.
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        shell: bash
+        run: |
+          report() {
+            FLAVOR="$(cat packaging/FLAVOR 2>/dev/null | tr -d '[:space:]' || true)"
+            if [ "$FLAVOR" = "dev" ]; then APP_NAME="PyReconstruct Dev"; else APP_NAME="PyReconstruct"; fi
+            APP="dist/${APP_NAME}.app"
+            [ -d "$APP" ] || { echo "::warning::$APP not found"; return 0; }
+            BYTES="$(find "$APP" -type f -exec stat -f %z {} + | awk '{ s += $1 } END { print s + 0 }')"
+            COUNT="$(find "$APP" -type f | wc -l | tr -d ' ')"
+            LONGEST="$(cd "$APP" && find . -mindepth 1 | sed 's#^\./##' \
+                       | awk '{ if (length($0) > m) { m = length($0); p = $0 } } END { print m + 0 " characters (" p ")" }')"
+            echo "frozen app: $APP"
+            echo "installed size: $BYTES bytes"
+            echo "file count: $COUNT"
+            echo "longest relative path: $LONGEST"
+          }
+          report || echo "::warning::could not measure the frozen app"
+          exit 0
+
       - name: Frozen self-test (Windows) — catches windowed-only import bugs
         if: runner.os == 'Windows'
         run: |
