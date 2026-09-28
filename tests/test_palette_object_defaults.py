@@ -475,7 +475,9 @@ def test_paste_with_shape_keeps_the_buttons_defaults(tmp_path):
         s.close()
 
 
-def test_a_value_removed_from_the_columns_options_survives_ok(tmp_path, monkeypatch):
+def test_a_value_that_is_no_longer_an_option_is_not_offered(tmp_path, monkeypatch):
+    """One rule with objects: a value that is no longer one of the column's
+    options is not shown on the button, and OK does not keep it."""
     from PyReconstruct.modules.gui.dialog.trace import TraceDialog
 
     s = _open(tmp_path)
@@ -486,14 +488,13 @@ def test_a_value_removed_from_the_columns_options_survives_ok(tmp_path, monkeypa
         item.obj_defaults = {"user_columns": {"Stage": "draft"}}
         dlg = TraceDialog(None, [item], is_palette=True, series=s)
         _, col, val = dlg.columns_input.rows[0]
-        assert val.currentText() == "draft", "the saved value is still shown"
+        assert [val.itemText(i) for i in range(val.count())] == ["", "final"]
         _accept(monkeypatch)
         t, confirmed = dlg.exec()
         assert confirmed
-        assert t.obj_defaults == {"user_columns": {"Stage": "draft"}}
+        assert t.obj_defaults is None
     finally:
         s.close()
-
 
 def test_a_value_for_a_deleted_column_is_dropped(tmp_path, monkeypatch):
     from PyReconstruct.modules.gui.dialog.trace import TraceDialog
@@ -589,3 +590,36 @@ def test_a_deleted_column_is_never_applied(main_window):
     field.newTrace([(x0, y0), (x0 + side, y0), (x0 + side, y0 + side), (x0, y0 + side)],
                    field.tracing_trace, points_as_pix=False, reduce_points=False, log_event=False)
     assert "Gone" not in (series.getAttr("deleted_col_obj", "user_columns") or {})
+
+
+def test_removing_an_option_clears_it_from_palette_buttons(tmp_path):
+    """One rule: a value that is no longer an option is cleared from objects
+    and palette buttons alike."""
+    s = _open(tmp_path)
+    try:
+        s.addUserCol("Stage", ["draft", "final"], log_event=False)
+        item = _button_with_column(s, "Stage", "draft")
+        s.editUserCol("Stage", "Stage", ["final"], log_event=False)
+        assert item.obj_defaults == {"groups": ["axons"]}
+        # a value still offered is kept
+        item.obj_defaults = {"user_columns": {"Stage": "final"}}
+        s.editUserCol("Stage", "Stage", ["final", "review"], log_event=False)
+        assert item.obj_defaults == {"user_columns": {"Stage": "final"}}
+    finally:
+        s.close()
+
+
+@pytest.mark.gui
+def test_a_value_that_is_not_an_option_is_never_applied(main_window):
+    field = main_window.field
+    series = main_window.series
+    series.addUserCol("Stage", ["final"], log_event=False)
+    item = Trace("stale_value_obj", (0, 255, 0), True)
+    item.obj_defaults = {"user_columns": {"Stage": "draft"}}
+    field.setTracingTrace(item)
+    wx, wy, ww, wh = series.window
+    side = min(ww, wh) * 0.1
+    x0, y0 = wx + ww * 0.4, wy + wh * 0.4
+    field.newTrace([(x0, y0), (x0 + side, y0), (x0 + side, y0 + side), (x0, y0 + side)],
+                   field.tracing_trace, points_as_pix=False, reduce_points=False, log_event=False)
+    assert "Stage" not in (series.getAttr("stale_value_obj", "user_columns") or {})

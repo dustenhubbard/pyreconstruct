@@ -702,11 +702,11 @@ class FieldWidgetTrace(FieldWidgetBase):
         if new_group and hasattr(self.mainwindow, "createMenuBar"):
             self.mainwindow.createMenuBar()
 
-        # only columns the series still has; a saved value for a deleted
-        # column has nowhere to go
+        # only a current option of a column the series still has: the same
+        # rule that clears a removed option from every object
         columns = {
             col: value for col, value in defaults.get("user_columns", {}).items()
-            if col in self.series.user_columns
+            if value in self.series.user_columns.get(col, [])
         }
         if columns:
             current = dict(self.series.getAttr(name, "user_columns") or {})

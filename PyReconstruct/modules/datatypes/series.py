@@ -4934,6 +4934,12 @@ class Series():
                 if "user_columns" in attrs and col_name in attrs["user_columns"]:
                     if attrs["user_columns"][col_name] not in new_opts:
                         del(attrs["user_columns"][col_name])
+            # and from palette buttons, by the same rule: a value that is no
+            # longer an option is cleared everywhere (his call, 2026-09-28)
+            for trace, columns in list(self._paletteColumnDefaults()):
+                if col_name in columns and columns[col_name] not in new_opts:
+                    del columns[col_name]
+                    self._dropEmptyPaletteDefaults(trace)
         
         if log_event:
             self.addLog(None, None, f"Edit user column {new_name}")
