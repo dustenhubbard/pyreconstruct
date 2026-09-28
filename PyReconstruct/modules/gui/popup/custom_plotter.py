@@ -671,7 +671,8 @@ class VPlotter(vedo.Plotter):
             generateVolumes,
             series if series else series_fp, 
             objs,
-            ztraces
+            ztraces,
+            progress=True,
         )
         worker.signals.result.connect(self.placeInScene)
         self.threadpool.startAll(text="Generating 3D...", status_bar=self.mainwindow.statusbar)

@@ -126,7 +126,10 @@ class Capturing(NullProgressReporter):
         Capturing.made.append((text, eta))
 
 
-def test_only_the_recolor_asks_for_an_estimate(series_jser):
+def test_the_recolor_asks_for_an_estimate_and_opening_does_not(series_jser):
+    """Since fork #421 every operation bar carries an estimate, so the recolor
+    is no longer the only one; tests/test_progress_bars_421.py pins the rest.
+    What still holds from 2026-09-14: an opening series shows none."""
     import os
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PyReconstruct.modules.datatypes import Series
