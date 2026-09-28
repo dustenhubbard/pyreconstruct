@@ -4660,6 +4660,7 @@ class MainWindow(QMainWindow):
                 o_series,
                 import_as
             )
+            self.refreshPaletteAfterImport({name for _, name in import_as})
 
         if "brightness/contrast profiles" in response:
             import_as = response["brightness/contrast profiles"]
@@ -4677,6 +4678,18 @@ class MainWindow(QMainWindow):
 
         notify("Import successful.")
     
+    def refreshPaletteAfterImport(self, names : set):
+        """An import over the palette on screen replaces its buttons: show the
+        new ones and draw with the new current button."""
+        if self.series.palette_index[0] not in names:
+            return
+        g, i = self.series.palette_index
+        palette = self.series.palette_traces[g]
+        if i >= len(palette):       # the new palette may be shorter
+            self.series.palette_index[1] = i = 0
+        self.mouse_palette.reset()
+        self.changeTracingTrace(palette[i])
+
     def importFromZarrLabels(self):
         """Import label data from a neuroglancer zarr."""
         zarr_fp = FileDialog.get(

@@ -846,3 +846,66 @@ def test_the_palette_editor_carries_tokens_through_a_rename_and_not_to_a_new_tab
         assert s.paletteToken("brand_new") != token
     finally:
         s.close()
+
+
+# ---------------------------------------------------------------------------
+# importing palettes from another series
+# ---------------------------------------------------------------------------
+
+def test_imported_buttons_are_copies_with_only_this_series_columns(tmp_path):
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    s = _open(tmp_path)
+    o = _open(other_dir)
+    try:
+        s.addUserCol("Stage", ["draft", "final"], log_event=False)
+        o_pal = o.palette_index[0]
+        src = o.palette_traces[o_pal][0]
+        src.obj_defaults = {
+            "groups": ["axons"],
+            "user_columns": {"Stage": "draft", "Unknown": "x", "Stage2": "y"},
+        }
+        s.importPalettes(o, [(o_pal, "imported")], log_event=False)
+        got = s.palette_traces["imported"][0]
+        assert got is not src, "the imported button is shared with the other series"
+        assert got.obj_defaults == {"groups": ["axons"], "user_columns": {"Stage": "draft"}}
+        # the source is untouched
+        assert src.obj_defaults["user_columns"]["Unknown"] == "x"
+    finally:
+        s.close()
+        o.close()
+
+
+def test_a_value_that_is_not_an_option_is_dropped_on_import(tmp_path):
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    s = _open(tmp_path)
+    o = _open(other_dir)
+    try:
+        s.addUserCol("Stage", ["final"], log_event=False)
+        o_pal = o.palette_index[0]
+        o.palette_traces[o_pal][0].obj_defaults = {"user_columns": {"Stage": "draft"}}
+        s.importPalettes(o, [(o_pal, "imported")], log_event=False)
+        assert s.palette_traces["imported"][0].obj_defaults is None
+    finally:
+        s.close()
+        o.close()
+
+
+@pytest.mark.gui
+def test_an_import_over_the_current_palette_refreshes_the_drawing_copy(main_window):
+    series = main_window.series
+    field = main_window.field
+    g, i = series.palette_index
+    replacement = [t.copy() for t in series.palette_traces[g]]
+    replacement[i].name = "imported_button"
+    replacement[i].obj_defaults = {"groups": ["axons"]}
+    series.palette_traces[g] = replacement
+
+    main_window.refreshPaletteAfterImport({g})
+    assert field.tracing_trace.name == "imported_button"
+    assert field.tracing_trace.obj_defaults == {"groups": ["axons"]}
+
+    # an import under another name leaves the drawing copy alone
+    main_window.refreshPaletteAfterImport({"some_other_palette"})
+    assert field.tracing_trace.name == "imported_button"

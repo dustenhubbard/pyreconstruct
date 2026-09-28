@@ -3956,8 +3956,14 @@ class Series():
                 log_event (bool): True if event should be logged
         """
         for palette, new_name in import_as:
-            trace_list = other.palette_traces[palette]
-            self.palette_traces[new_name] = trace_list.copy()
+            # own copies of the other series' buttons, so nothing is shared
+            # with it, and object defaults cleaned to this series' columns
+            trace_list = []
+            for trace in other.palette_traces[palette]:
+                copied = trace.copy()
+                copied.obj_defaults = self.cleanObjDefaults(copied.obj_defaults)
+                trace_list.append(copied)
+            self.palette_traces[new_name] = trace_list
             self.forgetPaletteToken(new_name)
         
         if log_event:
@@ -4888,6 +4894,24 @@ class Series():
         if log_event:
             self.addLog(None, None, f"Delete user column {col_name}")
         
+    def cleanObjDefaults(self, defaults):
+        """A palette button's object defaults, keeping only custom column
+        values this series can hold: a column it has, and one of that
+        column's options. Groups are kept; drawing creates a missing group.
+
+        A button imported from another series can carry values for columns
+        this series lacks. They were never applied, but a later column renamed
+        to the same name would take them over, with no undo to reverse it
+        (fork #480 review)."""
+        defaults = copyObjDefaults(defaults)
+        if not defaults or not defaults.get("user_columns"):
+            return defaults
+        defaults["user_columns"] = {
+            col: value for col, value in defaults["user_columns"].items()
+            if value in self.user_columns.get(col, [])
+        }
+        return copyObjDefaults(defaults)
+
     def paletteToken(self, name : str) -> str:
         """An in-memory identity for the palette now called ``name``.
 
