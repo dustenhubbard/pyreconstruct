@@ -18,6 +18,7 @@ from .helper import resizeLineEdit
 from .quick_dialog import MultiInput
 
 from PyReconstruct.modules.datatypes import Trace
+from PyReconstruct.modules.datatypes.trace import copyObjDefaults
 from PyReconstruct.modules.gui.utils import notify
 
 class TraceDialog(QDialog):
@@ -33,7 +34,8 @@ class TraceDialog(QDialog):
             is_palette=False,
             is_obj_list=False,
             pos=None,
-            tag_sets=None):
+            tag_sets=None,
+            series=None):
         """Create an attribute dialog.
         
             Params:
@@ -43,6 +45,9 @@ class TraceDialog(QDialog):
                 tag_sets (TagSets): the series' tag sets. Each pick-one set
                     gets its own labeled dropdown; the pick-many values are
                     offered in the Tags rows. None or empty keeps plain rows.
+                series (Series): for a palette item, the open series. Its
+                    object groups and custom columns become rows the item can
+                    hand to a new object (fork #419). None hides those rows.
 
         After exec(), ``tag_choices`` holds the pick-one rows' answer as
         ``TagSets.apply`` reads it: set name -> value, "" for cleared, None
@@ -277,6 +282,39 @@ class TraceDialog(QDialog):
             self.stamp_size_input.setText(str(round(trace.getRadius(), 6)))
             stamp_size_row.addWidget(stamp_size_text)
             stamp_size_row.addWidget(self.stamp_size_input)
+
+        # What a NEW object drawn from this palette item starts with: its
+        # groups and a value for each custom column. Object-level, so they
+        # live beside the trace rather than on it (Trace.obj_defaults), and
+        # only a palette item with a series in hand shows them.
+        self.series = series
+        self.groups_input = None
+        self.column_inputs = {}
+        defaults_rows = QVBoxLayout()
+        if self.is_palette and series is not None:
+            seed = trace.obj_defaults or {}
+            known_groups = sorted(series.object_groups.getGroupList())
+            defaults_rows.addWidget(QLabel(self, text="New objects join groups:"))
+            self.groups_input = MultiInput(
+                self,
+                sorted(seed.get("groups", [])),
+                combo=True,
+                combo_items=known_groups,
+                restrict_to_opts=False,
+            )
+            defaults_rows.addWidget(self.groups_input)
+            seed_columns = seed.get("user_columns", {})
+            for col_name, opts in sorted(series.user_columns.items()):
+                row = QHBoxLayout()
+                row.addWidget(QLabel(self, text=f"{col_name}:"))
+                combo = QComboBox(self)
+                combo.addItem("")
+                for value in opts:
+                    combo.addItem(str(value))
+                combo.setCurrentText(str(seed_columns.get(col_name, "")))
+                row.addWidget(combo)
+                self.column_inputs[col_name] = combo
+                defaults_rows.addLayout(row)
         
         if self.is_obj_list:
             range_row = QHBoxLayout()
@@ -312,6 +350,7 @@ class TraceDialog(QDialog):
         vlayout.addWidget(self.selected_input)
         vlayout.addWidget(self.unselected_input)
         if self.is_palette: vlayout.addLayout(stamp_size_row)
+        if self.groups_input is not None: vlayout.addLayout(defaults_rows)
         if self.is_obj_list: vlayout.addLayout(range_row)
         vlayout.addWidget(buttonbox)
 
@@ -416,6 +455,17 @@ class TraceDialog(QDialog):
                 trace.points = points
             else:
                 trace.points = None
+
+            # object defaults for a new object (palette items with a series)
+            if self.groups_input is not None:
+                trace.obj_defaults = copyObjDefaults({
+                    "groups": [g for g in self.groups_input.getEntries() if g],
+                    "user_columns": {
+                        col: combo.currentText()
+                        for col, combo in self.column_inputs.items()
+                        if combo.currentText()
+                    },
+                })
             
             # fill mode
             if self.style_none.isChecked():

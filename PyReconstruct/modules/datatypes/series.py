@@ -10,7 +10,7 @@ from typing import Union
 from .log import LogSet, LogSetPair
 from .ztrace import Ztrace
 from .section import Section
-from .trace import Trace, normalizeObjectName
+from .trace import Trace, normalizeObjectName, copyObjDefaults
 from .trace_id import TraceIDIssuer
 from .transform import Transform
 from .obj_group_dict import ObjGroupDict
@@ -441,6 +441,12 @@ class Series():
             (name, [Trace.fromList(trace) for trace in palette_group])
             for name, palette_group in series_data["palette_traces"].items()
         ))
+        # object defaults per palette item (fork #419), stored as a parallel
+        # list per palette so the trace rows keep the shape older builds read
+        for name, defaults in series_data.get("palette_obj_defaults", {}).items():
+            traces = self.palette_traces.get(name, [])
+            for trace, d in zip(traces, defaults):
+                trace.obj_defaults = copyObjDefaults(d)
         self.palette_index = series_data["palette_index"]
 
         self.ztraces = series_data["ztraces"]
@@ -1282,6 +1288,15 @@ class Series():
             for name, palette_group in self.palette_traces.items()
         ))
         d["palette_index"] = self.palette_index
+        # written only when some item carries defaults, so a series that never
+        # used them serializes exactly as before
+        palette_obj_defaults = dict(
+            (name, [trace.obj_defaults for trace in palette_group])
+            for name, palette_group in self.palette_traces.items()
+            if any(trace.obj_defaults for trace in palette_group)
+        )
+        if palette_obj_defaults:
+            d["palette_obj_defaults"] = palette_obj_defaults
 
         d["ztraces"] = {}
         for name in self.ztraces:
