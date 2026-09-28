@@ -5,9 +5,9 @@ It becomes the commit when this is squash merged.
 Body: one short paragraph. What does someone using the app do and see now, and why?
 Name code only when the sentence needs it.
 
-Changes something on screen? Add before and after screenshots.
+Changes something on screen? Add before and after screenshots and say which OS
+you tested on.
 Depends on timing or motion? Add a short video.
-Say which OS you tested on.
 
 Touches PyReconstruct/ with no changelog entry? Start a line with
 "No changelog entry:" and the reason.
