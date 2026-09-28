@@ -4921,9 +4921,14 @@ class Series():
                     del(attrs["user_columns"][col_name])
             # and in every palette button's saved values, so a rename does not
             # quietly drop them
-            for _, columns in self._paletteColumnDefaults():
+            for trace, columns in list(self._paletteColumnDefaults()):
                 if col_name in columns:
-                    columns[new_name] = columns.pop(col_name)
+                    value = columns.pop(col_name)
+                    # carry only a value that is still an option; a stale one
+                    # would otherwise come back if the option is added again
+                    if value in self.user_columns[new_name]:
+                        columns[new_name] = value
+                    self._dropEmptyPaletteDefaults(trace)
         col_name = new_name
 
         if self.user_columns[col_name] != new_opts:

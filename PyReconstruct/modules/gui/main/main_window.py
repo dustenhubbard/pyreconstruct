@@ -4374,6 +4374,10 @@ class MainWindow(QMainWindow):
         self.series.palette_index[0] = name
 
         self.mouse_palette.reset()
+        # reset() checks the new palette's button without clicking it, so the
+        # field would keep drawing with the old palette's trace
+        g, i = self.series.palette_index
+        self.changeTracingTrace(self.series.palette_traces[g][i])
 
         notify(f"Trace palette '{name}' successfully imported.\n" +
                f"Press {self.series.getOption('modifytracepalette_act')} to view all palettes.")

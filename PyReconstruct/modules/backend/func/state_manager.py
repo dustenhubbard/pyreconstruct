@@ -11,6 +11,7 @@ from PyReconstruct.modules.datatypes import (
     Ztrace,
     Trace
 )
+from PyReconstruct.modules.datatypes.trace import copyObjDefaults
 
 from PyReconstruct.modules.constants import keyed_trace_row_to_positional
 
@@ -656,6 +657,13 @@ class SeriesState():
         object_columns = deepcopy(series.getOption("object_columns"))
 
         host_tree = series.host_tree.copy()
+
+        # Palette buttons' object defaults (fork #419). A custom column edit
+        # changes them together with obj_attrs, so undo has to bring both back.
+        palette_obj_defaults = {
+            name: [copyObjDefaults(getattr(t, "obj_defaults", None)) for t in traces]
+            for name, traces in series.palette_traces.items()
+        }
         
         return {
             "obj_attrs" : obj_attrs,
@@ -667,7 +675,8 @@ class SeriesState():
             "ztraces" : ztraces,
             "user_columns": user_columns,
             "object_columns": object_columns,
-            "host_tree": host_tree
+            "host_tree": host_tree,
+            "palette_obj_defaults": palette_obj_defaults,
         }
     
     def resetSeriesAttributes(self, series : Series):
@@ -688,6 +697,13 @@ class SeriesState():
         for attr, value in self.series_attrs.items():
             if attr == "object_columns":
                 continue  # only replace obj columns under specific circumstances (below)
+            if attr == "palette_obj_defaults":
+                # put back onto the buttons themselves, matched by palette and
+                # position, rather than replacing the palette traces
+                for name, saved in value.items():
+                    for trace, d in zip(series.palette_traces.get(name, []), saved):
+                        trace.obj_defaults = copyObjDefaults(d)
+                continue
             setattr(series, attr, value)
 
         # specific case: no sections modified but the series data needs to be refreshed bc preferred alignments changed

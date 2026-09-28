@@ -623,3 +623,47 @@ def test_a_value_that_is_not_an_option_is_never_applied(main_window):
     field.newTrace([(x0, y0), (x0 + side, y0), (x0 + side, y0 + side), (x0, y0 + side)],
                    field.tracing_trace, points_as_pix=False, reduce_points=False, log_event=False)
     assert "Stage" not in (series.getAttr("stale_value_obj", "user_columns") or {})
+
+
+def test_rename_drops_a_value_that_is_not_an_option(tmp_path):
+    s = _open(tmp_path)
+    try:
+        s.addUserCol("Stage", ["final"], log_event=False)
+        item = _button_with_column(s, "Stage", "draft")      # already stale
+        s.editUserCol("Stage", "Phase", ["final"], log_event=False)
+        assert item.obj_defaults == {"groups": ["axons"]}
+    finally:
+        s.close()
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("edit", ["rename", "delete", "remove_option"])
+def test_undo_of_a_column_edit_restores_palette_buttons(main_window, edit):
+    """A column edit is a series undo step. Undo must bring the buttons'
+    values back along with the column and the objects, and the drawing copy
+    with them."""
+    field = main_window.field
+    series = main_window.series
+    series.addUserCol("Stage", ["draft", "final"], log_event=False)
+    pal_name, idx = series.palette_index
+    button = series.palette_traces[pal_name][idx]
+    button.obj_defaults = {"user_columns": {"Stage": "draft"}}
+    main_window.changeTracingTrace(button)
+
+    field.series_states.addState()
+    if edit == "rename":
+        series.editUserCol("Stage", "Phase", ["draft", "final"], log_event=False)
+    elif edit == "delete":
+        series.removeUserCol("Stage", log_event=False)
+    else:
+        series.editUserCol("Stage", "Stage", ["final"], log_event=False)
+    field.syncTracingDefaults()
+    assert button.obj_defaults != {"user_columns": {"Stage": "draft"}}
+
+    field.seriesUndo()
+    assert "Stage" in series.user_columns
+    assert button.obj_defaults == {"user_columns": {"Stage": "draft"}}
+    assert field.tracing_trace.obj_defaults == {"user_columns": {"Stage": "draft"}}
+
+    field.seriesUndo(redo=True)
+    assert button.obj_defaults != {"user_columns": {"Stage": "draft"}}
