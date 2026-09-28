@@ -269,6 +269,53 @@ def mergeTraces(trace_list : list) -> list:
         new_traces[i] = reducePoints(new_traces[i])
     return new_traces
 
+# A merge used to happen on the screen's pixel grid, so its result changed
+# with the zoom (fork issue #423). It now happens on a grid tied to the image:
+# MERGE_SUPERSAMPLE cells per image pixel, coarser only when the traces span
+# more than MERGE_MAX_CELLS cells on an axis, so one huge object cannot ask
+# for a grid that exhausts memory. Neither number looks at the view.
+MERGE_SUPERSAMPLE = 4
+MERGE_MAX_CELLS = 2500
+
+
+def mergeCellSize(field_traces : list, mag : float) -> float:
+    """Field units per grid cell for a zoom-independent merge.
+
+        Params:
+            field_traces (list): the traces to merge, points in field units
+            mag (float): the section magnification, field units per image pixel
+        Returns:
+            (float): the cell size in field units
+    """
+    cell = mag / MERGE_SUPERSAMPLE
+    xs = [x for trace in field_traces for x, _ in trace]
+    ys = [y for trace in field_traces for _, y in trace]
+    if xs and ys:
+        span = max(max(xs) - min(xs), max(ys) - min(ys))
+        if span / cell > MERGE_MAX_CELLS:
+            cell = span / MERGE_MAX_CELLS
+    return cell
+
+
+def mergeTracesInField(field_traces : list, mag : float) -> list:
+    """Merge closed traces given in field units, at a resolution set by the
+    image rather than the screen.
+
+        Params:
+            field_traces (list): the traces to merge, points in field units
+            mag (float): the section magnification, field units per image pixel
+        Returns:
+            (list): the merged trace(s), points in field units
+    """
+    cell = mergeCellSize(field_traces, mag)
+    grid_traces = [
+        [(int(round(x / cell)), int(round(y / cell))) for x, y in trace]
+        for trace in field_traces
+    ]
+    merged = mergeTraces(grid_traces)
+    return [[(x * cell, y * cell) for x, y in trace] for trace in merged]
+
+
 def cutTraces(trace_list, cut_trace, del_threshold=0.0, closed=True):
     """Cut a set of traces using polygon operations.
     

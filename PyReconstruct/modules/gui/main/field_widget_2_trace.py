@@ -19,7 +19,7 @@ from PyReconstruct.modules.gui.utils import notify
 from PyReconstruct.modules.calc import (
     pixmapPointToField,
     getExterior, 
-    mergeTraces, 
+    mergeTracesInField, 
     reducePoints,
     cutTraces,
     uncuttable_closed_traces,
@@ -1304,8 +1304,9 @@ class FieldWidgetTrace(FieldWidgetBase):
 
         # merge traces
         else:
-            pix_traces = []
+            field_traces = []
             name = first_trace.name
+            tform = self.section.tform
             for trace in to_merge:
                 if trace.name != name:
                     notify("Please merge traces with the same name.")
@@ -1313,20 +1314,24 @@ class FieldWidgetTrace(FieldWidgetBase):
                 if trace.closed == False:
                     notify("Please merge only closed traces.")
                     return False
-                # collect pixel values for trace points
-                pix_points = self.section_layer.traceToPix(trace)
-                pix_traces.append(pix_points)
+                # field units, not screen pixels: the merge grid is tied to
+                # the image so the result no longer changes with the zoom
+                # (fork issue #423)
+                field_traces.append(tform.mapPointsArray(trace.points).tolist())
             
-            merged_traces = mergeTraces(pix_traces)  # merge the pixel traces
+            merged_traces = mergeTracesInField(field_traces, self.section.mag)
             
             # delete the old traces
             self.section.deleteTraces(to_merge, log_event=False)
 
-            # create new merged trace
+            # create new merged trace; already reduced on the merge grid, and
+            # getExterior would rebuild a pixel grid from field coordinates
             for trace in merged_traces:
                 self.newTrace(
                     trace,
                     first_trace,
+                    points_as_pix=False,
+                    reduce_points=False,
                     log_event=False
                 )
             
