@@ -52,7 +52,8 @@ def test_info_plist_sets_the_key_from_the_build_version(key):
               if isinstance(k, ast.Constant)}
 
     assert key in values
-    assert isinstance(values[key], ast.Name) and values[key].id == "BUNDLE_VERSION"
+    # the numeric release part: Apple wants plain dotted integers here
+    assert isinstance(values[key], ast.Name) and values[key].id == "BUNDLE_NUMERIC_VERSION"
 
 
 def test_bundle_version_is_the_result_of_bundle_version():
@@ -110,3 +111,26 @@ def test_a_local_build_reads_version_py(clean_env, tmp_path):
 
 def test_nothing_known_falls_back_to_zero(clean_env, tmp_path):
     assert _bundle_version_fn(tmp_path / "missing.py")() == "0.0.0"
+
+
+def test_the_full_version_rides_in_its_own_key():
+    plist = _info_plist()
+    values = {k.value: v for k, v in zip(plist.keys, plist.values)
+              if isinstance(k, ast.Constant)}
+    assert isinstance(values["PyReconstructVersion"], ast.Name)
+    assert values["PyReconstructVersion"].id == "BUNDLE_VERSION"
+
+
+@pytest.mark.parametrize("full, numeric", [
+    ("1.24.0", "1.24.0"),
+    ("1.24.0.dev20260928", "1.24.0"),
+    ("1.23.1rc2", "1.23.1"),
+    ("0.0.0", "0.0.0"),
+    ("garbage", "0.0.0"),
+])
+def test_numeric_version_is_the_dotted_integer_prefix(full, numeric):
+    line = next(l for l in SPEC.read_text(encoding="utf-8").splitlines()
+                if l.startswith("BUNDLE_NUMERIC_VERSION"))
+    ns = {"re": re, "BUNDLE_VERSION": full}
+    exec(line, ns)
+    assert ns["BUNDLE_NUMERIC_VERSION"] == numeric

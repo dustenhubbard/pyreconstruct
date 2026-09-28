@@ -78,6 +78,10 @@ def _bundle_version():
 
 
 BUNDLE_VERSION = _bundle_version()
+# Apple wants plain dotted integers in the two bundle version keys, and a
+# nightly's 1.24.0.dev20260928 is not that. The keys get the release part
+# (1.24.0); the full version rides in PyReconstructVersion.
+BUNDLE_NUMERIC_VERSION = (re.match(r"\d+(?:\.\d+){0,2}", BUNDLE_VERSION) or [None])[0] or "0.0.0"
 
 # --- WHATS_NEW.md: the friendly highlights the first-launch "What's new" dialog
 #     shows offline (no network). CHANGELOG.md (technical) is bundled too for
@@ -344,8 +348,9 @@ if is_mac:
                            if IS_DEV else "edu.utexas.synapseweb.pyreconstruct"),
         info_plist={
             "NSHighResolutionCapable": True,
-            "CFBundleShortVersionString": BUNDLE_VERSION,
-            "CFBundleVersion": BUNDLE_VERSION,
+            "CFBundleShortVersionString": BUNDLE_NUMERIC_VERSION,
+            "CFBundleVersion": BUNDLE_NUMERIC_VERSION,
+            "PyReconstructVersion": BUNDLE_VERSION,
             # Claim .jser so Finder offers this app for double-clicked series.
             # macOS delivers the file as an open-document event, handled by
             # the FileOpen watcher in run.py, never as argv. Both flavors
