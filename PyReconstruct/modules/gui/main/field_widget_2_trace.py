@@ -5,6 +5,7 @@ from .context_menu_list import get_context_menu_list_trace
 from PySide6.QtWidgets import QInputDialog
 
 from PyReconstruct.modules.datatypes import Trace, Flag, Points
+from PyReconstruct.modules.datatypes.trace import copyObjDefaults
 from PyReconstruct.modules.gui.dialog import (
     QuickDialog,
     FlagDialog,
@@ -671,6 +672,21 @@ class FieldWidgetTrace(FieldWidgetBase):
                 section.traces_group_hide = []
                 section.setGroupVisibility(viz)
 
+    def syncTracingDefaults(self):
+        """Copy the current palette button's object defaults onto the tracing
+        trace. The field draws from its own copy of the button, so a custom
+        column renamed or deleted after the button was picked left that copy
+        holding the old column name (fork #419)."""
+        tracing = getattr(self, "tracing_trace", None)
+        if tracing is None:
+            return
+        try:
+            group, index = self.series.palette_index
+            button = self.series.palette_traces[group][index]
+        except (KeyError, IndexError, TypeError, ValueError):
+            return
+        tracing.obj_defaults = copyObjDefaults(button.obj_defaults)
+
     def applyObjectDefaults(self, name : str, defaults : dict):
         """Give a brand-new object the groups and custom column values its
         palette item carries (fork #419). Mirrors addToGroup for a group the
@@ -686,7 +702,12 @@ class FieldWidgetTrace(FieldWidgetBase):
         if new_group and hasattr(self.mainwindow, "createMenuBar"):
             self.mainwindow.createMenuBar()
 
-        columns = defaults.get("user_columns", {})
+        # only columns the series still has; a saved value for a deleted
+        # column has nowhere to go
+        columns = {
+            col: value for col, value in defaults.get("user_columns", {}).items()
+            if col in self.series.user_columns
+        }
         if columns:
             current = dict(self.series.getAttr(name, "user_columns") or {})
             current.update(columns)

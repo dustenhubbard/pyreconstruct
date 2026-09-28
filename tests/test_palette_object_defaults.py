@@ -510,3 +510,82 @@ def test_a_value_for_a_deleted_column_is_dropped(tmp_path, monkeypatch):
         assert t.obj_defaults == {"user_columns": {"Stage": "final"}}
     finally:
         s.close()
+
+
+# ---------------------------------------------------------------------------
+# custom column rename and delete follow the palette buttons
+# ---------------------------------------------------------------------------
+
+def _button_with_column(s, col, value):
+    pal_name, idx = s.palette_index
+    item = s.palette_traces[pal_name][idx]
+    item.obj_defaults = {"groups": ["axons"], "user_columns": {col: value}}
+    return item
+
+
+def test_renaming_a_column_renames_it_on_palette_buttons(tmp_path):
+    s = _open(tmp_path)
+    try:
+        s.addUserCol("Stage", ["draft", "final"], log_event=False)
+        item = _button_with_column(s, "Stage", "draft")
+        s.editUserCol("Stage", "Phase", ["draft", "final"], log_event=False)
+        assert item.obj_defaults == {"groups": ["axons"], "user_columns": {"Phase": "draft"}}
+    finally:
+        s.close()
+
+
+def test_deleting_a_column_removes_it_from_palette_buttons(tmp_path):
+    s = _open(tmp_path)
+    try:
+        s.addUserCol("Stage", ["draft"], log_event=False)
+        item = _button_with_column(s, "Stage", "draft")
+        s.removeUserCol("Stage", log_event=False)
+        assert item.obj_defaults == {"groups": ["axons"]}
+        # a button left with nothing collapses to None
+        item.obj_defaults = {"user_columns": {"Other": "x"}}
+        s.addUserCol("Other", ["x"], log_event=False)
+        s.removeUserCol("Other", log_event=False)
+        assert item.obj_defaults is None
+    finally:
+        s.close()
+
+
+@pytest.mark.gui
+def test_a_rename_reaches_the_trace_being_drawn(main_window):
+    """The field draws from a copy of the button, so the rename has to reach
+    that copy too, or the next new object gets nothing for the column."""
+    field = main_window.field
+    series = main_window.series
+    series.addUserCol("Stage", ["draft", "final"], log_event=False)
+    pal_name, idx = series.palette_index
+    button = series.palette_traces[pal_name][idx]
+    button.name = "renamed_col_obj"
+    button.obj_defaults = {"user_columns": {"Stage": "draft"}}
+    main_window.changeTracingTrace(button)
+
+    series.editUserCol("Stage", "Phase", ["draft", "final"], log_event=False)
+    field.syncTracingDefaults()
+    assert field.tracing_trace.obj_defaults == {"user_columns": {"Phase": "draft"}}
+
+    wx, wy, ww, wh = series.window
+    side = min(ww, wh) * 0.1
+    x0, y0 = wx + ww * 0.3, wy + wh * 0.3
+    field.newTrace([(x0, y0), (x0 + side, y0), (x0 + side, y0 + side), (x0, y0 + side)],
+                   field.tracing_trace, points_as_pix=False, reduce_points=False, log_event=False)
+    assert series.getAttr("renamed_col_obj", "user_columns") == {"Phase": "draft"}
+
+
+@pytest.mark.gui
+def test_a_deleted_column_is_never_applied(main_window):
+    """A value saved for a column the series no longer has is skipped."""
+    field = main_window.field
+    series = main_window.series
+    item = Trace("deleted_col_obj", (0, 255, 0), True)
+    item.obj_defaults = {"user_columns": {"Gone": "x"}}
+    field.setTracingTrace(item)
+    wx, wy, ww, wh = series.window
+    side = min(ww, wh) * 0.1
+    x0, y0 = wx + ww * 0.5, wy + wh * 0.5
+    field.newTrace([(x0, y0), (x0 + side, y0), (x0 + side, y0 + side), (x0, y0 + side)],
+                   field.tracing_trace, points_as_pix=False, reduce_points=False, log_event=False)
+    assert "Gone" not in (series.getAttr("deleted_col_obj", "user_columns") or {})

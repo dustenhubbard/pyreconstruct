@@ -1135,6 +1135,7 @@ class FieldWidgetObject(FieldWidgetTrace):
         
         self.series_states.addState()
         self.series.editUserCol(col_name, name, opts)
+        self.syncTracingDefaults()
 
         self.mainwindow.seriesModified(True)
         self.mainwindow.createContextMenus()

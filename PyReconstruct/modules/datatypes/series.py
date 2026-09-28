@@ -4871,10 +4871,27 @@ class Series():
         for attrs in self.obj_attrs.values():
             if "user_columns" in attrs and col_name in attrs["user_columns"]:
                 del(attrs["user_columns"][col_name])
+        # a palette button's saved value for a deleted column goes with it
+        for trace, columns in list(self._paletteColumnDefaults()):
+            if col_name in columns:
+                del columns[col_name]
+                self._dropEmptyPaletteDefaults(trace)
         
         if log_event:
             self.addLog(None, None, f"Delete user column {col_name}")
         
+    def _paletteColumnDefaults(self):
+        """Every palette button's saved custom-column values (fork #419), as
+        the dicts to edit in place."""
+        for palette in self.palette_traces.values():
+            for trace in palette:
+                defaults = getattr(trace, "obj_defaults", None)
+                if defaults and defaults.get("user_columns"):
+                    yield trace, defaults["user_columns"]
+
+    def _dropEmptyPaletteDefaults(self, trace):
+        trace.obj_defaults = copyObjDefaults(trace.obj_defaults)
+
     def editUserCol(self, col_name : str, new_name : str, new_opts : list, log_event=True):
         """Edit a user-defined column.
         
@@ -4902,6 +4919,11 @@ class Series():
                 if "user_columns" in attrs and col_name in attrs["user_columns"]:
                     attrs["user_columns"][new_name] = attrs["user_columns"][col_name]
                     del(attrs["user_columns"][col_name])
+            # and in every palette button's saved values, so a rename does not
+            # quietly drop them
+            for _, columns in self._paletteColumnDefaults():
+                if col_name in columns:
+                    columns[new_name] = columns.pop(col_name)
         col_name = new_name
 
         if self.user_columns[col_name] != new_opts:
