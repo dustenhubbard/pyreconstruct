@@ -105,3 +105,32 @@ def test_redo_keeps_a_hidden_group_hidden(window):
     assert series.groups_visibility["solo_group"] is False, (
         "redo showed a group the user had hidden"
     )
+
+
+def test_redo_lists_a_returned_group_in_the_groups_menu(window):
+    """Redo can bring back a group no object holds any more. The Groups menu
+    must list it again, which means rebuilding the menubar."""
+    series = window.series
+    other = NAME + "_b"
+    _draw_from_palette(window, NAME, {"groups": ["shared"]}, offset=0.2)
+    _draw_from_palette(window, other, {"groups": ["shared"]}, offset=0.6)
+
+    window.undo()                       # takes back the second draw only
+    assert other not in series.data["objects"]
+    assert "shared" in series.object_groups.getGroupList()
+
+    # Remove the last member the way the object list's "Remove from all
+    # groups" does. It records a series step only, so the redo stays.
+    series_states = window.field.series_states
+    series_states.addState()
+    series.object_groups.removeObject(NAME)
+    del series.groups_visibility["shared"]
+    window.createMenuBar()
+    assert "shared" not in series.object_groups.getGroupList()
+    assert not hasattr(window, "shared_viz_act")
+
+    window.field.undoState(redo=True)
+    assert "shared" in series.object_groups.getObjectGroups(other)
+    assert hasattr(window, "shared_viz_act"), (
+        "the returned group is missing from the Groups menu"
+    )

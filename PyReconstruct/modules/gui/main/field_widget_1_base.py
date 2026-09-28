@@ -382,10 +382,18 @@ class FieldWidgetBase:
         self.section.selected_flags = []
 
         # get the last undo state
+        groups_before = set(self.series.object_groups.getGroupList())
         self.series_states.undoSection(self.section, redo)
 
         # update the data/tables
         self.updateData()
+
+        # A redo can bring back a group that no object held a moment ago (the
+        # object snapshot in state_manager), and the Groups menu lists groups
+        # from createMenuBar. Rebuild it only when the set of groups changed.
+        if set(self.series.object_groups.getGroupList()) != groups_before:
+            if hasattr(self.mainwindow, "createMenuBar"):
+                self.mainwindow.createMenuBar()
         
         self.generateView()
     
