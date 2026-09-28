@@ -510,23 +510,25 @@ jobs:
       matrix:
         include:
           # Desktop baseline: GL (libglvnd + Mesa), EGL, fontconfig/freetype,
-          # glib, dbus, X11/xcb, expat, zlib, libstdc++. A GNOME or KDE desktop
-          # has all of these; a bare container has almost none.
+          # glib, dbus, X11/xcb, expat, zlib, libstdc++, and the Kerberos GSSAPI
+          # library QtNetwork links. A GNOME or KDE desktop has all of these; a
+          # bare container has almost none. Wayland and GTK stay optional: Qt
+          # loads its wayland and gtk3 plugins only in a session that has them.
           - image: ubuntu:20.04
             install: apt
-            pkgs: libgl1 libegl1 libopengl0 libfontconfig1 libfreetype6 libglib2.0-0 libdbus-1-3 libx11-6 libx11-xcb1 libxcb1 libexpat1 zlib1g
+            pkgs: libgl1 libegl1 libopengl0 libfontconfig1 libfreetype6 libglib2.0-0 libdbus-1-3 libx11-6 libx11-xcb1 libxcb1 libexpat1 zlib1g libgssapi-krb5-2
           - image: ubuntu:22.04
             install: apt
-            pkgs: libgl1 libegl1 libopengl0 libfontconfig1 libfreetype6 libglib2.0-0 libdbus-1-3 libx11-6 libx11-xcb1 libxcb1 libexpat1 zlib1g
+            pkgs: libgl1 libegl1 libopengl0 libfontconfig1 libfreetype6 libglib2.0-0 libdbus-1-3 libx11-6 libx11-xcb1 libxcb1 libexpat1 zlib1g libgssapi-krb5-2
           - image: ubuntu:24.04
             install: apt
-            pkgs: libgl1 libegl1 libopengl0 libfontconfig1 libfreetype6 libglib2.0-0t64 libdbus-1-3 libx11-6 libx11-xcb1 libxcb1 libexpat1 zlib1g
+            pkgs: libgl1 libegl1 libopengl0 libfontconfig1 libfreetype6 libglib2.0-0t64 libdbus-1-3 libx11-6 libx11-xcb1 libxcb1 libexpat1 zlib1g libgssapi-krb5-2
           - image: debian:12
             install: apt
-            pkgs: libgl1 libegl1 libopengl0 libfontconfig1 libfreetype6 libglib2.0-0 libdbus-1-3 libx11-6 libx11-xcb1 libxcb1 libexpat1 zlib1g
+            pkgs: libgl1 libegl1 libopengl0 libfontconfig1 libfreetype6 libglib2.0-0 libdbus-1-3 libx11-6 libx11-xcb1 libxcb1 libexpat1 zlib1g libgssapi-krb5-2
           - image: fedora:latest
             install: dnf
-            pkgs: mesa-libGL mesa-libEGL libglvnd-opengl fontconfig freetype glib2 dbus-libs libX11 libX11-xcb libxcb expat zlib-ng-compat
+            pkgs: mesa-libGL mesa-libEGL libglvnd-opengl fontconfig freetype glib2 dbus-libs libX11 libX11-xcb libxcb expat zlib-ng-compat krb5-libs
     name: test-appimage (${{ matrix.image }})
     runs-on: ubuntu-24.04
     container: ${{ matrix.image }}
