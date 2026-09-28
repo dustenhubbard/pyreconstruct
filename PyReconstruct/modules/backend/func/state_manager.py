@@ -43,6 +43,8 @@ class FieldState():
         """
         self.contours = {}
         self.contours_fp = contours_fp
+        # object attributes and groups to restore on redo (objectSnapshot)
+        self.obj_snapshot = {}
         if updated_contours is None:
             if contours is None:
                 updated_contours = []
@@ -130,7 +132,9 @@ class FieldState():
         self.time = round(time.time() * 10)
 
     def copy(self):
-        return FieldState(self.contours, self.ztraces, self.tforms, self.flags, self.contours_fp)
+        c = FieldState(self.contours, self.ztraces, self.tforms, self.flags, self.contours_fp)
+        c.obj_snapshot = deepcopy(self.obj_snapshot)
+        return c
     
     def getContours(self):
         contours = {}
@@ -209,6 +213,53 @@ class FieldState():
     
     def updateTime(self):
         self.time = round(time.time()*10)  # keep track of time when added to state list
+
+def objectSnapshot(series : Series, names) -> dict:
+    """What an undo step must bring back with an object it recreates.
+
+    Undoing an object's last trace deletes the object, and SeriesData then
+    clears its attributes and group memberships (removeObjAttrs). The section
+    undo states hold only traces, transforms and flags, so a redo used to bring
+    the trace back bare: a palette button's groups and custom columns (fork
+    #419), set when the trace was drawn, were gone. Each state now keeps a copy
+    of those for the objects it touched.
+
+        Params:
+            series (Series): the series
+            names (iterable): the object names the state touched
+        Returns:
+            (dict): name -> {"attrs": dict, "groups": list}, only for names
+                that have attributes or groups
+    """
+    out = {}
+    for name in names:
+        attrs = series.obj_attrs.get(name)
+        groups = series.object_groups.getObjectGroups(name)
+        if attrs or groups:
+            out[name] = {
+                "attrs": deepcopy(attrs) if attrs else {},
+                "groups": sorted(groups),
+            }
+    return out
+
+
+def restoreObjectSnapshot(series : Series, snapshot : dict, recreated) -> None:
+    """Put a snapshot back on the objects a redo just recreated.
+
+    Only objects that did not exist before the redo are touched, so a redo
+    never overwrites attributes an existing object carries.
+    """
+    for name in recreated:
+        entry = snapshot.get(name)
+        if not entry:
+            continue
+        for attr_name, value in entry["attrs"].items():
+            series.setAttr(name, attr_name, deepcopy(value))
+        for group in entry["groups"]:
+            if group not in series.object_groups.getGroupList():
+                series.groups_visibility[group] = True
+            series.object_groups.add(group=group, obj=name)
+
 
 class SectionStates():
 
@@ -295,6 +346,7 @@ class SectionStates():
             updated_contours,
             updated_ztraces
         )
+        self.current_state.obj_snapshot = objectSnapshot(series, updated_contours)
         
     def dropStatesAfter(self, count : int):
         """Drop the undo states pushed after the first `count`.
@@ -437,8 +489,18 @@ class SectionStates():
         # restore the contours on the section
         state_contours = redo_state.getContours()
         modified_contours = redo_state.getModifiedContours()
+        existed = {n for n in state_contours if n in series.data["objects"]}
         for contour_name in state_contours:
             section.contours[contour_name] = state_contours[contour_name]
+        # objects this redo brings back from nothing get their attributes and
+        # groups back too (see objectSnapshot)
+        recreated = [
+            n for n in state_contours
+            if n not in existed and len(state_contours[n])
+        ]
+        restoreObjectSnapshot(
+            series, getattr(redo_state, "obj_snapshot", {}), recreated
+        )
         # restore the ztraces
         state_ztraces = redo_state.getZtraces()
         modified_ztraces = redo_state.getModifiedZtraces()
