@@ -731,3 +731,33 @@ def test_a_refused_column_edit_leaves_no_changes_to_undo(tmp_path):
         assert s.palette_column_changes == []
     finally:
         s.close()
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("rebuild", ["palette_editor", "paste_to_button"])
+def test_undo_finds_a_button_that_was_rebuilt_after_the_edit(main_window, rebuild):
+    """The palette editor and paste-to-button put new Trace objects in place
+    of the old ones. Undo of an earlier column edit must still reach the
+    button in that place."""
+    field = main_window.field
+    series = main_window.series
+    series.addUserCol("Stage", ["draft", "final"], log_event=False)
+    pal_name, idx = series.palette_index
+    palette = series.palette_traces[pal_name]
+    palette[idx].obj_defaults = {"user_columns": {"Stage": "draft"}}
+
+    field.series_states.addState()
+    series.editUserCol("Stage", "Phase", ["draft", "final"], log_event=False)
+    field.series_states.recordPaletteChanges(series.palette_column_changes)
+
+    if rebuild == "palette_editor":
+        # OK in the editor rebuilds every button as a new Trace
+        series.palette_traces[pal_name] = [t.copy() for t in palette]
+    else:
+        palette[idx] = palette[idx].copy()
+    button = series.palette_traces[pal_name][idx]
+    assert button.obj_defaults == {"user_columns": {"Phase": "draft"}}
+
+    field.seriesUndo()
+    assert "Stage" in series.user_columns
+    assert series.palette_traces[pal_name][idx].obj_defaults == {"user_columns": {"Stage": "draft"}}

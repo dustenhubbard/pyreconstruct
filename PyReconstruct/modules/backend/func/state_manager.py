@@ -625,16 +625,26 @@ class SeriesState():
         self.palette_changes = list(changes)
         self.palette_changes_applied = True
 
-    def swapPaletteChanges(self):
-        """Undo or redo the recorded button changes, whichever is due."""
+    def swapPaletteChanges(self, series : Series):
+        """Undo or redo the recorded button changes, whichever is due. Each
+        change names a button by its place in the palette, looked up now."""
         if not getattr(self, "palette_changes", None):
             return
+
+        def button(name, index):
+            palette = series.palette_traces.get(name, [])
+            return palette[index] if 0 <= index < len(palette) else None
+
         if self.palette_changes_applied:
-            for trace, before, after in reversed(self.palette_changes):
-                applyColumnChange(trace, remove=after, add=before)
+            for name, index, before, after in reversed(self.palette_changes):
+                trace = button(name, index)
+                if trace is not None:
+                    applyColumnChange(trace, remove=after, add=before)
         else:
-            for trace, before, after in self.palette_changes:
-                applyColumnChange(trace, remove=before, add=after)
+            for name, index, before, after in self.palette_changes:
+                trace = button(name, index)
+                if trace is not None:
+                    applyColumnChange(trace, remove=before, add=after)
         self.palette_changes_applied = not self.palette_changes_applied
 
     def recordBCProfiles(self, snum : int, bc_profiles : dict):
@@ -736,7 +746,7 @@ class SeriesState():
                 series (Series): the series to apply attributes to
         """
         pre_series_attrs = SeriesState.getSeriesAttributes(series)
-        self.swapPaletteChanges()
+        self.swapPaletteChanges(series)
         for attr, value in self.series_attrs.items():
             if attr == "object_columns":
                 continue  # only replace obj columns under specific circumstances (below)
