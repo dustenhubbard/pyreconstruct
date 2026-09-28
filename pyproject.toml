@@ -170,3 +170,11 @@ PyReconstruct = ["assets/**/*", "assets/welcome_series/.welcome/*"]
 # frozen app can read its version without git or installed package metadata.
 version_file = "PyReconstruct/_version.py"
 fallback_version = "0.0.0+unknown"
+# On a tag the version is the tag; between tags it is the newest tag plus a
+# commit hash, never a guessed next number. The default scheme guesses by
+# bumping the tag's last number, and a nightly tag ends in a date
+# (v1.24.0.dev20260927), which it refuses to bump: every checkout one commit
+# past a nightly failed to build, so `uv sync` failed on every dev machine the
+# day after the first nightly (2026-09-27). Tag builds are unchanged: the
+# release workflow checks that the version equals the tag either way.
+version_scheme = "only-version"

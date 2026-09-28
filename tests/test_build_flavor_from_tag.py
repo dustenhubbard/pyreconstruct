@@ -101,8 +101,8 @@ def test_flavor_step_strips_the_file_and_keeps_the_tree_clean(
 
     assert (repo / "packaging" / "FLAVOR").exists() is not stable
     assert out.strip() == ("flavor: stable" if stable else "flavor: dev")
-    # setuptools-scm reads a dirty tree as a new dev version, so a stable tag
-    # would build as 1.23.1.dev0
+    # setuptools-scm marks a dirty tree in the version (a date suffix under
+    # the only-version scheme), so a stable tag would not build as 1.23.0
     status = subprocess.check_output(git + ["status", "--porcelain"], text=True)
     assert status == ""
     described = subprocess.check_output(git + ["describe", "--tags", "--dirty"], text=True)
