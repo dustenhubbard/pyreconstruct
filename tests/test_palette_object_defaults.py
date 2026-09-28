@@ -475,7 +475,9 @@ def test_paste_with_shape_keeps_the_buttons_defaults(tmp_path):
         s.close()
 
 
-def test_a_value_removed_from_the_columns_options_survives_ok(tmp_path, monkeypatch):
+def test_a_value_that_is_no_longer_an_option_is_not_offered(tmp_path, monkeypatch):
+    """One rule with objects: a value that is no longer one of the column's
+    options is not shown on the button, and OK does not keep it."""
     from PyReconstruct.modules.gui.dialog.trace import TraceDialog
 
     s = _open(tmp_path)
@@ -486,14 +488,13 @@ def test_a_value_removed_from_the_columns_options_survives_ok(tmp_path, monkeypa
         item.obj_defaults = {"user_columns": {"Stage": "draft"}}
         dlg = TraceDialog(None, [item], is_palette=True, series=s)
         _, col, val = dlg.columns_input.rows[0]
-        assert val.currentText() == "draft", "the saved value is still shown"
+        assert [val.itemText(i) for i in range(val.count())] == ["", "final"]
         _accept(monkeypatch)
         t, confirmed = dlg.exec()
         assert confirmed
-        assert t.obj_defaults == {"user_columns": {"Stage": "draft"}}
+        assert t.obj_defaults is None
     finally:
         s.close()
-
 
 def test_a_value_for_a_deleted_column_is_dropped(tmp_path, monkeypatch):
     from PyReconstruct.modules.gui.dialog.trace import TraceDialog
@@ -508,5 +509,340 @@ def test_a_value_for_a_deleted_column_is_dropped(tmp_path, monkeypatch):
         _accept(monkeypatch)
         t, _ = dlg.exec()
         assert t.obj_defaults == {"user_columns": {"Stage": "final"}}
+    finally:
+        s.close()
+
+
+# ---------------------------------------------------------------------------
+# custom column rename and delete follow the palette buttons
+# ---------------------------------------------------------------------------
+
+def _button_with_column(s, col, value):
+    pal_name, idx = s.palette_index
+    item = s.palette_traces[pal_name][idx]
+    item.obj_defaults = {"groups": ["axons"], "user_columns": {col: value}}
+    return item
+
+
+def test_renaming_a_column_renames_it_on_palette_buttons(tmp_path):
+    s = _open(tmp_path)
+    try:
+        s.addUserCol("Stage", ["draft", "final"], log_event=False)
+        item = _button_with_column(s, "Stage", "draft")
+        s.editUserCol("Stage", "Phase", ["draft", "final"], log_event=False)
+        assert item.obj_defaults == {"groups": ["axons"], "user_columns": {"Phase": "draft"}}
+    finally:
+        s.close()
+
+
+def test_deleting_a_column_removes_it_from_palette_buttons(tmp_path):
+    s = _open(tmp_path)
+    try:
+        s.addUserCol("Stage", ["draft"], log_event=False)
+        item = _button_with_column(s, "Stage", "draft")
+        s.removeUserCol("Stage", log_event=False)
+        assert item.obj_defaults == {"groups": ["axons"]}
+        # a button left with nothing collapses to None
+        item.obj_defaults = {"user_columns": {"Other": "x"}}
+        s.addUserCol("Other", ["x"], log_event=False)
+        s.removeUserCol("Other", log_event=False)
+        assert item.obj_defaults is None
+    finally:
+        s.close()
+
+
+@pytest.mark.gui
+def test_a_rename_reaches_the_trace_being_drawn(main_window):
+    """The field draws from a copy of the button, so the rename has to reach
+    that copy too, or the next new object gets nothing for the column."""
+    field = main_window.field
+    series = main_window.series
+    series.addUserCol("Stage", ["draft", "final"], log_event=False)
+    pal_name, idx = series.palette_index
+    button = series.palette_traces[pal_name][idx]
+    button.name = "renamed_col_obj"
+    button.obj_defaults = {"user_columns": {"Stage": "draft"}}
+    main_window.changeTracingTrace(button)
+
+    series.editUserCol("Stage", "Phase", ["draft", "final"], log_event=False)
+    field.syncTracingDefaults()
+    assert field.tracing_trace.obj_defaults == {"user_columns": {"Phase": "draft"}}
+
+    wx, wy, ww, wh = series.window
+    side = min(ww, wh) * 0.1
+    x0, y0 = wx + ww * 0.3, wy + wh * 0.3
+    field.newTrace([(x0, y0), (x0 + side, y0), (x0 + side, y0 + side), (x0, y0 + side)],
+                   field.tracing_trace, points_as_pix=False, reduce_points=False, log_event=False)
+    assert series.getAttr("renamed_col_obj", "user_columns") == {"Phase": "draft"}
+
+
+@pytest.mark.gui
+def test_a_deleted_column_is_never_applied(main_window):
+    """A value saved for a column the series no longer has is skipped."""
+    field = main_window.field
+    series = main_window.series
+    item = Trace("deleted_col_obj", (0, 255, 0), True)
+    item.obj_defaults = {"user_columns": {"Gone": "x"}}
+    field.setTracingTrace(item)
+    wx, wy, ww, wh = series.window
+    side = min(ww, wh) * 0.1
+    x0, y0 = wx + ww * 0.5, wy + wh * 0.5
+    field.newTrace([(x0, y0), (x0 + side, y0), (x0 + side, y0 + side), (x0, y0 + side)],
+                   field.tracing_trace, points_as_pix=False, reduce_points=False, log_event=False)
+    assert "Gone" not in (series.getAttr("deleted_col_obj", "user_columns") or {})
+
+
+def test_removing_an_option_clears_it_from_palette_buttons(tmp_path):
+    """One rule: a value that is no longer an option is cleared from objects
+    and palette buttons alike."""
+    s = _open(tmp_path)
+    try:
+        s.addUserCol("Stage", ["draft", "final"], log_event=False)
+        item = _button_with_column(s, "Stage", "draft")
+        s.editUserCol("Stage", "Stage", ["final"], log_event=False)
+        assert item.obj_defaults == {"groups": ["axons"]}
+        # a value still offered is kept
+        item.obj_defaults = {"user_columns": {"Stage": "final"}}
+        s.editUserCol("Stage", "Stage", ["final", "review"], log_event=False)
+        assert item.obj_defaults == {"user_columns": {"Stage": "final"}}
+    finally:
+        s.close()
+
+
+@pytest.mark.gui
+def test_a_value_that_is_not_an_option_is_never_applied(main_window):
+    field = main_window.field
+    series = main_window.series
+    series.addUserCol("Stage", ["final"], log_event=False)
+    item = Trace("stale_value_obj", (0, 255, 0), True)
+    item.obj_defaults = {"user_columns": {"Stage": "draft"}}
+    field.setTracingTrace(item)
+    wx, wy, ww, wh = series.window
+    side = min(ww, wh) * 0.1
+    x0, y0 = wx + ww * 0.4, wy + wh * 0.4
+    field.newTrace([(x0, y0), (x0 + side, y0), (x0 + side, y0 + side), (x0, y0 + side)],
+                   field.tracing_trace, points_as_pix=False, reduce_points=False, log_event=False)
+    assert "Stage" not in (series.getAttr("stale_value_obj", "user_columns") or {})
+
+
+def test_rename_drops_a_value_that_is_not_an_option(tmp_path):
+    s = _open(tmp_path)
+    try:
+        s.addUserCol("Stage", ["final"], log_event=False)
+        item = _button_with_column(s, "Stage", "draft")      # already stale
+        s.editUserCol("Stage", "Phase", ["final"], log_event=False)
+        assert item.obj_defaults == {"groups": ["axons"]}
+    finally:
+        s.close()
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("edit", ["rename", "delete", "remove_option"])
+def test_undo_of_a_column_edit_restores_palette_buttons(main_window, edit):
+    """A column edit is a series undo step. Undo must bring the buttons'
+    values back along with the column and the objects, and the drawing copy
+    with them."""
+    field = main_window.field
+    series = main_window.series
+    series.addUserCol("Stage", ["draft", "final"], log_event=False)
+    pal_name, idx = series.palette_index
+    button = series.palette_traces[pal_name][idx]
+    button.obj_defaults = {"user_columns": {"Stage": "draft"}}
+    main_window.changeTracingTrace(button)
+
+    field.series_states.addState()
+    if edit == "rename":
+        series.editUserCol("Stage", "Phase", ["draft", "final"], log_event=False)
+    elif edit == "delete":
+        series.removeUserCol("Stage", log_event=False)
+    else:
+        series.editUserCol("Stage", "Stage", ["final"], log_event=False)
+    # as the column menus do, right after the edit
+    field.series_states.recordPaletteChanges(series.palette_column_changes)
+    field.syncTracingDefaults()
+    assert button.obj_defaults != {"user_columns": {"Stage": "draft"}}
+
+    field.seriesUndo()
+    assert "Stage" in series.user_columns
+    assert button.obj_defaults == {"user_columns": {"Stage": "draft"}}
+    assert field.tracing_trace.obj_defaults == {"user_columns": {"Stage": "draft"}}
+
+    field.seriesUndo(redo=True)
+    assert button.obj_defaults != {"user_columns": {"Stage": "draft"}}
+
+
+@pytest.mark.gui
+def test_an_unrelated_undo_keeps_a_later_palette_button_edit(main_window):
+    """Palette button edits make no undo state. An undo of some other series
+    action must not roll a button edit made after it back."""
+    field = main_window.field
+    series = main_window.series
+    pal_name, idx = series.palette_index
+    button = series.palette_traces[pal_name][idx]
+    button.obj_defaults = None
+
+    field.series_states.addState()
+    series.addUserCol("Other", ["x"], log_event=False)
+    button.obj_defaults = {"groups": ["axons"]}          # as the dialog does
+
+    field.seriesUndo()
+    assert "Other" not in series.user_columns
+    assert button.obj_defaults == {"groups": ["axons"]}
+
+
+@pytest.mark.gui
+def test_undo_of_a_column_edit_keeps_later_edits_to_other_buttons(main_window):
+    """Undo of a column edit reverses exactly the button values that edit
+    changed. An edit made afterwards, to another button or to another value on
+    the same button, survives."""
+    field = main_window.field
+    series = main_window.series
+    series.addUserCol("Stage", ["draft", "final"], log_event=False)
+    series.addUserCol("Other", ["x"], log_event=False)
+    pal_name, idx = series.palette_index
+    palette = series.palette_traces[pal_name]
+    touched, untouched = palette[idx], palette[(idx + 1) % len(palette)]
+    touched.obj_defaults = {"user_columns": {"Stage": "draft"}}
+    untouched.obj_defaults = None
+
+    field.series_states.addState()
+    series.editUserCol("Stage", "Phase", ["draft", "final"], log_event=False)
+    field.series_states.recordPaletteChanges(series.palette_column_changes)
+
+    untouched.obj_defaults = {"groups": ["axons"]}                    # another button
+    touched.obj_defaults["user_columns"]["Other"] = "x"               # same button, other value
+
+    field.seriesUndo()
+    assert untouched.obj_defaults == {"groups": ["axons"]}
+    assert touched.obj_defaults == {"user_columns": {"Stage": "draft", "Other": "x"}}
+
+    field.seriesUndo(redo=True)
+    assert touched.obj_defaults == {"user_columns": {"Phase": "draft", "Other": "x"}}
+    assert untouched.obj_defaults == {"groups": ["axons"]}
+
+
+def test_a_refused_column_edit_leaves_no_changes_to_undo(tmp_path):
+    """A refused edit must not leave the last edit's changes for the GUI to
+    attach to the new undo state."""
+    s = _open(tmp_path)
+    try:
+        s.palette_column_changes = ["left over from an earlier edit"]
+        s.editUserCol("No_such_column", "Stage", ["draft"], log_event=False)
+        assert s.palette_column_changes == []
+    finally:
+        s.close()
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("rebuild", ["palette_editor", "paste_to_button"])
+def test_undo_finds_a_button_that_was_rebuilt_after_the_edit(main_window, rebuild):
+    """The palette editor and paste-to-button put new Trace objects in place
+    of the old ones. Undo of an earlier column edit must still reach the
+    button in that place."""
+    field = main_window.field
+    series = main_window.series
+    series.addUserCol("Stage", ["draft", "final"], log_event=False)
+    pal_name, idx = series.palette_index
+    palette = series.palette_traces[pal_name]
+    palette[idx].obj_defaults = {"user_columns": {"Stage": "draft"}}
+
+    field.series_states.addState()
+    series.editUserCol("Stage", "Phase", ["draft", "final"], log_event=False)
+    field.series_states.recordPaletteChanges(series.palette_column_changes)
+
+    if rebuild == "palette_editor":
+        # OK in the editor rebuilds every button as a new Trace
+        series.palette_traces[pal_name] = [t.copy() for t in palette]
+    else:
+        palette[idx] = palette[idx].copy()
+    button = series.palette_traces[pal_name][idx]
+    assert button.obj_defaults == {"user_columns": {"Phase": "draft"}}
+
+    field.seriesUndo()
+    assert "Stage" in series.user_columns
+    assert series.palette_traces[pal_name][idx].obj_defaults == {"user_columns": {"Stage": "draft"}}
+
+
+def _delete_stage_on_a_button(main_window):
+    field = main_window.field
+    series = main_window.series
+    series.addUserCol("Stage", ["draft"], log_event=False)
+    pal_name, idx = series.palette_index
+    series.palette_traces[pal_name][idx].obj_defaults = {"user_columns": {"Stage": "draft"}}
+    field.series_states.addState()
+    series.removeUserCol("Stage", log_event=False)
+    field.series_states.recordPaletteChanges(series.palette_column_changes)
+    return pal_name, idx
+
+
+@pytest.mark.gui
+def test_undo_skips_a_palette_replaced_under_the_same_name(main_window):
+    """Removing a tab and adding a new one with the same name, or importing
+    over it, puts different buttons in the same places. Undo of a column
+    delete must not put the value on them."""
+    from PyReconstruct.modules.datatypes.series import Series
+
+    field, series = main_window.field, main_window.series
+    pal_name, idx = _delete_stage_on_a_button(main_window)
+
+    series.palette_traces[pal_name] = Series.getDefaultPaletteTraces()
+    series.forgetPaletteToken(pal_name)          # what every replacement path does
+    newcomer = series.palette_traces[pal_name][idx]
+
+    field.seriesUndo()
+    assert "Stage" in series.user_columns
+    assert newcomer.obj_defaults is None, "the value landed on a different button"
+
+
+@pytest.mark.gui
+def test_undo_follows_a_renamed_palette_tab(main_window):
+    field, series = main_window.field, main_window.series
+    pal_name, idx = _delete_stage_on_a_button(main_window)
+
+    # the editor's tab rename moves the palette and its token together
+    series.palette_traces["renamed_tab"] = series.palette_traces.pop(pal_name)
+    series.palette_tokens["renamed_tab"] = series.palette_tokens.pop(pal_name)
+    series.palette_index[0] = "renamed_tab"
+
+    field.seriesUndo()
+    assert series.palette_traces["renamed_tab"][idx].obj_defaults == {"user_columns": {"Stage": "draft"}}
+
+
+def test_the_palette_editor_carries_tokens_through_a_rename_and_not_to_a_new_tab(tmp_path, monkeypatch):
+    from PyReconstruct.modules.gui.dialog import trace_palette as tp
+    from PyReconstruct.modules.gui.dialog.quick_dialog import QuickTabDialog
+
+    s = _open(tmp_path)
+    try:
+        pal_name = s.palette_index[0]
+        token = s.paletteToken(pal_name)
+        dlg = tp.TracePaletteDialog(None, s)
+        monkeypatch.setattr(tp.QInputDialog, "getText", lambda *a, **k: ("renamed", True))
+
+        class RightClick:
+            def buttons(self): return tp.Qt.RightButton
+            def pos(self): return dlg.tab_widget.tabBar().tabRect(
+                dlg.tab_widget.currentIndex()).center()
+
+        monkeypatch.setattr(QuickTabDialog, "mousePressEvent", lambda self, e: None, raising=False)
+        dlg.editTab(RightClick())
+
+        def fake_exec(self):
+            response = {"current_tab_text": "renamed"}
+            for name, palette in s.palette_traces.items():
+                key = "renamed" if name == pal_name else name
+                flat = []
+                for t in palette:
+                    c = t.copy(); c.resize(1)
+                    flat += [t.name, t.color, c.points, "", t.fill_mode[0], t.fill_mode[1], t.getRadius()]
+                response[key] = flat
+            response["brand_new"] = list(response["renamed"])
+            return response, True
+
+        monkeypatch.setattr(QuickTabDialog, "exec", fake_exec)
+        _, confirmed = dlg.exec()
+        assert confirmed
+        assert s.paletteToken("renamed") == token
+        assert s.paletteToken("brand_new") != token
     finally:
         s.close()

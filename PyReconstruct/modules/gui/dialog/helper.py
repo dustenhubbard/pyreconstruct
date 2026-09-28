@@ -258,10 +258,6 @@ class ColumnValueInput(QWidget):
         opts = [str(opt) for opt in self.columns.get(col_combo.currentText(), [])]
         for opt in opts:
             val_combo.addItem(opt)
-        # A saved value that has since been removed from the column's options
-        # stays offered, so an untouched OK keeps it instead of dropping it.
-        if value and str(value) not in opts:
-            val_combo.addItem(str(value))
         val_combo.setCurrentText(str(value))
 
     def add(self, column="", value=""):

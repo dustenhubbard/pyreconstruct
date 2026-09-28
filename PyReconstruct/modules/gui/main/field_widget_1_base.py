@@ -412,6 +412,10 @@ class FieldWidgetBase:
         self.series_states.undoState(redo)
         self.reload()
         self.table_manager.recreateTables()
+        # a series undo can change palette buttons' object defaults (a custom
+        # column edit); the field draws from its own copy of the button
+        if hasattr(self, "syncTracingDefaults"):
+            self.syncTracingDefaults()
 
         # rebuild only when the set of names actually changed: the submenu is one
         # of ~200 actions createContextMenus() recreates, and most series undos
