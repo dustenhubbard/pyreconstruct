@@ -761,3 +761,88 @@ def test_undo_finds_a_button_that_was_rebuilt_after_the_edit(main_window, rebuil
     field.seriesUndo()
     assert "Stage" in series.user_columns
     assert series.palette_traces[pal_name][idx].obj_defaults == {"user_columns": {"Stage": "draft"}}
+
+
+def _delete_stage_on_a_button(main_window):
+    field = main_window.field
+    series = main_window.series
+    series.addUserCol("Stage", ["draft"], log_event=False)
+    pal_name, idx = series.palette_index
+    series.palette_traces[pal_name][idx].obj_defaults = {"user_columns": {"Stage": "draft"}}
+    field.series_states.addState()
+    series.removeUserCol("Stage", log_event=False)
+    field.series_states.recordPaletteChanges(series.palette_column_changes)
+    return pal_name, idx
+
+
+@pytest.mark.gui
+def test_undo_skips_a_palette_replaced_under_the_same_name(main_window):
+    """Removing a tab and adding a new one with the same name, or importing
+    over it, puts different buttons in the same places. Undo of a column
+    delete must not put the value on them."""
+    from PyReconstruct.modules.datatypes.series import Series
+
+    field, series = main_window.field, main_window.series
+    pal_name, idx = _delete_stage_on_a_button(main_window)
+
+    series.palette_traces[pal_name] = Series.getDefaultPaletteTraces()
+    series.forgetPaletteToken(pal_name)          # what every replacement path does
+    newcomer = series.palette_traces[pal_name][idx]
+
+    field.seriesUndo()
+    assert "Stage" in series.user_columns
+    assert newcomer.obj_defaults is None, "the value landed on a different button"
+
+
+@pytest.mark.gui
+def test_undo_follows_a_renamed_palette_tab(main_window):
+    field, series = main_window.field, main_window.series
+    pal_name, idx = _delete_stage_on_a_button(main_window)
+
+    # the editor's tab rename moves the palette and its token together
+    series.palette_traces["renamed_tab"] = series.palette_traces.pop(pal_name)
+    series.palette_tokens["renamed_tab"] = series.palette_tokens.pop(pal_name)
+    series.palette_index[0] = "renamed_tab"
+
+    field.seriesUndo()
+    assert series.palette_traces["renamed_tab"][idx].obj_defaults == {"user_columns": {"Stage": "draft"}}
+
+
+def test_the_palette_editor_carries_tokens_through_a_rename_and_not_to_a_new_tab(tmp_path, monkeypatch):
+    from PyReconstruct.modules.gui.dialog import trace_palette as tp
+    from PyReconstruct.modules.gui.dialog.quick_dialog import QuickTabDialog
+
+    s = _open(tmp_path)
+    try:
+        pal_name = s.palette_index[0]
+        token = s.paletteToken(pal_name)
+        dlg = tp.TracePaletteDialog(None, s)
+        monkeypatch.setattr(tp.QInputDialog, "getText", lambda *a, **k: ("renamed", True))
+
+        class RightClick:
+            def buttons(self): return tp.Qt.RightButton
+            def pos(self): return dlg.tab_widget.tabBar().tabRect(
+                dlg.tab_widget.currentIndex()).center()
+
+        monkeypatch.setattr(QuickTabDialog, "mousePressEvent", lambda self, e: None, raising=False)
+        dlg.editTab(RightClick())
+
+        def fake_exec(self):
+            response = {"current_tab_text": "renamed"}
+            for name, palette in s.palette_traces.items():
+                key = "renamed" if name == pal_name else name
+                flat = []
+                for t in palette:
+                    c = t.copy(); c.resize(1)
+                    flat += [t.name, t.color, c.points, "", t.fill_mode[0], t.fill_mode[1], t.getRadius()]
+                response[key] = flat
+            response["brand_new"] = list(response["renamed"])
+            return response, True
+
+        monkeypatch.setattr(QuickTabDialog, "exec", fake_exec)
+        _, confirmed = dlg.exec()
+        assert confirmed
+        assert s.paletteToken("renamed") == token
+        assert s.paletteToken("brand_new") != token
+    finally:
+        s.close()

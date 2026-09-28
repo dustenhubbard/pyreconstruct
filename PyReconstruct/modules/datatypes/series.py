@@ -1,4 +1,5 @@
 import os
+import uuid
 import re
 import json
 import shutil
@@ -3957,6 +3958,7 @@ class Series():
         for palette, new_name in import_as:
             trace_list = other.palette_traces[palette]
             self.palette_traces[new_name] = trace_list.copy()
+            self.forgetPaletteToken(new_name)
         
         if log_event:
             palettes_str = " ".join(p[0] for p in import_as)
@@ -4715,6 +4717,7 @@ class Series():
             trace_list.append(t)
         
         self.palette_traces[palette_name] = trace_list
+        self.forgetPaletteToken(palette_name)
 
     def exportObjectsCSV(self, output_fp: Union[str, Path]="", notify: bool=False) -> None:
         """Export all object data as CSV file."""
@@ -4885,6 +4888,22 @@ class Series():
         if log_event:
             self.addLog(None, None, f"Delete user column {col_name}")
         
+    def paletteToken(self, name : str) -> str:
+        """An in-memory identity for the palette now called ``name``.
+
+        It follows a palette through a tab rename and changes when a palette
+        is created or replaced, so undo can tell the palette it edited from a
+        new one that took its name. Never saved to the file.
+        """
+        tokens = self.__dict__.setdefault("palette_tokens", {})
+        if name not in tokens:
+            tokens[name] = uuid.uuid4().hex
+        return tokens[name]
+
+    def forgetPaletteToken(self, name : str):
+        """Called when the palette under ``name`` is replaced."""
+        self.__dict__.setdefault("palette_tokens", {}).pop(name, None)
+
     def _paletteColumnDefaults(self):
         """Every palette button's saved custom-column values (fork #419), as
         the dicts to edit in place, with the button's place in the palette."""
@@ -4910,7 +4929,7 @@ class Series():
         these values and nothing else on the buttons.
         """
         name, index, _ = button
-        self.palette_column_changes.append((name, index, before, after))
+        self.palette_column_changes.append((self.paletteToken(name), index, before, after))
 
     def editUserCol(self, col_name : str, new_name : str, new_opts : list, log_event=True):
         """Edit a user-defined column.

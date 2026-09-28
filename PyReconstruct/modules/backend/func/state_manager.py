@@ -631,18 +631,25 @@ class SeriesState():
         if not getattr(self, "palette_changes", None):
             return
 
-        def button(name, index):
-            palette = series.palette_traces.get(name, [])
+        tokens = getattr(series, "palette_tokens", {})
+        by_token = {token: name for name, token in tokens.items()}
+
+        def button(token, index):
+            """The button at this place in the palette the change was made
+            in, found by token so a renamed tab still matches and a new
+            palette under the old name does not."""
+            name = by_token.get(token)
+            palette = series.palette_traces.get(name, []) if name else []
             return palette[index] if 0 <= index < len(palette) else None
 
         if self.palette_changes_applied:
-            for name, index, before, after in reversed(self.palette_changes):
-                trace = button(name, index)
+            for token, index, before, after in reversed(self.palette_changes):
+                trace = button(token, index)
                 if trace is not None:
                     applyColumnChange(trace, remove=after, add=before)
         else:
-            for name, index, before, after in self.palette_changes:
-                trace = button(name, index)
+            for token, index, before, after in self.palette_changes:
+                trace = button(token, index)
                 if trace is not None:
                     applyColumnChange(trace, remove=before, add=after)
         self.palette_changes_applied = not self.palette_changes_applied
