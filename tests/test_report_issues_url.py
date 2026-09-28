@@ -8,9 +8,13 @@ and the Help ▸ Online resources ▸ "PyReconstruct source code" action opens
 three must resolve to the fork. This test documents that so none of them drift
 back to upstream.
 
-Importing the constants module is Qt-free, so the test runs headless.
+The same goes for Help ▸ "Email developers": it writes to the fork's shared
+address (``PyReconstruct.modules.constants.developers``), not to the original
+developers' personal addresses (fork #458).
+
+Importing the constants modules is Qt-free, so the tests run headless.
 """
-from PyReconstruct.modules.constants import websites
+from PyReconstruct.modules.constants import developers, websites
 
 
 FORK_REPO = "https://github.com/dustenhubbard/PyReconstruct"
@@ -28,3 +32,11 @@ def test_source_code_link_points_at_fork():
     # The "PyReconstruct source code" menu link opens the fork, like every other
     # in-app menu link; upstream provenance is credited in the README/About.
     assert websites.gh_repo == FORK_REPO
+
+
+def test_email_developers_writes_to_the_fork_address():
+    # "Email developers" opens developers_mailto_str; one shared fork address,
+    # no personal addresses (fork #458).
+    assert developers.developers_email == "issues@pyreconstruct.org"
+    assert developers.developers_mailto_str == "mailto:issues@pyreconstruct.org"
+    assert "utexas.edu" not in developers.developers_mailto_str
