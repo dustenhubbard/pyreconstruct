@@ -1973,7 +1973,7 @@ class MainWindow(QMainWindow):
     def exportSectionPNG(self):
         """Export untransformed traces as png."""
 
-        if not modules_available(["svgwrite", "cairosvg"], notify=True):
+        if not modules_available("svgwrite", notify=True):
             return
 
         self.saveToJser()
