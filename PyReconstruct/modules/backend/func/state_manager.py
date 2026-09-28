@@ -586,6 +586,33 @@ class SeriesState():
         # does not live in FieldState alongside tforms and flags: see
         # recordBCProfiles.
         self.bc_profiles = {}
+        # Palette buttons' object defaults before this state's action, or None.
+        # Recorded only by a custom column edit (recordPaletteDefaults): palette
+        # button edits make no undo state of their own, so saving the buttons on
+        # every state would let an unrelated undo roll back a button edit.
+        self.palette_defaults = None
+
+    @staticmethod
+    def paletteDefaults(series : Series) -> dict:
+        """Every palette button's object defaults, by palette and position."""
+        return {
+            name: [copyObjDefaults(getattr(t, "obj_defaults", None)) for t in traces]
+            for name, traces in series.palette_traces.items()
+        }
+
+    def recordPaletteDefaults(self, series : Series):
+        """Save the buttons' object defaults before a custom column edit."""
+        self.palette_defaults = SeriesState.paletteDefaults(series)
+
+    def swapPaletteDefaults(self, series : Series):
+        """Put the saved button defaults back, keeping the current ones for redo."""
+        if self.palette_defaults is None:
+            return
+        current = SeriesState.paletteDefaults(series)
+        for name, saved in self.palette_defaults.items():
+            for trace, d in zip(series.palette_traces.get(name, []), saved):
+                trace.obj_defaults = copyObjDefaults(d)
+        self.palette_defaults = current
 
     def recordBCProfiles(self, snum : int, bc_profiles : dict):
         """Store a section's brightness/contrast profiles as they were before the action.
@@ -657,13 +684,6 @@ class SeriesState():
         object_columns = deepcopy(series.getOption("object_columns"))
 
         host_tree = series.host_tree.copy()
-
-        # Palette buttons' object defaults (fork #419). A custom column edit
-        # changes them together with obj_attrs, so undo has to bring both back.
-        palette_obj_defaults = {
-            name: [copyObjDefaults(getattr(t, "obj_defaults", None)) for t in traces]
-            for name, traces in series.palette_traces.items()
-        }
         
         return {
             "obj_attrs" : obj_attrs,
@@ -675,8 +695,7 @@ class SeriesState():
             "ztraces" : ztraces,
             "user_columns": user_columns,
             "object_columns": object_columns,
-            "host_tree": host_tree,
-            "palette_obj_defaults": palette_obj_defaults,
+            "host_tree": host_tree
         }
     
     def resetSeriesAttributes(self, series : Series):
@@ -694,16 +713,10 @@ class SeriesState():
                 series (Series): the series to apply attributes to
         """
         pre_series_attrs = SeriesState.getSeriesAttributes(series)
+        self.swapPaletteDefaults(series)
         for attr, value in self.series_attrs.items():
             if attr == "object_columns":
                 continue  # only replace obj columns under specific circumstances (below)
-            if attr == "palette_obj_defaults":
-                # put back onto the buttons themselves, matched by palette and
-                # position, rather than replacing the palette traces
-                for name, saved in value.items():
-                    for trace, d in zip(series.palette_traces.get(name, []), saved):
-                        trace.obj_defaults = copyObjDefaults(d)
-                continue
             setattr(series, attr, value)
 
         # specific case: no sections modified but the series data needs to be refreshed bc preferred alignments changed
@@ -799,6 +812,12 @@ class SeriesStates():
         """
         if self.undos:
             self.undos[-1].recordBCProfiles(snum, bc_profiles)
+
+    def recordPaletteDefaults(self):
+        """Save palette buttons' object defaults on the newest series state.
+        Called right after addState() by the custom column edits."""
+        if self.undos:
+            self.undos[-1].recordPaletteDefaults(self.series)
 
     def addSectionUndo(self, snum : int):
         """Flag the section's latest undo state as part of the most recent series undo.

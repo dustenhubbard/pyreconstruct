@@ -651,6 +651,7 @@ def test_undo_of_a_column_edit_restores_palette_buttons(main_window, edit):
     main_window.changeTracingTrace(button)
 
     field.series_states.addState()
+    field.series_states.recordPaletteDefaults()    # as the column menus do
     if edit == "rename":
         series.editUserCol("Stage", "Phase", ["draft", "final"], log_event=False)
     elif edit == "delete":
@@ -667,3 +668,22 @@ def test_undo_of_a_column_edit_restores_palette_buttons(main_window, edit):
 
     field.seriesUndo(redo=True)
     assert button.obj_defaults != {"user_columns": {"Stage": "draft"}}
+
+
+@pytest.mark.gui
+def test_an_unrelated_undo_keeps_a_later_palette_button_edit(main_window):
+    """Palette button edits make no undo state. An undo of some other series
+    action must not roll a button edit made after it back."""
+    field = main_window.field
+    series = main_window.series
+    pal_name, idx = series.palette_index
+    button = series.palette_traces[pal_name][idx]
+    button.obj_defaults = None
+
+    field.series_states.addState()
+    series.addUserCol("Other", ["x"], log_event=False)
+    button.obj_defaults = {"groups": ["axons"]}          # as the dialog does
+
+    field.seriesUndo()
+    assert "Other" not in series.user_columns
+    assert button.obj_defaults == {"groups": ["axons"]}

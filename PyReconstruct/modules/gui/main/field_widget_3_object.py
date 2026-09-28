@@ -1134,6 +1134,7 @@ class FieldWidgetObject(FieldWidgetTrace):
             return
         
         self.series_states.addState()
+        self.series_states.recordPaletteDefaults()
         self.series.editUserCol(col_name, name, opts)
         self.syncTracingDefaults()
 
