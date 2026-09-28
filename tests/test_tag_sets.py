@@ -336,7 +336,9 @@ def test_merge_copies_not_references():
 # ---------------------------------------------------------------------------
 def test_series_key_is_declared_last_and_written():
     from PyReconstruct.modules.datatypes import Series
-    assert SERIES_KEYS[-1] == "tag_sets", "appended so earlier keys keep their byte positions"
+    # tag_sets was appended so earlier keys keep their byte positions, and
+    # palette_obj_defaults (fork #419) was appended after it for the same reason
+    assert SERIES_KEYS[-2:] == ("tag_sets", "palette_obj_defaults")
     assert Series.getEmptyDict()["tag_sets"] == {}
 
 

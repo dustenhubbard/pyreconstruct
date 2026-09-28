@@ -101,6 +101,7 @@ from .outlined_label import OutlinedLabel
 from .help import palette_help
 
 from PyReconstruct.modules.datatypes import Series, Trace
+from PyReconstruct.modules.datatypes.trace import copyObjDefaults
 from PyReconstruct.modules.datatypes.default_settings import validPinnedLength
 from PyReconstruct.modules.constants import (
     locations as loc
@@ -501,6 +502,9 @@ class MousePalette():
         if use_shape:
             t = trace.copy()
             t.centerAtOrigin()
+            # a section trace carries no object defaults; the button keeps its
+            # own groups and custom columns (fork #419)
+            t.obj_defaults = copyObjDefaults(self.palette_buttons[bpos].trace.obj_defaults)
         else:
             name = trace.name
             color = trace.color

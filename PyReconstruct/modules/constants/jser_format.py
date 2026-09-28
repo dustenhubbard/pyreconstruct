@@ -401,6 +401,9 @@ SERIES_KEYS = (
     # Appended, not slotted beside user_columns: a key's position fixes its
     # byte position, and every key before it keeps the layout it had.
     "tag_sets",
+    # Appended for the same reason (fork #419): per-item object defaults for
+    # the trace palette, a parallel list beside palette_traces.
+    "palette_obj_defaults",
 )
 
 #: Top-level key order. The reader tolerates any order; the writer has always

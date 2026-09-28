@@ -30,6 +30,26 @@ def normalizeObjectName(value : str) -> str:
     return "_".join(value.split()).replace(",", "_")
 
 
+def copyObjDefaults(defaults):
+    """A deep enough copy of a palette item's object defaults, or None.
+
+    The shape is {"groups": [str], "user_columns": {str: str}}; anything empty
+    collapses to None so "no defaults" has one spelling.
+    """
+    if not defaults:
+        return None
+    groups = list(defaults.get("groups") or [])
+    columns = dict(defaults.get("user_columns") or {})
+    if not groups and not columns:
+        return None
+    out = {}
+    if groups:
+        out["groups"] = groups
+    if columns:
+        out["user_columns"] = columns
+    return out
+
+
 class Trace():
 
     # Declared on the class rather than as `self.fill_mode : ... = ...` in
@@ -81,6 +101,13 @@ class Trace():
         self.hidden     = False
         self.tags       = set()
         self.fill_mode  = ("none", "none")
+        # Palette items only (fork #419): what a NEW object drawn from this
+        # item starts with, {"groups": [...], "user_columns": {col: value}}.
+        # None everywhere else. Not part of getList/fromList: a section row
+        # never carries it, and the palette stores it beside the trace rows
+        # (Series.palette_obj_defaults), so an older build reading the file
+        # sees only the rows it knows.
+        self.obj_defaults = None
     
     @property
     def name(self):
@@ -146,6 +173,10 @@ class Trace():
 
         copy_trace.points    = self.points.copy()
         copy_trace.tags      = self.tags.copy()
+
+        # its own dict and containers, so editing a palette item's defaults
+        # never reaches the tracing copy already handed to the field
+        copy_trace.obj_defaults = copyObjDefaults(self.obj_defaults)
 
         return copy_trace
     

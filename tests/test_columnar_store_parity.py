@@ -1610,6 +1610,12 @@ TRACE_FIELDS = ("name", "color", "closed", "negative", "points", "hidden",
 ## The single rename between `vars(Trace(...))` and the surface above.
 TRACE_FIELD_STORAGE = {"name": "_name"}
 
+## Fields a Trace carries that never reach a section row, so the store has
+## nothing to hold for them. `obj_defaults` (fork #419) rides on a palette
+## item only: `newTrace` strips it before `Section.addTrace`, and neither
+## `getList` nor `fromList` knows it. A section trace always has it as None.
+TRACE_FIELDS_NOT_STORED = {"obj_defaults"}
+
 
 def test_the_view_carries_exactly_the_fields_a_trace_constructor_produces():
     """The completeness guard, derived rather than listed.
@@ -1624,7 +1630,7 @@ def test_the_view_carries_exactly_the_fields_a_trace_constructor_produces():
     a `Trace` is the view inventing surface, which for a compatibility shim is
     the more expensive mistake of the two.
     """
-    constructed = set(vars(Trace("axon", [1, 2, 3])))
+    constructed = set(vars(Trace("axon", [1, 2, 3]))) - TRACE_FIELDS_NOT_STORED
     expected = {TRACE_FIELD_STORAGE.get(f, f) for f in TRACE_FIELDS}
     assert constructed == expected, (
         f"Trace.__init__ and this suite's field list have diverged: "

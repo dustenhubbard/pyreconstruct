@@ -308,6 +308,7 @@ def test_copy_carries_every_field():
     orig.hidden = True
     orig.tags = {"a", "b"}
     orig.fill_mode = ("solid", "unselected")
+    orig.obj_defaults = {"groups": ["g"], "user_columns": {"c": "v"}}
 
     # The same throwaway `copy()` starts from, so its values are precisely the
     # ones a dropped field would come back holding.

@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from PyReconstruct.modules.datatypes import Series, Trace
+from PyReconstruct.modules.datatypes.trace import copyObjDefaults
 from PyReconstruct.modules.gui.utils import notify
 
 from .quick_dialog import QuickTabDialog, getLayout
@@ -37,8 +38,13 @@ class TracePaletteDialog(QuickTabDialog):
         """Create a multi-tabbed trace palette dialog."""
         self.series = series
         structures = {}
+        # Each row's object defaults (fork #419). This dialog rebuilds every
+        # palette from its cells on OK, and the cells hold no defaults, so they
+        # ride here under the tab's current name and follow renames/removals.
+        self.obj_defaults = {}
         for name, palette in self.series.palette_traces.items():
             structures[name] = self.getStructure(palette)
+            self.obj_defaults[name] = [copyObjDefaults(t.obj_defaults) for t in palette]
         
         QuickTabDialog.__init__(self, parent, structures, "Trace Palette", grid=True)
 
@@ -122,6 +128,8 @@ class TracePaletteDialog(QuickTabDialog):
                 else:
                     new_inputs[key] = self.inputs[key]
             self.inputs = new_inputs
+            if text in self.obj_defaults:
+                self.obj_defaults[new_text] = self.obj_defaults.pop(text)
 
             self.tab_widget.setTabText(index, new_text)
     
@@ -166,6 +174,7 @@ class TracePaletteDialog(QuickTabDialog):
             return
         
         del(self.inputs[text])
+        self.obj_defaults.pop(text, None)
         self.tab_widget.removeTab(index)
 
         if self.tab_widget.count() > 1:
@@ -201,6 +210,7 @@ class TracePaletteDialog(QuickTabDialog):
         self.series.palette_traces = {}
         for palette_name, inputs in response.items():
             palette_traces = []
+            defaults = list(self.obj_defaults.get(palette_name, []))
             while inputs:
                 (
                     name,
@@ -222,6 +232,8 @@ class TracePaletteDialog(QuickTabDialog):
                     (fill_mode, fill_condition), tags
                 ])
                 t.resize(stamp_radius)
+                if defaults:
+                    t.obj_defaults = defaults.pop(0)
                 
                 palette_traces.append(t)
             
