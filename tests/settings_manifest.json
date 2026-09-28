@@ -35,6 +35,7 @@
     "cpu_max": "int",
     "cut_act": "str",
     "decbr_act": "str",
+    "deletefromsections_act": "str",
     "deccon_act": "str",
     "deselect_act": "str",
     "display_closest": "bool",

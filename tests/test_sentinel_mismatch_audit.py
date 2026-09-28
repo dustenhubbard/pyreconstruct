@@ -295,6 +295,7 @@ def _trace_field(recorded):
         editTraceRadius=noop,
         editTraceShape=noop,
         copyTracesToSections=noop,
+        deleteTracesFromSections=noop,
         createTraceFlag=noop,
         deleteTraces=noop,
     )

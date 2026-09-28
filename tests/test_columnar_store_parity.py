@@ -3173,8 +3173,8 @@ def test_remove_would_not_be_the_operation_contour_remove_is():
     `editTraceShape`, `makeNegative`, `translateTraces`) and the sixth,
     `Series.splitObject`, is remove / `.copy()` / add-the-copy. The other five
     mean the removal: `Section.deleteTraces` and, in `series.py`,
-    `deleteObjects`, `deleteAllTraces`, `deleteMalformedTraces` and
-    `deleteDuplicateTraces`. `SectionColumns.removeRow` TOMBSTONES: the row
+    `deleteObjects`, `deleteTracesFromSections`, `deleteAllTraces`,
+    `deleteMalformedTraces` and `deleteDuplicateTraces`. `SectionColumns.removeRow` TOMBSTONES: the row
     number retires and every view over it raises from then on, so the *mutate*
     step has nothing left to write through, as this test measures.
 
@@ -3205,27 +3205,31 @@ def test_remove_would_not_be_the_operation_contour_remove_is():
         "modules/datatypes/section.py:translateTraces",
         "modules/datatypes/section.py:deleteTraces",
         "modules/datatypes/series.py:deleteObjects",
+        "modules/datatypes/series.py:deleteTracesFromSections",
         "modules/datatypes/series.py:deleteAllTraces",
         "modules/datatypes/series.py:deleteMalformedTraces",
         "modules/datatypes/series.py:deleteDuplicateTraces",
         "modules/datatypes/series.py:repairSelfCrossingTraces",
         "modules/datatypes/series.py:splitObject",
     }, readds
-    assert len(readds) == 12, readds
+    assert len(readds) == 13, readds
     # repairSelfCrossingTraces (2026-08-25) removes the crossed trace and
     # re-adds the repaired copy, so it lands on the readd side
     assert sum(readds.values()) == 7, (
         f"the remove/mutate/add shape has changed: {readds}. The argument for "
         f"keeping `remove` off the view rests on it."
     )
-    ## The five that mean the removal -- named, so a caller that starts reusing
+    ## The six that mean the removal -- named, so a caller that starts reusing
     ## the object it just removed flips one of these and fails here.
+    ## deleteTracesFromSections (fork #422) is deleteObjects over a chosen set
+    ## of sections, and deletes the same way.
     assert [key for key, readd in sorted(readds.items()) if not readd] == [
         "modules/datatypes/section.py:deleteTraces",
         "modules/datatypes/series.py:deleteAllTraces",
         "modules/datatypes/series.py:deleteDuplicateTraces",
         "modules/datatypes/series.py:deleteMalformedTraces",
         "modules/datatypes/series.py:deleteObjects",
+        "modules/datatypes/series.py:deleteTracesFromSections",
     ], readds
 
     ## And the reason that shape cannot route through `removeRow`: the object

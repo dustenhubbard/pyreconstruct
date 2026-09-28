@@ -152,10 +152,41 @@ def format_copy_result(copied_to, skipped, excluded_current=None) -> str:
     return "\n".join(msgs)
 
 
-class CopyToSectionsDialog(QDialog):
-    """Pick the target sections to copy the selected trace(s) onto."""
+def format_delete_result(deleted_from, untouched) -> str:
+    """Build the user-facing summary for a "Delete from sections" run.
 
-    def __init__(self, parent, series):
+    Same self-check as ``format_copy_result``: the sections named are the ones a
+    trace actually came off, not the ones typed. Chosen sections that held no
+    trace of the selected name(s) are listed so a typo in the range is visible.
+
+        Params:
+            deleted_from (iterable): section numbers a trace was deleted from
+            untouched (iterable): chosen section numbers that held none
+        Returns:
+            (str): the message to show, "" if there is nothing to report
+    """
+    msgs = []
+    if deleted_from:
+        unique = sorted(set(deleted_from))
+        noun = "section" if len(unique) == 1 else "sections"
+        msgs.append(f"Deleted trace(s) from {noun} {format_section_run(unique)}.")
+    if untouched:
+        unique = sorted(set(untouched))
+        noun = "section" if len(unique) == 1 else "sections"
+        msgs.append(
+            f"No trace(s) with the selected name(s) on {noun} "
+            f"{format_section_run(unique)}."
+        )
+    return "\n".join(msgs)
+
+
+class CopyToSectionsDialog(QDialog):
+    """Pick a set of sections. Built for "Copy to sections..."; "Delete from
+    sections..." reuses it with its own title and prompt, so the two read the
+    same and one parser serves both."""
+
+    def __init__(self, parent, series, title="Copy to sections",
+                 prompt="Copy selected trace(s) onto other sections."):
         super().__init__(parent)
         self.series = series
         self.valid_sections = set(series.sections.keys())
@@ -164,7 +195,7 @@ class CopyToSectionsDialog(QDialog):
         self.smin, self.smax = min(self.valid_sections), max(self.valid_sections)
         smin, smax = self.smin, self.smax
 
-        self.setWindowTitle("Copy to sections")
+        self.setWindowTitle(title)
 
         vlayout = QVBoxLayout()
 
@@ -181,7 +212,7 @@ class CopyToSectionsDialog(QDialog):
         section_placeholders = f"e.g. \"{smin}-{smax}\" or \"{random_sections}\""
 
         info = QLabel(self, text=(
-            "Copy selected trace(s) onto other sections.\n"
+            f"{prompt}\n"
             f"Enter section numbers or ranges from {smin} to {smax}, "
             f"{section_placeholders}."
         ))

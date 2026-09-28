@@ -13,6 +13,7 @@ from PyReconstruct.modules.gui.dialog import (
     ObjectGroupDialog,
     CopyToSectionsDialog,
     format_copy_result,
+    format_delete_result,
 )
 from PyReconstruct.modules.gui.utils import notify
 from PyReconstruct.modules.calc import (
@@ -1146,6 +1147,39 @@ class FieldWidgetTrace(FieldWidgetBase):
             notify(message)
 
         return bool(copied_to)
+
+    @trace_function
+    def deleteTracesFromSections(self, traces : list):
+        """Delete the selected trace name(s) from a chosen set of sections
+        (fork issue #422), the twin of copyTracesToSections. The current
+        section may be in the set; it is reloaded from disk afterwards like
+        every other section, and undo covers it through series_states."""
+        if self.hide_trace_layer:
+            return False
+
+        names = sorted(set(t.name for t in traces))
+
+        chosen, confirmed = CopyToSectionsDialog(
+            self, self.series,
+            title="Delete from sections",
+            prompt="Delete the selected trace name(s) from the chosen sections.",
+        ).get()
+        if not confirmed:
+            return False
+
+        deleted_from, untouched = self.series.deleteTracesFromSections(
+            names, chosen, self.series_states
+        )
+
+        if deleted_from:
+            self.table_manager.updateObjects(names)
+            self.reload()
+
+        message = format_delete_result(deleted_from, untouched)
+        if message:
+            notify(message)
+
+        return bool(deleted_from)
 
     @trace_function
     @field_interaction

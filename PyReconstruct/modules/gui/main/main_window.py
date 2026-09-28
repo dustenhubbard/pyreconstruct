@@ -405,6 +405,7 @@ class MainWindow(QMainWindow):
             self.cut_act,
             self.copy_act,
             self.copytosections_act,
+            self.deletefromsections_act,
             self.pasteattributes_act,
         ]
         self.ztrace_actions = [
