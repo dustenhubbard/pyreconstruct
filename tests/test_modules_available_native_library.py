@@ -271,3 +271,41 @@ def test_importable_modules_still_return_true(captured):
     """The happy path is unchanged -- no dialog, True."""
     assert mod_imports.modules_available(["json", "pathlib"], notify=True) is True
     assert not captured["notes"] and not captured["confirms"]
+
+
+def test_a_module_with_no_remedy_entry_is_reported_plainly(monkeypatch, captured):
+    """With the remedy table empty, this is the path every real failure takes:
+    a notice with the error, no remedy line, and no pip offer."""
+    _install_stub(monkeypatch, "noremedy", OSError('no library called "none-1" was found'))
+
+    assert mod_imports.modules_available("noremedy", notify=True) is False
+
+    assert not captured["confirms"], "a pip install was offered for a native library"
+    assert len(captured["notes"]) == 1
+    message = captured["notes"][0]
+    assert "noremedy could not load:" in message
+    assert 'no library called "none-1" was found' in message
+    assert "the native" not in message
+    assert "reinstalling it will not help" in message
+
+
+def test_a_module_with_no_remedy_entry_after_an_accepted_install(monkeypatch, captured):
+    """The same path through install_module: the package installs, then its
+    import raises OSError, and there is no remedy entry to add."""
+    _install_staged_stub(
+        monkeypatch,
+        "noremedy",
+        [
+            ModuleNotFoundError("No module named 'noremedy'"),
+            OSError('no library called "none-1" was found'),
+        ],
+    )
+    _fake_pip(monkeypatch)
+    _accept_the_prompt(monkeypatch, captured)
+
+    assert mod_imports.modules_available("noremedy", notify=True) is False
+    assert len(captured["confirms"]) == 1
+    assert len(captured["notes"]) == 1
+    message = captured["notes"][0]
+    assert "noremedy could not load:" in message
+    assert "the native" not in message

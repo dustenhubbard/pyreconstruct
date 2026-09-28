@@ -15,8 +15,8 @@ from PyReconstruct.modules.gui.utils import notifyConfirm, notify as note
 ## fix it -- the remedy is a system package manager. Keyed by module name;
 ## the value is the human name of the library and the per-platform remedy.
 NATIVE_LIBRARY_REMEDIES: Dict[str, Tuple[str, str]] = {
-    # Empty since PNG export moved off cairosvg (fork #477). The OSError path
-    # below still reports any native-wrapper module without a remedy entry.
+    ## Empty since PNG export moved off cairosvg. The OSError path below
+    ## still reports any native-wrapper module without a remedy entry.
 }
 
 
