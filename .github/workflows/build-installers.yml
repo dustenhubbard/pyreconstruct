@@ -14,7 +14,8 @@ name: build-installers
 # pre-release) publishes as a pre-release with the WHATS_NEW body, as before.
 # The in-app updater (updater.GITHUB_REPO) reads these. Runs on the fork as-is
 # (no hardcoded owner). The macOS app and dmg are signed with a Developer ID and
-# notarized when the signing secrets exist; the Windows installer is unsigned.
+# notarized when the signing secrets exist, which is only on a v* tag (see the
+# build job's `environment`); the Windows installer is unsigned.
 #
 # Installers are built ONLY for a tag (or a manual workflow_dispatch), NOT on
 # every push to main. The former rolling "latest main" build that republished a
@@ -84,6 +85,11 @@ jobs:
           - { os: macos-14,       plat: macOS,   arch: arm64 }
           - { os: macos-15-intel, plat: macOS,   arch: x86_64 }
     runs-on: ${{ matrix.os }}
+    # The signing secrets live in the `release` environment, which accepts only
+    # v* tags (stable tags and the nightly's vX.Y.Z.devYYYYMMDD). Any other ref,
+    # such as a manual dispatch on a branch, runs with no environment, gets no
+    # signing secrets, and builds the unsigned app.
+    environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'release' || '' }}
     steps:
       - uses: actions/checkout@v7
         with:
