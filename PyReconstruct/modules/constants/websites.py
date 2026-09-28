@@ -9,4 +9,9 @@ gh_repo = fork_repo
 # User-guide menu link (Help > Online resources > "PyReconstruct user guide").
 gh_wiki = fork_repo + "/wiki"
 gh_issues = fork_repo + "/issues"
-gh_submit = gh_issues + "/new/choose"
+# The two issue forms (.github/ISSUE_TEMPLATE/*.yml), opened by their own Help
+# rows. Each URL names its form directly rather than going through GitHub's
+# chooser page, because only a direct form link can carry prefilled fields:
+# error_report.prefilled_issue_url appends the version/OS/Python lines.
+gh_bug_form = gh_issues + "/new?template=bug.yml"
+gh_feature_form = gh_issues + "/new?template=feature.yml"
