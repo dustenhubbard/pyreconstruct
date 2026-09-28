@@ -123,6 +123,7 @@ def get_field_menu_list(self):
         # series form: the user-configurable shortcut is looked up by act_name,
         # and this is the binding's only home
         ("copytosections_act", "Copy to sections...", self.series, self.field.copyTracesToSections),
+        ("deletefromsections_act", "Delete from sections...", self.series, self.field.deleteTracesFromSections),
         self.paste_act,
         self.pasteattributes_act,
         None,
@@ -296,9 +297,10 @@ def get_context_menu_list_trace(self, is_in_field=True, list_ops=None, find_in_f
     # "Copy to sections..." lives at the field context-menu top level (next to
     # "Copy") when invoked in the field; in the trace list it appears here.
     if not is_in_field:
-        context_menu.append(
-            ("copytosections_act", "Copy to sections...", "", self.copyTracesToSections)
-        )
+        context_menu += [
+            ("copytosections_act", "Copy to sections...", "", self.copyTracesToSections),
+            ("deletefromsections_act", "Delete from sections...", "", self.deleteTracesFromSections),
+        ]
 
     context_menu += [
         None,
