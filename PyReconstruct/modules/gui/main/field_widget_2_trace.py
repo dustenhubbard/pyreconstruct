@@ -1320,6 +1320,18 @@ class FieldWidgetTrace(FieldWidgetBase):
                 field_traces.append(tform.mapPointsArray(trace.points).tolist())
             
             merged_traces = mergeTracesInField(field_traces, self.section.mag)
+
+            # A merge that yields nothing must not delete what it was given:
+            # a trace smaller than a grid cell leaves no outline behind
+            # (fork #467 review), and the old traces were already gone by the
+            # time that showed. Refuse instead, and say so.
+            if not merged_traces:
+                notify(
+                    "The merge produced no outline, so the traces were left "
+                    "as they are. Traces this small are usually leftover "
+                    "specks; delete them or redraw them larger."
+                )
+                return False
             
             # delete the old traces
             self.section.deleteTraces(to_merge, log_event=False)
