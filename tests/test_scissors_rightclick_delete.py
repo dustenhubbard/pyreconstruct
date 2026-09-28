@@ -127,7 +127,7 @@ def _run_scissors_cycle(hide_trace_layer, other_hidden, closed):
     for attr in (
         "deselectAllTraces", "generateView", "activateMouseBoundaryTimer",
         "deactivateMouseBoundaryTimer", "update", "saveState",
-        "setMouseMode", "setTracingTrace", "autoMerge",
+        "setMouseMode", "setTracingTrace", "autoMerge", "showGroupsHiding",
     ):
         setattr(stub, attr, (lambda *a, **k: None))
     stub.newTrace = types.MethodType(FieldWidgetTrace.newTrace, stub)

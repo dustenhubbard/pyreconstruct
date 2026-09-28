@@ -49,6 +49,7 @@ class TraceLayer():
         self._selected_set = set()
         self._temp_hide_set = set()
         self._group_hide_set = set()
+        self._group_hidden_names = set()
     
     def pointToPix(self, pt : tuple, apply_tform=True, tform : Transform = None, qpoint=False) -> tuple:
         """Return the pixel point corresponding to a field point.
@@ -478,7 +479,10 @@ class TraceLayer():
 
         temp_hide = trace in self._temp_hide_set
         show_all_traces = self.show_all_traces
-        group_hide = trace in self._group_hide_set
+        group_hide = (
+            trace in self._group_hide_set
+            or trace.name in self._group_hidden_names
+        )
         trace_not_hidden = not trace.hidden
 
         if temp_hide:  # always hide when dragging
@@ -531,6 +535,8 @@ class TraceLayer():
         self._selected_set = set(self.section.selected_traces)
         self._temp_hide_set = set(self.section.temp_hide)
         self._group_hide_set = set(self.section.traces_group_hide)
+        # by name too, for traces drawn or restored since the section loaded
+        self._group_hidden_names = self.section.groupHiddenNames()
 
         # hoist settings-backed options out of the render loops: each getOption
         # for a non-series option constructs a QSettings and re-reads the
