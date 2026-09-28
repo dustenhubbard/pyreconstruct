@@ -391,11 +391,12 @@ jobs:
         # platform plugin links; PyInstaller copies those a desktop may lack
         # (libxcb-cursor, the xcb-util family, libxkbcommon-x11) into the
         # bundle, and the spec leaves the desktop's base libraries out.
+        # libatomic is for QtPdf, which distributions do not always install.
         # xcb-util-cursor comes from EPEL.
         run: |
           dnf -y install epel-release
           dnf -y install git python3.11 python3.11-devel python3.11-pip \
-            findutils file which desktop-file-utils \
+            findutils file which desktop-file-utils libatomic \
             mesa-libGL mesa-libEGL libglvnd-opengl fontconfig freetype glib2 dbus-libs \
             libX11 libX11-xcb libXext libXrender libXi libXcursor libXrandr libXfixes libSM libICE \
             libxcb libxkbcommon libxkbcommon-x11 \
@@ -563,7 +564,7 @@ jobs:
           echo "Qt platform plugins:"
           grep -E "^libq(xcb|offscreen|wayland)" /tmp/missing.txt || echo "  nothing missing"
           echo "Everything (plugins for optional features included):"
-          awk -F': ' '{print $2}' /tmp/missing.txt | sort | uniq -c | sort -rn || true
+          cat /tmp/missing.txt
           rm -rf /tmp/x
 
       - name: Frozen self-test inside the AppImage
