@@ -1,12 +1,12 @@
 """A palette item can hand a new object its groups and custom columns (fork #419).
 
-Kristen asked for the trace palette to fill object list columns at the moment
-an object is created, so nobody has to go back to the object list afterwards.
-Step one, built here without waiting on her: a palette item carries object
-defaults, {"groups": [...], "user_columns": {column: value}}. The palette
-dialog edits them, the series saves them beside the palette rows, and the
-first trace of a NEW object applies them. An object that already exists is
-left alone, and section traces never carry them.
+Issue #419 asks for the trace palette to fill in object list columns at the
+moment an object is created, so nobody has to go back to the object list
+afterwards. This covers the first step: a palette item carries object defaults,
+{"groups": [...], "user_columns": {column: value}}. The palette dialog edits
+them, the series saves them beside the palette rows, and the first trace of a
+NEW object applies them. An object that already exists is left alone, and
+section traces never carry them.
 """
 import os
 import shutil
@@ -392,5 +392,84 @@ def test_no_custom_columns_means_no_custom_columns_header(tmp_path):
         dlg.close()
         assert "Object Groups:" in order
         assert "Custom Columns:" not in order, order
+    finally:
+        s.close()
+
+
+def test_edit_all_palettes_keeps_every_items_defaults(tmp_path, monkeypatch):
+    """The palette editor rebuilds every palette from its cells on OK. The
+    cells hold no defaults, so they must be carried across, including through
+    a tab rename."""
+    from PyReconstruct.modules.gui.dialog import trace_palette as tp
+    from PyReconstruct.modules.gui.dialog.quick_dialog import QuickTabDialog
+
+    s = _open(tmp_path)
+    try:
+        pal_name, idx = s.palette_index
+        s.palette_traces[pal_name][idx].obj_defaults = {"groups": ["axons"]}
+        s.palette_traces[pal_name][idx + 1].obj_defaults = {"user_columns": {"C": "v"}}
+
+        dlg = tp.TracePaletteDialog(None, s)
+        # rename the tab through editTab's own path, then accept untouched
+        monkeypatch.setattr(tp.QInputDialog, "getText", lambda *a, **k: ("renamed", True))
+
+        class RightClick:
+            def buttons(self): return tp.Qt.RightButton
+            def pos(self): return dlg.tab_widget.tabBar().tabRect(
+                dlg.tab_widget.currentIndex()).center()
+
+        monkeypatch.setattr(QuickTabDialog, "mousePressEvent", lambda self, e: None, raising=False)
+        dlg.editTab(RightClick())
+        assert "renamed" in dlg.inputs and pal_name not in dlg.inputs
+
+        def fake_exec(self):
+            response = {"current_tab_text": "renamed"}
+            for name, palette in s.palette_traces.items():
+                key = "renamed" if name == pal_name else name
+                flat = []
+                for t in palette:
+                    c = t.copy(); c.resize(1)
+                    flat += [t.name, t.color, c.points, ", ".join(sorted(t.tags)),
+                             t.fill_mode[0], t.fill_mode[1], t.getRadius()]
+                response[key] = flat
+            return response, True
+
+        monkeypatch.setattr(QuickTabDialog, "exec", fake_exec)
+        _, confirmed = dlg.exec()
+        assert confirmed
+        assert s.palette_traces["renamed"][idx].obj_defaults == {"groups": ["axons"]}
+        assert s.palette_traces["renamed"][idx + 1].obj_defaults == {"user_columns": {"C": "v"}}
+        others = [t for i, t in enumerate(s.palette_traces["renamed"]) if i not in (idx, idx + 1)]
+        assert all(t.obj_defaults is None for t in others)
+    finally:
+        s.close()
+
+
+def test_paste_with_shape_keeps_the_buttons_defaults(tmp_path):
+    from PyReconstruct.modules.gui.palette.mouse_palette import MousePalette
+
+    class Button:
+        def __init__(self, trace): self.trace = trace
+        def setTrace(self, t): self.trace = t
+
+    class Palette:
+        pass
+
+    s = _open(tmp_path)
+    try:
+        item = Trace("item", (1, 2, 3), True)
+        item.points = [(0, 0), (1, 0), (1, 1), (0, 1)]
+        item.obj_defaults = {"groups": ["axons"]}
+        pal = Palette()
+        pal.series = s
+        s.palette_index[1] = 0
+        pal.palette_buttons = [Button(item)]
+        pal.modifyPaletteButton = lambda bpos, t: MousePalette.modifyPaletteButton(pal, bpos, t)
+        pal.paletteButtonChanged = lambda b: None
+
+        section_trace = Trace("other", (9, 9, 9), True)
+        section_trace.points = [(5, 5), (7, 5), (7, 7), (5, 7)]
+        MousePalette.pasteAttributesToButton(pal, section_trace, use_shape=True)
+        assert pal.palette_buttons[0].trace.obj_defaults == {"groups": ["axons"]}
     finally:
         s.close()
