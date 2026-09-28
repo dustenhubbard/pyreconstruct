@@ -651,7 +651,7 @@ def test_a_successful_check_still_surfaces_an_upgrade(monkeypatch, stamp, transp
         "tag_name": "v1.21.0",
         "draft": False,
         "prerelease": False,
-        "assets": [{"name": "PyReconstruct-1.21.0-Windows-x86_64.exe"}],
+        "assets": [{"name": "PyReconstruct-1.21.0-Windows-x86_64-Setup.exe"}],
     }]).encode()
 
     def dispatch(window, channel, on_result, on_error):

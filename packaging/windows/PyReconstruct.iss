@@ -62,6 +62,14 @@ ChangesAssociations=yes
 Type: filesandordirs; Name: "{app}\_internal"
 Type: files; Name: "{app}\*.dll"
 
+[UninstallDelete]
+; Uninstall removes only the files this installer wrote. An in-place update
+; replaces the install folder with a newer tree, so files the updater brought
+; in are unknown to the uninstall log. Remove the whole payload and the
+; updater's own folder so an uninstall leaves nothing behind.
+Type: filesandordirs; Name: "{app}\_internal"
+Type: filesandordirs; Name: "{app}\_updater"
+
 [Files]
 Source: "..\..\dist\{#PYR_NAME}\*"; DestDir: "{app}"; \
     Flags: recursesubdirs createallsubdirs ignoreversion

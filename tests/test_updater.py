@@ -17,11 +17,11 @@ def _rel(tag, *, prerelease=False, draft=False, assets=()):
             "assets": [{"name": n, "browser_download_url": f"https://x/{n}"} for n in assets]}
 
 RELEASES = [
-    _rel("prerelease", prerelease=True, assets=["PyReconstruct-1.21.dev3-Windows-x86_64.exe"]),
-    _rel("v1.20.0", assets=["PyReconstruct-1.20.0-Windows-x86_64.exe",
-                            "PyReconstruct-1.20.0-Windows-x86_64.exe.sha256",
+    _rel("prerelease", prerelease=True, assets=["PyReconstruct-1.21.dev3-Windows-x86_64-Setup.exe"]),
+    _rel("v1.20.0", assets=["PyReconstruct-1.20.0-Windows-x86_64-Setup.exe",
+                            "PyReconstruct-1.20.0-Windows-x86_64-Setup.exe.sha256",
                             "PyReconstruct-1.20.0-macOS-arm64.dmg"]),
-    _rel("v1.19.0", assets=["PyReconstruct-1.19.0-Windows-x86_64.exe"]),
+    _rel("v1.19.0", assets=["PyReconstruct-1.19.0-Windows-x86_64-Setup.exe"]),
 ]
 
 
@@ -141,9 +141,9 @@ def test_check_for_update_prerelease_offers_the_newest_nightly(monkeypatch):
     monkeypatch.setattr(II, "platform_asset_tag", lambda: "Windows-x86_64")
     monkeypatch.setattr(II, "current_version", lambda: Version("1.20.0"))
     rels = [
-        _rel("prerelease", prerelease=True, assets=["PyReconstruct-9.9.9-Windows-x86_64-Dev.exe"]),
-        _rel("v1.21.0rc1", prerelease=True, assets=["PyReconstruct-1.21.0rc1-Windows-x86_64-Dev.exe"]),
-        _rel("v1.20.0", assets=["PyReconstruct-1.20.0-Windows-x86_64.exe"]),
+        _rel("prerelease", prerelease=True, assets=["PyReconstruct-9.9.9-Windows-x86_64-Dev-Setup.exe"]),
+        _rel("v1.21.0rc1", prerelease=True, assets=["PyReconstruct-1.21.0rc1-Windows-x86_64-Dev-Setup.exe"]),
+        _rel("v1.20.0", assets=["PyReconstruct-1.20.0-Windows-x86_64-Setup.exe"]),
     ]
     info = U.check_for_update("prerelease", releases=rels)
     assert info["release"]["tag_name"] == "v1.21.0rc1"   # NOT the rolling tag
@@ -158,8 +158,8 @@ def test_check_for_update_never_offers_the_rolling_build_on_nightly(monkeypatch)
     monkeypatch.setattr(II, "platform_asset_tag", lambda: "Windows-x86_64")
     monkeypatch.setattr(II, "current_version", lambda: Version("1.20.0"))
     rels = [
-        _rel("prerelease", prerelease=True, assets=["PyReconstruct-9.9.9-Windows-x86_64-Dev.exe"]),
-        _rel("v1.20.0", assets=["PyReconstruct-1.20.0-Windows-x86_64.exe"]),
+        _rel("prerelease", prerelease=True, assets=["PyReconstruct-9.9.9-Windows-x86_64-Dev-Setup.exe"]),
+        _rel("v1.20.0", assets=["PyReconstruct-1.20.0-Windows-x86_64-Setup.exe"]),
     ]
     info = U.check_for_update("prerelease", releases=rels)
     assert info["release"] is None
@@ -172,7 +172,7 @@ def test_check_for_update_never_offers_the_rolling_build_on_nightly(monkeypatch)
 def test_pick_asset_matches_platform_and_skips_sha256():
     rel = U.pick_release(RELEASES, "release")
     a = U.pick_asset(rel, "Windows-x86_64")
-    assert a["name"] == "PyReconstruct-1.20.0-Windows-x86_64.exe"
+    assert a["name"] == "PyReconstruct-1.20.0-Windows-x86_64-Setup.exe"
 
 def test_pick_asset_picks_macos():
     rel = U.pick_release(RELEASES, "release")
@@ -262,33 +262,33 @@ def test_compare_versions_unknown_on_none():
 
 # ---- fetch_checksum (monkeypatched network) ---------------------------------
 def test_fetch_checksum_sibling_sha256(monkeypatch):
-    monkeypatch.setattr(U, "_download_text", lambda url, timeout=15: "abc123  PyReconstruct-1.20.0-Windows-x86_64.exe\n")
+    monkeypatch.setattr(U, "_download_text", lambda url, timeout=15: "abc123  PyReconstruct-1.20.0-Windows-x86_64-Setup.exe\n")
     rel = U.pick_release(RELEASES, "release")
-    status, digest = U.fetch_checksum(rel, "PyReconstruct-1.20.0-Windows-x86_64.exe")
+    status, digest = U.fetch_checksum(rel, "PyReconstruct-1.20.0-Windows-x86_64-Setup.exe")
     assert status == "ok" and digest == "abc123"
 
 def test_fetch_checksum_manifest(monkeypatch):
-    rel = _rel("v1.20.0", assets=["PyReconstruct-1.20.0-Windows-x86_64.exe", "SHA256SUMS"])
+    rel = _rel("v1.20.0", assets=["PyReconstruct-1.20.0-Windows-x86_64-Setup.exe", "SHA256SUMS"])
     monkeypatch.setattr(U, "_download_text",
-                        lambda url, timeout=15: "deadbeef *PyReconstruct-1.20.0-Windows-x86_64.exe\nother 0\n")
-    status, digest = U.fetch_checksum(rel, "PyReconstruct-1.20.0-Windows-x86_64.exe")
+                        lambda url, timeout=15: "deadbeef *PyReconstruct-1.20.0-Windows-x86_64-Setup.exe\nother 0\n")
+    status, digest = U.fetch_checksum(rel, "PyReconstruct-1.20.0-Windows-x86_64-Setup.exe")
     assert status == "ok" and digest == "deadbeef"
 
 def test_fetch_checksum_manifest_missing_entry(monkeypatch):
-    rel = _rel("v1.20.0", assets=["PyReconstruct-1.20.0-Windows-x86_64.exe", "SHA256SUMS"])
+    rel = _rel("v1.20.0", assets=["PyReconstruct-1.20.0-Windows-x86_64-Setup.exe", "SHA256SUMS"])
     monkeypatch.setattr(U, "_download_text", lambda url, timeout=15: "deadbeef something-else\n")
-    assert U.fetch_checksum(rel, "PyReconstruct-1.20.0-Windows-x86_64.exe")[0] == "missing"
+    assert U.fetch_checksum(rel, "PyReconstruct-1.20.0-Windows-x86_64-Setup.exe")[0] == "missing"
 
 def test_fetch_checksum_none_published():
-    rel = _rel("v1.20.0", assets=["PyReconstruct-1.20.0-Windows-x86_64.exe"])
-    assert U.fetch_checksum(rel, "PyReconstruct-1.20.0-Windows-x86_64.exe") == ("missing", None)
+    rel = _rel("v1.20.0", assets=["PyReconstruct-1.20.0-Windows-x86_64-Setup.exe"])
+    assert U.fetch_checksum(rel, "PyReconstruct-1.20.0-Windows-x86_64-Setup.exe") == ("missing", None)
 
 def test_fetch_checksum_published_but_unfetchable_is_error(monkeypatch):
     def boom(url, timeout=15):
         raise OSError("network down")
     monkeypatch.setattr(U, "_download_text", boom)
     rel = U.pick_release(RELEASES, "release")  # has the .sha256 sibling
-    assert U.fetch_checksum(rel, "PyReconstruct-1.20.0-Windows-x86_64.exe") == ("error", None)
+    assert U.fetch_checksum(rel, "PyReconstruct-1.20.0-Windows-x86_64-Setup.exe") == ("error", None)
 
 
 # ---- install_info platform tags ---------------------------------------------
