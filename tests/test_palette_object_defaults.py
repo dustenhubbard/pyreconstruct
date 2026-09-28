@@ -473,3 +473,40 @@ def test_paste_with_shape_keeps_the_buttons_defaults(tmp_path):
         assert pal.palette_buttons[0].trace.obj_defaults == {"groups": ["axons"]}
     finally:
         s.close()
+
+
+def test_a_value_removed_from_the_columns_options_survives_ok(tmp_path, monkeypatch):
+    from PyReconstruct.modules.gui.dialog.trace import TraceDialog
+
+    s = _open(tmp_path)
+    try:
+        s.addUserCol("Stage", ["final"], log_event=False)     # "draft" removed
+        item = Trace("item", (1, 2, 3), True)
+        item.points = [(0, 0), (1, 0), (1, 1), (0, 1)]
+        item.obj_defaults = {"user_columns": {"Stage": "draft"}}
+        dlg = TraceDialog(None, [item], is_palette=True, series=s)
+        _, col, val = dlg.columns_input.rows[0]
+        assert val.currentText() == "draft", "the saved value is still shown"
+        _accept(monkeypatch)
+        t, confirmed = dlg.exec()
+        assert confirmed
+        assert t.obj_defaults == {"user_columns": {"Stage": "draft"}}
+    finally:
+        s.close()
+
+
+def test_a_value_for_a_deleted_column_is_dropped(tmp_path, monkeypatch):
+    from PyReconstruct.modules.gui.dialog.trace import TraceDialog
+
+    s = _open(tmp_path)
+    try:
+        s.addUserCol("Stage", ["final"], log_event=False)
+        item = Trace("item", (1, 2, 3), True)
+        item.points = [(0, 0), (1, 0), (1, 1), (0, 1)]
+        item.obj_defaults = {"user_columns": {"Gone": "x", "Stage": "final"}}
+        dlg = TraceDialog(None, [item], is_palette=True, series=s)
+        _accept(monkeypatch)
+        t, _ = dlg.exec()
+        assert t.obj_defaults == {"user_columns": {"Stage": "final"}}
+    finally:
+        s.close()
