@@ -663,10 +663,13 @@ class FieldWidgetTrace(FieldWidgetBase):
             return
         for group in hidden:
             viz[group] = True
-        # traces_group_hide was filled when the section loaded; rebuild it for
-        # the groups still hidden
-        self.section.traces_group_hide = []
-        self.section.setGroupVisibility(viz)
+        # traces_group_hide was filled when each section loaded; rebuild it for
+        # the groups still hidden, on both the shown section and the one the
+        # A/B flicker swaps back in without reloading
+        for section in (self.section, getattr(self, "b_section", None)):
+            if section is not None:
+                section.traces_group_hide = []
+                section.setGroupVisibility(viz)
 
     def applyObjectDefaults(self, name : str, defaults : dict):
         """Give a brand-new object the groups and custom column values its

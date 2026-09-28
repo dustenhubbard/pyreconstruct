@@ -99,3 +99,29 @@ def test_invert_selection_skips_a_restored_trace_in_a_hidden_group(window):
     field.section.invertTraceSelection()
     for trace in field.section.contours[NAME]:
         assert trace not in field.section.selected_traces
+
+
+def test_showing_the_group_reaches_the_other_flicker_section(window):
+    """The A/B flicker swaps the other section back in without reloading, so
+    its hidden list must be rebuilt too when drawing shows the group."""
+    series, field = window.series, window.field
+    first = series.current_section
+    other = next(n for n in sorted(series.sections) if n != first)
+
+    _hide_group_with(window, [0.3])
+    on_first = field.section.contours[NAME][0]
+
+    field.changeSection(other)
+    assert field.b_section is not None and field.b_section.n == first
+    field.newTrace(_square(series, 0.6), field.tracing_trace,
+                   points_as_pix=False, reduce_points=False)
+    assert series.groups_visibility[GROUP] is True
+
+    field.changeSection(first)            # the flicker: a swap, no reload
+    assert field.section.n == first
+    restored = [t for t in field.section.contours[NAME]
+                if list(t.points) == list(on_first.points)]
+    assert restored, "fixture premise: the first section's trace is still there"
+    assert _visible(window, restored[0]), (
+        "the flicker section kept hiding a group that drawing turned back on"
+    )
