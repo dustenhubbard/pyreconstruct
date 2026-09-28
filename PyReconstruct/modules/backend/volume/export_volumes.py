@@ -172,7 +172,13 @@ def get_3D_meshes(series: Series, obj_names: list) -> dict:
     alignments = {name: series.getAttr(name, "alignment") for name in obj_data}
     wanted = set(obj_data)
 
-    for snum, section in series.enumerateSections(show_progress=False):
+    # This runs on the GUI thread (the export menu entries), and it used to run
+    # silently over every section (fork #421: "3D has no bar at all"). Show the
+    # pass, with an estimate, and load only the sections that hold the objects.
+    for snum, section in series.enumerateSections(
+        message="Building 3D meshes...",
+        section_numbers=sorted(series.getObjectSections(obj_names)),
+    ):
 
         for obj_name in (wanted & section.contours.keys()):
 

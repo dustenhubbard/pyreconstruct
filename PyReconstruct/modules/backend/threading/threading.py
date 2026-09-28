@@ -7,6 +7,7 @@ https://www.pythonguis.com/tutorials/multithreading-pyside6-applications-qthread
 """
 
 import sys
+import time
 import traceback
 
 from PySide6.QtWidgets import (
@@ -17,6 +18,10 @@ from PySide6.QtWidgets import (
 )
 
 from PyReconstruct.modules.gui.utils import getProgbar
+from PyReconstruct.modules.backend.progress import (
+    estimate_remaining,
+    format_remaining,
+)
 
 from PySide6.QtCore import (
     QRunnable,
@@ -68,13 +73,18 @@ class Worker(QRunnable, QObject):
 
     '''
 
-    def __init__(self, fn, *args):
+    def __init__(self, fn, *args, progress=False):
         super(Worker, self).__init__()
 
         # Store constructor arguments (re-used for processing)
         self.fn = fn
         self.args = args
         self.signals = WorkerSignals()
+        # With progress=True the function is called with an extra keyword,
+        # progress=<callable taking a 0-100 percent>, wired to the progress
+        # signal. The function runs off the GUI thread and cannot touch a
+        # widget; emitting a signal is the one thing it may do (fork #421).
+        self.reports_progress = progress
 
     @Slot()
     def run(self):
@@ -84,7 +94,12 @@ class Worker(QRunnable, QObject):
 
         # Retrieve args/kwargs here; and fire processing using them
         try:
-            result = self.fn(*self.args)
+            if self.reports_progress:
+                result = self.fn(
+                    *self.args, progress=lambda p: self.signals.progress.emit(int(p))
+                )
+            else:
+                result = self.fn(*self.args)
         except:
             traceback.print_exc()
             exctype, value = sys.exc_info()[:2]
@@ -110,13 +125,15 @@ class ThreadPool(QThreadPool):
         self.n_finished = 0
         self.finished_fn = None
 
-    def createWorker(self, fn, *args):
+    def createWorker(self, fn, *args, progress=False):
         """Create and return a worker object.
         
             Params:
                 fn (function): the function for the worker to run
-                *args: the args to be passed into the function"""
-        w = Worker(fn, *args)
+                *args: the args to be passed into the function
+                progress (bool): True if fn takes a progress= keyword and
+                    reports 0-100 through it (see Worker)"""
+        w = Worker(fn, *args, progress=progress)
         self.workers.append(w)
         return w
 
@@ -168,9 +185,30 @@ class ThreadPoolProgBar(ThreadPool):
 
         def onWorkerFinished():
             counter.inc()
-            progbar.setValue(counter.n)
+            if not reporting:
+                progbar.setValue(counter.n)
             if use_event_loop and counter.n >= final_value:
                 loop.quit()
+
+        # A lone worker that reports its own percent (Worker(progress=True))
+        # turns the busy indicator into a real bar with a time estimate: the
+        # 3D scene's "Generating 3D..." sat as a spinner in the status bar for
+        # a minute or more with nothing to say (fork #421). Several workers
+        # keep the per-worker count; their percents would fight.
+        reporting = final_value == 1 and self.workers[0].reports_progress
+        started = time.monotonic()
+
+        def onProgress(percent):
+            if progbar.maximum() != 100:
+                progbar.setMaximum(100)
+            progbar.setValue(percent)
+            eta = estimate_remaining(time.monotonic() - started, percent)
+            eta_text = "" if eta is None else format_remaining(eta)
+            label = text if not eta_text else f"{text} {eta_text}"
+            if lbl is not None:
+                lbl.setText(label)
+            elif hasattr(progbar, "setLabelText"):
+                progbar.setLabelText(label)
 
         # queued connections deliver the signals on the GUI thread while
         # the local event loop below is running
@@ -178,6 +216,8 @@ class ThreadPoolProgBar(ThreadPool):
         for worker in self.workers:
             worker.signals.error.connect(errors.append, conn_type)
             worker.signals.finished.connect(onWorkerFinished, conn_type)
+            if reporting:
+                worker.signals.progress.connect(onProgress, conn_type)
             self.start(worker)
 
         # wait for the workers without busy-spinning processEvents

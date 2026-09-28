@@ -221,7 +221,10 @@ class SeriesData():
             "objects": {},
         }
 
-        for snum, section in self.series.enumerateSections():
+        # No time estimate here: this is the pass behind "Loading series
+        # data..." when a series opens, and an opening series must not carry
+        # one (his call, 2026-09-14). Every other operation bar does.
+        for snum, section in self.series.enumerateSections(eta=False):
 
             self.updateSection(section, update_traces=True, log_events=False)
     

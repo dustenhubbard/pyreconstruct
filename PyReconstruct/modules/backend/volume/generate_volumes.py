@@ -8,14 +8,18 @@ from PyReconstruct.modules.datatypes import Series
 Series_like_obj = Union[Series, str]  # can be type statement in >=3.12
 
 
-def generateVolumes(series_like : Series_like_obj, objs : dict, ztraces : dict):
+def generateVolumes(series_like : Series_like_obj, objs : dict, ztraces : dict, progress=None):
     """Generate the volume items for a set of objects.
     
         Params:
             series_like (Series or str): The series of fp to a series containing object data
             objs (dict): a dict of objects to construct (dict containing name, color, alpha, tform)
             ztrace_names (list): the list of ztraces to construct (dict containing name, color, alpha, tform)
-            alpha (float): the transparency for the 3D scene
+            progress (callable): optional, called with a 0-100 percent as the
+                work advances. This function runs on the 3D worker thread, so
+                it cannot show a bar itself; the caller's GUI side does that
+                from these reports (fork #421). The section pass is the first
+                80 percent, the meshing the last 20.
         Returns:
             (list): the 3D item objects
             (tuple): xmin, xmax, ymin, ymax, zmin, zmax
@@ -68,7 +72,11 @@ def generateVolumes(series_like : Series_like_obj, objs : dict, ztraces : dict):
     mags = []
     thicknesses = []
 
-    for snum, section in series.enumerateSections(show_progress=False):
+    report = progress if progress is not None else (lambda percent: None)
+    report(0)
+    section_numbers = sorted(series.sections.keys())
+    for i, (snum, section) in enumerate(series.enumerateSections(show_progress=False)):
+        report(80 * i / max(len(section_numbers), 1))
         # ASSUME SOMEWHAT UNIFORM THICKNESS
         thicknesses.append(section.thickness)
         mags.append(section.mag)
@@ -100,7 +108,11 @@ def generateVolumes(series_like : Series_like_obj, objs : dict, ztraces : dict):
     mesh_data_list = []
     extremes = []
 
+    n_meshes = max(len(obj_data) + len(ztrace_data), 1)
+    done = 0
     for obj_name, obj_3D in obj_data.items():
+        report(80 + 20 * done / n_meshes)
+        done += 1
         extremes = addToExtremes(extremes, obj_3D.extremes)
 
         if type(obj_3D) is Surface:
@@ -111,6 +123,8 @@ def generateVolumes(series_like : Series_like_obj, objs : dict, ztraces : dict):
             mesh_data_list.append(obj_3D.generate3D())
     
     for _, ztrace_3D in ztrace_data.items():
+        report(80 + 20 * done / n_meshes)
+        done += 1
         mesh_data = ztrace_3D.generate3D()
         extremes = addToExtremes(extremes, ztrace_3D.extremes)
         mesh_data_list.append(mesh_data)
@@ -126,6 +140,8 @@ def generateVolumes(series_like : Series_like_obj, objs : dict, ztraces : dict):
         t = series.avg_thickness
         extremes[4] *= t
         extremes[5] *= t
+
+    report(100)
 
     # return list tuples (volume, opengl objects)
     # return global bounding box to set view

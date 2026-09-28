@@ -1594,7 +1594,7 @@ class Series():
         section = Section(section_num, self)
         return section
     
-    def enumerateSections(self, show_progress : bool = True, message : str = "Loading series data...", series_states=None, breakable=True, section_numbers=None, eta=False):
+    def enumerateSections(self, show_progress : bool = True, message : str = "Loading series data...", series_states=None, breakable=True, section_numbers=None, eta=True):
         """Allow iteration through the sections.
 
         Proper use in a for loop: for snum, section in series.enumerateSections():
@@ -1607,6 +1607,10 @@ class Series():
                 section_numbers (iterable): if given, only iterate these section
                     numbers (used to avoid loading every section for operations
                     that only touch a few objects)
+                eta (bool): show a time estimate on the progress bar once enough
+                    of the pass has run to make one (fork #421: every
+                    operation's bar carries one; the series-open pass in
+                    SeriesData.refresh opts out, his call of 2026-09-14)
             Returns:
                 (generator): yielding (section number, Section) pairs
         """
@@ -1646,7 +1650,7 @@ class Series():
                 snums.update(obj_data.traces.keys())
         return snums
 
-    def _forEachObjectSection(self, obj_names, message, edit, series_states=None, eta=False):
+    def _forEachObjectSection(self, obj_names, message, edit, series_states=None, eta=True):
         """Run an edit on every section a set of objects appears on.
 
         The loop the bulk object operations all need: visit only the sections
@@ -3327,7 +3331,7 @@ class Series():
         ## Touch only the sections the selected objects appear on.
         self._forEachObjectSection(
             obj_names, "Reapplying custom color palette...", edit, series_states,
-            eta=True,   # the one progress bar he wanted a time estimate on
+            eta=True,   # the first bar with a time estimate (2026-09-14); every operation bar has one since fork #421
         )
 
         if log_event:
@@ -5193,7 +5197,7 @@ class Series():
     
 class SeriesIterator():
 
-    def __init__(self, series : Series, show_progress : bool, message : str, series_states, breakable=True, section_numbers=None, eta=False):
+    def __init__(self, series : Series, show_progress : bool, message : str, series_states, breakable=True, section_numbers=None, eta=True):
         """Create the series iterator object.
 
             Params:
@@ -5228,9 +5232,9 @@ class SeriesIterator():
         if self.show_progress:
             factory = self.series._progressReporterFactory()
             if self.eta:
-                # asked for only by the operations that want a time estimate
-                # (reapplyAutosegColors); a factory that predates the flag
-                # still works, without one
+                # every operation bar since fork #421 (the recolor was the
+                # first, 2026-09-14); a factory that predates the flag still
+                # works, without one
                 try:
                     self.reporter = factory(text=self.message, cancel=False, eta=True)
                 except TypeError:
