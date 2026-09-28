@@ -746,3 +746,25 @@ def test_png_render_keeps_a_section_image_over_qts_decode_limit(tmp_path):
         "the embedded section image was dropped: Qt's decode limit applied"
     )
     assert QImageReader.allocationLimit() == before, "the decode limit was not restored"
+
+
+def test_svg_export_opens_a_section_image_past_pils_bomb_limit(
+        exportable_series, tmp_path):
+    """PIL refuses an image over MAX_IMAGE_PIXELS (about 13377 x 13377) as a
+    decompression bomb. A section that large is the user's own image, so the
+    export must open it, and must put PIL's limit back afterwards."""
+    from PIL import Image as PILImage
+
+    section = exportable_series.loadSection(min(exportable_series.sections.keys()))
+    side = 14000
+    big = Path(section.src_fp)
+    PILImage.new("L", (side, side), 180).save(big, format="TIFF", compression="tiff_lzw")
+    assert side * side > PILImage.MAX_IMAGE_PIXELS, "fixture premise: past the limit"
+
+    before = PILImage.MAX_IMAGE_PIXELS
+    out = tmp_path / "big.svg"
+    section.exportAsSVG(str(out))
+
+    assert out.stat().st_size > 0
+    assert f'width="{side}"' in out.read_text()[:2000]
+    assert PILImage.MAX_IMAGE_PIXELS == before, "PIL's limit was not restored"
