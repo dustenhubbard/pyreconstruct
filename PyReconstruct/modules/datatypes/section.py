@@ -2550,12 +2550,16 @@ class Section():
         """
         selected = set(self.selected_traces)
         group_hidden = set(self.traces_group_hide)
+        group_hidden_names = self.groupHiddenNames()
 
         to_select = []
         for trace in self.tracesAsList():
             if trace in selected:
                 continue
-            if not include_hidden and (trace.hidden or trace in group_hidden):
+            if not include_hidden and (
+                trace.hidden or trace in group_hidden
+                or trace.name in group_hidden_names
+            ):
                 continue
             to_select.append(trace)
 
@@ -2627,6 +2631,25 @@ class Section():
         self.selected_traces : list[Trace] = []
 
         return modified
+
+    def groupHiddenNames(self) -> set:
+        """Names of the objects in a hidden group, read live from the series.
+
+        traces_group_hide is filled once, when the section loads, and holds
+        trace objects. A trace drawn afterwards, or brought back by undo or
+        redo as a fresh copy, was not on it, so it showed until the section
+        reloaded. Group membership is by object name, so checking the name
+        catches every such trace.
+        """
+        viz = getattr(self.series, "groups_visibility", None) or {}
+        hidden = [group for group, shown in viz.items() if not shown]
+        if not hidden:
+            return set()
+        obj_groups = self.series.object_groups
+        names = set()
+        for group in hidden:
+            names |= set(obj_groups.getGroupObjects(group))
+        return names
 
     def setGroupVisibility(self, group_viz: Union[Dict[str, bool], None]=None) -> None:
         """Modify traces_group_hide based on group visibility.
