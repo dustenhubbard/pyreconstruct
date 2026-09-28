@@ -56,6 +56,17 @@ ROLLING_TAG = "prerelease"
 DEV_ASSET_MARKER = "-Dev"
 _DEV_MARKER_RE = re.compile(r"-Dev(?=[-.]|$)")
 
+# The installer each OS label takes, as the packaging scripts name it:
+# '...-Windows-x86_64[-Dev]-Setup.exe', '...-macOS-<arch>[-Dev].dmg',
+# '...-Linux-installer[-Dev].tar.gz'. ``pick_asset`` accepts nothing else, so a
+# release can carry other files (update archives, manifests, checksum lists)
+# without any of them being offered as the installer.
+_INSTALLER_SUFFIX_RE = {
+    "Windows": re.compile(r"-Setup\.exe$"),
+    "macOS": re.compile(r"\.dmg$"),
+    "Linux": re.compile(r"-installer.*\.tar\.gz$"),
+}
+
 # Channel values in the order their radios appear in Series > Options > Updates.
 # Position is the contract between the dialog's radios and the stored value; keep
 # this tuple and the radio order in all_options.py in lockstep.
@@ -255,6 +266,11 @@ def pick_asset(release, platform_tag, dev=False):
     exactly one asset and never another arch's or OS's. If asset tags are ever
     shortened to bare 'x86_64'/'arm64', that guarantee is lost -- keep the
     OS-label prefix.
+
+    Only the installer for the tag's OS label counts (``is_installer_asset``):
+    ``-Setup.exe`` on Windows, ``.dmg`` on macOS, ``-installer*.tar.gz`` on
+    Linux. Any other file on the release is never picked, whatever its name
+    contains.
     """
     if not release:
         return None
@@ -262,10 +278,22 @@ def pick_asset(release, platform_tag, dev=False):
         name = a.get("name", "")
         if platform_tag not in name or name.endswith(".sha256"):
             continue
+        if not is_installer_asset(name, platform_tag):
+            continue
         if is_dev_asset(name) != bool(dev):
             continue
         return a
     return None
+
+
+def is_installer_asset(asset_name, platform_tag):
+    """True when ``asset_name`` is an installer for the OS in ``platform_tag``.
+
+    The OS label is the part of the tag before the first '-' ('Windows',
+    'macOS', 'Linux'); an unknown label has no installer.
+    """
+    pattern = _INSTALLER_SUFFIX_RE.get((platform_tag or "").split("-", 1)[0])
+    return bool(pattern and pattern.search(asset_name or ""))
 
 
 def asset_version(asset_name):
