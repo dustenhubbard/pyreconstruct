@@ -197,7 +197,7 @@ def test_stable_never_takes_the_dev_asset(env):
         p = run(env, gh, check=False)
     assert p.returncode == 1
     assert "has no Linux AppImage" in p.stderr
-    assert not paths(env, "stable")["appimage"].exists()
+    assert not paths(env, "stable")["root"].exists()
 
 
 def test_no_stable_release_at_all_is_a_clear_error(env):

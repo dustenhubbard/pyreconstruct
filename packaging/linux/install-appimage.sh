@@ -242,6 +242,8 @@ cleanup() {
   if [ -n "$TMP_L" ]; then rm -f "$TMP_L" 2>/dev/null || true; fi
   if [ -n "$TMP_D" ]; then rm -f "$TMP_D" 2>/dev/null || true; fi
   if [ -n "$OWN_LOCK" ]; then rmdir "$OWN_LOCK" 2>/dev/null || true; fi
+  # a first install that failed leaves no empty folder behind
+  rmdir "$APPROOT" 2>/dev/null || true
 }
 trap cleanup EXIT
 trap 'exit 130' INT
