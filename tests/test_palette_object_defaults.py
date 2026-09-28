@@ -278,3 +278,45 @@ def test_second_trace_of_the_same_new_object_does_not_reapply(main_window):
     assert "axons" not in series.object_groups.getObjectGroups("brand_new_obj2"), (
         "defaults apply once, when the object is created"
     )
+
+
+def _row_order(dlg):
+    """Top-to-bottom order of the dialog's labeled rows, by label text."""
+    from PySide6.QtWidgets import QLabel
+    dlg.show()
+    QApplication.processEvents()
+    labels = [w for w in dlg.findChildren(QLabel) if w.isVisible() and w.text()]
+    labels.sort(key=lambda w: w.mapTo(dlg, w.rect().topLeft()).y())
+    return [w.text() for w in labels]
+
+
+def test_palette_dialog_puts_tags_just_above_groups(tmp_path):
+    from PyReconstruct.modules.gui.dialog.trace import TraceDialog
+
+    s = _open(tmp_path)
+    try:
+        s.addUserCol("Reviewer", ["KH"], log_event=False)
+        item = Trace("item", (1, 2, 3), True)
+        item.points = [(0, 0), (1, 0), (1, 1), (0, 1)]
+        dlg = TraceDialog(None, [item], is_palette=True, series=s)
+        order = _row_order(dlg)
+        dlg.close()
+        i_stamp = order.index("Stamp radius (microns):")
+        i_tags = order.index("Tags:")
+        i_groups = order.index("New objects join groups:")
+        i_col = order.index("Reviewer:")
+        assert i_stamp < i_tags < i_groups < i_col, order
+    finally:
+        s.close()
+
+
+def test_trace_dialog_keeps_tags_beside_the_name():
+    from PyReconstruct.modules.gui.dialog.trace import TraceDialog
+
+    QApplication.instance() or QApplication(["test"])
+    t = Trace("t", (1, 2, 3), True)
+    t.points = [(0, 0), (1, 0), (1, 1), (0, 1)]
+    dlg = TraceDialog(None, [t])
+    order = _row_order(dlg)
+    dlg.close()
+    assert order.index("Tags:") < order.index("Fill:"), order

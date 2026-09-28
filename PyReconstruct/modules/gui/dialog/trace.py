@@ -340,16 +340,25 @@ class TraceDialog(QDialog):
 
         vlayout = QVBoxLayout()
         vlayout.setSpacing(10)
+        def add_tag_rows():
+            if self.pick_one_inputs: vlayout.addLayout(pick_one_rows)
+            vlayout.addWidget(tags_text)
+            vlayout.addWidget(self.tags_input)
+
+        # A palette button's dialog groups what a new trace or object gets at
+        # the bottom: tags, then groups, then custom columns (fork #419). The
+        # trace and object dialogs keep tags beside the name, as before.
+        tags_at_bottom = self.is_palette
+
         vlayout.addLayout(name_row)
         vlayout.addLayout(color_row)
         if self.is_palette: vlayout.addLayout(shape_row)
-        if self.pick_one_inputs: vlayout.addLayout(pick_one_rows)
-        vlayout.addWidget(tags_text)
-        vlayout.addWidget(self.tags_input)
+        if not tags_at_bottom: add_tag_rows()
         vlayout.addLayout(style_row)
         vlayout.addWidget(self.selected_input)
         vlayout.addWidget(self.unselected_input)
         if self.is_palette: vlayout.addLayout(stamp_size_row)
+        if tags_at_bottom: add_tag_rows()
         if self.groups_input is not None: vlayout.addLayout(defaults_rows)
         if self.is_obj_list: vlayout.addLayout(range_row)
         vlayout.addWidget(buttonbox)
