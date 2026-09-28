@@ -638,6 +638,11 @@ class FieldWidgetTrace(FieldWidgetBase):
 
         if defaults and is_new_object:
             self.applyObjectDefaults(new_trace.name, defaults)
+
+        # A trace drawn into a hidden group would vanish the moment it is
+        # drawn. Show the group instead, so the trace stays in view and the
+        # View > Groups check box says why (his call, 2026-09-28).
+        self.showGroupsHiding(new_trace.name)
         
         # if action is logged, increment the mouse_palette button
         if log_event:
@@ -646,6 +651,26 @@ class FieldWidgetTrace(FieldWidgetBase):
         # if not logging the event, the action is not complete
         return log_event 
     
+    def showGroupsHiding(self, name : str):
+        """Turn back on every hidden group that holds this object, and let the
+        section redraw that group's traces."""
+        viz = self.series.groups_visibility
+        hidden = [
+            g for g in self.series.object_groups.getObjectGroups(name)
+            if viz.get(g) is False
+        ]
+        if not hidden:
+            return
+        for group in hidden:
+            viz[group] = True
+        # traces_group_hide was filled when each section loaded; rebuild it for
+        # the groups still hidden, on both the shown section and the one the
+        # A/B flicker swaps back in without reloading
+        for section in (self.section, getattr(self, "b_section", None)):
+            if section is not None:
+                section.traces_group_hide = []
+                section.setGroupVisibility(viz)
+
     def applyObjectDefaults(self, name : str, defaults : dict):
         """Give a brand-new object the groups and custom column values its
         palette item carries (fork #419). Mirrors addToGroup for a group the
