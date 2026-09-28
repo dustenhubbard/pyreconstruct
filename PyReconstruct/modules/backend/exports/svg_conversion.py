@@ -153,6 +153,45 @@ def export_svg(section_data, svg_fp) -> Union[str, Path]:
     return svg_fp
 
 
+def render_svg_to_png(svg_fp, png_fp, scale: float = 1.0):
+    """Rasterize an SVG file to a PNG with QtSvg.
+
+    The section image rides inside the SVG as a base64 PNG, and Qt's image
+    reader refuses to decode any image over its allocation limit (256 MB by
+    default, about 8192 x 8192 pixels). It logs a warning and draws the SVG
+    without the image, so a large section came out as traces on a transparent
+    background with no error. The limit is lifted for the render and put back
+    after. The raster itself is sized by the caller's scale.
+    """
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QImage, QImageReader, QPainter
+    from PySide6.QtSvg import QSvgRenderer
+
+    previous_limit = QImageReader.allocationLimit()
+    QImageReader.setAllocationLimit(0)
+    try:
+        renderer = QSvgRenderer(str(svg_fp))
+        if not renderer.isValid():
+            raise ValueError(f"could not read the exported SVG: {svg_fp}")
+        size = renderer.defaultSize()
+        width = max(1, round(size.width() * scale))
+        height = max(1, round(size.height() * scale))
+
+        image = QImage(width, height, QImage.Format_ARGB32)
+        image.fill(Qt.transparent)
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        renderer.render(painter)
+        painter.end()
+    finally:
+        QImageReader.setAllocationLimit(previous_limit)
+
+    if not image.save(str(png_fp), "PNG"):
+        raise OSError(f"could not write the PNG: {png_fp}")
+    return png_fp
+
+
 def export_png(section_data, png_fp, scale: float=1.0):
     """Export untransformed section with traces as a png."""
 
@@ -172,27 +211,7 @@ def export_png(section_data, png_fp, scale: float=1.0):
         # QtSvg is already in every build, needs no application object, and
         # matches cairosvg's output pixel for pixel at full size; only the
         # antialiased edges differ when scaled.
-        from PySide6.QtCore import Qt
-        from PySide6.QtGui import QImage, QPainter
-        from PySide6.QtSvg import QSvgRenderer
-
-        renderer = QSvgRenderer(tmp_svg)
-        if not renderer.isValid():
-            raise ValueError(f"could not read the exported SVG: {tmp_svg}")
-        size = renderer.defaultSize()
-        width = max(1, round(size.width() * scale))
-        height = max(1, round(size.height() * scale))
-
-        image = QImage(width, height, QImage.Format_ARGB32)
-        image.fill(Qt.transparent)
-        painter = QPainter(image)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setRenderHint(QPainter.SmoothPixmapTransform)
-        renderer.render(painter)
-        painter.end()
-
-        if not image.save(str(png_fp), "PNG"):
-            raise OSError(f"could not write the PNG: {png_fp}")
+        render_svg_to_png(tmp_svg, png_fp, scale)
     finally:
         Path(tmp_svg).unlink(missing_ok=True)
 

@@ -45,8 +45,7 @@ The tests below are layered so that a regression is reported at the layer it
 actually happened at:
 
 1. ``test_export_packages_are_declared`` reads the dependency files. It fails if
-   someone drops the declaration, and it fails identically on every platform,
-   and on every platform.
+   someone drops the declaration, and it fails identically on every platform.
 2. ``test_export_packages_are_importable`` proves the declaration produced an
    installed package, which is the part a file-contents check cannot see.
 3. ``test_export_as_svg_writes_a_real_svg`` runs the real export and checks the
@@ -714,3 +713,36 @@ def test_png_export_does_not_need_cairosvg(exportable_series, tmp_path, monkeypa
     out = tmp_path / "no_cairo.png"
     section.exportAsPNG(str(out), 0.25)
     assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_png_render_keeps_a_section_image_over_qts_decode_limit(tmp_path):
+    """Qt refuses to decode an embedded image over 256 MB by default and draws
+    the SVG without it. A section image of 8400 x 8400 pixels is past that
+    line; its background must still be in the PNG."""
+    import base64
+    import io
+    from PIL import Image as PILImage
+    from PySide6.QtGui import QImageReader
+    from PyReconstruct.modules.backend.exports.svg_conversion import render_svg_to_png
+
+    side = 8400
+    buf = io.BytesIO()
+    PILImage.new("L", (side, side), 200).save(buf, format="PNG")
+    uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    svg = tmp_path / "big.svg"
+    svg.write_text(
+        f'<svg xmlns="http://www.w3.org/2000/svg" '
+        f'xmlns:xlink="http://www.w3.org/1999/xlink" width="{side}" height="{side}">'
+        f'<image xlink:href="{uri}" x="0" y="0" width="{side}" height="{side}"/></svg>'
+    )
+    before = QImageReader.allocationLimit()
+    out = tmp_path / "big.png"
+    render_svg_to_png(svg, out, scale=0.05)
+
+    img = PILImage.open(out).convert("RGBA")
+    assert img.size == (round(side * 0.05), round(side * 0.05))
+    r, g, b, a = img.getpixel((img.width // 2, img.height // 2))
+    assert a == 255 and abs(r - 200) <= 2, (
+        "the embedded section image was dropped: Qt's decode limit applied"
+    )
+    assert QImageReader.allocationLimit() == before, "the decode limit was not restored"
