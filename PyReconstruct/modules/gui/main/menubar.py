@@ -475,9 +475,11 @@ def return_help_menu(self):
 
     Ordered in five groups, separator between each (his layout call,
     2026-08-26): the search field, then what this build IS, then updates,
-    then the What's-new pop-up, then everything else unchanged. The search
-    field itself is inserted at the very top by MainWindow.createMenuBar,
-    which also focuses it when Help opens.
+    then the What's-new pop-up, then the shortcuts list, then one flat
+    group for reporting a problem (his order, 2026-09-27, #459): copy the
+    report, send it to us or file it, the log tools, and the links last.
+    The search field itself is inserted at the very top by
+    MainWindow.createMenuBar, which also focuses it when Help opens.
     """
 
     return {
@@ -526,9 +528,21 @@ def return_help_menu(self):
             ("togglewhatsnew_act", "Turn off What's new pop-up", "checkbox",
              self.toggleWhatsNewPopup),
             None,
-            # 5. the rest, unchanged
+            # 5. the shortcuts list
             ("shortcutshelp_act", "Shortcuts list", "?", self.displayShortcuts),
             None,
+            # 6. reporting a problem, one flat list in the order the steps
+            # happen (his call, 2026-09-27, #459). The old "Report issues
+            # (GitHub)" submenu is gone; its five rows sit here directly.
+            # Copy the report first, then send it to us or file it...
+            ("copydiag_act", "Copy diagnostic report...", "", self.copyDiagnosticReport),
+            ("emailteam_act", "Email developers", "", lambda : self.openWebsite(developers_mailto_str)),
+            ("submitissue_act", "Report bug / Request feature", "", lambda : self.openWebsite(gh_submit)),
+            ("seeissues_act", "See unresolved issues", "", lambda : self.openWebsite(gh_issues)),
+            # ...then the log tools for anyone who needs them...
+            ("viewlog_act", "View log file...", "", self.viewLogFile),
+            ("openlogdir_act", "Open log folder", "", self.openLogFolder),
+            # ...and the links last.
             {
                 "attr_name": "onlinemenu",
                 "text": "Online resources",
@@ -540,19 +554,6 @@ def return_help_menu(self):
                     ("download2015", "Harris2015 example images", "", self.downloadExample)
                 ]
             },
-            {
-                "attr_name": "issuemenu",
-                "text": "Report issues (GitHub)",
-                "opts":
-                [
-                    ("copydiag_act", "Copy diagnostic report...", "", self.copyDiagnosticReport),
-                    ("viewlog_act", "View log file...", "", self.viewLogFile),
-                    ("openlogdir_act", "Open log folder", "", self.openLogFolder),
-                    ("submitissue_act", "Report bug / Request feature", "", lambda : self.openWebsite(gh_submit)),
-                    ("seeissues_act", "See unresolved issues", "", lambda : self.openWebsite(gh_issues))
-                ]
-            },
-            ("emailteam_act", "Email developers", "", lambda : self.openWebsite(developers_mailto_str)),
         ]
     }
 
