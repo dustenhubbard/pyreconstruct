@@ -92,7 +92,8 @@ jobs:
         # Runs before anything reads packaging/FLAVOR. A clean vX.Y.Z tag, or a
         # manual run with flavor=stable, builds the stable app by removing the
         # file. skip-worktree comes first because a plain delete leaves the tree
-        # dirty, and setuptools-scm then turns v1.23.0 into 1.23.1.dev0.
+        # dirty, and setuptools-scm then stamps the version with a dirty-tree
+        # date suffix, which the tag check below refuses.
         shell: bash
         env:
           FLAVOR_INPUT: ${{ inputs.flavor }}
@@ -256,7 +257,8 @@ jobs:
         # Runs before anything reads packaging/FLAVOR. A clean vX.Y.Z tag, or a
         # manual run with flavor=stable, builds the stable app by removing the
         # file. skip-worktree comes first because a plain delete leaves the tree
-        # dirty, and setuptools-scm then turns v1.23.0 into 1.23.1.dev0.
+        # dirty, and setuptools-scm then stamps the version with a dirty-tree
+        # date suffix, which the tag check below refuses.
         shell: bash
         env:
           FLAVOR_INPUT: ${{ inputs.flavor }}
