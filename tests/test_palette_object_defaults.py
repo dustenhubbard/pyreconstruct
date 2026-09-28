@@ -290,7 +290,7 @@ def _row_order(dlg):
     return [w.text() for w in labels]
 
 
-def test_palette_dialog_puts_tags_just_above_groups(tmp_path):
+def test_palette_dialog_puts_tags_below_radius_and_above_groups(tmp_path):
     from PyReconstruct.modules.gui.dialog.trace import TraceDialog
 
     s = _open(tmp_path)
@@ -302,15 +302,16 @@ def test_palette_dialog_puts_tags_just_above_groups(tmp_path):
         order = _row_order(dlg)
         dlg.close()
         i_stamp = order.index("Stamp radius (microns):")
-        i_tags = order.index("Tags:")
-        i_groups = order.index("New objects join groups:")
+        i_tags = order.index("Trace Tags:")
+        i_groups = order.index("Object Groups:")
+        i_header = order.index("Custom Columns:")
         i_col = order.index("Reviewer:")
-        assert i_stamp < i_tags < i_groups < i_col, order
+        assert i_stamp < i_tags < i_groups < i_header < i_col, order
     finally:
         s.close()
 
 
-def test_trace_dialog_keeps_tags_beside_the_name():
+def test_trace_dialog_puts_tags_below_fill():
     from PyReconstruct.modules.gui.dialog.trace import TraceDialog
 
     QApplication.instance() or QApplication(["test"])
@@ -319,4 +320,38 @@ def test_trace_dialog_keeps_tags_beside_the_name():
     dlg = TraceDialog(None, [t])
     order = _row_order(dlg)
     dlg.close()
-    assert order.index("Tags:") < order.index("Fill:"), order
+    assert order.index("Fill:") < order.index("Trace Tags:"), order
+    assert "Object Groups:" not in order, "groups belong to palette buttons only"
+
+
+def test_object_dialog_puts_tags_below_fill_and_above_the_range(tmp_path):
+    from PyReconstruct.modules.gui.dialog.trace import TraceDialog
+    from PySide6.QtWidgets import QWidget
+
+    s = _open(tmp_path)
+    try:
+        parent = QWidget()
+        parent.series = s
+        dlg = TraceDialog(parent, name="obj", tags=set(), is_obj_list=True)
+        order = _row_order(dlg)
+        dlg.close()
+        assert order.index("Fill:") < order.index("Trace Tags:") < order.index("From section"), order
+    finally:
+        s.close()
+
+
+def test_no_custom_columns_means_no_custom_columns_header(tmp_path):
+    from PyReconstruct.modules.gui.dialog.trace import TraceDialog
+
+    s = _open(tmp_path)
+    try:
+        assert not s.user_columns, "fixture premise: no custom columns"
+        item = Trace("item", (1, 2, 3), True)
+        item.points = [(0, 0), (1, 0), (1, 1), (0, 1)]
+        dlg = TraceDialog(None, [item], is_palette=True, series=s)
+        order = _row_order(dlg)
+        dlg.close()
+        assert "Object Groups:" in order
+        assert "Custom Columns:" not in order, order
+    finally:
+        s.close()

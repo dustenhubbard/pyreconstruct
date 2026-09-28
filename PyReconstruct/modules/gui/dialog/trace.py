@@ -217,7 +217,7 @@ class TraceDialog(QDialog):
             self.pick_one_inputs[set_name] = combo
             pick_one_rows.addLayout(row)
 
-        tags_text = QLabel(self, text="Tags:")
+        tags_text = QLabel(self, text="Trace Tags:")
         # sorted because trace.tags is a set: unsorted, a tag lands on a
         # different row each time the dialog opens, so the row a user is part
         # way through editing is not the row they left off on
@@ -294,7 +294,8 @@ class TraceDialog(QDialog):
         if self.is_palette and series is not None:
             seed = trace.obj_defaults or {}
             known_groups = sorted(series.object_groups.getGroupList())
-            defaults_rows.addWidget(QLabel(self, text="New objects join groups:"))
+            groups_text = QLabel(self, text="Object Groups:")
+            defaults_rows.addWidget(groups_text)
             self.groups_input = MultiInput(
                 self,
                 sorted(seed.get("groups", [])),
@@ -304,6 +305,12 @@ class TraceDialog(QDialog):
             )
             defaults_rows.addWidget(self.groups_input)
             seed_columns = seed.get("user_columns", {})
+            self.columns_text = None
+            if series.user_columns:
+                # the object list's categorical columns (Columns > Create
+                # categorical column...), one dropdown each
+                self.columns_text = QLabel(self, text="Custom Columns:")
+                defaults_rows.addWidget(self.columns_text)
             for col_name, opts in sorted(series.user_columns.items()):
                 row = QHBoxLayout()
                 row.addWidget(QLabel(self, text=f"{col_name}:"))
@@ -340,25 +347,20 @@ class TraceDialog(QDialog):
 
         vlayout = QVBoxLayout()
         vlayout.setSpacing(10)
-        def add_tag_rows():
-            if self.pick_one_inputs: vlayout.addLayout(pick_one_rows)
-            vlayout.addWidget(tags_text)
-            vlayout.addWidget(self.tags_input)
-
-        # A palette button's dialog groups what a new trace or object gets at
-        # the bottom: tags, then groups, then custom columns (fork #419). The
-        # trace and object dialogs keep tags beside the name, as before.
-        tags_at_bottom = self.is_palette
-
+        # Appearance first (name, color, shape, fill, radius), then what the
+        # trace carries: its tags, then on a palette button the object's groups
+        # and custom columns. The same order in all three dialogs (palette
+        # button, trace, object list), fork #419.
         vlayout.addLayout(name_row)
         vlayout.addLayout(color_row)
         if self.is_palette: vlayout.addLayout(shape_row)
-        if not tags_at_bottom: add_tag_rows()
         vlayout.addLayout(style_row)
         vlayout.addWidget(self.selected_input)
         vlayout.addWidget(self.unselected_input)
         if self.is_palette: vlayout.addLayout(stamp_size_row)
-        if tags_at_bottom: add_tag_rows()
+        if self.pick_one_inputs: vlayout.addLayout(pick_one_rows)
+        vlayout.addWidget(tags_text)
+        vlayout.addWidget(self.tags_input)
         if self.groups_input is not None: vlayout.addLayout(defaults_rows)
         if self.is_obj_list: vlayout.addLayout(range_row)
         vlayout.addWidget(buttonbox)
