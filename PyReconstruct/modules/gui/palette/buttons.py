@@ -144,10 +144,14 @@ class PaletteButton(MoveableButton):
             [self.trace],
             is_palette=True,
             tag_sets=tag_sets,
+            series=series,
         )
         t, confirmed = dialog.exec()
         if not confirmed:
             return
+        if series is not None:
+            # groups and custom column values a new object starts with
+            self.trace.obj_defaults = t.obj_defaults
 
         name, color, points, tags, mode, radius = (
             t.name, t.color, t.points, t.tags, t.fill_mode, t.getRadius()

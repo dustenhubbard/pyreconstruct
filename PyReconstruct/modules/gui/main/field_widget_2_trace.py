@@ -623,9 +623,21 @@ class FieldWidgetTrace(FieldWidgetBase):
             interpol_spacing = self.series.avg_mag / 2
             new_trace.smooth(window=window, spacing=interpol_spacing)  # spacing a function of pixel mag
         
+        # Object defaults ride on the palette item, not on section traces:
+        # apply them if this trace starts a new object, then drop them.
+        defaults = new_trace.obj_defaults
+        new_trace.obj_defaults = None
+        is_new_object = (
+            new_trace.name not in self.section.contours
+            and new_trace.name not in self.series.data["objects"]
+        )
+
         # add the trace to the section and select
         self.section.addTrace(new_trace, log_event=log_event)
         self.section.addSelectedTrace(new_trace)
+
+        if defaults and is_new_object:
+            self.applyObjectDefaults(new_trace.name, defaults)
         
         # if action is logged, increment the mouse_palette button
         if log_event:
@@ -634,6 +646,30 @@ class FieldWidgetTrace(FieldWidgetBase):
         # if not logging the event, the action is not complete
         return log_event 
     
+    def applyObjectDefaults(self, name : str, defaults : dict):
+        """Give a brand-new object the groups and custom column values its
+        palette item carries (fork #419). Mirrors addToGroup for a group the
+        series has not seen: it becomes visible and the menubar learns it."""
+        obj_groups = self.series.object_groups
+        starting_groups = set(obj_groups.getGroupList())
+        new_group = False
+        for group in defaults.get("groups", []):
+            obj_groups.add(group=group, obj=name)
+            if group not in starting_groups:
+                self.series.groups_visibility[group] = True
+                new_group = True
+        if new_group and hasattr(self.mainwindow, "createMenuBar"):
+            self.mainwindow.createMenuBar()
+
+        columns = defaults.get("user_columns", {})
+        if columns:
+            current = dict(self.series.getAttr(name, "user_columns") or {})
+            current.update(columns)
+            self.series.setAttr(name, "user_columns", current)
+
+        if defaults.get("groups") or columns:
+            self.series.addLog(name, None, "Set attributes from palette")
+
     @field_interaction
     def cutTrace(self, scalpel_trace : list):
         """Execute a scalpel cut on the selected trace(s)

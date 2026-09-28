@@ -14,10 +14,11 @@ from PySide6.QtWidgets import (
 
 from .color_button import ColorButton
 from .shape_button import ShapeButton
-from .helper import resizeLineEdit
+from .helper import resizeLineEdit, ColumnValueInput
 from .quick_dialog import MultiInput
 
 from PyReconstruct.modules.datatypes import Trace
+from PyReconstruct.modules.datatypes.trace import copyObjDefaults
 from PyReconstruct.modules.gui.utils import notify
 
 class TraceDialog(QDialog):
@@ -33,7 +34,8 @@ class TraceDialog(QDialog):
             is_palette=False,
             is_obj_list=False,
             pos=None,
-            tag_sets=None):
+            tag_sets=None,
+            series=None):
         """Create an attribute dialog.
         
             Params:
@@ -43,6 +45,9 @@ class TraceDialog(QDialog):
                 tag_sets (TagSets): the series' tag sets. Each pick-one set
                     gets its own labeled dropdown; the pick-many values are
                     offered in the Tags rows. None or empty keeps plain rows.
+                series (Series): for a palette item, the open series. Its
+                    object groups and custom columns become rows the item can
+                    hand to a new object (fork #419). None hides those rows.
 
         After exec(), ``tag_choices`` holds the pick-one rows' answer as
         ``TagSets.apply`` reads it: set name -> value, "" for cleared, None
@@ -212,7 +217,12 @@ class TraceDialog(QDialog):
             self.pick_one_inputs[set_name] = combo
             pick_one_rows.addLayout(row)
 
-        tags_text = QLabel(self, text="Tags:")
+        tags_text = QLabel(self, text="Trace Tags:")
+        tags_text.setToolTip(
+            "Labels stored on each trace, used to sort and filter traces with "
+            "the trace list's Tag filter. A palette button gives its tags to "
+            "every trace drawn with it."
+        )
         # sorted because trace.tags is a set: unsorted, a tag lands on a
         # different row each time the dialog opens, so the row a user is part
         # way through editing is not the row they left off on
@@ -277,6 +287,49 @@ class TraceDialog(QDialog):
             self.stamp_size_input.setText(str(round(trace.getRadius(), 6)))
             stamp_size_row.addWidget(stamp_size_text)
             stamp_size_row.addWidget(self.stamp_size_input)
+
+        # What a NEW object drawn from this palette item starts with: its
+        # groups and a value for each custom column. Object-level, so they
+        # live beside the trace rather than on it (Trace.obj_defaults), and
+        # only a palette item with a series in hand shows them.
+        self.series = series
+        self.groups_input = None
+        self.columns_input = None
+        defaults_rows = QVBoxLayout()
+        if self.is_palette and series is not None:
+            seed = trace.obj_defaults or {}
+            known_groups = sorted(series.object_groups.getGroupList())
+            groups_text = QLabel(self, text="Object Groups:")
+            groups_text.setToolTip(
+                "Groups a new object joins when you draw its first trace with "
+                "this button. Objects that already exist are not changed."
+            )
+            defaults_rows.addWidget(groups_text)
+            self.groups_input = MultiInput(
+                self,
+                sorted(seed.get("groups", [])),
+                combo=True,
+                combo_items=known_groups,
+                restrict_to_opts=False,
+            )
+            defaults_rows.addWidget(self.groups_input)
+            self.columns_text = None
+            self.columns_input = None
+            if series.user_columns:
+                # the object list's categorical columns (Columns > Create
+                # categorical column...), one row per column chosen
+                self.columns_text = QLabel(self, text="Custom Columns:")
+                self.columns_text.setToolTip(
+                    "Values for the object list's custom columns, set on a new "
+                    "object when you draw its first trace with this button. Add "
+                    "columns in the object list under Columns > Create "
+                    "categorical column..."
+                )
+                defaults_rows.addWidget(self.columns_text)
+                self.columns_input = ColumnValueInput(
+                    self, series.user_columns, seed.get("user_columns", {})
+                )
+                defaults_rows.addWidget(self.columns_input)
         
         if self.is_obj_list:
             range_row = QHBoxLayout()
@@ -302,16 +355,21 @@ class TraceDialog(QDialog):
 
         vlayout = QVBoxLayout()
         vlayout.setSpacing(10)
+        # Appearance first (name, color, shape, fill, radius), then what the
+        # trace carries: its tags, then on a palette button the object's groups
+        # and custom columns. The same order in all three dialogs (palette
+        # button, trace, object list), fork #419.
         vlayout.addLayout(name_row)
         vlayout.addLayout(color_row)
         if self.is_palette: vlayout.addLayout(shape_row)
-        if self.pick_one_inputs: vlayout.addLayout(pick_one_rows)
-        vlayout.addWidget(tags_text)
-        vlayout.addWidget(self.tags_input)
         vlayout.addLayout(style_row)
         vlayout.addWidget(self.selected_input)
         vlayout.addWidget(self.unselected_input)
         if self.is_palette: vlayout.addLayout(stamp_size_row)
+        if self.pick_one_inputs: vlayout.addLayout(pick_one_rows)
+        vlayout.addWidget(tags_text)
+        vlayout.addWidget(self.tags_input)
+        if self.groups_input is not None: vlayout.addLayout(defaults_rows)
         if self.is_obj_list: vlayout.addLayout(range_row)
         vlayout.addWidget(buttonbox)
 
@@ -416,6 +474,16 @@ class TraceDialog(QDialog):
                 trace.points = points
             else:
                 trace.points = None
+
+            # object defaults for a new object (palette items with a series)
+            if self.groups_input is not None:
+                trace.obj_defaults = copyObjDefaults({
+                    "groups": [g for g in self.groups_input.getEntries() if g],
+                    "user_columns": (
+                        self.columns_input.getValues()
+                        if self.columns_input is not None else {}
+                    ),
+                })
             
             # fill mode
             if self.style_none.isChecked():
