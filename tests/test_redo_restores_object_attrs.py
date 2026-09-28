@@ -88,3 +88,20 @@ def test_plain_draw_undo_redo_is_unchanged(window):
     window.undo(redo=True)
     assert NAME in series.data["objects"]
     assert not series.object_groups.getObjectGroups(NAME)
+
+
+def test_redo_keeps_a_hidden_group_hidden(window):
+    """The recreated object was the only member of a hidden group: undo
+    removes the group but keeps its visibility, and redo must not show it."""
+    series = window.series
+    _draw_from_palette(window, NAME, {"groups": ["solo_group"]})
+    series.groups_visibility["solo_group"] = False
+
+    window.undo()
+    assert "solo_group" not in series.object_groups.getGroupList()
+    window.undo(redo=True)
+
+    assert "solo_group" in series.object_groups.getObjectGroups(NAME)
+    assert series.groups_visibility["solo_group"] is False, (
+        "redo showed a group the user had hidden"
+    )

@@ -256,8 +256,10 @@ def restoreObjectSnapshot(series : Series, snapshot : dict, recreated) -> None:
         for attr_name, value in entry["attrs"].items():
             series.setAttr(name, attr_name, deepcopy(value))
         for group in entry["groups"]:
-            if group not in series.object_groups.getGroupList():
-                series.groups_visibility[group] = True
+            # setdefault, not assignment: undo removes an emptied group but
+            # leaves its visibility behind, and a hidden group must come back
+            # hidden. Only a group the series has never seen defaults to shown.
+            series.groups_visibility.setdefault(group, True)
             series.object_groups.add(group=group, obj=name)
 
 
