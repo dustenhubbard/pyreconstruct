@@ -90,9 +90,13 @@ def test_overlapping_unselected_trace_merges(merge_field):
         "an overlapping same-name closed trace must be merged into the new "
         "trace even when it is not selected"
     )
-    # the merged trace spans the original square and extends past it
+    # the merged trace spans the original square and extends past it. The
+    # merge grid is tied to the image, not the screen (fork #423), so its
+    # cells no longer line up with the drawn pixels: allow one cell of slack.
+    from PyReconstruct.modules.calc.grid import MERGE_SUPERSAMPLE
+    cell = field.section.mag / MERGE_SUPERSAMPLE
     xmin, ymin, xmax, ymax = contour[0].getBounds()
-    assert xmin <= base_bounds[0] and ymax >= base_bounds[3]
+    assert xmin <= base_bounds[0] + cell and ymax >= base_bounds[3] - cell
     assert xmax > base_bounds[2]
 
 
