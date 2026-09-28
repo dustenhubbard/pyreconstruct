@@ -1,43 +1,16 @@
-"""Regression test for ``modules_available`` crashing on a native-library failure.
+"""``modules_available`` when the module is a wrapper around a native library.
 
-``modules_available`` probes each module with ``__import__`` inside a ``try``
-that caught ``ModuleNotFoundError`` only. That is the wrong exception for a
-module which is a wrapper around a native library: ``import cairosvg`` runs
-``cairocffi``'s ``dlopen`` at import time and raises ``OSError:
-no library called "cairo-2" was found`` on a machine with the wheel installed
-and no system Cairo. The ``OSError`` escaped the guard, out of
-``MainWindow.exportSectionPNG`` (``main_window.py``, ``File > Export > PNG``)
-and into ``customExcepthook`` as a crash report.
+Such a module can install from pip and still fail at import with an
+``OSError`` when its system library is missing, because it ``dlopen``s the
+library at import time. PyReconstruct's first such module was ``cairosvg``,
+used by PNG export until that moved to QtSvg (fork #477). The guard catches the
+``OSError``, reports it with a platform remedy instead of offering a pip
+install that cannot help, and ``install_module`` treats an install that still
+cannot load as failed.
 
-Declaring ``cairosvg`` is what made that reachable: the ``launch/*`` scripts run
-``pip install -r requirements.txt`` on every startup, so every user now has the
-Python package, while nothing ships native Cairo on macOS or Windows. Before the
-declaration the same machine had no ``cairosvg`` at all, got ``ModuleNotFoundError``,
-and saw the handled install prompt.
-
-The remedies are different in kind, so the message has to be too: a missing
-*package* is fixed by the pip install ``modules_available`` offers, a missing
-*native library* is not, and offering the install for it sends the user down a
-path that cannot work.
-
-There are *two* imports on the way to the same crash, not one. The probe is the
-first. The second is ``install_module``: when the package really is absent the
-user is offered the pip install, and on success ``install_module`` calls
-``module_path``, whose own unguarded ``__import__`` raises the same ``OSError``
-for the same reason. That one is pre-existing rather than introduced by
-declaring ``cairosvg`` -- and declaring it makes the path *rarer*, since the
-package is now installed at startup and the probe lands in the handled bucket
--- but it ends in ``customExcepthook`` all the same, so it is guarded and
-tested here too. Note that catching it is not sufficient on its own: on that
-path nothing went into the ``unloadable`` bucket, so ``modules_available``
-would return ``True`` off the back of a successful ``pip install`` and the
-caller would import the module and crash. ``install_module`` has to report the
-install as failed, which is what the tests below pin.
-
-PNG export no longer uses ``cairosvg`` (it draws with QtSvg), but the guard
-still has to handle any native-wrapper module this way. These tests inject the
-failure with a stub module named ``cairosvg``, which keeps them
-platform-independent.
+The tests inject the failure with a stub module named ``fakenative`` and a
+remedy entry added to ``NATIVE_LIBRARY_REMEDIES`` for their run only, which
+keeps them platform-independent.
 """
 
 import sys
@@ -45,6 +18,18 @@ import sys
 import pytest
 
 from PyReconstruct.modules.backend.imports import mod_imports
+
+
+@pytest.fixture(autouse=True)
+def fake_remedy(monkeypatch):
+    """A made-up native-wrapper module with a remedy entry, for these tests
+    only. PyReconstruct itself has none since PNG export left cairosvg."""
+    monkeypatch.setitem(
+        mod_imports.NATIVE_LIBRARY_REMEDIES,
+        "fakenative",
+        ("Fake", "Debian/Ubuntu:  sudo apt-get install libfake\n"
+                 "macOS:          brew install fake"),
+    )
 
 
 @pytest.fixture
@@ -172,18 +157,18 @@ def test_accepted_install_then_unloadable_library_does_not_propagate(
     """
     _install_staged_stub(
         monkeypatch,
-        "cairosvg",
+        "fakenative",
         [
-            ModuleNotFoundError("No module named 'cairosvg'"),
-            OSError('no library called "cairo-2" was found'),
+            ModuleNotFoundError("No module named 'fakenative'"),
+            OSError('no library called "fake-1" was found'),
         ],
     )
     _fake_pip(monkeypatch)
     _accept_the_prompt(monkeypatch, captured)
 
-    assert mod_imports.modules_available("cairosvg", notify=True) is False, (
+    assert mod_imports.modules_available("fakenative", notify=True) is False, (
         "a pip install that cannot make the feature usable was reported as "
-        "success; the caller would go on to import cairosvg and crash"
+        "success; the caller would go on to import the module and crash"
     )
 
     ## Exactly one prompt: the original offer, which was correct at the time
@@ -192,9 +177,9 @@ def test_accepted_install_then_unloadable_library_does_not_propagate(
     assert len(captured["confirms"]) == 1
     assert len(captured["notes"]) == 1
     message = captured["notes"][0]
-    assert 'no library called "cairo-2" was found' in message
-    assert "libcairo2" in message
-    assert "brew install cairo" in message
+    assert 'no library called "fake-1" was found' in message
+    assert "apt-get install libfake" in message
+    assert "brew install fake" in message
     assert "reinstalling it will not help" in message
     assert "successfully installed" not in message
     assert "install them into your current environment" not in message
@@ -228,16 +213,16 @@ def test_native_library_oserror_does_not_propagate(monkeypatch, captured):
     Without the widened ``except`` this test does not fail an assertion -- it
     errors with the OSError, exactly as ``exportSectionPNG`` did.
     """
-    _install_stub(monkeypatch, "cairosvg", OSError('no library called "cairo-2" was found'))
+    _install_stub(monkeypatch, "fakenative", OSError('no library called "fake-1" was found'))
 
-    assert mod_imports.modules_available(["svgwrite", "cairosvg"], notify=False) is False
+    assert mod_imports.modules_available(["svgwrite", "fakenative"], notify=False) is False
 
 
 def test_native_library_message_names_the_real_remedy(monkeypatch, captured):
     """The OSError path must name the system library, and must not offer pip."""
-    _install_stub(monkeypatch, "cairosvg", OSError('no library called "cairo-2" was found'))
+    _install_stub(monkeypatch, "fakenative", OSError('no library called "fake-1" was found'))
 
-    assert mod_imports.modules_available("cairosvg", notify=True) is False
+    assert mod_imports.modules_available("fakenative", notify=True) is False
 
     assert not captured["confirms"], (
         "a pip install was offered for a missing *native* library, which "
@@ -245,10 +230,9 @@ def test_native_library_message_names_the_real_remedy(monkeypatch, captured):
     )
     assert len(captured["notes"]) == 1
     message = captured["notes"][0]
-    assert "libcairo2" in message
-    assert "brew install cairo" in message
-    assert "libcairo-2.dll" in message
-    assert 'no library called "cairo-2" was found' in message
+    assert "apt-get install libfake" in message
+    assert "brew install fake" in message
+    assert 'no library called "fake-1" was found' in message
     # The pip prompt's wording must not leak into this branch.
     assert "install them into your current environment" not in message
 
@@ -272,14 +256,14 @@ def test_both_failures_get_their_own_message(monkeypatch, captured):
     _install_stub(
         monkeypatch, "svgwrite", ModuleNotFoundError("No module named 'svgwrite'")
     )
-    _install_stub(monkeypatch, "cairosvg", OSError('no library called "cairo-2" was found'))
+    _install_stub(monkeypatch, "fakenative", OSError('no library called "fake-1" was found'))
 
-    assert mod_imports.modules_available(["svgwrite", "cairosvg"], notify=True) is False
+    assert mod_imports.modules_available(["svgwrite", "fakenative"], notify=True) is False
 
     assert len(captured["notes"]) == 1
     assert len(captured["confirms"]) == 1
     # The pip prompt lists only what pip can actually install.
-    assert "cairosvg" not in captured["confirms"][0]
+    assert "fakenative" not in captured["confirms"][0]
     assert "svgwrite" in captured["confirms"][0]
 
 

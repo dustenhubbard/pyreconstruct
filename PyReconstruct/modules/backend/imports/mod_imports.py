@@ -15,13 +15,8 @@ from PyReconstruct.modules.gui.utils import notifyConfirm, notify as note
 ## fix it -- the remedy is a system package manager. Keyed by module name;
 ## the value is the human name of the library and the per-platform remedy.
 NATIVE_LIBRARY_REMEDIES: Dict[str, Tuple[str, str]] = {
-    "cairosvg": (
-        "Cairo",
-        "Debian/Ubuntu:  sudo apt-get install libcairo2\n"
-        "macOS:          brew install cairo, then set "
-        "DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib\n"
-        "Windows:        put a Cairo DLL (libcairo-2.dll) on PATH"
-    ),
+    # Empty since PNG export moved off cairosvg (fork #477). The OSError path
+    # below still reports any native-wrapper module without a remedy entry.
 }
 
 
@@ -45,8 +40,8 @@ def native_library_message(unloadable: Dict[str, OSError]) -> str:
         if library:
             heading += f" the native {library} library"
 
-        ## First line only: cairocffi reports every dlopen candidate it tried,
-        ## which is a dozen paths of no use to a user in a modal dialog.
+        ## First line only: a dlopen failure can list every candidate path it
+        ## tried, which is of no use to a user in a modal dialog.
         detail = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
 
         lines.append(f"{heading}:\n{detail}\n")
@@ -121,8 +116,8 @@ def modules_available(modules: Union[str, List[str]], notify: bool=True) -> bool
 
         except OSError as e:
 
-            ## e.g. `import cairosvg` -> cairocffi dlopens libcairo and
-            ## raises OSError('no library called "cairo-2" was found').
+            ## e.g. a module that dlopens a missing system library at import
+            ## time and raises OSError('no library called ... was found').
             ## Uncaught, this reaches customExcepthook as a crash report.
             unloadable[module] = e
 
