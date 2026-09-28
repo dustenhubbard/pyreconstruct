@@ -319,7 +319,8 @@ a = Analysis(
 #     plugin), but wrong for the ones the GPU driver and the GTK theme plugin
 #     load into the same process: a copy from the build machine (glibc 2.28)
 #     shadows the host's newer one, and the host's Mesa or GTK then fails on a
-#     missing symbol version (the classic "GLIBCXX_3.4.30 not found"). Every
+#     missing symbol version (the classic "GLIBCXX_3.4.30 not found", or
+#     Fedora's libgio asking the bundled libmount for MOUNT_2_40). Every
 #     desktop that can run this build already has these, in a version at least
 #     as new as the build machine's. This follows the AppImage project's
 #     excludelist. Names with a hash suffix (libz-1a2b3c4d.so.1, vendored into
@@ -330,7 +331,7 @@ if sys.platform.startswith("linux"):
         r"^lib("
         r"stdc\+\+|gcc_s|z|expat|uuid|"
         r"fontconfig|freetype|harfbuzz|fribidi|"
-        r"glib-2\.0|gobject-2\.0|gio-2\.0|gmodule-2\.0|gthread-2\.0|"
+        r"glib-2\.0|gobject-2\.0|gio-2\.0|gmodule-2\.0|gthread-2\.0|mount|blkid|selinux|"
         r"X11|X11-xcb|ICE|SM|dbus-1|asound|"
         r"gpg-error|com_err|gssapi_krb5|krb5|k5crypto|krb5support|keyutils|p11-kit|"
         r"GLdispatch|gbm|glapi|usb-1\.0"

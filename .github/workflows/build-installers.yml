@@ -470,6 +470,8 @@ jobs:
           pyinstaller --noconfirm packaging/PyReconstruct.spec 2>&1 | tee pyinstaller.log
           echo "----- libraries PyInstaller could not find -----"
           grep -i "library not found\|could not find\|not found in" pyinstaller.log | sort -u || true
+          echo "----- shared libraries bundled from the build system -----"
+          find dist/*/_internal -maxdepth 1 -name 'lib*.so*' -printf '%f\n' | sort
 
       - name: Frozen self-test (Linux)
         shell: bash
@@ -555,7 +557,7 @@ jobs:
           chmod +x appimage/*.AppImage
           ls -l appimage
 
-      - name: Libraries this system still lacks (report only)
+      - name: Libraries this system still lacks
         run: |
           AI="$PWD/$(ls appimage/*.AppImage)"
           mkdir -p /tmp/x && cd /tmp/x && "$AI" --appimage-extract >/dev/null
@@ -567,6 +569,12 @@ jobs:
           grep -E "^libq(xcb|offscreen|wayland)" /tmp/missing.txt || echo "  nothing missing"
           echo "Everything (plugins for optional features included):"
           cat /tmp/missing.txt
+          # A bundled library older than the host's shadows it, and the host's
+          # own libraries then miss a symbol version. That is a bundling bug.
+          if grep -q "version \`.*' not found" /tmp/missing.txt; then
+            echo "::error::a bundled library is older than the one this system's libraries need"
+            exit 1
+          fi
           rm -rf /tmp/x
 
       - name: Frozen self-test inside the AppImage
