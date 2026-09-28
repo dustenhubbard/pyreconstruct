@@ -157,6 +157,25 @@ if __name__ == "__main__":
         from PyReconstruct.modules.backend.volume import export3DObjects  # noqa: F401  (trimesh)
         import scipy.interpolate  # noqa: F401
         import skimage.draw  # noqa: F401
+        # PNG section export draws its SVG with QtSvg. Render a tiny one here,
+        # so a build that dropped QtSvg fails now rather than on a user's
+        # first export (no installer could export PNG before this moved off
+        # cairosvg).
+        from PySide6.QtCore import QByteArray, Qt
+        from PySide6.QtGui import QImage, QPainter
+        from PySide6.QtSvg import QSvgRenderer
+        _svg = QSvgRenderer(QByteArray(
+            b'<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4">'
+            b'<rect width="4" height="4" fill="#ff0000"/></svg>'
+        ))
+        _img = QImage(4, 4, QImage.Format_ARGB32)
+        _img.fill(Qt.transparent)
+        _p = QPainter(_img)
+        _svg.render(_p)
+        _p.end()
+        if _img.pixelColor(2, 2).red() != 255:
+            print("selftest failed: QtSvg did not render")
+            sys.exit(1)
         # Reaching here means the full GUI + 3D/scientific import chain succeeded.
         # CI runs the frozen exe with this flag to catch windowed-only import
         # failures (e.g. None stdout) without launching the UI.
