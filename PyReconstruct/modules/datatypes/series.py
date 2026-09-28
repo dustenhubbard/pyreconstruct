@@ -500,6 +500,8 @@ class Series():
 
         # user-defined columns
         self.user_columns = series_data["user_columns"]
+        # button values changed by the last custom column edit (for undo)
+        self.palette_column_changes = []
 
         # tag sets: the vocabularies behind the tags dropdown
         self.tag_sets = TagSets(series_data["tag_sets"])
@@ -4864,6 +4866,8 @@ class Series():
             Params:
                 col_name (str): the name of the column to remove
         """
+        # reset first, so undo reverses only what this call changed
+        self.palette_column_changes = []
         if col_name in self.user_columns:
             del(self.user_columns[col_name])
 
@@ -4874,6 +4878,7 @@ class Series():
         # a palette button's saved value for a deleted column goes with it
         for trace, columns in list(self._paletteColumnDefaults()):
             if col_name in columns:
+                self._notePaletteChange(trace, (col_name, columns[col_name]), None)
                 del columns[col_name]
                 self._dropEmptyPaletteDefaults(trace)
         
@@ -4892,6 +4897,16 @@ class Series():
     def _dropEmptyPaletteDefaults(self, trace):
         trace.obj_defaults = copyObjDefaults(trace.obj_defaults)
 
+    def _notePaletteChange(self, trace, before, after):
+        """Remember one button value a column edit changed, for undo.
+
+        ``before`` and ``after`` are (column, value) pairs, ``after`` None for
+        a value removed. The GUI hands the list to the undo state right after
+        the edit (SeriesStates.recordPaletteChanges), so undo reverses exactly
+        these values and nothing else on the buttons.
+        """
+        self.palette_column_changes.append((trace, before, after))
+
     def editUserCol(self, col_name : str, new_name : str, new_opts : list, log_event=True):
         """Edit a user-defined column.
         
@@ -4900,6 +4915,8 @@ class Series():
                 new_name (str): the new name for the column
                 new_opts (list): the new options for the column
         """
+        # reset first, so a refused edit leaves nothing for undo to reverse
+        self.palette_column_changes = []
         new_name = new_name.replace(" ", "_")
         for i, opt in enumerate(new_opts):
             new_opts[i] = opt.replace(" ", "_")
@@ -4928,6 +4945,9 @@ class Series():
                     # would otherwise come back if the option is added again
                     if value in self.user_columns[new_name]:
                         columns[new_name] = value
+                        self._notePaletteChange(trace, (col_name, value), (new_name, value))
+                    else:
+                        self._notePaletteChange(trace, (col_name, value), None)
                     self._dropEmptyPaletteDefaults(trace)
         col_name = new_name
 
@@ -4943,6 +4963,7 @@ class Series():
             # longer an option is cleared everywhere (his call, 2026-09-28)
             for trace, columns in list(self._paletteColumnDefaults()):
                 if col_name in columns and columns[col_name] not in new_opts:
+                    self._notePaletteChange(trace, (col_name, columns[col_name]), None)
                     del columns[col_name]
                     self._dropEmptyPaletteDefaults(trace)
         

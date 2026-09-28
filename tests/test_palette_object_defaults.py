@@ -651,13 +651,14 @@ def test_undo_of_a_column_edit_restores_palette_buttons(main_window, edit):
     main_window.changeTracingTrace(button)
 
     field.series_states.addState()
-    field.series_states.recordPaletteDefaults()    # as the column menus do
     if edit == "rename":
         series.editUserCol("Stage", "Phase", ["draft", "final"], log_event=False)
     elif edit == "delete":
         series.removeUserCol("Stage", log_event=False)
     else:
         series.editUserCol("Stage", "Stage", ["final"], log_event=False)
+    # as the column menus do, right after the edit
+    field.series_states.recordPaletteChanges(series.palette_column_changes)
     field.syncTracingDefaults()
     assert button.obj_defaults != {"user_columns": {"Stage": "draft"}}
 
@@ -687,3 +688,46 @@ def test_an_unrelated_undo_keeps_a_later_palette_button_edit(main_window):
     field.seriesUndo()
     assert "Other" not in series.user_columns
     assert button.obj_defaults == {"groups": ["axons"]}
+
+
+@pytest.mark.gui
+def test_undo_of_a_column_edit_keeps_later_edits_to_other_buttons(main_window):
+    """Undo of a column edit reverses exactly the button values that edit
+    changed. An edit made afterwards, to another button or to another value on
+    the same button, survives."""
+    field = main_window.field
+    series = main_window.series
+    series.addUserCol("Stage", ["draft", "final"], log_event=False)
+    series.addUserCol("Other", ["x"], log_event=False)
+    pal_name, idx = series.palette_index
+    palette = series.palette_traces[pal_name]
+    touched, untouched = palette[idx], palette[(idx + 1) % len(palette)]
+    touched.obj_defaults = {"user_columns": {"Stage": "draft"}}
+    untouched.obj_defaults = None
+
+    field.series_states.addState()
+    series.editUserCol("Stage", "Phase", ["draft", "final"], log_event=False)
+    field.series_states.recordPaletteChanges(series.palette_column_changes)
+
+    untouched.obj_defaults = {"groups": ["axons"]}                    # another button
+    touched.obj_defaults["user_columns"]["Other"] = "x"               # same button, other value
+
+    field.seriesUndo()
+    assert untouched.obj_defaults == {"groups": ["axons"]}
+    assert touched.obj_defaults == {"user_columns": {"Stage": "draft", "Other": "x"}}
+
+    field.seriesUndo(redo=True)
+    assert touched.obj_defaults == {"user_columns": {"Phase": "draft", "Other": "x"}}
+    assert untouched.obj_defaults == {"groups": ["axons"]}
+
+
+def test_a_refused_column_edit_leaves_no_changes_to_undo(tmp_path):
+    """A refused edit must not leave the last edit's changes for the GUI to
+    attach to the new undo state."""
+    s = _open(tmp_path)
+    try:
+        s.palette_column_changes = ["left over from an earlier edit"]
+        s.editUserCol("No_such_column", "Stage", ["draft"], log_event=False)
+        assert s.palette_column_changes == []
+    finally:
+        s.close()

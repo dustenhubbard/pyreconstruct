@@ -573,6 +573,32 @@ def restoreZtraceOnSection(orig_ztrace : Ztrace, new_ztrace : Ztrace, snum : int
         restored_points
     )
 
+def applyColumnChange(trace, remove=None, add=None) -> bool:
+    """Change one custom column value on a palette button, only if the button
+    still holds what the change expects.
+
+        Params:
+            trace (Trace): the palette button's trace
+            remove (tuple): (column, value) to take off, or None
+            add (tuple): (column, value) to put on, or None
+        Returns:
+            (bool): False, touching nothing, if the button was edited since
+    """
+    defaults = copyObjDefaults(getattr(trace, "obj_defaults", None)) or {}
+    columns = dict(defaults.get("user_columns", {}))
+    if remove is not None and columns.get(remove[0]) != remove[1]:
+        return False
+    if add is not None and add[0] in columns and columns[add[0]] != add[1]:
+        return False
+    if remove is not None:
+        del columns[remove[0]]
+    if add is not None:
+        columns[add[0]] = add[1]
+    defaults["user_columns"] = columns
+    trace.obj_defaults = copyObjDefaults(defaults)
+    return True
+
+
 class SeriesState():
 
     def __init__(self, breakable=True):
@@ -586,33 +612,30 @@ class SeriesState():
         # does not live in FieldState alongside tforms and flags: see
         # recordBCProfiles.
         self.bc_profiles = {}
-        # Palette buttons' object defaults before this state's action, or None.
-        # Recorded only by a custom column edit (recordPaletteDefaults): palette
-        # button edits make no undo state of their own, so saving the buttons on
-        # every state would let an unrelated undo roll back a button edit.
-        self.palette_defaults = None
+        # Button values a custom column edit changed (recordPaletteChanges);
+        # empty for every other kind of series state.
+        self.palette_changes = []
+        self.palette_changes_applied = True
 
-    @staticmethod
-    def paletteDefaults(series : Series) -> dict:
-        """Every palette button's object defaults, by palette and position."""
-        return {
-            name: [copyObjDefaults(getattr(t, "obj_defaults", None)) for t in traces]
-            for name, traces in series.palette_traces.items()
-        }
+    def recordPaletteChanges(self, changes : list):
+        """Keep the button values a custom column edit changed, to reverse on
+        undo and reapply on redo. Only those values: palette button edits
+        make no undo state of their own, so anything wider would roll back a
+        button edit made after this one."""
+        self.palette_changes = list(changes)
+        self.palette_changes_applied = True
 
-    def recordPaletteDefaults(self, series : Series):
-        """Save the buttons' object defaults before a custom column edit."""
-        self.palette_defaults = SeriesState.paletteDefaults(series)
-
-    def swapPaletteDefaults(self, series : Series):
-        """Put the saved button defaults back, keeping the current ones for redo."""
-        if self.palette_defaults is None:
+    def swapPaletteChanges(self):
+        """Undo or redo the recorded button changes, whichever is due."""
+        if not getattr(self, "palette_changes", None):
             return
-        current = SeriesState.paletteDefaults(series)
-        for name, saved in self.palette_defaults.items():
-            for trace, d in zip(series.palette_traces.get(name, []), saved):
-                trace.obj_defaults = copyObjDefaults(d)
-        self.palette_defaults = current
+        if self.palette_changes_applied:
+            for trace, before, after in reversed(self.palette_changes):
+                applyColumnChange(trace, remove=after, add=before)
+        else:
+            for trace, before, after in self.palette_changes:
+                applyColumnChange(trace, remove=before, add=after)
+        self.palette_changes_applied = not self.palette_changes_applied
 
     def recordBCProfiles(self, snum : int, bc_profiles : dict):
         """Store a section's brightness/contrast profiles as they were before the action.
@@ -713,7 +736,7 @@ class SeriesState():
                 series (Series): the series to apply attributes to
         """
         pre_series_attrs = SeriesState.getSeriesAttributes(series)
-        self.swapPaletteDefaults(series)
+        self.swapPaletteChanges()
         for attr, value in self.series_attrs.items():
             if attr == "object_columns":
                 continue  # only replace obj columns under specific circumstances (below)
@@ -813,11 +836,11 @@ class SeriesStates():
         if self.undos:
             self.undos[-1].recordBCProfiles(snum, bc_profiles)
 
-    def recordPaletteDefaults(self):
-        """Save palette buttons' object defaults on the newest series state.
-        Called right after addState() by the custom column edits."""
-        if self.undos:
-            self.undos[-1].recordPaletteDefaults(self.series)
+    def recordPaletteChanges(self, changes : list):
+        """Attach the button values a custom column edit changed to the
+        newest series state. Called right after the edit."""
+        if self.undos and changes:
+            self.undos[-1].recordPaletteChanges(changes)
 
     def addSectionUndo(self, snum : int):
         """Flag the section's latest undo state as part of the most recent series undo.

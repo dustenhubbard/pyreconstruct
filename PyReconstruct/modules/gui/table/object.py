@@ -1104,9 +1104,9 @@ class ObjectTableWidget(DataTable):
             return
         
         self.series_states.addState()
-        self.series_states.recordPaletteDefaults()
         
         self.series.removeUserCol(response[0])
+        self.series_states.recordPaletteChanges(self.series.palette_column_changes)
         self.mainwindow.field.syncTracingDefaults()
 
         self.manager.updateObjCols()
