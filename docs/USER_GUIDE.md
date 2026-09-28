@@ -1019,12 +1019,12 @@ In the app, **Help ▸ Online resources** links to:
 
 Found a bug, have a feature idea, or want to improve the docs? Please open an issue
 on this distribution's
-**[GitHub Issues](https://github.com/dustenhubbard/PyReconstruct/issues)**, which you
-can also reach from the in-app **Help ▸ Report bug / Request feature** item. When
-reporting a bug, include the version/commit shown at the top of the **Help** menu
-(clicking it copies the commit to your clipboard), or use **Help ▸ Copy diagnostic
-report**, which gathers that and your OS in one paste. **Help ▸ Email developers**
-writes to the same team.
+**[GitHub Issues](https://github.com/dustenhubbard/PyReconstruct/issues)**. The
+in-app **Help ▸ Report a bug...** and **Help ▸ Request a feature...** items open the
+same place with your version and OS already filled in. If you file another way,
+**Help ▸ Copy diagnostic report** gathers that in one paste, or click the
+version/commit shown at the top of the **Help** menu to copy the commit to your
+clipboard. **Help ▸ Email developers** writes to the same team.
 
 ---
 
