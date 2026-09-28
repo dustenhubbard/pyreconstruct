@@ -1,21 +1,21 @@
 """Regression tests for SVG/PNG section export and the packages it needs.
 
 The bug: ``PyReconstruct/modules/backend/exports/svg_conversion.py`` imports
-``svgwrite`` (for ``export_svg``) and ``cairosvg`` (for ``export_png``), and
-neither package was declared in ``pyproject.toml``, ``requirements.txt`` or
+``svgwrite`` (for ``export_svg``) and, at the time, ``cairosvg`` (for
+``export_png``), and neither package was declared in ``pyproject.toml``, ``requirements.txt`` or
 ``uv.lock``. ``git log -S svgwrite`` shows they arrived with the feature commits
 that wrote the module and were never added to a dependency file by any of them.
 
 ``pillow`` was the third and is covered here too, added after the other two.
 ``export_svg`` does ``from PIL import Image`` to re-encode the section image
 into the SVG's base64 data URI, and it was undeclared for the same reason. It
-never failed for anybody, because five locked packages pull pillow in
-transitively -- ``cairosvg`` and ``scikit-image`` directly, ``imageio`` via
+never failed for anybody, because locked packages pull pillow in
+transitively -- ``scikit-image`` directly, ``imageio`` via
 ``scikit-image``, ``matplotlib`` via ``vtk``, ``neuroglancer`` via the dev-only
 ``funlib-show-neuroglancer`` -- but a transitive edge is somebody else's
 promise, and it takes one dependency bump to withdraw it. It is also the *worse*
-of the three gaps if it ever opens: the guard described below covers ``svgwrite``
-and ``cairosvg`` and does not probe ``PIL`` at all, so a missing pillow is an
+of the gaps if it ever opens: the guard described below covers ``svgwrite``
+and does not probe ``PIL`` at all, so a missing pillow is an
 uncaught ``ModuleNotFoundError`` rather than a dialog.
 ``test_svg_export_is_not_guarded_against_a_missing_pillow`` pins that
 difference.
@@ -37,20 +37,16 @@ Nothing caught it because nothing tested it. No test in the suite touched
 ``export_svg``, ``export_png``, ``exportAsSVG`` or ``exportAsPNG``, so the only
 signal available was a user trying to export.
 
-Declaring ``cairosvg`` had a second-order consequence that this branch also
-fixes, because the guard is what made it visible: ``modules_available`` caught
-``ModuleNotFoundError`` only, and ``import cairosvg`` raises ``OSError`` when
-native Cairo is absent. Once every user has the wheel, that ``OSError`` escapes
-the guard as a crash on any machine without Cairo. The guard is widened in
-``mod_imports.py`` on this branch and covered by
-``tests/test_modules_available_native_library.py``.
+PNG export no longer uses ``cairosvg``. It needed the native Cairo library,
+which no installer shipped, so PNG export never worked from a packaged build.
+It now rasterizes the SVG with QtSvg, which is part of PySide6.
 
 The tests below are layered so that a regression is reported at the layer it
 actually happened at:
 
 1. ``test_export_packages_are_declared`` reads the dependency files. It fails if
    someone drops the declaration, and it fails identically on every platform,
-   including one where the native half of cairo is unavailable.
+   and on every platform.
 2. ``test_export_packages_are_importable`` proves the declaration produced an
    installed package, which is the part a file-contents check cannot see.
 3. ``test_export_as_svg_writes_a_real_svg`` runs the real export and checks the
@@ -62,12 +58,10 @@ actually happened at:
 5. ``test_svg_export_is_not_guarded_against_a_missing_pillow`` injects a missing
    pillow and shows the guard passes and the export raises, which is the reason
    the declaration is worth having rather than relying on the transitive edges.
-6. ``test_export_as_png_writes_a_real_png`` does what (3) does for PNG, and is
-   the one test here that can skip. See its docstring: ``cairosvg`` reaches
-   Cairo through a runtime ``dlopen``, so a machine can have the wheel and still
-   not be able to render. That is a real, separate deployment requirement rather
-   than a detail, so the skip names it instead of hiding it, and CI installs
-   ``libcairo2`` so the assertion runs there.
+6. ``test_export_as_png_writes_a_real_png`` does what (3) does for PNG. It
+   never skips: QtSvg ships with PySide6 and needs no system library.
+7. ``test_png_export_does_not_need_cairosvg`` hides ``cairosvg`` and exports
+   anyway, so a return of the native dependency fails by name.
 
 The fixture is the shipped checker series ``shapes1.jser`` plus its five TIFFs.
 It is used rather than a synthetic stub because ``export_svg`` reads the section
@@ -107,7 +101,6 @@ SVG_NS = "http://www.w3.org/2000/svg"
 # gap these tests exist to hold shut.
 EXPORT_PACKAGES = {
     "svgwrite": "svgwrite",
-    "cairosvg": "cairosvg",
     "pillow": "PIL",
 }
 
@@ -225,27 +218,6 @@ def exportable_series(tmp_path):
     series.close()
 
 
-def _cairo_native_error():
-    """Return the OSError cairocffi raises when it cannot find libcairo, else None.
-
-    ``import cairosvg`` executes ``cairocffi``'s ``dlopen`` at import time, so
-    this doubles as the native-library probe for the render test.
-
-    A *missing package* deliberately reports ``None`` rather than an error: that
-    is the regression this file exists to catch, and it must reach the export
-    call and fail there with the pointed message, not be skipped away as if it
-    were the system-library case. The two failures look alike from a distance
-    and have completely different fixes.
-    """
-    try:
-        import cairosvg  # noqa: F401
-    except ModuleNotFoundError:
-        return None  # the declaration regression -- do not skip, let it fail
-    except OSError as exc:  # cairocffi: 'no library called "cairo-2" was found'
-        return exc
-    return None
-
-
 # --------------------------------------------------------------------------
 # 1. The declaration. Platform-independent, and the layer the bug was at.
 # --------------------------------------------------------------------------
@@ -266,8 +238,8 @@ def test_export_packages_are_declared(package):
     assert package in names, (
         f"{package} is imported by modules/backend/exports/svg_conversion.py but "
         f"is not in [project.dependencies]; without it SVG/PNG export cannot run "
-        f"-- and only svgwrite and cairosvg have a modules_available guard in "
-        f"front of them, so for pillow the failure is an uncaught "
+        f"-- and only svgwrite has a modules_available guard in "
+        f"front of it, so for pillow the failure is an uncaught "
         f"ModuleNotFoundError rather than the guard's pip-install offer"
     )
 
@@ -289,11 +261,8 @@ def test_export_packages_are_declared(package):
 def test_export_packages_are_importable(package, import_name):
     """The declaration has to have produced an installed distribution.
 
-    ``importlib.util.find_spec`` rather than ``import``: for ``cairosvg`` the
-    import itself can fail on the native library even when the Python package is
-    correctly installed, and that is a different failure with a different fix.
-    This test is about the packaging half only, and holds on a machine with no
-    Cairo at all.
+    ``importlib.util.find_spec`` rather than ``import``: this test is about the
+    packaging half only, whether the distribution is installed.
 
     The distribution name and the import name are not the same thing for every
     package -- ``pillow`` imports as ``PIL`` -- so the two are carried
@@ -421,12 +390,11 @@ def test_svg_export_is_not_guarded_against_a_missing_pillow(
     This is why pillow is declared rather than left to arrive transitively, and
     it is the one way its gap differs from ``svgwrite``'s. ``exportSectionSVG``
     (``main_window.py``) opens with ``modules_available("svgwrite")`` and
-    ``exportSectionPNG`` with ``modules_available(["svgwrite", "cairosvg"])`` --
-    neither probes ``PIL``. So an environment that resolved without pillow gets
+    ``exportSectionPNG`` likewise -- neither probes ``PIL``. So an environment that resolved without pillow gets
     a guard that says yes and a ``ModuleNotFoundError`` out of ``export_svg``
     immediately afterwards, which reaches ``customExcepthook`` as a crash
-    report. ``svgwrite`` and ``cairosvg`` at their worst produced a handled
-    dialog offering the pip install.
+    report. ``svgwrite`` at its worst produced a handled dialog offering the
+    pip install.
 
     The absence is injected through ``sys.meta_path`` rather than by
     uninstalling anything, so this runs on a correctly-installed machine and on
@@ -438,7 +406,7 @@ def test_svg_export_is_not_guarded_against_a_missing_pillow(
     list out by hand as ``modules_available("svgwrite", notify=False)``, so it
     was measuring a literal in this file and not the guard: widening BOTH real
     call sites in ``main_window.py`` to ``["svgwrite", "PIL"]`` and
-    ``["svgwrite", "cairosvg", "PIL"]`` left the entire suite green (6240
+    ``["svgwrite", "PIL"]`` left the entire suite green (6240
     passed, 3 skipped, 6 xfailed -- identical to an unwidened run). The module
     lists below now come from ``menu_guard_modules``, which reads them off the
     real call sites, so both guards are genuinely under this assertion.
@@ -495,13 +463,8 @@ def test_svg_export_is_not_guarded_against_a_missing_pillow(
     # The guard in front of File > Export > SVG, with the exact argument
     # main_window passes it. It sees nothing wrong.
     #
-    # Only the SVG guard is *run*. The PNG guard probes ``cairosvg``, whose
-    # import dlopens native Cairo and raises OSError where that is absent (see
-    # ``_cairo_native_error``), so running it would report False on a machine
-    # with no libcairo -- a second, unrelated reason to fail, on the one leg of
-    # this file that already has to skip for it. The PNG guard is held to the
-    # assertion above instead, which is platform-independent and is what carries
-    # the teeth for it: widening it to probe PIL fails there.
+    # Both guards are run. Each sees nothing wrong.
+    assert modules_available(png_guard, notify=False) is True
     assert modules_available(svg_guard, notify=False) is True, (
         f"the SVG guard's own probe ({svg_guard}) failed with only pillow "
         f"injected as missing, so this test is not measuring what it claims to"
@@ -515,30 +478,9 @@ def test_svg_export_is_not_guarded_against_a_missing_pillow(
 def test_export_as_png_writes_a_real_png(exportable_series, tmp_path, monkeypatch):
     """``Section.exportAsPNG`` rasterizes the SVG to a PNG at the requested scale.
 
-    This is the one test here that can skip, and the reason is a genuine
-    deployment constraint rather than an environment quirk worth papering over:
-    ``cairosvg`` does not bundle Cairo. It imports ``cairocffi``, which
-    ``dlopen``s the *native* library at import time, so `pip install cairosvg`
-    succeeds on a machine that then raises
-    ``OSError: no library called "cairo-2" was found`` on first use. Declaring
-    the package -- which is what this branch fixes -- is necessary but not
-    sufficient for PNG export; the machine also needs ``libcairo2``
-    (Debian/Ubuntu) or ``brew install cairo`` (macOS), and on macOS Homebrew's
-    ``/opt/homebrew/lib`` is not searched by ``ctypes.util.find_library``, so it
-    additionally needs ``DYLD_FALLBACK_LIBRARY_PATH`` to point there. SVG export
-    needs none of this and is asserted unconditionally above.
-
-    CI installs ``libcairo2``, so this does not skip on the gate.
+    Drawn with QtSvg, which ships with PySide6, so this runs everywhere and
+    never skips.
     """
-    native_error = _cairo_native_error()
-    if native_error is not None:
-        pytest.skip(
-            "cairosvg is installed but native Cairo is not loadable here, so PNG "
-            "export cannot run: install libcairo2 (Debian/Ubuntu) or `brew "
-            "install cairo` and set DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib "
-            f"(macOS). Underlying error: {native_error}"
-        )
-
     section = exportable_series.loadSection(min(exportable_series.sections.keys()))
     height, width = section.img_dims
 
@@ -750,3 +692,25 @@ def test_export_svg_content_and_order_match_the_object_model(
         "a path's geometry differs from the object model's own asPixels answer"
     )
     assert "aaa_hidden_probe" not in {name for name, _ in exported}
+
+
+def test_png_export_does_not_need_cairosvg(exportable_series, tmp_path, monkeypatch):
+    """PNG export works with ``cairosvg`` absent, and its guard does not ask
+    for it. It needed native Cairo, which no installer shipped."""
+    class _Finder:
+        @staticmethod
+        def find_spec(fullname, path=None, target=None):
+            if fullname.split(".")[0] in ("cairosvg", "cairocffi"):
+                raise ModuleNotFoundError(f"No module named {fullname!r}", name=fullname)
+            return None
+
+    for cached in [n for n in sys.modules if n.split(".")[0] in ("cairosvg", "cairocffi")]:
+        monkeypatch.delitem(sys.modules, cached)
+    monkeypatch.setattr(sys, "meta_path", [_Finder()] + list(sys.meta_path))
+
+    assert "cairosvg" not in menu_guard_modules("exportAsPNG")
+
+    section = exportable_series.loadSection(min(exportable_series.sections.keys()))
+    out = tmp_path / "no_cairo.png"
+    section.exportAsPNG(str(out), 0.25)
+    assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"

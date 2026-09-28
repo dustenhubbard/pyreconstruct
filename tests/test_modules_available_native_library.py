@@ -34,9 +34,10 @@ would return ``True`` off the back of a successful ``pip install`` and the
 caller would import the module and crash. ``install_module`` has to report the
 install as failed, which is what the tests below pin.
 
-CI installs ``libcairo2``, so the real ``cairosvg`` import succeeds there and
-cannot exercise this branch. These tests inject the failure with a stub module
-instead, which also keeps them platform-independent.
+PNG export no longer uses ``cairosvg`` (it draws with QtSvg), but the guard
+still has to handle any native-wrapper module this way. These tests inject the
+failure with a stub module named ``cairosvg``, which keeps them
+platform-independent.
 """
 
 import sys

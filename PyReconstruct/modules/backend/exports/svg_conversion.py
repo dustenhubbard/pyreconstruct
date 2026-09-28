@@ -166,13 +166,33 @@ def export_png(section_data, png_fp, scale: float=1.0):
     try:
         export_svg(section_data, tmp_svg)
 
-        from cairosvg import svg2png
+        # Drawn with Qt's own SVG renderer rather than cairosvg. cairosvg
+        # needs the native Cairo library, which no installer shipped, so PNG
+        # export never worked from a packaged build (deferred 2026-08-07).
+        # QtSvg is already in every build, needs no application object, and
+        # matches cairosvg's output pixel for pixel at full size; only the
+        # antialiased edges differ when scaled.
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QImage, QPainter
+        from PySide6.QtSvg import QSvgRenderer
 
-        svg2png(
-            url=tmp_svg,
-            write_to=png_fp,
-            scale=scale
-        )
+        renderer = QSvgRenderer(tmp_svg)
+        if not renderer.isValid():
+            raise ValueError(f"could not read the exported SVG: {tmp_svg}")
+        size = renderer.defaultSize()
+        width = max(1, round(size.width() * scale))
+        height = max(1, round(size.height() * scale))
+
+        image = QImage(width, height, QImage.Format_ARGB32)
+        image.fill(Qt.transparent)
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        renderer.render(painter)
+        painter.end()
+
+        if not image.save(str(png_fp), "PNG"):
+            raise OSError(f"could not write the PNG: {png_fp}")
     finally:
         Path(tmp_svg).unlink(missing_ok=True)
 
