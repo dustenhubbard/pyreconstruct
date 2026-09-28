@@ -25,6 +25,21 @@ def collada_available() -> bool:
     return importlib.util.find_spec("collada") is not None
 
 
+def _objectProgress(series: Series, text: str):
+    """A progress bar over a per-object pass, with a time estimate.
+
+    The section pass in get_3D_meshes has its own bar; the mesh writing and
+    measuring that follow it had none (fork #421 review), and on a large object
+    the marching-cubes step is the slow half. A factory that predates the eta
+    flag still works, without the estimate.
+    """
+    factory = series._progressReporterFactory()
+    try:
+        return factory(text=text, cancel=False, eta=True)
+    except TypeError:
+        return factory(text=text, cancel=False)
+
+
 def export3DObjects(series: Series, obj_names : list, output_dir : str, export_type: str, notify_user: bool = True) -> None:
     """Export 3D objects.
 
@@ -67,21 +82,31 @@ def export3DObjects(series: Series, obj_names : list, output_dir : str, export_t
     output_directory = Path(output_dir)
 
     skipped = []
-    for obj_name, obj_3D in obj_data.items():
+    # finish() in a finally, not through the reporter's context manager: the
+    # bar has no Cancel button and closes only at 100%, and __exit__ skips
+    # finish() when the block raises. A failed write (unwritable folder, disk
+    # full, a degenerate mesh) would otherwise leave the window blocked behind
+    # it, the hang found 2026-08-28 in saveJser and enumerateSections.
+    progress = _objectProgress(series, "Writing 3D meshes...")
+    try:
+        for i, (obj_name, obj_3D) in enumerate(obj_data.items()):
+            progress.set_progress(100 * i / max(len(obj_data), 1))
 
-        output_file = output_directory / f"{obj_name}.{export_type}"
+            output_file = output_directory / f"{obj_name}.{export_type}"
 
-        if type(obj_3D) is Surface or type(obj_3D) is Spheres:
+            if type(obj_3D) is Surface or type(obj_3D) is Spheres:
 
-            obj_3D.exportTrimesh(
-                output_file,
-                export_type,
-            )
-        else:
-            # a contours-mode object has no mesh to write; claiming success
-            # for it sent users hunting for files that were never made
-            # (found 2026-08-28)
-            skipped.append(obj_name)
+                obj_3D.exportTrimesh(
+                    output_file,
+                    export_type,
+                )
+            else:
+                # a contours-mode object has no mesh to write; claiming success
+                # for it sent users hunting for files that were never made
+                # (found 2026-08-28)
+                skipped.append(obj_name)
+    finally:
+        progress.finish()
 
     if notify_user:
 
@@ -108,22 +133,28 @@ def export3DData(series: Series, obj_names: list, output_fp: str, notify_user: b
     ## Build all meshes in a single pass over the sections
     meshes = get_3D_meshes(series, obj_names)
 
-    for obj in obj_names:
+    # same shape as the write loop above, so the bar closes on every road out
+    progress = _objectProgress(series, "Measuring 3D meshes...")
+    try:
+        for i, obj in enumerate(obj_names):
+            progress.set_progress(100 * i / max(len(obj_names), 1))
 
-        try:
+            try:
 
-            obj_data = meshes[obj]
-            obj_type = type(obj_data).__name__.lower()
-            tm = obj_data.generateTrimesh()
+                obj_data = meshes[obj]
+                obj_type = type(obj_data).__name__.lower()
+                tm = obj_data.generateTrimesh()
 
-            surface_area = round(tm.area, 5)
-            volume = round(tm.volume, 5)
+                surface_area = round(tm.area, 5)
+                volume = round(tm.volume, 5)
 
-            csv_str += f"{series_code}{sep}{obj}{sep}{obj_type}{sep}{surface_area}{sep}{volume}\n"
+                csv_str += f"{series_code}{sep}{obj}{sep}{obj_type}{sep}{surface_area}{sep}{volume}\n"
 
-        except Exception as e:
+            except Exception as e:
 
-            errors[obj] = e
+                errors[obj] = e
+    finally:
+        progress.finish()
 
     if not errors:
 
