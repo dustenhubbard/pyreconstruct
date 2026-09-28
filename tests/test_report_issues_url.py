@@ -2,10 +2,11 @@
 
 This is a fork of PyReconstruct. All in-app menu links point at the fork, not the
 upstream SynapseWeb project (upstream is credited in the README and About dialog).
-The Help ▸ Report issues (GitHub) menu actions open ``gh_issues`` / ``gh_submit``
-and the Help ▸ Online resources ▸ "PyReconstruct source code" action opens
-``gh_repo`` (constants in ``PyReconstruct.modules.constants.websites``), so all
-three must resolve to the fork. This test documents that so none of them drift
+The Help menu's "See unresolved issues" and "Report bug / Request feature"
+actions open ``gh_issues`` / ``gh_submit`` and the Help ▸ Online resources ▸
+"PyReconstruct source code" action opens ``gh_repo`` (constants in
+``PyReconstruct.modules.constants.websites``), so all three must resolve to the
+fork. This test documents that so none of them drift
 back to upstream.
 
 The same goes for Help ▸ "Email developers": it writes to the fork's shared
