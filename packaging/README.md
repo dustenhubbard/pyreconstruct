@@ -2,12 +2,13 @@
 
 This directory builds the one-click desktop installers. It produces a frozen
 app with PyInstaller, which is then wrapped per platform (Windows: Inno Setup;
-macOS: `.dmg`). This is a **proof of concept**: builds are currently unsigned.
-On Windows users get an "unknown publisher" SmartScreen warning (click *More
-info → Run anyway*). On macOS it's stricter: a downloaded, quarantined app is
-refused outright ("PyReconstruct is damaged and can't be opened") until the
-quarantine attribute is cleared. See the macOS section. Real signing /
-notarization is a post-POC milestone.
+macOS: `.dmg`). When the signing secrets exist, CI signs the macOS app with a
+Developer ID and the hardened runtime, then signs, notarizes, and staples the
+dmg (`macos/sign_app.sh` and the build workflow), so it opens with only the
+usual prompt for a download. A build without the secrets, such as a fork's, is
+unsigned: macOS refuses it until the quarantine attribute is cleared (see the
+macOS section). The Windows installer is unsigned, so users get an "unknown
+publisher" SmartScreen warning (click *More info → Run anyway*).
 
 | File | Purpose |
 |------|---------|
@@ -15,7 +16,8 @@ notarization is a post-POC milestone.
 | `rthook_qt.py` | Runtime hook: clears a stale Qt plugin path |
 | `smoke_test.py` | Headless import + offscreen VTK render check |
 | `windows/PyReconstruct.iss` | Inno Setup installer script *(to be added)* |
-| `macos/make_icns.sh`, `macos/make_dmg.sh` | macOS icon + dmg *(to be added)* |
+| `macos/make_icns.sh`, `macos/make_dmg.sh` | macOS icon + dmg |
+| `macos/sign_app.sh`, `macos/entitlements.plist` | Developer ID signing with the hardened runtime |
 
 ## Prerequisites
 
@@ -66,15 +68,15 @@ native dependencies (vtk, scipy, scikit-image, opencv, the cloud-volume codecs)
 ship universal2 wheels, so a universal2 freeze would force source builds and
 likely fail.
 
-**Unsigned macOS first launch (Gatekeeper):** since the `.app` is unsigned and
-un-notarized, a copy downloaded from the Releases page is quarantined and macOS
-refuses it ("…is damaged and can't be opened"). To run it, drag
-`PyReconstruct.app` to `/Applications`, then clear the quarantine flag once:
+**Unsigned macOS first launch (Gatekeeper):** an unsigned, un-notarized `.app`
+(a local build, or a CI build without the signing secrets) downloaded from the
+Releases page is quarantined, and macOS refuses it. Its dmg carries
+`Read Before First Launch.html` with the steps. To run it, drag the app to
+`/Applications`, then clear the quarantine flag once:
 
     xattr -dr com.apple.quarantine /Applications/PyReconstruct.app
 
-(Apps pulled by the in-app updater over the API are generally not quarantined;
-this mainly affects browser downloads from the Releases page.)
+A signed dmg leaves the guide out, since a notarized app needs no such step.
 
 ## VTK 3D viewport: the main risk
 

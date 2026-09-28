@@ -33,8 +33,15 @@ mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"   # drag-and-drop target in the mounted dmg
 # Render the first-launch help for the app actually included in this image.
-"${PYTHON:-python3}" "$(dirname "$0")/render_first_launch.py" "$APP_NAME" "$GUIDE" "$ICON" \
-    "$STAGE/Read Before First Launch.html"
+# Only an unsigned app needs it: the guide walks users past Gatekeeper, and a
+# Developer ID app opens with no extra steps once it is notarized.
+SIGNATURE="$(codesign -dvv "$APP" 2>&1 || true)"
+if [[ "$SIGNATURE" == *"Authority=Developer ID Application"* ]]; then
+    echo "app is signed with a Developer ID; leaving out the first-launch guide"
+else
+    "${PYTHON:-python3}" "$(dirname "$0")/render_first_launch.py" "$APP_NAME" "$GUIDE" "$ICON" \
+        "$STAGE/Read Before First Launch.html"
+fi
 
 # hdiutil create intermittently fails with "Resource busy" on CI runners when a
 # stale diskimages-helper still holds a disk image. Retry with cleanup + backoff.

@@ -1,6 +1,6 @@
 name: build-installers
 
-# Builds unsigned one-click installers and publishes them to THIS repo's GitHub
+# Builds one-click installers and publishes them to THIS repo's GitHub
 # Releases for a cut release. Two channels:
 #
 #   * stable:  a clean vX.Y.Z tag on main -> a GitHub Release, the latest one,
@@ -13,7 +13,8 @@ name: build-installers
 # Any other tag shape that reaches here (vX.Y.ZrcN, vX.Y.ZaN, a dashed
 # pre-release) publishes as a pre-release with the WHATS_NEW body, as before.
 # The in-app updater (updater.GITHUB_REPO) reads these. Runs on the fork as-is
-# (no hardcoded owner). Signing is deferred (proof of concept).
+# (no hardcoded owner). The macOS app and dmg are signed with a Developer ID and
+# notarized when the signing secrets exist; the Windows installer is unsigned.
 #
 # Installers are built ONLY for a tag (or a manual workflow_dispatch), NOT on
 # every push to main. The former rolling "latest main" build that republished a
@@ -192,6 +193,47 @@ jobs:
           if ($p.ExitCode -ne 0) { Write-Error "frozen self-test failed (exit $($p.ExitCode))"; exit 1 }
           Write-Host "frozen self-test OK"
 
+      - name: Import the Developer ID certificate (macOS)
+        # Signing runs only where the five signing secrets exist, so a fork
+        # without them still builds the unsigned app. The certificate goes into
+        # a throwaway keychain that dies with the runner.
+        id: macsign
+        if: runner.os == 'macOS'
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          if [ -z "$MACOS_CERT_P12" ]; then
+            echo "::notice::no signing secrets; building an unsigned app"
+            echo "sign=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PW="$(openssl rand -base64 24)"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/devid.p12"
+          curl -fsSL -o "$RUNNER_TEMP/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$KEYCHAIN"
+          security import "$RUNNER_TEMP/devid.p12" -P "$MACOS_CERT_PASSWORD" -f pkcs12 -k "$KEYCHAIN" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/devid.p12"
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" | awk '/Developer ID Application/ { print $2; exit }')"
+          [ -n "$IDENTITY" ] || { echo "::error::no Developer ID Application identity in the certificate"; exit 1; }
+          echo "IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          echo "sign=true" >> "$GITHUB_OUTPUT"
+
+      - name: Sign the app (macOS)
+        # Before the self-test, so the test runs the app exactly as users get it,
+        # hardened runtime included.
+        if: runner.os == 'macOS' && steps.macsign.outputs.sign == 'true'
+        run: |
+          FLAVOR="$(cat packaging/FLAVOR 2>/dev/null | tr -d '[:space:]' || true)"
+          if [ "$FLAVOR" = "dev" ]; then APP_NAME="PyReconstruct Dev"; else APP_NAME="PyReconstruct"; fi
+          bash packaging/macos/sign_app.sh "dist/${APP_NAME}.app"
+
       - name: Frozen self-test (macOS) — catches windowed-only import bugs
         if: runner.os == 'macOS'
         run: |
@@ -234,6 +276,36 @@ jobs:
           mkdir -p dist-assets
           ARCH="${{ matrix.arch }}" bash packaging/macos/make_dmg.sh
           mv PyReconstruct-*.dmg dist-assets/
+
+      - name: Sign, notarize, and staple the dmg (macOS)
+        # notarytool waits for Apple's verdict and fails the leg on a rejection,
+        # printing Apple's log so the reason is in the run. The JSON parses may
+        # fail on purpose (no JSON when notarytool itself fails), so they never
+        # stop the step before the error line. Stapling attaches the
+        # ticket to the dmg, so Gatekeeper accepts it with no network.
+        if: runner.os == 'macOS' && steps.macsign.outputs.sign == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          DMG="$(ls dist-assets/PyReconstruct-*.dmg)"
+          codesign --force --timestamp --sign "$IDENTITY" "$DMG"
+          set +e
+          OUT="$(xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" \
+                 --team-id "$APPLE_TEAM_ID" --wait --timeout 45m --output-format json)"
+          set -e
+          echo "$OUT"
+          ID="$(echo "$OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)"
+          STATUS="$(echo "$OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' 2>/dev/null || true)"
+          if [ "$STATUS" != "Accepted" ]; then
+            [ -n "$ID" ] && xcrun notarytool log "$ID" --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" --team-id "$APPLE_TEAM_ID"
+            echo "::error::notarization status: ${STATUS:-no response}"
+            exit 1
+          fi
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
 
       - uses: actions/upload-artifact@v7
         with:
