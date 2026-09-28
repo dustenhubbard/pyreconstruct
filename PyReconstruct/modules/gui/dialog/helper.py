@@ -231,8 +231,10 @@ class ColumnValueInput(QWidget):
         vbl.setContentsMargins(0, 0, 0, 0)
         self.input_layout = QVBoxLayout()
         self.rows = []
+        # a value for a column that no longer exists has nowhere to go
         for col, value in (entries or {}).items():
-            self.add(col, value)
+            if col in self.columns:
+                self.add(col, value)
         if not self.rows:
             self.add()
         vbl.addLayout(self.input_layout)
@@ -253,8 +255,13 @@ class ColumnValueInput(QWidget):
     def _fillValues(self, col_combo, val_combo, value=""):
         val_combo.clear()
         val_combo.addItem("")
-        for opt in self.columns.get(col_combo.currentText(), []):
-            val_combo.addItem(str(opt))
+        opts = [str(opt) for opt in self.columns.get(col_combo.currentText(), [])]
+        for opt in opts:
+            val_combo.addItem(opt)
+        # A saved value that has since been removed from the column's options
+        # stays offered, so an untouched OK keeps it instead of dropping it.
+        if value and str(value) not in opts:
+            val_combo.addItem(str(value))
         val_combo.setCurrentText(str(value))
 
     def add(self, column="", value=""):
