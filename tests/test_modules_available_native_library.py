@@ -3,7 +3,7 @@
 Such a module can install from pip and still fail at import with an
 ``OSError`` when its system library is missing, because it ``dlopen``s the
 library at import time. PyReconstruct's first such module was ``cairosvg``,
-used by PNG export until that moved to QtSvg (fork #477). The guard catches the
+used by PNG export until that moved to QtSvg. The guard catches the
 ``OSError``, reports it with a platform remedy instead of offering a pip
 install that cannot help, and ``install_module`` treats an install that still
 cannot load as failed.

@@ -750,7 +750,7 @@ def test_png_render_keeps_a_section_image_over_qts_decode_limit(tmp_path):
 
 def test_svg_export_opens_a_section_image_past_pils_bomb_limit(
         exportable_series, tmp_path):
-    """PIL refuses an image over MAX_IMAGE_PIXELS (about 13377 x 13377) as a
+    """PIL refuses an image over twice MAX_IMAGE_PIXELS (about 13377 x 13377) as a
     decompression bomb. A section that large is the user's own image, so the
     export must open it, and must put PIL's limit back afterwards."""
     from PIL import Image as PILImage
@@ -759,7 +759,9 @@ def test_svg_export_opens_a_section_image_past_pils_bomb_limit(
     side = 14000
     big = Path(section.src_fp)
     PILImage.new("L", (side, side), 180).save(big, format="TIFF", compression="tiff_lzw")
-    assert side * side > PILImage.MAX_IMAGE_PIXELS, "fixture premise: past the limit"
+    assert side * side > 2 * PILImage.MAX_IMAGE_PIXELS, (
+        "fixture premise: past the point where PIL refuses, not only warns"
+    )
 
     before = PILImage.MAX_IMAGE_PIXELS
     out = tmp_path / "big.svg"
