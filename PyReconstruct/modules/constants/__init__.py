@@ -35,8 +35,7 @@ from .websites import (
 )
 
 from .developers import (
-    developers_names,
-    developers_emails,
+    developers_email,
     developers_mailto_str
 )
 

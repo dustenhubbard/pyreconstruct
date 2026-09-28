@@ -1,11 +1,9 @@
-developers_data = [
-    {"name": "Julian Falco", "email": "julian.falco@utexas.edu"},
-    {"name": "Michael Chirillo", "email": "m.chirillo@utexas.edu"}
-]
+"""Where Help > Email developers sends mail.
 
-developers_names = [person["name"] for person in developers_data]
+One shared address for this fork. The original developers' personal
+addresses used to live here; neither of them works on this fork.
+"""
 
-developers_emails = [person["email"] for person in developers_data]
+developers_email = "issues@pyreconstruct.org"
 
-developers_mailto_str = "mailto:" + ",".join(developers_emails)
-
+developers_mailto_str = "mailto:" + developers_email
