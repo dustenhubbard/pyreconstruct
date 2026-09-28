@@ -68,7 +68,18 @@ def export_svg(section_data, svg_fp) -> Union[str, Path]:
 
     else:
 
-        image=Image.open(img_fp)
+        # PIL refuses to open an image past MAX_IMAGE_PIXELS (about 13377 x
+        # 13377) as a decompression bomb, so a large section failed both SVG
+        # and PNG export (fork #477 review). This is the user's own section
+        # image, the same file PyReconstruct already displays, so the guard is
+        # lifted for this one open and put back after.
+        previous_limit = Image.MAX_IMAGE_PIXELS
+        Image.MAX_IMAGE_PIXELS = None
+        try:
+            image = Image.open(img_fp)
+            image.load()
+        finally:
+            Image.MAX_IMAGE_PIXELS = previous_limit
 
     buffered = BytesIO()
     image.save(buffered, format="PNG")
