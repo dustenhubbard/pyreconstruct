@@ -279,7 +279,9 @@ jobs:
 
       - name: Sign, notarize, and staple the dmg (macOS)
         # notarytool waits for Apple's verdict and fails the leg on a rejection,
-        # printing Apple's log so the reason is in the run. Stapling attaches the
+        # printing Apple's log so the reason is in the run. The JSON parses may
+        # fail on purpose (no JSON when notarytool itself fails), so they never
+        # stop the step before the error line. Stapling attaches the
         # ticket to the dmg, so Gatekeeper accepts it with no network.
         if: runner.os == 'macOS' && steps.macsign.outputs.sign == 'true'
         env:
@@ -294,8 +296,8 @@ jobs:
                  --team-id "$APPLE_TEAM_ID" --wait --timeout 45m --output-format json)"
           set -e
           echo "$OUT"
-          ID="$(echo "$OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))')"
-          STATUS="$(echo "$OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')"
+          ID="$(echo "$OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)"
+          STATUS="$(echo "$OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' 2>/dev/null || true)"
           if [ "$STATUS" != "Accepted" ]; then
             [ -n "$ID" ] && xcrun notarytool log "$ID" --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" --team-id "$APPLE_TEAM_ID"
             echo "::error::notarization status: ${STATUS:-no response}"

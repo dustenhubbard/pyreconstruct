@@ -77,3 +77,34 @@ Path(sys.argv[-1]).touch()
     assert order == sorted(order)
     assert "No such file or directory" in text and "Force Quit" in text
     assert "click Done. Do not click Move to Trash" in text
+
+
+def test_dmg_leaves_out_first_launch_help_for_a_signed_app(tmp_path):
+    packaging = tmp_path / "packaging"
+    shutil.copytree(ROOT / "packaging" / "macos", packaging / "macos")
+    (packaging / "FLAVOR").write_text("dev\n")
+    (tmp_path / "dist" / "PyReconstruct Dev.app").mkdir(parents=True)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    # A Developer ID signature, as codesign -dvv reports it on stderr.
+    codesign = bin_dir / "codesign"
+    codesign.write_text("#!/bin/sh\n"
+                        "echo 'Authority=Developer ID Application: Test (ABCDE12345)' >&2\n")
+    codesign.chmod(0o755)
+    hdiutil = bin_dir / "hdiutil"
+    hdiutil.write_text(f"#!{sys.executable}\n" + '''
+from pathlib import Path
+import sys
+stage = Path(sys.argv[sys.argv.index("-srcfolder") + 1])
+assert (stage / "PyReconstruct Dev.app").is_dir()
+assert (stage / "Applications").is_symlink()
+assert not (stage / "Read Before First Launch.html").exists()
+Path(sys.argv[-1]).touch()
+''')
+    hdiutil.chmod(0o755)
+    env = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+               PYR_PUBLIC="1.24.0.dev20260927", ARCH="arm64", TMPDIR=str(tmp_path))
+    result = subprocess.run(["bash", "packaging/macos/make_dmg.sh"], cwd=tmp_path,
+                            env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert "leaving out the first-launch guide" in result.stdout
