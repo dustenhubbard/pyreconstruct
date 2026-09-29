@@ -53,11 +53,22 @@ class RoiExporter:
         return output_fp
 
     def get_roi(self): 
-        """Get an ImageJ roi object."""
+        """Get an ImageJ roi object.
+
+        An open trace is a POLYLINE, never FREEHAND: ImageJ treats FREEHAND
+        as a closed shape, so an exported centerline came back closed and
+        measured an area instead of a length.
+        """
 
         roi = self.roi_mod.ImagejRoi.frompoints(self.coords)
-        
-        roi.roitype = self.roi_mod.ROI_TYPE.POLYGON if self.trace.closed else self.roi_mod.ROI_TYPE.FREEHAND
+
+        ROI_TYPE = self.roi_mod.ROI_TYPE
+        if len(self.coords) == 1:
+            roi.roitype = ROI_TYPE.POINT
+        elif self.trace.closed:
+            roi.roitype = ROI_TYPE.POLYGON
+        else:
+            roi.roitype = ROI_TYPE.POLYLINE
         roi.name = self.trace.name
 
         return roi

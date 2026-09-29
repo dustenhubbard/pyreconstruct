@@ -46,6 +46,46 @@ def test_the_exporter_refuses_to_half_construct(monkeypatch):
         roi_export.RoiExporter(trace, 0.002, 100)
 
 
+def _export_and_reimport(tmp_path, points, closed):
+    roifile = pytest.importorskip("roifile")
+    from PyReconstruct.modules.backend.exports.roi_export import RoiExporter
+    from PyReconstruct.modules.backend.imports.imagej_roi import Roi
+    from PyReconstruct.modules.datatypes import Trace
+
+    trace = Trace("dendrite", (255, 0, 0), closed=closed)
+    trace.points = points
+    fp = RoiExporter(trace, 0.002, 100).export_roi(tmp_path)
+    return roifile.ImagejRoi.fromfile(str(fp)).roitype, Roi(str(fp)).closed
+
+
+def test_an_open_trace_exports_as_an_open_roi(tmp_path):
+    # FREEHAND is a closed shape in ImageJ and in our own importer, so an
+    # open centerline used to come back closed and measure as an area.
+    roifile = pytest.importorskip("roifile")
+    pts = [(0.0, 0.0), (0.05, 0.02), (0.1, 0.0), (0.15, 0.03), (0.2, 0.0)]
+
+    roitype, closed = _export_and_reimport(tmp_path, pts, closed=False)
+    assert roitype == roifile.ROI_TYPE.POLYLINE
+    assert closed is False
+
+
+def test_a_closed_trace_still_exports_as_a_polygon(tmp_path):
+    roifile = pytest.importorskip("roifile")
+    pts = [(0.0, 0.0), (0.1, 0.0), (0.1, 0.1), (0.0, 0.1)]
+
+    roitype, closed = _export_and_reimport(tmp_path, pts, closed=True)
+    assert roitype == roifile.ROI_TYPE.POLYGON
+    assert closed is True
+
+
+def test_a_one_point_trace_exports_as_a_point_roi(tmp_path):
+    roifile = pytest.importorskip("roifile")
+
+    roitype, closed = _export_and_reimport(tmp_path, [(0.05, 0.05)], closed=False)
+    assert roitype == roifile.ROI_TYPE.POINT
+    assert closed is False
+
+
 # --- ROI import -----------------------------------------------------------------
 
 def _roi_from_points(points, roitype):
