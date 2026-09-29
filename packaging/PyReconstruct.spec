@@ -325,6 +325,15 @@ a = Analysis(
 #     as new as the build machine's. This follows the AppImage project's
 #     excludelist. Names with a hash suffix (libz-1a2b3c4d.so.1, vendored into
 #     a wheel by auditwheel) do not match and stay bundled, as they must.
+#
+#     The last two lines are libraries that nothing left in the bundle links
+#     (checked against every ELF file in the 2026-09-29 nightly AppImage):
+#     gnutls and its crypto chain, libsystemd with the gcrypt, libcap and lz4
+#     it pulls in, and pcre and pcre2-8. They come along as dependencies of
+#     libraries the host keeps (libdbus-1, glib, libselinux). Bundled, only a
+#     host library can load them, and then the build machine's older copy
+#     shadows the host's own: the excludelist's GNUTLS_3_6_9 failure when GIO
+#     loads glib-networking. liblzma stays, for Python's _lzma.
 if sys.platform.startswith("linux"):
     import re as _re
     _HOST_LIBS = _re.compile(
@@ -334,7 +343,9 @@ if sys.platform.startswith("linux"):
         r"glib-2\.0|gobject-2\.0|gio-2\.0|gmodule-2\.0|gthread-2\.0|mount|blkid|selinux|"
         r"X11|X11-xcb|ICE|SM|dbus-1|asound|"
         r"gpg-error|com_err|gssapi_krb5|krb5|k5crypto|krb5support|keyutils|p11-kit|"
-        r"GLdispatch|gbm|glapi|usb-1\.0"
+        r"GLdispatch|gbm|glapi|usb-1\.0|"
+        r"gnutls|nettle|hogweed|gmp|tasn1|idn2|unistring|"
+        r"systemd|gcrypt|cap|lz4|pcre|pcre2-8"
         r")\.so(\..*)?$"
     )
     _kept = []
