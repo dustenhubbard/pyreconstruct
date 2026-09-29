@@ -678,14 +678,16 @@ def test_welcome_note_reaches_the_stray_welcome_cases_too():
 
 
 # ---- the note is a claim about the installed app ----------------------------
-# `MainWindow.checkForUpdatesStartup` returns early unless
-# `install_kind() == "frozen"`, so anywhere else the note would be describing
+# `MainWindow.checkForUpdatesStartup` returns early unless the install kind is
+# "frozen", "appimage" or "linux-installer", so anywhere else the note would be describing
 # something that never happens. The gate compares against that one value rather
 # than testing for "not source": `install_kind` answers "source" for a git
 # checkout and a pip install alike today, and a kind added later should be
 # excluded until someone decides otherwise, not included by default.
 @pytest.mark.parametrize("kind,noted", [
     ("frozen", True),      # the installed app, the only one that checks
+    ("appimage", True),    # a frozen build too, and it runs the check
+    ("linux-installer", True),  # runs the check and names its command
     ("source", False),     # git checkout and pip install alike
     ("flatpak", False),    # a kind nobody has added yet: excluded by default
     ("", False),

@@ -18,8 +18,9 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar,
-    QPushButton,
+    QPushButton, QLineEdit, QApplication,
 )
+from PySide6.QtGui import QFontDatabase
 from PySide6.QtCore import Qt
 
 from PyReconstruct.modules.backend.threading import ThreadPool
@@ -182,7 +183,7 @@ class UpdateDialog(QDialog):
             return
         else:  # missing
             from PyReconstruct.modules.backend.updater.install_info import install_kind
-            if install_kind() == "frozen":
+            if install_kind() in ("frozen", "appimage"):
                 # A frozen build must never offer to run an unverifiable
                 # installer -- refuse outright and rely on the OS installer
                 # signature checks for what did verify.
@@ -235,3 +236,60 @@ class UpdateDialog(QDialog):
         if self._tmpdir:
             shutil.rmtree(self._tmpdir, ignore_errors=True)
             self._tmpdir = None
+
+
+class ReinstallDialog(QDialog):
+    """Names the command that updates an install the updater cannot replace.
+
+    The AppImage and the install.sh venv update by running their installer
+    again, so this dialog downloads nothing. It shows the command as
+    selectable text with a Copy button beside it.
+    """
+
+    def __init__(self, parent, info, app_name):
+        super().__init__(parent)
+        self.command = info["command"]
+        self.setWindowTitle(f"{app_name} Update")
+        self.setMinimumWidth(520)
+        lay = QVBoxLayout(self)
+
+        remote, local = info["remote_version"], info["local_version"]
+        lay.addWidget(QLabel(f"<b>Update available:</b> {remote}"))
+        text = QLabel(
+            (f"You have {local}. " if local else "")
+            + f"To update, close {app_name} and run this command in a terminal:"
+        )
+        text.setWordWrap(True)
+        lay.addWidget(text)
+
+        row = QHBoxLayout()
+        self.command_field = QLineEdit(self.command)
+        self.command_field.setReadOnly(True)
+        self.command_field.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))
+        self.command_field.setCursorPosition(0)
+        row.addWidget(self.command_field, 1)
+        self.copy_btn = QPushButton("Copy")
+        self.copy_btn.setToolTip("Copy the command to the clipboard")
+        self.copy_btn.clicked.connect(self.copyCommand)
+        row.addWidget(self.copy_btn)
+        lay.addLayout(row)
+
+        link = QLabel(
+            f'<a href="{github_release_url(remote)}">Release notes for {remote} ↗</a>'
+        )
+        link.setTextFormat(Qt.RichText)
+        link.setOpenExternalLinks(True)
+        lay.addWidget(link)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        close_btn = QPushButton("Close")
+        close_btn.setDefault(True)
+        close_btn.clicked.connect(self.accept)
+        buttons.addWidget(close_btn)
+        lay.addLayout(buttons)
+
+    def copyCommand(self):
+        """Put the command on the clipboard."""
+        QApplication.clipboard().setText(self.command)
+        self.copy_btn.setText("Copied")
