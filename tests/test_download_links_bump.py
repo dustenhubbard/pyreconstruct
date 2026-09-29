@@ -33,7 +33,9 @@ def _bumped(path: str, version: str) -> str:
 def test_the_job_edits_and_commits_every_file():
     step = _bump_step()
     assert f"FILES=({' '.join(FILES)})" in step
-    for use in ('"${FILES[@]}"\n', 'git diff --quiet "${FILES[@]}"', 'git add "${FILES[@]}"'):
+    sed_block = step[step.index("sed -E -i"):step.index("git diff --quiet")]
+    assert '"${FILES[@]}"' in sed_block
+    for use in ('git diff --quiet "${FILES[@]}"', 'git add "${FILES[@]}"'):
         assert use in step, use
 
 
