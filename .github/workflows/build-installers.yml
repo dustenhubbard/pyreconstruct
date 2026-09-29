@@ -444,7 +444,7 @@ jobs:
           V="$(python -m setuptools_scm)"
           case "$V" in
             0.0.0*|*unknown*)
-              echo "::error::setuptools-scm produced a fallback version ($V) — missing tags or fetch-depth:0?"
+              echo "::error::setuptools-scm produced a fallback version ($V): missing tags or fetch-depth:0?"
               exit 1 ;;
           esac
           if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(\.dev[0-9]{8})?$ && "$V" != "${GITHUB_REF_NAME#v}" ]]; then
@@ -505,7 +505,8 @@ jobs:
     # The AppImage on the distributions people run, each with only the base
     # libraries a desktop already has (the list per distribution is below).
     # --appimage-extract-and-run needs no FUSE, which containers lack. Nothing
-    # here publishes, and the release job does not wait on it.
+    # here publishes. The release job waits on it and leaves out an AppImage
+    # that failed here.
     needs: build-linux
     strategy:
       fail-fast: false
@@ -636,7 +637,7 @@ jobs:
           exit 1
 
   release:
-    needs: [build, build-linux]
+    needs: [build, build-linux, test-appimage]
     # publish whatever built, even if one matrix leg failed (don't hide a good installer)
     if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') && (needs.build.result == 'success' || needs.build.result == 'failure') && (needs.build-linux.result == 'success' || needs.build-linux.result == 'failure') }}
     runs-on: ubuntu-latest
@@ -698,6 +699,12 @@ jobs:
           SUFFIX=""
           [ "$FLAVOR" = "dev" ] && SUFFIX="-Dev"
           tar -czf "dist/PyReconstruct-${VERSION}-Linux-installer${SUFFIX}.tar.gz" "$STAGE"
+      - name: Hold back an AppImage that failed its distro tests
+        # A nightly goes live at once, and --dev installs the newest nightly
+        # that has an AppImage, so an untested one must not ship. The other
+        # installers still publish.
+        if: needs.test-appimage.result != 'success'
+        run: rm -f dist/*.AppImage dist/*.AppImage.sha256
       - name: Generate checksums
         run: cd dist && for f in *; do [ -f "$f" ] && sha256sum "$f" > "$f.sha256"; done
       - name: Build nightly release notes

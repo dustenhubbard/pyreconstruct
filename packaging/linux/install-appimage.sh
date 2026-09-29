@@ -52,8 +52,8 @@ Usage:
   install-appimage.sh --uninstall [--dev]   remove it
   install-appimage.sh --help
 
-  --dev        PyReconstruct Dev, the nightly build (installs beside the stable app)
-  --uninstall  remove the app, its launcher, menu entry, icon and file type
+  --dev        PyReconstruct Dev, the nightly build (installs beside PyReconstruct)
+  --uninstall  remove PyReconstruct, its launcher, menu entry, icon and file type
 
 Piped from curl, pass options after "bash -s --":
   curl -fsSL $INSTALLER_URL | bash -s -- --dev
@@ -126,6 +126,10 @@ if [ "$MODE" = "uninstall" ]; then
     say "$APP_NAME is not installed from its AppImage here (nothing at $APPROOT)."
     exit 0
   fi
+  if [ -d "$APPROOT" ] && ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    die "an install of $APP_NAME seems to be running (lock: $LOCK_DIR). If none is, remove that folder and re-run."
+  fi
+  trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
   if [ -e "$LAUNCHER" ]; then
     # Only a launcher this script wrote; never someone else's command.
     if grep -q "$LAUNCHER_TAG" "$LAUNCHER" 2>/dev/null; then
@@ -137,7 +141,7 @@ if [ "$MODE" = "uninstall" ]; then
   for f in "$DESKTOP" "$ICON" "$MIME_XML" "$APPIMAGE" "$MARKER"; do
     if [ -f "$f" ] || [ -L "$f" ]; then rm -f "$f" && note "removed $f"; fi
   done
-  rm -rf "$LOCK_DIR" 2>/dev/null || true
+  rmdir "$LOCK_DIR" 2>/dev/null || true
   if [ -d "$APPROOT" ]; then
     if rmdir "$APPROOT" 2>/dev/null; then
       note "removed $APPROOT"
@@ -189,9 +193,9 @@ fetch_api() {
   check_url "$1"
   if [ "$DL" = "curl" ]; then
     if [ -n "${GITHUB_TOKEN:-}" ]; then
-      curl -fsSL --retry 3 -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GITHUB_TOKEN" "$1"
+      curl -fsSL --proto-redir =https --retry 3 -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GITHUB_TOKEN" "$1"
     else
-      curl -fsSL --retry 3 -H "Accept: application/vnd.github+json" "$1"
+      curl -fsSL --proto-redir =https --retry 3 -H "Accept: application/vnd.github+json" "$1"
     fi
   else
     if [ -n "${GITHUB_TOKEN:-}" ]; then
@@ -206,8 +210,10 @@ fetch_api() {
 download() {
   check_url "$1"
   if [ "$DL" = "curl" ]; then
-    if [ -t 2 ]; then curl -fL --retry 3 -# -o "$2" "$1"; else curl -fsSL --retry 3 -o "$2" "$1"; fi
+    if [ -t 2 ]; then curl -fL --proto-redir =https --retry 3 -# -o "$2" "$1"; else curl -fsSL --proto-redir =https --retry 3 -o "$2" "$1"; fi
   else
+    # wget has no option to limit a redirect to https; the .sha256 check below
+    # still refuses a file that does not match.
     wget -q -O "$2" "$1"
   fi
 }
@@ -223,15 +229,9 @@ Remove it first, then re-run this installer:
     bash \"$APPROOT/uninstall.sh\""
 fi
 
-mkdir -p "$APPROOT" "$BIN_DIR" "$APPS_DIR" "$HICOLOR/512x512/apps" "$MIME_DIR/packages" 2>/dev/null || true
-for d in "$APPROOT" "$BIN_DIR" "$APPS_DIR" "$HICOLOR/512x512/apps" "$MIME_DIR/packages"; do
-  { [ -d "$d" ] && [ -w "$d" ]; } || die "cannot write to $d; check its permissions"
-done
-if [ -e "$LAUNCHER" ] && ! grep -q "$LAUNCHER_TAG" "$LAUNCHER" 2>/dev/null; then
-  die "$LAUNCHER already exists and this installer did not write it; move it aside and re-run"
-fi
-
 # ----------------------------------------------------------------------- lock
+# The trap is set before the first mkdir, so a first install that stops at the
+# permission checks below leaves no empty folder either.
 # Scratch files live in WORK, inside APPROOT so the finished download renames
 # into place on the same file system. TMP_L and TMP_D sit beside their targets
 # for the same reason. Each is removed by name: APPROOT may contain a space.
@@ -250,6 +250,14 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+mkdir -p "$APPROOT" "$BIN_DIR" "$APPS_DIR" "$HICOLOR/512x512/apps" "$MIME_DIR/packages" 2>/dev/null || true
+for d in "$APPROOT" "$BIN_DIR" "$APPS_DIR" "$HICOLOR/512x512/apps" "$MIME_DIR/packages"; do
+  { [ -d "$d" ] && [ -w "$d" ]; } || die "cannot write to $d; check its permissions"
+done
+if [ -e "$LAUNCHER" ] && ! grep -q "$LAUNCHER_TAG" "$LAUNCHER" 2>/dev/null; then
+  die "$LAUNCHER already exists and this installer did not write it; move it aside and re-run"
+fi
+
 if mkdir "$LOCK_DIR" 2>/dev/null; then
   OWN_LOCK="$LOCK_DIR"
 else
@@ -472,7 +480,7 @@ case ":${PATH:-}:" in
   *) note "($BIN_DIR is not on your PATH; add it, or run $LAUNCHER)" ;;
 esac
 if [ ! -c /dev/fuse ] || ! { have fusermount3 || have fusermount; }; then
-  note "FUSE is not available, so each launch unpacks the app first and starts more slowly."
+  note "FUSE is not available, so each launch unpacks $APP_NAME first and starts more slowly."
   note "Installing FUSE (the fuse3 package on most distributions) makes launches fast."
 fi
 printf '\n' >&2

@@ -227,6 +227,12 @@ resolve_source() {
 
 # --------------------------------- preflight ---------------------------------
 preflight() {
+  # The AppImage installer uses the same folder and command. Installing over it
+  # would leave uninstall.sh able to delete the AppImage, so ask for it to go.
+  if [ -f "$APPROOT/.appimage-install" ]; then
+    die "PyReconstruct is installed from its AppImage in $APPROOT. Remove it first, then re-run this installer:
+    curl -fsSL https://pyreconstruct.org/install.sh | bash -s -- --uninstall"
+  fi
   mkdir -p "$APPROOT" "$BIN_DIR" "$APPS_DIR" "$ICON_DIR" 2>/dev/null || true
   local d
   for d in "$APPROOT" "$BIN_DIR" "$APPS_DIR" "$ICON_DIR"; do

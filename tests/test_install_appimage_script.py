@@ -14,6 +14,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -279,6 +280,16 @@ def test_uninstall_keeps_a_launcher_it_did_not_write(env):
     assert not f["appimage"].exists()
 
 
+def test_uninstall_waits_for_a_running_install(env):
+    with FakeGitHub([stable_release("v1.24.0")]) as gh:
+        run(env, gh)
+        f = paths(env, "stable")
+        (f["root"] / ".install-lock").mkdir()
+        p = run(env, gh, "--uninstall", check=False)
+    assert p.returncode == 1 and "seems to be running" in p.stderr
+    assert f["appimage"].exists() and (f["root"] / ".install-lock").is_dir()
+
+
 # ---- refusals ------------------------------------------------------------------
 def test_refuses_to_overwrite_a_script_based_install(env):
     root = paths(env, "stable")["root"]
@@ -319,3 +330,33 @@ def test_refuses_plain_http_off_localhost(env):
 def test_unknown_option_prints_usage(env):
     p = subprocess.run(["bash", str(SCRIPT), "--bogus"], env=env, capture_output=True, text=True)
     assert p.returncode == 2 and "Usage:" in p.stderr
+
+
+def test_a_first_install_that_stops_early_leaves_no_folder(env):
+    bin_dir = Path(env["HOME"]) / ".local" / "bin"
+    bin_dir.parent.mkdir(parents=True)
+    bin_dir.write_text("not a folder")
+    with FakeGitHub([stable_release("v1.24.0")]) as gh:
+        p = run(env, gh, check=False)
+    assert p.returncode == 1 and "cannot write" in p.stderr
+    assert not paths(env, "stable")["root"].exists()
+
+
+def test_every_curl_call_keeps_redirects_on_https():
+    calls = [l for l in SCRIPT.read_text().splitlines()
+             if "curl -f" in l and not l.lstrip().startswith("#") and "$INSTALLER_URL" not in l]
+    assert len(calls) == 3, calls
+    for line in calls:
+        assert line.count("curl -f") == line.count("--proto-redir =https"), line
+
+
+@pytest.mark.skipif(sys.version_info[:2] != (3, 11), reason="install.sh needs a Python 3.11")
+def test_source_installer_refuses_to_install_over_the_appimage(env):
+    root = paths(env, "stable")["root"]
+    root.mkdir(parents=True)
+    (root / ".appimage-install").write_text("flavor=stable\n")
+    p = subprocess.run(["bash", str(ROOT / "packaging" / "linux" / "install.sh")],
+                       env={**env, "PYRECON_PYTHON": sys.executable},
+                       capture_output=True, text=True, timeout=60)
+    assert p.returncode == 1 and "--uninstall" in p.stderr, p.stderr
+    assert sorted(x.name for x in root.iterdir()) == [".appimage-install"]

@@ -74,3 +74,11 @@ def test_readme_bump_moves_an_appimage_link_to_the_new_version():
     )
     out = subprocess.run(args, input=old, capture_output=True, text=True, check=True).stdout
     assert out == old.replace("1.24.0", "1.25.0")
+
+
+def test_release_leaves_out_an_appimage_that_failed_its_distro_tests():
+    workflow = (ROOT / ".github" / "workflows" / "build-installers.yml").read_text()
+    job = workflow[workflow.index("\n  release:\n"):workflow.index("\n  readme-bump:\n")]
+    assert "needs: [build, build-linux, test-appimage]" in job
+    hold = job.index("if: needs.test-appimage.result != 'success'")
+    assert job.index("run: rm -f dist/*.AppImage dist/*.AppImage.sha256", hold) < job.index("- name: Generate checksums")
