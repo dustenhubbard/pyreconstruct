@@ -1,6 +1,18 @@
 import os, sys, importlib
 from pathlib import Path
 
+# In-place update helper: `<exe> __apply_update__ <staging> [--pid N]` swaps a
+# staged build into place after this app quits. It has to run before anything
+# below imports Qt, since the swap renames the folder Qt would load from, and
+# it only ever runs on that exact first argument. apply.py is stdlib only; the
+# package imports on the way to it (the updater and constants packages) pull
+# in no Qt either, which tests/test_run_apply_dispatch.py checks.
+if len(sys.argv) > 1 and sys.argv[1] == "__apply_update__":
+    if not getattr(sys, "frozen", False):
+        sys.path.append(str(Path(__file__).parents[1]))
+    from PyReconstruct.modules.backend.updater.apply import main as _apply_update
+    sys.exit(_apply_update(sys.argv[2:]))
+
 # In a frozen build, multiprocessing (spawn -- the default on macOS and Windows)
 # re-runs THIS executable for every worker process. Intercept that re-launch
 # here, before the heavy GUI/VTK imports below, so a worker runs its task
