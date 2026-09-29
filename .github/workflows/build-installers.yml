@@ -15,7 +15,9 @@ name: build-installers
 # The in-app updater (updater.GITHUB_REPO) reads these. Runs on the fork as-is
 # (no hardcoded owner). The macOS app and dmg are signed with a Developer ID and
 # notarized when the signing secrets exist, which is only on a v* tag (see the
-# build job's `environment`); the Windows installer is unsigned.
+# build job's `environment`); the Windows installer is unsigned. The release
+# job lists every asset in SHA256SUMS and signs it with minisign, which the
+# in-app updater checks before it runs an installer.
 #
 # Installers are built ONLY for a tag (or a manual workflow_dispatch), NOT on
 # every push to main. The former rolling "latest main" build that republished a
@@ -641,6 +643,10 @@ jobs:
     # publish whatever built, even if one matrix leg failed (don't hide a good installer)
     if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') && (needs.build.result == 'success' || needs.build.result == 'failure') && (needs.build-linux.result == 'success' || needs.build-linux.result == 'failure') }}
     runs-on: ubuntu-latest
+    # The same rule as the build job: the `release` environment, and with it
+    # UPDATE_SIGNING_KEY, only on a v* tag. Only the "Sign SHA256SUMS" step
+    # reads the key; no other job asks for the environment.
+    environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'release' || '' }}
     permissions:
       contents: write
       actions: write   # dispatches prune-nightlies and link-check after a publish
@@ -707,6 +713,80 @@ jobs:
         run: rm -f dist/*.AppImage dist/*.AppImage.sha256
       - name: Generate checksums
         run: cd dist && for f in *; do [ -f "$f" ] && sha256sum "$f" > "$f.sha256"; done
+      - name: Write the update manifest and SHA256SUMS
+        # After the per-file .sha256 files, which clients from before signing
+        # still read, and before the signing step. SHA256SUMS lists every asset
+        # but the .sha256 files, the manifest included; see the script for what
+        # each file holds. The flavor is read as the Linux installer step reads it.
+        run: |
+          FLAVOR="$(cat packaging/FLAVOR 2>/dev/null | tr -d '[:space:]' || true)"
+          python3 scripts/release_update_files.py dist --tag "$GITHUB_REF_NAME" --flavor "${FLAVOR:-stable}"
+      - name: Install minisign
+        # The upstream 0.12 static binary, pinned by the tarball's SHA-256. The
+        # pin was taken after checking the tarball against its .minisig with
+        # the author's published key,
+        # RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3. The signing
+        # step runs it by the absolute path this step records.
+        env:
+          MINISIGN_URL: https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz
+          MINISIGN_SHA256: 9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73
+        run: |
+          set -euo pipefail
+          DIR="$RUNNER_TEMP/minisign"
+          mkdir -p "$DIR"
+          curl -fsSL --retry 3 -o "$DIR/minisign.tar.gz" "$MINISIGN_URL"
+          echo "$MINISIGN_SHA256  $DIR/minisign.tar.gz" | sha256sum -c -
+          tar -xzf "$DIR/minisign.tar.gz" -C "$DIR" minisign-linux/x86_64/minisign
+          echo "MINISIGN=$DIR/minisign-linux/x86_64/minisign" >> "$GITHUB_ENV"
+          "$DIR/minisign-linux/x86_64/minisign" -v
+      - name: Sign SHA256SUMS
+        # The only step that sees UPDATE_SIGNING_KEY, a minisign secret key
+        # with no password. It runs no action and nothing from a package
+        # index. The key reaches minisign through a pipe, never a file, so no
+        # later step can read it, and it is never printed. The trusted comment
+        # names the tag, which PyReconstruct checks, so one release's list
+        # cannot be served as another's.
+        #
+        # Before anything publishes, the new signature is checked against the
+        # two public keys PyReconstruct trusts (signing_keys.py; a test keeps
+        # this list and that module the same). A signature that fails would
+        # make every client refuse the update, so it fails the release instead.
+        #
+        # No key (a fork, or the secret not set yet): SHA256SUMS ships without
+        # a signature and PyReconstruct keeps using the per-file .sha256.
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          UPDATE_PUBLIC_KEYS: >-
+            RWRBDHdp5oDg6X8z9UrV+9/9lxyAu+oumUM+2ZWO0uPTzZOXAULNg5R1
+            RWSLnrPP6fYhlcLSl/iYXcHAgH2PQC/EPVfI9l2CBFb8G35mY1UoyTUp
+        run: |
+          set -euo pipefail
+          if [ -z "${UPDATE_SIGNING_KEY:-}" ]; then
+            echo "::notice::UPDATE_SIGNING_KEY is not set, so SHA256SUMS ships unsigned"
+            exit 0
+          fi
+          secret_key() {
+            case "$UPDATE_SIGNING_KEY" in
+              "untrusted comment:"*) printf '%s\n' "$UPDATE_SIGNING_KEY" ;;
+              *) printf 'untrusted comment: minisign secret key\n%s\n' "$UPDATE_SIGNING_KEY" ;;
+            esac | tr -d '\r'
+          }
+          COMMENT="tag:${GITHUB_REF_NAME} file:SHA256SUMS"
+          "$MINISIGN" -S -s <(secret_key) -t "$COMMENT" \
+            -m dist/SHA256SUMS -x dist/SHA256SUMS.minisig < /dev/null > /dev/null
+          unset UPDATE_SIGNING_KEY
+          for KEY in $UPDATE_PUBLIC_KEYS; do
+            if GOT="$("$MINISIGN" -V -Q -P "$KEY" -m dist/SHA256SUMS -x dist/SHA256SUMS.minisig 2> /dev/null)"; then
+              if [ "$GOT" != "$COMMENT" ]; then
+                echo "::error::SHA256SUMS.minisig has the trusted comment '$GOT', expected '$COMMENT'"
+                exit 1
+              fi
+              echo "SHA256SUMS signed; trusted comment: $GOT"
+              exit 0
+            fi
+          done
+          echo "::error::SHA256SUMS.minisig does not verify against a key PyReconstruct trusts"
+          exit 1
       - name: Build nightly release notes
         # A nightly gets GitHub's auto-generated notes (the merged pull requests
         # and a compare link), measured against the previous release on the

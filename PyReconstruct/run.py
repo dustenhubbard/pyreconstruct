@@ -188,6 +188,13 @@ if __name__ == "__main__":
         if _img.pixelColor(2, 2).red() != 255:
             print("selftest failed: QtSvg did not render")
             sys.exit(1)
+        # The updater checks release signatures with its own Ed25519 code and
+        # hashlib's BLAKE2b; make sure both work in this build.
+        from PyReconstruct.modules.backend.updater import minisign as _minisign
+        from PyReconstruct.modules.backend.updater.signing_keys import TRUSTED_KEYS
+        if not _minisign.selftest(TRUSTED_KEYS):
+            print("selftest failed: update signature check does not work")
+            sys.exit(1)
         # Reaching here means the full GUI + 3D/scientific import chain succeeded.
         # CI runs the frozen exe with this flag to catch windowed-only import
         # failures (e.g. None stdout) without launching the UI.

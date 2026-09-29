@@ -2,8 +2,9 @@
 
 The frozen app can't ``pip install`` or use git, so "update" means: query the
 GitHub Releases API, pick the installer asset for this platform/channel,
-download it (with progress), optionally verify its SHA-256, then launch the
-installer and quit. The dev/source update path stays in ``cli.py``.
+download it (with progress), verify its SHA-256 against the release's signed
+``SHA256SUMS`` (or its ``.sha256`` file when no signature is published), then
+launch the installer and quit. The dev/source update path stays in ``cli.py``.
 
 Module-level imports are stdlib + ``packaging`` only (no Qt, no app imports), so
 the pure functions here are unit-testable in isolation; ``install_info`` is
@@ -468,6 +469,123 @@ def fetch_checksum(release, asset_name):
 def _download_text(url, timeout=15):
     with _open_download(url, timeout=timeout) as resp:
         return resp.read().decode("utf-8", "replace")
+
+
+# The signed checksum list each release carries, and its minisign signature.
+# The release job writes SHA256SUMS (every asset but the .sha256 files and
+# itself, in sha256sum's format) and signs it with the key whose public half is
+# in ``signing_keys``. Its trusted comment names the tag, so the list from one
+# release cannot be passed off as another's.
+SUMS_ASSET = "SHA256SUMS"
+SIGNATURE_ASSET = "SHA256SUMS.minisig"
+
+# Both files are a few kilobytes; anything much bigger is not ours.
+_MAX_SIGNED_BYTES = 1 << 20
+
+_SUMS_LINE_RE = re.compile(r"([0-9a-fA-F]{64}) [ *](.+)")
+
+
+def _download_bytes(url, limit=_MAX_SIGNED_BYTES, timeout=15):
+    """The exact bytes at ``url``; raise RuntimeError past ``limit``.
+
+    Exact bytes, not text, because a signature covers the bytes as published.
+    """
+    with _open_download(url, timeout=timeout) as resp:
+        data = resp.read(limit + 1)
+    if len(data) > limit:
+        raise RuntimeError(f"Refusing an oversized download: {url}")
+    return data
+
+
+def parse_sums(data):
+    """``{name: sha256}`` from a sha256sum-format list.
+
+    Lines that do not parse are skipped. A name listed twice with different
+    hashes is dropped, so it reads as not listed rather than as either hash.
+    """
+    sums, conflicts = {}, set()
+    for line in data.decode("utf-8", "replace").splitlines():
+        m = _SUMS_LINE_RE.fullmatch(line.rstrip("\r"))
+        if not m:
+            continue
+        digest, name = m.group(1).lower(), m.group(2)
+        if sums.get(name, digest) != digest:
+            conflicts.add(name)
+        sums[name] = digest
+    for name in conflicts:
+        del sums[name]
+    return sums
+
+
+def trusted_comment_fields(comment):
+    """``{key: value}`` from a trusted comment such as ``tag:v1.24.0 file:SHA256SUMS``."""
+    fields = {}
+    for token in (comment or "").split():
+        key, sep, value = token.partition(":")
+        if sep:
+            fields[key] = value
+    return fields
+
+
+def fetch_signed_checksum(release, asset_name, trusted_keys=None):
+    """Return ``(status, digest)`` for ``asset_name`` from the signed SHA256SUMS.
+
+    * ``('absent', None)``: the release publishes no signature, so the caller
+      falls back to :func:`fetch_checksum` (releases from before signing, or
+      one built without the signing key).
+    * ``('ok', hex)``: the signature is valid, made by a compiled-in key, names
+      this release's tag, and SHA256SUMS lists the asset.
+    * ``('bad_signature', None)``: a signature is published but is invalid,
+      malformed, by an unknown key, names another tag, or has no SHA256SUMS
+      beside it. Refuse the update.
+    * ``('unlisted', None)``: the signature is valid but SHA256SUMS does not
+      list the asset. Refuse the update.
+    * ``('error', None)``: either file was published but could not be fetched.
+      Refuse, and let the user try again.
+    """
+    from PyReconstruct.modules.backend.updater import minisign
+    from PyReconstruct.modules.backend.updater.signing_keys import TRUSTED_KEYS
+
+    if trusted_keys is None:
+        trusted_keys = TRUSTED_KEYS
+    assets = {a.get("name"): a for a in (release or {}).get("assets") or []
+              if isinstance(a, dict)}
+    sig_asset = assets.get(SIGNATURE_ASSET)
+    if sig_asset is None:
+        return ("absent", None)
+    sums_asset = assets.get(SUMS_ASSET)
+    if sums_asset is None:
+        return ("bad_signature", None)
+    try:
+        signature = _download_bytes(sig_asset["browser_download_url"])
+        sums = _download_bytes(sums_asset["browser_download_url"])
+    except Exception:
+        return ("error", None)
+    try:
+        comment = minisign.verify(sums, signature, trusted_keys)
+    except minisign.SignatureError:
+        return ("bad_signature", None)
+    fields = trusted_comment_fields(comment)
+    tag = (release or {}).get("tag_name")
+    if not tag or fields.get("tag") != tag or fields.get("file") != SUMS_ASSET:
+        return ("bad_signature", None)
+    digest = parse_sums(sums).get(asset_name)
+    if digest is None:
+        return ("unlisted", None)
+    return ("ok", digest)
+
+
+def verified_checksum(release, asset_name):
+    """The checksum the installer must match: signed if published, else per file.
+
+    Returns :func:`fetch_signed_checksum`'s statuses, except that a release
+    with no signature goes through :func:`fetch_checksum` and returns one of
+    its statuses ('ok', 'missing', 'error') instead of 'absent'.
+    """
+    status, digest = fetch_signed_checksum(release, asset_name)
+    if status == "absent":
+        return fetch_checksum(release, asset_name)
+    return (status, digest)
 
 
 def launch_installer(path):

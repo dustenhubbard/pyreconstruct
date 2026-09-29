@@ -23,5 +23,7 @@ from .updater import (
     other_flavor_url,
     download_asset,
     fetch_checksum,
+    fetch_signed_checksum,
+    verified_checksum,
     launch_installer,
 )
