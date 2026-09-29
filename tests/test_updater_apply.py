@@ -33,7 +33,7 @@ DEV_ID = "edu.utexas.synapseweb.pyreconstruct.dev"
 UNINSTALL_KEY = A._UNINSTALL_KEY_PREFIX + "{A1B2C3D4-E5F6-47A8-9B0C-1D2E3F4A5B6C}_is1"
 
 FAST = A.Timings(pid_exit=2, selftest=5, health=2, lock_retry=0.05, lock_wait=0.2,
-                 kill_wait=0.5, interval=0.01, poll=0.01)
+                 kill_wait=0.5, interval=0.01, poll=0.01, backoff_max=0.04)
 
 
 def _can_symlink(tmp_path_factory):
@@ -80,7 +80,7 @@ def macos_tree(root, version, links, app_name="PyReconstruct", bundle_id=STABLE_
     _write(root, f"Contents/MacOS/{app_name}", f"exe {version}", 0o755)
     fw = "Contents/Frameworks/Python.framework"
     _write(root, f"{fw}/Versions/A/Python", f"libpython {version}", 0o755)
-    _write(root, "version.txt", version)
+    _write(root, "Contents/Resources/version.txt", version)
     os.makedirs(os.path.join(root, "Contents", "Resources", "empty"))
     if links:
         os.symlink("A", os.path.join(root, *f"{fw}/Versions/Current".split("/")))
@@ -120,7 +120,12 @@ class World:
         self.quits_on_start = set()
         self.launch_error = None
         self.registry = {}
+        self.install_locations = {}
         self.rename_hook = None
+        self.on_poll = None       # called on every processes_under, to change the world mid-wait
+        self.slow_start = set()   # versions that report healthy only once the helper looks
+        self.pending_health = {}
+        self.start_times = {}
         self.install = None
         self.staging = None
 
@@ -128,6 +133,7 @@ class World:
         pid = self.next_pid
         self.next_pid += 1
         self.alive[pid] = exe
+        self.start_times[pid] = f"started-{pid}"
         return pid
 
 
@@ -148,13 +154,19 @@ class FakePlatform(A.Platform):
             raise self.w.launch_error
         self.w.launches.append(list(argv))
         pid = self.w.spawn(argv[0])
-        marker = os.path.join(self.w.install, "version.txt") if os.path.isdir(self.w.install) else self.w.install
+        marker = self.w.install
+        if os.path.isdir(marker):
+            marker = next(m for m in (os.path.join(marker, "version.txt"),
+                                      os.path.join(marker, "Contents", "Resources", "version.txt"))
+                          if os.path.exists(m))
         with open(marker, "rb") as f:
             text = f.read().decode()
         version = OLD_V if OLD_V in text else NEW_V
         self.w.versions[pid] = version
         if version in self.w.quits_on_start:
             del self.w.alive[pid]
+        elif self.w.healthy.get(version) and version in self.w.slow_start:
+            self.w.pending_health[pid] = version
         elif self.w.healthy.get(version):
             A.write_health(self.w.staging, version, pid)
         return pid
@@ -164,7 +176,19 @@ class FakePlatform(A.Platform):
         return self.w.selftest_code
 
     def processes_under(self, path):
-        return [p for p, exe in self.w.alive.items() if A._inside(exe, os.path.abspath(path))]
+        if self.w.on_poll:
+            self.w.on_poll()
+        for pid, version in list(self.w.pending_health.items()):
+            if pid in self.w.alive:
+                A.write_health(self.w.staging, version, pid)
+            del self.w.pending_health[pid]
+        return [p for p, exe in self.w.alive.items() if A._at_or_inside(exe, os.path.abspath(path))]
+
+    def start_time(self, pid):
+        return self.w.start_times.get(pid) if pid in self.w.alive else None
+
+    def install_location(self, key):
+        return self.w.install_locations.get(key)
 
     def set_display_version(self, key, version):
         self.w.registry[key] = version
@@ -211,6 +235,8 @@ class Setup:
                 self.new_snap[name] = self.old_snap[name]
         self.world.install = self.install
         self.world.staging = self.staging
+        if style == "windows":
+            self.world.install_locations[UNINSTALL_KEY] = self.install + "\\"  # as Inno Setup writes it
         app_pid = self.world.spawn(self.install)
         del self.world.alive[app_pid]  # the app has already quit
         self.plan = {
@@ -423,7 +449,8 @@ def test_recovery_waits_while_the_first_helper_is_alive(win):
     with pytest.raises(Crash):
         win.applier(crashing_at(("swap_out", "end"), "after")).run()
     state = win.read("state.json")
-    state["helper_pid"] = win.world.spawn("still-running-helper")
+    helper = win.world.spawn("still-running-helper")
+    state["helper_pid"], state["helper_start"] = helper, win.world.start_times[helper]
     A.atomic_write_json(os.path.join(win.staging, "state.json"), state)
 
     result = win.applier().run()
@@ -431,6 +458,110 @@ def test_recovery_waits_while_the_first_helper_is_alive(win):
     assert result["status"] == "busy"
     assert not os.path.lexists(win.install)  # it left the half-done swap to its owner
     assert win.read("state.json")["status"] == "running"
+
+
+def test_recovery_ignores_a_reused_helper_pid(win):
+    """The dead helper's pid now belongs to another process, which started later."""
+    with pytest.raises(Crash):
+        win.applier(crashing_at(("swap_out", "end"), "after")).run()
+    state = win.read("state.json")
+    stranger = win.world.spawn("some-other-program")
+    state["helper_pid"], state["helper_start"] = stranger, "started-long-ago"
+    A.atomic_write_json(os.path.join(win.staging, "state.json"), state)
+
+    win.applier().run()
+
+    assert win.settled() == "old"
+    assert stranger in win.world.alive
+
+
+def test_a_reused_launched_pid_is_neither_trusted_nor_killed(win):
+    """The new version died with the helper, and its pid went to a stranger outside the install."""
+    win.world.healthy[NEW_V] = False
+    with pytest.raises(Crash):
+        win.applier(crashing_at(("launch", "end"), "after")).run()
+    pid = win.read("state.json")["launched_pid"]
+    win.world.alive[pid] = os.path.join(os.sep, "usr", "bin", "stranger")
+
+    result = win.applier(timings=replace(FAST, health=30)).run()
+
+    assert result["status"] == "rolled_back"
+    assert "quit before" in result["reason"]  # not a 30 second wait on the stranger
+    assert pid not in win.world.kills and pid in win.world.alive
+    assert win.settled() == "old"
+
+
+def test_recovery_adopts_a_new_version_launched_by_the_dead_run(win):
+    """The helper died after starting the new version but before recording its pid."""
+    win.world.slow_start.add(NEW_V)
+    with pytest.raises(Crash):
+        win.applier(crashing_at(("launch", "end"), "before")).run()
+    assert win.read("state.json")["launched_pid"] is None
+
+    assert win.applier().run()["status"] == "updated"
+
+    new_launches = [p for p, v in win.world.versions.items() if v == NEW_V]
+    assert len(new_launches) == 1, "started a second copy"
+    assert new_launches[0] in win.world.alive and new_launches[0] not in win.world.kills
+    assert win.settled() == "new"
+
+
+def test_a_second_helper_touches_nothing(win):
+    held = A.take_lock(win.staging)
+    assert held is not None
+    try:
+        result = win.applier().run()
+    finally:
+        A.release_lock(held)
+
+    assert result["status"] == "busy"
+    _untouched(win)
+    for name in ("state.json", "result.json", "helper.log"):
+        assert not os.path.exists(os.path.join(win.staging, name)), name
+    assert win.applier().run()["status"] == "updated"  # the lock goes with its holder
+
+
+def test_restore_keeps_trying_until_the_old_version_is_back(win):
+    """Nothing starts another helper once PyReconstruct is gone, so this run must not give up."""
+    win.world.healthy[NEW_V] = False
+    fails = []
+
+    def hook(src, dst):
+        if src == os.path.join(win.staging, "old") and len(fails) < 12:
+            fails.append(src)
+            raise PermissionError(32, "in use", src)
+
+    win.world.rename_hook = hook
+    result = win.applier(timings=replace(FAST, health=0.05, lock_retry=0.01)).run()
+
+    assert result["status"] == "rolled_back"
+    assert len(fails) == 12
+    assert win.settled() == "old"
+    with open(os.path.join(win.staging, "helper.log"), encoding="utf-8") as f:
+        assert f.read().count("putting the old version back, try") == 12
+
+
+def test_a_stuck_run_keeps_its_backup(win):
+    """After a stuck end, old/ may be the only copy of the install."""
+    old = os.path.join(win.staging, "old")
+    _write(old, "only-copy.txt", "precious")
+    A.atomic_write_json(os.path.join(win.staging, "state.json"),
+                        {"format": 1, "status": "done", "result": "stuck", "installed": None})
+
+    result = win.applier().run()
+
+    assert result["status"] == "refused"
+    with open(os.path.join(old, "only-copy.txt")) as f:
+        assert f.read() == "precious"
+
+
+def test_a_leftover_backup_after_an_update_is_cleared(win):
+    old = os.path.join(win.staging, "old")
+    _write(old, "stale.txt", "x")
+    A.atomic_write_json(os.path.join(win.staging, "state.json"),
+                        {"format": 1, "status": "done", "result": "updated", "installed": "new"})
+    assert win.applier().run()["status"] == "updated"
+    assert not os.path.lexists(old)
 
 
 # --- Early ends ---------------------------------------------------------------------------
@@ -444,10 +575,16 @@ def test_failed_selftest_touches_nothing(win):
     assert win.read("failed-versions.json")["versions"] == [NEW_V]
 
 
-def test_selftest_timeout_counts_as_a_failure(win):
+def test_selftest_timeout_defers_and_three_offer_the_installer(win):
+    """A first Defender scan can be slow, so a timeout is not held against the version."""
     win.world.selftest_code = None
-    assert win.applier().run()["status"] == "selftest_failed"
-    _untouched(win)
+    for count in (1, 2, 3):
+        result = win.applier().run()
+        assert result["status"] == "deferred" and "timed out" in result["reason"]
+        assert result["deferrals"] == count
+        assert result["offer_installer"] is (count >= A.MAX_DEFERRALS)
+        _untouched(win)
+    assert win.read("failed-versions.json") is None
 
 
 def test_health_timeout_rolls_back(win):
@@ -517,17 +654,27 @@ def test_lock_that_clears_is_retried(win):
             raise PermissionError(32, "in use", src)
 
     win.world.rename_hook = hook
-    assert win.applier().run()["status"] == "updated"
+    # a retry window far longer than three tries take, however slow the runner
+    assert win.applier(timings=replace(FAST, lock_retry=5)).run()["status"] == "updated"
     assert len(tries) == 3
 
 
 def test_lock_held_by_a_process_is_waited_out(win):
-    """Past the plain retry window, a process still running from the folder keeps it waiting."""
-    holder = win.world.spawn(os.path.join(win.install, "_internal", "worker.exe"))
+    """Past the plain retry window, a process still running from the folder keeps it waiting.
+
+    The worker starts after the helper's check that nothing runs from the
+    install, as one could, and holds the folder until it exits.
+    """
+    holder = None
     tries = []
 
     def hook(src, dst):
-        if src == win.install and holder in win.world.alive:
+        nonlocal holder
+        if src != win.install:
+            return
+        if holder is None:
+            holder = win.world.spawn(os.path.join(win.install, "_internal", "worker.exe"))
+        if holder in win.world.alive:
             tries.append(src)
             if len(tries) >= 30:
                 del win.world.alive[holder]  # the worker exits
@@ -547,9 +694,97 @@ def test_second_rename_failure_puts_the_old_version_back(win):
     _untouched(win)
 
 
+def test_a_second_running_copy_defers_the_swap(tmp_path):
+    """macOS renames a folder with a program running from it without complaint, so the helper checks."""
+    s = Setup(tmp_path, "macos")
+    other = s.world.spawn(s.exe(s.install))
+    result = s.applier().run()
+    assert result["status"] == "deferred"
+    assert "still running" in result["reason"]
+    _untouched(s)
+    assert other in s.world.alive
+
+
+def test_a_second_copy_that_quits_is_waited_for(tmp_path):
+    s = Setup(tmp_path, "macos")
+    other = s.world.spawn(s.exe(s.install))
+    polls = []
+
+    def quits_later():
+        polls.append(1)
+        if len(polls) == 5:
+            s.world.alive.pop(other, None)
+
+    s.world.on_poll = quits_later
+    assert s.applier(timings=replace(FAST, lock_wait=10)).run()["status"] == "updated"
+    assert s.settled() == "new"
+
+
+def test_display_version_is_written_only_for_this_install(win):
+    win.world.install_locations[UNINSTALL_KEY] = os.path.join(os.sep, "Somewhere", "Else") + "\\"
+    assert win.applier().run()["status"] == "updated"
+    assert win.world.registry == {}
+    with open(os.path.join(win.staging, "helper.log"), encoding="utf-8") as f:
+        assert "DisplayVersion not set to" in f.read()
+
+
+def test_display_version_matches_the_install_in_any_case(win):
+    win.world.install_locations[UNINSTALL_KEY] = win.install.upper().replace("/", "\\") + "\\"
+    assert win.applier().run()["status"] == "updated"
+    assert win.world.registry == {UNINSTALL_KEY: NEW_V}
+
+
+def test_display_version_is_skipped_when_the_entry_has_no_location(win):
+    del win.world.install_locations[UNINSTALL_KEY]
+    assert win.applier().run()["status"] == "updated"
+    assert win.world.registry == {}
+
+
+def test_main_leaves_the_install_as_its_working_folder(win, monkeypatch):
+    """Windows cannot rename a folder that is some process's working folder, the helper's included."""
+    seen = []
+
+    class Recorder:
+        def __init__(self, staging, platform, **kw):
+            seen.append(os.getcwd())
+
+        def run(self):
+            return {"installed": "old"}
+
+    monkeypatch.chdir(win.install)
+    monkeypatch.setattr(A, "Applier", Recorder)
+    assert A.main([A.APPLY_ARG, win.staging]) == 1
+    assert [os.path.realpath(p) for p in seen] == [os.path.realpath(win.staging)]
+
+
 # --- Refusals: nothing is touched --------------------------------------------------------
 
-def _refused(s, fragment):
+def test_refuses_an_install_holding_someone_elses_files(win):
+    """A series saved inside the install folder would be deleted with the old version."""
+    _write(win.install, "my work/cells.jser", '{"series": "mine"}')
+    win.old_snap = snapshot(win.install)
+    _refused(win)
+    assert win.read("result.json")["offer_installer"] is True
+    with open(os.path.join(win.install, "my work", "cells.jser")) as f:
+        assert f.read() == '{"series": "mine"}'
+
+
+def test_refuses_a_bundle_with_anything_beside_contents(tmp_path):
+    s = Setup(tmp_path, "macos")
+    _write(s.install, "notes.txt", "mine")
+    s.old_snap = snapshot(s.install)
+    _refused(s, "notes.txt")
+
+
+def test_known_install_entries_in_any_case_are_not_foreign(win):
+    """Windows names match in any case, and the updater's own folder is expected."""
+    os.rename(os.path.join(win.install, "unins000.dat"), os.path.join(win.install, "UNINS000.DAT"))
+    os.makedirs(os.path.join(win.install, "_updater"))
+    _write(win.install, "_updater/pyreconstruct-updater.exe", "helper")
+    assert win.applier().run()["status"] == "updated"
+
+
+def _refused(s, fragment="the update would remove"):
     result = s.applier().run()
     assert result["status"] == "refused", result
     assert fragment in result["reason"], result["reason"]
@@ -779,6 +1014,9 @@ def test_real_platform_runs_waits_and_kills(tmp_path):
     """The OS layer itself, with a Python child standing in for the app. No registry."""
     plat = A.default_platform()
     exe = _python()
+    # A framework build (the macOS runner's) re-execs from
+    # .../Resources/Python.app/Contents/MacOS/Python, so search the whole install.
+    home = os.path.realpath(sys.base_prefix)
 
     assert plat.run([exe, "-c", "raise SystemExit(3)"], 30, str(tmp_path)) == 3
     start = time.monotonic()
@@ -790,14 +1028,34 @@ def test_real_platform_runs_waits_and_kills(tmp_path):
         assert plat.pid_alive(pid)
         assert not plat.wait_pid(pid, 0.2, 0.05)
         deadline = time.monotonic() + 10
-        while pid not in plat.processes_under(os.path.dirname(exe)) and time.monotonic() < deadline:
+        while pid not in plat.processes_under(home) and time.monotonic() < deadline:
             time.sleep(0.1)
-        assert pid in plat.processes_under(os.path.dirname(exe))
+        assert pid in plat.processes_under(home)
         assert pid not in plat.processes_under(str(tmp_path))
+        started = plat.start_time(pid)
+        assert started is not None and plat.start_time(pid) == started
+        assert plat.start_time(os.getpid()) not in (None, started)
     finally:
         plat.kill(pid, force=True)
     assert plat.wait_pid(pid, 10, 0.05)
     assert not plat.pid_alive(pid)
+
+
+def test_children_start_free_of_the_helpers_pyinstaller_state(tmp_path, monkeypatch):
+    """A frozen helper's own _MEIPASS and _PYI_ variables would point a frozen child at the wrong folder."""
+    monkeypatch.setenv("_PYI_APPLICATION_HOME_DIR", str(tmp_path))
+    monkeypatch.setenv("_MEIPASS2", str(tmp_path))
+    monkeypatch.setenv("PYINSTALLER_RESET_ENVIRONMENT", "0")
+    check = ("import os, sys; bad = [k for k in os.environ if k.upper().startswith(('_PYI_', '_MEIPASS'))];"
+             " ok = os.environ.get('PYINSTALLER_RESET_ENVIRONMENT') == '1' and not bad;")
+    plat = A.default_platform()
+
+    assert plat.run([_python(), "-c", check + " sys.exit(0 if ok else 7)"], 30, str(tmp_path)) == 0
+
+    out = tmp_path / "launched.txt"
+    pid = plat.launch([_python(), "-c", check + f" open({str(out)!r}, 'w').write(str(ok))"], str(tmp_path))
+    assert plat.wait_pid(pid, 30, 0.05)
+    assert out.read_text() == "True"
 
 
 def test_build_tree_round_trips_through_verify(tmp_path, can_symlink):

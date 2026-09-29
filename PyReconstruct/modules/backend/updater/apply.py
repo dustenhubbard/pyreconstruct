@@ -37,11 +37,23 @@ Staging layout, ``<parent>/.<AppName>-update/``::
     result.json          what happened, for the app to read at next launch
     failed-versions.json versions that failed and are not retried in place
     deferrals.json       how many times a locked install put this version off
+    helper.lock          held by the running helper, so only one runs at a time
     helper.log           a line per step, for bug reports
 
 The OS-specific parts (waiting on and killing processes, launching, the
 Windows uninstall registry entry) sit behind ``Platform`` so tests can drive
 every path with a fake.
+
+Every program the helper starts (the self-test, the new version, the old one
+on a rollback) gets ``PYINSTALLER_RESET_ENVIRONMENT=1`` and none of the
+``_PYI_*`` or ``_MEIPASS*`` variables a frozen parent passes down, so a frozen
+child sets itself up from its own folder rather than the helper's.
+
+On macOS the new version is started by running ``Contents/MacOS/<app>``
+directly, because that gives the helper the process ID it health-checks and,
+on a rollback, stops. Step 7 of the build plan (the macOS helper) should
+decide between that and ``open -n -a``, which is how Finder starts an app but
+returns no process ID, in which case the ID would come from health.json.
 """
 
 import argparse
@@ -73,6 +85,7 @@ RESULT = "result.json"
 FAILED_VERSIONS = "failed-versions.json"
 DEFERRALS = "deferrals.json"
 LOG = "helper.log"
+LOCK = "helper.lock"
 NEW = "new"
 OLD = "old"
 REJECTED = "rejected"
@@ -134,6 +147,7 @@ class Timings:
     kill_wait: float = 10.0    # a stopped process takes this long to exit
     interval: float = 1.0      # between rename retries
     poll: float = 0.25         # between process and health checks
+    backoff_max: float = 30.0  # longest pause between tries at putting the old version back
 
 
 def default_timings(host=None):
@@ -296,6 +310,28 @@ def _link_target_parts(link_parts, target):
     if not stack:
         raise Refused(f"link {'/'.join(link_parts)} points at the tree root")
     return stack
+
+
+def child_env(base=None):
+    """The environment for a program the helper starts, free of this process's PyInstaller state."""
+    env = dict(os.environ if base is None else base)
+    for key in list(env):
+        if key.upper().startswith(("_PYI_", "_MEIPASS")):
+            del env[key]
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return env
+
+
+def _norm_win(path):
+    """A path as Windows compares it: backslashes, no trailing separator, case folded."""
+    path = ntpath.normpath(path.strip())
+    if len(path) > 3:
+        path = path.rstrip("\\")
+    return ntpath.normcase(path)
+
+
+def _at_or_inside(path, root):
+    return os.path.normcase(path) == os.path.normcase(root) or _inside(path, root)
 
 
 def _inside(path, root):
@@ -599,7 +635,7 @@ class Platform:
         try:
             done = subprocess.run(
                 argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT, timeout=timeout, **self._run_flags(),
+                stderr=subprocess.STDOUT, timeout=timeout, env=child_env(), **self._run_flags(),
             )
         except subprocess.TimeoutExpired:
             return None
@@ -609,8 +645,20 @@ class Platform:
         return {}
 
     def processes_under(self, path):
-        """Pids of processes whose executable lives under ``path``, this one excluded."""
+        """Pids of processes whose executable is ``path`` or lives under it, this one excluded."""
         return []
+
+    def start_time(self, pid):
+        """When ``pid`` started, in any form that is stable for one process; None if unknown.
+
+        A pid alone can be reused by an unrelated process once the first one
+        exits, so a saved pid is only trusted when its start time matches.
+        """
+        return None
+
+    def install_location(self, key):
+        """Windows only: the uninstall entry's InstallLocation, or None."""
+        return None
 
     def set_display_version(self, key, version):
         """Windows only: the version Settings > Apps shows."""
@@ -648,7 +696,7 @@ class PosixPlatform(Platform):
     def launch(self, argv, cwd):
         child = subprocess.Popen(
             argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, close_fds=True, start_new_session=True,
+            stderr=subprocess.DEVNULL, close_fds=True, start_new_session=True, env=child_env(),
         )
         self._children[child.pid] = child
         return child.pid
@@ -665,7 +713,7 @@ class PosixPlatform(Platform):
                     exe = os.readlink(f"/proc/{name}/exe")
                 except OSError:
                     continue
-                if any(_inside(exe, r) for r in roots):
+                if any(_at_or_inside(exe, r) for r in roots):
                     found.append(int(name))
             return found
         try:
@@ -679,9 +727,25 @@ class PosixPlatform(Platform):
             if not pid.isdigit() or int(pid) == own:
                 continue
             exe = exe.strip()
-            if any(_inside(exe, r) or _inside(os.path.realpath(exe), r) for r in roots):
+            if any(_at_or_inside(exe, r) or _at_or_inside(os.path.realpath(exe), r) for r in roots):
                 found.append(int(pid))
         return found
+
+    def start_time(self, pid):
+        if sys.platform.startswith("linux"):
+            try:
+                with open(f"/proc/{pid}/stat", encoding="ascii", errors="replace") as f:
+                    fields = f.read().rpartition(")")[2].split()
+                return fields[19]  # starttime, in clock ticks since boot
+            except (OSError, IndexError):
+                return None
+        try:
+            out = subprocess.run(
+                ["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=10,
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return out or None
 
 
 class WindowsPlatform(Platform):
@@ -711,6 +775,8 @@ class WindowsPlatform(Platform):
         k32.K32EnumProcesses.argtypes = [
             ctypes.POINTER(wintypes.DWORD), wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
         k32.K32EnumProcesses.restype = wintypes.BOOL
+        k32.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
+        k32.GetProcessTimes.restype = wintypes.BOOL
         self._k32 = k32
         self._wintypes = wintypes
 
@@ -737,7 +803,7 @@ class WindowsPlatform(Platform):
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
         child = subprocess.Popen(
             argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags,
+            stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags, env=child_env(),
         )
         return child.pid
 
@@ -774,12 +840,34 @@ class WindowsPlatform(Platform):
             if pid in (0, own):
                 continue
             image = self._image_path(pid)
-            if image and _inside(image, root):
+            if image and _at_or_inside(image, root):
                 found.append(int(pid))
         return found
 
+    def start_time(self, pid):
+        h = self._k32.OpenProcess(self._PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not h:
+            return None
+        try:
+            ft = [self._wintypes.FILETIME() for _ in range(4)]
+            if not self._k32.GetProcessTimes(h, *(self._ctypes.byref(t) for t in ft)):
+                return None
+            return str((ft[0].dwHighDateTime << 32) | ft[0].dwLowDateTime)
+        finally:
+            self._k32.CloseHandle(h)
+
+    def install_location(self, key):
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_READ) as k:
+                value, kind = winreg.QueryValueEx(k, "InstallLocation")
+        except OSError:
+            return None
+        return value if isinstance(value, str) else None
+
     def set_display_version(self, key, version):
-        # Per-user installs only, so HKCU; load_plan already checked the key's shape.
+        # Per-user installs only, so HKCU; load_plan already checked the key's
+        # shape and the caller checked its InstallLocation is this install.
         import winreg
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_SET_VALUE) as k:
             winreg.SetValueEx(k, "DisplayVersion", 0, winreg.REG_SZ, version)
@@ -787,6 +875,39 @@ class WindowsPlatform(Platform):
 
 def default_platform():
     return WindowsPlatform() if os.name == "nt" else PosixPlatform()
+
+
+def take_lock(staging):
+    """An exclusive lock on staging/helper.lock, or None if another helper holds it.
+
+    The OS drops the lock when the holder exits, however it exits, so a
+    crashed helper never leaves a stale one behind.
+    """
+    fd = os.open(os.path.join(staging, LOCK), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        if os.name == "nt":
+            import msvcrt
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def release_lock(fd):
+    try:
+        if os.name == "nt":
+            import msvcrt
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
 
 
 # --- The swap ----------------------------------------------------------------------
@@ -807,6 +928,7 @@ class Applier:
         self.old = os.path.join(self.staging, OLD)
         self.rejected = os.path.join(self.staging, REJECTED)
         self.install = None
+        self.recovering = False
 
     # -- bookkeeping --
 
@@ -892,10 +1014,20 @@ class Applier:
 
     def run(self):
         """Apply plan.json, or first finish or undo a run that stopped part way."""
-        previous = read_json(self.state_path)
-        if isinstance(previous, dict) and previous.get("status") == "running":
-            return self.recover(previous)
-        return self.apply(previous)
+        try:
+            lock = take_lock(self.staging)
+        except OSError as e:
+            return {"status": "error", "installed": None, "reason": f"no staging folder: {e}"}
+        if lock is None:
+            # Another helper is working here. Touch nothing, not even the log.
+            return {"status": "busy", "installed": None, "reason": "another helper is running"}
+        try:
+            previous = read_json(self.state_path)
+            if isinstance(previous, dict) and previous.get("status") == "running":
+                return self.recover(previous)
+            return self.apply(previous)
+        finally:
+            release_lock(lock)
 
     # -- checks --
 
@@ -932,6 +1064,34 @@ class Applier:
             info = _read_plist(os.path.join(install, "Contents", "Info.plist"))
             if info.get("CFBundleIdentifier") != plan["bundle_id"]:
                 raise Refused("the install has a different bundle id")
+        if plan["kind"] == "folder":
+            self._check_no_foreign_files()
+
+    def _check_no_foreign_files(self):
+        """Refuse an install folder holding anything PyReconstruct did not put there.
+
+        The swap moves the whole folder into staging and deletes it once the
+        new version starts, so a series someone saved inside the install
+        would go with it. The installer path leaves such files alone.
+        """
+        plan = self.plan
+        if plan["platform"] == "macos":
+            known = {"Contents"}
+            fold = str
+        else:
+            tree = read_json(os.path.join(self.staging, TREE), {})
+            entries = tree.get("files") if isinstance(tree, dict) else None
+            known = {plan["app_name"] + ".exe", "_internal", "_updater"}
+            if isinstance(entries, list):
+                known |= {e["path"].split("/")[0] for e in entries
+                          if isinstance(e, dict) and isinstance(e.get("path"), str)}
+            fold = str.casefold  # Windows names match in any case
+        known = {fold(n) for n in known}
+        patterns = [p.lower() for p in plan["carry"]]
+        for name in sorted(os.listdir(self.install)):
+            if fold(name) in known or any(fnmatch.fnmatch(name.lower(), p) for p in patterns):
+                continue
+            raise Refused(f"the install folder holds {name!r}, which the update would remove")
 
     def _check_new_identity(self, tree):
         plan = self.plan
@@ -983,9 +1143,11 @@ class Applier:
                 raise Refused(f"{self.plan['to_version']} failed before and is not retried in place")
             leftovers = [p for p in (self.old, self.rejected) if os.path.lexists(p)]
             if leftovers:
-                # A finished run can leave a backup it could not delete. With
-                # no finished journal there is no telling what it is.
-                if not (isinstance(previous, dict) and previous.get("status") == "done"):
+                # A run that updated or rolled back can leave a copy it could
+                # not delete. After any other end (a stuck run, no journal)
+                # old/ may be the only copy of the install, so it stays.
+                done = isinstance(previous, dict) and previous.get("status") == "done"
+                if not (done and previous.get("result") in ("updated", "rolled_back")):
                     raise Refused("a backup from an earlier run is still in staging")
                 for path in leftovers:
                     _remove(path)
@@ -995,8 +1157,8 @@ class Applier:
         _remove(os.path.join(self.staging, HEALTH))  # only this run's launch may report in
         self.state = {
             "format": FORMAT, "status": "running", "plan": self.plan,
-            "helper_pid": os.getpid(), "started": _now(), "installed": "old",
-            "carried": [], "launched_pid": None,
+            "helper_pid": os.getpid(), "helper_start": self.platform.start_time(os.getpid()),
+            "started": _now(), "installed": "old", "carried": [], "launched_pid": None,
         }
         return self._steps(FORWARD, 0)
 
@@ -1061,10 +1223,13 @@ class Applier:
     def _do_selftest(self):
         cwd = self.new if self.plan["kind"] == "folder" else self.staging
         code = self.platform.run(self._selftest_argv(), self.timings.selftest, cwd)
+        if code is None:
+            # A first run of new files can be slow while Defender scans them.
+            # Try again at the next quit; three of these count as three deferrals.
+            return self._finish("deferred", "old", "the self-test timed out")
         if code != 0:
-            why = "timed out" if code is None else f"exited {code}"
             self._record_failed()
-            return self._finish("selftest_failed", "old", f"the self-test {why}")
+            return self._finish("selftest_failed", "old", f"the self-test exited {code}")
         return None
 
     def _before_carry(self):
@@ -1130,7 +1295,55 @@ class Applier:
                     return False
             time.sleep(self.timings.interval)
 
+    def _restore_backup(self):
+        """old/ -> install, retried until it works. True once the old version is back.
+
+        Called only when the install path is empty. Nothing else would ever
+        put it back (PyReconstruct is not running to start another helper),
+        so this does not give up while old/ exists and the path is empty. The
+        pause between tries doubles up to ``backoff_max``.
+        """
+        delay = self.timings.interval
+        tries = 0
+        while os.path.lexists(self.old) and not os.path.lexists(self.install):
+            tries += 1
+            try:
+                self.platform.rename(self.old, self.install)
+                _fsync_dir(os.path.dirname(self.install))
+                _fsync_dir(self.staging)
+                self._log(f"old version put back on try {tries}")
+                break
+            except OSError as e:
+                self._log(f"putting the old version back, try {tries} failed: {e}")
+            time.sleep(delay)
+            delay = min(delay * 2, self.timings.backoff_max)
+        if os.path.lexists(self.install):
+            self.state["installed"] = "old"
+            return True
+        return False
+
+    def _wait_until_unused(self):
+        """True once nothing runs from the install; False if something still does at ``lock_wait``.
+
+        Windows would refuse the rename anyway, but macOS and Linux would
+        move the folder out from under a second running copy.
+        """
+        start = time.monotonic()
+        logged = False
+        while True:
+            holders = self.platform.processes_under(self.install)
+            if not holders:
+                return True
+            if not logged:
+                self._log(f"waiting for {holders} to exit")
+                logged = True
+            if time.monotonic() - start >= self.timings.lock_wait:
+                return False
+            time.sleep(self.timings.interval)
+
     def _do_swap_out(self):
+        if not self._wait_until_unused():
+            return self._finish("deferred", "old", "PyReconstruct is still running from the install")
         if not self._rename_retrying(self.install, self.old, holder_root=self.install):
             return self._finish("deferred", "old", "the install folder is in use")
         self.state["installed"] = None  # neither version is at the install path now
@@ -1142,20 +1355,35 @@ class Applier:
             return None
         # Put the old version straight back and try again at the next quit.
         self._journal("swap_undo", "begin")
-        if not self._rename_retrying(self.old, self.install):
-            return {"status": "error", "installed": None,
-                    "reason": "could not put the old version back; the next run retries"}
-        self.state["installed"] = "old"
+        if not self._restore_backup():
+            return self._finish("stuck", None, "the backup vanished before it could be put back")
         return self._finish("deferred", "old", "the new version could not be moved into place")
 
-    def _do_registry(self):
+    def _set_display_version(self, version):
+        """Update the uninstall entry, but only the one that belongs to this install.
+
+        The key comes from plan.json; its InstallLocation has to name this
+        install folder, or the write is skipped. Cosmetic either way:
+        Settings > Apps shows the old number until the next install.
+        """
         key = self.plan["registry_key"]
-        if key:
-            try:
-                self.platform.set_display_version(key, self.plan["to_version"])
-            except OSError as e:
-                # Cosmetic: Settings > Apps shows the old number until the next install.
-                self._log(f"DisplayVersion not updated: {e}")
+        if not key:
+            return
+        try:
+            location = self.platform.install_location(key)
+        except OSError as e:
+            self._log(f"DisplayVersion not set to {version}: {e}")
+            return
+        if not location or _norm_win(location) != _norm_win(self.install):
+            self._log(f"DisplayVersion not set to {version}: the uninstall entry is for {location!r}")
+            return
+        try:
+            self.platform.set_display_version(key, version)
+        except OSError as e:
+            self._log(f"DisplayVersion not set to {version}: {e}")
+
+    def _do_registry(self):
+        self._set_display_version(self.plan["to_version"])
         return None
 
     def _launch_argv(self):
@@ -1176,8 +1404,14 @@ class Applier:
         health = os.path.join(self.staging, HEALTH)
         if self._healthy():
             return None  # a recovered run whose new version already reported in
-        # a relaunch after recovery replaces any copy the dead run started
-        self._stop([self.state.get("launched_pid")])
+        if self.recovering:
+            running = self.platform.processes_under(self.install)
+            if running:
+                # The dead run started it but did not live to record it.
+                # Watch that one rather than start a second copy.
+                self._log(f"adopting {running[0]}, already running from the install")
+                self.state["launched_pid"] = running[0]
+                return None
         _remove(health)
         cwd = os.path.dirname(self.install)
         try:
@@ -1197,7 +1431,9 @@ class Applier:
         while True:
             if self._healthy():
                 return None
-            if pid and not self.platform.pid_alive(pid):
+            # A pid can be reused once its process exits, so it counts as the
+            # new version only while it is still running from the install.
+            if pid and pid not in self.platform.processes_under(self.install):
                 if self._healthy():
                     return None
                 return self._rollback("the new version quit before it finished starting")
@@ -1221,10 +1457,11 @@ class Applier:
         return self._steps(ROLLBACK, 0)
 
     def _do_rb_kill(self):
-        pids = [self.state.get("launched_pid")]
+        # Only processes running from the install, which is the new version
+        # while old/ holds the backup. A saved pid is never killed on its own
+        # say-so: it may belong to someone else by now.
         if os.path.lexists(self.old) and os.path.lexists(self.install):
-            pids += self.platform.processes_under(self.install)
-        self._stop(pids)
+            self._stop(self.platform.processes_under(self.install))
         return None
 
     def _do_rb_aside(self):
@@ -1237,19 +1474,13 @@ class Applier:
 
     def _do_rb_restore(self):
         if not os.path.lexists(self.install) and os.path.lexists(self.old):
-            if not self._rename_retrying(self.old, self.install):
-                return {"status": "error", "installed": None,
-                        "reason": "could not put the old version back; the next run retries"}
+            if not self._restore_backup():
+                return self._finish("stuck", None, "the backup vanished before it could be put back")
         self.state["installed"] = "old"
         return None
 
     def _do_rb_registry(self):
-        key = self.plan["registry_key"]
-        if key:
-            try:
-                self.platform.set_display_version(key, self.plan["from_version"])
-            except OSError as e:
-                self._log(f"DisplayVersion not restored: {e}")
+        self._set_display_version(self.plan["from_version"])
         return None
 
     def _do_rb_record(self):
@@ -1282,16 +1513,24 @@ class Applier:
             return {"status": "error", "installed": None, "reason": "state.json has no plan"}
         self.install = os.path.abspath(self.plan["install"])
         helper = state.get("helper_pid")
-        if helper and helper != os.getpid() and self.platform.pid_alive(helper):
+        if helper and helper != os.getpid() and self._helper_running(helper, state.get("helper_start")):
             return {"status": "busy", "installed": None, "reason": f"helper {helper} is still running"}
         if self.pid_override and not self.platform.wait_pid(
                 self.pid_override, self.timings.pid_exit, self.timings.poll):
             return {"status": "busy", "installed": None, "reason": "PyReconstruct did not exit"}
         state["helper_pid"] = os.getpid()
+        state["helper_start"] = self.platform.start_time(os.getpid())
         state["recoveries"] = state.get("recoveries", 0) + 1
+        self.recovering = True
         state["errors"] = 0
         self._log(f"recovering from {state.get('step')} {state.get('phase')}")
         return self._recover_steps()
+
+    def _helper_running(self, pid, started):
+        """The journal's helper is alive only if that pid still has the start time it recorded."""
+        if not self.platform.pid_alive(pid):
+            return False
+        return started is not None and self.platform.start_time(pid) == started
 
     def _resume_index(self, steps, step, phase):
         return steps.index(step) + (1 if phase == "end" else 0)
@@ -1314,9 +1553,8 @@ class Applier:
                 return self._finish("interrupted", "old", f"stopped during {step}; nothing was moved")
             if not at_install and backup:
                 self._journal("swap_undo", "begin", installed=None)
-                if not self._rename_retrying(self.old, self.install):
-                    return {"status": "error", "installed": None,
-                            "reason": "could not put the old version back; the next run retries"}
+                if not self._restore_backup():
+                    return self._finish("stuck", None, "the backup vanished before it could be put back")
                 return self._finish("interrupted", "old", f"stopped during {step}; the old version was put back")
             if at_install and backup and not staged:
                 self._journal("swap_in", "end", installed="new")
@@ -1337,6 +1575,9 @@ def main(argv=None):
     parser.add_argument("staging", help="the .<AppName>-update folder next to the install")
     parser.add_argument("--pid", type=int, default=None, help="wait for this process to exit first")
     args = parser.parse_args(argv)
+    # A working folder inside the install would lock it on Windows, and the
+    # helper may have been started from there. Staging is never moved.
+    os.chdir(os.path.abspath(args.staging))
     applier = Applier(args.staging, default_platform(), pid=args.pid)
     result = applier.run()
     return 0 if result.get("installed") == "new" else 1
