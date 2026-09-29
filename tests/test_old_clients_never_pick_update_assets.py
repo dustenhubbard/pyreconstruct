@@ -195,3 +195,43 @@ def test_a_tagged_non_installer_is_never_picked(tag, name, dev):
     release = _rel(STABLE, [name, f"{name}.sha256"])
     assert old_pick_asset(release, tag)["name"] == name
     assert U.pick_asset(release, tag, dev=bool(dev)) is None
+
+
+# --- What the release job writes today ---------------------------------------
+
+@pytest.mark.parametrize("ver,dev", FLAVORS)
+def test_the_files_the_release_job_adds_are_planned_names(tmp_path, ver, dev):
+    """Run the release job's script on a fake dist folder and check what it adds.
+
+    Each new file must be one of the planned names above, so every check in
+    this module covers it, and neither matcher may take it from the full list.
+    SHA256SUMS.minisig comes from the signing step, so its name is read from
+    the workflow, and both names are the ones the updater looks for.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "release_update_files.py"
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    for name in installers(ver, dev).values():
+        (dist / name).write_bytes(b"x")
+        (dist / f"{name}.sha256").write_text("0" * 64 + f"  {name}\n")
+    before = {p.name for p in dist.iterdir()}
+    flavor = "dev" if dev else "stable"
+    subprocess.run([sys.executable, str(script), str(dist), "--tag", f"v{ver}", "--flavor", flavor],
+                   check=True, capture_output=True, timeout=60)
+    added = {p.name for p in dist.iterdir()} - before
+    workflow = (script.parents[1] / ".github" / "workflows" / "build-installers.yml").read_text()
+    assert f"-m dist/{U.SUMS_ASSET} -x dist/{U.SIGNATURE_ASSET} " in workflow
+    added.add(U.SIGNATURE_ASSET)
+    assert added == {"update-manifest.json", "SHA256SUMS", "SHA256SUMS.minisig"}
+    assert added <= set(planned(ver, dev))
+
+    release = _rel(ver, sorted(before | added, key=str.lower))
+    for tag in PLATFORM_TAGS:
+        assert old_pick_asset(release, tag)["name"] == installers(ver, dev)[tag]
+        assert _new_pick(release, tag, dev)["name"] == installers(ver, dev)[tag]
+        for name in added:
+            assert old_pick_asset(_rel(ver, [name]), tag) is None

@@ -2,7 +2,8 @@
 
 Shows the available version, channel and download size, then runs the download +
 checksum verify inline (progress bar + status) and hands the verified installer
-to the main window for the launch-on-close step. Styling is intentionally plain
+to the main window for the launch-on-close step. The checksum comes from the
+release's signed ``SHA256SUMS`` when it has one. Styling is intentionally plain
 Qt so it inherits the app theme.
 
 It deliberately does *not* render the release notes. Those belong to the version
@@ -23,7 +24,7 @@ from PySide6.QtCore import Qt
 
 from PyReconstruct.modules.backend.threading import ThreadPool
 from PyReconstruct.modules.backend.updater.updater import (
-    download_asset, fetch_checksum, channel_display_name, UpdateCancelled,
+    download_asset, verified_checksum, channel_display_name, UpdateCancelled,
 )
 from PyReconstruct.modules.gui.main.first_launch import github_release_url
 
@@ -59,7 +60,7 @@ class UpdateDialog(QDialog):
         self._cancel = threading.Event()
         self._tmpdir = None
 
-        self.setWindowTitle("PyReconstruct — Update")
+        self.setWindowTitle("PyReconstruct Update")
         self.setMinimumWidth(480)
         lay = QVBoxLayout(self)
 
@@ -133,7 +134,7 @@ class UpdateDialog(QDialog):
             sha = download_asset(url, dest,
                                  progress_cb=worker.signals.progress.emit,
                                  cancel_cb=self._cancel.is_set)
-            cs_status, expected = fetch_checksum(self._release, name)
+            cs_status, expected = verified_checksum(self._release, name)
             return (sha, cs_status, expected, dest)
 
         worker = self._pool.createWorker(_job)
@@ -159,12 +160,25 @@ class UpdateDialog(QDialog):
         self._status.setText("Verifying…")
         self._progress.setValue(100)
 
+        # A published signature decides on its own: a bad one, or a valid one
+        # that does not list this file, refuses the update outright. A frozen
+        # build also refuses a release with no signature; only a source build
+        # falls through to the per-file checksum.
+        if cs_status == "unsigned":
+            self._fail("PyReconstruct couldn't verify this download (the release has no signature). Nothing was installed.")
+            return
+        if cs_status == "bad_signature":
+            self._fail("PyReconstruct couldn't verify this download (its signature is not valid). Nothing was installed.")
+            return
+        if cs_status == "unlisted":
+            self._fail("PyReconstruct couldn't verify this download (it is not in the signed checksum list). Nothing was installed.")
+            return
         if cs_status == "ok":
             if sha.lower() != expected.lower():
                 self._fail("Verification failed (checksum mismatch). Nothing was installed.")
                 return
         elif cs_status == "error":
-            self._fail("Couldn't verify the download (checksum unreachable). Not installing — try again.")
+            self._fail("Couldn't verify the download (checksum unreachable). Not installing. Try again.")
             return
         else:  # missing
             from PyReconstruct.modules.backend.updater.install_info import install_kind
