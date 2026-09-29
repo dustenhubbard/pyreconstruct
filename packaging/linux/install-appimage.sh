@@ -2,9 +2,11 @@
 #
 # install-appimage.sh: install PyReconstruct on Linux from its AppImage.
 #
-#   curl -fsSL https://raw.githubusercontent.com/dustenhubbard/PyReconstruct/main/packaging/linux/install-appimage.sh | bash
-#   curl -fsSL .../install-appimage.sh | bash -s -- --dev          # PyReconstruct Dev
-#   curl -fsSL .../install-appimage.sh | bash -s -- --uninstall    # add --dev for Dev
+#   curl -fsSL https://pyreconstruct.org/install.sh | bash
+#   curl -fsSL https://pyreconstruct.org/install.sh | bash -s -- --dev          # PyReconstruct Dev
+#   curl -fsSL https://pyreconstruct.org/install.sh | bash -s -- --uninstall    # add --dev for Dev
+#
+# The docs workflow publishes this file as pyreconstruct.org/install.sh.
 #
 # Per user, no root. Downloads the newest AppImage for the chosen app from the
 # GitHub releases, checks it against its published .sha256, and adds a launcher
@@ -28,7 +30,7 @@
 set -eu
 
 REPO="dustenhubbard/PyReconstruct"
-INSTALLER_URL="https://raw.githubusercontent.com/$REPO/main/packaging/linux/install-appimage.sh"
+INSTALLER_URL="https://pyreconstruct.org/install.sh"
 API="${PYRECON_RELEASES_API:-https://api.github.com/repos/$REPO}"
 NIGHTLY_RE='^v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]{8}$'
 ROLLING_TAG="prerelease"
