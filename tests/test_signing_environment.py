@@ -148,6 +148,34 @@ def test_the_signature_reaches_the_publish_job():
     assert "files: dist/*" in publish
 
 
+def _retention(step: str):
+    value = _with(step).get("retention-days")
+    return None if value is None else int(value)
+
+
+def test_the_handoff_artifacts_last_as_long_as_the_installers():
+    """A publish retried with "Re-run failed jobs" days later still finds its inputs.
+
+    A re-run of only publish (or sign) downloads what the earlier jobs
+    uploaded on the first attempt, so those artifacts must not expire before
+    the installer-* ones, which keep the repository default."""
+    text = WORKFLOW.read_text()
+    installers = [s for s in re.split(r"\n(?=      - )", text)
+                  if "upload-artifact" in s and "\n          name: installer-" in s]
+    assert len(installers) == 2, len(installers)
+    floors = {_retention(s) for s in installers}
+    handoffs = [_step("release", "Keep the release files for the publish job"),
+                _step("release", "Hand SHA256SUMS to the sign job"),
+                _step("sign", "Hand the signature to the publish job")]
+    for step in handoffs:
+        days = _retention(step)
+        name = _with(step)["name"]
+        if None in floors:
+            assert days is None, (name, days, "installers keep the repo default")
+        else:
+            assert days is None or days >= max(floors), (name, days, floors)
+
+
 def test_the_jobs_around_the_key_never_name_it():
     jobs = _jobs()
     for name in ("release", "publish"):

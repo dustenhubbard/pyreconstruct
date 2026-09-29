@@ -757,7 +757,6 @@ jobs:
           name: release-files
           path: dist/*
           if-no-files-found: error
-          retention-days: 1
           overwrite: true
       - name: Hand SHA256SUMS to the sign job
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
@@ -765,7 +764,6 @@ jobs:
           name: sha256sums
           path: dist/SHA256SUMS
           if-no-files-found: error
-          retention-days: 1
           overwrite: true
 
   sign:
@@ -865,7 +863,6 @@ jobs:
           name: sha256sums-signature
           path: dist/SHA256SUMS.minisig
           if-no-files-found: error
-          retention-days: 1
           overwrite: true
 
   publish:
