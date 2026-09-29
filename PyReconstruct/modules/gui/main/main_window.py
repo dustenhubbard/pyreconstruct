@@ -4042,27 +4042,45 @@ class MainWindow(QMainWindow):
 
         Frozen builds query GitHub Releases off the GUI thread, then present the
         UpdateDialog (the download + verify happen there). Source/pip installs
-        reuse the cli pip+git path.
+        reuse the cli pip+git path. The AppImage and the install.sh venv
+        (``REINSTALL_KINDS``) read the same feed but only name the command
+        that updates them; see ``_onReinstallCheck``.
         """
         if self._updater_pool is not None:
             notify("An update is already in progress.")
             return
-        if install_kind() == "source":
+        kind = install_kind()
+        if kind == "source":
             self._updateFromSource()
             return
         channel = pinned_channel()
         progbar = getProgbar("Checking for updates…", cancel=False, maximum=0)
+        if kind in REINSTALL_KINDS:
+            self._runUpdateCheck(
+                channel,
+                on_result=lambda info: (progbar.close(), self._onReinstallCheck(info, channel, manual=True)),
+                on_error=lambda exc: (progbar.close(), notify(f"Could not check for updates:\n{exc}")),
+                kind=kind,
+            )
+            return
         self._runUpdateCheck(
             channel,
             on_result=lambda info: (progbar.close(), self._onCheckResult(info, channel, manual=True)),
             on_error=lambda exc: (progbar.close(), notify(f"Could not check for updates:\n{exc}")),
         )
 
-    def _runUpdateCheck(self, channel, on_result, on_error):
-        """Resolve the available update off the GUI thread, then dispatch."""
+    def _runUpdateCheck(self, channel, on_result, on_error, kind=None):
+        """Resolve the available update off the GUI thread, then dispatch.
+
+        ``kind`` is set for an install in ``REINSTALL_KINDS``: the check then
+        reads the release feed for the command to show and downloads nothing.
+        """
         pool = ThreadPool()
         self._updater_pool = pool
-        worker = pool.createWorker(lambda: check_for_update(channel))
+        if kind in REINSTALL_KINDS:
+            worker = pool.createWorker(lambda: check_for_reinstall(channel, kind))
+        else:
+            worker = pool.createWorker(lambda: check_for_update(channel))
 
         def _done(info):
             self._updater_pool = None
@@ -4110,7 +4128,8 @@ class MainWindow(QMainWindow):
     def checkForUpdatesStartup(self):
         """Background check on launch; quietly surfaces a genuine upgrade.
 
-        Frozen builds only, gated to once per 24h via QSettings so it never burns
+        Frozen builds and ``REINSTALL_KINDS`` only (the latter name a command
+        and download nothing), gated to once per 24h via QSettings so it never burns
         the anonymous GitHub rate limit. Any failure is swallowed — a background
         convenience must never disrupt startup. On by default, and switchable
         under Help > Automatically check for updates.
@@ -4121,7 +4140,8 @@ class MainWindow(QMainWindow):
         allows 60 anonymous requests an hour per address.
         """
         try:
-            if install_kind() != "frozen" or self.series is None:
+            kind = install_kind()
+            if kind not in ("frozen",) + REINSTALL_KINDS or self.series is None:
                 return
             if not self.series.getOption("update_check_on_startup"):
                 return
@@ -4144,6 +4164,14 @@ class MainWindow(QMainWindow):
                 return
             settings.setValue("last_update_check_epoch", time.time())
             channel = pinned_channel()
+            if kind in REINSTALL_KINDS:
+                self._runUpdateCheck(
+                    channel,
+                    on_result=lambda info: self._onReinstallCheck(info, channel, manual=False),
+                    on_error=lambda exc: None,  # silent on a background failure
+                    kind=kind,
+                )
+                return
             self._runUpdateCheck(
                 channel,
                 on_result=lambda info: self._onStartupCheck(info, channel),
@@ -4180,6 +4208,32 @@ class MainWindow(QMainWindow):
             )
         if notifyConfirm(f"PyReconstruct {remote} is available.\n\nView the update now?", yn=True):
             self._onCheckResult(info, channel, manual=True)
+
+    def _onReinstallCheck(self, info, channel, manual):
+        """Report a check for an install that updates by reinstalling.
+
+        The AppImage and the install.sh venv are never replaced from here:
+        a newer release shows the command that updates this install, and
+        nothing is downloaded. The startup check stays silent unless there
+        is a newer release; the manual check always answers.
+        """
+        from PyReconstruct.modules.datatypes.series_owner import app_display_name
+        from PyReconstruct.modules.backend.updater.updater import channel_display_name
+        app_name = app_display_name()
+        remote, status = info.get("remote_version"), info.get("status")
+        if not remote:
+            self._noteNothingToOffer(info, channel)
+            if manual:
+                notify(f"No {channel_display_name(channel)} update is available for {app_name} yet.")
+            return
+        if status in ("same", "older"):
+            if manual:
+                notify(f"You're already up to date (version {info['local_version']}).")
+            return
+        if status != "newer" and not manual:
+            return  # the background check only surfaces a genuine upgrade
+        from PyReconstruct.modules.gui.dialog.update_dialog import ReinstallDialog
+        ReinstallDialog(self, info, app_name).exec()
 
     @staticmethod
     def _cleanupUpdateDir(tmpdir):
