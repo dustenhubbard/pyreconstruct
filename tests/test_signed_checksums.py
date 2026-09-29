@@ -902,7 +902,7 @@ def test_the_frozen_selftest_covers_the_verifier():
 
 def _release_job():
     text = WORKFLOW.read_text()
-    return text[text.index("\n  release:\n"):text.index("\n  readme-bump:\n")]
+    return text[text.index("\n  release:\n"):]
 
 
 def test_every_pip_install_in_the_release_job_is_hash_pinned_to_the_lock():

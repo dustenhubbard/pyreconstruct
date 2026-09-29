@@ -56,7 +56,7 @@ def test_release_job_uses_the_release_environment_only_on_v_tags():
 
 def test_no_other_job_asks_for_an_environment():
     jobs = _jobs()
-    assert {"build", "release", "readme-bump"} <= set(jobs), sorted(jobs)
+    assert {"build", "release"} <= set(jobs), sorted(jobs)
     asking = sorted(n for n, job in jobs.items() if re.search(r"^\s+environment:", job, re.M))
     assert asking == ["build", "release"]
 

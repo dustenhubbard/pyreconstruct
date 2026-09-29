@@ -1,0 +1,101 @@
+# Opens the PR that moves the download links to a new stable release, once
+# that release is public.
+#
+# A stable tag makes every direct download link stale the moment the release
+# publishes, and the bump was a hand-made PR every release until it was
+# forgotten one time too many (v1.22.0 shipped while the README still said
+# v1.21.2, and the User Guide and website trailed by two releases). This opens
+# that PR automatically, over the README, the User Guide, and the website's
+# front page. It edits only three shapes: the bold version callout, the
+# /releases/download/vX.Y.Z/ path, and the versioned asset filenames, so prose
+# examples elsewhere (a pre-release tag named in the updater section) are left
+# alone. Label and merge stay human steps, per the repo's gate discipline.
+# Pre-release tags, nightlies included, skip this entirely.
+#
+# Why it waits for the publish. build-installers.yml stages a stable release
+# as a hidden draft by default, and a draft has no public assets. The bump
+# used to be the last job of that build, so its PR opened while the release
+# was still a draft, and merging it before the publish pointed the README, the
+# User Guide, and the website at links that 404 (the window that broke the
+# v1.22.1 links for hours). Now it runs on the publish itself:
+#   * publishing a draft by hand fires `release: published`;
+#   * a release the build publishes directly (STAGE_RELEASE_AS_DRAFT=false)
+#     fires no release trigger, because it publishes with the workflow token,
+#     so build-installers.yml dispatches this workflow with the tag instead.
+# Either way the first step asks the releases API and goes on only for a
+# published, non-draft, non-prerelease vX.Y.Z release, so a dispatch made too
+# early fails instead of opening the PR.
+
+name: download-links-bump
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "A stable tag whose release is already published, e.g. v1.24.0"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check the release is public
+        id: public
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "$TAG is not a stable tag; no bump"; exit 0; }
+          # The by-tag endpoint returns published releases only, so a draft
+          # answers 404 here. The draft flag is still checked below rather than
+          # trusted to that.
+          if ! state=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '"\(.draft) \(.prerelease)"'); then
+            echo "::error::$TAG has no published release. Publish it first, then run this workflow with tag=$TAG."
+            exit 1
+          fi
+          if [ "$state" != "false false" ]; then
+            echo "$TAG is a draft or a pre-release (draft prerelease: $state); no bump"
+            exit 0
+          fi
+          echo "bump=true" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        if: steps.public.outputs.bump == 'true'
+        with:
+          ref: main
+
+      - name: Open the bump PR
+        if: steps.public.outputs.bump == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.public.outputs.version }}
+        run: |
+          FILES=(README.md docs/USER_GUIDE.md docs/index.md)
+          sed -E -i \
+            -e "s|(releases/download/)v[0-9]+\.[0-9]+\.[0-9]+/|\1v${VERSION}/|g" \
+            -e "s#PyReconstruct-[0-9]+\.[0-9]+\.[0-9]+-(Windows|macOS|Linux|linux)#PyReconstruct-${VERSION}-\1#g" \
+            -e "s|current stable release, \*\*v[0-9]+\.[0-9]+\.[0-9]+\*\*|current stable release, **v${VERSION}**|" \
+            "${FILES[@]}"
+          git diff --quiet "${FILES[@]}" && { echo "download links already current"; exit 0; }
+          git config user.name "$(git log -1 --format=%an)"
+          git config user.email "$(git log -1 --format=%ae)"
+          BRANCH="docs/downloads-v${VERSION}"
+          git checkout -b "$BRANCH"
+          git add "${FILES[@]}"
+          git commit -m "docs: point the download links at v${VERSION}" \
+            -m "Opened once the release published, so the README, the User Guide, and the website never trail a stable release."
+          git push -f origin "$BRANCH"
+          gh pr create --base main --head "$BRANCH" \
+            --title "docs: point the download links at v${VERSION}" \
+            --body "The v${VERSION} release is published; this points the download links in the README, the User Guide, and the website at it. Label and merge as usual." \
+            || echo "PR already open for $BRANCH"
