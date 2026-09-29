@@ -102,7 +102,9 @@ from PyReconstruct.modules.backend.threading import ThreadPool
 
 from PyReconstruct.modules.backend.updater import (
     install_kind,
+    REINSTALL_KINDS,
     check_for_update,
+    check_for_reinstall,
     pinned_channel,
     download_asset,
     fetch_checksum,
