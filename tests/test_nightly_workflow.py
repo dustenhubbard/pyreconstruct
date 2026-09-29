@@ -116,7 +116,7 @@ def test_every_step_spells_the_nightly_shape_the_same_way():
 
 def test_the_release_job_keeps_a_nightly_off_latest():
     text = source(BUILD)
-    release = text.split("\n  release:\n", 1)[1].split("\n  readme-bump:\n", 1)[0]
+    release = text.split("\n  release:\n", 1)[1]
     publish = release.split("- uses: softprops/action-gh-release", 1)[1].split("\n      - name:", 1)[0]
     assert "prerelease: ${{ steps.rel.outputs.prerelease }}" in publish
     assert "make_latest: ${{ steps.rel.outputs.make_latest }}" in publish
