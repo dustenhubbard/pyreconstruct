@@ -137,19 +137,27 @@ def update(requested_branch=None):
     source-update path surface the message.
     """
 
+    # Both Linux installers own their install; updating is running the
+    # installer again, never pip. Checked before the frozen early return,
+    # since an AppImage is a frozen build.
+    from PyReconstruct.modules.backend.updater.install_info import install_kind
+    from PyReconstruct.modules.backend.updater.updater import (
+        reinstall_command, pinned_channel,
+    )
+    kind = install_kind()
+    if kind in ("appimage", "linux-installer"):
+        from PyReconstruct.modules.datatypes.series_owner import app_display_name
+        command = reinstall_command(kind, dev=(pinned_channel() == "prerelease"))
+        installer = "AppImage installer" if kind == "appimage" else "Linux installer"
+        raise RuntimeError(
+            f"This copy of {app_display_name()} is managed by its {installer}.\n"
+            "To update, run this command in a terminal:\n"
+            f"  {command}"
+        )
+
     if getattr(sys, "frozen", False):
         print("This is a packaged build; use Help > Check for updates in the app.")
         return
-
-    # The Linux .sh installer owns its venv (ownership marker at the app root);
-    # its update path is re-running the installer, not an in-place pip.
-    if (Path(sys.prefix).parent / ".pyreconstruct-install").exists():
-        raise RuntimeError(
-            "This install is managed by the PyReconstruct Linux installer.\n"
-            "To update, re-run the installer:\n"
-            f"  curl -fsSL https://raw.githubusercontent.com/{_github_repo()}"
-            "/main/packaging/linux/install.sh | bash"
-        )
 
     if not requested_branch:
 

@@ -365,6 +365,106 @@ def check_for_update(channel, releases=None):
     }
 
 
+# --- Installs that update by re-running their installer -----------------------
+
+# The commands that update each Linux install, as the site serves the scripts
+# (see .github/workflows/docs.yml). install-appimage.sh takes --dev for
+# PyReconstruct Dev; install.sh has no flavors, so one command serves both.
+APPIMAGE_INSTALL_URL = "https://pyreconstruct.org/install.sh"
+SOURCE_INSTALL_URL = "https://pyreconstruct.org/install-from-source.sh"
+
+# The AppImage names install-appimage.sh accepts (its ASSET_RE). The lowercase
+# platform token keeps them out of ``pick_asset`` on purpose.
+_APPIMAGE_ASSET_RE = re.compile(
+    r"PyReconstruct-(?P<ver>[0-9][^/-]*)-linux-x86_64(?P<dev>-Dev)?\.AppImage"
+)
+# The nightly tags install-appimage.sh --dev accepts (its NIGHTLY_RE).
+_NIGHTLY_TAG_RE = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]{8}")
+
+
+def reinstall_command(kind, dev=False):
+    """The one command that updates an install of ``kind``, or None."""
+    if kind == "appimage":
+        cmd = f"curl -fsSL {APPIMAGE_INSTALL_URL} | bash"
+        return cmd + " -s -- --dev" if dev else cmd
+    if kind == "linux-installer":
+        return f"curl -fsSL {SOURCE_INSTALL_URL} | bash"
+    return None
+
+
+def _appimage_asset(release, dev):
+    """The AppImage for this flavor on ``release``, or None."""
+    for a in (release or {}).get("assets") or []:
+        m = _APPIMAGE_ASSET_RE.fullmatch(a.get("name") or "")
+        if m and bool(m.group("dev")) == bool(dev):
+            return a
+    return None
+
+
+def _appimage_release(releases, channel):
+    """The release install-appimage.sh would install, and its AppImage.
+
+    Stable takes the newest stable release only, and nothing when it has no
+    AppImage, as the script does. Nightly takes the newest nightly that has
+    one. Returns ``(release, asset)``; ``release`` is the channel's newest
+    even when ``asset`` is None, so the log can name it.
+    """
+    dev = channel == "prerelease"
+    newest = pick_release(releases, channel)
+    if not dev:
+        return newest, _appimage_asset(newest, dev=False)
+    for r in releases or []:
+        if r.get("draft") or not r.get("prerelease") or r.get("tag_name") == ROLLING_TAG:
+            continue
+        if not _NIGHTLY_TAG_RE.fullmatch(r.get("tag_name") or ""):
+            continue
+        asset = _appimage_asset(r, dev=True)
+        if asset:
+            return r, asset
+    return newest, None
+
+
+def check_for_reinstall(channel, kind, releases=None):
+    """What the release feed offers an install that updates by reinstalling.
+
+    Returns the dict :func:`check_for_update` returns, with ``asset`` None
+    and one more key, ``command``: what to run to update. Nothing here
+    downloads. ``remote_version`` is None when the channel has nothing this
+    install can take, and the caller reads that as "no update".
+
+    * ``appimage``: the release install-appimage.sh would install for this
+      flavor, versioned by its AppImage's name.
+    * ``linux-installer``: the channel's newest release, versioned by its
+      tag. install.sh installs from source, so no asset is needed.
+    """
+    from PyReconstruct.modules.backend.updater.install_info import current_version
+    if releases is None:
+        releases = fetch_releases()
+    channel = normalize_channel(channel)
+    dev = channel == "prerelease"
+    if kind == "appimage":
+        release, asset = _appimage_release(releases, channel)
+        remote_v = None
+        if asset:
+            try:
+                remote_v = Version(
+                    _APPIMAGE_ASSET_RE.fullmatch(asset["name"]).group("ver"))
+            except InvalidVersion:
+                remote_v = None
+    else:
+        release = pick_release(releases, channel)
+        remote_v = _tag_version(release)
+    local_v = current_version()
+    return {
+        "release": release,
+        "asset": None,
+        "remote_version": str(remote_v) if remote_v else None,
+        "local_version": str(local_v) if local_v else None,
+        "status": compare_versions(remote_v, local_v),
+        "command": reinstall_command(kind, dev=dev),
+    }
+
+
 # --- Download / verify / launch ----------------------------------------------
 
 # Hosts installer/checksum bytes may come from. Release-asset URLs in the GitHub
@@ -593,7 +693,7 @@ def verified_checksum(release, asset_name):
 
     status, digest = fetch_signed_checksum(release, asset_name)
     if status == "absent":
-        if install_kind() == "frozen":
+        if install_kind() in ("frozen", "appimage"):
             return ("unsigned", None)
         return fetch_checksum(release, asset_name)
     return (status, digest)
