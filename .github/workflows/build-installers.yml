@@ -138,8 +138,10 @@ jobs:
         # does; --no-deps and --only-binary keep it from resolving anything
         # else for the wrong platform. These land before the project install,
         # so the project sees its pins already satisfied.
+        env:
+          ARCH: ${{ matrix.arch }}
         run: |
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
+          if [ "$ARCH" = "arm64" ]; then
             PLAT=macosx_12_0_arm64
           else
             PLAT=macosx_10_13_x86_64
@@ -331,9 +333,11 @@ jobs:
 
       - name: Build macOS dmg
         if: runner.os == 'macOS'
+        env:
+          ARCH: ${{ matrix.arch }}
         run: |
           mkdir -p dist-assets
-          ARCH="${{ matrix.arch }}" bash packaging/macos/make_dmg.sh
+          bash packaging/macos/make_dmg.sh
           mv PyReconstruct-*.dmg dist-assets/
 
       - name: Sign, notarize, and staple the dmg (macOS)
@@ -550,8 +554,9 @@ jobs:
       - name: Install the desktop baseline
         env:
           PKGS: ${{ matrix.pkgs }}
+          INSTALL: ${{ matrix.install }}
         run: |
-          if [ "${{ matrix.install }}" = apt ]; then
+          if [ "$INSTALL" = apt ]; then
             apt-get update -qq
             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends $PKGS
           else
@@ -583,17 +588,20 @@ jobs:
       - name: Frozen self-test inside the AppImage
         env:
           QT_QPA_PLATFORM: offscreen
+          IMAGE: ${{ matrix.image }}
         run: |
           AI="$(ls appimage/*.AppImage)"
           "$AI" --appimage-extract-and-run --selftest
-          echo "AppImage self-test OK on ${{ matrix.image }}"
+          echo "AppImage self-test OK on $IMAGE"
 
       - name: Install it with install-appimage.sh and run the launcher
         # The installer against a local stand-in for the releases API, serving
         # the AppImage just built, then the self-test through the launcher it
         # wrote. python3 is for the stand-in server only.
+        env:
+          INSTALL: ${{ matrix.install }}
         run: |
-          if [ "${{ matrix.install }}" = apt ]; then
+          if [ "$INSTALL" = apt ]; then
             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends python3 curl
           else
             dnf -y -q install python3 curl
@@ -620,8 +628,11 @@ jobs:
         # passes when it is still running after 40 seconds. Xvfb pulls in more
         # X libraries than a desktop needs, so it runs after the tests above.
         continue-on-error: true
+        env:
+          INSTALL: ${{ matrix.install }}
+          IMAGE: ${{ matrix.image }}
         run: |
-          if [ "${{ matrix.install }}" = apt ]; then
+          if [ "$INSTALL" = apt ]; then
             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends xvfb procps
           else
             dnf -y -q install xorg-x11-server-Xvfb procps-ng
@@ -635,7 +646,7 @@ jobs:
           set -e
           tail -n 40 /tmp/gui.log
           if [ "$rc" = 124 ]; then echo "GUI still running after 40 s on xcb: OK"; exit 0; fi
-          echo "::warning::GUI exited with $rc on xcb (${{ matrix.image }})"
+          echo "::warning::GUI exited with $rc on xcb ($IMAGE)"
           exit 1
 
   release:
@@ -691,20 +702,33 @@ jobs:
           echo "packaging==26.2 --hash=sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e" > "$RUNNER_TEMP/release-requirements.txt"
           python3 -m pip install --quiet --disable-pip-version-check \
             --require-hashes --no-deps --only-binary :all: -r "$RUNNER_TEMP/release-requirements.txt"
-          VERSION="$(python3 -c "from packaging.version import Version; print(Version('${GITHUB_REF_NAME#v}'))")"
+          # The tag reaches Python through the environment and never through
+          # the program text, so no tag name can turn into code here. A tag
+          # that is not a version fails the step.
+          VERSION="$(python3 -c 'import os; from packaging.version import Version; print(Version(os.environ["GITHUB_REF_NAME"].removeprefix("v")))')"
           STAGE="PyReconstruct-linux-installer"
           mkdir -p "$STAGE"
           cp packaging/linux/install.sh packaging/linux/uninstall.sh \
              packaging/linux/pyreconstruct.desktop.in packaging/linux/README.md "$STAGE"/
           # Standalone installs pin to this exact tag, so a vX.Y.Z asset installs
-          # vX.Y.Z (not bleeding main).
-          sed -i "s#DEFAULT_SOURCE=\"git+https://github.com/dustenhubbard/PyReconstruct.git\"#DEFAULT_SOURCE=\"git+https://github.com/dustenhubbard/PyReconstruct.git@${GITHUB_REF_NAME}\"#" "$STAGE/install.sh"
-          # sed exits 0 even when the pattern matched nothing; if the
-          # DEFAULT_SOURCE line in install.sh ever drifts, an unverified sed
+          # vX.Y.Z (not bleeding main). Python makes the edit and reads the tag
+          # from the environment; a tag in a sed script would be sed code.
+          python3 - "$STAGE/install.sh" <<'PY'
+          import os, sys
+          path = sys.argv[1]
+          line = 'DEFAULT_SOURCE="git+https://github.com/dustenhubbard/PyReconstruct.git"'
+          pinned = line[:-1] + "@" + os.environ["GITHUB_REF_NAME"] + '"'
+          with open(path) as f:
+              text = f.read()
+          with open(path, "w") as f:
+              f.write(text.replace(line, pinned))
+          PY
+          # The edit changes nothing when the line is missing; if the
+          # DEFAULT_SOURCE line in install.sh ever drifts, an unverified edit
           # would silently ship an installer that installs bleeding main
           # instead of this tag. Fail the release loudly instead.
           grep -qF "PyReconstruct.git@${GITHUB_REF_NAME}\"" "$STAGE/install.sh" || {
-            echo "::error::Linux installer version pin did not apply — DEFAULT_SOURCE line in packaging/linux/install.sh no longer matches the sed pattern above"
+            echo "::error::Linux installer version pin did not apply; the DEFAULT_SOURCE line in packaging/linux/install.sh no longer matches the line the step above pins"
             exit 1
           }
           FLAVOR="$(cat packaging/FLAVOR 2>/dev/null | tr -d '[:space:]' || true)"
