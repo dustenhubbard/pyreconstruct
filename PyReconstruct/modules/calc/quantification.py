@@ -20,8 +20,14 @@ def area(pts : list) -> float:
     
     if pts[0] != pts[-1]:
         pts = pts + pts[:1]
-    x = [ c[0] for c in pts ]
-    y = [ c[1] for c in pts ]
+    # Sum relative to the first point. Each cross product in raw coordinates
+    # is on the order of x*y, so a small trace far from the origin loses its
+    # area to rounding in the difference; measured from a point on the trace,
+    # the terms are on the order of the trace's own size. centroid() and
+    # traceGeometry() use the same reference.
+    x0, y0 = pts[0]
+    x = [ c[0] - x0 for c in pts ]
+    y = [ c[1] - y0 for c in pts ]
     s = 0
     for i in range(len(pts) - 1):
         s += x[i]*y[i+1] - x[i+1]*y[i]
@@ -43,13 +49,16 @@ def centroid(pts : list) -> tuple:
             pts = pts + pts[:1]
         if not ccwpoly(pts):
             pts = pts[::-1]
-        x = [ c[0] for c in pts ]
-        y = [ c[1] for c in pts ]
+        # relative to the first point, as in area(); the ring is closed, so
+        # reversing it leaves that point first
+        x0, y0 = pts[0]
+        x = [ c[0] - x0 for c in pts ]
+        y = [ c[1] - y0 for c in pts ]
         sx = sy = 0
         for i in range(len(pts) - 1):
             sx += (x[i] + x[i+1])*(x[i]*y[i+1] - x[i+1]*y[i])
             sy += (y[i] + y[i+1])*(x[i]*y[i+1] - x[i+1]*y[i])
-        return (round(sx/(6*a), 6), round(sy/(6*a), 6))
+        return (round(x0 + sx/(6*a), 6), round(y0 + sy/(6*a), 6))
     # if area is 0: return average of points
     else:
         x_avg = sum([p[0] for p in pts])/len(pts)
@@ -129,8 +138,9 @@ def traceGeometry(points, closed=True):
     centroid(), and a max-distance radius separately (each its own Python loop
     over the points, all calling distance()). Results match those scalar
     functions: ``area`` is unsigned, ``length`` is rounded to 7 and the centroid
-    to 6. The scalar functions above remain the reference implementations and are
-    unchanged; this is purely a faster equivalent for the 60k+/refresh hot path.
+    to 6. The scalar functions above remain the reference implementations, and
+    all three sum relative to the trace's first point; this is purely a faster
+    equivalent for the 60k+/refresh hot path.
     """
     n = len(points)
     if n == 0:
@@ -140,17 +150,11 @@ def traceGeometry(points, closed=True):
     x = arr[:, 0]
     y = arr[:, 1]
 
-    # Consecutive-vertex pairs, built once. Every edge quantity below -- segment
-    # lengths, shoelace cross products, midpoint sums -- is a function of these
-    # same pairs, so the slices are hoisted instead of being rebuilt per use.
-    xa, xb = x[:-1], x[1:]
-    ya, yb = y[:-1], y[1:]
-
     # length (matches lineDistance)
     if n <= 1:
         length = 0.0
     else:
-        d = float(np.hypot(xb - xa, yb - ya).sum())
+        d = float(np.hypot(x[1:] - x[:-1], y[1:] - y[:-1]).sum())
         if closed:
             d += math.hypot(x[0] - x[-1], y[0] - y[-1])
         length = round(d, 7)
@@ -161,19 +165,36 @@ def traceGeometry(points, closed=True):
         cx = round(float(x.mean()), 6)
         cy = round(float(y.mean()), 6)
     else:
+        # The sums run relative to the first point, the same reference area()
+        # and centroid() use. In raw coordinates each cross product is on the
+        # order of x*y, so a small trace far from the origin loses its area and
+        # centroid to rounding; relative to a point on the trace, the terms are
+        # on the order of the trace's own size.
+        x0, y0 = arr[0].tolist()
+        rel = arr - arr[0]
+        rx = rel[:, 0]
+        ry = rel[:, 1]
+
+        # Consecutive-vertex pairs, built once. The shoelace cross products and
+        # the midpoint sums are both functions of these same pairs, so the
+        # slices are hoisted instead of being rebuilt per use.
+        xa, xb = rx[:-1], rx[1:]
+        ya, yb = ry[:-1], ry[1:]
+
         # The ring is closed by writing its wrap edge -- the one from the last
         # vertex back to the first -- straight into the last slot of the cross
         # array, rather than by appending a copy of the first point to x and y
         # and taking the cross products of the longer arrays. The two are the
         # same n cross products in the same order: appending x[0]/y[0] makes the
         # final pair (x[-1], y[-1]) -> (x[0], y[0]), whose cross product is
-        # exactly the term assigned below. Appending was also guarded by an
-        # "only if not already closed" test, which was vacuous: when the ring is
-        # already closed the wrap term is x[0]*y[0] - x[0]*y[0] == 0.0 exactly,
-        # so adding it unconditionally cannot change the sum.
+        # exactly the term assigned below. Measured from the first point, that
+        # term is rx[-1]*0.0 - 0.0*ry[-1], which is 0.0 exactly, so it is
+        # written as a constant. The same goes for a ring that already repeats
+        # its first point at the end: its last edge adds 0.0 too, so it sums the
+        # same as the ring without the repeat.
         cross = np.empty(n)
         cross[:-1] = xa * yb - xb * ya
-        cross[-1] = x[-1] * y[0] - x[0] * y[-1]
+        cross[-1] = 0.0
         signed2 = float(cross.sum())          # == 2 * signed area
         a = abs(signed2) / 2.0
         if a > 1e-6:
@@ -181,12 +202,12 @@ def traceGeometry(points, closed=True):
             # explicit CCW reversal is needed; 6*signed_area == 3*signed2.
             sx = np.empty(n)
             sx[:-1] = xa + xb
-            sx[-1] = x[-1] + x[0]
+            sx[-1] = rx[-1]                    # + rx[0], which is 0.0
             sy = np.empty(n)
             sy[:-1] = ya + yb
-            sy[-1] = y[-1] + y[0]
-            cx = round(float((sx * cross).sum()) / (3.0 * signed2), 6)
-            cy = round(float((sy * cross).sum()) / (3.0 * signed2), 6)
+            sy[-1] = ry[-1]                    # + ry[0], which is 0.0
+            cx = round(x0 + float((sx * cross).sum()) / (3.0 * signed2), 6)
+            cy = round(y0 + float((sy * cross).sum()) / (3.0 * signed2), 6)
         else:
             cx = round(float(x.mean()), 6)
             cy = round(float(y.mean()), 6)
