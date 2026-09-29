@@ -50,9 +50,10 @@ def test_flavor_step_runs_before_the_first_flavor_read(job):
     assert "FLAVOR_INPUT: ${{ inputs.flavor }}" in text
 
 
-def test_readme_bump_never_reads_the_flavor():
-    """readme-bump checks out main and edits the README only, so it needs no step."""
-    assert not any(r in s for s in job_steps("readme-bump") for r in READERS)
+def test_the_download_links_bump_never_reads_the_flavor():
+    """The bump checks out main and edits the download links only, so it needs no step."""
+    source = (ROOT / ".github" / "workflows" / "download-links-bump.yml").read_text()
+    assert not any(r in source for r in READERS)
 
 
 def test_both_jobs_run_the_same_snippet():
