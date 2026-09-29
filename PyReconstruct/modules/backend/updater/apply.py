@@ -39,6 +39,7 @@ Staging layout, ``<parent>/.<AppName>-update/``::
     deferrals.json       how many times a locked install put this version off
     helper.lock          held by the running helper, so only one runs at a time
     helper.log           a line per step, for bug reports
+    selftest.log         what the self-test printed
 
 The OS-specific parts (waiting on and killing processes, launching, the
 Windows uninstall registry entry) sit behind ``Platform`` so tests can drive
@@ -86,6 +87,7 @@ FAILED_VERSIONS = "failed-versions.json"
 DEFERRALS = "deferrals.json"
 LOG = "helper.log"
 LOCK = "helper.lock"
+SELFTEST_LOG = "selftest.log"
 NEW = "new"
 OLD = "old"
 REJECTED = "rejected"
@@ -630,16 +632,33 @@ class Platform:
         """Start a program detached from this helper and return its pid."""
         raise NotImplementedError
 
-    def run(self, argv, timeout, cwd):
-        """Run to completion: the exit code, or None if it ran past ``timeout`` and was killed."""
+    def run(self, argv, timeout, cwd, log=None):
+        """Run to completion: the exit code, or None if it ran past ``timeout`` and was killed.
+
+        Output goes to the file ``log`` (or nowhere), never to a pipe. A
+        pipe has to be read until every process holding it closes it, and
+        a grandchild that inherited it could hold it open forever, with
+        this helper waiting on it and holding helper.lock.
+        """
+        out = open(log, "ab") if log else open(os.devnull, "wb")
         try:
-            done = subprocess.run(
-                argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT, timeout=timeout, env=child_env(), **self._run_flags(),
+            out.write(f"{_now()} {argv}\n".encode("utf-8", "replace"))
+            out.flush()
+            child = subprocess.Popen(
+                argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+                env=child_env(), **self._run_flags(),
             )
-        except subprocess.TimeoutExpired:
-            return None
-        return done.returncode
+            try:
+                return child.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                try:
+                    child.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    pass
+                return None
+        finally:
+            out.close()
 
     def _run_flags(self):
         return {}
@@ -1122,6 +1141,16 @@ class Applier:
     # -- apply --
 
     def apply(self, previous=None):
+        finished = isinstance(previous, dict) and previous.get("status") == "done"
+        if finished and previous.get("result") in ("updated", "rolled_back"):
+            # A copy that run could not delete. Cleared first, before any
+            # check below can refuse: a refusal ends with a new result, and
+            # after that there would be no telling what the copy was.
+            for path in (self.old, self.rejected):
+                try:
+                    _remove(path)
+                except OSError as e:
+                    self._log(f"could not clear {os.path.basename(path)}: {e}")
         if (isinstance(previous, dict) and previous.get("status") == "done"
                 and not os.path.lexists(self.new)):
             # A run already finished and nothing new is staged. Its result
@@ -1141,16 +1170,11 @@ class Applier:
             self._check_install_identity()
             if self.plan["to_version"] in self._failed_versions():
                 raise Refused(f"{self.plan['to_version']} failed before and is not retried in place")
-            leftovers = [p for p in (self.old, self.rejected) if os.path.lexists(p)]
-            if leftovers:
-                # A run that updated or rolled back can leave a copy it could
-                # not delete. After any other end (a stuck run, no journal)
-                # old/ may be the only copy of the install, so it stays.
-                done = isinstance(previous, dict) and previous.get("status") == "done"
-                if not (done and previous.get("result") in ("updated", "rolled_back")):
-                    raise Refused("a backup from an earlier run is still in staging")
-                for path in leftovers:
-                    _remove(path)
+            if any(os.path.lexists(p) for p in (self.old, self.rejected)):
+                # Left by a stuck run, a run with no journal, or a copy that
+                # could not be cleared above. old/ may be the only copy of
+                # the install, so it stays.
+                raise Refused("a backup from an earlier run is still in staging")
         except Refused as e:
             return self._refuse(str(e))
 
@@ -1222,7 +1246,8 @@ class Applier:
 
     def _do_selftest(self):
         cwd = self.new if self.plan["kind"] == "folder" else self.staging
-        code = self.platform.run(self._selftest_argv(), self.timings.selftest, cwd)
+        code = self.platform.run(self._selftest_argv(), self.timings.selftest, cwd,
+                                 log=os.path.join(self.staging, SELFTEST_LOG))
         if code is None:
             # A first run of new files can be slow while Defender scans them.
             # Try again at the next quit; three of these count as three deferrals.
@@ -1295,28 +1320,36 @@ class Applier:
                     return False
             time.sleep(self.timings.interval)
 
-    def _restore_backup(self):
-        """old/ -> install, retried until it works. True once the old version is back.
+    def _rename_until_done(self, src, dst, what, before_try=None):
+        """Rename ``src`` to ``dst``, retried until it works. True once it has.
 
-        Called only when the install path is empty. Nothing else would ever
-        put it back (PyReconstruct is not running to start another helper),
-        so this does not give up while old/ exists and the path is empty. The
-        pause between tries doubles up to ``backoff_max``.
+        For the renames a rollback cannot do without. Nothing else would
+        ever finish them (PyReconstruct is not running to start another
+        helper), so this does not give up while ``src`` exists and ``dst``
+        does not. Every try is logged, and the pause between tries doubles
+        up to ``backoff_max``.
         """
         delay = self.timings.interval
         tries = 0
-        while os.path.lexists(self.old) and not os.path.lexists(self.install):
+        while os.path.lexists(src) and not os.path.lexists(dst):
             tries += 1
+            if before_try:
+                before_try()
             try:
-                self.platform.rename(self.old, self.install)
-                _fsync_dir(os.path.dirname(self.install))
-                _fsync_dir(self.staging)
-                self._log(f"old version put back on try {tries}")
+                self.platform.rename(src, dst)
+                _fsync_dir(os.path.dirname(dst))
+                _fsync_dir(os.path.dirname(src))
+                self._log(f"{what}: done on try {tries}")
                 break
             except OSError as e:
-                self._log(f"putting the old version back, try {tries} failed: {e}")
+                self._log(f"{what}, try {tries} failed: {e}")
             time.sleep(delay)
             delay = min(delay * 2, self.timings.backoff_max)
+        return not os.path.lexists(src) and os.path.lexists(dst)
+
+    def _restore_backup(self):
+        """old/ -> install, retried until it works. True once the old version is back."""
+        self._rename_until_done(self.old, self.install, "putting the old version back")
         if os.path.lexists(self.install):
             self.state["installed"] = "old"
             return True
@@ -1371,16 +1404,16 @@ class Applier:
             return
         try:
             location = self.platform.install_location(key)
-        except OSError as e:
-            self._log(f"DisplayVersion not set to {version}: {e}")
+        except Exception as e:
+            self._log(f"DisplayVersion not set to {version}: {e!r}")
             return
         if not location or _norm_win(location) != _norm_win(self.install):
             self._log(f"DisplayVersion not set to {version}: the uninstall entry is for {location!r}")
             return
         try:
             self.platform.set_display_version(key, version)
-        except OSError as e:
-            self._log(f"DisplayVersion not set to {version}: {e}")
+        except Exception as e:
+            self._log(f"DisplayVersion not set to {version}: {e!r}")
 
     def _do_registry(self):
         self._set_display_version(self.plan["to_version"])
@@ -1466,9 +1499,13 @@ class Applier:
 
     def _do_rb_aside(self):
         if os.path.lexists(self.install) and os.path.lexists(self.old):
-            if not self._rename_retrying(self.install, self.rejected, holder_root=self.install):
+            # Whatever still holds the new version's folder is stopped before each try.
+            moved = self._rename_until_done(
+                self.install, self.rejected, "moving the new version aside",
+                before_try=lambda: self._stop(self.platform.processes_under(self.install)))
+            if not moved:
                 return {"status": "error", "installed": "new",
-                        "reason": "the new version is still in use; the next run finishes the rollback"}
+                        "reason": "a rejected copy is already in staging; the next run finishes the rollback"}
         self.state["installed"] = None
         return None
 
@@ -1577,8 +1614,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     # A working folder inside the install would lock it on Windows, and the
     # helper may have been started from there. Staging is never moved.
-    os.chdir(os.path.abspath(args.staging))
-    applier = Applier(args.staging, default_platform(), pid=args.pid)
+    staging = os.path.abspath(args.staging)
+    os.chdir(staging)
+    applier = Applier(staging, default_platform(), pid=args.pid)
     result = applier.run()
     return 0 if result.get("installed") == "new" else 1
 

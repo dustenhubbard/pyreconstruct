@@ -115,7 +115,9 @@ class World:
         self.versions = {}        # launched pid -> the version it runs
         self.kills = []
         self.selftests = []
+        self.selftest_logs = []
         self.selftest_code = 0
+        self.registry_error = None
         self.healthy = {OLD_V: True, NEW_V: True}
         self.quits_on_start = set()
         self.launch_error = None
@@ -171,8 +173,9 @@ class FakePlatform(A.Platform):
             A.write_health(self.w.staging, version, pid)
         return pid
 
-    def run(self, argv, timeout, cwd):
+    def run(self, argv, timeout, cwd, log=None):
         self.w.selftests.append(list(argv))
+        self.w.selftest_logs.append(log)
         return self.w.selftest_code
 
     def processes_under(self, path):
@@ -191,6 +194,8 @@ class FakePlatform(A.Platform):
         return self.w.install_locations.get(key)
 
     def set_display_version(self, key, version):
+        if self.w.registry_error:
+            raise self.w.registry_error
         self.w.registry[key] = version
 
     def rename(self, src, dst):
@@ -555,6 +560,86 @@ def test_a_stuck_run_keeps_its_backup(win):
         assert f.read() == "precious"
 
 
+def test_a_stale_backup_is_cleared_even_when_the_run_refuses(win):
+    """A refusal writes a new result, so the backup of a finished update must go before any check."""
+    old = os.path.join(win.staging, "old")
+    _write(old, "stale.txt", "x")
+    _write(os.path.join(win.staging, "rejected"), "stale.txt", "x")
+    A.atomic_write_json(os.path.join(win.staging, "state.json"),
+                        {"format": 1, "status": "done", "result": "updated", "installed": "new"})
+    A.atomic_write_json(os.path.join(win.staging, "failed-versions.json"), {"versions": [NEW_V]})
+
+    assert win.applier().run()["status"] == "refused"
+    assert not os.path.lexists(old)
+    assert not os.path.lexists(os.path.join(win.staging, "rejected"))
+
+    os.remove(os.path.join(win.staging, "failed-versions.json"))
+    assert win.applier().run()["status"] == "updated"
+    assert win.settled() == "new"
+
+
+def test_moving_the_new_version_aside_keeps_trying(win):
+    """A rollback stuck on a locked new version still ends with the old version running."""
+    win.world.healthy[NEW_V] = False
+    fails = []
+
+    def hook(src, dst):
+        if dst == os.path.join(win.staging, "rejected") and len(fails) < 12:
+            fails.append(src)
+            raise PermissionError(32, "in use", src)
+
+    win.world.rename_hook = hook
+    result = win.applier(timings=replace(FAST, health=0.05, lock_retry=0.01)).run()
+
+    assert result["status"] == "rolled_back"
+    assert len(fails) == 12
+    assert win.settled() == "old"
+    assert win.world.versions[max(win.world.versions)] == OLD_V  # relaunched last
+    with open(os.path.join(win.staging, "helper.log"), encoding="utf-8") as f:
+        assert f.read().count("moving the new version aside, try") == 12
+
+
+def test_a_registry_error_never_rolls_back_the_update(win):
+    win.world.registry_error = RuntimeError("not an OSError")
+    assert win.applier().run()["status"] == "updated"
+    assert win.settled() == "new"
+    with open(os.path.join(win.staging, "helper.log"), encoding="utf-8") as f:
+        assert "not an OSError" in f.read()
+
+
+def test_an_unreadable_uninstall_entry_never_rolls_back_the_update(win, monkeypatch):
+    def broken(self, key):
+        raise ValueError("bad registry data")
+
+    monkeypatch.setattr(FakePlatform, "install_location", broken)
+    assert win.applier().run()["status"] == "updated"
+    assert win.world.registry == {}
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the Windows registry")
+def test_real_registry_round_trip_on_a_throwaway_key(tmp_path):
+    """The real reads and writes, on a key made for this test under HKCU and deleted after."""
+    import uuid
+    import winreg
+    parent = "Software\\PyReconstruct-apply-test"
+    key = f"{parent}\\{uuid.uuid4()}_is1"
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key) as k:
+        winreg.SetValueEx(k, "InstallLocation", 0, winreg.REG_SZ, str(tmp_path) + "\\")
+    try:
+        plat = A.WindowsPlatform()
+        assert plat.install_location(key) == str(tmp_path) + "\\"
+        plat.set_display_version(key, NEW_V)
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as k:
+            assert winreg.QueryValueEx(k, "DisplayVersion")[0] == NEW_V
+        assert plat.install_location(key + "-missing") is None
+    finally:
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key)
+        try:
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, parent)
+        except OSError:
+            pass
+
+
 def test_a_leftover_backup_after_an_update_is_cleared(win):
     old = os.path.join(win.staging, "old")
     _write(old, "stale.txt", "x")
@@ -565,6 +650,11 @@ def test_a_leftover_backup_after_an_update_is_cleared(win):
 
 
 # --- Early ends ---------------------------------------------------------------------------
+
+def test_selftest_output_goes_to_its_log_in_staging(win):
+    win.applier().run()
+    assert win.world.selftest_logs == [os.path.join(win.staging, "selftest.log")]
+
 
 def test_failed_selftest_touches_nothing(win):
     win.world.selftest_code = 1
@@ -738,6 +828,24 @@ def test_display_version_is_skipped_when_the_entry_has_no_location(win):
     del win.world.install_locations[UNINSTALL_KEY]
     assert win.applier().run()["status"] == "updated"
     assert win.world.registry == {}
+
+
+def test_main_takes_a_relative_staging_path(win, monkeypatch):
+    """Resolved once, before the change of folder, so the helper and its working folder agree."""
+    seen = []
+
+    class Recorder:
+        def __init__(self, staging, platform, **kw):
+            seen.append((os.getcwd(), os.path.abspath(staging)))
+
+        def run(self):
+            return {"installed": "old"}
+
+    monkeypatch.chdir(win.parent)
+    monkeypatch.setattr(A, "Applier", Recorder)
+    A.main([A.APPLY_ARG, os.path.basename(win.staging)])
+    [(cwd, staging)] = seen
+    assert os.path.realpath(cwd) == os.path.realpath(staging) == os.path.realpath(win.staging)
 
 
 def test_main_leaves_the_install_as_its_working_folder(win, monkeypatch):
@@ -1039,6 +1147,37 @@ def test_real_platform_runs_waits_and_kills(tmp_path):
         plat.kill(pid, force=True)
     assert plat.wait_pid(pid, 10, 0.05)
     assert not plat.pid_alive(pid)
+
+
+def test_real_run_writes_output_to_the_log_file(tmp_path):
+    log = str(tmp_path / "selftest.log")
+    plat = A.default_platform()
+    code = "import sys; print('selftest ok'); print('to stderr', file=sys.stderr)"
+    assert plat.run([_python(), "-c", code], 30, str(tmp_path), log=log) == 0
+    with open(log, encoding="utf-8") as f:
+        text = f.read()
+    assert "selftest ok" in text and "to stderr" in text
+
+
+def test_a_grandchild_holding_the_output_cannot_hang_the_helper(tmp_path):
+    """The self-test times out, is killed, and leaves behind a child of its own that still has its output."""
+    import threading
+    pidfile = tmp_path / "grandchild.pid"
+    code = ("import subprocess, sys, time;"
+            " g = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)']);"
+            f" open({str(pidfile)!r}, 'w').write(str(g.pid)); print('started', flush=True); time.sleep(120)")
+    plat = A.default_platform()
+    outcome = []
+    worker = threading.Thread(daemon=True, target=lambda: outcome.append(
+        plat.run([_python(), "-c", code], 3, str(tmp_path), log=str(tmp_path / "selftest.log"))))
+    try:
+        worker.start()
+        worker.join(60)
+        assert not worker.is_alive(), "the helper is still waiting on the self-test's output"
+        assert outcome == [None]
+    finally:
+        if pidfile.exists():
+            plat.kill(int(pidfile.read_text()), force=True)
 
 
 def test_children_start_free_of_the_helpers_pyinstaller_state(tmp_path, monkeypatch):
