@@ -400,7 +400,10 @@ def test_a_series_with_no_sections_refuses_the_save(series):
     series.saveJser()
     good = open(series.jser_fp, "rb").read()
 
-    series.deleteSections(list(series.sections))
+    # deleteSections refuses to empty a series, so empty it by hand.
+    for filename in series.sections.values():
+        os.remove(os.path.join(series.hidden_dir, filename))
+    series.sections.clear()
 
     with pytest.raises(SeriesSaveError):
         series.saveJser()

@@ -475,7 +475,11 @@ class SectionTableWidget(DataTable):
             if self.series.data["sections"][snum]["locked"]:
                 notify("Cannot delete locked sections.")
                 return
-        
+
+        if set(self.series.sections) <= set(section_numbers):
+            notify("Cannot delete every section. A series needs at least one.")
+            return
+
         if not noUndoWarning():
             return
         
