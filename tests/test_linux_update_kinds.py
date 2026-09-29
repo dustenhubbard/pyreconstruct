@@ -26,6 +26,11 @@ DEV_CMD = "curl -fsSL https://pyreconstruct.org/install.sh | bash -s -- --dev"
 SOURCE_CMD = "curl -fsSL https://pyreconstruct.org/install-from-source.sh | bash"
 
 
+def source_cmd(tag):
+    """The install.sh command pinned to one release (install.sh's --ref)."""
+    return f"{SOURCE_CMD} -s -- --ref {tag}"
+
+
 # --------------------------------------------------------------------------- #
 # detection
 # --------------------------------------------------------------------------- #
@@ -202,12 +207,28 @@ def test_an_install_sh_copy_compares_against_the_release_tag(running):
     running("1.23.1.dev4")
     info = U.check_for_reinstall("release", "linux-installer", releases=FEED)
     assert (info["status"], info["remote_version"]) == ("newer", "1.24.0")
-    assert info["command"] == SOURCE_CMD
+    assert info["command"] == source_cmd("v1.24.0")
+
+
+def test_the_install_sh_command_installs_the_release_it_names(running):
+    """Without --ref, install.sh installs the newest main. A stable tag that
+    is not on main would then install something that still reads as older,
+    and the check would offer the same update again forever."""
+    running("1.22.2")
+    feed = [_nightly("1.23.0.dev20261001"), _stable("1.22.3")]
+    stable = U.check_for_reinstall("release", "linux-installer", releases=feed)
+    assert stable["remote_version"] == "1.22.3"
+    assert stable["command"] == source_cmd("v1.22.3")
+    nightly = U.check_for_reinstall("prerelease", "linux-installer", releases=feed)
+    assert nightly["remote_version"] == "1.23.0.dev20261001"
+    assert nightly["command"] == source_cmd("v1.23.0.dev20261001")
 
 
 def test_install_sh_has_one_command_for_both_flavors():
     assert U.reinstall_command("linux-installer", dev=True) == SOURCE_CMD
     assert U.reinstall_command("linux-installer", dev=False) == SOURCE_CMD
+    assert U.reinstall_command("linux-installer", dev=True, ref="v1.24.0") == source_cmd("v1.24.0")
+    assert U.reinstall_command("appimage", ref="v1.24.0") == STABLE_CMD
     assert U.reinstall_command("frozen") is None
 
 
@@ -282,8 +303,9 @@ def routes(main_window, main_window_dialogs, monkeypatch):
 @pytest.mark.parametrize("kind,flavor,version,command,title", [
     ("appimage", None, "1.23.0", STABLE_CMD, "PyReconstruct Update"),
     ("appimage", "PyReconstruct Dev", "1.24.0.dev20260901", DEV_CMD, "PyReconstruct Dev Update"),
-    ("linux-installer", None, "1.23.0", SOURCE_CMD, "PyReconstruct Update"),
-    ("linux-installer", "PyReconstruct Dev", "1.24.0.dev20260901", SOURCE_CMD, "PyReconstruct Dev Update"),
+    ("linux-installer", None, "1.23.0", source_cmd("v1.24.0"), "PyReconstruct Update"),
+    ("linux-installer", "PyReconstruct Dev", "1.24.0.dev20260901",
+     source_cmd("v1.25.0.dev20261001"), "PyReconstruct Dev Update"),
 ])
 def test_help_check_for_updates_shows_the_command(routes, kind, flavor, version, command, title):
     routes.use(kind, flavor, version)
@@ -322,7 +344,7 @@ def test_help_check_with_nothing_on_the_channel_names_the_flavor(routes, monkeyp
 @pytest.mark.parametrize("kind,flavor,command", [
     ("appimage", None, STABLE_CMD),
     ("appimage", "PyReconstruct Dev", DEV_CMD),
-    ("linux-installer", None, SOURCE_CMD),
+    ("linux-installer", None, source_cmd("v1.24.0")),
 ])
 def test_the_startup_check_shows_the_command(routes, kind, flavor, command):
     from PySide6.QtCore import QSettings
@@ -387,16 +409,41 @@ def test_cli_update_refuses_an_appimage_with_its_command(machine, monkeypatch, f
     )
 
 
-def test_cli_update_refuses_an_install_sh_copy_with_its_command(machine, monkeypatch):
+@pytest.mark.parametrize("flavor,tag", [
+    (None, "v1.24.0"), ("PyReconstruct Dev", "v1.25.0.dev20261001"),
+])
+def test_cli_update_refuses_an_install_sh_copy_with_its_command(machine, monkeypatch, flavor, tag):
     (machine.root / ".pyreconstruct-install").write_text(str(machine.root))
+    if flavor:
+        machine.env("PYRECON_APP_NAME", flavor)
+    monkeypatch.setattr(U, "fetch_releases", lambda *a, **k: FEED)
     _forbid_subprocess(monkeypatch)
     with pytest.raises(RuntimeError) as e:
         cli.update()
+    name = flavor or "PyReconstruct"
     assert str(e.value) == (
-        "This copy of PyReconstruct is managed by its Linux installer.\n"
+        f"This copy of {name} is managed by its Linux installer.\n"
         "To update, run this command in a terminal:\n"
-        f"  {SOURCE_CMD}"
+        f"  {source_cmd(tag)}"
     )
+
+
+def test_cli_update_on_an_install_sh_copy_offline_asks_for_the_tag(machine, monkeypatch):
+    """The command never falls back to the newest main when the feed is out
+    of reach; it asks for a release tag instead."""
+    (machine.root / ".pyreconstruct-install").write_text(str(machine.root))
+
+    def offline(*a, **k):
+        raise OSError("no network")
+
+    monkeypatch.setattr(U, "fetch_releases", offline)
+    _forbid_subprocess(monkeypatch)
+    with pytest.raises(RuntimeError) as e:
+        cli.update()
+    msg = str(e.value)
+    assert f"  {source_cmd('<release tag>')}\n" in msg
+    assert "/releases" in msg
+    assert f"  {SOURCE_CMD}\n" not in msg and not msg.endswith(SOURCE_CMD)
 
 
 def test_cli_update_on_plain_frozen_is_unchanged(machine, monkeypatch, capsys):

@@ -142,17 +142,37 @@ def update(requested_branch=None):
     # since an AppImage is a frozen build.
     from PyReconstruct.modules.backend.updater.install_info import install_kind
     from PyReconstruct.modules.backend.updater.updater import (
-        reinstall_command, pinned_channel,
+        reinstall_command, pinned_channel, check_for_reinstall,
     )
     kind = install_kind()
     if kind in ("appimage", "linux-installer"):
         from PyReconstruct.modules.datatypes.series_owner import app_display_name
-        command = reinstall_command(kind, dev=(pinned_channel() == "prerelease"))
+        channel = pinned_channel()
+        note = ""
+        if kind == "appimage":
+            command = reinstall_command(kind, dev=(channel == "prerelease"))
+        else:
+            # install.sh with no --ref installs the newest main, so name the
+            # channel's newest release, as Help > Check for updates does.
+            try:
+                info = check_for_reinstall(channel, kind)
+            except Exception:
+                info = {}
+            if info.get("remote_version"):
+                command = info["command"]
+            else:
+                command = reinstall_command(kind, ref="<release tag>")
+                note = (
+                    "\nThe newest release could not be looked up. Replace "
+                    "<release tag> with a tag from\n"
+                    f"  https://github.com/{_github_repo()}/releases"
+                )
         installer = "AppImage installer" if kind == "appimage" else "Linux installer"
         raise RuntimeError(
             f"This copy of {app_display_name()} is managed by its {installer}.\n"
             "To update, run this command in a terminal:\n"
             f"  {command}"
+            + note
         )
 
     if getattr(sys, "frozen", False):

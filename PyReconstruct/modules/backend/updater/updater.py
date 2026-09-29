@@ -369,7 +369,9 @@ def check_for_update(channel, releases=None):
 
 # The commands that update each Linux install, as the site serves the scripts
 # (see .github/workflows/docs.yml). install-appimage.sh takes --dev for
-# PyReconstruct Dev; install.sh has no flavors, so one command serves both.
+# PyReconstruct Dev and picks the release itself. install.sh has no flavors,
+# but with no --ref it installs the newest main, so its command names the
+# release tag to install.
 APPIMAGE_INSTALL_URL = "https://pyreconstruct.org/install.sh"
 SOURCE_INSTALL_URL = "https://pyreconstruct.org/install-from-source.sh"
 
@@ -382,13 +384,19 @@ _APPIMAGE_ASSET_RE = re.compile(
 _NIGHTLY_TAG_RE = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]{8}")
 
 
-def reinstall_command(kind, dev=False):
-    """The one command that updates an install of ``kind``, or None."""
+def reinstall_command(kind, dev=False, ref=None):
+    """The one command that updates an install of ``kind``, or None.
+
+    ``ref`` is the release tag install.sh should install (its ``--ref``).
+    Without it install.sh installs the newest ``main``, which is not the
+    release the update check named. install-appimage.sh takes no ref.
+    """
     if kind == "appimage":
         cmd = f"curl -fsSL {APPIMAGE_INSTALL_URL} | bash"
         return cmd + " -s -- --dev" if dev else cmd
     if kind == "linux-installer":
-        return f"curl -fsSL {SOURCE_INSTALL_URL} | bash"
+        cmd = f"curl -fsSL {SOURCE_INSTALL_URL} | bash"
+        return f"{cmd} -s -- --ref {ref}" if ref else cmd
     return None
 
 
@@ -435,7 +443,8 @@ def check_for_reinstall(channel, kind, releases=None):
     * ``appimage``: the release install-appimage.sh would install for this
       flavor, versioned by its AppImage's name.
     * ``linux-installer``: the channel's newest release, versioned by its
-      tag. install.sh installs from source, so no asset is needed.
+      tag. install.sh installs from source, so no asset is needed, and the
+      command passes that tag as ``--ref`` so it installs this release.
     """
     from PyReconstruct.modules.backend.updater.install_info import current_version
     if releases is None:
@@ -451,9 +460,12 @@ def check_for_reinstall(channel, kind, releases=None):
                     _APPIMAGE_ASSET_RE.fullmatch(asset["name"]).group("ver"))
             except InvalidVersion:
                 remote_v = None
+        ref = None
     else:
         release = pick_release(releases, channel)
         remote_v = _tag_version(release)
+        # Only a tag that parses as a version, so the command stays plain text.
+        ref = release["tag_name"] if remote_v else None
     local_v = current_version()
     return {
         "release": release,
@@ -461,7 +473,7 @@ def check_for_reinstall(channel, kind, releases=None):
         "remote_version": str(remote_v) if remote_v else None,
         "local_version": str(local_v) if local_v else None,
         "status": compare_versions(remote_v, local_v),
-        "command": reinstall_command(kind, dev=dev),
+        "command": reinstall_command(kind, dev=dev, ref=ref),
     }
 
 
