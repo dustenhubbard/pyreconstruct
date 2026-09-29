@@ -1,10 +1,11 @@
-"""A stable release moves every download link in the README and the User Guide.
+"""A stable release moves every download link in the README, User Guide, and website.
 
-The readme-bump job runs three sed expressions over both files after a stable
-tag publishes. The User Guide went two releases without a bump because the job
-edited only the README, and its version callout wrapped across two lines, which
-sed reads one line at a time. This runs the job's own expressions over the real
-files and checks that nothing still names the old version.
+The readme-bump job runs three sed expressions over those files after a stable
+tag publishes. The User Guide and the website's front page went two releases
+without a bump because the job edited only the README, and the guide's version
+callout wrapped across two lines, which sed reads one line at a time. This runs
+the job's own expressions over the real files and checks that nothing still
+names the old version.
 """
 import re
 import subprocess
@@ -12,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "build-installers.yml"
-FILES = ("README.md", "docs/USER_GUIDE.md")
+FILES = ("README.md", "docs/USER_GUIDE.md", "docs/index.md")
 
 
 def _bump_step() -> str:
@@ -29,12 +30,13 @@ def _bumped(path: str, version: str) -> str:
     return subprocess.run(args + [str(ROOT / path)], capture_output=True, text=True, check=True).stdout
 
 
-def test_the_job_edits_and_commits_both_files():
+def test_the_job_edits_and_commits_every_file():
     step = _bump_step()
-    for path in FILES:
-        assert f"{path}" in step.split("sed -E -i", 1)[1].split("git diff", 1)[0], path
-    assert "git add README.md docs/USER_GUIDE.md" in step
-    assert "git diff --quiet README.md docs/USER_GUIDE.md" in step
+    assert f"FILES=({' '.join(FILES)})" in step
+    sed_block = step[step.index("sed -E -i"):step.index("git diff --quiet")]
+    assert '"${FILES[@]}"' in sed_block
+    for use in ('git diff --quiet "${FILES[@]}"', 'git add "${FILES[@]}"'):
+        assert use in step, use
 
 
 def test_a_new_version_leaves_no_old_download_link_or_callout():
