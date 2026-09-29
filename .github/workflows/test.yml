@@ -384,3 +384,42 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: uv run --frozen --no-default-groups --extra test python -m pytest -ra   # -ra surfaces xfail/xpass/skip reasons if the gate goes red
+
+  # The in-place update swap engine renames install folders, waits on and stops
+  # processes, and launches programs, and each of those behaves differently on
+  # Windows and macOS: a folder with an open file cannot be renamed on Windows,
+  # a venv's python.exe there is a launcher, and macOS bundles carry framework
+  # links. The suite above runs on Linux only, so the swap tests run here as
+  # well, on the two platforms the swap ships on first. The Linux run inside
+  # `test` still covers them there.
+  #
+  # Not a merge gate: branch protection requires `test` by name, and this job
+  # has its own name, so adding it changed nothing about what blocks a merge.
+  # It is a separate job and not a matrix on `test` for the same reason: a
+  # matrix would rename `test` to `test (ubuntu-latest)` and the required check
+  # would never report.
+  #
+  # Same install line as `test`, so the environment matches. No Qt system libs
+  # step: PySide6's Windows and macOS wheels carry what they need.
+  updater-apply:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25   # the cold wheel install, as in `test`; the tests take seconds
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install project + test deps (frozen against uv.lock)
+        run: uv sync --frozen --no-default-groups --extra test
+
+      - name: Swap engine tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run --frozen --no-default-groups --extra test python -m pytest -ra tests/test_updater_apply.py tests/test_run_apply_dispatch.py
