@@ -662,7 +662,7 @@ jobs:
     environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'release' || '' }}
     permissions:
       contents: write
-      actions: write   # dispatches prune-nightlies and link-check after a publish
+      actions: write   # dispatches prune-nightlies, link-check, and download-links-bump after a publish
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1; needed for packaging/linux/ + release notes
         with:
@@ -965,15 +965,20 @@ jobs:
         # workflow_dispatch is exempt from the guard, so the publish path
         # dispatches them here. For a nightly this is also what enforces the
         # keep-the-newest-seven policy, since every nightly publishes from
-        # here. Skipped for drafts: nothing is public yet, so there is nothing
-        # to prune or check; the hand-publish of the draft fires the release
-        # triggers itself.
+        # here. A stable also dispatches download-links-bump, which opens the
+        # PR that moves the download links to it. Skipped for drafts: nothing
+        # is public yet, so there is nothing to prune, check, or link to; the
+        # hand-publish of the draft fires the release triggers itself.
         if: steps.rel.outputs.draft != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ steps.rel.outputs.prerelease }}
         run: |
           gh workflow run prune-nightlies.yml --repo "$GITHUB_REPOSITORY"
           gh workflow run link-check.yml --repo "$GITHUB_REPOSITORY"
+          if [ "$PRERELEASE" = false ]; then
+            gh workflow run download-links-bump.yml --repo "$GITHUB_REPOSITORY" -f tag="$GITHUB_REF_NAME"
+          fi
 
       - name: Prune orphaned draft-placeholder tags
         # Staging a release as a draft makes GitHub mint a placeholder tag named
@@ -1009,51 +1014,3 @@ jobs:
                 echo "deleting orphaned draft-placeholder tag: $t"
                 git push origin ":refs/tags/$t"
               done
-
-  readme-bump:
-    # A stable tag makes every direct download link stale the moment the
-    # release publishes, and the bump was a hand-made PR every release until it
-    # was forgotten one time too many (v1.22.0 shipped while the README still
-    # said v1.21.2, and the User Guide and website trailed by two releases).
-    # This opens that PR automatically, over the README, the User Guide, and
-    # the website's front page. It edits only three shapes: the bold version
-    # callout, the /releases/download/vX.Y.Z/ path, and the versioned asset
-    # filenames, so prose examples elsewhere (a pre-release tag named in the
-    # updater section) are left alone. Label and merge stay human steps, per
-    # the repo's gate discipline. Pre-release tags, nightlies included, skip
-    # this entirely.
-    needs: release
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: main
-      - name: Open the bump PR (stable tags only)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "pre-release tag; no bump"; exit 0; }
-          VERSION="${GITHUB_REF_NAME#v}"
-          FILES=(README.md docs/USER_GUIDE.md docs/index.md)
-          sed -E -i \
-            -e "s|(releases/download/)v[0-9]+\.[0-9]+\.[0-9]+/|\1v${VERSION}/|g" \
-            -e "s#PyReconstruct-[0-9]+\.[0-9]+\.[0-9]+-(Windows|macOS|Linux|linux)#PyReconstruct-${VERSION}-\1#g" \
-            -e "s|current stable release, \*\*v[0-9]+\.[0-9]+\.[0-9]+\*\*|current stable release, **v${VERSION}**|" \
-            "${FILES[@]}"
-          git diff --quiet "${FILES[@]}" && { echo "download links already current"; exit 0; }
-          git config user.name "$(git log -1 --format=%an)"
-          git config user.email "$(git log -1 --format=%ae)"
-          BRANCH="docs/downloads-v${VERSION}"
-          git checkout -b "$BRANCH"
-          git add "${FILES[@]}"
-          git commit -m "docs: point the download links at v${VERSION}" \
-            -m "Opened by the release build so the README, the User Guide, and the website never trail a stable release."
-          git push -f origin "$BRANCH"
-          gh pr create --base main --head "$BRANCH" \
-            --title "docs: point the download links at v${VERSION}" \
-            --body "The v${VERSION} release just published; this points the download links in the README, the User Guide, and the website at it. Opened automatically by the release build. Label and merge as usual." \
-            || echo "PR already open for $BRANCH"
