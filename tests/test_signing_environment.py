@@ -4,7 +4,9 @@ The five macOS signing secrets and UPDATE_SIGNING_KEY live in the `release`
 GitHub environment, which accepts only v* tags. build-installers.yml's build
 job (macOS signing) and release job (SHA256SUMS signing) ask for that
 environment only on a v* tag ref, so a manual dispatch on a branch gets no
-secrets and builds the unsigned app (the signing steps' documented fallback).
+secrets and builds the unsigned app (the macOS signing step's documented
+fallback; the release job runs only on v* tags, and fails there without the
+key rather than publish unsigned).
 A later edit that dropped the condition would ask every ref for the
 environment, and a branch run would then fail its deployment instead of
 building; one that dropped the environment would stop signing entirely. Both

@@ -639,6 +639,8 @@ jobs:
           exit 1
 
   release:
+    # Every action here is pinned to a commit, because this job holds the
+    # release environment.
     needs: [build, build-linux, test-appimage]
     # publish whatever built, even if one matrix leg failed (don't hide a good installer)
     if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') && (needs.build.result == 'success' || needs.build.result == 'failure') && (needs.build-linux.result == 'success' || needs.build-linux.result == 'failure') }}
@@ -651,7 +653,7 @@ jobs:
       contents: write
       actions: write   # dispatches prune-nightlies and link-check after a publish
     steps:
-      - uses: actions/checkout@v7          # needed for packaging/linux/ + release notes
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1; needed for packaging/linux/ + release notes
         with:
           fetch-depth: 0                   # full history + tags for the changelog link
       - name: Pick the build flavor
@@ -671,7 +673,7 @@ jobs:
             fi
           fi
           echo "flavor: $(cat packaging/FLAVOR 2>/dev/null || echo stable)"
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
         with:
           path: dist
           merge-multiple: true
@@ -684,7 +686,11 @@ jobs:
           # raw tag, so a v1.21.0-rc.1 tag yields 1.21.0rc1 like the others (a
           # nightly's v1.24.0.dev20260928 is already normalized). The
           # install-source pin below still uses the exact tag ref.
-          python3 -m pip install --quiet --disable-pip-version-check packaging
+          # This job holds the release environment, so nothing is installed in
+          # it unpinned: the exact wheel uv.lock resolves, checked by its hash.
+          echo "packaging==26.2 --hash=sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e" > "$RUNNER_TEMP/release-requirements.txt"
+          python3 -m pip install --quiet --disable-pip-version-check \
+            --require-hashes --no-deps --only-binary :all: -r "$RUNNER_TEMP/release-requirements.txt"
           VERSION="$(python3 -c "from packaging.version import Version; print(Version('${GITHUB_REF_NAME#v}'))")"
           STAGE="PyReconstruct-linux-installer"
           mkdir -p "$STAGE"
@@ -752,8 +758,10 @@ jobs:
         # this list and that module the same). A signature that fails would
         # make every client refuse the update, so it fails the release instead.
         #
-        # No key (a fork, or the secret not set yet): SHA256SUMS ships without
-        # a signature and PyReconstruct keeps using the per-file .sha256.
+        # No key fails the release. A frozen PyReconstruct refuses a release
+        # with no signature, so an unsigned v* release would reach nobody, and
+        # accepting one would let whoever deletes the signature choose the
+        # installer.
         env:
           UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
           UPDATE_PUBLIC_KEYS: >-
@@ -762,8 +770,8 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${UPDATE_SIGNING_KEY:-}" ]; then
-            echo "::notice::UPDATE_SIGNING_KEY is not set, so SHA256SUMS ships unsigned"
-            exit 0
+            echo "::error::UPDATE_SIGNING_KEY is not set; a v* release must not publish unsigned"
+            exit 1
           fi
           secret_key() {
             case "$UPDATE_SIGNING_KEY" in
@@ -886,7 +894,7 @@ jobs:
             *)     DRAFT=$IS_STABLE ;;
           esac
           echo "draft=$DRAFT" >> "$GITHUB_OUTPUT"
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.6.2
         with:
           files: dist/*
           prerelease: ${{ steps.rel.outputs.prerelease }}

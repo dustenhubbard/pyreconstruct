@@ -4,8 +4,9 @@ The release job writes SHA256SUMS and update-manifest.json, signs SHA256SUMS
 with minisign, and checks the signature against the two compiled-in public
 keys before publishing. The updater fetches SHA256SUMS and its signature from
 the same release and refuses the installer unless the signature is valid, made
-by a trusted key, names this release's tag, and lists the installer. A release
-with no signature keeps the per-file .sha256 flow.
+by a trusted key, names this release's tag, and lists the installer. A frozen
+build refuses a release with no signature; a source build keeps the per-file
+.sha256 flow. The release job fails rather than publish without a signature.
 
 The key pair under tests/fixtures/minisign/ is a throwaway made for these
 tests with ``minisign -G -W``; ``other.*`` is a second one that PyReconstruct
@@ -28,6 +29,7 @@ import pytest
 
 from PyReconstruct.modules.backend.updater import minisign as M
 from PyReconstruct.modules.backend.updater import signing_keys
+from PyReconstruct.modules.backend.updater import signing_keys as SK_MODULE
 from PyReconstruct.modules.backend.updater import updater as U
 
 from test_pruning_preserves_release_tags import workflow_script
@@ -143,6 +145,49 @@ def test_a_non_reduced_s_is_refused():
     s = int.from_bytes(signature[32:], "little") + M._L
     assert s < 2 ** 256
     assert not M.ed25519_verify(pk, msg, signature[:32] + s.to_bytes(32, "little"))
+
+
+# Encodings of points of small order. The identity is (0, 1); (0, -1) has order 2.
+SMALL_ORDER = {
+    "identity": (1).to_bytes(32, "little"),
+    "order 2": (M._P - 1).to_bytes(32, "little"),
+}
+
+
+def _any_message_signature():
+    """R = B, S = 1: under the identity as a public key, [S]B - [h]A = B = R
+    for every message, so only the small-order check refuses it."""
+    return M._encode(M._BASE) + (1).to_bytes(32, "little")
+
+
+def test_the_small_order_forgery_is_real_without_the_check():
+    """The arithmetic accepts it, so the refusal below is the check's doing."""
+    a = M._decode(SMALL_ORDER["identity"])
+    for msg in (b"", b"anything", SUMS):
+        h = int.from_bytes(hashlib.sha512(M._encode(M._BASE) + SMALL_ORDER["identity"] + msg).digest(),
+                           "little") % M._L
+        lhs = M._add(M._mul(1, M._BASE), M._negate(M._mul(h, a)))
+        assert M._encode(lhs) == M._encode(M._BASE)
+
+
+@pytest.mark.parametrize("name", sorted(SMALL_ORDER))
+def test_a_small_order_public_key_is_refused(name):
+    pk = SMALL_ORDER[name]
+    assert M._decode(pk) is not None, "a valid point, just of small order"
+    for msg in (b"", b"anything", SUMS):
+        assert not M.ed25519_verify(pk, msg, _any_message_signature())
+
+
+def test_a_minisign_signature_under_a_small_order_key_is_refused():
+    """A whole forged .minisig for any file, under a key made of the identity."""
+    key_id = b"\x01" * 8
+    key = base64.b64encode(b"Ed" + key_id + SMALL_ORDER["identity"]).decode()
+    forged = (b"untrusted comment: forged\n"
+              + base64.b64encode(b"ED" + key_id + _any_message_signature()) + b"\n"
+              + b"trusted comment: " + COMMENT.encode() + b"\n"
+              + base64.b64encode(_any_message_signature()) + b"\n")
+    with pytest.raises(M.BadSignature):
+        M.verify(SUMS, forged, [key])
 
 
 # --- Signatures made by the minisign CLI -------------------------------------
@@ -452,7 +497,15 @@ def test_the_signature_covers_the_exact_bytes(monkeypatch):
     assert _signed(monkeypatch, make_sig(sums), sums=sums) == ("ok", _expected())
 
 
-def test_no_signature_keeps_the_per_file_flow(monkeypatch):
+@pytest.fixture
+def kind(monkeypatch):
+    """Set what ``install_kind`` reports: ``kind("frozen")`` or ``kind("source")``."""
+    import PyReconstruct.modules.backend.updater.install_info as II
+    return lambda k: monkeypatch.setattr(II, "install_kind", lambda: k)
+
+
+def test_no_signature_keeps_the_per_file_flow_in_a_source_build(monkeypatch, kind):
+    kind("source")
     rel = _release(INSTALLER, INSTALLER + ".sha256")
     monkeypatch.setattr(U, "_download_bytes", lambda *a, **k: pytest.fail("no signed fetch"))
     monkeypatch.setattr(U, "_download_text", lambda url, timeout=15: "c0ffee  " + INSTALLER + "\n")
@@ -460,14 +513,37 @@ def test_no_signature_keeps_the_per_file_flow(monkeypatch):
     assert U.verified_checksum(rel, INSTALLER) == ("ok", "c0ffee")
 
 
-def test_no_signature_and_no_checksum_is_still_missing():
+def test_no_signature_and_no_checksum_is_still_missing_in_a_source_build(kind):
+    kind("source")
     assert U.verified_checksum(_release(INSTALLER), INSTALLER) == ("missing", None)
 
 
-def test_an_unsigned_sums_file_alone_keeps_the_old_fallback(monkeypatch):
+def test_an_unsigned_sums_file_alone_keeps_the_old_fallback_in_a_source_build(monkeypatch, kind):
     """A release from a build without the key has SHA256SUMS but no signature."""
+    kind("source")
     monkeypatch.setattr(U, "_download_text", lambda url, timeout=15: SUMS.decode())
     rel = _release(INSTALLER, "SHA256SUMS")
+    assert U.verified_checksum(rel, INSTALLER) == ("ok", _expected())
+
+
+@pytest.mark.parametrize("names", [
+    (INSTALLER, INSTALLER + ".sha256"),                  # the signature deleted
+    (INSTALLER, INSTALLER + ".sha256", "SHA256SUMS"),    # SHA256SUMS left unsigned
+    (INSTALLER,),                                        # nothing at all
+])
+def test_a_frozen_build_refuses_a_release_with_no_signature(monkeypatch, kind, names):
+    kind("frozen")
+    monkeypatch.setattr(U, "_download_text", lambda *a, **k: pytest.fail("per-file fallback"))
+    monkeypatch.setattr(U, "_download_bytes", lambda *a, **k: pytest.fail("nothing to fetch"))
+    assert U.verified_checksum(_release(*names), INSTALLER) == ("unsigned", None)
+
+
+@pytest.mark.parametrize("build", ["frozen", "source"])
+def test_a_signed_release_verifies_in_either_build(monkeypatch, kind, build):
+    kind(build)
+    monkeypatch.setattr(SK_MODULE, "TRUSTED_KEYS", (TEST_PUB,))
+    _serve(monkeypatch, {"SHA256SUMS": SUMS, "SHA256SUMS.minisig": sig("prehashed.minisig")})
+    rel = _release(INSTALLER, INSTALLER + ".sha256", "SHA256SUMS", "SHA256SUMS.minisig")
     assert U.verified_checksum(rel, INSTALLER) == ("ok", _expected())
 
 
@@ -516,6 +592,7 @@ def _dialog(tmp_path):
 
 
 REFUSALS = {
+    "unsigned": "PyReconstruct couldn't verify this download (the release has no signature). Nothing was installed.",
     "bad_signature": "PyReconstruct couldn't verify this download (its signature is not valid). Nothing was installed.",
     "unlisted": "PyReconstruct couldn't verify this download (it is not in the signed checksum list). Nothing was installed.",
 }
@@ -528,7 +605,7 @@ def test_the_dialog_refuses_and_says_why(qapp, tmp_path, monkeypatch, status):
     notified = []
     monkeypatch.setattr(gui_utils, "notify", notified.append)
     monkeypatch.setattr(gui_utils, "notifyConfirm", lambda *a, **k: pytest.fail("no install anyway"))
-    monkeypatch.setattr(II, "install_kind", lambda: "source")  # even where 'missing' may ask
+    monkeypatch.setattr(II, "install_kind", lambda: "frozen")
     dlg, tmpdir, dest = _dialog(tmp_path)
     dlg._on_downloaded(("sha", status, None, str(dest)))
     assert notified == [REFUSALS[status]]
@@ -541,6 +618,30 @@ def test_refusal_text_follows_the_house_rules():
         assert "\u2014" not in text and "\u2013" not in text
         assert "the app" not in text.lower()
         assert text.startswith("PyReconstruct ")
+
+
+def test_an_unreachable_checksum_says_try_again(qapp, tmp_path, monkeypatch):
+    import PyReconstruct.modules.gui.utils as gui_utils
+    notified = []
+    monkeypatch.setattr(gui_utils, "notify", notified.append)
+    dlg, tmpdir, dest = _dialog(tmp_path)
+    dlg._on_downloaded(("sha", "error", None, str(dest)))
+    assert notified == ["Couldn't verify the download (checksum unreachable). Not installing. Try again."]
+    assert dlg._parent._pending_installer is None
+
+
+def test_no_text_in_the_dialog_has_an_em_or_en_dash():
+    """Every string literal, so window titles and messages alike."""
+    import ast
+    import PyReconstruct.modules.gui.dialog.update_dialog as D
+    tree = ast.parse(Path(D.__file__).read_text())
+    doc_nodes = {id(n.body[0].value) for n in ast.walk(tree)
+                 if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef))
+                 and n.body and isinstance(n.body[0], ast.Expr)}
+    texts = [n.value for n in ast.walk(tree)
+             if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in doc_nodes]
+    assert texts
+    assert [t for t in texts if "\u2014" in t or "\u2013" in t] == []
 
 
 def test_a_signed_hash_that_does_not_match_is_refused(qapp, tmp_path, monkeypatch):
@@ -747,12 +848,13 @@ def test_the_sign_step_fails_on_a_key_that_is_not_trusted(tmp_path):
 
 
 @needs_bash
-def test_the_sign_step_skips_without_a_key(tmp_path):
+def test_the_sign_step_fails_without_a_key(tmp_path):
+    """A v* release must never publish unsigned: a frozen client refuses it."""
     dist, _ = _fake_dist(tmp_path)
     assert _run_script(dist, TAG, "stable").returncode == 0
     r = _sign_step(tmp_path, "")
-    assert r.returncode == 0, r.stderr
-    assert "::notice::" in r.stdout
+    assert r.returncode == 1
+    assert "::error::UPDATE_SIGNING_KEY is not set" in r.stdout
     assert not (dist / "SHA256SUMS.minisig").exists()
 
 
@@ -765,7 +867,7 @@ def test_the_sign_step_never_prints_or_stores_the_key():
                "*) printf 'untrusted comment: minisign secret key\\n%s\\n' \"$UPDATE_SIGNING_KEY\" ;;",
                'case "$UPDATE_SIGNING_KEY" in',
                "unset UPDATE_SIGNING_KEY",
-               'echo "::notice::UPDATE_SIGNING_KEY is not set, so SHA256SUMS ships unsigned"')
+               'echo "::error::UPDATE_SIGNING_KEY is not set; a v* release must not publish unsigned"')
     for line in uses:
         assert line.strip() in allowed, line
     assert "-s <(secret_key)" in script, "the key goes to minisign through a pipe"
@@ -796,3 +898,38 @@ def test_the_frozen_selftest_covers_the_verifier():
     run = (ROOT / "PyReconstruct" / "run.py").read_text()
     selftest = run.split('elif "--selftest" in sys.argv[1:]:', 1)[1].split("else:", 1)[0]
     assert "_minisign.selftest(TRUSTED_KEYS)" in selftest
+
+
+def _release_job():
+    text = WORKFLOW.read_text()
+    return text[text.index("\n  release:\n"):text.index("\n  readme-bump:\n")]
+
+
+def test_every_pip_install_in_the_release_job_is_hash_pinned_to_the_lock():
+    """The release job holds the signing key's environment, so nothing it
+    installs may float: pip gets the exact wheel uv.lock resolves, by hash."""
+    import re
+    import tomllib
+    job = _release_job()
+    installs = re.findall(r"pip install[^\n]*", job.replace("\\\n", " "))
+    assert installs, "is this test stale?"
+    for cmd in installs:
+        for flag in ("--require-hashes", "--no-deps", "--only-binary :all:", "-r "):
+            assert flag in cmd, (flag, cmd)
+    pins = re.findall(r"([A-Za-z0-9_.-]+)==(\S+) --hash=sha256:([0-9a-f]{64})", job)
+    assert pins
+    lock = tomllib.loads((ROOT / "uv.lock").read_text())
+    for name, version, digest in pins:
+        pkg = next(p for p in lock["package"] if p["name"] == name)
+        assert pkg["version"] == version, name
+        assert f"sha256:{digest}" in [w["hash"] for w in pkg.get("wheels", [])], name
+    assert "pip install" not in job.replace("python3 -m pip install", ""), "only through python3 -m pip"
+
+
+def test_every_action_in_the_release_job_is_pinned_to_a_commit():
+    import re
+    uses = re.findall(r"uses: (\S+)(.*)", _release_job())
+    assert len(uses) == 3, uses
+    for action, rest in uses:
+        assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", action), action
+        assert re.search(r"#\s*v\d", rest), (action, "no version comment")

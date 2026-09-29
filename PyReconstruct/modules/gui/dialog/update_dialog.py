@@ -60,7 +60,7 @@ class UpdateDialog(QDialog):
         self._cancel = threading.Event()
         self._tmpdir = None
 
-        self.setWindowTitle("PyReconstruct — Update")
+        self.setWindowTitle("PyReconstruct Update")
         self.setMinimumWidth(480)
         lay = QVBoxLayout(self)
 
@@ -161,8 +161,12 @@ class UpdateDialog(QDialog):
         self._progress.setValue(100)
 
         # A published signature decides on its own: a bad one, or a valid one
-        # that does not list this file, refuses the update outright. Only a
-        # release with no signature falls through to the per-file checksum.
+        # that does not list this file, refuses the update outright. A frozen
+        # build also refuses a release with no signature; only a source build
+        # falls through to the per-file checksum.
+        if cs_status == "unsigned":
+            self._fail("PyReconstruct couldn't verify this download (the release has no signature). Nothing was installed.")
+            return
         if cs_status == "bad_signature":
             self._fail("PyReconstruct couldn't verify this download (its signature is not valid). Nothing was installed.")
             return
@@ -174,7 +178,7 @@ class UpdateDialog(QDialog):
                 self._fail("Verification failed (checksum mismatch). Nothing was installed.")
                 return
         elif cs_status == "error":
-            self._fail("Couldn't verify the download (checksum unreachable). Not installing — try again.")
+            self._fail("Couldn't verify the download (checksum unreachable). Not installing. Try again.")
             return
         else:  # missing
             from PyReconstruct.modules.backend.updater.install_info import install_kind

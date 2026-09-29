@@ -3,8 +3,9 @@
 The frozen app can't ``pip install`` or use git, so "update" means: query the
 GitHub Releases API, pick the installer asset for this platform/channel,
 download it (with progress), verify its SHA-256 against the release's signed
-``SHA256SUMS`` (or its ``.sha256`` file when no signature is published), then
-launch the installer and quit. The dev/source update path stays in ``cli.py``.
+``SHA256SUMS``, then launch the installer and quit. A frozen build refuses a
+release that publishes no signature; a source build falls back to the
+installer's ``.sha256`` file. The dev/source update path stays in ``cli.py``.
 
 Module-level imports are stdlib + ``packaging`` only (no Qt, no app imports), so
 the pure functions here are unit-testable in isolation; ``install_info`` is
@@ -530,9 +531,9 @@ def trusted_comment_fields(comment):
 def fetch_signed_checksum(release, asset_name, trusted_keys=None):
     """Return ``(status, digest)`` for ``asset_name`` from the signed SHA256SUMS.
 
-    * ``('absent', None)``: the release publishes no signature, so the caller
-      falls back to :func:`fetch_checksum` (releases from before signing, or
-      one built without the signing key).
+    * ``('absent', None)``: the release publishes no signature. A frozen
+      build refuses it; a source build falls back to :func:`fetch_checksum`
+      (see :func:`verified_checksum`).
     * ``('ok', hex)``: the signature is valid, made by a compiled-in key, names
       this release's tag, and SHA256SUMS lists the asset.
     * ``('bad_signature', None)``: a signature is published but is invalid,
@@ -576,14 +577,24 @@ def fetch_signed_checksum(release, asset_name, trusted_keys=None):
 
 
 def verified_checksum(release, asset_name):
-    """The checksum the installer must match: signed if published, else per file.
+    """The checksum the installer must match, from the signed SHA256SUMS.
 
-    Returns :func:`fetch_signed_checksum`'s statuses, except that a release
-    with no signature goes through :func:`fetch_checksum` and returns one of
-    its statuses ('ok', 'missing', 'error') instead of 'absent'.
+    Returns :func:`fetch_signed_checksum`'s statuses, except 'absent':
+
+    * A frozen build gets ``('unsigned', None)`` and refuses the update.
+      Every release since signing began is signed (the release job fails
+      rather than publish without a signature), so a missing signature means
+      someone removed it. Falling back to the per-file ``.sha256`` would let
+      whoever can change the release's files choose the installer.
+    * A source build keeps the per-file flow and gets one of
+      :func:`fetch_checksum`'s statuses ('ok', 'missing', 'error').
     """
+    from PyReconstruct.modules.backend.updater.install_info import install_kind
+
     status, digest = fetch_signed_checksum(release, asset_name)
     if status == "absent":
+        if install_kind() == "frozen":
+            return ("unsigned", None)
         return fetch_checksum(release, asset_name)
     return (status, digest)
 
