@@ -3399,7 +3399,7 @@ class MainWindow(QMainWindow):
 
         labels = None if all else self.field.zarr_layer.selected_ids
 
-        labelsToObjects(
+        imported = labelsToObjects(
             self.series,
             data_fp,
             group_name,
@@ -3409,7 +3409,8 @@ class MainWindow(QMainWindow):
         self.removeZarrLayer()
         self.field.table_manager.refresh()
 
-        notify("Labels imported successfully.")
+        if imported:  # a failure already showed its error window
+            notify("Labels imported successfully.")
 
     def shuffleAutosegColors(self):
         """Re-roll the autoseg import color arrangement and refresh the preview.
@@ -4772,12 +4773,14 @@ class MainWindow(QMainWindow):
         
         for group in groups:
             if group in os.listdir(zarr_fp):
-                labelsToObjects(
+                imported = labelsToObjects(
                     self.series,
                     zarr_fp,
                     group,
                 )
                 self.field.reload()
+                if not imported:  # stop after the error window
+                    break
         
     def toggleGroupViz(self, group):
         """Toggle visibility of a group."""
