@@ -82,10 +82,16 @@ PyReconstruct = "PyReconstruct.cli:main"
 # runtime dependency, so this adds no Qt of its own. It belongs in this extra,
 # not in [dependency-groups].dev, because CI installs the suite with
 # `--extra test --no-default-groups` and would otherwise not see it.
+#
+# setuptools-scm is a build dependency, so the test environment does not get it
+# on its own. It is here so tests/test_version_after_nightly_tag.py can ask it
+# for the version of a throwaway repository with nightly tags. Without it those
+# tests skipped in CI, and nothing there checked the setting below.
 [project.optional-dependencies]
 test = [
     "pytest>=9,<10",
     "pytest-qt>=4",
+    "setuptools-scm>=8",
 ]
 
 # Developer-only tooling (PEP 735). Installed by `uv sync`, not shipped to
