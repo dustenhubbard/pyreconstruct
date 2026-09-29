@@ -69,6 +69,11 @@ Type: files; Name: "{app}\*.dll"
 ; updater's own folder so an uninstall leaves nothing behind.
 Type: filesandordirs; Name: "{app}\_internal"
 Type: filesandordirs; Name: "{app}\_updater"
+; The in-place updater's staging folder sits beside the install, not in it,
+; so a swap is one rename on one volume. It holds only what the updater put
+; there (a download, the staged tree, a backup, its logs), and its name is
+; this app's alone, so an uninstall removes it too.
+Type: filesandordirs; Name: "{app}\..\.{#PYR_NAME}-update"
 
 [Files]
 Source: "..\..\dist\{#PYR_NAME}\*"; DestDir: "{app}"; \

@@ -54,14 +54,33 @@ def test_uninstall_deletes_the_payload_and_the_updater_folder():
     assert ("filesandordirs", r"{app}\_updater") in targets
 
 
+STAGING = "{app}\\..\\.{#PYR_NAME}-update"
+
+
 def test_uninstall_delete_stays_inside_the_install_folder():
-    """A filesandordirs entry outside {app} could delete user data."""
+    """A filesandordirs entry outside {app} could delete user data.
+
+    The one exception is the updater's staging folder beside the install,
+    named for this app alone.
+    """
     entries = [_entry(line) for line in _sections(ISS.read_text(encoding="utf-8")).get("UninstallDelete", [])]
 
     assert entries
     for e in entries:
+        if e["name"] == STAGING:
+            continue
         assert e["name"].startswith("{app}\\"), e
         assert e["name"] != "{app}\\", e
+        assert ".." not in e["name"], e
+
+
+def test_uninstall_removes_the_staging_folder_the_helper_uses():
+    """The name the helper insists on for its staging folder, beside the install."""
+    entries = [_entry(line) for line in _sections(ISS.read_text(encoding="utf-8")).get("UninstallDelete", [])]
+    assert ("filesandordirs", STAGING) in {(e.get("type"), e.get("name")) for e in entries}
+
+    apply_py = (ISS.parents[2] / "PyReconstruct" / "modules" / "backend" / "updater" / "apply.py").read_text()
+    assert "os.path.basename(staging) != f\".{plan['app_name']}-update\"" in apply_py
 
 
 def test_the_two_appids_are_unchanged():
