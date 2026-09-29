@@ -1,5 +1,6 @@
 from .install_info import (
     install_kind,
+    REINSTALL_KINDS,
     current_version,
     current_version_str,
     os_key,
@@ -18,6 +19,8 @@ from .updater import (
     asset_version,
     compare_versions,
     check_for_update,
+    check_for_reinstall,
+    reinstall_command,
     pinned_channel,
     channel_display_name,
     other_flavor_url,

@@ -351,20 +351,20 @@ def welcome_update_note():
 def _is_installed_app():
     """True in the installed app, the only place that checks for updates.
 
-    ``MainWindow.checkForUpdatesStartup`` returns early unless
-    ``install_kind() == "frozen"``, so when running from source the note would
-    be describing something that does not happen. Compares against that one
-    value rather than testing for "not source", so a kind added later is
-    excluded until someone decides otherwise: ``install_kind`` today answers
-    ``"source"`` for a git checkout and a pip install alike, and that set can
-    grow.
+    ``MainWindow.checkForUpdatesStartup`` returns early unless the install
+    kind is ``"frozen"``, ``"appimage"`` or ``"linux-installer"``, so when
+    running from source the note would be describing something that does not
+    happen. Compares against those values rather than testing for "not
+    source", so a kind added later is excluded until someone decides
+    otherwise: ``install_kind`` answers ``"source"`` for a git checkout and a
+    pip install alike, and that set can grow.
 
     Reads the module-level ``install_kind`` so a test can rebind it, the way the
     other collaborators in this module are rebound. Never raises: a first-launch
     convenience must not be able to break the dialog.
     """
     try:
-        return install_kind() == "frozen"
+        return install_kind() in ("frozen", "appimage", "linux-installer")
     except Exception:
         return False
 

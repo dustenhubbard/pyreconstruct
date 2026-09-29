@@ -83,7 +83,7 @@ def test_update_redirects_sh_installer_venv(no_marker_prefix, monkeypatch):
     _forbid_subprocess(monkeypatch)
     with pytest.raises(RuntimeError) as e:
         cli.update()
-    assert "install.sh" in str(e.value)
+    assert "pyreconstruct.org/install-from-source.sh" in str(e.value)
 
 def test_update_targets_fork_with_this_pythons_pip_and_no_uninstall(no_marker_prefix, monkeypatch):
     monkeypatch.setattr(cli, "_repo_info", lambda: {"branch": "PyReconstruct", "commit": "1.20.0"})
