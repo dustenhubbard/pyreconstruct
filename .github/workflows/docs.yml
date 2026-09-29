@@ -8,11 +8,15 @@ on:
     branches: [main]
     paths:
       - docs/**
+      - packaging/linux/install-appimage.sh
+      - packaging/linux/install.sh
       - mkdocs.yml
       - .github/workflows/docs.yml
   pull_request:
     paths:
       - docs/**
+      - packaging/linux/install-appimage.sh
+      - packaging/linux/install.sh
       - mkdocs.yml
       - .github/workflows/docs.yml
   workflow_dispatch:
@@ -37,6 +41,12 @@ jobs:
           cache-dependency-glob: docs/requirements.txt
       # --no-project: the docs build must not sync the app's own (heavy) env.
       - run: uv run --no-project --with-requirements docs/requirements.txt mkdocs build --strict
+      # The Linux curl installers are served from the site so the commands stay
+      # short: pyreconstruct.org/install.sh installs the AppImage, and
+      # pyreconstruct.org/install-from-source.sh installs from source.
+      - run: |
+          cp packaging/linux/install-appimage.sh site/install.sh
+          cp packaging/linux/install.sh site/install-from-source.sh
       # Skipped on `pull_request` only. A `workflow_dispatch` still builds and
       # uploads the artifact, because manual dispatch is the escape hatch for
       # redeploying the site without a docs change.
