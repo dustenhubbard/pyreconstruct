@@ -54,3 +54,23 @@ def test_the_build_and_the_installer_spell_the_same_names():
     assert re.match(patterns["stable"], NAMES[0]) and not re.match(patterns["stable"], NAMES[2])
     assert re.match(patterns["dev"], NAMES[2]) and not re.match(patterns["dev"], NAMES[0])
     assert not any(re.match(p, n) for p in patterns.values() for n in NAMES if n.endswith(".sha256"))
+
+
+def test_readme_bump_moves_an_appimage_link_to_the_new_version():
+    """A README link to the AppImage follows each stable release like the others."""
+    import subprocess
+
+    workflow = (ROOT / ".github" / "workflows" / "build-installers.yml").read_text()
+    job = workflow[workflow.index("\n  readme-bump:\n"):]
+    exprs = re.findall(r'^\s+-e "(.+)" \\$', job, re.M)
+    assert len(exprs) == 3, exprs
+    args = ["sed", "-E"]
+    for e in exprs:
+        args += ["-e", e.replace("${VERSION}", "1.25.0")]
+    old = (
+        "[PyReconstruct-1.24.0-linux-x86_64.AppImage]"
+        "(https://github.com/dustenhubbard/PyReconstruct/releases/download/"
+        "v1.24.0/PyReconstruct-1.24.0-linux-x86_64.AppImage)\n"
+    )
+    out = subprocess.run(args, input=old, capture_output=True, text=True, check=True).stdout
+    assert out == old.replace("1.24.0", "1.25.0")

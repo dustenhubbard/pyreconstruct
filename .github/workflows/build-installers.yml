@@ -920,7 +920,7 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           sed -E -i \
             -e "s|(releases/download/)v[0-9]+\.[0-9]+\.[0-9]+/|\1v${VERSION}/|g" \
-            -e "s#PyReconstruct-[0-9]+\.[0-9]+\.[0-9]+-(Windows|macOS|Linux)#PyReconstruct-${VERSION}-\1#g" \
+            -e "s#PyReconstruct-[0-9]+\.[0-9]+\.[0-9]+-(Windows|macOS|Linux|linux)#PyReconstruct-${VERSION}-\1#g" \
             -e "s|current stable release, \*\*v[0-9]+\.[0-9]+\.[0-9]+\*\*|current stable release, **v${VERSION}**|" \
             README.md
           git diff --quiet README.md && { echo "README already current"; exit 0; }
