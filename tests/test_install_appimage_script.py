@@ -360,3 +360,17 @@ def test_source_installer_refuses_to_install_over_the_appimage(env):
                        capture_output=True, text=True, timeout=60)
     assert p.returncode == 1 and "--uninstall" in p.stderr, p.stderr
     assert sorted(x.name for x in root.iterdir()) == [".appimage-install"]
+
+
+@pytest.mark.skipif(sys.version_info[:2] != (3, 11), reason="install.sh needs a Python 3.11")
+def test_source_installer_with_a_prefix_keeps_the_appimage_launcher(env, tmp_path):
+    with FakeGitHub([stable_release("v1.24.0")]) as gh:
+        run(env, gh)
+    launcher = paths(env, "stable")["launcher"]
+    before = launcher.read_text()
+    other = tmp_path / "elsewhere"
+    p = subprocess.run(["bash", str(ROOT / "packaging" / "linux" / "install.sh"), "--prefix", str(other)],
+                       env={**env, "PYRECON_PYTHON": sys.executable},
+                       capture_output=True, text=True, timeout=60)
+    assert p.returncode == 1 and "--uninstall" in p.stderr, p.stderr
+    assert launcher.read_text() == before
