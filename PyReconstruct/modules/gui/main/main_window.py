@@ -1282,38 +1282,29 @@ class MainWindow(QMainWindow):
                     filename} section map; _OPEN_ABORTED if the series is
                     already open in another window
         """
+        holder = self._seriesHolder(hidden_series_dir)
+        if holder:
+            QMessageBox.information(
+                self,
+                "Series In Use",
+                f"This series is already open in {holder}.\n"
+                "Close it there before opening it here; two "
+                "apps writing the same series can corrupt it.",
+                QMessageBox.Ok
+            )
+            if not self.series:
+                # aborting the very first open (see sys.exit note above)
+                sys.exit()
+            else:
+                return _OPEN_ABORTED
+
         new_series_fp = ""
         sections = {}
         for f in os.listdir(hidden_series_dir):
             if os.path.isdir(os.path.join(hidden_series_dir, f)):
                 continue
-            # check if the series is currently being modified
             if "." not in f:
-                if not f.isdigit():
-                    continue  # not a timer file (e.g. stray editor/OS file)
-                current_time = round(time.time())
-                time_diff = current_time - int(f)
-                if time_diff <= _SERIES_LOCK_HEARTBEAT:  # currently being operated on
-                    # the identity file beside the heartbeat says who and which
-                    # app flavor; with two builds installed, "another window"
-                    # stopped being an answer
-                    from PyReconstruct.modules.datatypes.series_owner import (
-                        describe_owner, read_owner,
-                    )
-                    holder = describe_owner(read_owner(hidden_series_dir))
-                    QMessageBox.information(
-                        self,
-                        "Series In Use",
-                        f"This series is already open in {holder}.\n"
-                        "Close it there before opening it here; two "
-                        "apps writing the same series can corrupt it.",
-                        QMessageBox.Ok
-                    )
-                    if not self.series:
-                        # aborting the very first open (see sys.exit note above)
-                        sys.exit()
-                    else:
-                        return _OPEN_ABORTED
+                continue  # timer file, handled above
             else:
                 ext = f[f.rfind(".")+1:]
                 if ext.isnumeric():
@@ -1322,6 +1313,77 @@ class MainWindow(QMainWindow):
                     new_series_fp = os.path.join(hidden_series_dir, f)
 
         return new_series_fp, sections
+
+    @staticmethod
+    def _seriesHolder(hidden_series_dir):
+        """Who has this hidden series dir open right now, if anyone.
+
+        The open window rewrites a timer file named for the current epoch
+        second every `_SERIES_LOCK_HEARTBEAT` seconds (FieldWidget.markTime),
+        so a timer file younger than that means another window has the series.
+
+            Params:
+                hidden_series_dir (str): the hidden dir to check
+            Returns:
+                (str): the holder, for a message; None if nobody has it open
+        """
+        for f in os.listdir(hidden_series_dir):
+            if "." in f or not f.isdigit():
+                continue  # not a timer file (e.g. stray editor/OS file)
+            if os.path.isdir(os.path.join(hidden_series_dir, f)):
+                continue
+            if round(time.time()) - int(f) <= _SERIES_LOCK_HEARTBEAT:
+                # the identity file beside the heartbeat says who and which
+                # app flavor; with two builds installed, "another window"
+                # stopped being an answer
+                from PyReconstruct.modules.datatypes.series_owner import (
+                    describe_owner, read_owner,
+                )
+                return describe_owner(read_owner(hidden_series_dir))
+        return None
+
+    def _saveAsTargetFree(self, new_jser_fp):
+        """Check that Save As may clear the working folder at the destination.
+
+        Series.move deletes the destination's hidden dir. That folder can
+        belong to a series open in another window, or hold a crashed
+        session's unsaved work, so it is only cleared when neither is true
+        or the user says so.
+
+            Params:
+                new_jser_fp (str): the .jser the user chose
+            Returns:
+                (bool): True if the save can go ahead
+        """
+        sname = os.path.basename(new_jser_fp)
+        sname = sname[:sname.rfind(".")]
+        dest_dir = os.path.join(os.path.dirname(new_jser_fp), f".{sname}")
+        if not os.path.isdir(dest_dir):
+            return True
+        if os.path.samefile(dest_dir, self.series.getwdir()):
+            return True  # saving over itself
+
+        holder = self._seriesHolder(dest_dir)
+        if holder:
+            QMessageBox.information(
+                self,
+                "Series In Use",
+                f"{sname}.jser is open in {holder}.\n"
+                "Saving over it would delete the copy that is open there. "
+                "Close it there first, or save under another name.",
+                QMessageBox.Ok
+            )
+            return False
+
+        if any(f.endswith(".ser") for f in os.listdir(dest_dir)):
+            return notifyConfirm(
+                f"{sname}.jser has unsaved work from a session that did not "
+                "close.\nSaving over it will delete that work. Save anyway?",
+                yn=True,
+                title="Unsaved Series",
+            )
+
+        return True
 
     @staticmethod
     def _clearHiddenSeriesDir(hidden_series_dir):
@@ -2401,6 +2463,8 @@ class MainWindow(QMainWindow):
             file_name=f"{self.series.name}.jser"
         )
         if not new_jser_fp:
+            return "cancel"
+        if not self._saveAsTargetFree(new_jser_fp):
             return "cancel"
 
         ## Move hidden folder to new jser directory
