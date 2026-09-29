@@ -23,7 +23,7 @@ STABLE_TAG = r"^v[0-9]+\.[0-9]+\.[0-9]+$"
 
 # Anything that reads packaging/FLAVOR, directly or through a script or spec.
 READERS = ("packaging/FLAVOR", "packaging\\FLAVOR", "make_icns.sh", "make_dmg.sh",
-           "PyReconstruct.spec", "PyReconstruct.iss")
+           "make_appimage.sh", "PyReconstruct.spec", "PyReconstruct.iss")
 
 
 def job_steps(job):
@@ -35,7 +35,7 @@ def job_steps(job):
     return re.split(r"\n(?=      - )", steps)
 
 
-@pytest.mark.parametrize("job", ["build", "release"])
+@pytest.mark.parametrize("job", ["build", "build-linux", "release"])
 def test_flavor_step_runs_before_the_first_flavor_read(job):
     steps = job_steps(job)
     names = [s.split("- name: ", 1)[1].split("\n", 1)[0] if "- name: " in s else s
@@ -56,9 +56,9 @@ def test_readme_bump_never_reads_the_flavor():
 
 
 def test_both_jobs_run_the_same_snippet():
-    blocks = [s for job in ("build", "release") for s in job_steps(job)
-              if f"- name: {STEP}\n" in s]
-    assert len(blocks) == 2 and blocks[0].strip() == blocks[1].strip()
+    jobs = ("build", "build-linux", "release")
+    blocks = [s for job in jobs for s in job_steps(job) if f"- name: {STEP}\n" in s]
+    assert len(blocks) == len(jobs) and all(b.strip() == blocks[0].strip() for b in blocks)
 
 
 def test_dispatch_offers_the_flavor_choice():
