@@ -4,7 +4,7 @@
 import sys
 from pathlib import Path
 
-usage = "Convert legacy Reconstruct XML series to PyReconstruct jser file through command line.\nusage: series-from-xml <dir containing xml series> [<output jser filepath>]"
+usage = "Convert legacy Reconstruct XML series to PyReconstruct jser file through command line.\nusage: series-from-xml <xml series .ser file, or a folder holding exactly one> [<output jser filepath>]"
 
 args = sys.argv
 
@@ -17,9 +17,25 @@ _, xml, *jser = sys.argv
     
 xml = Path(xml)
 
-if not xml.exists() or not xml.is_dir():
+if xml.is_dir():
 
-    print("Please provide a valid directory containing legacy xml tracefiles.")
+    # only visible .ser files: a hidden ".<name>" folder from an earlier
+    # conversion can end in .ser too
+    found = [
+        f for f in xml.iterdir()
+        if f.is_file() and f.suffix.lower() == ".ser" and not f.name.startswith(".")
+    ]
+
+    if len(found) != 1:
+
+        print(f"Found {len(found)} .ser files in {xml}. Please provide the .ser file of the series to convert.")
+        sys.exit(1)
+
+    xml = found[0]
+
+if not xml.is_file() or xml.suffix.lower() != ".ser" or not xml.stem or xml.name.startswith("."):
+
+    print("Please provide a legacy xml series (.ser) file, or a folder that holds exactly one.")
     sys.exit(1)
 
 if not jser:

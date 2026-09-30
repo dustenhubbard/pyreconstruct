@@ -31,8 +31,17 @@ def xmlToJSON(series_fp : str) -> Series:
     # gather the section filepaths for this series only: a folder can hold
     # more than one series, and the hidden folder of an earlier conversion
     # can end in .ser too
-    xml_dir = os.path.dirname(series_fp)
-    series_name = os.path.basename(series_fp)[:-len(".ser")]
+    base = os.path.basename(series_fp)
+    series_name = base[:-len(".ser")]
+    # a folder or a nameless ".ser" would make the hidden folder below the
+    # xml folder itself, and creating it empties that folder
+    if (
+        not os.path.isfile(series_fp)
+        or not base.lower().endswith(".ser")
+        or not series_name
+    ):
+        raise ValueError(f"Not a legacy series (.ser) file: {series_fp}")
+    xml_dir = os.path.dirname(series_fp) or "."
     section_fps = []
     json_fp = ""
 
@@ -44,7 +53,10 @@ def xmlToJSON(series_fp : str) -> Series:
             continue
         if f.endswith(".json"):
             json_fp = fp
-        elif f.startswith(series_name + ".") and f[len(series_name)+1:].isdecimal():
+        elif (
+            f.startswith(series_name + ".")
+            and re.fullmatch(r"[0-9]+", f[len(series_name)+1:])
+        ):
             section_fps.append(fp)
 
     print("Creating hidden folder...")

@@ -118,3 +118,100 @@ def test_new_from_xml_passes_the_chosen_file(monkeypatch):
     fake = types.SimpleNamespace()
     main_window.MainWindow.newFromXML(fake, "/data/xml/Alpha.ser")
     assert seen == ["/data/xml/Alpha.ser"]
+
+
+def _snapshot(d):
+    return sorted(
+        os.path.relpath(os.path.join(root, f), d)
+        for root, dirs, files in os.walk(d)
+        for f in files + dirs
+    )
+
+
+@pytest.mark.parametrize("name", [".", ".ser", "Alpha.SER.d"])
+def test_a_folder_is_refused_and_nothing_is_deleted(
+    qapp, settings_isolated, tmp_path, name
+):
+    d = tmp_path / "xml"
+    d.mkdir()
+    _write_ser(d / "ser.ser")
+    _write_section(d / "ser.1", 1)
+    (d / ".ser").mkdir()
+    (d / ".ser" / "ser.ser").write_text("{}")
+    (d / "Alpha.SER.d").mkdir()
+    before = _snapshot(d)
+
+    with pytest.raises(ValueError):
+        conv.xmlToJSON(str(d / name))
+    assert _snapshot(d) == before
+
+
+def test_a_nameless_ser_file_is_refused(qapp, settings_isolated, tmp_path):
+    d = tmp_path / "xml"
+    d.mkdir()
+    _write_ser(d / ".ser")
+    _write_section(d / "ser.1", 1)
+    before = _snapshot(d)
+
+    with pytest.raises(ValueError):
+        conv.xmlToJSON(str(d / ".ser"))
+    assert _snapshot(d) == before
+
+
+def test_an_uppercase_suffix_and_a_bare_relative_path_work(
+    qapp, settings_isolated, tmp_path, monkeypatch
+):
+    _write_ser(tmp_path / "Alpha.SER")
+    _write_section(tmp_path / "Alpha.1", 1)
+    monkeypatch.chdir(tmp_path)
+
+    series = conv.xmlToJSON("Alpha.SER")
+    assert series.name == "Alpha"
+    assert sorted(series.sections) == [1]
+
+
+SCRIPT = os.path.join(
+    os.path.dirname(__file__), os.pardir, "dev", "scripts", "series-from-xml"
+)
+
+
+def _run_script(monkeypatch, *args):
+    import runpy
+    monkeypatch.setattr("sys.argv", ["series-from-xml", *map(str, args)])
+    with pytest.raises(SystemExit) as exit_info:
+        runpy.run_path(SCRIPT, run_name="__main__")
+        raise SystemExit(0)
+    return exit_info.value.code
+
+
+@pytest.mark.parametrize("by_folder", [False, True])
+def test_dev_script_converts_the_series(
+    qapp, settings_isolated, tmp_path, monkeypatch, by_folder
+):
+    d = tmp_path / "xml"
+    d.mkdir()
+    _write_ser(d / "Alpha.ser")
+    _write_section(d / "Alpha.1", 1)
+    (d / ".Alpha.ser").mkdir()  # hidden folder that is not a series file
+    out = tmp_path / "out.jser"
+
+    code = _run_script(monkeypatch, d if by_folder else d / "Alpha.ser", out)
+    assert code in (0, None)
+    assert out.is_file()
+    assert {"Alpha.ser", "Alpha.1"} <= set(os.listdir(d))
+
+
+def test_dev_script_refuses_a_folder_with_two_series(
+    qapp, settings_isolated, tmp_path, monkeypatch, capsys
+):
+    d = tmp_path / "xml"
+    d.mkdir()
+    for name in ("Alpha", "Beta"):
+        _write_ser(d / f"{name}.ser")
+        _write_section(d / f"{name}.1", 1)
+    before = _snapshot(d)
+
+    assert _run_script(monkeypatch, d, tmp_path / "out.jser") == 1
+    assert "Found 2 .ser files" in capsys.readouterr().out
+    assert _snapshot(d) == before
+    assert not (tmp_path / "out.jser").exists()
