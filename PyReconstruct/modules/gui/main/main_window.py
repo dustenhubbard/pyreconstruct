@@ -87,10 +87,16 @@ _OPEN_ABORTED = object()
 
 
 def _sameDir(a, b):
-    """True if two paths name the same folder (symlinks and case folded)."""
-    if not a or not b:
+    """True if two paths name the same existing folder.
+
+    Asks the filesystem rather than comparing strings, so a path that differs
+    only in case on a case-insensitive volume, or reaches the folder through a
+    symlink, still matches. A missing path matches nothing.
+    """
+    try:
+        return os.path.samefile(a, b)
+    except (OSError, TypeError, ValueError):
         return False
-    return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
 
 ## How fresh a timer file in a hidden series dir has to be for the series to
 ## count as open in another window. The open window rewrites that file every 5
@@ -1119,10 +1125,10 @@ class MainWindow(QMainWindow):
 
         # clear the series
         if self.series and not self.series.isWelcomeSeries():
-            # Reopening the series that is already open (File > Open or Open
-            # Recent on the same .jser) unpacks the new copy into the very
-            # hidden dir the old one used, which the save prompt above has
-            # already closed. Closing the old object again would delete the
+            # Reopening the series that is already open (File > Open series,
+            # or the macOS file-open event, on the same .jser) unpacks the
+            # new copy into the very hidden dir the old one used, which the
+            # save prompt above has already closed. Closing the old object again would delete the
             # files the new one was just given (fork #527).
             if _sameDir(self.series.hidden_dir, new_series.hidden_dir):
                 self.series.leave_open = True
