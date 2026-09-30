@@ -4497,6 +4497,8 @@ class MainWindow(QMainWindow):
 
         self.series.importTracePaletteCSV(fp, name)
         self.series.palette_index[0] = name
+        # the new palette may be shorter than the selected button number
+        self.series.clampPaletteIndex()
 
         self.mouse_palette.reset()
         # reset() checks the new palette's button without clicking it, so the
