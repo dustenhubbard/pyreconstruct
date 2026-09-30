@@ -4383,12 +4383,15 @@ class Series():
             if new_name not in self.obj_attrs:
                 self.obj_attrs[new_name] = {}
 
-            # find non-existing attributes and import them in
+            # find non-existing attributes and import them in; copy each
+            # value, since a rename on only some sections leaves the old
+            # object in place and the two must not share a mutable value
+            # (user_columns is a dict)
             old_attrs = self.obj_attrs[old_name]
             new_attrs = self.obj_attrs[new_name]
             for attr, value in old_attrs.items():
                 if attr not in new_attrs:
-                    new_attrs[attr] = value
+                    new_attrs[attr] = deepcopy(value)
             
             # find non-existing user columns and import them in
             if "user_columns" in old_attrs:
