@@ -667,7 +667,7 @@ class TraceLayer():
         # insert in trace_layer
         arr[yy, xx] = label
     
-    def generateLabelsArray(self, pixmap_dim : tuple, window : list, traces : list[Trace], tform : Transform = None):
+    def generateLabelsArray(self, pixmap_dim : tuple, window : list, traces : list[Trace], tform : Transform = None, name_ids : dict = None):
         """Generate numpy array with traces drawn as labels.
         
             Params:
@@ -675,9 +675,14 @@ class TraceLayer():
                 window (list): the view of the window (x, y, w, h)
                 traces (list[Traces]): the traces to include as labels
                 tform (Transform): the unique transform to apply to the traces
+                name_ids (dict): the label for each object name; if None, the
+                    names in traces are sorted and numbered from 1
             Returns:
                 (np.ndarray): the numpy array with traces drawn in as labels
+                (dict): the label of each object name drawn
         """
+        if name_ids is None:
+            name_ids = labelIds(trace.name for trace in traces)
         # set up the trace layer
         self.series.window = window
         self.pixmap_dim = pixmap_dim
@@ -689,7 +694,7 @@ class TraceLayer():
         for trace in traces:
 
             name = trace.name
-            name_id = hashName(name)
+            name_id = name_ids[name]
             
             self._drawTraceLabel(
                 arr, 
@@ -728,29 +733,19 @@ def qPointList(pix_pts : np.ndarray) -> list:
     return list(starmap(QPoint, pix_pts.tolist()))
 
 
-def hashName(name : str):
-    """Create a hash label for a name.
+def labelIds(names) -> dict:
+    """Give each distinct object name its own label, numbered from 1.
+
+    0 is background, so no object gets it. Case and punctuation count, as they
+    do everywhere else in the app: "Axon", "axon", and "axon_1" are three
+    labels.
 
         Params:
-            name (str): the name to hash
+            names (iterable): the object names
+        Returns:
+            (dict): name to label
     """
-    hash = 0
-    p = 0
-    for c in name:
-        add_to_hash = False
-        n = ord(c.lower())
-        if 48 <= n < 58:
-            n -= 48
-            add_to_hash = True
-        elif 97 <= n < 123:
-            n -= 87
-            add_to_hash = True
-        if add_to_hash:
-            hash += n * 36 ** p
-            p += 1
-            if hash >= 2**32:
-                hash %= 2**32
-    return hash
+    return {name: i for i, name in enumerate(sorted(set(names)), start=1)}
 
 def boundsOverlap(b1 : tuple, b2 : tuple):
     """Check if two bounding boxes intersect.

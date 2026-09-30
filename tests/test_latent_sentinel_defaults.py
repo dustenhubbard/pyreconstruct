@@ -143,6 +143,12 @@ class _FakeZarrGroup(dict):
         self.created[name] = kwargs
 
 
+## seriesToLabels numbers the group's objects before it queues any worker
+_SERIES = types.SimpleNamespace(
+    object_groups=types.SimpleNamespace(getGroupObjects=lambda group: set())
+)
+
+
 class _CountingThreadPool:
     """Stands in for ThreadPoolProgBar: records one entry per queued section."""
 
@@ -197,7 +203,7 @@ def test_series_to_labels_reads_the_section_range_off_the_zarr(labels_zarr):
 
     group, pools = labels_zarr
 
-    seriesToLabels(None, "/nonexistent.zarr", group="mito")
+    seriesToLabels(_SERIES, "/nonexistent.zarr", group="mito")
 
     ## one queued worker per section named in raw.attrs["sections"]
     assert len(pools) == 1
@@ -217,7 +223,7 @@ def test_series_to_labels_still_prefers_an_explicit_window(labels_zarr):
     group, pools = labels_zarr
 
     seriesToLabels(
-        None,
+        _SERIES,
         "/nonexistent.zarr",
         group="mito",
         window=[[0.0, 0.0, 8.0, 4.0], (5, 7)],
