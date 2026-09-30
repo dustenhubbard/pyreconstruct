@@ -290,23 +290,26 @@ class TraceLayer():
         ## Get color
         draw_color = color if color else trace.color
 
+        selected = trace in self._selected_set
+
         ## Set up painter (shared: reset state left over from the previous trace)
         painter.setOpacity(1)
         painter.setBrush(Qt.NoBrush)
         painter.setPen(QPen(QColor(*draw_color), 1))
 
-        ## Draw trace
-        if trace.closed:
-            painter.drawPolygon(qpoints)
-        else:
-            painter.drawPolyline(qpoints)
+        ## Draw trace (a selected trace gets its line from the outline below)
+        if not selected:
+            if trace.closed:
+                painter.drawPolygon(qpoints)
+            else:
+                painter.drawPolyline(qpoints)
 
         ## Determine if user requested fill
         if (
             (trace.closed) and
             (trace.fill_mode[0] != "none") and (
                 (trace.fill_mode[1] == "always") or
-                ((trace.fill_mode[1] == "selected") == (trace in self._selected_set))
+                ((trace.fill_mode[1] == "selected") == selected)
             )
         ):
 
@@ -339,7 +342,7 @@ class TraceLayer():
             painter.drawPolygon(qpoints)
 
         ## Draw the selection outline last, so a fill never covers it
-        if trace in self._selected_set:
+        if selected:
             self._drawSelectionOutline(painter, qpoints, trace.closed, draw_color)
 
         return True
@@ -361,8 +364,10 @@ class TraceLayer():
         draw = painter.drawPolygon if closed else painter.drawPolyline
         for color, width in SELECTION_OUTLINE:
             pen = QPen(QColor(*(color or draw_color)), width)
-            pen.setJoinStyle(Qt.RoundJoin)
-            pen.setCapStyle(Qt.RoundCap)
+            # round joins cost about twice the stroke time on long traces, so
+            # corners keep the default bevel; round caps only on open ends
+            if not closed:
+                pen.setCapStyle(Qt.RoundCap)
             painter.setPen(pen)
             draw(qpoints)
     

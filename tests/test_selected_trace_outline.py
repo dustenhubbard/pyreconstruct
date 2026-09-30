@@ -41,7 +41,7 @@ def series():
     s.close()
 
 
-def _column(series, selected, fill_mode=("none", "none")):
+def _column(series, selected, fill_mode=("none", "none"), closed=True, focus_on=False):
     """Render one magenta square and return the opaque RGB pixels across its top edge.
 
     Returns a dict of pixel row -> (r, g, b) for rows near the edge; rows
@@ -59,7 +59,7 @@ def _column(series, selected, fill_mode=("none", "none")):
     series.window = window
     # field y grows upward, so the top edge at pixel row 100 is field y 3
     corners = [(2, 3), (4, 3), (4, 1), (2, 1)]
-    trace = Trace("outline_probe", MAGENTA, closed=True)
+    trace = Trace("outline_probe", MAGENTA, closed=closed)
     trace.points = [
         tuple(p) for p in section.tform.mapPointsArray(corners, inverted=True).tolist()
     ]
@@ -69,7 +69,9 @@ def _column(series, selected, fill_mode=("none", "none")):
         section.addSelectedTrace(trace)
 
     layer = SectionLayer(section, series, load_image_layer=False)
-    image = layer.generateTraceLayer((W, H), window, window_moved=True).toImage()
+    image = layer.generateTraceLayer(
+        (W, H), window, window_moved=True, focus_on=focus_on
+    ).toImage()
 
     column = {}
     for y in range(EDGE_Y - 8, EDGE_Y + 9):
@@ -79,13 +81,28 @@ def _column(series, selected, fill_mode=("none", "none")):
     return column
 
 
-def test_selected_trace_has_black_and_white_outline(series):
-    column = _column(series, selected=True)
-    colors = set(column.values())
-    assert BLACK in colors, f"no black edge across the selected trace: {column}"
-    assert WHITE in colors, f"no white band across the selected trace: {column}"
-    # the trace keeps its own color down the middle of the outline
+def _bands(column):
+    """The colors met going down the column, with repeats collapsed."""
+    bands = []
+    for y in sorted(column):
+        if not bands or bands[-1] != column[y]:
+            bands.append(column[y])
+    return bands
+
+
+@pytest.mark.parametrize("closed", [True, False], ids=["closed", "open"])
+def test_selected_trace_has_black_and_white_outline(series, closed):
+    column = _column(series, selected=True, closed=closed)
+    # black edge, white band, the trace's own color, white band, black edge
+    assert _bands(column) == [BLACK, WHITE, MAGENTA, WHITE, BLACK], column
     assert column.get(EDGE_Y) == MAGENTA, column
+
+
+def test_outline_keeps_a_forced_color_down_the_middle(series):
+    # focus mode forces the focused object's color
+    column = _column(series, selected=True, focus_on="outline_probe")
+    assert column.get(EDGE_Y) == (246, 249, 72), column
+    assert {BLACK, WHITE} <= set(column.values()), column
 
 
 def test_unselected_trace_has_no_outline(series):
