@@ -4,11 +4,10 @@ zarrToNewSeries used to open the source for writing and put ``true_mag``,
 ``window``, ``sections`` and ``alignment`` on its raw array while it built the
 series. It restored only the last three, only when they had existed, and only
 when the import succeeded. A failed import also left the new images Zarr
-behind, and that Zarr is opened with ``w-``, so a retry with the same name
-failed (fork #501).
+behind, so a retry with the same name failed (fork #501).
 
-The thread pool is swapped for one that runs each worker inline, so the label
-import really runs without a Qt event loop.
+Most tests swap the thread pool for one that runs each worker inline, so the
+label import really runs without a Qt event loop. One runs the real pool.
 """
 import os
 
@@ -62,7 +61,7 @@ def inline_pool(monkeypatch):
 
 
 @pytest.mark.parametrize("raw_attrs", [
-    # a Zarr this app exported: its own window, sections and a real alignment
+    # a Zarr PyReconstruct exported: its own window, sections and a real alignment
     {
         "resolution": [50, 4, 4], "true_mag": 0.004,
         "window": [1.0, 2.0, 0.032, 0.032], "sections": [42],
@@ -113,15 +112,104 @@ def test_failed_new_series_leaves_the_source_untouched(tmp_path, inline_pool, mo
 
 
 def test_existing_images_zarr_is_not_removed(tmp_path, inline_pool):
-    """The images Zarr is created with w-; one already there is not ours to delete."""
+    """An images Zarr already there is not ours to delete."""
     fp = _make_source(tmp_path, {"resolution": [50, 4, 4], "true_mag": 0.004})
     images = tmp_path / "fresh_images.zarr"
     zarr.open(str(images), "w").attrs["keep"] = True
 
-    with pytest.raises(Exception):
+    with pytest.raises(FileExistsError):
         conversions.zarrToNewSeries(fp, [], "fresh")
 
     assert zarr.open(str(images), "r").attrs["keep"] is True
+
+
+def test_existing_plain_folder_is_refused_and_kept(tmp_path, inline_pool, monkeypatch):
+    """zarr's w- mode accepts a folder that is not a Zarr, so it must be refused first.
+
+    Series.new is made to fail too: if the folder were taken over, the cleanup
+    would remove it along with the user's file.
+    """
+    fp = _make_source(tmp_path, {"resolution": [50, 4, 4], "true_mag": 0.004})
+    images = tmp_path / "fresh_images.zarr"
+    images.mkdir()
+    (images / "notes.txt").write_text("mine")
+
+    def boom(*a, **k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(Series, "new", boom)
+    with pytest.raises(FileExistsError):
+        conversions.zarrToNewSeries(fp, [], "fresh")
+
+    assert sorted(os.listdir(images)) == ["notes.txt"]
+    assert (images / "notes.txt").read_text() == "mine"
+
+
+def test_close_error_keeps_the_original_error_and_removes_the_images(
+    tmp_path, inline_pool, monkeypatch
+):
+    fp = _make_source(tmp_path, {"resolution": [50, 4, 4], "true_mag": 0.004})
+
+    def boom(*a, **k):
+        raise KeyError("voxel_size")
+
+    def bad_close(self):
+        raise OSError("close failed")
+
+    monkeypatch.setattr(conversions, "labelsToObjects", boom)
+    monkeypatch.setattr(Series, "close", bad_close)
+    with pytest.raises(KeyError, match="voxel_size"):
+        conversions.zarrToNewSeries(fp, ["labels_cells"], "fresh")
+
+    assert not (tmp_path / "fresh_images.zarr").exists()
+
+
+def test_close_error_after_a_failed_import_removes_the_images(
+    tmp_path, inline_pool, monkeypatch
+):
+    fp = _make_source(tmp_path, {"resolution": [50, 4, 4], "true_mag": 0.004})
+
+    def bad_close(self):
+        raise OSError("close failed")
+
+    monkeypatch.setattr(conversions, "labelsToObjects", lambda *a, **k: False)
+    monkeypatch.setattr(Series, "close", bad_close)
+    with pytest.raises(OSError, match="close failed"):
+        conversions.zarrToNewSeries(fp, ["labels_cells"], "fresh")
+
+    assert not (tmp_path / "fresh_images.zarr").exists()
+
+
+def test_real_pool_failure_returns_none_and_cleans_up(tmp_path, qapp, monkeypatch):
+    """The real ThreadPoolProgBar returns False when a section worker raises."""
+    from PyReconstruct.modules.backend.threading import threading as th
+
+    class _Bar:
+        def setValue(self, value):
+            pass
+
+        def maximum(self):
+            return 0
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(th, "getProgbar", lambda *a, **k: _Bar())
+    monkeypatch.setattr(th.QMessageBox, "critical", lambda *a, **k: None)
+
+    fp = _make_source(tmp_path, {"resolution": [50, 4, 4], "true_mag": 0.004})
+    before = _snapshot(fp)
+
+    def boom(*a, **k):
+        raise RuntimeError("section failed")
+
+    monkeypatch.setattr(conversions, "importSection", boom)
+    result = conversions.zarrToNewSeries(fp, ["labels_cells"], "fresh")
+
+    assert result is None
+    assert _snapshot(fp) == before
+    assert not (tmp_path / "fresh_images.zarr").exists()
+    assert not (tmp_path / ".fresh").exists()
 
 
 def test_label_import_error_removes_the_half_built_series(tmp_path, inline_pool, monkeypatch):

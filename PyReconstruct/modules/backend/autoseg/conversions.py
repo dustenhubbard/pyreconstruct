@@ -533,7 +533,7 @@ def seriesToLabels(series: Series,
 
 def getLabelsToObjectsData(data_fp: str, group: str, raw_attrs: dict = None) -> tuple:
 
-    data_zg = zarr.open(data_fp)
+    data_zg = zarr.open(data_fp, "r")
     
     if group not in data_zg:
         return
@@ -959,11 +959,13 @@ def zarrToNewSeries(zarr_fp : str, label_groups : list, name : str):
 
     images_dir = Path(zarr_fp).with_name(f"{name}_images.zarr")
 
-    ## w- fails if it exists, so from here on the folder is one this call made
-    images_zarr = zarr.open(images_dir, "w-")
+    ## mkdir refuses a folder that is already there, Zarr or not, so the
+    ## cleanup below only ever removes a folder this call made
+    images_dir.mkdir(exist_ok=False)
     series = None
 
     try:
+        images_zarr = zarr.open(images_dir, "w-")
         images_zarr.create_group("scale_1")
         images = images_zarr["scale_1"]
         image_locations = []
@@ -999,17 +1001,24 @@ def zarrToNewSeries(zarr_fp : str, label_groups : list, name : str):
                 if not imported:
                     break
 
-        if not imported:  # a section failed: drop the half-built series
-            series.close()
-            shutil.rmtree(images_dir)
-            return None
-
     except BaseException:
-        ## a partial images zarr would make a retry with this name fail
-        if series is not None:
-            series.close()
-        shutil.rmtree(images_dir, ignore_errors=True)
+        ## a partial images zarr would make a retry with this name fail;
+        ## a close error must not hide the original one
+        try:
+            if series is not None:
+                series.close()
+        except Exception:
+            pass
+        finally:
+            shutil.rmtree(images_dir, ignore_errors=True)
         raise
+
+    if not imported:  # a section failed: drop the half-built series
+        try:
+            series.close()
+        finally:
+            shutil.rmtree(images_dir, ignore_errors=True)
+        return None
 
     ## Return series
     return series
