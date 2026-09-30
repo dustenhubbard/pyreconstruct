@@ -493,6 +493,13 @@ class SectionTableWidget(DataTable):
         # switch to first section if current section is deleted
         if self.series.current_section in section_numbers:
             self.mainwindow.changeSection(sorted(list(self.series.sections.keys()))[0], save=False)
+
+        # drop a flickered section that was deleted, or the next save writes
+        # its file back
+        field = self.mainwindow.field
+        if field.b_section is not None and field.b_section.n in section_numbers:
+            field.b_section = None
+            field.b_section_layer = None
         
         # refresh the data in all tables
         self.manager.recreateTables(refresh_data=True)
@@ -652,6 +659,11 @@ class SectionTableWidget(DataTable):
         """
         field = self.mainwindow.field
         if field.b_section is not None:
-            # reload() loads the B section by its number
-            field.b_section.n = renumbered[field.b_section.n]
+            if field.b_section.n in renumbered:
+                # reload() loads the B section by its number
+                field.b_section.n = renumbered[field.b_section.n]
+            else:
+                # the flickered section is no longer in the series
+                field.b_section = None
+                field.b_section_layer = None
         field.reload(clear_states=True)

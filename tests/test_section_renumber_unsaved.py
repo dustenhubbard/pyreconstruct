@@ -123,3 +123,96 @@ def test_reorder_with_gap_on_unsaved_series(main_window, gui_dialogs):
     assert (mw.field.b_section.n, mw.field.b_section.src) == (
         len(keys) - 1, f"ORIG_{last}.png"
     )
+
+
+def section_files(series):
+    """The section numbers that have a file in the hidden dir."""
+    prefix = f"{series.name}."
+    return sorted(
+        int(f[len(prefix):]) for f in os.listdir(series.hidden_dir)
+        if f.startswith(prefix) and f[len(prefix):].isdigit()
+    )
+
+
+def flicker_then_drop_b(mw, cur, b):
+    """Stand on cur with b flickered away, then remove b from the series only.
+
+    ``Series.deleteSections`` leaves the field alone, so the field still holds
+    a flickered section whose number is gone.
+    """
+    mw.changeSection(b)
+    mw.changeSection(cur)
+    tag_sections(mw)
+    assert mw.field.section.n == cur and mw.field.b_section.n == b
+    mw.series.deleteSections([b])
+    mw.field.clearStates()
+    mw.seriesModified(True)
+
+
+def test_reorder_after_flickered_section_was_deleted(main_window, gui_dialogs):
+    mw = main_window
+    series = mw.series
+    keys = sorted(series.sections)
+    cur, b = keys[2], keys[3]
+    flicker_then_drop_b(mw, cur, b)
+    keys = sorted(series.sections)
+
+    widget = open_section_table(mw)
+    widget.reorderSections()
+
+    assert gui_dialogs.notices == []
+    assert sorted(series.sections) == list(range(len(keys)))
+    assert section_files(series) == sorted(series.sections)
+    expected = {i: f"ORIG_{old}.png" for i, old in enumerate(keys)}
+    assert {k: disk_src(series, k) for k in series.sections} == expected
+
+    new_cur = keys.index(cur)
+    assert series.current_section == new_cur
+    assert (mw.field.section.n, mw.field.section.src) == (new_cur, f"ORIG_{cur}.png")
+    assert mw.field.b_section is None
+
+
+def test_insert_after_flickered_section_was_deleted(main_window, gui_dialogs):
+    mw = main_window
+    series = mw.series
+    keys = sorted(series.sections)
+    n = keys[5]
+    flicker_then_drop_b(mw, n, n + 1)
+    keys = sorted(series.sections)
+
+    widget = open_section_table(mw)
+    select_section(widget, n)
+    gui_dialogs.responses.append((["", n, 0.00254, 0.05], True))
+    widget.insertSection(before=True)
+
+    expected = {k: f"ORIG_{k}.png" for k in keys if k < n}
+    expected[n] = "no-image"
+    expected.update({k + 1: f"ORIG_{k}.png" for k in keys if k >= n})
+    assert sorted(series.sections) == sorted(expected)
+    assert section_files(series) == sorted(expected)
+    assert {k: disk_src(series, k) for k in series.sections} == expected
+
+    assert series.current_section == n + 1
+    assert (mw.field.section.n, mw.field.section.src) == (n + 1, f"ORIG_{n}.png")
+    assert mw.field.b_section is None
+
+
+def test_delete_flickered_section_drops_it_from_the_field(main_window, gui_dialogs):
+    mw = main_window
+    series = mw.series
+    keys = sorted(series.sections)
+    cur, b = keys[2], keys[3]
+    mw.changeSection(b)
+    mw.changeSection(cur)
+    tag_sections(mw)
+    mw.seriesModified(True)
+
+    widget = open_section_table(mw)
+    select_section(widget, b)
+    widget.deleteSections()
+
+    assert b not in series.sections
+    assert mw.field.b_section is None
+    # the save after the delete does not write the deleted section back
+    assert section_files(series) == sorted(series.sections)
+    assert (mw.field.section.n, mw.field.section.src) == (cur, f"ORIG_{cur}.png")
