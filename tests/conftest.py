@@ -528,6 +528,8 @@ _MAIN_WINDOW_SETTINGS_KEYS = (
     # purpose; left set, it would silence the startup dialog for every later
     # test in the session.
     "suppress_whatsnew",
+    # the launch check's update notice (#430); the notice tests set it
+    "update_notice_version",
     "palette/trace_hidden",
     "palette/inc_hidden",
     "palette/bc_hidden",
