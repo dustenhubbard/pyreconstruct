@@ -22,6 +22,7 @@ from PySide6.QtWidgets import QTableView, QApplication, QHeaderView
 
 from PyReconstruct.modules.gui.utils.str_helper import SortStr
 from PyReconstruct.modules.backend.func import make_unique_id
+from .copy_table_widget import claimsArrowKey
 
 
 class ObjectTableModel(QAbstractTableModel):
@@ -215,6 +216,12 @@ class ObjectTableView(QTableView):
         super().__init__(*args, **kwargs)
         self.container = container
         self.id = make_unique_id()
+
+    def event(self, event):
+        # arrow keys move through the list, not the field (see claimsArrowKey)
+        if claimsArrowKey(event):
+            return True
+        return super().event(event)
 
     def keyPressEvent(self, event):
         ret = super().keyPressEvent(event)
