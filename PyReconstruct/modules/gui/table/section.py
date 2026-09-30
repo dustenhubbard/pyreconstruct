@@ -590,7 +590,7 @@ class SectionTableWidget(DataTable):
         
         self.mainwindow.saveAllData()
 
-        d = dict(tuple((snum, i) for i, snum in enumerate(self.series.sections.keys())))
+        d = dict(tuple((snum, i) for i, snum in enumerate(sorted(self.series.sections))))
         self.series.reorderSections(d)
         self.series.addLog(None, None, "Reorder sections")
         

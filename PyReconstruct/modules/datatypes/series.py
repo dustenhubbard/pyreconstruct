@@ -4188,7 +4188,7 @@ class Series():
                 log_event (bool): True if event should be logged
         """
         if not d:
-            d = dict(tuple((snum, i) for i, snum in enumerate(self.sections.keys())))
+            d = dict(tuple((snum, i) for i, snum in enumerate(sorted(self.sections))))
         
         # rename the section files
         for old_snum, new_snum in d.items():
