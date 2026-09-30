@@ -46,6 +46,7 @@ SPEC_PER_APP = {
     "last_whatsnew_version",
     "last_update_check_epoch",
     "window/geometry",
+    "update_notice_version",
     "meta/settings_seeded",
     "meta/folded_into_shared",
 }
@@ -82,6 +83,7 @@ def _known_keys():
         WHATSNEW_SUPPRESS_KEY: "first_launch.WHATSNEW_SUPPRESS_KEY",
         "last_update_check_epoch": "main_window.checkForUpdatesStartup",
         "window/geometry": "main_window.windowGeometrySettings",
+        "update_notice_version": "main_window.UPDATE_NOTICE_KEY",
         "last_folder": "file_dialog / main_window._rememberSeriesFolder",
         "username": "main_window / first_launch.resolve_username",
         UPDATE_CHECK_DEFAULT_APPLIED_KEY: "settings_migrations",

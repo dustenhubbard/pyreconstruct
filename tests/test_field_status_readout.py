@@ -28,9 +28,9 @@ three defects below follow from that one choice:
 
 The permanent widget also settles the coexistence question, which is the point
 of test ``test_a_transient_message_appears_and_expires_beside_the_readout``:
-``MainWindow._onStartupCheck`` posts a real transient notice with
-``showMessage(..., 15000)``, and that notice and this readout are no longer
-competing for the same slot.
+a real transient notice posted with ``showMessage`` and this readout are no
+longer competing for the same slot. The launch check's update notice is a
+permanent widget of its own now (#430), and it too survives a repaint.
 """
 import pytest
 
@@ -213,10 +213,9 @@ def test_a_transient_message_appears_and_expires_beside_the_readout(
 ):
     """``showMessage`` still works, and neither side destroys the other.
 
-    This is the shape ``MainWindow._onStartupCheck`` uses for the
-    "Update available" banner. Before the readout moved to a permanent widget,
-    the first repaint of the field overwrote that banner well inside its
-    timeout.
+    This is the shape the update banner used before it became its own
+    widget (#430). Before the readout moved to a permanent widget, the first
+    repaint of the field overwrote that banner well inside its timeout.
     """
     main_window.field.updateStatusBar()
     before = readout(main_window)
@@ -236,23 +235,33 @@ def test_a_transient_message_appears_and_expires_beside_the_readout(
     assert readout(main_window) == before
 
 
-def test_the_update_banner_survives_a_repaint(main_window, monkeypatch):
+def test_the_update_notice_survives_a_repaint(main_window, monkeypatch):
     """The reported case, end to end through the real startup handler."""
+    from PySide6.QtCore import QSettings
+    from PyReconstruct.modules.constants.settings_domain import domain_for
     from PyReconstruct.modules.gui.main import main_window as mw
 
-    monkeypatch.setattr(mw, "notifyConfirm", lambda *a, **k: False)
+    def boom(*a, **k):
+        raise AssertionError("no dialog at launch")
+
+    monkeypatch.setattr(mw, "notifyConfirm", boom)
     main_window.field.updateStatusBar()
 
     main_window._onStartupCheck(
         {"asset": "x", "status": "newer", "remote_version": "9.9.9"}, "stable"
     )
-    assert "9.9.9" in main_window.statusbar.currentMessage()
+    try:
+        notice = main_window.update_notice
+        assert not notice.isHidden() and "9.9.9" in notice.text()
 
-    main_window.field.mouse_x, main_window.field.mouse_y = 33, 44
-    paint_the_field(main_window)
+        main_window.field.mouse_x, main_window.field.mouse_y = 33, 44
+        paint_the_field(main_window)
 
-    assert "9.9.9" in main_window.statusbar.currentMessage()
-    assert readout(main_window).startswith("Section: ")
+        assert not notice.isHidden() and "9.9.9" in notice.text()
+        assert readout(main_window).startswith("Section: ")
+    finally:
+        key = mw.UPDATE_NOTICE_KEY
+        QSettings(*domain_for(key)).remove(key)
 
 
 # ---- 3. the latent IndexError ---------------------------------------------
