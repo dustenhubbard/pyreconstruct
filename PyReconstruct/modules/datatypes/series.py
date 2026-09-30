@@ -449,6 +449,9 @@ class Series():
             for trace, d in zip(traces, defaults):
                 trace.obj_defaults = copyObjDefaults(d)
         self.palette_index = series_data["palette_index"]
+        # a palette CSV import could save an index past the end of the new
+        # palette, and such a file could not be opened (fork #530)
+        self.clampPaletteIndex()
 
         self.ztraces = series_data["ztraces"]
         for name in self.ztraces:
@@ -4693,6 +4696,21 @@ class Series():
         with open(fp, "w", encoding="utf-8") as f:
             f.write(csv_str)
     
+    def clampPaletteIndex(self):
+        """Point palette_index at a palette and a button that exist.
+
+        An unknown palette name falls back to the first palette, and a button
+        number outside that palette falls back to 0. The list is changed in
+        place, so anything holding it sees the change.
+        """
+        g, i = self.palette_index
+        if g not in self.palette_traces and self.palette_traces:
+            g = next(iter(self.palette_traces))
+        palette = self.palette_traces.get(g, [])
+        if type(i) is not int or not 0 <= i < len(palette):
+            i = 0
+        self.palette_index[:] = [g, i]
+
     def importTracePaletteCSV(self, fp : str, palette_name : str = None):
         """Import the trace palette from a CSV file.
         
