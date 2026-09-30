@@ -4779,7 +4779,7 @@ class MainWindow(QMainWindow):
                     group,
                 )
                 self.field.reload()
-                if not imported:  # stop after the error window
+                if imported is False:  # stop after the error window
                     break
         
     def toggleGroupViz(self, group):

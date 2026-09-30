@@ -151,3 +151,38 @@ def test_import_labels_only_reports_success_on_success(monkeypatch, imported, no
     main_window.MainWindow.importLabels(window)
 
     assert messages == notified
+
+
+@pytest.mark.parametrize(
+    "results, attempted",
+    [
+        ([None, True], ["stray", "labels_a"]),  # a group not in the zarr is skipped
+        ([False, True], ["stray"]),  # a failed import stops the loop
+    ],
+)
+def test_menu_import_stops_only_on_a_failed_group(monkeypatch, results, attempted):
+    from PyReconstruct.modules.gui.main import main_window
+
+    groups = ["stray", "labels_a"]
+    calls = []
+    outcomes = iter(results)
+
+    def fake_labels_to_objects(series, zarr_fp, group):
+        calls.append(group)
+        return next(outcomes)
+
+    monkeypatch.setattr(main_window.FileDialog, "get", lambda *a, **k: "data.zarr")
+    monkeypatch.setattr(
+        main_window.QuickDialog, "get", lambda *a, **k: ([list(groups)], True)
+    )
+    monkeypatch.setattr(main_window.os, "listdir", lambda fp: list(groups))
+    monkeypatch.setattr(main_window, "labelsToObjects", fake_labels_to_objects)
+
+    window = types.SimpleNamespace(
+        series=object(),
+        field=types.SimpleNamespace(reload=lambda: None),
+    )
+
+    main_window.MainWindow.importFromZarrLabels(window)
+
+    assert calls == attempted
