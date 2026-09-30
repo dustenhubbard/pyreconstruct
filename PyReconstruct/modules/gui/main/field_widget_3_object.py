@@ -783,13 +783,15 @@ class FieldWidgetObject(FieldWidgetTrace):
                 self.series.addLog(
                     name, None, f"Add to group '{group_name}'"
                 )
-        
-            ## Update series visibility
-            if group_name not in starting_groups:
-                self.series.groups_visibility[group_name] = True
 
-                ## Update menubar
-                self.mainwindow.createMenuBar()
+        ## A new group becomes visible and gets its row in the menubar. Once,
+        ## after the loop: rebuilding the menubar costs 20 to 30 ms, and doing
+        ## it per object made adding 2,000 objects to a new group take 43
+        ## seconds with nothing on screen (fork #421, measured 2026-09-30 on a
+        ## 255-section series; 0.6 seconds once).
+        if group_name not in starting_groups:
+            self.series.groups_visibility[group_name] = True
+            self.mainwindow.createMenuBar()
 
         return True
     
