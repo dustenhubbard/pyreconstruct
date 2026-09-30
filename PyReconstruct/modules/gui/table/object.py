@@ -484,6 +484,25 @@ class ObjectTableWidget(DataTable):
                 )
             )
             
+        elif item_type == "3D":
+
+            # A read-only mark: the box is drawn but not user-checkable, so a
+            # click cannot desync it from the scene. Add and remove stay in
+            # the 3D menu; the viewer refreshes these rows when its scene
+            # changes (CustomPlotter.updateObjectList).
+            viewer = getattr(self.mainwindow, "viewer", None)
+            in_scene = viewer is not None and viewer.inScene(
+                name, self.series.jser_fp
+            )
+            item = QTableWidgetItem("")
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            item.setCheckState(
+                Qt.CheckState.Checked if in_scene else Qt.CheckState.Unchecked
+            )
+            if in_scene:
+                item.setToolTip("In the 3D scene")
+            items.append(item)
+
         elif item_type in self.series.user_columns:
             
             value = self.series.getUserColAttr(name, item_type)

@@ -1375,7 +1375,8 @@ class Series():
                 "Curate"         : False,
                 "Alignment"      : False,
                 "Comment"        : True,
-                "Configuration"  : False
+                "Configuration"  : False,
+                "3D"             : True
                 
             }.items()),
             

@@ -625,6 +625,7 @@ class _RealObjectSource:
     getItems = ObjectTableWidget.getItems
     getHeaders = ObjectTableWidget.getHeaders
     passesFilters = ObjectTableWidget.passesFilters
+    mainwindow = None  # no 3D viewer, so the 3D column reads unchecked
 
     def __init__(self, series, columns):
         self.series = series
