@@ -100,7 +100,15 @@ class TraceDialog(QDialog):
             points = ct.points
             # the free part only: the pick-one values have their own rows
             tags = trace.tags - pick_one_values
-            fill_style, fill_condition = trace.fill_mode
+            fill_style = trace.fill_mode[0]
+            # what each fill box says for each trace; two values in a set
+            # means the traces disagree on that box
+            sel_values = {
+                t.fill_mode[1] in ("selected", "always") for t in traces
+            }
+            unsel_values = {
+                t.fill_mode[1] in ("unselected", "always") for t in traces
+            }
             for set_name in pick_one_names:
                 pick_one_seed[set_name] = tag_sets.chosen(set_name, trace.tags)
                 self.pick_one_mixed[set_name] = False
@@ -128,8 +136,6 @@ class TraceDialog(QDialog):
                         self.pick_one_mixed[set_name] = True
                 if trace.fill_mode[0] != fill_style:
                     fill_style = None
-                if trace.fill_mode[1] != fill_condition:
-                    fill_condition = None
         else:
             if not name:
                 name = "*"
@@ -158,7 +164,8 @@ class TraceDialog(QDialog):
             if not tags:
                 tags = set()
             fill_style = None
-            fill_condition = None
+            sel_values = {False}
+            unsel_values = {False}
 
         self.setWindowTitle("Set Attributes")
 
@@ -271,10 +278,19 @@ class TraceDialog(QDialog):
         # the trace's stored condition, so a trace filled "when selected"
         # opened with both boxes ticked and an untouched OK silently wrote
         # "always" onto every selected trace (found 2026-08-28).
-        self.selected_input.setChecked(fill_condition in ("selected", "always"))
-        self.unselected_input.setChecked(
-            fill_condition in ("unselected", "always")
-        )
+        # A box the selected traces disagree on opens partially checked, and
+        # while it stays that way exec() returns no condition, so an untouched
+        # OK leaves each trace's own condition alone (fork #528).
+        for box, values in (
+            (self.selected_input, sel_values),
+            (self.unselected_input, unsel_values),
+        ):
+            if len(values) > 1:
+                box.setTristate(True)
+                box.setCheckState(Qt.PartiallyChecked)
+            else:
+                box.setChecked(values.pop())
+            box.clicked.connect(self.settleCondition)
         style_row.addWidget(style_text)
         style_row.addWidget(self.style_none)
         style_row.addWidget(self.style_transparent)
@@ -375,8 +391,20 @@ class TraceDialog(QDialog):
 
         self.setLayout(vlayout)
     
+    def settleCondition(self):
+        """Make both fill boxes plain two-state once the user chooses.
+
+        A partially checked box the user did not click becomes unchecked, so
+        what the dialog shows is what OK writes.
+        """
+        for box in (self.selected_input, self.unselected_input):
+            if box.checkState() == Qt.PartiallyChecked:
+                box.setCheckState(Qt.Unchecked)
+            box.setTristate(False)
+
     def checkDisplayCondition(self):
         """Determine whether the "fill when selected" checkbox should be displayed."""
+        self.settleCondition()
         if self.style_transparent.isChecked() or self.style_solid.isChecked():
             self.selected_input.show()
             self.selected_input.setChecked(True)
@@ -497,7 +525,14 @@ class TraceDialog(QDialog):
                 style = None
                 condition = None
             
-            if style in ("transparent", "solid"):
+            condition_mixed = any(
+                box.checkState() == Qt.PartiallyChecked
+                for box in (self.selected_input, self.unselected_input)
+            )
+            if style in ("transparent", "solid") and condition_mixed:
+                # the traces disagreed and the user left the boxes alone
+                condition = None
+            elif style in ("transparent", "solid"):
                 sel = self.selected_input.isChecked()
                 unsel = self.unselected_input.isChecked()
                 if sel and unsel:
