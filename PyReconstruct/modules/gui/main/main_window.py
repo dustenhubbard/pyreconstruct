@@ -1673,6 +1673,7 @@ class MainWindow(QMainWindow):
         self.saveAllData()
 
         ## Get new xml series filepath from user
+        from_dialog = not export_fp
         if not export_fp:
             export_fp = FileDialog.get(
                 "save",
@@ -1682,11 +1683,67 @@ class MainWindow(QMainWindow):
                 filter="XML Series (*.ser)"
             )
             if not export_fp: return False
-        
-        ## Convert series
-        jsonToXML(self.series, os.path.dirname(export_fp))
 
-        notify(f"Legacy series (xml) exported to:\n\n{os.path.dirname(export_fp)}")
+        ## Name every file after the one the user chose
+        export_dir = os.path.dirname(export_fp) or "."
+        name = os.path.basename(export_fp)
+        if name.lower().endswith(".ser"):
+            name = name[:-4]
+        if not name:
+            name = self.series.name
+
+        ## Ask before replacing files, or mixing in old section files
+        replaced, extra = xmlExportFiles(self.series, export_dir, name)
+        # the save dialog asked about the path it returned, and only that one
+        ser_fp = os.path.join(export_dir, name + ".ser")
+        if (from_dialog and export_fp == ser_fp
+                and replaced == [f"{name}.ser"] and not extra):
+            replaced = []
+        if (replaced or extra) and not self._confirmXMLOverwrite(name, replaced, extra):
+            return False
+
+        ## Convert series
+        jsonToXML(self.series, export_dir, name)
+
+        notify(
+            "Legacy series (xml) exported to:\n\n"
+            f"{ser_fp}"
+        )
+
+    @staticmethod
+    def _confirmXMLOverwrite(name : str, replaced : list, extra : list) -> bool:
+        """Ask before an XML export replaces files or leaves old sections in.
+
+            Params:
+                name (str): the file name stem of the export
+                replaced (list): existing files the export would replace
+                extra (list): existing section files the export would not write
+            Returns:
+                (bool): True if the user wants to export anyway
+        """
+        def listed(files):
+            shown = [f"    {f}" for f in files[:10]]
+            if len(files) > 10:
+                shown.append(f"    ...and {len(files) - 10} more")
+            return "\n".join(shown)
+
+        message = ""
+        if replaced:
+            message += (
+                "This folder already has these files, and exporting will "
+                f"replace them:\n\n{listed(replaced)}\n\n"
+            )
+        if extra:
+            also = " also" if replaced else ""
+            message += (
+                f"This folder{also} has section files named {name} that this "
+                "series does not have. Legacy Reconstruct will read them as "
+                f"part of the export:\n\n{listed(extra)}\n\n"
+            )
+        message += "Export anyway?"
+
+        title = "Overwrite Existing" if replaced else "Export Series"
+        return notifyConfirm(message, yn=True, title=title)
     
     def seriesModified(self, modified=True):
         """Change the title of the window reflect modifications."""
