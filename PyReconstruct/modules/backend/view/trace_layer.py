@@ -31,6 +31,14 @@ from PyReconstruct.modules.calc import (
 )
 from PyReconstruct.modules.gui.utils import drawOutlinedText
 
+# How a selected trace is drawn: (color, pen width in pixels), widest first.
+# None stands for the trace's own color.
+SELECTION_OUTLINE = (
+    ((0, 0, 0), 8),
+    ((255, 255, 255), 6),
+    (None, 3),
+)
+
 class TraceLayer():
 
     def __init__(self, section : Section, series : Series):
@@ -293,17 +301,6 @@ class TraceLayer():
         else:
             painter.drawPolyline(qpoints)
 
-        ## Draw highlight
-        if trace in self._selected_set:
-
-            painter.setPen(QPen(QColor(*draw_color), 8))
-            painter.setOpacity(0.4)
-
-            if trace.closed:
-                painter.drawPolygon(qpoints)
-            else:
-                painter.drawPolyline(qpoints)
-
         ## Determine if user requested fill
         if (
             (trace.closed) and
@@ -341,7 +338,33 @@ class TraceLayer():
 
             painter.drawPolygon(qpoints)
 
+        ## Draw the selection outline last, so a fill never covers it
+        if trace in self._selected_set:
+            self._drawSelectionOutline(painter, qpoints, trace.closed, draw_color)
+
         return True
+
+    def _drawSelectionOutline(self, painter : QPainter, qpoints, closed : bool, draw_color):
+        """Draw a selected trace as a black and white band with its own color down the middle.
+
+        The black edge shows on a light image and the white band on a dark
+        one, whatever the trace's own color is.
+
+            Params:
+                painter (QPainter): the painter
+                qpoints: the trace in pixmap coordinates
+                closed (bool): True to draw a polygon, False for a polyline
+                draw_color: the color the trace line is drawn in
+        """
+        painter.setOpacity(1)
+        painter.setBrush(Qt.NoBrush)
+        draw = painter.drawPolygon if closed else painter.drawPolyline
+        for color, width in SELECTION_OUTLINE:
+            pen = QPen(QColor(*(color or draw_color)), width)
+            pen.setJoinStyle(Qt.RoundJoin)
+            pen.setCapStyle(Qt.RoundCap)
+            painter.setPen(pen)
+            draw(qpoints)
     
     def _drawZtrace(self, trace_layer : QPixmap, ztrace : Ztrace):
         """Draw points on the current trace layer.
