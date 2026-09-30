@@ -782,6 +782,7 @@ def _step_env(tmp_path, **extra):
 def _stage_repo(tmp_path, flavor):
     (tmp_path / "scripts").mkdir()
     shutil.copy(SCRIPT, tmp_path / "scripts" / SCRIPT.name)
+    shutil.copy(SCRIPT.with_name("build_update_payload.py"), tmp_path / "scripts")
     (tmp_path / "packaging").mkdir()
     if flavor is not None:
         (tmp_path / "packaging" / "FLAVOR").write_text(flavor + "\n")
