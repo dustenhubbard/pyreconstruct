@@ -123,6 +123,13 @@ class FieldWidgetData(FieldWidgetObject):
             current_tform = self.section_layer.section.tform
             dtform = new_tform * current_tform.inverted()
             self.stored_tform = dtform * self.stored_tform
+        else:
+            # Remember where this section's transform stood before the latest
+            # run of changes to it, so that starting propagation recording
+            # afterward can pick up an alignment already made here.
+            last = self.tform_before_change
+            if last is None or last[0] != self.section.n:
+                self.tform_before_change = (self.section.n, self.section.tform.copy())
 
         self.section.tform = new_tform
         self.series.addLog(None, self.section.n, "Modify transform")
@@ -190,7 +197,15 @@ class FieldWidgetData(FieldWidgetObject):
         self.propagate_tform = propagate
         if self.propagate_tform:
             self.stored_tform = Transform([1,0,0,0,1,0])
+            # include the alignment just made on this section, if the last
+            # transform change was made here (an undo back to where it
+            # started leaves nothing to include)
+            last = self.tform_before_change
+            if last is not None and last[0] == self.section.n:
+                self.stored_tform = self.section.tform * last[1].inverted()
             self.propagated_sections = set([self.series.current_section])
+        # a change is recorded or propagated at most once
+        self.tform_before_change = None
         self.update()
         
     def propagateTo(self, to_end : bool = True, log_event=True):

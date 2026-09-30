@@ -45,6 +45,7 @@ class FieldWidgetBase:
         self.table_manager : TableManager   = None
 
         self.propagate_tform : bool         = False
+        self.tform_before_change : tuple    = None
 
         # Session-only visibility snapshot taken by "Hide other objects", so
         # "Restore previous visibility" can put back the state the isolate
@@ -161,6 +162,8 @@ class FieldWidgetBase:
         self.propagate_tform = False
         self.stored_tform = Transform.identity()
         self.propagated_sections = set()
+        # (section number, transform before the latest change to it)
+        self.tform_before_change = None
 
         ## Clear copy/paste clipboard
         self.clipboard = []

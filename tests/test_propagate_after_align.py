@@ -1,0 +1,120 @@
+"""Starting propagation recording picks up an alignment already made.
+
+Before, "Start propagation recording" had to come before the alignment: a
+shift made first was never recorded, so there was nothing to propagate and
+the alignment had to be done again. Now the last transform change on the
+current section is included when recording starts, as long as it was made on
+that section and has not been recorded before.
+"""
+
+import types
+
+import pytest
+
+from PyReconstruct.modules.datatypes import Transform
+from PyReconstruct.modules.gui.main import field_widget_4_data as fw
+
+pytestmark = pytest.mark.gui
+
+
+@pytest.fixture
+def field(main_window, monkeypatch):
+    monkeypatch.setattr(
+        fw, "getProgbar",
+        lambda *a, **k: types.SimpleNamespace(
+            setValue=lambda v: None, close=lambda: None
+        ),
+    )
+    field = main_window.field
+    # the fixture series ships with its sections locked
+    for n in field.series.sections:
+        section = field.series.loadSection(n)
+        section.align_locked = False
+        section.save()
+    field.reload()
+    return field
+
+
+def _others(field):
+    return [n for n in sorted(field.series.sections) if n != field.section.n]
+
+
+def test_correlation_alignment_made_first_propagates(field, monkeypatch):
+    start = field.section.n
+    other = _others(field)[0]
+    field.changeSection(other)
+    field.changeSection(start)  # the other section is now the B section
+    later = [n for n in sorted(field.series.sections) if n > start]
+    assert later, "the fixture series needs a section after the current one"
+    before_later = {n: field.series.loadSection(n).tform.copy() for n in later}
+    before = field.section.tform.copy()
+
+    monkeypatch.setattr(fw, "correlate", lambda a, b: (12, -8))
+    field.corrAlign()
+    aligned = field.section.tform.copy()
+    assert not aligned.equals(before), "the alignment should move the section"
+
+    field.setPropagationMode(True)
+    delta = aligned * before.inverted()
+    assert field.stored_tform.equals(delta)
+
+    field.propagateTo(to_end=True)
+
+    assert field.section.tform.equals(aligned), "the current section moved twice"
+    for n in later:
+        got = field.series.loadSection(n).tform
+        assert got.equals(delta * before_later[n]), f"section {n} was not propagated"
+
+
+def test_every_change_on_the_section_is_included(field):
+    before = field.section.tform.copy()
+    field.translateTform(3, 4)
+    field.translateTform(1, -2)
+
+    field.setPropagationMode(True)
+
+    assert field.stored_tform.equals(field.section.tform * before.inverted())
+    assert field.stored_tform.equals(Transform([1, 0, 4, 0, 1, 2]))
+
+
+def test_checking_against_another_section_keeps_the_change(field):
+    start = field.section.n
+    field.translateTform(3, 4)
+    field.changeSection(_others(field)[0])
+    field.changeSection(start)
+
+    field.setPropagationMode(True)
+
+    assert field.stored_tform.equals(Transform([1, 0, 3, 0, 1, 4]))
+
+
+def test_a_change_made_elsewhere_is_not_included(field):
+    start = field.section.n
+    field.translateTform(3, 4)
+    field.changeSection(_others(field)[0])
+    field.translateTform(5, 5)
+    field.changeSection(start)
+
+    field.setPropagationMode(True)
+
+    assert field.stored_tform.equals(Transform.identity())
+
+
+def test_an_undone_change_is_not_included(field):
+    field.translateTform(3, 4)
+    field.undoState()
+
+    field.setPropagationMode(True)
+
+    assert field.stored_tform.equals(Transform.identity())
+
+
+def test_a_recorded_change_is_not_included_again(field):
+    field.translateTform(3, 4)
+    field.setPropagationMode(True)
+    field.translateTform(1, 1)
+    field.setPropagationMode(False)
+
+    field.setPropagationMode(True)
+
+    assert field.stored_tform.equals(Transform.identity())
