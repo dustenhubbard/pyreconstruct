@@ -4575,7 +4575,12 @@ class MainWindow(QMainWindow):
         
         if sections is None:
             sections = list(self.series.sections.keys())
-        
+
+        # optimizeSeriesBC loads each section from disk and saves it, and the
+        # reload below puts those copies in the field, so anything drawn
+        # since the last save has to reach disk first
+        self.saveAllData()
+
         optimizeSeriesBC(
             self.series, 
             mean,
