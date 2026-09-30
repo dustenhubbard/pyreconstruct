@@ -93,24 +93,36 @@ def build(app_dir: Path, version: str, flavor: str, out: Path, mtime: int | None
     archive, tree_path = out / archive_name, out / tree_name
     stamp = int(time.time()) if mtime is None else int(mtime)
 
-    partial = archive.with_name(archive.name + ".partial")
-    with tarfile.open(partial, "w:xz", preset=XZ_PRESET, format=tarfile.PAX_FORMAT) as tar:
-        for entry in tree["files"]:
-            info = tarfile.TarInfo(entry["path"])
-            info.mtime = stamp
-            info.uid = info.gid = 0
-            info.uname = info.gname = ""
-            if entry.get("type") == "dir":
-                info.type = tarfile.DIRTYPE
-                info.mode = 0o755
-                tar.addfile(info)
-                continue
-            info.size = entry["size"]
-            info.mode = 0o755 if entry["mode"] & 0o111 else 0o644
-            with open(app_dir.joinpath(*entry["path"].split("/")), "rb") as f:
-                tar.addfile(info, f)
-    os.replace(partial, archive)
-    tree_path.write_text(json.dumps(tree, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
+    # Both files are written as .partial and renamed only once both are whole.
+    # On any failure neither name is left behind, so a release never holds a
+    # half-written payload or half of a pair.
+    partials = {path: path.with_name(path.name + ".partial") for path in (archive, tree_path)}
+    try:
+        with tarfile.open(partials[archive], "w:xz", preset=XZ_PRESET, format=tarfile.PAX_FORMAT) as tar:
+            for entry in tree["files"]:
+                info = tarfile.TarInfo(entry["path"])
+                info.mtime = stamp
+                info.uid = info.gid = 0
+                info.uname = info.gname = ""
+                if entry.get("type") == "dir":
+                    info.type = tarfile.DIRTYPE
+                    info.mode = 0o755
+                    tar.addfile(info)
+                    continue
+                info.size = entry["size"]
+                info.mode = 0o755 if entry["mode"] & 0o111 else 0o644
+                with open(app_dir.joinpath(*entry["path"].split("/")), "rb") as f:
+                    tar.addfile(info, f)
+        partials[tree_path].write_text(json.dumps(tree, indent=2, sort_keys=True) + "\n",
+                                       encoding="utf-8", newline="\n")
+        for final, partial in partials.items():
+            os.replace(partial, final)
+    except BaseException:
+        for final, partial in partials.items():
+            for path in (partial, final):
+                if path.exists():
+                    path.unlink()
+        raise
     return archive, tree_path, tree
 
 

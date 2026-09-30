@@ -192,24 +192,110 @@ def test_no_payload_leaves_the_windows_entry_bare(tmp_path):
     assert manifest["platforms"]["windows-x86_64"] == {"inplace": {"enabled": False}, "min_client": STABLE}
 
 
-def test_half_a_payload_is_not_listed(tmp_path):
-    dist, _, archive, _, _ = _dist_with_payload(tmp_path, STABLE, "stable")
-    archive.unlink()
+def _listed(dist):
+    return [line.split("  ", 1)[1] for line in (dist / "SHA256SUMS").read_text().splitlines()]
+
+
+@pytest.mark.parametrize("half", [0, 1])
+def test_half_a_payload_is_not_published(tmp_path, half):
+    dist, setup, archive, tree_path, _ = _dist_with_payload(tmp_path, STABLE, "stable")
+    gone, left = (archive, tree_path) if half == 0 else (tree_path, archive)
+    gone.unlink()
+    (dist / f"{left.name}.sha256").write_text("x")
     r, manifest = _manifest(dist, "v1.24.0", "stable")
     assert r.returncode == 0, r.stderr
     assert "payload" not in manifest["platforms"]["windows-x86_64"]
-    assert "has no partner" in r.stdout
+    assert f"left {left.name} out of the release: it has no partner" in r.stdout
+    assert not left.exists() and not (dist / f"{left.name}.sha256").exists()
+    assert _listed(dist) == sorted(["update-manifest.json", setup], key=str.encode)
 
 
 @pytest.mark.parametrize("key,value", [("version", "1.23.9"), ("flavor", "dev"),
                                        ("app_name", "PyReconstruct Dev"), ("platform", "macos-arm64")])
-def test_a_tree_from_another_build_fails_the_release(tmp_path, key, value):
-    dist, _, _, tree_path, tree = _dist_with_payload(tmp_path, STABLE, "stable")
+def test_a_tree_from_another_build_is_left_out_and_the_installers_ship(tmp_path, key, value):
+    dist, setup, archive, tree_path, tree = _dist_with_payload(tmp_path, STABLE, "stable")
     tree_path.write_text(json.dumps(dict(tree, **{key: value})), encoding="utf-8")
-    r, _ = _manifest(dist, "v1.24.0", "stable")
-    assert r.returncode != 0
-    assert key in r.stderr
-    assert not (dist / "SHA256SUMS").exists()
+    r, manifest = _manifest(dist, "v1.24.0", "stable")
+    assert r.returncode == 0, r.stderr
+    assert f"its tree.json has {key}" in r.stdout
+    assert "payload" not in manifest["platforms"]["windows-x86_64"]
+    assert not archive.exists() and not tree_path.exists()
+    assert setup in _listed(dist) and archive.name not in _listed(dist)
+
+
+@pytest.mark.parametrize("text", ["{not json", "[]", '{"files": []}'])
+def test_a_broken_tree_is_left_out_and_the_installers_ship(tmp_path, text):
+    dist, setup, archive, tree_path, tree = _dist_with_payload(tmp_path, STABLE, "stable")
+    if text.startswith('{"files"'):
+        text = json.dumps(dict(tree, files=[e for e in tree["files"] if e.get("type") == "dir"]))
+    tree_path.write_text(text, encoding="utf-8")
+    r, manifest = _manifest(dist, "v1.24.0", "stable")
+    assert r.returncode == 0, r.stderr
+    assert "payload" not in manifest["platforms"]["windows-x86_64"]
+    assert not archive.exists() and not tree_path.exists()
+    assert setup in _listed(dist)
+
+
+def test_a_misnamed_payload_file_is_not_published(tmp_path):
+    """Only this release's pair ships; any other payload name goes, with its .sha256."""
+    dist, setup, archive, tree_path, _ = _dist_with_payload(tmp_path, STABLE, "stable")
+    strays = [
+        *P.payload_names("1.23.9", "stable"),                  # another version
+        *P.payload_names(STABLE, "dev"),                       # the other flavor
+        f"{archive.name}.partial",                             # a half-written archive
+        f"PyReconstruct-{STABLE}-update-windows-x86_64.tar.gz",  # the wrong kind
+    ]
+    for name in strays:
+        (dist / name).write_bytes(b"x")
+        (dist / f"{name}.sha256").write_text("x")
+    r, manifest = _manifest(dist, "v1.24.0", "stable")
+    assert r.returncode == 0, r.stderr
+    for name in strays:
+        assert f"left {name} out of the release" in r.stdout
+        assert not (dist / name).exists() and not (dist / f"{name}.sha256").exists()
+    assert manifest["platforms"]["windows-x86_64"]["payload"]["name"] == archive.name
+    assert sorted(_listed(dist), key=str.encode) == sorted(
+        [setup, archive.name, tree_path.name, "update-manifest.json"], key=str.encode)
+
+
+@pytest.mark.parametrize("fail_at", ["archive", "tree", "rename"])
+def test_a_failed_build_leaves_no_payload_file(tmp_path, monkeypatch, fail_at):
+    """The Windows leg then uploads Setup.exe alone, with no half of a payload beside it."""
+    app = fake_app(tmp_path)
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "Setup.exe").write_bytes(b"x")
+    # A payload of the same name from an earlier run goes too, so no stale half survives.
+    for name in P.payload_names(STABLE, "stable"):
+        (out / name).write_bytes(b"old")
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    if fail_at == "archive":
+        calls = []
+        real = tarfile.TarFile.addfile
+
+        def addfile(self, *a, **k):
+            calls.append(1)
+            if len(calls) > 2:
+                boom()
+            return real(self, *a, **k)
+        monkeypatch.setattr(tarfile.TarFile, "addfile", addfile)
+    elif fail_at == "tree":
+        monkeypatch.setattr(Path, "write_text", boom)
+    else:
+        real_replace = os.replace
+
+        def replace(src, dst):
+            if str(dst).endswith(".tree.json"):
+                boom()
+            return real_replace(src, dst)
+        monkeypatch.setattr(P.os, "replace", replace)
+
+    with pytest.raises(OSError, match="disk full"):
+        P.build(app, STABLE, "stable", out)
+    assert sorted(p.name for p in out.iterdir()) == ["Setup.exe"]
 
 
 # --- The helper and the workflow -----------------------------------------------------
@@ -282,3 +368,30 @@ def test_the_hold_back_step_removes_the_payload_and_nothing_else(tmp_path):
     script = workflow_script(WORKFLOW.name, "Hold back a Windows update payload that failed its swap test")
     subprocess.run(["bash", "-euo", "pipefail", "-c", script], cwd=tmp_path, check=True, timeout=60)
     assert sorted(p.name for p in dist.iterdir()) == sorted(keep)
+
+
+def _step(job, name):
+    """One step's text, from its name line to the next step."""
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    body = workflow.split(f"\n  {job}:\n", 1)[1]
+    return body.split(f"- name: {name}\n", 1)[1].split("\n      - ", 1)[0]
+
+
+def test_a_failed_helper_or_payload_never_costs_the_release_its_setup_exe():
+    helper = _step("build", "Freeze the in-place update helper (Windows)")
+    assert "id: helper" in helper and "continue-on-error: true" in helper
+    assert 'Remove-Item -LiteralPath "dist\\$app\\_updater" -Recurse' in helper, \
+        "a failed freeze leaves no half-copied helper for Setup.exe to install"
+
+    payload = _step("build", "Build the in-place update payload (Windows)")
+    assert "id: payload" in payload and "continue-on-error: true" in payload
+    assert "if: runner.os == 'Windows' && steps.helper.outcome == 'success'" in payload
+    assert 'Remove-Item "dist-assets\\PyReconstruct-*-update-windows-*"' in payload
+
+    # Everything from the helper to the upload either cannot fail on the
+    # helper's account or carries on past it, and the upload itself waits on
+    # neither step.
+    upload = WORKFLOW.read_text(encoding="utf-8").split("- uses: actions/upload-artifact@v7\n", 1)[1]
+    upload = upload.split("\n\n", 1)[0]
+    assert "steps.helper" not in upload and "steps.payload" not in upload
+    assert "path: dist-assets/*" in upload

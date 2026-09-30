@@ -201,16 +201,29 @@ jobs:
         # app's _updater folder before anything is measured, tested, or
         # packaged, so Setup.exe installs it and the update payload carries
         # it. Its own build and dist folders keep it clear of the app's.
+        #
+        # A failure here never costs the release its Setup.exe: the step
+        # removes whatever it put in _updater, the installer is built without
+        # the helper, and the payload step below is skipped, so the release
+        # has no Windows payload.
+        id: helper
         if: runner.os == 'Windows'
+        continue-on-error: true
         run: |
           $flavor = ""
           if (Test-Path "packaging\FLAVOR") { $flavor = (Get-Content "packaging\FLAVOR" -Raw).Trim() }
           $app = if ($flavor -eq "dev") { "PyReconstruct Dev" } else { "PyReconstruct" }
-          pyinstaller --noconfirm --distpath build\updater-dist --workpath build\updater-work packaging\windows\pyreconstruct-updater.spec
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          New-Item -ItemType Directory -Force -Path "dist\$app\_updater" | Out-Null
-          Copy-Item "build\updater-dist\pyreconstruct-updater.exe" "dist\$app\_updater\"
-          Get-Item "dist\$app\_updater\pyreconstruct-updater.exe" | Format-List Name, Length
+          try {
+            pyinstaller --noconfirm --distpath build\updater-dist --workpath build\updater-work packaging\windows\pyreconstruct-updater.spec
+            if ($LASTEXITCODE -ne 0) { throw "PyInstaller exited with $LASTEXITCODE" }
+            New-Item -ItemType Directory -Force -Path "dist\$app\_updater" | Out-Null
+            Copy-Item "build\updater-dist\pyreconstruct-updater.exe" "dist\$app\_updater\"
+            Get-Item "dist\$app\_updater\pyreconstruct-updater.exe" | Format-List Name, Length
+          } catch {
+            Remove-Item -LiteralPath "dist\$app\_updater" -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Host "::warning::the update helper did not build ($_); Setup.exe ships without it and the release has no Windows payload"
+            exit 1
+          }
 
       - name: Report the frozen app's size (Windows)
         # Informational, for sizing in-place updates: bytes on disk, file
@@ -338,14 +351,25 @@ jobs:
         # tree.json (scripts/build_update_payload.py). The swap-windows job
         # below installs Setup.exe and swaps this payload in, and the release
         # job leaves both files out if that fails.
-        if: runner.os == 'Windows'
+        #
+        # It runs only when the helper built, and a failure here never costs
+        # the release its Setup.exe: the script leaves no payload file behind
+        # when it fails, this step removes any that are left anyway, and the
+        # upload goes ahead with the installer alone.
+        id: payload
+        if: runner.os == 'Windows' && steps.helper.outcome == 'success'
+        continue-on-error: true
         run: |
           $flavor = ""
           if (Test-Path "packaging\FLAVOR") { $flavor = (Get-Content "packaging\FLAVOR" -Raw).Trim() }
           $app = if ($flavor -eq "dev") { "PyReconstruct Dev" } else { "PyReconstruct" }
           $kind = if ($flavor -eq "dev") { "dev" } else { "stable" }
           python scripts/build_update_payload.py "dist\$app" --version "$env:PYR_PUBLIC" --flavor $kind --out dist-assets
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($LASTEXITCODE -ne 0) {
+            Remove-Item "dist-assets\PyReconstruct-*-update-windows-*" -Force -ErrorAction SilentlyContinue
+            Write-Host "::warning::the update payload did not build; the release has no Windows payload"
+            exit 1
+          }
 
       - name: Refuse a macOS build that needs the new Accelerate
         if: runner.os == 'macOS'
@@ -804,7 +828,8 @@ jobs:
         run: rm -f dist/*.AppImage dist/*.AppImage.sha256
       - name: Hold back a Windows update payload that failed its swap test
         # The manifest then lists no Windows payload, and the installers
-        # still publish.
+        # still publish. The manifest script below also drops any payload
+        # file that is misnamed or missing its partner.
         if: needs.swap-windows.result != 'success'
         run: |
           rm -f dist/PyReconstruct-*-update-windows-x86_64*
