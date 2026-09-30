@@ -6,32 +6,66 @@ import numpy as np
 from PyReconstruct.modules.datatypes import Series, Section
 from .section_layer import SectionLayer
 
-# just here for reference, not actually used
-def applyContrastAndBrightness(pixel : int, brightness : int, contrast : int):
-    """Apply brightness and contrast to a single pixel.
-    
+# Brightness and contrast are whole numbers from -100 to 100 (the field clamps
+# them there), and ImageLayer draws them in this order:
+#   brightness b >= 0: white over the image at opacity b/100
+#   brightness b < 0:  black over the image at opacity |b|/100
+#   contrast c >= 0:   the image composited onto itself in Overlay mode c/20
+#                      times (the fraction as one pass at partial opacity)
+#   contrast c < 0:    gray 128 over the image at opacity |c|/100
+# Overlay of an image onto itself is not a linear stretch. It maps a level x
+# (0-1) to 2x^2 below 0.5 and 1 - 2(1-x)^2 above, an S-curve around 128.
+# QPainter stores whole levels after every pass, so the curves round there
+# too; on a low contrast image that needs four or five passes it adds up.
+LEVELS = np.arange(256, dtype=np.float64)
+SETTINGS = np.arange(-100, 101)
+
+
+def _overlay(levels):
+    """Composite levels (0-255) onto themselves in Overlay mode."""
+    x = levels / 255
+    return np.rint(np.where(x < 0.5, 2 * x * x, 1 - 2 * (1 - x) ** 2) * 255)
+
+
+def _brightnessCurves():
+    """Return every brightness setting's level curve, one row per setting."""
+    b = SETTINGS[:, None] / 100
+    return np.rint(np.where(
+        b >= 0,
+        LEVELS + (255 - LEVELS) * b,
+        LEVELS * (1 + b),
+    ))
+
+
+def applyContrastAndBrightness(levels, brightness : int, contrast : int):
+    """Return levels (0-255) as ImageLayer renders them with this brightness and contrast.
+
         Params:
-            pixel (int): the pixel value (0-255)
-            brightness (int): the brightness adjustment (-100-100)
-            contrast (int): the contrast adjustment (-100-100)
+            levels (array): pixel values from 0 to 255
+            brightness (int): the brightness setting (-100 to 100)
+            contrast (int): the contrast setting (-100 to 100)
     """
-    # apply brightness
-    if brightness >= 0:
-        pixel += (255 - pixel) * (brightness / 100)
-    else:
-        pixel += (pixel) * (brightness / 100)
-    
-    # apply contrast
+    x = np.asarray(levels, dtype=np.float64)
+    b = brightness / 100
+    x = np.rint(x + (255 - x) * b if b >= 0 else x * (1 + b))
     if contrast >= 0:
-        pixel = (pixel - 128) * (contrast / 20 + 1) + 128
+        passes = contrast / 20
+        for _ in range(int(passes)):
+            x = _overlay(x)
+        opacity = passes % 1
+        if opacity > 0:
+            x = x + (_overlay(x) - x) * opacity
     else:
-        pixel = (pixel - 128) * (1 - abs(contrast) / 100) + 128
-    
-    # round and clamp pixel value
-    pixel = max(0, min(255, round(pixel)))
+        opacity = abs(contrast) / 100
+        x = x * (1 - opacity) + 128 * opacity
+    return x
+
 
 def adjustPixelsToStats(image, desired_mean, desired_std):
-    """Adjust a set of pixels to have the desired mean and standard deviation.
+    """Find the brightness and contrast that render an image closest to a mean and standard deviation.
+
+    Every whole-number pair from -100 to 100 is scored on the image's histogram
+    with the same curves ImageLayer draws, and the closest one wins.
 
     Params:
         image (array): image as numpy array
@@ -39,26 +73,50 @@ def adjustPixelsToStats(image, desired_mean, desired_std):
         desired_std (float): The target standard deviation for the adjusted pixels.
 
     Returns:
-        brightness (float): The calculated brightness adjustment (-100 to 100).
-        contrast (float): The calculated contrast adjustment (-100 to 100).
+        brightness (int): The brightness setting (-100 to 100), None for an empty image.
+        contrast (int): The contrast setting (-100 to 100), None if the image has
+            no spread for contrast to act on.
     """
-    # Calculate the current mean and standard deviation of the input pixels
-    current_mean = np.mean(image)
-    current_std = np.std(image)
+    pixels = np.clip(np.rint(np.asarray(image, dtype=np.float64)), 0, 255)
+    if pixels.size == 0:
+        return None, None
+    weights = np.bincount(pixels.astype(np.intp).ravel(), minlength=256) / pixels.size
+    flat = np.std(pixels) < 1e-6
 
-    # Calculate the required brightness and contrast adjustments
-    if abs(current_mean) > 1e-6:
-        brightness = ((desired_mean - current_mean) / current_mean) * 100
-        brightness = max(-100, min(100, round(brightness)))
-    else:
-        brightness = None
-    if abs(current_std) > 1e-6:
-        contrast = ((desired_std / current_std) - 1) * 20
-        contrast = max(-100, min(100, round(contrast)))
-    else:
-        contrast = None
-    
-    return brightness, contrast
+    def score(curves):
+        # a plain weighted sum, not a matrix product: on a busy machine the
+        # threaded matrix product took about 20 ms a call, this takes 0.1 ms
+        mean = (curves * weights).sum(axis=1)
+        var = (curves * curves * weights).sum(axis=1) - mean ** 2
+        std = np.sqrt(np.maximum(var, 0))
+        return (mean - desired_mean) ** 2 + (std - desired_std) ** 2
+
+    # one row per brightness setting, after brightness and before contrast
+    bright = _brightnessCurves()
+    if flat:
+        return int(SETTINGS[np.argmin(score(bright))]), None
+
+    # the curves after 0 to 5 full Overlay passes
+    passes = [bright]
+    for _ in range(5):
+        passes.append(_overlay(passes[-1]))
+
+    best = (np.inf, 0, 0)
+    for c in SETTINGS:
+        if c >= 0:
+            full, opacity = divmod(c, 20)
+            curves = passes[full]
+            if opacity:
+                curves = curves + (passes[full + 1] - curves) * (opacity / 20)
+        else:
+            opacity = -c / 100
+            curves = bright * (1 - opacity) + 128 * opacity
+        errors = score(curves)
+        i = int(np.argmin(errors))
+        if errors[i] < best[0]:
+            best = (errors[i], int(SETTINGS[i]), int(c))
+
+    return best[1], best[2]
 
 def optimizeSectionBC(section : Section, desired_mean=128, desired_std=60, window=None, lowest_res=True):
     """Optimize the brightness and contrast of the image for a single section.
