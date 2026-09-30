@@ -73,7 +73,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
+          COMMITS: ${{ github.event.pull_request.commits }}
         run: |
+          # The API lists at most 250 commits per PR, so a longer branch could hide one.
+          if [ "$COMMITS" -gt 250 ]; then
+            echo "::error::This PR has $COMMITS commits and the API lists only 250. Squash the branch so every commit can be checked."
+            exit 1
+          fi
           hits=$(gh api "repos/$REPO/pulls/$PR/commits" --paginate \
             --jq '.[] | select(.commit.message | test("(^|\n)co-authored-by[ \t]*:"; "i")) | .sha[0:8]')
           if [ -n "$hits" ]; then
