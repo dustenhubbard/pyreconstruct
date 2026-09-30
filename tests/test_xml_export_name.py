@@ -103,3 +103,57 @@ def test_xml_export_files_splits_replaced_and_extra(main_window, tmp_path):
 
     assert replaced == ["chosen.ser", f"chosen.{first}"]
     assert extra == ["chosen.9999"]
+
+
+@pytest.fixture
+def confirm_calls(monkeypatch, main_window_dialogs):
+    """Record (message, title) for each prompt, answering No."""
+    from PyReconstruct.modules.gui.main import main_window as mw
+
+    calls = []
+
+    def fake(message, yn=False, title="Confirm"):
+        calls.append((message, title))
+        return False
+
+    monkeypatch.setattr(mw, "notifyConfirm", fake)
+    return calls
+
+
+def test_prompt_without_replaced_files_says_has_not_also(main_window, confirm_calls, tmp_path):
+    name = main_window.series.name
+    (tmp_path / f"{name}_export.9999").write_text("STALE")
+
+    main_window.exportToXML(str(tmp_path / f"{name}_export.ser"))
+
+    [(message, title)] = confirm_calls
+    assert message.startswith(f"This folder has section files named {name}_export ")
+    assert " also " not in message
+    assert title == "Export Series"
+
+
+def test_prompt_with_replaced_and_extra_files_says_also(main_window, confirm_calls, tmp_path):
+    name = main_window.series.name
+    (tmp_path / f"{name}.ser").write_text("ORIGINAL SERIES")
+    (tmp_path / f"{name}.9999").write_text("STALE")
+
+    main_window.exportToXML(str(tmp_path / f"{name}.ser"))
+
+    [(message, title)] = confirm_calls
+    assert message.startswith("This folder already has these files")
+    assert f"This folder also has section files named {name} " in message
+    assert title == "Overwrite Existing"
+
+
+def test_ser_confirmed_in_the_save_dialog_is_not_asked_again(
+    main_window, main_window_dialogs, confirm_calls, tmp_path
+):
+    name = main_window.series.name
+    ser = tmp_path / f"{name}.ser"
+    ser.write_text("ORIGINAL SERIES")
+    main_window_dialogs.file_responses = [str(ser)]
+
+    main_window.exportToXML()
+
+    assert confirm_calls == []
+    assert ser.read_text() != "ORIGINAL SERIES"

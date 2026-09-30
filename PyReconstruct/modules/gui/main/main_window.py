@@ -1673,6 +1673,7 @@ class MainWindow(QMainWindow):
         self.saveAllData()
 
         ## Get new xml series filepath from user
+        from_dialog = not export_fp
         if not export_fp:
             export_fp = FileDialog.get(
                 "save",
@@ -1693,6 +1694,8 @@ class MainWindow(QMainWindow):
 
         ## Ask before replacing files, or mixing in old section files
         replaced, extra = xmlExportFiles(self.series, export_dir, name)
+        if from_dialog and replaced == [f"{name}.ser"] and not extra:
+            replaced = []  # the save dialog already asked about this one
         if (replaced or extra) and not self._confirmXMLOverwrite(name, replaced, extra):
             return False
 
@@ -1728,14 +1731,16 @@ class MainWindow(QMainWindow):
                 f"replace them:\n\n{listed(replaced)}\n\n"
             )
         if extra:
+            also = " also" if replaced else ""
             message += (
-                f"This folder also has section files named {name} that this "
+                f"This folder{also} has section files named {name} that this "
                 "series does not have. Legacy Reconstruct will read them as "
                 f"part of the export:\n\n{listed(extra)}\n\n"
             )
         message += "Export anyway?"
 
-        return notifyConfirm(message, yn=True, title="Overwrite Existing")
+        title = "Overwrite Existing" if replaced else "Export Series"
+        return notifyConfirm(message, yn=True, title=title)
     
     def seriesModified(self, modified=True):
         """Change the title of the window reflect modifications."""
