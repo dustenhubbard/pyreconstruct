@@ -255,7 +255,7 @@ def test_labels_to_objects_iterates_real_section_numbers(monkeypatch, real_serie
     monkeypatch.setattr(conversions, "setDT", lambda: None)
     monkeypatch.setattr(
         conversions, "getLabelsToObjectsData",
-        lambda fp, group: (None, sections, 2),
+        lambda fp, group, **k: (None, sections, 2),
     )
 
     conversions.labelsToObjects(real_series, "unused.zarr", "labels_test")
