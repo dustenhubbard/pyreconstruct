@@ -942,8 +942,18 @@ class MousePalette():
         if not confirmed:
             return
         
-        self.modifyPalette(self.series.palette_traces[self.series.palette_index[0]])
-        self.activatePaletteButton(self.series.palette_index[1])
+        # the dialog can make a palette of another length current, by
+        # switching to its tab or by removing the current one
+        self.series.clampPaletteIndex()
+        g, i = self.series.palette_index
+        traces = self.series.palette_traces[g]
+        if len(traces) == len(self.palette_buttons):
+            self.modifyPalette(traces)
+        else:
+            # the buttons belong to the old palette: build new ones, and draw
+            # with the new current button, which reset() checks but not clicks
+            self.reset()
+            self.mainwindow.changeTracingTrace(traces[i])
     
     def setFlag(self, name : str = None, color : tuple = None, font_size : int = None, display_flags : str = None):
         """Set the default flag in the palette."""
