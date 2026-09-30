@@ -1,7 +1,7 @@
 import os
 import json
 import shutil
-import time
+import itertools
 from copy import deepcopy
 
 from PyReconstruct.modules.datatypes import (
@@ -14,6 +14,18 @@ from PyReconstruct.modules.datatypes import (
 from PyReconstruct.modules.datatypes.trace import copyObjDefaults
 
 from PyReconstruct.modules.constants import keyed_trace_row_to_positional
+
+# Undo and redo order comes from comparing these stamps (see favor3D), so they
+# come from one counter shared by field and series states. A wall clock in
+# tenths of a second gave two undos inside the same tenth equal stamps (a held
+# Cmd+Z repeats faster than that), and a clock set back made a newer step look
+# older; either way redo could replay a series step and a section step in the
+# wrong order.
+_stamps = itertools.count(1)
+
+def nextStamp() -> int:
+    """Return a stamp greater than every stamp handed out before it."""
+    return next(_stamps)
 
 class FieldState():
 
@@ -130,7 +142,7 @@ class FieldState():
         # raised AttributeError instead of undoing anything (reported against
         # v1.21.2). `updateTime` still restamps a state as it goes onto a
         # stack; this is the floor under that, not a replacement for it.
-        self.time = round(time.time() * 10)
+        self.time = nextStamp()
 
     def copy(self):
         c = FieldState(self.contours, self.ztraces, self.tforms, self.flags, self.contours_fp)
@@ -213,7 +225,7 @@ class FieldState():
         return self.flags.copy()
     
     def updateTime(self):
-        self.time = round(time.time()*10)  # keep track of time when added to state list
+        self.time = nextStamp()  # keep track of when it was added to a state list
 
 def objectSnapshot(series : Series, names) -> dict:
     """What an undo step must bring back with an object it recreates.
@@ -623,7 +635,7 @@ class SeriesState():
 
     def __init__(self, breakable=True):
         """Create a single series state."""
-        self.time = round(time.time() * 10)  # keep track of time
+        self.time = nextStamp()  # keep track of order
         self.undo_lens = {}  # keep track of individial section undos (these will be populated as the enumerateSections loop progresses)
         self.series_attrs = {}
         self.breakable = breakable
@@ -1012,7 +1024,12 @@ class SeriesStates():
         # undo/redo the series attributes
         state.applySeriesAttributes(self.series)
 
-        # move the state accordingly
+        # move the state accordingly, stamped as it goes onto the other stack
+        # the way SectionStates stamps its states: favor3D compares these
+        # stamps with the section's, so a series state still carrying the stamp
+        # it was first made with would lose to any section step undone before
+        # it, and redo would replay the two in the wrong order
+        state.time = nextStamp()
         if redo:
             self.undos.append(self.redos.pop())
         else:
