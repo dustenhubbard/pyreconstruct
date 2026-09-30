@@ -795,8 +795,8 @@ class FieldWidgetMouse(FieldWidgetData):
 
         The pickup in scissorsPress removes the trace without logging it or
         saving an undo state, so backing out has to restore it here. The
-        section ends up as it was before the pickup: no log entry and no undo
-        state.
+        section ends up as it was before the pickup: the trace in its old
+        place in its contour, no log entry and no undo state.
 
         The trace is not selected again. The pickup deselected everything,
         and a held Backspace keeps repeating after this cancel; with the
@@ -808,8 +808,16 @@ class FieldWidgetMouse(FieldWidgetData):
         self.deactivateMouseBoundaryTimer()
 
         trace = self.tracing_trace
+        index = self.scissors_index
+        self.scissors_index = None
         if trace is not None:
             self.section.addTrace(trace, log_event=False)
+            # addTrace appends; move the trace back to its old place so the
+            # contour order, and the Trace List rows that index into it, are
+            # as they were before the pickup
+            traces = self.section.contours[trace.name].traces
+            if index is not None and traces[-1] is trace and index < len(traces) - 1:
+                traces.insert(index, traces.pop())
             # the pickup's removal and this add cancel out; drop one entry
             # of each so the trace is not tracked (and drawn) twice, and any
             # other pending edits stay tracked
@@ -918,6 +926,11 @@ class FieldWidgetMouse(FieldWidgetData):
                     return
                 self.is_scissoring = True
                 self.deselectAllTraces()
+                # remember where the trace sits in its contour, so a cancel can
+                # put it back in the same place (Trace List rows are indexes)
+                self.scissors_index = self.section.contours[
+                    self.selected_trace.name
+                ].index(self.selected_trace)
                 self.section.deleteTraces([self.selected_trace], log_event=False)
                 self.generateView(generate_image=False)
                 self.current_trace = self.section_layer.traceToPix(self.selected_trace)

@@ -182,3 +182,48 @@ def test_the_scissors_work_again_after_backing_out(main_window, qapp):
 
     assert not field.is_scissoring
     assert _count(field, name) == before
+
+
+def test_a_cancel_keeps_the_trace_in_its_place_for_the_trace_list(main_window, qapp):
+    """Trace List rows are (name, index) into the contour, and nothing
+    refreshes them on a cancel. The restored trace has to go back to its old
+    index, or the row that showed it would now select another trace."""
+    field = main_window.field
+    first = _pick_trace(field, True)
+    name = first.name
+
+    # a second trace of the same object, beside the first
+    second = first.copy()
+    xs = [x for x, _ in first.points]
+    shift = (max(xs) - min(xs)) * 2 + 1
+    second.points = [(x + shift, y) for x, y in first.points]
+    field.section.addTrace(second, log_event=False)
+    field.saveState()
+    field.generateView()
+    contour = field.section.contours[name]
+    assert contour.getTraces() == [first, second]
+
+    field.table_manager.newTable("trace", field.section)
+    qapp.processEvents()
+    table = field.table_manager.tables["trace"][-1]
+    def row_items():
+        return [
+            (table.table.item(r, 0).text(), table.rows[r].index)
+            for r in range(len(table.rows))
+        ]
+
+    assert (name, 0) in row_items()
+    assert table.getTraces([(name, 0)]) == [first]
+
+    _pickup(main_window, qapp, first)
+    assert field.is_scissoring
+    assert field.tracing_trace is first
+    _backspace_to_the_end(main_window)
+    qapp.processEvents()
+
+    traces = field.section.contours[name].getTraces()
+    assert len(traces) == 2
+    assert traces[0] is first
+    assert traces[1] is second
+    assert (name, 0) in row_items()
+    assert table.getTraces([(name, 0)])[0] is first
