@@ -179,7 +179,9 @@ from PyReconstruct.modules.constants import (
 
 from PyReconstruct.assets.scripts.projects import (
     randomize_project,
-    derandomize_project
+    derandomize_project,
+    RandomizeError,
+    DerandomizeError,
 )
 
 from .menubar import return_menubar
