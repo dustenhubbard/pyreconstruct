@@ -159,8 +159,79 @@ def test_clicking_the_notice_runs_the_manual_check_and_hides_it(
 
     assert manual == [main_window]
     assert notice.isHidden()
+
+
+def _click_through(main_window, monkeypatch, info=None, error=None):
+    """Click the notice with the manual check's feed faked; returns what
+    ``notify`` showed. ``info`` is what the check finds, ``error`` a failure."""
+    from PyReconstruct.modules.gui.main import main_window as MW
+
+    shown = []
+    monkeypatch.setattr(MW, "notify", lambda msg, *a, **k: shown.append(msg))
+    monkeypatch.setattr(MW, "install_kind", lambda: "frozen")
+
+    def manual_check(self, channel, on_result, on_error, kind=None):
+        if error is not None:
+            on_error(error)
+        else:
+            on_result(info)
+
+    monkeypatch.setattr(MW.MainWindow, "_runUpdateCheck", manual_check)
+    main_window.openUpdateNotice()
+    return shown
+
+
+def test_a_click_while_an_update_is_in_progress_keeps_the_saved_notice(
+    launch, main_window, monkeypatch
+):
+    notice = launch(_newer())
+    main_window._updater_pool = object()
+    try:
+        shown = _click_through(main_window, monkeypatch, info=_newer())
+    finally:
+        main_window._updater_pool = None
+
+    assert shown == ["An update is already in progress."]
+    assert notice.isHidden()
+    assert _settings(KEY).value(KEY) == "1.24.0"
+    assert not launch(None).isHidden()  # back at the next launch
+
+
+def test_a_click_whose_check_fails_keeps_the_saved_notice(
+    launch, main_window, monkeypatch
+):
+    notice = launch(_newer())
+
+    shown = _click_through(main_window, monkeypatch, error=OSError("no network"))
+
+    assert len(shown) == 1 and shown[0].startswith("Could not check for updates")
+    assert notice.isHidden()
+    assert _settings(KEY).value(KEY) == "1.24.0"
+    assert not launch(None).isHidden()
+
+
+def test_a_click_that_opens_the_update_forgets_the_notice(
+    launch, main_window, monkeypatch
+):
+    from PyReconstruct.modules.gui.dialog import update_dialog as UD
+
+    opened = []
+
+    class FakeDialog:
+        def __init__(self, *a, **k):
+            opened.append(a)
+
+        def exec(self):
+            return 0  # closed without installing
+
+    monkeypatch.setattr(UD, "UpdateDialog", FakeDialog)
+    notice = launch(_newer())
+
+    _click_through(main_window, monkeypatch, info=_newer())
+
+    assert len(opened) == 1
+    assert notice.isHidden()
     assert not _settings(KEY).contains(KEY)
-    # and a throttled launch after that brings nothing back
     assert launch(None).isHidden()
 
 

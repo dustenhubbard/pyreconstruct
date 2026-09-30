@@ -4204,6 +4204,7 @@ class MainWindow(QMainWindow):
             return  # the background check only surfaces a genuine upgrade
         from PyReconstruct.modules.gui.dialog.update_dialog import UpdateDialog
         dialog = UpdateDialog(self, info, channel)
+        self.clearUpdateNotice()  # the update is open now; the notice is done
         # the dialog downloads + verifies, sets _pending_installer, and accepts;
         # closing then launches the installer (see closeEvent).
         if dialog.exec() and self._pending_installer:
@@ -4350,9 +4351,15 @@ class MainWindow(QMainWindow):
             notice.hide()
 
     def openUpdateNotice(self):
-        """Clicked notice: it has done its job, so it goes, and the check
-        runs exactly as Help > Check for updates does."""
-        self.clearUpdateNotice()
+        """Clicked notice: hide it and run the check exactly as Help > Check
+        for updates does.
+
+        The saved version stays until the update dialog (or the reinstall
+        command dialog) actually opens. The check can stop at once ("An
+        update is already in progress.") or fail on the network, and then
+        nothing was shown, so the notice has to come back at the next launch.
+        """
+        self._setUpdateNotice(None)
         self.checkForUpdates()
 
     def _onReinstallCheck(self, info, channel, manual):
@@ -4385,7 +4392,9 @@ class MainWindow(QMainWindow):
                 self._showBackgroundNotice(remote)  # no dialog at launch (#430)
             return  # the background check only surfaces a genuine upgrade
         from PyReconstruct.modules.gui.dialog.update_dialog import ReinstallDialog
-        ReinstallDialog(self, info, app_name).exec()
+        dialog = ReinstallDialog(self, info, app_name)
+        self.clearUpdateNotice()  # the command is shown now; the notice is done
+        dialog.exec()
 
     @staticmethod
     def _cleanupUpdateDir(tmpdir):
