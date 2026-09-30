@@ -15,7 +15,6 @@ The username is never assigned through ``series.user``: its setter writes the
 real ``username`` setting. The end-to-end tests patch the property on the
 class instead, and ``monkeypatch`` puts it back.
 """
-import os
 import shutil
 from pathlib import Path
 
@@ -116,6 +115,23 @@ def test_an_older_name_opening_with_a_quote_still_reads():
     log = Log.fromStr(row)
     assert fields(log) == ('26-06-29', '12:00', '"alice', 'obj_a', [(3, 3)],
                            'Modify trace(s)')
+    assert fields(Log.fromStr(str(log))) == fields(log)
+
+
+@pytest.mark.parametrize("row", [
+    '26-06-29, 12:00, "alice", axon, 3, Modify trace(s)',
+    '26-06-29, 12:00, alice, "axon", 3, Modify trace(s)',
+    '26-06-29, 12:00, "alice, axon", 3, Modify trace(s)',
+])
+def test_quotes_an_older_version_wrote_stay_literal(row):
+    """Older versions wrote names as they were, quotes included. Those
+    quotes are read as part of the name, and a row that only parses the old
+    way is read the old way."""
+    log = Log.fromStr(row)
+    date, time, user, obj_name, sections, event = old_from_str(row)
+    assert (log.date, log.time, log.user, log.obj_name, log.event) == (
+        date, time, user, obj_name, event
+    )
     assert fields(Log.fromStr(str(log))) == fields(log)
 
 
@@ -248,5 +264,20 @@ def test_history_view_keeps_a_comma_name_in_one_cell(qapp):
     cells = [widget.table.item(0, c).text() for c in range(6)]
     assert cells == ["26-09-30", "12:00", "Smith, John",
                      "dendrite 1, spine a", "2-4", "Modify ztrace"]
+    widget.close()
+    parent.deleteLater()
+
+
+def test_history_view_opens_with_an_empty_event(qapp):
+    from PySide6.QtWidgets import QWidget
+
+    from PyReconstruct.modules.gui.table import HistoryTableWidget
+
+    parent = QWidget()
+    log_set = LogSet()
+    log_set.all_logs.append(Log("26-09-30", "12:00", "alice", "axon", 3, ""))
+    widget = HistoryTableWidget(log_set, parent)
+    cells = [widget.table.item(0, c).text() for c in range(6)]
+    assert cells == ["26-09-30", "12:00", "alice", "axon", "3", ""]
     widget.close()
     parent.deleteLater()

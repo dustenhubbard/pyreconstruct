@@ -53,8 +53,9 @@ class HistoryTableWidget(QDockWidget):
         """
         # splitRow, not split(", "): a quoted user or object name holds ", "
         # and must stay one cell
+        # (and no strip: an empty event leaves the row ending in ", ")
         date, time, (user, _), (obj_name, _), sections, event = splitRow(
-            str(log).strip()
+            str(log)
         )
         for c, s in enumerate((date, time, user, obj_name, sections, event)):
             self.table.setItem(r, c, QTableWidgetItem(s))

@@ -57,7 +57,7 @@ def quoteField(value : str, force : bool = False) -> str:
     Only a value that needs it is quoted: one holding ", ", one that opens
     with a quote, or (force) an object literally named "-", which would
     otherwise read back as "no object". Every other row is byte for byte what
-    older versions wrote, so their logs and the new ones read the same way.
+    older versions wrote.
     """
     if force or ", " in value or value.startswith('"'):
         return '"' + value.replace('"', '""') + '"'
@@ -80,23 +80,40 @@ def _readQuoted(s : str, pos : int):
         return "".join(parts), k + 1
 
 
-def splitRow(s : str):
+def _onlyQuotedShape(value : str) -> bool:
+    """Whether a decoded quoted field could only have come from quoteField.
+
+    Older versions wrote names as they were, so a name such as '"alice"' is
+    literal text in their logs. quoteField quotes a value only when it holds
+    ", ", opens with a quote or is "-", so a decoded value that holds ", " or
+    a quote, or is "-", is one no older row can have meant as a plain name.
+    Anything else is read the old way.
+    """
+    return ", " in value or '"' in value or value == "-"
+
+
+def splitRow(s : str, decode : bool = True):
     """Split a log row into its six fields.
 
     Returns (date, time, (user, quoted), (obj_name, quoted), sections, event).
     The event is always the rest of the row, commas included, as it has
-    always been. A field that opens with a quote and closes with one right
-    before the next ", " is read as quoted (see quoteField); anything else is
-    read up to the next ", ", which is how every older row was written.
+    always been. With decode, a user or object field written by quoteField
+    is read as quoted; anything else is read up to the next ", ", which is how
+    every older row was written. Without decode every field is read that old
+    way (Log.fromStr falls back to it when a decoded row does not parse).
 
     Raises ValueError when the row has fewer than six fields.
     """
     fields = []
     pos = 0
-    for _ in range(5):
-        if s.startswith('"', pos):
+    for i in range(5):
+        if decode and i in (2, 3) and s.startswith('"', pos):
             quoted = _readQuoted(s, pos)
-            if quoted and s.startswith(", ", quoted[1]):
+            if (
+                quoted
+                and s.startswith(", ", quoted[1])
+                and _onlyQuotedShape(quoted[0])
+            ):
                 fields.append((quoted[0], True))
                 pos = quoted[1] + 2
                 continue
@@ -216,6 +233,13 @@ class Log():
             Params:
                 s (str): the string
         """
+        try:
+            return Log._fromStr(s, decode=True)
+        except ValueError:
+            # an older row whose name only looked quoted
+            return Log._fromStr(s, decode=False)
+
+    def _fromStr(s : str, decode : bool):
         (
             date,
             time,
@@ -223,7 +247,7 @@ class Log():
             (obj_name, obj_quoted),
             section_ranges,
             event
-        ) = splitRow(s)
+        ) = splitRow(s, decode)
         if obj_name == "-" and not obj_quoted:
             obj_name = None
 
