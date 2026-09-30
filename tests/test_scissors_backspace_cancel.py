@@ -91,18 +91,73 @@ def test_backspace_out_of_a_scissors_cut_restores_the_trace(main_window, qapp, c
 
 
 @pytest.mark.parametrize("closed", [True, False])
-def test_undo_after_backing_out_keeps_the_trace(main_window, qapp, closed):
+def test_a_held_backspace_does_not_delete_the_restored_trace(main_window, qapp, closed):
+    """Key repeat keeps calling backspace after the cancel. The restored trace
+    is not selected, so the next repeat has nothing to delete."""
+    field = main_window.field
+    trace = _pick_trace(field, closed)
+    name = trace.name
+    before = _count(field, name)
+    log_before = len(field.series.log_set.all_logs)
+
+    _pickup(main_window, qapp, trace)
+    _backspace_to_the_end(main_window)
+
+    main_window.backspace()
+    main_window.backspace()
+    qapp.processEvents()
+
+    assert _count(field, name) == before
+    assert len(field.series.log_set.all_logs) == log_before
+    assert trace not in field.section.selected_traces
+
+
+def test_repeated_cancels_draw_the_trace_once(main_window, qapp):
+    field = main_window.field
+    trace = _pick_trace(field, True)
+    added_before = list(field.section.added_traces)
+    removed_before = list(field.section.removed_traces)
+
+    for _ in range(2):
+        _pickup(main_window, qapp, trace)
+        assert field.is_scissoring
+        _backspace_to_the_end(main_window)
+
+    field.generateView(generate_image=False)
+    qapp.processEvents()
+    in_view = field.section_layer.traces_in_view
+    assert sum(1 for t in in_view if t is trace) == 1
+
+    assert field.section.added_traces == added_before
+    assert field.section.removed_traces == removed_before
+
+
+@pytest.mark.parametrize("closed", [True, False])
+def test_undo_after_backing_out_undoes_the_earlier_edit(main_window, qapp, closed):
+    """Undo after a cancel undoes the edit before the cut and keeps the trace."""
     field = main_window.field
     trace = _pick_trace(field, closed)
     name = trace.name
     points = list(trace.points)
     before = _count(field, name)
 
+    # a real edit first, so the undo stack has something on it
+    template = field.tracing_trace.copy()
+    template.name = "undo_probe"
+    new_name = template.name
+    assert new_name != name
+    new_before = _count(field, new_name)
+    field.newTrace([(10, 10), (40, 10), (40, 40), (10, 40)], template, closed=True)
+    qapp.processEvents()
+    assert _count(field, new_name) == new_before + 1
+
     _pickup(main_window, qapp, trace)
+    assert field.is_scissoring
     _backspace_to_the_end(main_window)
     main_window.undo()
     qapp.processEvents()
 
+    assert _count(field, new_name) == new_before
     assert _count(field, name) == before
     assert any(t.points == points for t in field.section.contours[name].getTraces())
 

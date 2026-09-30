@@ -795,17 +795,29 @@ class FieldWidgetMouse(FieldWidgetData):
 
         The pickup in scissorsPress removes the trace without logging it or
         saving an undo state, so backing out has to restore it here. The
-        section ends up as it was before the pickup: no log entry, no undo
-        state, and the trace selected as it would be after a finished cut.
+        section ends up as it was before the pickup: no log entry and no undo
+        state.
+
+        The trace is not selected again. The pickup deselected everything,
+        and a held Backspace keeps repeating after this cancel; with the
+        trace selected, the next repeat would delete it.
         """
         self.is_scissoring = False
         self.is_line_tracing = False
         self.current_trace = []
         self.deactivateMouseBoundaryTimer()
 
-        if self.tracing_trace is not None:
-            self.section.addTrace(self.tracing_trace, log_event=False)
-            self.section.addSelectedTrace(self.tracing_trace)
+        trace = self.tracing_trace
+        if trace is not None:
+            self.section.addTrace(trace, log_event=False)
+            # the pickup's removal and this add cancel out; drop one entry
+            # of each so the trace is not tracked (and drawn) twice, and any
+            # other pending edits stay tracked
+            for tracked in (self.section.added_traces, self.section.removed_traces):
+                for i in range(len(tracked) - 1, -1, -1):
+                    if tracked[i] is trace:
+                        del tracked[i]
+                        break
 
         self.setMouseMode(SCISSORS)
         self.setTracingTrace(
