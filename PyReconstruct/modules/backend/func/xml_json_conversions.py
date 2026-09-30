@@ -299,20 +299,31 @@ def xmlExportFiles(series : Series, new_dir : str, name : str = None):
     """
     if not name:
         name = series.name
+    new_dir = new_dir or "."
 
     targets = [f"{name}.ser"] + [f"{name}.{n}" for n in sorted(series.sections)]
     replaced = [t for t in targets if os.path.exists(os.path.join(new_dir, t))]
 
-    written = {t.lower() for t in targets}
+    by_lower = {t.lower(): t for t in targets}
     section_file = re.compile(re.escape(name) + r"\.\d+", re.IGNORECASE)
     try:
         listing = sorted(os.listdir(new_dir))
     except OSError:
         listing = []
-    extra = [
-        f for f in listing
-        if section_file.fullmatch(f) and f.lower() not in written
-    ]
+
+    def is_target(f):
+        """True if f is a file the export writes (by any case on this disk)."""
+        if f in targets:
+            return True
+        t = by_lower.get(f.lower())
+        if not t or t not in replaced:
+            return False
+        try:
+            return os.path.samefile(os.path.join(new_dir, f), os.path.join(new_dir, t))
+        except OSError:
+            return False
+
+    extra = [f for f in listing if section_file.fullmatch(f) and not is_target(f)]
 
     return replaced, extra
 

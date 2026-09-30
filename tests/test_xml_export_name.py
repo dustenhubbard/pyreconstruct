@@ -157,3 +157,56 @@ def test_ser_confirmed_in_the_save_dialog_is_not_asked_again(
 
     assert confirm_calls == []
     assert ser.read_text() != "ORIGINAL SERIES"
+
+
+@pytest.mark.parametrize("picked", ["{name}", "{name}.SER"])
+def test_dialog_path_that_is_not_the_written_ser_still_prompts(
+    main_window, main_window_dialogs, confirm_calls, tmp_path, picked
+):
+    # without the .ser suffix (or with another case) the save dialog asked
+    # about a different path than the one the export writes
+    name = main_window.series.name
+    ser = tmp_path / f"{name}.ser"
+    ser.write_text("ORIGINAL SERIES")
+    main_window_dialogs.file_responses = [str(tmp_path / picked.format(name=name))]
+
+    assert main_window.exportToXML() is False
+
+    [(message, title)] = confirm_calls
+    assert f"{name}.ser" in message
+    assert title == "Overwrite Existing"
+    assert ser.read_text() == "ORIGINAL SERIES"
+
+
+def test_dotted_name_without_suffix_still_prompts(
+    main_window, main_window_dialogs, confirm_calls, tmp_path
+):
+    ser = tmp_path / "chosen.v2.ser"
+    ser.write_text("ORIGINAL SERIES")
+    main_window_dialogs.file_responses = [str(tmp_path / "chosen.v2")]
+
+    assert main_window.exportToXML() is False
+
+    assert len(confirm_calls) == 1
+    assert ser.read_text() == "ORIGINAL SERIES"
+
+
+def test_other_case_section_file_is_counted_once(main_window, tmp_path):
+    series = main_window.series
+    first = _section_numbers(series)[0]
+    (tmp_path / f"CHOSEN.{first}").write_text("")
+    case_insensitive = (tmp_path / f"chosen.{first}").exists()
+
+    replaced, extra = xmlExportFiles(series, str(tmp_path), "chosen")
+
+    if case_insensitive:
+        assert (replaced, extra) == ([f"chosen.{first}"], [])
+    else:
+        assert (replaced, extra) == ([], [f"CHOSEN.{first}"])
+
+
+def test_empty_folder_means_the_working_directory(main_window, tmp_path, monkeypatch):
+    (tmp_path / "chosen.9999").write_text("")
+    monkeypatch.chdir(tmp_path)
+
+    assert xmlExportFiles(main_window.series, "", "chosen") == ([], ["chosen.9999"])

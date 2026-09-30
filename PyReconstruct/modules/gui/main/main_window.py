@@ -1685,7 +1685,7 @@ class MainWindow(QMainWindow):
             if not export_fp: return False
 
         ## Name every file after the one the user chose
-        export_dir = os.path.dirname(export_fp)
+        export_dir = os.path.dirname(export_fp) or "."
         name = os.path.basename(export_fp)
         if name.lower().endswith(".ser"):
             name = name[:-4]
@@ -1694,8 +1694,11 @@ class MainWindow(QMainWindow):
 
         ## Ask before replacing files, or mixing in old section files
         replaced, extra = xmlExportFiles(self.series, export_dir, name)
-        if from_dialog and replaced == [f"{name}.ser"] and not extra:
-            replaced = []  # the save dialog already asked about this one
+        # the save dialog asked about the path it returned, and only that one
+        ser_fp = os.path.join(export_dir, name + ".ser")
+        if (from_dialog and export_fp == ser_fp
+                and replaced == [f"{name}.ser"] and not extra):
+            replaced = []
         if (replaced or extra) and not self._confirmXMLOverwrite(name, replaced, extra):
             return False
 
@@ -1704,7 +1707,7 @@ class MainWindow(QMainWindow):
 
         notify(
             "Legacy series (xml) exported to:\n\n"
-            f"{os.path.join(export_dir, name + '.ser')}"
+            f"{ser_fp}"
         )
 
     @staticmethod
