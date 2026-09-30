@@ -76,7 +76,7 @@ class FieldWidgetView(FieldWidgetPaint):
         the field up to the menu bar used to wipe the readout until the pointer
         came back. A permanent widget is untouched by that, and it also stops
         this readout from destroying genuine transient notices posted with
-        `showMessage` (`MainWindow._onStartupCheck`) -- the two now sit side by
+        `showMessage` (the curation acknowledgment, for one) -- the two now sit side by
         side in the bar instead of overwriting each other.
 
         The first three parts are handed to the readout separately from the

@@ -406,7 +406,10 @@ def _window():
     the no-offer path calls on ``self``. Nothing here needs a widget tree."""
     from types import SimpleNamespace
     from PyReconstruct.modules.gui.main import main_window as MW
-    return SimpleNamespace(_noteNothingToOffer=MW.MainWindow._noteNothingToOffer)
+    return SimpleNamespace(
+        _noteNothingToOffer=MW.MainWindow._noteNothingToOffer,
+        clearUpdateNotice=lambda: None,  # the saved notice, not under test here
+    )
 
 
 def _manual_check(monkeypatch, info, channel):

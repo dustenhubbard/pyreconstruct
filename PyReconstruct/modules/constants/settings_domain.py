@@ -79,6 +79,9 @@ def per_app_domain():
 #                            must not silence the Dev check for a day
 #   window/geometry          the two apps run side by side; one shared blob
 #                            would put one window exactly over the other
+#   update_notice_version    the newer build the launch check found; each app
+#                            follows its own feed, so a nightly version must
+#                            not show up in the stable app
 #
 # The What's new keys mirror WHATSNEW_KEY and WHATSNEW_SUPPRESS_KEY in
 # gui/main/first_launch.py as literals: constants cannot import from gui.
@@ -88,6 +91,7 @@ PER_APP_KEYS = frozenset({
     "last_whatsnew_version",
     "last_update_check_epoch",
     "window/geometry",
+    "update_notice_version",
 })
 
 # Key groups that are bookkeeping about one particular store rather than a

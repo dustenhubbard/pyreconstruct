@@ -13,11 +13,16 @@ from PyReconstruct.modules.backend.func.window_geometry import (
     default_window_rect,
     window_geometry_is_usable,
 )
-from .status_readout import FieldStatusReadout
+from .status_readout import FieldStatusReadout, StatusSegment
 from PyReconstruct.modules.constants.settings_domain import (
     domain_for, fold_series_settings_once,
 )
 from PyReconstruct.modules.datatypes.series_owner import app_display_name
+
+# The newer version the launch check found and the user has not opened yet.
+# Per app (settings_domain.PER_APP_KEYS): the two flavors follow different
+# feeds, and a nightly version shown in the stable app would be wrong.
+UPDATE_NOTICE_KEY = "update_notice_version"
 
 
 def windowGeometrySettings():
@@ -152,7 +157,7 @@ class MainWindow(QMainWindow):
         ## the original blanking bug -- menu status-tip events clear the
         ## TEMPORARY message, and the readout is a widget now, not a message.
         ## The one trade: while a real showMessage notice is up (the curation
-        ## acknowledgment, the update banner) Qt hides normal widgets, so the
+        ## acknowledgment) Qt hides normal widgets, so the
         ## notice briefly takes the readout's place and the readout returns
         ## when it expires. test_banner_paints keeps the notice area painting.
         ##
@@ -171,6 +176,18 @@ class MainWindow(QMainWindow):
         self.status_readout.alignment_clicked.connect(self.quickSwitchAlignment)
         self.status_readout.bc_profile_clicked.connect(self.quickSwitchBCProfile)
         self.statusbar.addWidget(self.status_readout, 0)
+
+        ## The quiet update notice (#430): hidden until the launch check finds
+        ## a newer build, then it stays until clicked. A permanent widget, so a
+        ## showMessage notice never hides it; clicking runs the same check as
+        ## Help > Check for updates.
+        self.update_notice = StatusSegment(
+            "Opens the update, like Help ▸ Check for updates..."
+        )
+        self.update_notice.setObjectName("update_notice")
+        self.update_notice.clicked.connect(self.openUpdateNotice)
+        self.update_notice.hide()
+        self.statusbar.addPermanentWidget(self.update_notice, 0)
 
         ## Open series if requested thru CLI
         if filename and Path(filename).exists():
@@ -873,9 +890,11 @@ class MainWindow(QMainWindow):
         """Persist the Help-menu toggle: checked means the launch check runs."""
         if getattr(self, "series", None) is None:
             return
-        self.series.setOption(
-            "update_check_on_startup", self.toggleupdatecheck_act.isChecked()
-        )
+        checked = self.toggleupdatecheck_act.isChecked()
+        self.series.setOption("update_check_on_startup", checked)
+        if not checked:
+            # the notice comes from the automatic check, so it goes with it
+            self.clearUpdateNotice()
 
     def openMenuSearch(self):
         """Open the Help menu with its embedded search field focused (Ctrl+K).
@@ -4191,6 +4210,7 @@ class MainWindow(QMainWindow):
             return  # the background check only surfaces a genuine upgrade
         from PyReconstruct.modules.gui.dialog.update_dialog import UpdateDialog
         dialog = UpdateDialog(self, info, channel)
+        self.clearUpdateNotice()  # the update is open now; the notice is done
         # the dialog downloads + verifies, sets _pending_installer, and accepts;
         # closing then launches the installer (see closeEvent).
         if dialog.exec() and self._pending_installer:
@@ -4216,6 +4236,12 @@ class MainWindow(QMainWindow):
                 return
             if not self.series.getOption("update_check_on_startup"):
                 return
+            # A notice from an earlier launch comes back first, so it stays
+            # up on the days the 24h throttle skips the check.
+            try:
+                self.restoreUpdateNotice()
+            except Exception:
+                pass
             import time
             settings = QSettings(*domain_for("last_update_check_epoch"))
             try:
@@ -4268,17 +4294,79 @@ class MainWindow(QMainWindow):
         if not info.get("asset"):
             # Strict feed with nothing on this build's channel: log it, show
             # nothing. A Dev app before the first nightly lands sits here.
+            # A saved notice goes too: its release was pulled or has no
+            # installer for this build any more, so clicking it finds nothing.
             self._noteNothingToOffer(info, channel)
+            self.clearUpdateNotice()
             return
-        if info.get("status") != "newer":
+        status = info.get("status")
+        if status in ("same", "older"):
+            self.clearUpdateNotice()
             return
-        remote = info["remote_version"]
-        if self.statusbar:
-            self.statusbar.showMessage(
-                f"Update available: {remote}  —  Help ▸ Check for updates", 15000
-            )
-        if notifyConfirm(f"PyReconstruct {remote} is available.\n\nView the update now?", yn=True):
-            self._onCheckResult(info, channel, manual=True)
+        if status != "newer":
+            return
+        # No dialog at launch (#430): a status bar notice that stays until
+        # it is clicked.
+        self._showBackgroundNotice(info["remote_version"])
+
+    def _showBackgroundNotice(self, version):
+        """Show the notice for a background check's result, unless the
+        automatic check was turned off while that check ran on its worker."""
+        series = getattr(self, "series", None)
+        if series is None or not series.getOption("update_check_on_startup"):
+            self.clearUpdateNotice()
+            return
+        self.showUpdateNotice(version)
+
+    def showUpdateNotice(self, version):
+        """Show the status bar update notice for ``version`` and remember it,
+        so it is back at the next launch until it is clicked."""
+        QSettings(*domain_for(UPDATE_NOTICE_KEY)).setValue(UPDATE_NOTICE_KEY, str(version))
+        self._setUpdateNotice(str(version))
+
+    def clearUpdateNotice(self):
+        """Hide the update notice and forget its version."""
+        QSettings(*domain_for(UPDATE_NOTICE_KEY)).remove(UPDATE_NOTICE_KEY)
+        self._setUpdateNotice(None)
+
+    def restoreUpdateNotice(self):
+        """Bring back a notice an earlier launch showed and nobody clicked.
+
+        Only while that version is still newer than this build: after the
+        update is installed (or on anything unreadable) the stored version
+        is dropped instead.
+        """
+        from PyReconstruct.modules.backend.updater.install_info import current_version
+        from PyReconstruct.modules.backend.updater.updater import is_newer_than
+        stored = QSettings(*domain_for(UPDATE_NOTICE_KEY)).value(UPDATE_NOTICE_KEY, "")
+        if not stored:
+            return
+        if is_newer_than(str(stored), current_version()):
+            self._setUpdateNotice(str(stored))
+        else:
+            self.clearUpdateNotice()
+
+    def _setUpdateNotice(self, version):
+        notice = getattr(self, "update_notice", None)
+        if notice is None or not isValid(notice):
+            return
+        if version:
+            notice.setText(f"Update available: {version}")
+            notice.show()
+        else:
+            notice.hide()
+
+    def openUpdateNotice(self):
+        """Clicked notice: hide it and run the check exactly as Help > Check
+        for updates does.
+
+        The saved version stays until the update dialog (or the reinstall
+        command dialog) actually opens. The check can stop at once ("An
+        update is already in progress.") or fail on the network, and then
+        nothing was shown, so the notice has to come back at the next launch.
+        """
+        self._setUpdateNotice(None)
+        self.checkForUpdates()
 
     def _onReinstallCheck(self, info, channel, manual):
         """Report a check for an install that updates by reinstalling.
@@ -4296,15 +4384,23 @@ class MainWindow(QMainWindow):
             self._noteNothingToOffer(info, channel)
             if manual:
                 notify(f"No {channel_display_name(channel)} update is available for {app_name} yet.")
+            else:
+                self.clearUpdateNotice()  # nothing left for a saved notice to open
             return
         if status in ("same", "older"):
             if manual:
                 notify(f"You're already up to date (version {info['local_version']}).")
+            else:
+                self.clearUpdateNotice()
             return
-        if status != "newer" and not manual:
+        if not manual:
+            if status == "newer":
+                self._showBackgroundNotice(remote)  # no dialog at launch (#430)
             return  # the background check only surfaces a genuine upgrade
         from PyReconstruct.modules.gui.dialog.update_dialog import ReinstallDialog
-        ReinstallDialog(self, info, app_name).exec()
+        dialog = ReinstallDialog(self, info, app_name)
+        self.clearUpdateNotice()  # the command is shown now; the notice is done
+        dialog.exec()
 
     @staticmethod
     def _cleanupUpdateDir(tmpdir):

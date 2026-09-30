@@ -331,6 +331,19 @@ def compare_versions(remote, local):
     return "same"
 
 
+def is_newer_than(version_text, local):
+    """True when the version string ``version_text`` is newer than ``local``.
+
+    For a version kept as text (the launch check's stored update notice).
+    Unparseable text or an unknown local version is never newer.
+    """
+    try:
+        remote = Version(str(version_text))
+    except (InvalidVersion, TypeError):
+        return False
+    return compare_versions(remote, local) == "newer"
+
+
 # --- High-level check (needs platform/version) --------------------------------
 
 def check_for_update(channel, releases=None):
