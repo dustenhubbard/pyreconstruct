@@ -386,7 +386,13 @@ class FieldWidgetBase:
 
         # get the last undo state
         groups_before = set(self.series.object_groups.getGroupList())
+        tform_before = self.section.tform.copy()
         self.series_states.undoSection(self.section, redo)
+
+        # an undo or redo that moves the section leaves no change to pick up
+        # when propagation recording starts
+        if not self.section.tform.equals(tform_before):
+            self.tform_before_change = None
 
         # update the data/tables
         self.updateData()
@@ -522,6 +528,11 @@ class FieldWidgetBase:
             Params:
                 clear_states (bool): True if ALL undo states should be cleared (rare)
         """
+        # the transforms may have been replaced on disk (an import, an undo
+        # across the series, sections inserted or reordered), so a change
+        # remembered for propagation recording no longer applies
+        self.tform_before_change = None
+
         # reload the actual sections
         self.section = self.series.loadSection(self.series.current_section)
         self.section_layer.section = self.section

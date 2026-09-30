@@ -2,9 +2,10 @@
 
 Before, "Start propagation recording" had to come before the alignment: a
 shift made first was never recorded, so there was nothing to propagate and
-the alignment had to be done again. Now the last transform change on the
-current section is included when recording starts, as long as it was made on
-that section and has not been recorded before.
+the alignment had to be done again. Now every transform change made on the
+current section since the last transform change on another section is
+included when recording starts. Recording, an undo or redo that moves a
+section, and anything that reloads the sections start it over.
 """
 
 import types
@@ -114,6 +115,55 @@ def test_a_recorded_change_is_not_included_again(field):
     field.setPropagationMode(True)
     field.translateTform(1, 1)
     field.setPropagationMode(False)
+
+    field.setPropagationMode(True)
+
+    assert field.stored_tform.equals(Transform.identity())
+
+
+def _import_transforms(field, tmp_path):
+    fp = tmp_path / "imported.txt"
+    fp.write_text("".join(
+        f"{n} 1 0 100 0 1 50\n" for n in field.series.sections
+    ))
+    field.mainwindow.importTransforms(str(fp))
+
+
+def test_imported_transforms_are_not_included(field, tmp_path, monkeypatch):
+    # an import reloads the field, as a series undo and inserting or
+    # reordering sections do
+    monkeypatch.setattr("PyReconstruct.modules.gui.main.main_window.notify", lambda *a, **k: None)
+    field.translateTform(3, 4)
+    _import_transforms(field, tmp_path)
+
+    field.setPropagationMode(True)
+
+    assert field.stored_tform.equals(Transform.identity())
+
+
+def test_a_section_inserted_in_its_place_is_not_included(field):
+    start = field.section.n
+    field.translateTform(3, 4)
+    field.mainwindow.saveAllData()
+    field.series.insertSection(start, "no-image", field.section.mag, field.section.thickness)
+    field.clearStates()
+    field.reload()
+    field.changeSection(start)  # the new section now has the old number
+
+    field.setPropagationMode(True)
+
+    assert field.stored_tform.equals(Transform.identity())
+
+
+def test_undoing_past_the_first_change_here_is_not_included(field):
+    start = field.section.n
+    field.translateTform(3, 4)
+    field.changeSection(_others(field)[0])
+    field.translateTform(5, 5)
+    field.changeSection(start)
+    field.translateTform(1, 1)
+    field.undoState()
+    field.undoState()
 
     field.setPropagationMode(True)
 
