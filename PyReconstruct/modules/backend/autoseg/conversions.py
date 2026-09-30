@@ -531,7 +531,7 @@ def seriesToLabels(series: Series,
     return True
 
 
-def getLabelsToObjectsData(data_fp: str, group: str) -> tuple:
+def getLabelsToObjectsData(data_fp: str, group: str, raw_attrs: dict = None) -> tuple:
 
     data_zg = zarr.open(data_fp)
     
@@ -540,7 +540,7 @@ def getLabelsToObjectsData(data_fp: str, group: str) -> tuple:
 
     raw = get_zarr_array(data_zg, "raw")
     labels_array = get_zarr_array(data_zg, group)
-    sections = raw.attrs["sections"]
+    sections = (raw.attrs if raw_attrs is None else raw_attrs)["sections"]
 
     resolution_z = labels_array.attrs["voxel_size"][0]
     offset_z = labels_array.attrs["offset"][0]
@@ -549,7 +549,7 @@ def getLabelsToObjectsData(data_fp: str, group: str) -> tuple:
     return data_zg, sections, section_start
 
 
-def labelsToObjects(series : Series, data_fp : str, group : str, ids: list = None) -> None:
+def labelsToObjects(series : Series, data_fp : str, group : str, ids: list = None, raw_attrs: dict = None) -> None:
     """Convert labels in a zarr file to objects in a series.
     
         Params:
@@ -557,11 +557,13 @@ def labelsToObjects(series : Series, data_fp : str, group : str, ids: list = Non
             data_zg (str): the filepath for the zarr group
             group (str): the name of the group with labels of interest
             ids (list): the labels to import (will import all if None)
+            raw_attrs (dict): window, sections, true_mag and alignment to use
+                instead of the ones stored on the zarr's raw array
         Returns:
             (bool) True if every section imported (None if group is missing)
     """
 
-    data = getLabelsToObjectsData(data_fp, group)
+    data = getLabelsToObjectsData(data_fp, group, raw_attrs=raw_attrs)
     if data is None:  # group not present in the zarr
         return
     data_zg, sections, section_start = data
@@ -585,7 +587,8 @@ def labelsToObjects(series : Series, data_fp : str, group : str, ids: list = Non
             group,
             snum,
             series,
-            ids
+            ids,
+            raw_attrs
         )
 
     return threadpool.startAll(f"Converting {group} to contours...")
@@ -764,7 +767,7 @@ def exportTraces(data_zg,
                 section.save()
 
 
-def importSection(data_zg, group, snum, series, ids=None):
+def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
     """Import label data for a single section.
     
         Params:
@@ -773,6 +776,8 @@ def importSection(data_zg, group, snum, series, ids=None):
             snum (int): the section number
             series (Series): the series
             ids (list): the ids to include in importing
+            raw_attrs (dict): window, sections, true_mag and alignment to use
+                instead of the ones stored on the zarr's raw array
     """
     
     labels_array = get_zarr_array(data_zg, group)
@@ -784,13 +789,14 @@ def importSection(data_zg, group, snum, series, ids=None):
     raw_resolution = get_resolution(raw)
     raw_offset = get_array_offset(raw)
 
-    window = raw.attrs["window"]
-    sections = raw.attrs["sections"]
-    mag = raw.attrs["true_mag"] / raw_resolution[-1] * resolution[-1]
+    attrs = raw.attrs if raw_attrs is None else raw_attrs
+    window = attrs["window"]
+    sections = attrs["sections"]
+    mag = attrs["true_mag"] / raw_resolution[-1] * resolution[-1]
 
     ## Get section transformation
     try:
-        alignment = raw.attrs["alignment"]
+        alignment = attrs["alignment"]
         tform = Transform(alignment[str(snum)])
     except KeyError:
         return
@@ -915,42 +921,35 @@ def zarrToNewSeries(zarr_fp : str, label_groups : list, name : str):
             label_groups (str): the list of label groups to include as contours
             name (str): the name of the new series
     """
-    ng_zarr = zarr.open(zarr_fp, "r+")
+    ## Read only: the source zarr is the user's data, and nothing below may
+    ## change it. The window, sections and alignment the label import needs
+    ## are worked out here and passed to it, not stored on the source.
+    ng_zarr = zarr.open(zarr_fp, "r")
     raw = get_zarr_array(ng_zarr, "raw")  # assume "raw" exists as zarr path
-
-    ## Save original attributes
-    original_attr_items = []
-
-    ## These attrs modified while making new series
-    for k in ("window", "sections", "alignment"):
-        try:
-            original_attr_items.append(
-                (k, raw.attrs[k])
-            )
-        except KeyError:
-            pass
 
     ## Get true mag
     true_mag = get_true_mag(raw)
-    raw.attrs["true_mag"] = true_mag
 
     ## Set window
     z, y, x = raw.shape
     window = [0, 0, x * true_mag, y * true_mag]
-    raw.attrs["window"] = window
 
     ## Set the sections
     sections = list(range(z))
     n_digits = len(str(sections[-1]))
-    raw.attrs["sections"] = sections
 
     ## Set alignment
     alignment = {}
     
     for snum in sections:
         alignment[str(snum)] = Transform.identity().getList()
-        
-    raw.attrs["alignment"] = alignment
+
+    raw_attrs = {
+        "true_mag": true_mag,
+        "window": window,
+        "sections": sections,
+        "alignment": alignment,
+    }
 
     ## Get thickness
     thickness = get_thickness(raw)
@@ -960,50 +959,57 @@ def zarrToNewSeries(zarr_fp : str, label_groups : list, name : str):
 
     images_dir = Path(zarr_fp).with_name(f"{name}_images.zarr")
 
+    ## w- fails if it exists, so from here on the folder is one this call made
     images_zarr = zarr.open(images_dir, "w-")
-    images_zarr.create_group("scale_1")
-    images = images_zarr["scale_1"]
-    image_locations = []
+    series = None
 
-    for i, snum in enumerate(sections):
+    try:
+        images_zarr.create_group("scale_1")
+        images = images_zarr["scale_1"]
+        image_locations = []
 
-        src = f"section{snum:0{n_digits}d}"
-        print(f"Working on {src}...")
+        for i, snum in enumerate(sections):
 
-        images.create_dataset(src, data=raw[i])
+            src = f"section{snum:0{n_digits}d}"
+            print(f"Working on {src}...")
 
-        img_loc = os.path.join(images_dir, "scale_1", src)
-        image_locations.append(img_loc)
-    
-    ## Create new series
-    series = Series.new(
-        image_locations,
-        name,
-        true_mag,
-        thickness
-    )
+            images.create_dataset(src, data=raw[i])
 
-    ## Import label data into series
-    imported = True
-    for label_group in label_groups:
-        if label_group in ng_zarr:
-            imported = labelsToObjects(
-                series,
-                zarr_fp,
-                label_group,
-            )
-            if not imported:
-                break
-    
-    ## Reset original attributes for raw
-    for key, value in original_attr_items:
-        raw.attrs[key] = value
+            img_loc = os.path.join(images_dir, "scale_1", src)
+            image_locations.append(img_loc)
 
-    if not imported:  # a section failed: drop the half-built series
-        series.close()
-        shutil.rmtree(images_dir)
-        return None
-    
+        ## Create new series
+        series = Series.new(
+            image_locations,
+            name,
+            true_mag,
+            thickness
+        )
+
+        ## Import label data into series
+        imported = True
+        for label_group in label_groups:
+            if label_group in ng_zarr:
+                imported = labelsToObjects(
+                    series,
+                    zarr_fp,
+                    label_group,
+                    raw_attrs=raw_attrs,
+                )
+                if not imported:
+                    break
+
+        if not imported:  # a section failed: drop the half-built series
+            series.close()
+            shutil.rmtree(images_dir)
+            return None
+
+    except BaseException:
+        ## a partial images zarr would make a retry with this name fail
+        if series is not None:
+            series.close()
+        shutil.rmtree(images_dir, ignore_errors=True)
+        raise
+
     ## Return series
     return series
-
