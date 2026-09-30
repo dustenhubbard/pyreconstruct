@@ -1045,11 +1045,12 @@ class Trace():
         """Smooth trace in place.
 
         Malformed traces with too few points to smooth (e.g. "pixel dust"
-        artifacts) are left untouched.
+        artifacts) are left untouched, and so are traces so small that
+        smoothing would leave fewer points than a valid trace needs.
 
             Returns:
                 (bool): True if the trace was smoothed, False if it was
-                    skipped for having too few points
+                    skipped for having too few points or for being too small
         """
 
         if len(self.points) < 3:
@@ -1070,7 +1071,13 @@ class Trace():
 
             smoothed = smoothed[:-1]
 
-        if not smoothed:
+        # A trace smaller than the interpolation spacing comes back as one
+        # or two points. Storing that would leave a closed trace with no
+        # area, and it would be dropped on the next save. Keep the original
+        # points instead and report the trace as skipped.
+        min_points = 3 if self.closed else 2
+
+        if len(smoothed) < min_points:
 
             return False
 
