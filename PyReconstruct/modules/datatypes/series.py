@@ -2444,7 +2444,8 @@ class Series():
         """Smooth all traces belonging to an object.
 
         Malformed traces with too few points to smooth (e.g. "pixel dust"
-        artifacts) are skipped rather than smoothed.
+        artifacts) and traces too small to survive smoothing are skipped
+        rather than smoothed, and left as they were.
 
             Returns:
                 (list): one record per skipped trace, each a dict with keys
@@ -2506,11 +2507,13 @@ class Series():
                                     if num_points else None
                                 ),
                                 # Trace.smooth only returns falsy for these two
-                                # reasons, distinguishable by the point count.
+                                # reasons, distinguishable by the point count:
+                                # too few points to start with, or a trace so
+                                # small that smoothing would collapse it.
                                 "reason": (
                                     "Fewer than 3 points"
                                     if num_points < 3
-                                    else "Smoothing produced no points"
+                                    else "Too small to smooth"
                                 ),
                                 # signature used to re-find this exact trace at
                                 # delete time (sections are reloaded fresh from
