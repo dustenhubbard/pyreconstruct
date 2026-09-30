@@ -666,4 +666,6 @@ class SectionTableWidget(DataTable):
                 # the flickered section is no longer in the series
                 field.b_section = None
                 field.b_section_layer = None
+        # the field draws from series.data, which still has the old numbers
+        self.series.data.refresh()
         field.reload(clear_states=True)

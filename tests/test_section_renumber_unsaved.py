@@ -216,3 +216,55 @@ def test_delete_flickered_section_drops_it_from_the_field(main_window, gui_dialo
     # the save after the delete does not write the deleted section back
     assert section_files(series) == sorted(series.sections)
     assert (mw.field.section.n, mw.field.section.src) == (cur, f"ORIG_{cur}.png")
+
+
+@pytest.mark.parametrize("op", ["insert", "reorder"])
+def test_renumber_with_ztraces_shown(main_window, gui_dialogs, op):
+    """The field redraws z-traces from series.data, which has to follow the
+    renumbering before the field loads again."""
+    from PyReconstruct.modules.datatypes import Ztrace
+
+    mw = main_window
+    series = mw.series
+    if op == "reorder":
+        series.deleteSections([sorted(series.sections)[0]])
+        mw.field.clearStates()
+        series.data.refresh()
+    keys = sorted(series.sections)
+    cur = keys[2]
+    mw.changeSection(cur)
+    tag_sections(mw)
+    series.ztraces["zprobe"] = Ztrace(
+        "zprobe", (255, 0, 0), [(1.0, 1.0, k) for k in keys]
+    )
+    series.setOption("show_ztraces", True)
+    series.data.refresh()
+    mw.field.generateView()
+    mw.seriesModified(True)
+
+    widget = open_section_table(mw)
+    if op == "insert":
+        n = keys[1]
+        select_section(widget, n)
+        gui_dialogs.responses.append((["", n, 0.00254, 0.05], True))
+        widget.insertSection(before=True)
+        expected = {k: f"ORIG_{k}.png" for k in keys if k < n}
+        expected[n] = "no-image"
+        expected.update({k + 1: f"ORIG_{k}.png" for k in keys if k >= n})
+    else:
+        widget.reorderSections()
+        expected = {i: f"ORIG_{old}.png" for i, old in enumerate(keys)}
+
+    assert gui_dialogs.notices == []
+    assert section_files(series) == sorted(expected)
+    assert {k: disk_src(series, k) for k in series.sections} == expected
+    assert sorted(series.data["sections"]) == sorted(expected)
+    mw.field.generateView()
+
+    # the section list was rebuilt with the new numbers
+    widget = mw.field.table_manager.tables["section"][-1]
+    rows = sorted(
+        int(widget.table.item(r, 0).text().split()[0])
+        for r in range(widget.table.rowCount())
+    )
+    assert rows == sorted(expected)
