@@ -72,6 +72,7 @@ def _pool_running(order):
             workers = self.workers if order == "forward" else self.workers[::-1]
             for fn, args in workers:
                 fn(*args)
+            return True
 
     return _Pool
 
