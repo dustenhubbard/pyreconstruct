@@ -2275,7 +2275,11 @@ class MainWindow(QMainWindow):
         if response == False:
             return
 
-        jser_coded = randomize_project(project_dir)
+        try:
+            jser_coded = randomize_project(project_dir)
+        except RandomizeError as e:
+            notify(str(e))
+            return
         
         notify(
             "Project randomized and ready in:\n\n"
@@ -2337,7 +2341,11 @@ class MainWindow(QMainWindow):
         if response == False:
             return
 
-        project_dir = derandomize_project(coded_jser)
+        try:
+            project_dir = derandomize_project(coded_jser)
+        except DerandomizeError as e:
+            notify(f"The project could not be decoded. {e}")
+            return
 
         notify(
             "Project decoded and ready in:\n\n"
