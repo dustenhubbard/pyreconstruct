@@ -4,7 +4,7 @@ The "utc" preference is read through the Qt-free settings seam
 (`backend/settings_store.py`, M11) rather than `QSettings` directly, so
 importing `modules.constants` -- and therefore `modules.datatypes` -- pulls in
 no Qt. GUI callers get the `QSettingsStore` default, i.e. the same
-org/app ("KHLab"/"PyReconstruct") and key this module read before.
+org/app (``SETTINGS_ORG``/"PyReconstruct") and key this module read before.
 """
 
 from datetime import datetime, timedelta

@@ -349,8 +349,8 @@ def test_help_check_with_nothing_on_the_channel_names_the_flavor(routes, monkeyp
 def test_the_startup_check_shows_the_command(routes, kind, flavor, command):
     from PySide6.QtCore import QSettings
     routes.use(kind, flavor, "1.23.0" if not flavor else "1.24.0.dev20260901")
-    QSettings("KHLab", "PyReconstruct").remove("last_update_check_epoch")
-    QSettings("KHLab", "PyReconstruct Dev").remove("last_update_check_epoch")
+    QSettings("PyReconstruct", "PyReconstruct").remove("last_update_check_epoch")
+    QSettings("PyReconstruct", "PyReconstruct Dev").remove("last_update_check_epoch")
     routes.window.series.setOption("update_check_on_startup", True)
 
     routes.window.checkForUpdatesStartup()
@@ -363,7 +363,7 @@ def test_the_startup_check_shows_the_command(routes, kind, flavor, command):
 def test_the_startup_check_is_silent_when_up_to_date(routes):
     from PySide6.QtCore import QSettings
     routes.use("appimage", version="1.24.0")
-    QSettings("KHLab", "PyReconstruct").remove("last_update_check_epoch")
+    QSettings("PyReconstruct", "PyReconstruct").remove("last_update_check_epoch")
     routes.window.series.setOption("update_check_on_startup", True)
 
     routes.window.checkForUpdatesStartup()

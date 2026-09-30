@@ -59,7 +59,7 @@ from PyReconstruct.modules.datatypes.default_settings import default_settings
 from PyReconstruct.modules.datatypes.series import Series
 from PyReconstruct.modules.gui.main import main_window as MW
 
-ORG = "KHLab"
+ORG = "PyReconstruct"
 APP = "PyReconstruct"
 STAMP_KEY = "last_update_check_epoch"
 DAY = 24 * 3600
