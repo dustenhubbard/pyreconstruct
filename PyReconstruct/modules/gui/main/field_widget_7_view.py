@@ -231,6 +231,11 @@ class FieldWidgetView(FieldWidgetPaint):
             self.current_trace.pop()
             self.update()
             
+        elif self.is_scissoring:
+            # backing a scissors cut down to one point cancels the cut, and
+            # the trace it picked up goes back as it was
+            self.cancelScissors()
+
         elif len(self.current_trace) == 1:
             self.is_line_tracing = False
             self.deactivateMouseBoundaryTimer()
