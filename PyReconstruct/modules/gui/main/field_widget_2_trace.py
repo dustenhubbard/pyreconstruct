@@ -1,3 +1,4 @@
+import math
 from typing import List, Union
 
 from .context_menu_list import get_context_menu_list_trace
@@ -1511,24 +1512,35 @@ class FieldWidgetTrace(FieldWidgetBase):
     @field_interaction
     def editTraceRadius(self, traces : list):
         """Edit the radius for a set of traces."""
-        existing_radius = round(traces[0].getRadius(), 7)
-
-        for trace in traces[1:]:
-            if abs(existing_radius - trace.getRadius()) > 1e-6:
+        # show each radius in the frame Section.editTraceRadius applies the
+        # new one in, so an untouched OK leaves the traces alone
+        radii = [
+            trace.getRadius(self.section.traceTform(trace)) for trace in traces
+        ]
+        existing_radius = round(radii[0], 7)
+        for r in radii[1:]:
+            if abs(existing_radius - r) > 1e-6:
                 existing_radius = ""
                 break
-        
+        prefill = str(existing_radius)
+
         new_rad, confirmed = QInputDialog.getText(
             self,
             "New Trace Radius",
             "Enter the new trace radius:",
-            text=str(existing_radius)
+            text=prefill
         )
         if not confirmed:
+            return False
+        if prefill and new_rad.strip() == prefill:
             return False
         try:
             new_rad = float(new_rad)
         except ValueError:
+            new_rad = None
+        # zero collapses a trace to a point and a negative radius flips it
+        if new_rad is None or not math.isfinite(new_rad) or new_rad <= 0:
+            notify("The radius must be a number greater than zero.")
             return False
         
         self.section.editTraceRadius(traces, new_rad)

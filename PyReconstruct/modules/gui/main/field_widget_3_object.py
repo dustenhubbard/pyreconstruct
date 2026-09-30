@@ -1,3 +1,5 @@
+import math
+
 from .context_menu_list import get_context_menu_list_obj
 
 from PySide6.QtWidgets import (
@@ -572,7 +574,8 @@ class FieldWidgetObject(FieldWidgetTrace):
         except ValueError:
             return False
         
-        if new_rad <= 0:
+        # Section.editTraceRadius raises on a non-finite radius
+        if not math.isfinite(new_rad) or new_rad <= 0:
             return False
         
         for name in obj_names:

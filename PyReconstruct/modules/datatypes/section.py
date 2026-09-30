@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import math
 from collections import namedtuple
 from typing import Dict, List, Union
 
@@ -2338,6 +2339,19 @@ class Section():
             if selected:
                 self.addSelectedTrace(new_trace)
     
+    def traceTform(self, trace : Trace) -> Transform:
+        """Get the transform a trace is shown and resized in.
+
+            Params:
+                trace (Trace): the trace
+            Returns:
+                (Transform): the transform for the trace's object alignment,
+                or for the series alignment if the object has none
+        """
+        a = self.series.getAttr(trace.name, "alignment")
+        if not a: a = self.series.alignment
+        return self.tforms[a]
+
     def editTraceRadius(self, traces : list[Trace], new_rad : float, log_event=True):
         """Change the radius of a trace or set of traces.
         
@@ -2346,10 +2360,13 @@ class Section():
                 new_rad (float): the new radius for the trace(s)
                 log_event (bool): true if the event should be logged
         """
+        # zero collapses a trace onto its centroid and a negative radius
+        # reflects it, so refuse both before any trace is touched
+        if not math.isfinite(new_rad) or new_rad <= 0:
+            raise ValueError(f"radius must be greater than zero, got {new_rad}")
+
         for trace in traces:
-            a = self.series.getAttr(trace.name, "alignment")
-            if not a: a = self.series.alignment
-            tform = self.tforms[a]
+            tform = self.traceTform(trace)
             self.removeTrace(trace, log_event=False)
             trace.resize(new_rad, tform)
             self.addTrace(trace, log_event=False)
