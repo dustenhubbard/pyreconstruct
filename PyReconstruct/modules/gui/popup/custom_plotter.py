@@ -509,6 +509,7 @@ class VPlotter(vedo.Plotter):
         if scene_obj in self.selected:
             self.selected.remove(scene_obj)
             self.updateSelected()
+        self.qt_parent.updateObjectList([scene_obj])
             
     def removeFromScene(self, obj_names: Union[List, None], ztrace_names: Union[List, None], series_fp=None, save_state=True):
         """Remove objects and ztraces from the scene.
@@ -575,13 +576,17 @@ class VPlotter(vedo.Plotter):
         if series is not None and series is not self.series:
             series.close()
 
+        placed = []
         for md in mesh_data_list:
             vm = vedo.Mesh([md["vertices"], md["faces"]], md["color"], md["alpha"])
             obj = self.objs.add(vm, series, md["name"], md["type"], md["color"], md["alpha"])
             if md["tform"]:
                 obj.applyTform(md["tform"])
             self.add(vm)
+            placed.append(obj)
         self.render()
+        if placed:
+            self.qt_parent.updateObjectList(placed)
     
     def addToScene(self, objs : list, ztraces : list, remove_first=True, series=None, save_state=True):
         """Add objects to the scene.
@@ -1023,6 +1028,13 @@ class CustomPlotter(QVTKRenderWindowInteractor):
         self.addToScene = self.plt.addToScene
         self.removeObjects = self.plt.removeFromScene
 
+        # The Object List's 3D column reads the scene through
+        # mainwindow.viewer. addToScene blocks here until the first meshes are
+        # placed, before the caller's `viewer = CustomPlotter(...)` returns, so
+        # register now or the first batch would refresh against no viewer and
+        # stay unmarked.
+        self.mainwindow.viewer = self
+
         # gerenate objects and display
         if load_fp:
             self.loadScene(load_fp)
@@ -1459,10 +1471,39 @@ class CustomPlotter(QVTKRenderWindowInteractor):
                 obj_names, ztrace_names, remove_first=True, save_state=False
             )
 
+    def inScene(self, name : str, series_fp : str) -> bool:
+        """Whether an object from a series is in this scene right now.
+
+            Params:
+                name (str): the name of the object
+                series_fp (str): the filepath of the series holding the object
+        """
+        if self.is_closed:
+            return False
+        return self.plt.objs.search(name, "object", series_fp) is not None
+
+    def updateObjectList(self, scene_objs):
+        """Refresh the Object List's 3D column for scene objects that were
+        just added or removed.
+
+            Params:
+                scene_objs (iterable): the SceneObjects that entered or left
+        """
+        names = [o.name for o in scene_objs if o.type == "object"]
+        if not names:
+            return
+        field = getattr(self.mainwindow, "field", None)
+        manager = getattr(field, "table_manager", None)
+        if manager is not None:
+            manager.updateSceneMarks(names)
+
     def closeEvent(self, event):
+        in_scene = list(self.plt.objs.values())
         self.plt.close()
         self.is_closed = True
         self.container = None
+        # closing empties the scene, so every mark in the list clears
+        self.updateObjectList(in_scene)
         super().closeEvent(event)
 
 
