@@ -1629,7 +1629,11 @@ class MainWindow(QMainWindow):
             if not series_fp: return  # exit function if no series provided
 
         # convert the series
-        series = xmlToJSON(series_fp)
+        try:
+            series = xmlToJSON(series_fp)
+        except ValueError as e:
+            notify(str(e))
+            return
 
         if not series:
             return

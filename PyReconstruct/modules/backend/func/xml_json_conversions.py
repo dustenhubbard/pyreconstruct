@@ -34,9 +34,8 @@ def xmlToJSON(series_fp : str) -> Series:
     base = os.path.basename(series_fp)
     series_name = base[:-len(".ser")]
     xml_dir = os.path.dirname(series_fp) or "."
-    # the hidden folder below is emptied when it is created, so it has to be
-    # a folder inside xml_dir: a folder, ".ser" or "..ser" would make it the
-    # xml folder itself or its parent
+    # the hidden folder below has to be a folder inside xml_dir: a folder,
+    # ".ser" or "..ser" would make it the xml folder itself or its parent
     real_xml_dir = os.path.realpath(xml_dir)
     real_hidden = os.path.realpath(os.path.join(xml_dir, "." + series_name))
     if (
@@ -46,23 +45,33 @@ def xmlToJSON(series_fp : str) -> Series:
         or os.path.dirname(real_hidden) != real_xml_dir
         or real_hidden == real_xml_dir
     ):
-        raise ValueError(f"Not a legacy series (.ser) file: {series_fp}")
-    section_fps = []
+        raise ValueError(f"{series_fp} is not a legacy series (.ser) file.")
+    section_fps = {}
     json_fp = ""
 
     print("Gathering files...")
     
-    for f in os.listdir(xml_dir):
+    # the prefix is matched in any case, as a case-insensitive disk would;
+    # if two files differ only in case, the one matching the .ser wins
+    prefix = series_name + "."
+    for f in sorted(os.listdir(xml_dir)):
         fp = os.path.join(xml_dir, f)
         if not os.path.isfile(fp):
             continue
         if f.endswith(".json"):
             json_fp = fp
         elif (
-            f.startswith(series_name + ".")
-            and re.fullmatch(r"[0-9]+", f[len(series_name)+1:])
+            f.lower().startswith(prefix.lower())
+            and re.fullmatch(r"[0-9]+", f[len(prefix):])
         ):
-            section_fps.append(fp)
+            snum = int(f[len(prefix):])
+            if snum not in section_fps or f.startswith(prefix):
+                section_fps[snum] = fp
+    if not section_fps:
+        raise ValueError(
+            f"No section files for {base} were found. "
+            f"They are named {series_name}.1, {series_name}.2, and so on."
+        )
 
     print("Creating hidden folder...")
     
@@ -82,7 +91,9 @@ def xmlToJSON(series_fp : str) -> Series:
     print("Converting series...")
     
     # convert the series file
-    json_series_fp = seriesXMLToJSON(series_fp, section_fps, hidden_dir)
+    json_series_fp = seriesXMLToJSON(
+        series_fp, list(section_fps.values()), hidden_dir
+    )
     if progbar.wasCanceled(): return
     progress += 1
     progbar.setValue(progress/final_value * 100)
@@ -102,12 +113,13 @@ def xmlToJSON(series_fp : str) -> Series:
     sections = {}
     section_tforms = {}
 
-    for section_fp in section_fps:
+    for snum, section_fp in sorted(section_fps.items()):
         
-        snum = int(section_fp[section_fp.rfind(".")+1:])
-        tform = sectionXMLtoJSON(section_fp, alignment_dict, hidden_dir)
-
         sections[snum] = f"{sname}.{snum}"
+        tform = sectionXMLtoJSON(
+            section_fp, alignment_dict, hidden_dir, sections[snum]
+        )
+
         section_tforms[snum] = tform
 
         if progbar.wasCanceled(): return
@@ -207,7 +219,7 @@ def getReconcropperData(json_fp):
     return alignment_dict
 
 
-def sectionXMLtoJSON(section_fp, alignment_dict, hidden_dir):
+def sectionXMLtoJSON(section_fp, alignment_dict, hidden_dir, out_name=None):
 
     # # grab the section file
     # try:
@@ -278,7 +290,7 @@ def sectionXMLtoJSON(section_fp, alignment_dict, hidden_dir):
                 contours[trace.name] = [trace.getList(include_name=False)]
     
     # save the section
-    with open(os.path.join(hidden_dir, fname), "w") as f:
+    with open(os.path.join(hidden_dir, out_name or fname), "w") as f:
         json.dump(section_dict, f)
     
     # return the section's transform

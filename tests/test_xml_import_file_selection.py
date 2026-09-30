@@ -239,3 +239,83 @@ def test_dev_script_refuses_a_folder_with_two_series(
     assert "Found 2 .ser files" in capsys.readouterr().out
     assert _snapshot(d) == before
     assert not (tmp_path / "out.jser").exists()
+
+
+def _case_insensitive(d):
+    probe = d / "CaseProbe"
+    probe.write_text("")
+    try:
+        return (d / "caseprobe").exists()
+    finally:
+        probe.unlink()
+
+
+def test_section_files_match_in_any_case(qapp, settings_isolated, tmp_path):
+    d = tmp_path / "xml"
+    d.mkdir()
+    _write_ser(d / "Alpha.ser")
+    _write_section(d / "ALPHA.1", 1)
+    _write_section(d / "Alpha.2", 2)
+
+    series = conv.xmlToJSON(str(d / "Alpha.ser"))
+    assert sorted(series.sections) == [1, 2]
+    # the working files carry the series name, so Save As renames them
+    assert sorted(os.listdir(series.getwdir())) == [
+        "Alpha.1", "Alpha.2", "Alpha.ser", "existing_log.csv"
+    ]
+
+
+def test_a_lowercased_path_finds_the_sections(
+    qapp, settings_isolated, tmp_path
+):
+    d = tmp_path / "xml"
+    d.mkdir()
+    if not _case_insensitive(d):
+        pytest.skip("needs a case-insensitive disk")
+    _write_ser(d / "Alpha.ser")
+    _write_section(d / "Alpha.1", 1)
+
+    series = conv.xmlToJSON(str(d / "alpha.ser"))
+    assert sorted(series.sections) == [1]
+
+
+def test_no_sections_is_refused_and_leaves_no_folder(
+    qapp, settings_isolated, tmp_path
+):
+    d = tmp_path / "xml"
+    d.mkdir()
+    _write_ser(d / "Alpha.ser")
+    _write_section(d / "Beta.1", 1)
+    before = _contents(tmp_path)
+
+    with pytest.raises(ValueError, match="No section files for Alpha.ser"):
+        conv.xmlToJSON(str(d / "Alpha.ser"))
+    assert _contents(tmp_path) == before
+
+
+def test_new_from_xml_shows_a_refusal(monkeypatch):
+    from PyReconstruct.modules.gui.main import main_window
+
+    def refuse(fp):
+        raise ValueError("No section files for Alpha.ser were found.")
+
+    shown = []
+    monkeypatch.setattr(main_window, "xmlToJSON", refuse)
+    monkeypatch.setattr(main_window, "notify", shown.append)
+    fake = types.SimpleNamespace(
+        openSeries=lambda *a, **k: pytest.fail("opened a series")
+    )
+    main_window.MainWindow.newFromXML(fake, "/data/xml/Alpha.ser")
+    assert shown == ["No section files for Alpha.ser were found."]
+
+
+def test_dev_script_reports_a_refusal(
+    qapp, settings_isolated, tmp_path, monkeypatch, capsys
+):
+    d = tmp_path / "xml"
+    d.mkdir()
+    _write_ser(d / "Alpha.ser")
+
+    assert _run_script(monkeypatch, d / "Alpha.ser", tmp_path / "out.jser") == 1
+    assert "No section files for Alpha.ser" in capsys.readouterr().out
+    assert sorted(os.listdir(d)) == ["Alpha.ser"]

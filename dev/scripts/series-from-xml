@@ -48,7 +48,15 @@ else:
 
 from PyReconstruct.modules.backend.func import xmlToJSON
     
-jser_series = xmlToJSON(str(xml))
+try:
+
+    jser_series = xmlToJSON(str(xml))
+
+except ValueError as e:
+
+    print(e)
+    sys.exit(1)
+
 jser_series.saveJser(str(jser), close=True)
 
 print(f"\nSeries output to: {jser.absolute()}")
