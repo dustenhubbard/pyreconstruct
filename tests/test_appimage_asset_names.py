@@ -78,6 +78,6 @@ def test_readme_bump_moves_an_appimage_link_to_the_new_version():
 def test_release_leaves_out_an_appimage_that_failed_its_distro_tests():
     workflow = (ROOT / ".github" / "workflows" / "build-installers.yml").read_text()
     job = workflow[workflow.index("\n  release:\n"):]
-    assert "needs: [build, build-linux, test-appimage]" in job
+    assert "needs: [build, build-linux, test-appimage, swap-windows]" in job
     hold = job.index("if: needs.test-appimage.result != 'success'")
     assert job.index("run: rm -f dist/*.AppImage dist/*.AppImage.sha256", hold) < job.index("- name: Generate checksums")
