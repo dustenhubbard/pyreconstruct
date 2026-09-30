@@ -33,15 +33,20 @@ def xmlToJSON(series_fp : str) -> Series:
     # can end in .ser too
     base = os.path.basename(series_fp)
     series_name = base[:-len(".ser")]
-    # a folder or a nameless ".ser" would make the hidden folder below the
-    # xml folder itself, and creating it empties that folder
+    xml_dir = os.path.dirname(series_fp) or "."
+    # the hidden folder below is emptied when it is created, so it has to be
+    # a folder inside xml_dir: a folder, ".ser" or "..ser" would make it the
+    # xml folder itself or its parent
+    real_xml_dir = os.path.realpath(xml_dir)
+    real_hidden = os.path.realpath(os.path.join(xml_dir, "." + series_name))
     if (
         not os.path.isfile(series_fp)
         or not base.lower().endswith(".ser")
         or not series_name
+        or os.path.dirname(real_hidden) != real_xml_dir
+        or real_hidden == real_xml_dir
     ):
         raise ValueError(f"Not a legacy series (.ser) file: {series_fp}")
-    xml_dir = os.path.dirname(series_fp) or "."
     section_fps = []
     json_fp = ""
 
@@ -169,7 +174,9 @@ def seriesXMLToJSON(series_fp, section_fps, hidden_dir):
         series_dict["ztraces"][xml_zcontour.name] = Ztrace.dictFromXMLObj(xml_zcontour)
 
     # get the series filename and save
+    # always a lowercase .ser, the name crash recovery looks for
     fname = os.path.basename(series_fp)
+    fname = fname[:fname.rfind(".")] + ".ser"
     json_series_fp = os.path.join(hidden_dir, fname)
     with open(json_series_fp, "w") as f:
         json.dump(series_dict, f)

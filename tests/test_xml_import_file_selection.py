@@ -146,16 +146,38 @@ def test_a_folder_is_refused_and_nothing_is_deleted(
     assert _snapshot(d) == before
 
 
-def test_a_nameless_ser_file_is_refused(qapp, settings_isolated, tmp_path):
+def _contents(d):
+    """Every path under d with a checksum of each file's bytes."""
+    import hashlib
+    out = {}
+    for root, dirs, files in os.walk(d):
+        for name in dirs:
+            out[os.path.relpath(os.path.join(root, name), d)] = "dir"
+        for name in files:
+            fp = os.path.join(root, name)
+            with open(fp, "rb") as f:
+                out[os.path.relpath(fp, d)] = hashlib.sha256(f.read()).hexdigest()
+    return out
+
+
+@pytest.mark.parametrize("name", [".ser", "..ser", ".SER", "..SER"])
+def test_a_ser_file_whose_hidden_folder_leaves_the_xml_folder_is_refused(
+    qapp, settings_isolated, tmp_path, name
+):
+    # ".ser" would put the hidden folder at the xml folder itself and "..ser"
+    # at its parent, and creating the hidden folder empties it
     d = tmp_path / "xml"
     d.mkdir()
-    _write_ser(d / ".ser")
+    _write_ser(d / name)
     _write_section(d / "ser.1", 1)
-    before = _snapshot(d)
+    for i in range(6):
+        (tmp_path / f"keep{i}.txt").write_text(f"parent file {i}")
+    (tmp_path / "keep.ser").write_text("not touched")
+    before = _contents(tmp_path)
 
     with pytest.raises(ValueError):
-        conv.xmlToJSON(str(d / ".ser"))
-    assert _snapshot(d) == before
+        conv.xmlToJSON(str(d / name))
+    assert _contents(tmp_path) == before
 
 
 def test_an_uppercase_suffix_and_a_bare_relative_path_work(
@@ -168,6 +190,8 @@ def test_an_uppercase_suffix_and_a_bare_relative_path_work(
     series = conv.xmlToJSON("Alpha.SER")
     assert series.name == "Alpha"
     assert sorted(series.sections) == [1]
+    # crash recovery looks for a lowercase .ser in the hidden folder
+    assert "Alpha.ser" in os.listdir(tmp_path / ".Alpha")
 
 
 SCRIPT = os.path.join(
