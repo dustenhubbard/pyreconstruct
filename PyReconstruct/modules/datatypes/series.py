@@ -4195,6 +4195,8 @@ class Series():
             Params:
                 d (dict): old_snum : new_snum for every section
                 log_event (bool): True if event should be logged
+            Returns:
+                (dict): the old_snum : new_snum map that was applied
         """
         if not d:
             d = dict(tuple((snum, i) for i, snum in enumerate(sorted(self.sections))))
@@ -4230,6 +4232,8 @@ class Series():
 
         if log_event:
             self.addLog(None, None, "Reorder sections")
+
+        return d
     
     def insertSection(self, index : int, src : str, mag : float, thickness : float, log_event=True):
         """Create a new section.
@@ -4240,6 +4244,9 @@ class Series():
                 mag (float): the mag of the new section
                 thickness (float): the thickness of the new section
                 log_event (bool): True if event should be logged
+            Returns:
+                (dict): the old_snum : new_snum map for the sections that were
+                    already in the series
         """
         if index < 0:
             raise ValueError(f"Section number cannot be negative: {index}")
@@ -4268,6 +4275,9 @@ class Series():
 
         if log_event:
             self.addLog(None, None, "Insert section")
+
+        del reorder[max_snum]
+        return reorder
     
     def getAttr(self, name : str, attr_name : str, ztrace=False):
         """Get the attributes for an object in the series.

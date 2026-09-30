@@ -593,14 +593,11 @@ class SectionTableWidget(DataTable):
         d = dict(tuple((snum, i) for i, snum in enumerate(sorted(self.series.sections))))
         self.series.reorderSections(d)
         self.series.addLog(None, None, "Reorder sections")
+        self.reloadRenumberedField(d)
         
         # refresh all table data
         self.manager.recreateTables(refresh_data=True)
-        
-        # clear the states
-        self.mainwindow.field.clearStates()
         self.manager.refresh()
-        self.mainwindow.field.reload()
     
     def insertSection(self, before=True):
         """Insert a section into the series."""
@@ -629,18 +626,32 @@ class SectionTableWidget(DataTable):
 
         self.mainwindow.saveAllData()
         
-        self.series.insertSection(
+        renumbered = self.series.insertSection(
             index,
             src,
             mag,
             thickness
         )
         self.series.addLog(None, index, "Insert section")
+        self.reloadRenumberedField(renumbered)
 
         # refresh the data for all tables
         self.manager.recreateTables(refresh_data=True)
-        
-        # clear the field section states
-        self.mainwindow.field.clearStates()
         self.manager.refresh()
-        self.mainwindow.field.reload()
+
+    def reloadRenumberedField(self, renumbered : dict):
+        """Load the field's sections again after the section files were renumbered.
+
+        The field still holds its sections under their old numbers, and the
+        next save (recreateTables saves first) would write each one over the
+        section that now has its number. Everything was saved before the
+        renumbering, so the files on disk are current.
+
+            Params:
+                renumbered (dict): old_snum : new_snum for every existing section
+        """
+        field = self.mainwindow.field
+        if field.b_section is not None:
+            # reload() loads the B section by its number
+            field.b_section.n = renumbered[field.b_section.n]
+        field.reload(clear_states=True)
