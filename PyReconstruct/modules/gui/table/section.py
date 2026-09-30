@@ -609,6 +609,9 @@ class SectionTableWidget(DataTable):
             return
         
         src, index, mag, thickness = response
+        if index < 0:
+            notify("Section numbers cannot be negative.")
+            return
         if not src:
             src = "no-image"
         else:
