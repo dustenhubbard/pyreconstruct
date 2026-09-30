@@ -188,6 +188,9 @@ class _OptimizeBCStub:
             ),
         )
 
+    def saveAllData(self):
+        pass
+
 
 def _patch_optimize_bc(monkeypatch, *, accept_warning, dialog_confirmed=True):
     """Neutralise optimizeBC's three collaborators and record the real work."""
