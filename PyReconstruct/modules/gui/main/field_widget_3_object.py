@@ -821,12 +821,14 @@ class FieldWidgetObject(FieldWidgetTrace):
                     name, None, f"Remove from group '{group_name}'"
                 )
 
-            ## Update group visibility
-            if group_name not in obj_groups.getGroupList():
-                del self.series.groups_visibility[group_name]
-            
-                ## Create menubar
-                self.mainwindow.createMenuBar()
+        ## A group left empty loses its visibility entry and its menubar row.
+        ## Once, after the loop: inside it, every selected object after the
+        ## one that emptied the group ran the delete again and raised
+        ## KeyError. The delete is guarded because a series undo brings the
+        ## group back without its visibility entry.
+        if group_name in starting_groups and group_name not in obj_groups.getGroupList():
+            self.series.groups_visibility.pop(group_name, None)
+            self.mainwindow.createMenuBar()
 
         return True
 
