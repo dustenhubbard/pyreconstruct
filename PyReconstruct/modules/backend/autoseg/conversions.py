@@ -56,23 +56,40 @@ def get_zarr_array(zarr: zarr.hierarchy.Group, path: str="raw"):
         raise ValueError("No zarr array found.")
 
 
-def get_true_mag(zarr_array):
-    """Get true magnification of a zarr.
+def get_voxel_size_um(zarr_array):
+    """Get the (z, y, x) voxel size of a zarr in µm.
 
-    True mag from original series typically a float in nanometers, while mag for
-    neuroglancer is typically an int in microns.
+    Reads ``resolution`` or ``voxel_size``. Neuroglancer stores these in nm, so
+    they are divided by 1000 unless ``units`` says µm. Raises KeyError if the
+    zarr has neither attribute.
+    """
+
+    voxel_size = get_resolution(zarr_array)
+
+    units = zarr_array.attrs.get("units", "nm")
+    if isinstance(units, str):
+        units = [units] * len(voxel_size)
+
+    return [
+        v if str(u).lower() in ("um", "µm", "μm", "micrometer", "micron") else v / 1000
+        for v, u in zip(voxel_size, units)
+    ]
+
+
+def get_true_mag(zarr_array):
+    """Get true magnification (µm per pixel) of a zarr.
+
+    Prefers ``true_mag`` (written by PyReconstruct in µm), then the x voxel
+    size converted to µm.
     """
 
     if "true_mag" in zarr_array.attrs:
-        true_mag = zarr_array.attrs["true_mag"]
-        
-    elif "resolution" in zarr_array.attrs:
-        true_mag = zarr_array.attrs["resolution"][-1]
+        return zarr_array.attrs["true_mag"]
 
-    else:  # no resolution provided
-        true_mag = 0.004  # default to x, y res of 4 nm × 4 nm
-
-    return true_mag
+    try:
+        return get_voxel_size_um(zarr_array)[-1]
+    except KeyError:  # no resolution provided
+        return 0.004  # default to x, y res of 4 nm × 4 nm
 
 
 def get_array_offset(zarr_array):
@@ -100,15 +117,9 @@ def get_resolution(zarr_array):
 
 
 def get_thickness(zarr_array):
-    """Get thickness (in nm) of series in zarr format."""
+    """Get section thickness (in µm) of series in zarr format."""
 
-    try:
-        thickness = zarr_array.attrs["resolution"][0]
-        
-    except KeyError:
-        thickness = zarr_array.attrs["voxel_size"][0]
-
-    return thickness / 1000  # μm -> nm
+    return get_voxel_size_um(zarr_array)[0]
 
 
 def get_offset(window, resolution, img_mag, relative_to, section_diff=0):
