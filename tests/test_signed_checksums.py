@@ -1,12 +1,12 @@
 """Signed checksums: the release signs SHA256SUMS, PyReconstruct checks it.
 
-The release job writes SHA256SUMS and update-manifest.json, signs SHA256SUMS
-with minisign, and checks the signature against the two compiled-in public
-keys before publishing. The updater fetches SHA256SUMS and its signature from
+The release job writes SHA256SUMS and update-manifest.json, the sign job signs
+SHA256SUMS with minisign and checks the signature against the two compiled-in
+public keys, and the publish job ships them. The updater fetches SHA256SUMS and its signature from
 the same release and refuses the installer unless the signature is valid, made
 by a trusted key, names this release's tag, and lists the installer. A frozen
 build refuses a release with no signature; a source build keeps the per-file
-.sha256 flow. The release job fails rather than publish without a signature.
+.sha256 flow. The sign job fails rather than publish without a signature.
 
 The key pair under tests/fixtures/minisign/ is a throwaway made for these
 tests with ``minisign -G -W``; ``other.*`` is a second one that PyReconstruct
@@ -886,8 +886,10 @@ def test_release_steps_run_in_order():
     text = WORKFLOW.read_text()
     release = text.split("\n  release:\n", 1)[1]
     order = ["- name: Generate checksums", "- name: Write the update manifest and SHA256SUMS",
+             "- name: Hand SHA256SUMS to the sign job", "\n  sign:\n",
              "- name: Install minisign", "- name: Sign SHA256SUMS",
-             "- uses: softprops/action-gh-release"]
+             "- name: Hand the signature to the publish job", "\n  publish:\n",
+             "- name: Get the signature", "- uses: softprops/action-gh-release"]
     positions = [release.index(s) for s in order]
     assert positions == sorted(positions)
 
@@ -901,12 +903,13 @@ def test_the_frozen_selftest_covers_the_verifier():
 
 
 def _release_job():
+    """The release, sign, and publish jobs, which stage, sign, and ship."""
     text = WORKFLOW.read_text()
     return text[text.index("\n  release:\n"):]
 
 
 def test_every_pip_install_in_the_release_job_is_hash_pinned_to_the_lock():
-    """The release job holds the signing key's environment, so nothing it
+    """The release job writes the SHA256SUMS that gets signed, so nothing it
     installs may float: pip gets the exact wheel uv.lock resolves, by hash."""
     import re
     import tomllib
@@ -929,7 +932,9 @@ def test_every_pip_install_in_the_release_job_is_hash_pinned_to_the_lock():
 def test_every_action_in_the_release_job_is_pinned_to_a_commit():
     import re
     uses = re.findall(r"uses: (\S+)(.*)", _release_job())
-    assert len(uses) == 3, uses
+    # release: checkout, download, two uploads; sign: download, upload;
+    # publish: checkout, two downloads, the release action.
+    assert len(uses) == 10, uses
     for action, rest in uses:
         assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", action), action
         assert re.search(r"#\s*v\d", rest), (action, "no version comment")
