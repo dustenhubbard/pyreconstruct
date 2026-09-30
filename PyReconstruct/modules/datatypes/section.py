@@ -2200,12 +2200,15 @@ class Section():
         self._dualWriteAllCoordinates("setMag")
         self._dualWriteTransformChange()
 
-    def addTrace(self, trace : Trace, log_event=True):
+    def addTrace(self, trace : Trace, log_event=True, index : int = None):
         """Add a trace to the trace dictionary.
         
             Params:
                 trace (Trace): the trace to add
                 log_event (bool): true if the event should be logged
+                index (int): where to put the trace in its contour; the end
+                    if None. The scissors use it to put a trace back in its
+                    old place when a cut is canceled.
         """        
         # do not add trace if less than two points
         if len(trace.points) < 2:
@@ -2225,6 +2228,26 @@ class Section():
         self.added_traces.append(trace)
 
         self._dualWriteAppend(trace)  # test-only; a no-op in every shipped launch
+
+        if index is not None:
+            self._moveTraceInContour(trace, index)
+
+    def _moveTraceInContour(self, trace : Trace, index : int):
+        """Move a trace to `index` in its contour, in the store too.
+
+        The store holds within-contour order separately from `Contour.traces`,
+        so a reorder has to go through `reorderContour` or the two drift.
+        """
+        traces = self.contours[trace.name].traces
+        current = next(i for i, t in enumerate(traces) if t is trace)
+        index = max(0, min(index, len(traces) - 1))
+        if index == current:
+            return
+        traces.insert(index, traces.pop(current))
+        if self._columns is not None:
+            self._columns.reorderContour(
+                trace.name, [self._column_rows[t] for t in traces]
+            )
 
     def removeTrace(self, trace : Trace, log_event=True):
         """Remove a trace from the trace dictionary.

@@ -81,6 +81,7 @@ class FieldWidgetBase:
         self.is_panzooming : bool           = False
         self.is_gesturing : bool            = False
         self.is_scissoring : bool           = False
+        self.scissors_index : int           = None  # the picked-up trace's place in its contour
         self.is_z_tracing : bool            = False
 
         self.closed_trace_shape             = "trace"
@@ -203,6 +204,7 @@ class FieldWidgetBase:
         self.is_moving_trace      = False
         self.is_selecting_traces  = False
         self.is_scissoring        = False
+        self.scissors_index       = None
         self.closed_trace_shape   = "trace"
 
         ## Clear selected
