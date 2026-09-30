@@ -787,9 +787,32 @@ class FieldWidgetMouse(FieldWidgetData):
                 self.generateView()
                 
             else:
-                
+
                 self.update()
-    
+
+    def cancelScissors(self):
+        """Back out of a scissors cut and put the original trace back.
+
+        The pickup in scissorsPress removes the trace without logging it or
+        saving an undo state, so backing out has to restore it here. The
+        section ends up as it was before the pickup: no log entry, no undo
+        state, and the trace selected as it would be after a finished cut.
+        """
+        self.is_scissoring = False
+        self.is_line_tracing = False
+        self.current_trace = []
+        self.deactivateMouseBoundaryTimer()
+
+        if self.tracing_trace is not None:
+            self.section.addTrace(self.tracing_trace, log_event=False)
+            self.section.addSelectedTrace(self.tracing_trace)
+
+        self.setMouseMode(SCISSORS)
+        self.setTracingTrace(
+            self.series.palette_traces[self.series.palette_index[0]][self.series.palette_index[1]]
+        )
+        self.generateView()
+
     def stampPress(self, event):
         """Called when mouse is pressed in stamp mode.
         
