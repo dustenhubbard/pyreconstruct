@@ -10,6 +10,7 @@ from shapely.geometry import (
     MultiPolygon,
     Point
 )
+from shapely.ops import substring
 
 
 def uncuttable_closed_traces(trace_list) -> List[int]:
@@ -222,39 +223,44 @@ def cut_open_trace(line, intersection):
 
 def cut_at_points(line, points):
     """Cut a line at multiple points.
-    
+
+    Each point is placed by its distance along the original line, and the
+    pieces are the stretches of that line between consecutive distances. The
+    pieces together follow the original path exactly. Cutting piece by piece
+    instead lets a point be projected onto a piece it does not lie on, which
+    joins the piece to that point with an edge that was never drawn.
+
     Args:
         line: LineString to cut
         points: Collection of Point objects
-        
+
     Returns:
         list: List of LineString segments
     """
     # Handle MultiPoint by converting to a list of points
     if isinstance(points, MultiPoint):
         points = list(points.geoms)
-    
-    # Sort points by distance along the line
-    points_with_distance = [(point, line.project(point)) for point in points]
-    sorted_points = [p[0] for p in sorted(points_with_distance, key=lambda x: x[1])]
-    
-    # Start with the full line
-    result = [line]
-    
-    # Cut each segment at each point
-    for point in sorted_points:
-        new_result = []
-        for segment in result:
-            # Skip empty or very short segments
-            if segment.length < 1e-8:
-                continue
-                
-            # Cut this segment at the point
-            segments = cut_at_point(segment, point)
-            new_result.extend(segments)
-        result = new_result
-    
-    return result
+
+    eps = 1e-8
+    length = line.length
+
+    # Distances along the line, without the ends and without duplicates
+    cuts = []
+    for distance in sorted(line.project(point) for point in points):
+        if distance <= eps or distance >= length - eps:
+            continue
+        if cuts and distance - cuts[-1] <= eps:
+            continue
+        cuts.append(distance)
+
+    if not cuts:
+        return [line]
+
+    bounds = [0.0] + cuts + [length]
+    return [
+        substring(line, start, stop)
+        for start, stop in zip(bounds, bounds[1:])
+    ]
 
 def cut_at_point(line, point):
     """Cut a line at a single point.
