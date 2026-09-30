@@ -557,6 +557,12 @@ class SectionTableWidget(DataTable):
         if len(s) != 2:
             return
         max_digits = len(str(max(self.series.sections.keys())))
+
+        # the loop reloads every section from disk and field.reload() swaps the
+        # disk copies into the field, so unsaved edits on the current and
+        # flickered sections must be written first or they are lost
+        self.mainwindow.saveAllData()
+
         for snum, section in self.series.enumerateSections(message="Modifying section image sources..."):
             section_src = s[0] + str(snum).zfill(max_digits) + s[1]
             section.src = section_src
