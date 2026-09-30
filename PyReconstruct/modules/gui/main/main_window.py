@@ -85,6 +85,13 @@ def remappedBCProfile(current : str, profiles_dict : dict) -> str:
 ## and the two must not collapse into one another.
 _OPEN_ABORTED = object()
 
+
+def _sameDir(a, b):
+    """True if two paths name the same folder (symlinks and case folded)."""
+    if not a or not b:
+        return False
+    return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
+
 ## How fresh a timer file in a hidden series dir has to be for the series to
 ## count as open in another window. The open window rewrites that file every 5
 ## seconds (FieldWidget.markTime), so this has to stay comfortably above 5 or a
@@ -1112,6 +1119,13 @@ class MainWindow(QMainWindow):
 
         # clear the series
         if self.series and not self.series.isWelcomeSeries():
+            # Reopening the series that is already open (File > Open or Open
+            # Recent on the same .jser) unpacks the new copy into the very
+            # hidden dir the old one used, which the save prompt above has
+            # already closed. Closing the old object again would delete the
+            # files the new one was just given (fork #527).
+            if _sameDir(self.series.hidden_dir, new_series.hidden_dir):
+                self.series.leave_open = True
             self.series.close()
 
         # set new series
