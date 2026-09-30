@@ -300,7 +300,7 @@ def seriesToZarr(series : Series,
             other_attrs (dict): other infoformation to store in .zattrs
 
         Returns:
-            the filepath for the zarr, the threadpool
+            the filepath for the zarr (None if a section failed)
     """
 
     ## Calculate field attributes
@@ -396,7 +396,9 @@ def seriesToZarr(series : Series,
             pixmap_dim
         )
         
-    threadpool.startAll("Converting series to zarr...")
+    if not threadpool.startAll("Converting series to zarr..."):
+        shutil.rmtree(data_fp)  # a failed worker left blank sections
+        return None
 
     return data_fp
     
@@ -415,6 +417,8 @@ def seriesToLabels(series: Series,
             series (Series): the series
             data_fp (str): the filepath for the zarr
             group (str): the group to export as labels (None if retraining)
+        Returns:
+            (bool) True if every section exported
     """
 
     # extract data from raw
@@ -514,13 +518,17 @@ def seriesToLabels(series: Series,
             gt_lookup
         )
 
-    threadpool.startAll("Converting contours to zarr...")
+    if not threadpool.startAll("Converting contours to zarr..."):
+        del data_zg[dataset_name]  # drop the partial labels
+        return False
 
     ## written once here: a write from each worker kept only the last one's
     data_zg[dataset_name].attrs["gt_lookup"] = gt_lookup
 
     if del_group:
         series.object_groups.removeGroup(del_group)
+
+    return True
 
 
 def getLabelsToObjectsData(data_fp: str, group: str) -> tuple:
@@ -550,7 +558,7 @@ def labelsToObjects(series : Series, data_fp : str, group : str, ids: list = Non
             group (str): the name of the group with labels of interest
             ids (list): the labels to import (will import all if None)
         Returns:
-            the threadpool
+            (bool) True if every section imported (None if group is missing)
     """
 
     data = getLabelsToObjectsData(data_fp, group)
@@ -580,7 +588,7 @@ def labelsToObjects(series : Series, data_fp : str, group : str, ids: list = Non
             ids
         )
 
-    threadpool.startAll(f"Converting {group} to contours...")
+    return threadpool.startAll(f"Converting {group} to contours...")
 
 
 def getExteriors(mask : np.ndarray) -> list[np.ndarray]:
@@ -976,17 +984,25 @@ def zarrToNewSeries(zarr_fp : str, label_groups : list, name : str):
     )
 
     ## Import label data into series
+    imported = True
     for label_group in label_groups:
         if label_group in ng_zarr:
-            labelsToObjects(
+            imported = labelsToObjects(
                 series,
                 zarr_fp,
                 label_group,
             )
+            if not imported:
+                break
     
     ## Reset original attributes for raw
     for key, value in original_attr_items:
         raw.attrs[key] = value
+
+    if not imported:  # a section failed: drop the half-built series
+        series.close()
+        shutil.rmtree(images_dir)
+        return None
     
     ## Return series
     return series

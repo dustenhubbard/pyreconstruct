@@ -169,6 +169,10 @@ if not labels_only:
         other_attrs=additional_attrs
     )
 
+    if zarr_fp is None:
+        series.close()
+        sys.exit("Conversion failed: a section could not be exported.")
+
 else:
 
     zarr_fp = output_zarr
@@ -192,7 +196,7 @@ if groups:
 
         section_diff = min(window_group[1]) - raw_section_bounds[0]
         
-        seriesToLabels(
+        if not seriesToLabels(
             series,
             zarr_fp,
             group,
@@ -200,7 +204,9 @@ if groups:
             img_mag=img_mag,
             raw_window=window,
             section_diff=section_diff
-        )
+        ):
+            series.close()
+            sys.exit(f"Conversion failed: group {group} could not be exported.")
 
 series.close()
 
