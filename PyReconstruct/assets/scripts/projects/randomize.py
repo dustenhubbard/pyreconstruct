@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- mode: python -*-
 
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -9,41 +10,87 @@ from typing import Union
 from PyReconstruct.modules.datatypes import Series
 
 
-def randomize_images(project_dir):
+IMAGE_SUFFIXES = {".png", ".tif", ".tiff", ".jpg", ".jpeg", ".bmp"}
+
+
+class RandomizeError(Exception):
+    """Raised before any file is moved when a project cannot be randomized."""
+
+
+def is_image(fp: Path) -> bool:
+    """Return True for a visible image file with a supported extension.
+
+    Extensions match in any case (`.TIF` as well as `.tif`), and hidden files
+    such as `.DS_Store` are never treated as images.
+    """
+
+    return (
+        fp.is_file()
+        and not fp.name.startswith(".")
+        and fp.suffix.lower() in IMAGE_SUFFIXES
+    )
+
+
+def find_images(project_dir: Path) -> list:
+    """Return the images in each series subfolder of a project."""
+
+    images = []
+
+    for series in sorted(project_dir.iterdir()):
+
+        if (
+            series.name == "images"
+            or series.name.startswith(".")
+            or not series.is_dir()
+        ):
+            continue
+
+        images.extend(sorted(p for p in series.iterdir() if is_image(p)))
+
+    return images
+
+
+def randomize_images(project_dir, images):
     """Randomize and collect images."""
 
     decode_file = project_dir / "decode.txt"
 
-    for series in project_dir.iterdir():
+    ## Name every image first (always with "/" so any platform can read it)
+    coded = [
+        (image, f"{str(uuid.uuid4())}.{image.suffix[1:]}") for image in images
+    ]
 
-        if series.name == "images" or not series.is_dir():
+    ## Write the whole key to disk before any image moves, so an image is
+    ## never renamed without its original name on record
+    with decode_file.open("w", encoding="utf-8") as text:
+        for image, new_name in coded:
+            text.write(
+                f"{image.relative_to(project_dir).as_posix()} -> {new_name}\n"
+            )
+        text.flush()
+        os.fsync(text.fileno())
 
-            continue
+    ## Rename and move images
+    series_dirs = []
 
-        for image in series.iterdir():
+    for image, new_name in coded:
 
-            ## Generate coded name
-            new_name = f"{str(uuid.uuid4())}.{image.suffix[1:]}"
+        image.rename(project_dir / "images" / new_name)
 
-            ## Write decoding info
-            with decode_file.open("a") as text:
-                text.write(
-                    f"{image.relative_to(project_dir)} -> {new_name}\n"
-                )
+        if image.parent not in series_dirs:
+            series_dirs.append(image.parent)
 
-            ## Rename and move image
-            image.rename(project_dir / f"images/{new_name}")
-
-        ## Remove empty directories
-        series.rmdir()
+    ## Remove directories left empty (other files stay where they are)
+    for series in series_dirs:
+        if not any(series.iterdir()):
+            series.rmdir()
 
 
 def sort_images(image_dir):
     """Sort images by name."""
 
-    patterns = ["*.png", "*.tif", "*.tiff", "*.jpg", "*.jpeg", "*.bmp"]
-    images = [file for pattern in patterns for file in image_dir.glob(pattern)]
-    
+    images = [fp for fp in image_dir.iterdir() if is_image(fp)]
+
     images_sorted = [
         str(elem)
         for elem
@@ -51,7 +98,7 @@ def sort_images(image_dir):
             images, key=lambda p: p.name
         )
     ]
-    
+
     return images_sorted
 
 
@@ -77,9 +124,28 @@ def main(project_dir: Union[str, Path]) -> Path:
         project_dir = Path(project_dir)
     
     new_img_dir = project_dir / "images"
+
+    if any(
+        (project_dir / name).exists()
+        for name in ("images", "decode.txt", "coded.jser")
+    ):
+        raise RandomizeError(
+            f"{project_dir} already has an images folder, a decode.txt or a "
+            "coded.jser. "
+            "It looks like it was randomized before, so nothing was changed."
+        )
+
+    images = find_images(project_dir)
+
+    if not images:
+        raise RandomizeError(
+            f"No images were found in the subfolders of {project_dir}, "
+            "so nothing was changed."
+        )
+
     new_img_dir.mkdir()
-    
-    randomize_images(project_dir)
+
+    randomize_images(project_dir, images)
 
     return create_new(new_img_dir)
 
