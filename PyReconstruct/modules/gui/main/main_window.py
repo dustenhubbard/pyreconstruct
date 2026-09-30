@@ -1629,7 +1629,7 @@ class MainWindow(QMainWindow):
             if not series_fp: return  # exit function if no series provided
 
         # convert the series
-        series = xmlToJSON(os.path.dirname(series_fp))
+        series = xmlToJSON(series_fp)
 
         if not series:
             return

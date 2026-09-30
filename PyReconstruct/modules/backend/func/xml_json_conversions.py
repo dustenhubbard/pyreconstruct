@@ -22,27 +22,30 @@ from PyReconstruct.modules.datatypes_legacy import (
     write_series
 )
 
-def xmlToJSON(xml_dir : str) -> Series:
+def xmlToJSON(series_fp : str) -> Series:
     """Convert a series in XML to JSON.
     
         Params:
-            xml_dir (str): the directory for the xml series
+            series_fp (str): the filepath for the xml series (.ser) file
     """
-    # gather the series and section filepaths
-    series_fp = ""
+    # gather the section filepaths for this series only: a folder can hold
+    # more than one series, and the hidden folder of an earlier conversion
+    # can end in .ser too
+    xml_dir = os.path.dirname(series_fp)
+    series_name = os.path.basename(series_fp)[:-len(".ser")]
     section_fps = []
     json_fp = ""
 
     print("Gathering files...")
     
     for f in os.listdir(xml_dir):
-        if f.endswith(".ser"):
-            series_fp = os.path.join(xml_dir, f)
-            series_name = f[:-4]
-        elif f.endswith(".json"):
-            json_fp = os.path.join(xml_dir, f)
-        elif f[f.rfind(".")+1:].isnumeric():
-            section_fps.append(os.path.join(xml_dir, f))
+        fp = os.path.join(xml_dir, f)
+        if not os.path.isfile(fp):
+            continue
+        if f.endswith(".json"):
+            json_fp = fp
+        elif f.startswith(series_name + ".") and f[len(series_name)+1:].isdecimal():
+            section_fps.append(fp)
 
     print("Creating hidden folder...")
     
