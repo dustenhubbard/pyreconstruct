@@ -57,16 +57,17 @@ class RoiExporter:
 
         An open trace is a POLYLINE, never FREEHAND: ImageJ treats FREEHAND
         as a closed shape, so an exported centerline came back closed and
-        measured an area instead of a length.
+        measured an area instead of a length. Closure is checked first so a
+        closed trace smoothed down to one point stays a closed POLYGON.
         """
 
         roi = self.roi_mod.ImagejRoi.frompoints(self.coords)
 
         ROI_TYPE = self.roi_mod.ROI_TYPE
-        if len(self.coords) == 1:
-            roi.roitype = ROI_TYPE.POINT
-        elif self.trace.closed:
+        if self.trace.closed:
             roi.roitype = ROI_TYPE.POLYGON
+        elif len(self.coords) == 1:
+            roi.roitype = ROI_TYPE.POINT
         else:
             roi.roitype = ROI_TYPE.POLYLINE
         roi.name = self.trace.name

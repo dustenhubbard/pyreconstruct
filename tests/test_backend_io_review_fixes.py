@@ -86,6 +86,16 @@ def test_a_one_point_trace_exports_as_a_point_roi(tmp_path):
     assert closed is False
 
 
+def test_a_closed_one_point_trace_stays_a_closed_polygon(tmp_path):
+    # Smoothing can shrink a closed trace to one point; it must not turn
+    # into a POINT roi, which imports as open.
+    roifile = pytest.importorskip("roifile")
+
+    roitype, closed = _export_and_reimport(tmp_path, [(0.05, 0.05)], closed=True)
+    assert roitype == roifile.ROI_TYPE.POLYGON
+    assert closed is True
+
+
 # --- ROI import -----------------------------------------------------------------
 
 def _roi_from_points(points, roitype):
