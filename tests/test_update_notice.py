@@ -53,12 +53,18 @@ def launch(main_window, monkeypatch):
 
     def fake_check(self, channel, on_result, on_error, kind=None):
         checks.append(channel)
-        on_result(fake_check.info)
+        if fake_check.during is not None:
+            fake_check.during()  # what the user does while the worker runs
+        if isinstance(fake_check.info, Exception):
+            on_error(fake_check.info)
+        else:
+            on_result(fake_check.info)
 
     monkeypatch.setattr(MW.MainWindow, "_runUpdateCheck", fake_check)
 
-    def run(info):
+    def run(info, during=None):
         import time
+        fake_check.during = during
         if info is None:
             _settings(STAMP).setValue(STAMP, time.time())
         else:
@@ -188,3 +194,71 @@ def test_is_newer_than(text, newer):
 
 def test_is_newer_than_an_unknown_local_version_is_false():
     assert U.is_newer_than("9.9.9", None) is False
+
+
+def test_a_check_with_nothing_to_offer_clears_the_notice(launch):
+    """A pulled release, or one with no installer for this build: a saved
+    notice would open nothing, so it goes."""
+    launch(_newer())
+    notice = launch({"asset": None, "status": "unknown", "release": None,
+                     "remote_version": None, "local_version": "1.23.0"})
+
+    assert notice.isHidden()
+    assert not _settings(KEY).contains(KEY)
+
+
+def test_a_failed_check_keeps_the_notice(launch):
+    launch(_newer())
+    notice = launch(OSError("no network"))
+
+    assert not notice.isHidden()
+    assert _settings(KEY).value(KEY) == "1.24.0"
+
+
+def _reinstall_info(remote):
+    return {"release": None, "asset": None, "remote_version": remote,
+            "local_version": "1.23.0",
+            "status": "newer" if remote else "unknown", "command": "x"}
+
+
+def test_a_reinstall_check_with_nothing_to_offer_clears_the_notice(
+    launch, main_window
+):
+    launch(_newer())
+
+    main_window._onReinstallCheck(_reinstall_info(None), "release", manual=False)
+
+    assert main_window.update_notice.isHidden()
+    assert not _settings(KEY).contains(KEY)
+
+
+def test_turning_the_check_off_while_it_runs_shows_no_notice(launch, main_window):
+    def turn_off():
+        main_window.series.setOption("update_check_on_startup", False)
+
+    notice = launch(_newer(), during=turn_off)
+
+    assert notice.isHidden()
+    assert not _settings(KEY).contains(KEY)
+
+
+def test_a_reinstall_result_after_the_check_is_off_shows_no_notice(
+    launch, main_window
+):
+    main_window.series.setOption("update_check_on_startup", False)
+
+    main_window._onReinstallCheck(_reinstall_info("1.24.0"), "release", manual=False)
+
+    assert main_window.update_notice.isHidden()
+    assert not _settings(KEY).contains(KEY)
+
+
+@pytest.mark.parametrize("text,local,newer", [
+    ("1.24.0.dev20261002", "1.24.0.dev20261001", True),
+    ("1.24.0.dev20261001", "1.24.0.dev20261001", False),
+    ("1.24.0.dev20260930", "1.24.0.dev20261001", False),
+    ("1.24.0", "1.24.0.dev20261001", True),
+    ("1.24.0.dev20261001", "1.24.0", False),
+])
+def test_is_newer_than_with_dev_versions(text, local, newer):
+    assert U.is_newer_than(text, Version(local)) is newer

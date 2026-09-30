@@ -4287,7 +4287,10 @@ class MainWindow(QMainWindow):
         if not info.get("asset"):
             # Strict feed with nothing on this build's channel: log it, show
             # nothing. A Dev app before the first nightly lands sits here.
+            # A saved notice goes too: its release was pulled or has no
+            # installer for this build any more, so clicking it finds nothing.
             self._noteNothingToOffer(info, channel)
+            self.clearUpdateNotice()
             return
         status = info.get("status")
         if status in ("same", "older"):
@@ -4297,7 +4300,16 @@ class MainWindow(QMainWindow):
             return
         # No dialog at launch (#430): a status bar notice that stays until
         # it is clicked.
-        self.showUpdateNotice(info["remote_version"])
+        self._showBackgroundNotice(info["remote_version"])
+
+    def _showBackgroundNotice(self, version):
+        """Show the notice for a background check's result, unless the
+        automatic check was turned off while that check ran on its worker."""
+        series = getattr(self, "series", None)
+        if series is None or not series.getOption("update_check_on_startup"):
+            self.clearUpdateNotice()
+            return
+        self.showUpdateNotice(version)
 
     def showUpdateNotice(self, version):
         """Show the status bar update notice for ``version`` and remember it,
@@ -4359,6 +4371,8 @@ class MainWindow(QMainWindow):
             self._noteNothingToOffer(info, channel)
             if manual:
                 notify(f"No {channel_display_name(channel)} update is available for {app_name} yet.")
+            else:
+                self.clearUpdateNotice()  # nothing left for a saved notice to open
             return
         if status in ("same", "older"):
             if manual:
@@ -4368,7 +4382,7 @@ class MainWindow(QMainWindow):
             return
         if not manual:
             if status == "newer":
-                self.showUpdateNotice(remote)  # no dialog at launch (#430)
+                self._showBackgroundNotice(remote)  # no dialog at launch (#430)
             return  # the background check only surfaces a genuine upgrade
         from PyReconstruct.modules.gui.dialog.update_dialog import ReinstallDialog
         ReinstallDialog(self, info, app_name).exec()
