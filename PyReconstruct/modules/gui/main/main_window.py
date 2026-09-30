@@ -3,6 +3,7 @@
 
 import math
 import shutil
+import traceback
 
 from shiboken6 import isValid
 
@@ -2086,29 +2087,58 @@ class MainWindow(QMainWindow):
 
         h, _ = self.field.section.img_dims
         mag = self.field.section.mag
+        # .roi pixels are image space; newTrace takes on-screen field
+        # coordinates and applies the inverse section transform itself
+        tform = self.field.section.tform
+        stamp = self.field.tracing_trace.points
 
+        failed = []
         for fp in fps:
 
             print(f"Importing {fp}")
 
-            roi = Roi(fp)
-            coords = roi.get_field_coordinates(h, mag)  # px -> coords
+            try:
+                roi = Roi(fp)
+                shapes = roi.get_field_shapes(h, mag)  # px -> coords
+            except Exception as e:
+                # one unreadable file must not stop the rest of the batch
+                traceback.print_exc()
+                failed.append(f"{Path(fp).name}: {e}")
+                continue
+            if not shapes:
+                failed.append(f"{Path(fp).name}: no points")
+                continue
 
             trace = Trace(
                 Path(fp).stem,
                 (255, 255, 0)
             )
 
-            self.field.newTrace(
-                coords,
-                trace,
-                points_as_pix=False,  # provide as coordinates
-                closed=roi.closed,
-                reduce_points=False,
-                simplify=False
-            )
+            for shape in shapes:
+                points = [tform.map(x, y) for x, y in shape]
+                closed = roi.closed
+                if roi.markers:
+                    # a marker becomes a stamp, as a click with the stamp tool would
+                    (cx, cy), = points
+                    points = [(cx + x, cy + y) for x, y in stamp]
+                    closed = True
+                self.field.newTrace(
+                    points,
+                    trace,
+                    points_as_pix=False,  # provide as coordinates
+                    closed=closed,
+                    reduce_points=False,
+                    simplify=False
+                )
 
-        notify(".roi files imported as traces.")
+        if failed:
+            imported = len(fps) - len(failed)
+            notify(
+                f"Imported {imported} of {len(fps)} .roi files as traces.\n\n"
+                "These files could not be imported:\n" + "\n".join(failed)
+            )
+        else:
+            notify(".roi files imported as traces.")
 
     def exportSectionSVG(self):
         """Export untransformed traces as svg."""
