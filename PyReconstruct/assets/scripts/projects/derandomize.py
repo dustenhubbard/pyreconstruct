@@ -5,13 +5,18 @@ import re
 import sys
 import copy
 import json
+import locale
 from pathlib import Path
 from datetime import datetime as dt
 from typing import Union
 
 
 class DerandomizeError(Exception):
-    """Raised before any file is moved when a project cannot be decoded."""
+    """Raised when a project cannot be decoded.
+
+    Raised before any file is moved, or after a failed move has been rolled
+    back, unless the message lists what could not be put back.
+    """
 
 
 def split_image_path(image: str) -> tuple:
@@ -40,21 +45,29 @@ def get_decoding(project_dir):
 
     images = {}
 
-    with (project_dir / "decode.txt").open("r") as decode:
+    ## randomize.py writes UTF-8; an older version used the locale encoding
+    raw = (project_dir / "decode.txt").read_bytes()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            text = raw.decode(locale.getpreferredencoding(False))
+        except UnicodeDecodeError:
+            raise DerandomizeError("decode.txt is not readable text.")
 
-        for line in decode.read().splitlines():
+    for line in text.splitlines():
 
-            if not line.strip():
-                continue
+        if not line.strip():
+            continue
 
-            if " -> " not in line:
-                raise DerandomizeError(
-                    f"'{line}' in decode.txt is not in the form "
-                    "series/image -> coded image."
-                )
+        if " -> " not in line:
+            raise DerandomizeError(
+                f"'{line}' in decode.txt is not in the form "
+                "series/image -> coded image."
+            )
 
-            image, coded = line.strip().rsplit(" -> ", 1)
-            images[coded] = split_image_path(image)
+        image, coded = line.strip().rsplit(" -> ", 1)
+        images[coded] = split_image_path(image)
 
     decoding = {
         "series" : sorted(set(series for series, _ in images.values())),
@@ -127,6 +140,69 @@ def _decoded_series_data(data, decoding, series):
     }
 
 
+def _write_decoded(project_dir, images_dir, save_coding_dir, coded,
+                   decoding, decoded, done):
+    """Write the decoded series and move every file, recording each step.
+
+    `done` gets one entry per finished step, so a failed step can be undone.
+    """
+
+    ## Create the decoded series
+    for series, series_data in decoded.items():
+
+        for d in (project_dir / series, project_dir / series / "images"):
+            if not d.exists():
+                d.mkdir()
+                done.append(("mkdir", d))
+
+        series_jser = project_dir / series / f"{series}.jser"
+        done.append(("write", series_jser))
+        with series_jser.open("w", encoding="utf-8") as fp:
+            fp.write(json.dumps(series_data))
+
+    def move(src, dst):
+        src.rename(dst)
+        done.append(("move", src, dst))
+
+    ## Move images, including any that no longer have a section
+    for coded_name, (series, name) in decoding["images"].items():
+        move(images_dir / coded_name, project_dir / series / "images" / name)
+
+    ## Move the coded files aside, with anything left in images/
+    save_coding_dir.mkdir()
+    done.append(("mkdir", save_coding_dir))
+
+    if any(images_dir.iterdir()):
+        move(images_dir, save_coding_dir / "images")
+    else:
+        images_dir.rmdir()
+        done.append(("rmdir", images_dir))
+
+    move(coded, save_coding_dir / coded.name)
+    move(project_dir / "decode.txt", save_coding_dir / "decode.txt")
+
+
+def _roll_back(done) -> list:
+    """Undo recorded steps, newest first. Returns what could not be undone."""
+
+    stuck = []
+
+    for step in reversed(done):
+        try:
+            if step[0] == "move":
+                step[2].rename(step[1])
+            elif step[0] == "write":
+                step[1].unlink(missing_ok=True)
+            elif step[0] == "mkdir":
+                step[1].rmdir()
+            elif step[0] == "rmdir":
+                step[1].mkdir()
+        except OSError:
+            stuck.append(step[-1])
+
+    return stuck
+
+
 def derandomize_project(coded_series_fp: Union[str, Path]) -> Path:
     """Derandomize a project.
 
@@ -142,7 +218,7 @@ def derandomize_project(coded_series_fp: Union[str, Path]) -> Path:
     ## Get decoding information
     decoding = get_decoding(project_dir)
 
-    with coded.open("r") as fp:
+    with coded.open("r", encoding="utf-8") as fp:
         data = json.load(fp)
 
     ## Check everything before changing anything
@@ -175,6 +251,18 @@ def derandomize_project(coded_series_fp: Union[str, Path]) -> Path:
     if existing:
         problems.append(_listing("These already exist", existing))
 
+    ## two targets that differ only in case are one file on macOS and Windows
+    seen = {}
+    repeated = []
+    for t in targets:
+        key = str(t).casefold()
+        if key in seen:
+            repeated.append(f"{seen[key]} and {t}")
+        else:
+            seen[key] = t
+    if repeated:
+        problems.append(_listing("These would be the same file", repeated))
+
     if problems:
         raise DerandomizeError(
             "Nothing was changed.\n\n" + "\n\n".join(problems)
@@ -199,29 +287,21 @@ def derandomize_project(coded_series_fp: Union[str, Path]) -> Path:
 
         decoded[series] = series_data
 
-    ## Create the decoded series
-    for series, series_data in decoded.items():
+    done = []
 
-        series_img_dir = project_dir / series / "images"
-        series_img_dir.mkdir(parents=True, exist_ok=True)
-
-        with (project_dir / series / f"{series}.jser").open("w") as fp:
-            fp.write(json.dumps(series_data))
-
-    ## Move images, including any that no longer have a section
-    for coded_name, (series, name) in decoding["images"].items():
-        (images_dir / coded_name).rename(project_dir / series / "images" / name)
-
-    ## Move the coded files aside, with anything left in images/
-    save_coding_dir.mkdir()
-
-    if any(images_dir.iterdir()):
-        images_dir.rename(save_coding_dir / "images")
-    else:
-        images_dir.rmdir()
-
-    coded.rename(save_coding_dir / coded.name)
-    (project_dir / "decode.txt").rename(save_coding_dir / "decode.txt")
+    try:
+        _write_decoded(project_dir, images_dir, save_coding_dir, coded,
+                       decoding, decoded, done)
+    except OSError as e:
+        stuck = _roll_back(done)
+        if stuck:
+            raise DerandomizeError(
+                f"Decoding stopped: {e}\n\n"
+                + _listing("These could not be put back", stuck)
+            ) from e
+        raise DerandomizeError(
+            f"Decoding stopped and every change was undone: {e}"
+        ) from e
 
     return project_dir
 

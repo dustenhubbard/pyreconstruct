@@ -55,7 +55,7 @@ def randomize_images(project_dir, images):
     decode_file = project_dir / "decode.txt"
     series_dirs = []
 
-    with decode_file.open("w") as text:
+    with decode_file.open("w", encoding="utf-8") as text:
 
         for image in images:
 
@@ -118,9 +118,13 @@ def main(project_dir: Union[str, Path]) -> Path:
     
     new_img_dir = project_dir / "images"
 
-    if new_img_dir.exists() or (project_dir / "decode.txt").exists():
+    if any(
+        (project_dir / name).exists()
+        for name in ("images", "decode.txt", "coded.jser")
+    ):
         raise RandomizeError(
-            f"{project_dir} already has an images folder or a decode.txt. "
+            f"{project_dir} already has an images folder, a decode.txt or a "
+            "coded.jser. "
             "It looks like it was randomized before, so nothing was changed."
         )
 

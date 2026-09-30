@@ -276,3 +276,102 @@ def test_derandomize_menu_item_reports_the_problem(tmp_path, monkeypatch):
     assert len(notices) == 1
     assert notices[0].startswith("The project could not be decoded. Nothing was changed.")
     assert _tree(root) == before
+
+
+def test_targets_that_differ_only_in_case_change_nothing(tmp_path):
+    # a.tif and A.TIF can sit side by side on Linux but are one file on a Mac
+    root = _make_project(tmp_path / "proj", {"A": ["a1.tif", "a2.tif"]})
+    coded = randomize_project(root)
+    text = (root / "decode.txt").read_text(encoding="utf-8")
+    (root / "decode.txt").write_text(text.replace("A/a2.tif", "A/A1.TIF"), encoding="utf-8")
+    before = _tree(root)
+
+    with pytest.raises(DerandomizeError, match="would be the same file"):
+        derandomize_project(coded)
+
+    assert _tree(root) == before
+
+
+def test_decode_file_is_utf8(tmp_path):
+    spec = {"Série": ["côté.tif"]}
+    root = _make_project(tmp_path / "proj", spec)
+    coded = randomize_project(root)
+
+    assert "Série/côté.tif -> " in (root / "decode.txt").read_bytes().decode("utf-8")
+
+    derandomize_project(coded)
+
+    _assert_decoded(root, spec)
+
+
+def test_decode_file_in_the_locale_encoding(tmp_path, monkeypatch):
+    import PyReconstruct.assets.scripts.projects.derandomize as derandomize
+
+    spec = {"Série": ["côté.tif"]}
+    root = _make_project(tmp_path / "proj", spec)
+    coded = randomize_project(root)
+
+    # what an older version wrote on a Windows machine set to cp1252
+    text = (root / "decode.txt").read_text(encoding="utf-8")
+    (root / "decode.txt").write_bytes(text.encode("cp1252"))
+    monkeypatch.setattr(derandomize.locale, "getpreferredencoding", lambda *a: "cp1252")
+
+    derandomize_project(coded)
+
+    _assert_decoded(root, spec)
+
+
+def _fail_renames_after(monkeypatch, count, forever=False):
+    """Make Path.rename raise after `count` calls (and keep raising if forever)."""
+    real_rename = Path.rename
+    calls = {"n": 0}
+
+    def rename(self, target):
+        calls["n"] += 1
+        if calls["n"] == count + 1 or (forever and calls["n"] > count):
+            raise OSError("disk went away")
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", rename)
+
+
+@pytest.mark.parametrize("count", [0, 1, 3, 4, 5])
+def test_failed_move_is_rolled_back(tmp_path, monkeypatch, count):
+    # 3 images, then images/, coded.jser and decode.txt: 6 renames in all
+    root = _make_project(tmp_path / "proj", {"A": ["a1.tif", "a2.tif"], "B": ["b1.tif"]})
+    coded = randomize_project(root)
+    (root / "images" / ".DS_Store").write_bytes(b"\x00")
+    before = _tree(root)
+    _fail_renames_after(monkeypatch, count)
+
+    with pytest.raises(DerandomizeError, match="every change was undone"):
+        derandomize_project(coded)
+
+    monkeypatch.undo()
+    assert _tree(root) == before
+    assert sorted(p.name for p in root.iterdir()) == ["coded.jser", "decode.txt", "images"]
+
+
+def test_failed_rollback_says_what_moved(tmp_path, monkeypatch):
+    root = _make_project(tmp_path / "proj", {"A": ["a1.tif", "a2.tif"], "B": ["b1.tif"]})
+    coded = randomize_project(root)
+    _fail_renames_after(monkeypatch, 2, forever=True)
+
+    with pytest.raises(DerandomizeError, match="could not be put back") as raised:
+        derandomize_project(coded)
+
+    moved = [p for p in (root / "A" / "images", root / "B" / "images") if p.exists()]
+    names = [f.name for d in moved for f in d.iterdir() if f.suffix == ".tif"]
+    assert len(names) == 2
+    assert all(name in str(raised.value) for name in names)
+
+
+def test_randomize_refuses_an_existing_coded_jser(tmp_path):
+    root = _make_project(tmp_path / "proj", {"A": ["a1.tif"]})
+    (root / "coded.jser").write_text("{}")
+    before = _tree(root)
+
+    with pytest.raises(RandomizeError, match="coded.jser"):
+        randomize_project(root)
+
+    assert _tree(root) == before
