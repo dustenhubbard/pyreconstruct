@@ -20,7 +20,8 @@ and a route added tomorrow is covered without anyone remembering it exists.
 
 ## The two obvious mechanisms do not work on macOS. Measured, not assumed.
 
-With `PySide6==6.5.2` on macOS 27, for `QSettings("KHLab", "PyReconstruct")`:
+With `PySide6==6.5.2` on macOS 27, for `QSettings("KHLab", "PyReconstruct")`
+(the organization was `KHLab` then; it is `PyReconstruct` now):
 
 - `QStandardPaths.setTestModeEnabled(True)` moves `AppConfigLocation` to
   `~/.qttest/Library/Preferences`, and `QSettings` ignores it completely:
@@ -111,8 +112,13 @@ import pytest
 # The real domain this whole module exists to protect. Both scopes that
 # `QSettingsStore` addresses live under it: the global one is exactly `APP`, and
 # a per-series one is `f"{APP}-{code}"`.
-ORG = "KHLab"
+ORG = "PyReconstruct"
 APP = "PyReconstruct"
+
+# The organization the app stored everything under before 2026-09-29. The app
+# still reads it once, to copy it across, and must never write it, so it is
+# guarded the same way.
+LEGACY_ORG = "KHLab"
 
 #: Set this to make an unattributed change to the real store fail the session
 #: instead of warning. For CI, where the developer's application is not running
@@ -123,6 +129,7 @@ STRICT_ENV = "PYRECON_TEST_STRICT_SETTINGS"
 # nothing to isolate (see the ImportError branch).
 isolation_root = None
 guard = None
+legacy_guard = None
 
 _real_qsettings = None
 _isolated_qsettings = None
@@ -565,6 +572,16 @@ def _rebind(module_names_holding, replacement):
     return tuple(rebound)
 
 
+def _guard_for(real, organization):
+    """A snapshotted guard on the real domain family of ``organization``."""
+    real_file = real(organization, APP).fileName()
+    directory = os.path.dirname(real_file)
+    prefix = os.path.splitext(os.path.basename(real_file))[0]
+    watched = RealSettingsGuard(directory, prefix)
+    watched.snapshot()
+    return watched
+
+
 def _install():
     """Redirect `QSettings` and arm the guard. Called once, at import time.
 
@@ -572,7 +589,7 @@ def _install():
     `PySide6` there is no `QSettings` route to isolate, and the Qt-free core
     tests still run.
     """
-    global isolation_root, guard, _real_qsettings, _isolated_qsettings
+    global isolation_root, guard, legacy_guard, _real_qsettings, _isolated_qsettings
     global _rebound_modules
 
     try:
@@ -584,11 +601,8 @@ def _install():
 
     # Resolve the real locations *before* patching, so the guard watches where
     # the app actually stores things on this platform rather than a guess.
-    real_file = _real_qsettings(ORG, APP).fileName()
-    directory = os.path.dirname(real_file)
-    prefix = os.path.splitext(os.path.basename(real_file))[0]
-    guard = RealSettingsGuard(directory, prefix)
-    guard.snapshot()
+    guard = _guard_for(_real_qsettings, ORG)
+    legacy_guard = _guard_for(_real_qsettings, LEGACY_ORG)
 
     isolation_root = tempfile.mkdtemp(prefix="pyrecon-qsettings-")
     # One directory per session would otherwise accumulate forever, and the
@@ -641,11 +655,15 @@ def verify_isolated():
             "the suite can reach the real user settings. Something rebound it "
             f"(now {qtcore.QSettings!r})."
         )
-    for application in (APP, f"{APP}-isolationselfcheck"):
-        path = os.path.abspath(resolved_path(ORG, application))
+    for organization, application in (
+        (ORG, APP),
+        (ORG, f"{APP}-isolationselfcheck"),
+        (LEGACY_ORG, APP),
+    ):
+        path = os.path.abspath(resolved_path(organization, application))
         if not path.startswith(os.path.abspath(isolation_root)):
             raise RuntimeError(
-                f"QSettings({ORG!r}, {application!r}) resolves to {path}, which "
+                f"QSettings({organization!r}, {application!r}) resolves to {path}, which "
                 f"is outside the isolation root {isolation_root}. Refusing to "
                 "run: the suite would write the real user settings."
             )
@@ -687,7 +705,7 @@ def isolated_qsettings():
     verify_isolated()
 
     level, message = session_report(
-        guard.diff(),
+        guard.diff() + legacy_guard.diff(),
         recorded_bypasses(),
         root=isolation_root,
         strict=strict_requested(),

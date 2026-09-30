@@ -352,7 +352,7 @@ def own_recents(main_window):
 
     `recently_opened_series` is a *computer*-scoped option: `Series.setOption`
     resolves it to `Series.qsettings_defaults`, so it is addressed with
-    `code=None` and lands in `QSettings("KHLab", "PyReconstruct")` under a bare
+    `code=None` and lands in `QSettings("PyReconstruct", "PyReconstruct")` under a bare
     key. That is one machine-wide slot shared by every reader on the box, which
     makes these two tests read and write state that nothing in the test session
     owns. Three consequences, the first two measured rather than argued:

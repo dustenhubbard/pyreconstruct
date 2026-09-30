@@ -5,7 +5,7 @@ when packaging/FLAVOR says "dev"), and everything that distinguishes the two
 side-by-side apps reads it at call time: the window title, the per-app
 QSettings overlay, the pinned update channel, and the series ownership
 marker. Stored preferences are deliberately NOT on that list since
-2026-09-27: both apps share the ``KHLab/PyReconstruct`` store, and only the
+2026-09-27: both apps share the ``PyReconstruct/PyReconstruct`` store, and only the
 few PER_APP_KEYS live in the flavored domain (tests/test_settings_domains.py
 pins the routing). These pin the seam.
 """
@@ -20,8 +20,8 @@ from PyReconstruct.modules.datatypes.series_owner import app_display_name
 
 def test_stable_defaults(monkeypatch):
     monkeypatch.delenv("PYRECON_APP_NAME", raising=False)
-    assert shared_domain() == ("KHLab", "PyReconstruct")
-    assert per_app_domain() == ("KHLab", "PyReconstruct")
+    assert shared_domain() == ("PyReconstruct", "PyReconstruct")
+    assert per_app_domain() == ("PyReconstruct", "PyReconstruct")
     assert QSettingsStore().APP == "PyReconstruct"
     assert pinned_channel() == "release"
     assert app_display_name() == "PyReconstruct"
@@ -32,8 +32,8 @@ def test_dev_flavor_keeps_its_identity_but_shares_the_store(monkeypatch):
     settings store the options go through does not."""
     monkeypatch.setenv("PYRECON_APP_NAME", "PyReconstruct Dev")
     assert settings_app() == "PyReconstruct Dev"
-    assert per_app_domain() == ("KHLab", "PyReconstruct Dev")
-    assert shared_domain() == ("KHLab", "PyReconstruct")
+    assert per_app_domain() == ("PyReconstruct", "PyReconstruct Dev")
+    assert shared_domain() == ("PyReconstruct", "PyReconstruct")
     assert QSettingsStore().APP == "PyReconstruct"
     assert pinned_channel() == "prerelease"
     assert app_display_name() == "PyReconstruct Dev"

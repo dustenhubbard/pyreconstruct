@@ -9,7 +9,7 @@ Two halves, deliberately split:
     off-screen or too-small window is the only reason the action exists.
 
 Settings note. ``resetWindowGeometry`` writes ``window/geometry``, which lives
-in the machine-wide ``QSettings("KHLab", "PyReconstruct")`` domain alongside the
+in the machine-wide ``QSettings("PyReconstruct", "PyReconstruct")`` domain alongside the
 developer's real preferences. Every test here that lets that write happen first
 redirects it, by monkeypatching ``main_window.windowGeometrySettings`` to a
 ``QSettings`` bound to an explicit file under ``tmp_path``. The explicit

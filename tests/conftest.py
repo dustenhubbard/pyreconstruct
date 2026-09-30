@@ -541,7 +541,7 @@ _MAIN_WINDOW_SETTINGS_KEYS = (
 
 @pytest.fixture
 def qsettings_snapshot():
-    """Leave `QSettings("KHLab", "PyReconstruct")` as the test found it.
+    """Leave `QSettings("PyReconstruct", "PyReconstruct")` as the test found it.
 
     MainWindow reads and writes the developer's real user settings on the way up
     and down: `window/geometry` (`__init__` and `closeEvent`), `username`
@@ -562,15 +562,18 @@ def qsettings_snapshot():
     did not exist before is removed rather than written back as None.
     """
     from PySide6.QtCore import QSettings
+    from PyReconstruct.modules.constants.settings_domain import (
+        SETTINGS_ORG, SHARED_APP,
+    )
 
-    settings = QSettings("KHLab", "PyReconstruct")
+    settings = QSettings(SETTINGS_ORG, SHARED_APP)
     before = {
         key: settings.value(key)
         for key in _MAIN_WINDOW_SETTINGS_KEYS
         if settings.contains(key)
     }
     yield settings
-    restore = QSettings("KHLab", "PyReconstruct")
+    restore = QSettings(SETTINGS_ORG, SHARED_APP)
     for key in _MAIN_WINDOW_SETTINGS_KEYS:
         if key in before:
             restore.setValue(key, before[key])
