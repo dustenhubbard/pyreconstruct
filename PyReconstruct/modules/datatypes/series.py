@@ -26,6 +26,7 @@ from PyReconstruct.modules.calc import traceGeometry
 
 from PyReconstruct.modules.constants import (
     createHiddenDir,
+    createNewSeriesDir,
     welcome_series_dir,
     getDateTime,
     fast_loads,
@@ -1512,7 +1513,7 @@ class Series():
                 
                 src_dir = wdir
                 
-            hidden_dir = createHiddenDir(wdir, series_name)
+            hidden_dir = createNewSeriesDir(wdir, series_name)
             
         except PermissionError:
             
@@ -1530,7 +1531,7 @@ class Series():
                 
                 wdir = os.environ.get("HOME")
                 
-            hidden_dir = createHiddenDir(wdir, series_name)
+            hidden_dir = createNewSeriesDir(wdir, series_name)
 
         series_data = Series.getEmptyDict()
         series_data["src_dir"] = src_dir  # img dir
