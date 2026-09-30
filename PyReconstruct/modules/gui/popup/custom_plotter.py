@@ -1,6 +1,8 @@
 import os
 import re
 import random
+import shutil
+import tempfile
 import vedo
 import json
 import numpy as np
@@ -1377,17 +1379,37 @@ class CustomPlotter(QVTKRenderWindowInteractor):
         if not fp: return
 
         combo_obj_fp = Path(fp)
-        export_dir = combo_obj_fp.parent
-
-        obj_files = self.plt.objs.exportAsObjs(export_dir)
-        mtl_files = [f.with_suffix(".mtl") for f in obj_files]
-
-        ## Combine mtl (material) files
         combo_mtl = combo_obj_fp.with_suffix(".mtl")
-        combine_mtl_files(mtl_files, combo_mtl)
 
-        ## Combine obj files
-        combine_obj_files(obj_files, combo_obj_fp)
+        # the save dialog asked about the .obj; the .mtl beside it is ours too
+        if combo_mtl.exists() and not notifyConfirm(
+            f"This folder already has a file named {combo_mtl.name}.\n\n"
+            "Exporting the scene will replace it.\n\n"
+            "Continue?",
+            yn=True
+        ):
+            return
+
+        # write each object's files in a scratch folder, so nothing in the
+        # chosen folder is touched except the two scene files
+        with tempfile.TemporaryDirectory() as scratch:
+            scratch = Path(scratch)
+            obj_files = self.plt.objs.exportAsObjs(scratch)
+            mtl_files = [f.with_suffix(".mtl") for f in obj_files]
+
+            # the combined files take a name no object file can have
+            scene_obj = scratch / "scene" / combo_obj_fp.name
+            scene_obj.parent.mkdir()
+            scene_mtl = scene_obj.with_suffix(".mtl")
+
+            ## Combine mtl (material) files
+            combine_mtl_files(mtl_files, scene_mtl)
+
+            ## Combine obj files
+            combine_obj_files(obj_files, scene_obj)
+
+            shutil.move(str(scene_mtl), str(combo_mtl))
+            shutil.move(str(scene_obj), str(combo_obj_fp))
 
         notify(f"Scene exported to:\n\n{combo_obj_fp.absolute()}")
 
@@ -1832,12 +1854,20 @@ class SceneObjectList():
         """Export scene objects as obj and mtl files."""
 
         obj_files = []
+        used = set()  # lowercase, for case-insensitive file systems
 
         for _, obj in self.scene_objects.items():
 
             try:
 
-                obj_name = obj.name.replace(" ", "_")  # "Scale_Cube" and not "Scale Cube"
+                base = obj.name.replace(" ", "_")  # "Scale_Cube" and not "Scale Cube"
+
+                # same-named objects (one per series) get their own files
+                obj_name, n = base, 1
+                while obj_name.lower() in used:
+                    n += 1
+                    obj_name = f"{base}_{n}"
+                used.add(obj_name.lower())
 
                 obj_fp = export_dir / f"{obj_name}.obj"
                 mtl_fp = obj_fp.with_suffix(".mtl")
@@ -1864,7 +1894,7 @@ class SceneObjectList():
 
                 ## Write mtl file
 
-                mtl_txt = return_mesh_mtl(obj)
+                mtl_txt = return_mesh_mtl(obj, obj_name)
                 
                 with mtl_fp.open("w") as mtl:
                     mtl.write(mtl_txt)
