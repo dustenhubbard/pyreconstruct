@@ -26,6 +26,7 @@ from PyReconstruct.modules.calc import traceGeometry
 
 from PyReconstruct.modules.constants import (
     createHiddenDir,
+    createNewSeriesDir,
     welcome_series_dir,
     getDateTime,
     fast_loads,
@@ -669,8 +670,16 @@ class Series():
         final_value *= 2  # for loading section data
         final_value += 2  # unpacking series and log
 
-        # create the hidden directory
-        hidden_dir = createHiddenDir(sdir, sname)
+        # create the hidden directory. A .ser in it that is not this file's
+        # (the fast path above takes this file's) means the folder is the
+        # working folder of a different series, so it is left alone and the
+        # file is unpacked into a folder of its own.
+        if os.path.isdir(hidden_dir) and any(
+            f.endswith(".ser") for f in os.listdir(hidden_dir)
+        ):
+            hidden_dir = createNewSeriesDir(sdir, sname)
+        else:
+            hidden_dir = createHiddenDir(sdir, sname)
 
         # The .ser file is written LAST as the completion sentinel: both
         # recovery scans (the fast path above and the GUI's unsaved-work
@@ -1512,7 +1521,7 @@ class Series():
                 
                 src_dir = wdir
                 
-            hidden_dir = createHiddenDir(wdir, series_name)
+            hidden_dir = createNewSeriesDir(wdir, series_name)
             
         except PermissionError:
             
@@ -1530,7 +1539,7 @@ class Series():
                 
                 wdir = os.environ.get("HOME")
                 
-            hidden_dir = createHiddenDir(wdir, series_name)
+            hidden_dir = createNewSeriesDir(wdir, series_name)
 
         series_data = Series.getEmptyDict()
         series_data["src_dir"] = src_dir  # img dir
