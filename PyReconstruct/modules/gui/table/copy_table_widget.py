@@ -1,9 +1,32 @@
 from PySide6.QtWidgets import QTableWidget, QApplication
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QEvent
 
 from PyReconstruct.modules.gui.utils import lessThan
 from PyReconstruct.modules.backend.func import make_unique_id
     
+ARROW_KEYS = (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down)
+
+
+def claimsArrowKey(event) -> bool:
+    """Claim an arrow key for a focused list before a window shortcut takes it.
+
+    The field's nudge shortcuts (arrow keys, with or without Ctrl or Shift) are
+    added to the main window, and every list is a dock inside that window, so
+    they fired while a list had focus: the selected traces or the section
+    transform moved and the list row did not. Accepting the ShortcutOverride
+    tells Qt the focused list wants the key itself, so the shortcut does not
+    fire and the key moves through the list as it does in any other view.
+
+        Params:
+            event (QEvent): the event the view received
+        Returns:
+            (bool): True if the event was an arrow key override and was accepted
+    """
+    if event.type() == QEvent.ShortcutOverride and event.key() in ARROW_KEYS:
+        event.accept()
+        return True
+    return False
+
 
 class CopyTableWidget(QTableWidget):
 
@@ -12,6 +35,11 @@ class CopyTableWidget(QTableWidget):
 
         self.container = container
         self.id = make_unique_id()
+
+    def event(self, event):
+        if claimsArrowKey(event):
+            return True
+        return super().event(event)
 
     def keyPressEvent(self, event):
         ret = super().keyPressEvent(event)
