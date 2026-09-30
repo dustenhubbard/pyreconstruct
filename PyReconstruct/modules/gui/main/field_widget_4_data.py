@@ -494,6 +494,10 @@ class FieldWidgetData(FieldWidgetObject):
             Params:
                 new_mag (float): the new magnification for the series
         """
+        # a zero, negative or non-finite mag cannot be undone by another
+        # calibration, so refuse it before any section is rewritten
+        if not math.isfinite(new_mag) or new_mag <= 0:
+            raise ValueError(f"magnification must be greater than zero, got {new_mag}")
 
         # apply new mag to every section
         for snum, section in self.series.enumerateSections(

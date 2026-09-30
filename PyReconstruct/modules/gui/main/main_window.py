@@ -1,6 +1,7 @@
 """The main window."""
 
 
+import math
 import shutil
 
 from shiboken6 import isValid
@@ -2970,6 +2971,11 @@ class MainWindow(QMainWindow):
                 try:
                     d = float(d)
                 except ValueError:
+                    d = None
+                # zero or less would move every point in the series onto the
+                # origin or mirror it, and the change reaches every section
+                if d is None or not math.isfinite(d) or d <= 0:
+                    notify("The length must be a number greater than zero.")
                     return
                 trace_lengths[name] = d
         
