@@ -19,6 +19,9 @@ on:
     types: [published, unpublished, deleted]
   workflow_dispatch:
 
+# The job only curls public URLs, so the token gets no scopes.
+permissions: {}
+
 jobs:
   readme-downloads:
     runs-on: ubuntu-latest
