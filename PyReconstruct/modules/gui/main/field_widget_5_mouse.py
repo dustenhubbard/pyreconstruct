@@ -763,6 +763,7 @@ class FieldWidgetMouse(FieldWidgetData):
             if self.is_scissoring:
 
                 self.is_scissoring = False
+                self.scissors_index = None
 
                 # The scissors pickup deletes the original trace up front
                 # (scissorsPress) and relies on this completion to recreate it.
@@ -811,13 +812,9 @@ class FieldWidgetMouse(FieldWidgetData):
         index = self.scissors_index
         self.scissors_index = None
         if trace is not None:
-            self.section.addTrace(trace, log_event=False)
-            # addTrace appends; move the trace back to its old place so the
-            # contour order, and the Trace List rows that index into it, are
-            # as they were before the pickup
-            traces = self.section.contours[trace.name].traces
-            if index is not None and traces[-1] is trace and index < len(traces) - 1:
-                traces.insert(index, traces.pop())
+            # back in its old place, so the contour order and the Trace List
+            # rows that index into it are as they were before the pickup
+            self.section.addTrace(trace, log_event=False, index=index)
             # the pickup's removal and this add cancel out; drop one entry
             # of each so the trace is not tracked (and drawn) twice, and any
             # other pending edits stay tracked

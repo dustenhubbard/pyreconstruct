@@ -204,6 +204,7 @@ class FieldWidgetBase:
         self.is_moving_trace      = False
         self.is_selecting_traces  = False
         self.is_scissoring        = False
+        self.scissors_index       = None
         self.closed_trace_shape   = "trace"
 
         ## Clear selected

@@ -227,3 +227,11 @@ def test_a_cancel_keeps_the_trace_in_its_place_for_the_trace_list(main_window, q
     assert traces[1] is second
     assert (name, 0) in row_items()
     assert table.getTraces([(name, 0)])[0] is first
+
+    # the columnar store holds its own within-contour order; it has to match
+    section = field.section
+    assert section._columns is not None
+    assert section._columns.rowsForContour(name) == [
+        section._column_rows[first], section._column_rows[second]
+    ]
+    section._assertColumnsMatchObjectModel("scissors cancel")
