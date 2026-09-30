@@ -277,15 +277,20 @@ def convert_vedo_to_tm(obj) -> trimesh.Trimesh:
     return mesh
 
 
-def return_mesh_mtl(obj) -> str:
-    """Make mtl file string for an exported obj."""
+def return_mesh_mtl(obj, name: str = None) -> str:
+    """Make mtl file string for an exported obj.
+
+        Params:
+            obj: the scene object (supplies the color)
+            name (str): the material name (default: the object's name)
+    """
 
     col_norm = list(
         map(lambda x: x/255, obj.color)
     )
 
     mtl_str = (
-        f"newmtl {obj.name}\n"
+        f"newmtl {obj.name if name is None else name}\n"
         f"Ka {col_norm[0]} {col_norm[1]} {col_norm[2]}\n"
         f"Kd {col_norm[0]} {col_norm[1]} {col_norm[2]}\n"
         f"Ks 0.5 0.5 0.5\n"
