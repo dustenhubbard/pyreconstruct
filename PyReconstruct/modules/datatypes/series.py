@@ -5093,7 +5093,8 @@ class Series():
             Params:
                 section_numbers (list): the section numbers to delete. Repeats
                     are collapsed; a number the series does not have raises
-                    KeyError before anything is deleted.
+                    KeyError, and asking for every section raises ValueError,
+                    both before anything is deleted.
                 log_event (bool): True if the deletions should be logged
         """
         # Normalize and validate the whole request before deleting anything.
@@ -5121,6 +5122,10 @@ class Series():
             raise KeyError(
                 f"cannot delete section(s) {missing}: not in this series"
             )
+        # A series with no sections cannot be saved or reopened, and the files
+        # are gone once the loop below runs, so refuse before touching any.
+        if snums and len(snums) == len(self.sections):
+            raise ValueError("cannot delete every section in the series")
 
         for snum in snums:
             # delete the file
