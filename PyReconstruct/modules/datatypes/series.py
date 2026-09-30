@@ -1066,26 +1066,25 @@ class Series():
         self.rename(new_name)
 
         ## Update filepaths in series and section files
+        ## (prefix-only, the same rename the files on disk just got: a plain
+        ## str.replace sent section 11 of a series named "1" to "2.22")
         self.jser_fp = new_jser_fp
         self.hidden_dir = new_hidden_dir
-        
-        self.filepath = os.path.join(
-            new_hidden_dir,
-            os.path.basename(self.filepath).replace(old_name, new_name)
-        )
+
+        def moved(fp):
+            return os.path.join(
+                new_hidden_dir,
+                renamedSeriesFile(os.path.basename(fp), old_name, new_name)
+            )
+
+        self.filepath = moved(self.filepath)
 
         ## Update loaded sections in GUI
         if section:
-            section.filepath = os.path.join(
-                new_hidden_dir,
-                os.path.basename(section.filepath).replace(old_name, new_name)
-            )
-            
+            section.filepath = moved(section.filepath)
+
         if b_section:
-            b_section.filepath = os.path.join(
-                new_hidden_dir,
-                os.path.basename(b_section.filepath).replace(old_name, new_name)
-            )
+            b_section.filepath = moved(b_section.filepath)
     
     def close(self):
         """Clear the hidden directory of the series."""
