@@ -376,10 +376,108 @@ class SectionStates():
             Returns:
                 (set): the names of modified contours
         """
-        # if there are not undo states
-        if len(self.undo_states) == 0:
-            return
+        return self._restoreState(section, series, redo=False)
+
+    def redoState(self, section : Section, series : Series) -> set:
+        """Restore a redo state on the section.
         
+            Params:
+                section (Section): the section to restore
+            Returns:
+                (set): the names of modified contours
+        """
+        return self._restoreState(section, series, redo=True)
+
+    def _restoreState(self, section : Section, series : Series, redo : bool):
+        """Move the section one step back (undo) or forward (redo).
+
+        Undo and redo differ only in where the traces and z-traces come from
+        (`_restoreUndoTraces`, `_restoreRedoTraces`) and in which way the
+        stacks turn. Everything else is this one routine, so a fix to the
+        logging, transforms, flags, modified names or the store resync reaches
+        both directions at once.
+
+            Params:
+                section (Section): the section to restore
+                series (Series): the series with ztraces to restore
+                redo (bool): True to redo, False to undo
+        """
+        if redo:
+            source, destination = self.redo_states, self.undo_states
+        else:
+            source, destination = self.undo_states, self.redo_states
+        if len(source) == 0:
+            return
+        # the state being returned to: its transforms and flags are restored
+        # whole, whichever branch restored the traces
+        target_state = source[-1]
+
+        if redo:
+            modified_contours, modified_ztraces = self._restoreRedoTraces(
+                target_state, section, series
+            )
+        else:
+            modified_contours, modified_ztraces = self._restoreUndoTraces(
+                section, series
+            )
+
+        # update the series log
+        for cname in modified_contours:
+            series.addLog(cname, section.n, "Modify trace(s)")
+        for zname in modified_ztraces:
+            series.addLog(zname, section.n, "Modify ztrace")
+
+        # restore the transforms
+        section.tforms = target_state.getTforms()
+        if section.tformsModified():
+            series.addLog(None, section.n, "Modify transform")
+
+        # restore the flags
+        restored_flags = target_state.getFlags()
+        # check if flag changes should be logged
+        flist_1 = [len(f.comments) for f in section.flags]
+        flist_2 = [len(f.comments) for f in restored_flags]
+        if flist_1 != flist_2:
+            series.addLog(None, section.n, "Modify flag(s)")
+        section.flags = restored_flags
+
+        # edit the undo/redo stacks and the current state
+        # stamped as it goes onto the stack, the same way addState stamps the
+        # state it pushes: favor3D compares these times to pick which undo a
+        # Ctrl+Z takes, so a state arriving on a stack unstamped would be
+        # compared on a birth time that has nothing to do with this undo
+        self.current_state.updateTime()
+        destination.append(self.current_state)
+        # undo makes a copy of the state it lands on; redo uses the state itself
+        popped = source.pop()
+        self.current_state = popped if redo else popped.copy()
+
+        # add the modified contours to the section object
+        section.modified_contours = section.modified_contours.union(modified_contours)
+        # add modified ztrace names to the series object
+        series.modified_ztraces = series.modified_ztraces.union(modified_ztraces)
+
+        # An undo or redo replaces the section's contours from outside
+        # `Section`, either the whole dict at once or one key at a time, so
+        # there is no sequence of row operations for the columnar store's
+        # mutation hooks to have mirrored: the store is left describing exactly
+        # the traces this restore just discarded, and its row map is keyed on
+        # them. Rebuild it from the result. Not optional -- every `Section`
+        # carries a store as of 2026-08-05, and without this the first edit
+        # after an undo raises `ColumnarDualWriteMismatch` in the user's face.
+        # D11's rebuild at `save()` does not cover this: the edit comes before
+        # the save.
+        section.resyncColumnarStore()
+
+    def _restoreUndoTraces(self, section : Section, series : Series):
+        """Put back the traces and z-traces the current state changed.
+
+            Params:
+                section (Section): the section to restore
+                series (Series): the series with ztraces to restore
+            Returns:
+                (set, set): the names of the modified contours and ztraces
+        """
         # if only one undo state exists
         if len(self.undo_states) == 1:
             state = self.undo_states[0]
@@ -431,64 +529,19 @@ class SectionStates():
             if last_changed_contours:
                 for contour in last_changed_contours:
                     section.contours[contour] = Contour(contour)
-            
-        # update the series log
-        for cname in modified_contours:
-            series.addLog(cname, section.n, "Modify trace(s)")
-        for zname in modified_ztraces:
-            series.addLog(zname, section.n, "Modify ztrace")
 
-        # restore the transforms
-        restored_tforms = self.undo_states[-1].getTforms()
-        section.tforms = restored_tforms
-        if section.tformsModified():
-            series.addLog(None, section.n, "Modify transform")
+        return modified_contours, modified_ztraces
 
-        # restore the flags
-        restored_flags = self.undo_states[-1].getFlags()
-        # check if flag changes should be logged
-        flist_1 = [len(f.comments) for f in section.flags]
-        flist_2 = [len(f.comments) for f in restored_flags]
-        if flist_1 != flist_2:
-            series.addLog(None, section.n, "Modify flag(s)")
-        section.flags = restored_flags
+    def _restoreRedoTraces(self, redo_state : FieldState, section : Section, series : Series):
+        """Put back the traces and z-traces a redo state holds.
 
-        # edit the undo/redo stacks and the current state
-        # stamped as it goes onto the stack, the same way addState stamps the
-        # state it pushes: favor3D compares these times to pick which undo a
-        # Ctrl+Z takes, so a state arriving on a stack unstamped would be
-        # compared on a birth time that has nothing to do with this undo
-        self.current_state.updateTime()
-        self.redo_states.append(self.current_state)
-        self.current_state = self.undo_states.pop().copy()
-
-        # add the modified contours to the section object
-        section.modified_contours = section.modified_contours.union(modified_contours)
-        # add modified ztrace names to the series object
-        series.modified_ztraces = series.modified_ztraces.union(modified_ztraces)
-
-        # An undo replaces the section's contours from outside `Section`, either
-        # the whole dict at once or one key at a time, so there is no sequence
-        # of row operations for the columnar store's mutation hooks to have
-        # mirrored: the store is left describing exactly the traces this restore
-        # just discarded, and its row map is keyed on them. Rebuild it from the
-        # result. Not optional -- every `Section` carries a store as of
-        # 2026-08-05, and without this the first edit after an undo raises
-        # `ColumnarDualWriteMismatch` in the user's face. D11's rebuild at
-        # `save()` does not cover this: the edit comes before the save.
-        section.resyncColumnarStore()
-
-    def redoState(self, section : Section, series : Series) -> set:
-        """Restore a redo state on the section.
-        
             Params:
+                redo_state (FieldState): the state being redone
                 section (Section): the section to restore
+                series (Series): the series with ztraces to restore
             Returns:
-                (set): the names of modified contours
+                (set, set): the names of the modified contours and ztraces
         """
-        if len(self.redo_states) == 0:
-            return
-        redo_state = self.redo_states[-1]
         # restore the contours on the section
         state_contours = redo_state.getContours()
         modified_contours = redo_state.getModifiedContours()
@@ -513,41 +566,8 @@ class SectionStates():
                 state_ztraces[zname],
                 section.n
             )
-        
-        # update the series log
-        for cname in modified_contours:
-            series.addLog(cname, section.n, "Modify trace(s)")
-        for zname in modified_ztraces:
-            series.addLog(zname, section.n, "Modify ztrace")
-        
-        # restore the transforms
-        section.tforms = redo_state.getTforms()
-        if section.tformsModified():
-            series.addLog(None, section.n, "Modify transform")
 
-        # restore the flags
-        restored_flags = redo_state.getFlags()
-        # check if flag changes should be logged
-        flist_1 = [len(f.comments) for f in section.flags]
-        flist_2 = [len(f.comments) for f in restored_flags]
-        if flist_1 != flist_2:
-            series.addLog(None, section.n, "Modify flag(s)")
-        section.flags = restored_flags
-
-        # edit the undo/redo stacks and the current state
-        # stamped on the way onto the stack, as in addState and undoState
-        self.current_state.updateTime()
-        self.undo_states.append(self.current_state)
-        self.current_state = self.redo_states.pop()
-
-        # add the modified contours to the section object
-        section.modified_contours = section.modified_contours.union(modified_contours)
-        # add modified ztrace names to the series object
-        series.modified_ztraces = series.modified_ztraces.union(modified_ztraces)
-
-        # Same as `undoState`: the contours were replaced from outside `Section`
-        # and the columnar store has to be rebuilt from the result.
-        section.resyncColumnarStore()
+        return modified_contours, modified_ztraces
 
 def restoreZtraceOnSection(orig_ztrace : Ztrace, new_ztrace : Ztrace, snum : int) -> Ztrace:
     """Restore the ztrace for a specific section.
