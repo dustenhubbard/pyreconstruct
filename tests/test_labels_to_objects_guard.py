@@ -19,7 +19,7 @@ class _ThreadPool:
         self.workers.append(a)
 
     def startAll(self, *a, **k):
-        pass
+        return True
 
 
 def _patch(monkeypatch, data):

@@ -159,7 +159,7 @@ class _CountingThreadPool:
         self.workers.append(args)
 
     def startAll(self, *args, **kwargs):
-        pass
+        return True
 
 
 @pytest.fixture()
