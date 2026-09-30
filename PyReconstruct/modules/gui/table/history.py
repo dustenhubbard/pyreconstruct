@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt
 from .copy_table_widget import CopyTableWidget
 
 from PyReconstruct.modules.datatypes import LogSet, Log
+from PyReconstruct.modules.datatypes.log import splitRow
 
 class HistoryTableWidget(QDockWidget):
 
@@ -50,7 +51,12 @@ class HistoryTableWidget(QDockWidget):
                 r (int): the row index
                 snum (int): the section number
         """
-        for c, s in enumerate(str(log).strip().split(", ")):
+        # splitRow, not split(", "): a quoted user or object name holds ", "
+        # and must stay one cell
+        date, time, (user, _), (obj_name, _), sections, event = splitRow(
+            str(log).strip()
+        )
+        for c, s in enumerate((date, time, user, obj_name, sections, event)):
             self.table.setItem(r, c, QTableWidgetItem(s))
     
     def createTable(self, log_set : LogSet):
