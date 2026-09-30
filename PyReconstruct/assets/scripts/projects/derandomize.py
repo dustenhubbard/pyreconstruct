@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- mode: python -*-
 
+import os
 import re
 import sys
 import copy
@@ -19,6 +20,12 @@ class DerandomizeError(Exception):
     """
 
 
+def _unsafe_name(name: str) -> bool:
+    """True for a name that is not a plain file or folder name."""
+
+    return name in ("", ".", "..") or ":" in name
+
+
 def split_image_path(image: str) -> tuple:
     """Split a decode.txt image path into (series, image name).
 
@@ -27,9 +34,11 @@ def split_image_path(image: str) -> tuple:
     separators are accepted so a decode.txt from any platform decodes.
     """
 
-    parts = [p for p in re.split(r"[\\/]", image) if p]
+    parts = re.split(r"[\\/]", image)
 
-    if len(parts) != 2:
+    ## refuse anything that could point outside the series folder: absolute
+    ## paths and drives (an empty part or a ":"), and "." or ".."
+    if len(parts) != 2 or any(_unsafe_name(p) for p in parts):
         raise DerandomizeError(
             f"'{image}' in decode.txt is not in the form series/image."
         )
@@ -67,6 +76,11 @@ def get_decoding(project_dir):
             )
 
         image, coded = line.strip().rsplit(" -> ", 1)
+
+        if _unsafe_name(coded) or re.search(r"[\\/]", coded):
+            raise DerandomizeError(
+                f"'{coded}' in decode.txt is not a coded image name."
+            )
         images[coded] = split_image_path(image)
 
     decoding = {
@@ -247,7 +261,8 @@ def derandomize_project(coded_series_fp: Union[str, Path]) -> Path:
     ]
     targets.append(save_coding_dir)
 
-    existing = [t for t in targets if t.exists()]
+    ## a symlink counts even when broken, so an undo never removes one
+    existing = [t for t in targets if t.exists() or t.is_symlink()]
     if existing:
         problems.append(_listing("These already exist", existing))
 
@@ -255,7 +270,7 @@ def derandomize_project(coded_series_fp: Union[str, Path]) -> Path:
     seen = {}
     repeated = []
     for t in targets:
-        key = str(t).casefold()
+        key = os.path.normcase(str(t.resolve())).casefold()
         if key in seen:
             repeated.append(f"{seen[key]} and {t}")
         else:

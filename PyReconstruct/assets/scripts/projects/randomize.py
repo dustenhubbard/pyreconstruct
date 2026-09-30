@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- mode: python -*-
 
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -53,25 +54,31 @@ def randomize_images(project_dir, images):
     """Randomize and collect images."""
 
     decode_file = project_dir / "decode.txt"
-    series_dirs = []
 
+    ## Name every image first (always with "/" so any platform can read it)
+    coded = [
+        (image, f"{str(uuid.uuid4())}.{image.suffix[1:]}") for image in images
+    ]
+
+    ## Write the whole key to disk before any image moves, so an image is
+    ## never renamed without its original name on record
     with decode_file.open("w", encoding="utf-8") as text:
-
-        for image in images:
-
-            ## Generate coded name
-            new_name = f"{str(uuid.uuid4())}.{image.suffix[1:]}"
-
-            ## Write decoding info (always with "/" so any platform can read it)
+        for image, new_name in coded:
             text.write(
                 f"{image.relative_to(project_dir).as_posix()} -> {new_name}\n"
             )
+        text.flush()
+        os.fsync(text.fileno())
 
-            ## Rename and move image
-            image.rename(project_dir / "images" / new_name)
+    ## Rename and move images
+    series_dirs = []
 
-            if image.parent not in series_dirs:
-                series_dirs.append(image.parent)
+    for image, new_name in coded:
+
+        image.rename(project_dir / "images" / new_name)
+
+        if image.parent not in series_dirs:
+            series_dirs.append(image.parent)
 
     ## Remove directories left empty (other files stay where they are)
     for series in series_dirs:

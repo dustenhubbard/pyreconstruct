@@ -375,3 +375,88 @@ def test_randomize_refuses_an_existing_coded_jser(tmp_path):
         randomize_project(root)
 
     assert _tree(root) == before
+
+
+def test_every_moved_image_has_its_line_on_disk(tmp_path, monkeypatch):
+    # if Randomize is killed mid-run, each image it already renamed must have
+    # its original name in decode.txt, so check the file at every rename
+    root = _make_project(tmp_path / "proj", {"A": ["a1.tif", "a2.tif"], "B": ["b1.tif"]})
+    real_rename = Path.rename
+    seen = []
+
+    def rename(self, target):
+        on_disk = (root / "decode.txt").read_text(encoding="utf-8")
+        assert f"{self.relative_to(root).as_posix()} -> {Path(target).name}" in on_disk
+        seen.append(self.name)
+        if len(seen) == 2:
+            raise KeyboardInterrupt  # stopped partway
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", rename)
+
+    with pytest.raises(KeyboardInterrupt):
+        randomize_project(root)
+
+    monkeypatch.undo()
+    moved = [p.name for p in (root / "images").iterdir()]
+    assert len(moved) == 1
+    assert moved[0] in _decode(root)
+
+
+@pytest.mark.parametrize("image", [
+    "./a1.tif", "A/..", "../x", "A/.", "/A/a1.tif", "\\A\\a1.tif",
+    "C:\\A\\a1.tif", "C:/a1.tif", "A/C:a1.tif", "A//a1.tif", "A/b/a1.tif",
+])
+def test_unsafe_decode_paths_change_nothing(tmp_path, image):
+    root = _make_project(tmp_path / "proj", {"A": ["a1.tif"]})
+    coded = randomize_project(root)
+    (coded_name,) = _decode(root)
+    (root / "decode.txt").write_text(f"{image} -> {coded_name}\n", encoding="utf-8")
+    before = _tree(root)
+
+    with pytest.raises(DerandomizeError, match="not in the form series/image"):
+        derandomize_project(coded)
+
+    assert _tree(root) == before
+
+
+@pytest.mark.parametrize("coded_name", ["../x.tif", "sub/x.tif", "..", "C:x.tif"])
+def test_unsafe_coded_names_change_nothing(tmp_path, coded_name):
+    root = _make_project(tmp_path / "proj", {"A": ["a1.tif"]})
+    coded = randomize_project(root)
+    (root / "decode.txt").write_text(f"A/a1.tif -> {coded_name}\n", encoding="utf-8")
+    before = _tree(root)
+
+    with pytest.raises(DerandomizeError, match="not a coded image name"):
+        derandomize_project(coded)
+
+    assert _tree(root) == before
+
+
+def test_a_broken_symlink_target_is_left_alone(tmp_path):
+    root = _make_project(tmp_path / "proj", {"A": ["a1.tif"], "B": ["b1.tif"]})
+    coded = randomize_project(root)
+    (root / "B").mkdir()
+    (root / "B" / "B.jser").symlink_to(tmp_path / "nowhere.jser")
+
+    with pytest.raises(DerandomizeError, match="already exist"):
+        derandomize_project(coded)
+
+    assert (root / "B" / "B.jser").is_symlink()
+    assert (root / "images").exists() and (root / "coded.jser").exists()
+
+
+def test_targets_that_resolve_to_one_file_change_nothing(tmp_path):
+    # B links to A, so B/images/a1.tif is A/images/a1.tif
+    root = _make_project(tmp_path / "proj", {"A": ["a1.tif"], "B": ["b1.tif"]})
+    coded = randomize_project(root)
+    (root / "A").mkdir()
+    (root / "B").symlink_to(root / "A", target_is_directory=True)
+    text = (root / "decode.txt").read_text(encoding="utf-8")
+    (root / "decode.txt").write_text(text.replace("B/b1.tif", "B/a1.tif"), encoding="utf-8")
+    before = _tree(root)
+
+    with pytest.raises(DerandomizeError, match="would be the same file"):
+        derandomize_project(coded)
+
+    assert _tree(root) == before
