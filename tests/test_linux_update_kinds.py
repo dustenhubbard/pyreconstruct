@@ -346,17 +346,34 @@ def test_help_check_with_nothing_on_the_channel_names_the_flavor(routes, monkeyp
     ("appimage", "PyReconstruct Dev", DEV_CMD),
     ("linux-installer", None, source_cmd("v1.24.0")),
 ])
-def test_the_startup_check_shows_the_command(routes, kind, flavor, command):
+def test_the_startup_check_shows_a_notice_that_opens_the_command(
+    routes, kind, flavor, command
+):
+    """No dialog at launch (#430): a status bar notice, and clicking it runs
+    the manual check, which shows the command."""
     from PySide6.QtCore import QSettings
     routes.use(kind, flavor, "1.23.0" if not flavor else "1.24.0.dev20260901")
-    QSettings("KHLab", "PyReconstruct").remove("last_update_check_epoch")
-    QSettings("KHLab", "PyReconstruct Dev").remove("last_update_check_epoch")
+    for app in ("PyReconstruct", "PyReconstruct Dev"):
+        QSettings("KHLab", app).remove("last_update_check_epoch")
+        QSettings("KHLab", app).remove("update_notice_version")
     routes.window.series.setOption("update_check_on_startup", True)
 
-    routes.window.checkForUpdatesStartup()
+    try:
+        routes.window.checkForUpdatesStartup()
 
-    assert routes.dialogs.dialogs == []
-    assert [s["command"] for s in routes.shown] == [command]
+        assert routes.dialogs.dialogs == []
+        assert routes.shown == []
+        notice = routes.window.update_notice
+        assert not notice.isHidden()
+        assert notice.text().startswith("Update available: ")
+
+        routes.window.openUpdateNotice()
+
+        assert notice.isHidden()
+        assert [s["command"] for s in routes.shown] == [command]
+    finally:
+        for app in ("PyReconstruct", "PyReconstruct Dev"):
+            QSettings("KHLab", app).remove("update_notice_version")
 
 
 @pytest.mark.gui
@@ -370,6 +387,7 @@ def test_the_startup_check_is_silent_when_up_to_date(routes):
 
     assert routes.shown == []
     assert routes.dialogs.notices == []
+    assert routes.window.update_notice.isHidden()
 
 
 @pytest.mark.gui
