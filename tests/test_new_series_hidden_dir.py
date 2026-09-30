@@ -226,3 +226,89 @@ def test_new_from_xml_twice_keeps_both_folders(
     assert os.path.isfile(second.filepath)
     second.loadSection(1)
     second.modified = False
+
+
+def test_createNewSeriesDir_skips_names_with_a_jser(tmp_path):
+    """`.<name>` is where `<name>.jser` keeps its working folder."""
+    (tmp_path / "A.jser").write_text("{}")
+    assert createNewSeriesDir(str(tmp_path), "A") == str(tmp_path / ".A-2")
+
+    (tmp_path / "A-3.jser").write_text("{}")
+    assert createNewSeriesDir(str(tmp_path), "A") == str(tmp_path / ".A-4")
+
+
+def _new_series_files(series):
+    return sorted(
+        [os.path.basename(series.filepath)] + list(series.sections.values())
+    )
+
+
+def test_new_series_does_not_take_another_jsers_folder(series_jser):
+    """`.A` open elsewhere and an unrelated `A-2.jser` in the same folder."""
+    folder = os.path.dirname(series_jser)
+    elsewhere = Series.openJser(str(series_jser))
+    try:
+        other = os.path.join(folder, f"{elsewhere.name}-2.jser")
+        shutil.copy(series_jser, other)
+
+        new = Series.new([_image(folder)], elsewhere.name, MAG, THICKNESS)
+        assert os.path.basename(new.hidden_dir) != f".{elsewhere.name}-2"
+        files = _new_series_files(new)
+
+        # importing traces opens the other file directly, then closes it
+        imported = Series.openJser(other)
+        assert not os.path.samefile(imported.hidden_dir, new.hidden_dir)
+        imported.close()
+
+        for f in files:
+            assert os.path.isfile(os.path.join(new.hidden_dir, f))
+        new.close()
+    finally:
+        elsewhere.close()
+
+
+def test_open_leaves_a_different_series_folder_alone(series_jser):
+    """`A-2.jser` shows up after a new series already has `.A-2`."""
+    folder = os.path.dirname(series_jser)
+    (series_jser.parent / ".A").mkdir()
+    new = Series.new([_image(folder)], "A", MAG, THICKNESS)
+    assert os.path.basename(new.hidden_dir) == ".A-2"
+    files = _new_series_files(new)
+
+    other = os.path.join(folder, "A-2.jser")
+    shutil.copy(series_jser, other)
+    opened = Series.openJser(other)
+    assert not os.path.samefile(opened.hidden_dir, new.hidden_dir)
+    assert opened.name == "A-2"
+    opened.close()
+
+    for f in files:
+        assert os.path.isfile(os.path.join(new.hidden_dir, f))
+    new.close()
+
+
+@pytest.mark.gui
+def test_other_jser_gets_no_wrong_recovery_offer(
+    main_window, main_window_dialogs
+):
+    """A new series must not show up as another file's unsaved work."""
+    window = main_window
+    name = window.series.name
+    folder = os.path.dirname(window.series.jser_fp)
+    other = os.path.join(folder, f"{name}-2.jser")
+    shutil.copy(window.series.jser_fp, other)
+
+    window.newSeries(
+        image_locations=[_image(folder)],
+        series_name=name,
+        mag=MAG,
+        thickness=THICKNESS,
+    )
+    files = _new_series_files(window.series)
+
+    prompts = main_window_dialogs.unsaved_prompts
+    assert window._recoverUnsavedSeries(other) is None
+    assert main_window_dialogs.unsaved_prompts == prompts
+    assert not main_window_dialogs.message_boxes
+    for f in files:
+        assert os.path.isfile(os.path.join(window.series.hidden_dir, f))
