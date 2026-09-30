@@ -429,6 +429,21 @@ class TableManager():
         if clear_tracking:
             self.section.clearTracking()
     
+    def updateSceneMarks(self, obj_names):
+        """Refresh the Object List's 3D column for objects whose scene
+        membership just changed.
+
+        Separate from updateObjects on purpose: that path marks the objects
+        stale in the viewer, which would regenerate the meshes that were just
+        added and loop back here.
+
+            Params:
+                obj_names (iterable): the names of the objects added to or
+                    removed from the 3D scene
+        """
+        for table in self.tables["object"]:
+            table.updateData(obj_names)
+
     def updateSections(self, section_numbers : list = None):
         """Update ONLY THE SECTION LIST for multiple sections.
         
