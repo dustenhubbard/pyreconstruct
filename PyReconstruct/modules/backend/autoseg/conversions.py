@@ -11,6 +11,7 @@ import zarr
 
 from PyReconstruct.modules.datatypes import Series, Transform, Trace
 from PyReconstruct.modules.backend.view import SectionLayer
+from PyReconstruct.modules.backend.view.trace_layer import labelIds
 from PyReconstruct.modules.backend.threading import ThreadPoolProgBar
 from PyReconstruct.modules.calc import reducePoints
 
@@ -485,6 +486,14 @@ def seriesToLabels(series: Series,
     data_zg[dataset_name].attrs["axis_names"] = ["z", "y", "x"]
     data_zg[dataset_name].attrs["units"] = ["nm", "nm", "nm"]
 
+    ## One label per object for the whole export, so an object keeps its label
+    ## on every section and no two objects share one. Every worker draws only
+    ## objects from this group.
+    name_ids = labelIds(
+        series.object_groups.getGroupObjects(group if is_group else del_group)
+    )
+    gt_lookup = {}
+
     # create threadpool
     threadpool = ThreadPoolProgBar()
 
@@ -500,10 +509,15 @@ def seriesToLabels(series: Series,
             window,
             pixmap_dim,
             del_group,
-            alignment[str(snum)]
+            alignment[str(snum)],
+            name_ids,
+            gt_lookup
         )
 
     threadpool.startAll("Converting contours to zarr...")
+
+    ## written once here: a write from each worker kept only the last one's
+    data_zg[dataset_name].attrs["gt_lookup"] = gt_lookup
 
     if del_group:
         series.object_groups.removeGroup(del_group)
@@ -660,7 +674,9 @@ def exportTraces(data_zg,
                  window : list,
                  pixmap_dim : tuple,
                  del_group : str = None,
-                 tform_list=None):
+                 tform_list=None,
+                 name_ids : dict = None,
+                 gt_lookup : dict = None):
     """Export the traces as labels for a single section.
     
         Params:
@@ -674,6 +690,8 @@ def exportTraces(data_zg,
             pixmap_dim (tuple): the w and h in pixels for the arr output
             del_group (str): the group to delete
             tform_list (list): the transform to apply to the traces
+            name_ids (dict): the label for each object name in the export
+            gt_lookup (dict): filled with the name and label of each object drawn
     """
     section = series.loadSection(snum)
     slayer = SectionLayer(section, series, load_image_layer=False)
@@ -703,13 +721,15 @@ def exportTraces(data_zg,
             pixmap_dim,
             window,
             traces,
-            tform=tform
+            tform=tform,
+            name_ids=name_ids
     )
 
     labels_name = f"labels_{group_or_tag}"
 
     data_zg[labels_name][z] = array
-    data_zg[labels_name].attrs["gt_lookup"] = sec_id_dict
+    if gt_lookup is not None:
+        gt_lookup.update(sec_id_dict)
 
     # delete group if requested
     if not is_group:
