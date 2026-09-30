@@ -4226,6 +4226,9 @@ class Series():
                 thickness (float): the thickness of the new section
                 log_event (bool): True if event should be logged
         """
+        if index < 0:
+            raise ValueError(f"Section number cannot be negative: {index}")
+
         # create the new section object
         max_snum = max(self.sections.keys()) + 1
         Section.new(
