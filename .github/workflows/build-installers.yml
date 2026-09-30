@@ -18,7 +18,9 @@ name: build-installers
 # build job's `environment`); the Windows installer is unsigned. The release
 # job lists every asset in SHA256SUMS, the sign job signs it with minisign in
 # a job of its own, and the publish job ships both; the in-app updater checks
-# the signature before it runs an installer.
+# the signature before it runs an installer. The Windows leg also packs its
+# frozen app as an in-place update payload, which the swap-windows job tries
+# on a real install before the release job ships it.
 #
 # Installers are built ONLY for a tag (or a manual workflow_dispatch), NOT on
 # every push to main. The former rolling "latest main" build that republished a
@@ -194,6 +196,35 @@ jobs:
       - name: PyInstaller freeze
         run: pyinstaller --noconfirm packaging/PyReconstruct.spec
 
+      - name: Freeze the in-place update helper (Windows)
+        # apply.py frozen on its own as pyreconstruct-updater.exe, into the
+        # app's _updater folder before anything is measured, tested, or
+        # packaged, so Setup.exe installs it and the update payload carries
+        # it. Its own build and dist folders keep it clear of the app's.
+        #
+        # A failure here never costs the release its Setup.exe: the step
+        # removes whatever it put in _updater, the installer is built without
+        # the helper, and the payload step below is skipped, so the release
+        # has no Windows payload.
+        id: helper
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: |
+          $flavor = ""
+          if (Test-Path "packaging\FLAVOR") { $flavor = (Get-Content "packaging\FLAVOR" -Raw).Trim() }
+          $app = if ($flavor -eq "dev") { "PyReconstruct Dev" } else { "PyReconstruct" }
+          try {
+            pyinstaller --noconfirm --distpath build\updater-dist --workpath build\updater-work packaging\windows\pyreconstruct-updater.spec
+            if ($LASTEXITCODE -ne 0) { throw "PyInstaller exited with $LASTEXITCODE" }
+            New-Item -ItemType Directory -Force -Path "dist\$app\_updater" | Out-Null
+            Copy-Item "build\updater-dist\pyreconstruct-updater.exe" "dist\$app\_updater\"
+            Get-Item "dist\$app\_updater\pyreconstruct-updater.exe" | Format-List Name, Length
+          } catch {
+            Remove-Item -LiteralPath "dist\$app\_updater" -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Host "::warning::the update helper did not build ($_); Setup.exe ships without it and the release has no Windows payload"
+            exit 1
+          }
+
       - name: Report the frozen app's size (Windows)
         # Informational, for sizing in-place updates: bytes on disk, file
         # count, and the longest path inside the install folder (Windows path
@@ -314,6 +345,31 @@ jobs:
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" @args "packaging\windows\PyReconstruct.iss"
           New-Item -ItemType Directory -Force -Path dist-assets | Out-Null
           Move-Item "packaging\windows\Output\*.exe" dist-assets\
+
+      - name: Build the in-place update payload (Windows)
+        # The same folder Setup.exe was just built from, as a .tar.xz and its
+        # tree.json (scripts/build_update_payload.py). The swap-windows job
+        # below installs Setup.exe and swaps this payload in, and the release
+        # job leaves both files out if that fails.
+        #
+        # It runs only when the helper built, and a failure here never costs
+        # the release its Setup.exe: the script leaves no payload file behind
+        # when it fails, this step removes any that are left anyway, and the
+        # upload goes ahead with the installer alone.
+        id: payload
+        if: runner.os == 'Windows' && steps.helper.outcome == 'success'
+        continue-on-error: true
+        run: |
+          $flavor = ""
+          if (Test-Path "packaging\FLAVOR") { $flavor = (Get-Content "packaging\FLAVOR" -Raw).Trim() }
+          $app = if ($flavor -eq "dev") { "PyReconstruct Dev" } else { "PyReconstruct" }
+          $kind = if ($flavor -eq "dev") { "dev" } else { "stable" }
+          python scripts/build_update_payload.py "dist\$app" --version "$env:PYR_PUBLIC" --flavor $kind --out dist-assets
+          if ($LASTEXITCODE -ne 0) {
+            Remove-Item "dist-assets\PyReconstruct-*-update-windows-*" -Force -ErrorAction SilentlyContinue
+            Write-Host "::warning::the update payload did not build; the release has no Windows payload"
+            exit 1
+          }
 
       - name: Refuse a macOS build that needs the new Accelerate
         if: runner.os == 'macOS'
@@ -650,12 +706,41 @@ jobs:
           echo "::warning::GUI exited with $rc on xcb ($IMAGE)"
           exit 1
 
+  swap-windows:
+    # The in-place update on a real Windows install: Setup.exe installs this
+    # build for the runner's user, the frozen helper it installed swaps the
+    # update payload in, a second run is forced to roll back, and the
+    # uninstaller then has to clear the swapped folder, the staging folder,
+    # and its registry entry. tests/windows_swap_harness.py says what each
+    # check is. Nothing here publishes. The release job waits on it and
+    # leaves the payload out if it failed; the installers ship either way.
+    #
+    # It runs when the Windows leg built, whatever the macOS legs did.
+    needs: build
+    if: ${{ !cancelled() }}
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: installer-Windows-x86_64
+          path: artifact
+
+      - name: Install, update in place, roll back, and uninstall
+        run: python tests/windows_swap_harness.py artifact
+
   release:
     # Stages the release files: the Linux .sh installer, the per-file .sha256
     # files, update-manifest.json, and SHA256SUMS. The sign job signs
     # SHA256SUMS and the publish job ships them. Every action in these three
     # jobs is pinned to a commit.
-    needs: [build, build-linux, test-appimage]
+    needs: [build, build-linux, test-appimage, swap-windows]
     # publish whatever built, even if one matrix leg failed (don't hide a good installer)
     if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') && (needs.build.result == 'success' || needs.build.result == 'failure') && (needs.build-linux.result == 'success' || needs.build-linux.result == 'failure') }}
     runs-on: ubuntu-latest
@@ -741,13 +826,21 @@ jobs:
         # installers still publish.
         if: needs.test-appimage.result != 'success'
         run: rm -f dist/*.AppImage dist/*.AppImage.sha256
+      - name: Hold back a Windows update payload that failed its swap test
+        # The manifest then lists no Windows payload, and the installers
+        # still publish. The manifest script below also drops any payload
+        # file that is misnamed or missing its partner.
+        if: needs.swap-windows.result != 'success'
+        run: |
+          rm -f dist/PyReconstruct-*-update-windows-x86_64*
       - name: Generate checksums
         run: cd dist && for f in *; do [ -f "$f" ] && sha256sum "$f" > "$f.sha256"; done
       - name: Write the update manifest and SHA256SUMS
         # After the per-file .sha256 files, which clients from before signing
         # still read, and before the signing step. SHA256SUMS lists every asset
         # but the .sha256 files, the manifest included; see the script for what
-        # each file holds. The flavor is read as the Linux installer step reads it.
+        # each file holds, and for the Windows payload fields. The flavor is
+        # read as the Linux installer step reads it.
         run: |
           FLAVOR="$(cat packaging/FLAVOR 2>/dev/null | tr -d '[:space:]' || true)"
           python3 scripts/release_update_files.py dist --tag "$GITHUB_REF_NAME" --flavor "${FLAVOR:-stable}"
