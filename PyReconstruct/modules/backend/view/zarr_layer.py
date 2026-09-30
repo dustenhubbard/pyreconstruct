@@ -1,9 +1,11 @@
 import os
+import math
 import zarr
 import numpy as np
 
 from PySide6.QtCore import (
-    Qt
+    Qt,
+    QRectF
 )
 from PySide6.QtGui import (
     QPixmap, 
@@ -91,9 +93,10 @@ class ZarrLayer():
             self.section.mag
         )
 
-        # get zarr coordinates from field coordinates
-        image_x = round((field_x - self.zarr_x) / self.zarr_mag)
-        image_y = bh - round((field_y - self.zarr_y) / self.zarr_mag)
+        # get zarr coordinates from field coordinates: the pixel that contains
+        # the point, so floor (as the drawing in generateZarrLayer does)
+        image_x = math.floor((field_x - self.zarr_x) / self.zarr_mag)
+        image_y = math.floor(bh - (field_y - self.zarr_y) / self.zarr_mag)
 
         if not 0 <= image_x < bw:
             return None
@@ -194,50 +197,24 @@ class ZarrLayer():
         # assert(abs(x_scaling - y_scaling) < 1e-6)
         self.zarr_scaling = x_scaling * self.zarr_mag / section.mag
 
-        # calculate the coordinates to crop the image
-        xmin = ((window_x - self.zarr_x) / self.zarr_mag)
-        xmax = ((window_x + window_w - self.zarr_x) / self.zarr_mag)
+        # the window in zarr pixel coordinates (floats; rows count down from
+        # the top of the zarr)
+        wxmin = (window_x - self.zarr_x) / self.zarr_mag
+        wxmax = (window_x + window_w - self.zarr_x) / self.zarr_mag
+        wymin = bh - (window_y + window_h - self.zarr_y) / self.zarr_mag
+        wymax = bh - (window_y - self.zarr_y) / self.zarr_mag
 
-        ymin = bh - ((window_y + window_h - self.zarr_y) / self.zarr_mag)
-        ymax = bh - ((window_y - self.zarr_y) / self.zarr_mag)
-        
-        # calculate the shift in origin
-        origin_shift = [
-            window_x - self.zarr_x,
-            (window_y + window_h) - self.zarr_y
-        ]
-
-        # space to insert if crop falls outside image
-        blank_space = [0, 0]
-        # space to append if crop falls outside image
-        extra_space = [0, 0]
-
-        # check if requested view is completely out of bounds
-        oob = False
-        oob |= xmin >= bw
-        oob |= xmax <= 0
-        oob |= ymin >= bh
-        oob |= ymax <= 0
-        # return nothing if coords are out of bounds
-        if oob:
+        # return nothing if the requested view is completely out of bounds
+        if wxmin >= bw or wxmax <= 0 or wymin >= bh or wymax <= 0:
             return None
 
-        # trim crop coords to be within image
-        if xmin < 0:
-            blank_space[0] = -xmin
-            xmin = 0
-        if ymin < 0:
-            blank_space[1] = -ymin
-            ymin = 0
-        if xmax > bw:
-            extra_space[0] = xmax - bw
-            xmax = bw
-        if ymax > bh:
-            extra_space[1] = ymax - bh
-            ymax = bh
-
-        # crop image
-        xmin, ymin, xmax, ymax = tuple(map(int, (xmin, ymin, xmax, ymax)))
+        # crop outward to whole pixels, within the zarr, so the crop covers
+        # the whole window; the crop is placed below by its exact fractional
+        # offset from the window edge, the way ImageLayer places its crop
+        xmin = max(0, math.floor(wxmin))
+        ymin = max(0, math.floor(wymin))
+        xmax = min(bw, math.ceil(wxmax))
+        ymax = min(bh, math.ceil(wymax))
 
         if self.is_labels:
             zarr_crop = self.zarr[z, ymin:ymax, xmin:xmax]
@@ -280,6 +257,7 @@ class ZarrLayer():
                 painter = QPainter(im_crop)
                 painter.setOpacity(0.5)
                 painter.drawImage(0, 0, im_crop_selected)
+                painter.end()
         else:
             zarr_crop = self.zarr[:3, z, ymin:ymax, xmin:xmax]
             zarr_crop_colors = np.ascontiguousarray(np.moveaxis(zarr_crop, 0, -1))
@@ -291,29 +269,20 @@ class ZarrLayer():
                 QImage.Format.Format_RGB888
             )
 
-        # make the crop the size of the screen
-        im_scaled = im_crop.scaled(
-            im_crop.width()*self.zarr_scaling, 
-            im_crop.height()*self.zarr_scaling
-        )
-        for pair in (blank_space, extra_space, origin_shift):
-            for i in range(len(pair)):
-                pair[i] *= self.zarr_scaling
-
-        # get padded pixmap dim
-        padded_w = int(blank_space[0] + im_scaled.width() + extra_space[0] + 1)
-        if padded_w < pixmap_dim[0]: padded_w = pixmap_dim[0]
-        padded_h = int(blank_space[1] + im_scaled.height() + extra_space[1] + 1)
-        if padded_h < pixmap_dim[1]: padded_h = pixmap_dim[1]
-
-        # add blank space on each side
-        zarr_layer = QPixmap(padded_w, padded_h)
+        # draw the crop scaled to the screen at its exact offset from the
+        # window's top left corner; without smoothing, each screen pixel shows
+        # the zarr pixel that contains its center, the one getID returns
+        zarr_layer = QPixmap(pixmap_w, pixmap_h)
         zarr_layer.fill(Qt.transparent)
         painter = QPainter(zarr_layer)
         painter.drawImage(
-            blank_space[0],
-            blank_space[1],
-            im_scaled
+            QRectF(
+                (xmin - wxmin) * self.zarr_scaling,
+                (ymin - wymin) * self.zarr_scaling,
+                (xmax - xmin) * self.zarr_scaling,
+                (ymax - ymin) * self.zarr_scaling
+            ),
+            im_crop
         )
         painter.end()
 
