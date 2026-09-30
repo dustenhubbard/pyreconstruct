@@ -391,7 +391,7 @@ def test_a_failed_helper_or_payload_never_costs_the_release_its_setup_exe():
     # Everything from the helper to the upload either cannot fail on the
     # helper's account or carries on past it, and the upload itself waits on
     # neither step.
-    upload = WORKFLOW.read_text(encoding="utf-8").split("- uses: actions/upload-artifact@v7\n", 1)[1]
-    upload = upload.split("\n\n", 1)[0]
+    upload = WORKFLOW.read_text(encoding="utf-8").split("- uses: actions/upload-artifact@", 1)[1]
+    upload = upload.split("\n", 1)[1].split("\n\n", 1)[0]
     assert "steps.helper" not in upload and "steps.payload" not in upload
     assert "path: dist-assets/*" in upload

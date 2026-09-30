@@ -96,7 +96,7 @@ jobs:
     # signing secrets, and builds the unsigned app.
     environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'release' || '' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0          # setuptools-scm needs full history + tags
 
@@ -118,7 +118,7 @@ jobs:
           fi
           echo "flavor: $(cat packaging/FLAVOR 2>/dev/null || echo stable)"
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.11"
           # Cache pip's wheel cache between runs, keyed on the dependency
@@ -427,7 +427,7 @@ jobs:
           xcrun stapler validate "$DMG"
           spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: installer-${{ matrix.plat }}-${{ matrix.arch }}
           path: dist-assets/*
@@ -466,7 +466,7 @@ jobs:
             xcb-util xcb-util-wm xcb-util-image xcb-util-keysyms xcb-util-renderutil xcb-util-cursor \
             libwayland-client libwayland-cursor libwayland-egl
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0          # setuptools-scm needs full history + tags
 
@@ -558,7 +558,7 @@ jobs:
           APPIMAGETOOL=/tmp/appimagetool APPIMAGE_RUNTIME=/tmp/runtime-x86_64 bash packaging/linux/make_appimage.sh
           cd dist-assets && sha256sum *.AppImage
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: installer-Linux-x86_64
           path: dist-assets/*.AppImage
@@ -601,9 +601,9 @@ jobs:
     steps:
       # No git in these images, so checkout downloads the tree through the
       # API; only the installer script and its test harness are used.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
         with:
           name: installer-Linux-x86_64
           path: appimage
@@ -721,13 +721,13 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.11"
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7.0.0
         with:
           name: installer-Windows-x86_64
           path: artifact
