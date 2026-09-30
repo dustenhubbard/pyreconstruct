@@ -121,6 +121,7 @@ from PyReconstruct.modules.gui.table import (
 from PyReconstruct.modules.backend.func import (
     xmlToJSON,
     jsonToXML,
+    xmlExportFiles,
     importTransforms,
     importSwiftTransforms
 )

@@ -1,4 +1,5 @@
 import os
+import re
 import json
 
 from PyReconstruct.modules.calc import reducePoints
@@ -262,24 +263,72 @@ def sectionXMLtoJSON(section_fp, alignment_dict, hidden_dir):
     return tform
 
 
-def jsonToXML(series : Series, new_dir : str):
+def jsonToXML(series : Series, new_dir : str, name : str = None):
     """Convert a json series to xml for use in legacy Reconstruct
     
         Params:
             original_series (Series): series to convert
             new_dir (str): directory to store the new files
+            name (str): file name stem for the .ser and section files
+                (defaults to the series name)
     """
+    if not name:
+        name = series.name
+
     ## Convert sections
     for snum, section in series.enumerateSections(message="Exporting series as XML..."):
-        thickness = sectionJSONtoXML(series, section, new_dir)
+        thickness = sectionJSONtoXML(series, section, new_dir, name)
 
     final_sec = str(snum)
 
     ## Convert series
-    seriesJSONtoXML(series, new_dir, thickness, final_sec)
+    seriesJSONtoXML(series, new_dir, thickness, final_sec, name)
     
 
-def seriesJSONtoXML(series : Series, new_dir : str, thickness: str, last_section: str):
+def xmlExportFiles(series : Series, new_dir : str, name : str = None):
+    """Return the paths jsonToXML would write, and other section files there.
+
+        Params:
+            series (Series): series to convert
+            new_dir (str): directory the files would go to
+            name (str): file name stem (defaults to the series name)
+        Returns:
+            (list, list): existing files the export would replace, and
+                existing <name>.<number> files the export would not write,
+                which legacy Reconstruct would still read as sections
+    """
+    if not name:
+        name = series.name
+    new_dir = new_dir or "."
+
+    targets = [f"{name}.ser"] + [f"{name}.{n}" for n in sorted(series.sections)]
+    replaced = [t for t in targets if os.path.exists(os.path.join(new_dir, t))]
+
+    by_lower = {t.lower(): t for t in targets}
+    section_file = re.compile(re.escape(name) + r"\.\d+", re.IGNORECASE)
+    try:
+        listing = sorted(os.listdir(new_dir))
+    except OSError:
+        listing = []
+
+    def is_target(f):
+        """True if f is a file the export writes (by any case on this disk)."""
+        if f in targets:
+            return True
+        t = by_lower.get(f.lower())
+        if not t or t not in replaced:
+            return False
+        try:
+            return os.path.samefile(os.path.join(new_dir, f), os.path.join(new_dir, t))
+        except OSError:
+            return False
+
+    extra = [f for f in listing if section_file.fullmatch(f) and not is_target(f)]
+
+    return replaced, extra
+
+
+def seriesJSONtoXML(series : Series, new_dir : str, thickness: str, last_section: str, name : str = None):
     
     ## Create blank series and replace text as needed
     xml_text = blank_series_no_contours
@@ -299,7 +348,7 @@ def seriesJSONtoXML(series : Series, new_dir : str, thickness: str, last_section
     xml_text = xml_text.replace("[CONTOURS]", all_contours)
 
     ## Create series file
-    series_fp = os.path.join(new_dir, series.name + ".ser")
+    series_fp = os.path.join(new_dir, (name or series.name) + ".ser")
     with open(series_fp, "w") as f:
         f.write(xml_text)
     
@@ -319,7 +368,7 @@ def seriesJSONtoXML(series : Series, new_dir : str, thickness: str, last_section
     )
         
 
-def sectionJSONtoXML(series : Series, section : Section, new_dir : str):
+def sectionJSONtoXML(series : Series, section : Section, new_dir : str, name : str = None):
 
     sec_index      = str(section.n)
     sec_thickness  = str(round(section.thickness, 4))
@@ -343,7 +392,7 @@ def sectionJSONtoXML(series : Series, section : Section, new_dir : str):
     ## Save file
     section_fp = os.path.join(
         new_dir,
-        f"{series.name}.{sec_index}"
+        f"{name or series.name}.{sec_index}"
     )
 
     with open(section_fp, "w") as xml_file:
