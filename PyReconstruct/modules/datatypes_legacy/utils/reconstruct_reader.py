@@ -272,7 +272,11 @@ def fill_missing_ser_attributes(node):
             node.set(n, v)
 
     ## Add missing trace pallete items
-    if len(node) != 20:
+    # Count only the palette's Contour children: a ZContour is also a child
+    # of the series node, so counting every child made a full palette of 20
+    # look incomplete and doubled it to 40.
+    palette_size = sum(1 for child in node if child.tag == "Contour")
+    if palette_size != 20:
         for palette_item in placeholder:
             node.append(deepcopy(palette_item))
 
