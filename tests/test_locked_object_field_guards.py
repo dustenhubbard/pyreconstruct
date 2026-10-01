@@ -492,6 +492,38 @@ def test_copying_a_locked_trace_is_allowed(locked_selection):
     assert notices == []
 
 
+def test_pasting_a_locked_trace_is_refused(locked_selection):
+    """Ctrl+V. A pasted trace keeps its name, so it lands in the locked object.
+
+    Copy is allowed above, which is exactly how the clipboard comes to hold a
+    locked object's trace. Paste then adds a trace to it unless refused.
+    """
+    window, trace, notices = locked_selection
+    field = window.field
+    before = len(field.section.contours[LOCKED])
+    field.copy()
+
+    field.paste()
+
+    assert len(field.section.contours[LOCKED]) == before
+    assert notices == [REFUSAL]
+
+
+def test_pasting_an_unlocked_trace_still_adds_it(
+    main_window, main_window_dialogs, field_notices
+):
+    """The refusal is keyed on the clipboard's objects, not on paste itself."""
+    field = main_window.field
+    trace = field.section.contours[OTHER][0]
+    field.clipboard = [trace.copy()]
+    before = len(field.section.contours[OTHER])
+
+    field.paste()
+
+    assert len(field.section.contours[OTHER]) == before + 1
+    assert field_notices == []
+
+
 def test_deleting_a_locked_trace_was_already_refused(locked_selection):
     """`deleteTraces` goes through `trace_function`, which already checked.
 
