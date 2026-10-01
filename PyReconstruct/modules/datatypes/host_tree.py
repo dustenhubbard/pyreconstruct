@@ -83,7 +83,7 @@ class HostTree():
             self.objects[traveler]["hosts"].remove(obj_name)
         del(self.objects[obj_name])
     
-    def renameObject(self, old_name : str, new_name : str):
+    def renameObject(self, old_name : str, new_name : str, keep_old=False):
         """Rename an object in the tree.
 
         A rename can collapse two objects into one: renaming a traveler to its
@@ -91,10 +91,20 @@ class HostTree():
         edit. The relationship between them then has only one end left, so it is
         dropped instead of becoming a self-host edge. Deeper collisions (the new
         name is a grand-host of the old one) are caught by add().
+
+            Params:
+                old_name (str): the original name of the object
+                new_name (str): the new name for the object
+                keep_old (bool): True if the old object still exists (a rename
+                    on only some of its sections). The old object then keeps
+                    its hosts and travelers, and the new one gets the same
+                    relationships, the way renameObjAttrs copies groups and
+                    attributes.
         """
         hosts = [h for h in self.getHosts(old_name) if h != new_name]
         travelers = [t for t in self.getTravelers(old_name) if t != new_name]
-        self.removeObject(old_name)
+        if not keep_old:
+            self.removeObject(old_name)
         self.add(new_name, hosts)
         for traveler in travelers:
             self.add(traveler, [new_name])
