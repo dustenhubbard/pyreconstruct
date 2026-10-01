@@ -3,6 +3,11 @@ import os
 from PyReconstruct.modules.datatypes import Series, Transform
 from PyReconstruct.modules.constants import getDateTime
 
+
+class TransformImportError(Exception):
+    """A transforms file that cannot be imported. The message is for the user."""
+
+
 def importTransforms(series : Series, tforms_fp : str, series_states=None, log_event=True):
         """Import transforms from a text file.
         
@@ -15,19 +20,26 @@ def importTransforms(series : Series, tforms_fp : str, series_states=None, log_e
         with open(tforms_fp, "r") as f:
             lines = f.readlines()
         tforms = {}
-        for line in lines:
+        for line_num, line in enumerate(lines, start=1):
             nums = line.split()
-            if len(nums) != 7:
-                print("Incorrect transform file format")
-                return
+            if not nums:
+                continue  # a blank line, such as an extra newline at the end
             try:
-                if int(nums[0]) not in series.sections:
-                    print("Transform file section numbers do not correspond to this series")
-                    return
-                tforms[int(nums[0])] = [float(n) for n in nums[1:]]
+                if len(nums) != 7:
+                    raise ValueError
+                section_num = int(nums[0])
+                tform = [float(n) for n in nums[1:]]
             except ValueError:
-                print("Incorrect transform file format")
-                return
+                raise TransformImportError(
+                    f"Line {line_num} is not a section number followed by "
+                    "six transform numbers."
+                )
+            if section_num not in series.sections:
+                raise TransformImportError(
+                    f"Line {line_num} is for section {section_num}, "
+                    "which is not in this series."
+                )
+            tforms[section_num] = tform
         
         # set tforms
         fname = os.path.basename(tforms_fp)

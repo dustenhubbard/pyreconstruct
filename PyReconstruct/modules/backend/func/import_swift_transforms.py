@@ -5,12 +5,14 @@ import numpy as np
 from PyReconstruct.modules.datatypes import Series, Transform
 from PyReconstruct.modules.constants import getDateTime
 
+from .import_transforms import TransformImportError
 
-class IncorrectFormatError(Exception):
+
+class IncorrectFormatError(TransformImportError):
     pass
 
 
-class IncorrectSecNumError(Exception):
+class IncorrectSecNumError(TransformImportError):
     pass
 
 
@@ -138,14 +140,24 @@ def importSwiftTransforms(series: Series, project_fp: str, scale: int = 1, cal_g
 
     new_transforms = make_pyr_transforms(project_fp, scale, cal_grid)
     new_transforms = transforms_as_strings(new_transforms)
-    transforms_list = new_transforms.strip().split("\n")
+    transforms_list = new_transforms.splitlines()
 
-    if len(transforms_list) != len(series.sections):
-        raise IncorrectSecNumError("Mismatch between number of sections and number of transformations you are trying to import.")
+    # The SWiFT stack is in section order and its transforms are numbered from
+    # 0, but a series can start at any section number (a series converted from
+    # Reconstruct often starts at 1). Match them by position instead.
+    section_nums = sorted(series.sections)
+
+    if len(transforms_list) != len(section_nums):
+        stack_size = len(transforms_list) - 1 if cal_grid else len(transforms_list)
+        cal_grid_note = " plus the cal grid" if cal_grid else ""
+        raise IncorrectSecNumError(
+            f"The SWiFT project has {stack_size} sections{cal_grid_note}, "
+            f"and this series has {len(section_nums)}."
+        )
 
     tforms = {}  # Empty dictionary to hold transformations
     
-    for line in transforms_list:
+    for line, section_num in zip(transforms_list, section_nums):
         
         swift_sec, *matrix = line.split()
         
@@ -155,12 +167,7 @@ def importSwiftTransforms(series: Series, project_fp: str, scale: int = 1, cal_g
         
         try:
 
-            if int(swift_sec) not in series.sections:
-                raise IncorrectSecNumError("Section numbers in project file do not correspond to current series.")
-
-            current_tform = { int(swift_sec): [float(elem) for elem in matrix] }
-            
-            tforms.update(current_tform)
+            tforms[section_num] = [float(elem) for elem in matrix]
             
         except ValueError:
             
