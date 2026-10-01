@@ -4685,7 +4685,9 @@ class MainWindow(QMainWindow):
             i += 1
             name = f"{name}-{i}"
 
-        self.series.importTracePaletteCSV(fp, name)
+        if not self.series.importTracePaletteCSV(fp, name):
+            notify("This CSV file has no palette rows. Nothing was imported.")
+            return
         self.series.palette_index[0] = name
         # the new palette may be shorter than the selected button number
         self.series.clampPaletteIndex()
@@ -4695,6 +4697,7 @@ class MainWindow(QMainWindow):
         # field would keep drawing with the old palette's trace
         g, i = self.series.palette_index
         self.changeTracingTrace(self.series.palette_traces[g][i])
+        self.seriesModified(True)
 
         notify(f"Trace palette '{name}' successfully imported.\n" +
                f"Press {self.series.getOption('modifytracepalette_act')} to view all palettes.")
@@ -5000,10 +5003,10 @@ class MainWindow(QMainWindow):
         new ones and draw with the new current button."""
         if self.series.palette_index[0] not in names:
             return
+        # the new palette may be shorter than the selected button number
+        self.series.clampPaletteIndex()
         g, i = self.series.palette_index
         palette = self.series.palette_traces[g]
-        if i >= len(palette):       # the new palette may be shorter
-            self.series.palette_index[1] = i = 0
         self.mouse_palette.reset()
         self.changeTracingTrace(palette[i])
 

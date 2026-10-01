@@ -3985,6 +3985,8 @@ class Series():
             palettes_str = " ".join(p[0] for p in import_as)
             self.addLog(None, None, f"Import palettes {palettes_str} from another series")
         
+        # an imported palette may be shorter than the selected button number
+        self.clampPaletteIndex()
         self.save()
     
     def importFlags(self, other, srange, series_states=None, log_event=True):
@@ -4741,6 +4743,8 @@ class Series():
             Params:
                 fp (str): the path to the CSV file
                 palette_name (str): the name for the new palette (default: overwrite current)
+            Returns:
+                (bool): False if the file has no palette rows (nothing is imported)
         """
         if palette_name is None:
             palette_name = self.palette_index[0]
@@ -4754,6 +4758,8 @@ class Series():
         trace_list = []
 
         for line in lines:
+            if not line.strip():
+                continue
             l = line.split(",")
             name = l[0]
             color = tuple(int(n) for n in l[1].split())
@@ -4768,8 +4774,13 @@ class Series():
             t.points = list(zip(x, y))
             trace_list.append(t)
         
+        # an empty palette has no button to select
+        if not trace_list:
+            return False
+        
         self.palette_traces[palette_name] = trace_list
         self.forgetPaletteToken(palette_name)
+        return True
 
     def exportObjectsCSV(self, output_fp: Union[str, Path]="", notify: bool=False) -> None:
         """Export all object data as CSV file."""
