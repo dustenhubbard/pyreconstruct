@@ -1859,7 +1859,11 @@ class MainWindow(QMainWindow):
         alignments_before = set(self.series.alignments)
 
         # import the transforms
-        importTransforms(self.series, tforms_fp, series_states=self.field.series_states)
+        try:
+            importTransforms(self.series, tforms_fp, series_states=self.field.series_states)
+        except TransformImportError as e:
+            notify(f"No transforms were imported. {e}")
+            return
 
         # reload the section
         self.field.reload()
@@ -1924,7 +1928,11 @@ class MainWindow(QMainWindow):
         # import transforms
         print(f'Importing SWiFT transforms at scale {scale}...')
         if cal_grid: print('Cal grid included in series')
-        importSwiftTransforms(self.series, swift_fp, scale, cal_grid, series_states=self.field.series_states)
+        try:
+            importSwiftTransforms(self.series, swift_fp, scale, cal_grid, series_states=self.field.series_states)
+        except TransformImportError as e:
+            notify(f"No transforms were imported. {e}")
+            return
 
         self.field.reload()
 
