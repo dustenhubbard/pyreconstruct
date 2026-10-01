@@ -18,6 +18,30 @@ from PyReconstruct.modules.datatypes_legacy import (
 )
 
 
+def _xmlIsNegative(points : list, xml_tform : XMLTransform = None) -> bool:
+    """Return True if Reconstruct reads closed contour points as negative.
+
+    Reconstruct finds a contour's area after applying the contour's transform,
+    so a mirrored transform reverses which way the points run. The sign comes
+    from the raw points and the determinant of the transform's linear part
+    rather than from transformed points: transforming would let rounding give
+    a flat trace a sign, and the polynomial inverse is not exact.
+    """
+    signed_area = 0
+    for i in range(len(points)):
+        x1, y1 = points[i-1]
+        x2, y2 = points[i]
+        signed_area += (x2 - x1) * (y2 + y1)
+    if signed_area == 0:
+        return False
+    negative = signed_area > 0
+    if xml_tform is not None:
+        x, y = xml_tform.xcoef, xml_tform.ycoef
+        if x[1] * y[2] - x[2] * y[1] < 0:
+            negative = not negative
+    return negative
+
+
 def normalizeObjectName(value : str) -> str:
     """Return ``value`` with whitespace and commas collapsed to underscores.
 
@@ -428,12 +452,6 @@ class Trace():
         # element type changed under it halfway through the loop.
         border_color = [c / 255 for c in self.color]
 
-        # reverse point order if negative trace
-        if self.negative:
-            points = self.points[::-1]
-        else:
-            points = self.points
-
         xml_contour = XMLContour(
             name = self.name,
             comment = "",
@@ -443,9 +461,19 @@ class Trace():
             mode = convertMode(self.fill_mode),
             border = border_color,
             fill = border_color,
-            points = points,
+            points = self.points,
             transform = xml_image_tform
         )
+
+        # Reconstruct has no negative flag: a closed contour is negative when
+        # its points run clockwise once its transform is applied, which is
+        # what fromXMLObj checks on import. So the points go out in the
+        # direction that matches the flag, however they were drawn. Reversing
+        # every negative trace flipped one whose points already ran clockwise,
+        # like a hole imported from XML, and a mirrored transform reverses the
+        # direction, so the check runs on the transformed points.
+        if self.closed and _xmlIsNegative(self.points, xml_image_tform) != bool(self.negative):
+            xml_contour.points.reverse()
 
         if legacy_format:
 
@@ -566,7 +594,7 @@ class Trace():
             color[i] = int(color[i] * 255)
         closed = xml_trace.closed
         points = xml_trace.points.copy()
-        negative = xml_trace.isNegative()
+        negative = bool(closed) and _xmlIsNegative(xml_trace.points, xml_trace.transform)
         if negative:
             points = points[::-1]
         new_trace = Trace(name, color, closed)
