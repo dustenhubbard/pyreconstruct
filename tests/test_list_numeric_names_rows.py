@@ -35,7 +35,7 @@ def test_lessThan_agrees_with_sortList():
 
 
 @pytest.fixture
-def numeric_trace_table(qapp, list_mainwindow, gui_dialogs):
+def numeric_trace_table(qapp, list_mainwindow, gui_dialogs):  # noqa: F811  (fixture)
     from PyReconstruct.modules.gui.table.trace import TraceTableWidget
     series = list_mainwindow.series
     snum = sorted(series.sections)[1]
@@ -74,7 +74,7 @@ def test_deleting_a_numeric_trace_removes_its_row(numeric_trace_table):
 
 
 @pytest.fixture
-def numeric_ztrace_table(qapp, list_mainwindow, gui_dialogs):
+def numeric_ztrace_table(qapp, list_mainwindow, gui_dialogs):  # noqa: F811  (fixture)
     from PyReconstruct.modules.gui.table.ztrace import ZtraceTableWidget
     series = list_mainwindow.series
     for name in NAMES:
