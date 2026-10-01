@@ -2,7 +2,8 @@
 
 * A series undo that brings back a group removed with its last object now
   restores the group's visibility entry and rebuilds the Groups menu, so the
-  group has its row again, hidden if it was hidden.
+  group has its row again, hidden if it was hidden. The redo drops the entry
+  and the row again.
 * `removeFromAllGroups` no longer assumes an emptied group still has a
   visibility entry.
 * `edit3D` adds no undo state when no object changes, so a dialog closed with
@@ -16,6 +17,7 @@ from conftest import submenu_at
 from PyReconstruct.modules.gui.main import field_widget_3_object as fw3
 
 GROUP = "groupundo_group"
+OTHER = "groupundo_other"
 
 
 def _select_in_list(main_window, monkeypatch, names):
@@ -60,6 +62,12 @@ def _count_rebuilds(main_window, monkeypatch):
 def test_undo_brings_back_the_group_row_and_its_visibility(main_window, monkeypatch):
     series = main_window.series
     a = _group_of_one(series, visible=False)
+    # a second group keeps the Groups submenu in the menubar once GROUP is
+    # gone, so the row checks below look at a real menu
+    b = sorted(series.data["objects"].keys())[1]
+    assert OTHER not in series.object_groups.getGroupList()
+    series.object_groups.add(group=OTHER, obj=b)
+    series.groups_visibility[OTHER] = True
     main_window.createMenuBar()
     assert GROUP in _menu_groups(main_window)
 
@@ -67,6 +75,7 @@ def test_undo_brings_back_the_group_row_and_its_visibility(main_window, monkeypa
     field.removeFromAllGroups()
     assert GROUP not in series.groups_visibility
     assert GROUP not in _menu_groups(main_window)
+    assert OTHER in _menu_groups(main_window)
 
     rebuilds = _count_rebuilds(main_window, monkeypatch)
     main_window.undo()
@@ -78,7 +87,15 @@ def test_undo_brings_back_the_group_row_and_its_visibility(main_window, monkeypa
 
     main_window.undo(redo=True)
     assert GROUP not in series.object_groups.getGroupList()
+    assert GROUP not in series.groups_visibility
+    assert GROUP not in _menu_groups(main_window)
+    assert OTHER in _menu_groups(main_window)
     assert len(rebuilds) == 2
+
+    # the entry the redo dropped comes back with the next undo
+    main_window.undo()
+    assert series.groups_visibility[GROUP] is False
+    assert GROUP in _menu_groups(main_window)
 
 
 @pytest.mark.gui

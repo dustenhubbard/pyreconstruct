@@ -803,12 +803,21 @@ class SeriesState():
 
         # a group the step brings back gets the visibility it had when the
         # state was made, or shown for a group with no entry then. Entries
-        # already present are left alone: a toggle made since stays, and a
-        # group the step removes keeps its entry, as a section undo does.
+        # already present are left alone, so a toggle made since stays.
         stored_viz = self.series_attrs["groups_visibility"]
         for group in series.object_groups.getGroupList():
             if group not in series.groups_visibility:
                 series.groups_visibility[group] = stored_viz.get(group, True)
+
+        # a group the step removes loses its entry, as removing its last
+        # object does, or the Groups menu keeps a row for it. pre_series_attrs
+        # still holds the entry, so the opposite step brings the value back.
+        removed_groups = (
+            set(pre_series_attrs["object_groups"].getGroupList()) -
+            set(series.object_groups.getGroupList())
+        )
+        for group in removed_groups:
+            series.groups_visibility.pop(group, None)
 
         # specific case: no sections modified but the series data needs to be refreshed bc preferred alignments changed
         if not self.undo_lens and alignmentPreferencesChanged(pre_series_attrs, self.series_attrs):
