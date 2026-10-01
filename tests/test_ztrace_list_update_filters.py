@@ -23,7 +23,7 @@ def _rows(widget):
 
 
 @pytest.fixture
-def ztrace_widget(qapp, list_mainwindow, gui_dialogs):
+def ztrace_widget(qapp, list_mainwindow, gui_dialogs):  # noqa: F811  (fixture)
     from PyReconstruct.modules.gui.table.ztrace import ZtraceTableWidget
     series = list_mainwindow.series
     for name in NAMES:
