@@ -209,3 +209,105 @@ def test_zarr_image_pixels_land_where_the_traces_say(qapp, real_series, tmp_path
         f"{wrong} of {total} screen pixels show a neighboring scale_{k} pixel "
         f"at zoom {zoom}, pan {shift}"
     )
+
+
+def test_indexed8_outside_a_rotated_image_is_black(qapp, real_series, tmp_path):
+    """A palette image whose entry 0 is red draws black, not red, past its edge.
+
+    The outside mask has to apply after the color table maps values to colors,
+    or the fill value 0 names palette entry 0.
+    """
+    img = QImage(IW, IH, QImage.Format.Format_Indexed8)
+    img.setColorTable([QColor(200, 30, 30).rgb()] + [QColor(i, i, i).rgb() for i in range(1, 256)])
+    img.fill(77)
+    img.save(str(tmp_path / "grid.png"))
+    assert QImage(str(tmp_path / "grid.png")).format() == QImage.Format.Format_Indexed8
+
+    snum = sorted(real_series.sections)[0]
+    section = real_series.loadSection(snum)
+    real_series.src_dir = str(tmp_path)
+    section.src = "grid.png"
+    section.mag = MAG
+    layer = _layer(section, ROTATE)
+
+    window = _window(1.7, (13.37, 7.77))
+    rgba = layer._generateImage(DIM, window, bc=False).convertToFormat(QImage.Format.Format_RGBA8888)
+    buf = np.frombuffer(rgba.constBits(), np.uint8, rgba.sizeInBytes())
+    rgb = buf.reshape(DIM[1], rgba.bytesPerLine())[:, : DIM[0] * 4].reshape(DIM[1], DIM[0], 4)[:, :, :3]
+    col, row, on_edge = _expected(window, ROTATE)
+    inside = (col >= 0) & (col < IW) & (row >= 0) & (row < IH)
+    outside = ~inside & ~on_edge
+    assert outside.sum() > 1000, "the view should reach past the image"
+    red_outside = int(((rgb[:, :, 0] == 200) & outside).sum())
+    assert red_outside == 0, f"{red_outside} screen pixels outside the image show palette entry 0"
+    assert int((rgb[outside] != 0).sum()) == 0, "the area outside the image is not black"
+    assert int((rgb[inside & ~on_edge][:, 0] == 77).all())
+
+
+def _write_png(path, w, h, color_type, depth, rows):
+    """A PNG written by hand, so the file's own format reaches Qt's loader."""
+    import struct
+    import zlib
+
+    def chunk(kind, data):
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+
+    raw = b"".join(b"\x00" + r for r in rows)
+    head = struct.pack(">IIBBBBB", w, h, depth, color_type, 0, 0, 0)
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", head)
+                     + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+def _alpha_png(path, kind):
+    """A 200 by 160 PNG with varying alpha: 16-bit RGBA, 16-bit gray with
+    alpha, or 8-bit gray with alpha. Returns the format Qt loads it as."""
+    import struct
+
+    if kind == "rgba16":
+        rows = [b"".join(struct.pack(">HHHH", (x * 700) % 65536, (y * 900) % 65536,
+                                     7, ((x + y) * 300) % 65536) for x in range(IW))
+                for y in range(IH)]
+        _write_png(path, IW, IH, 6, 16, rows)
+        return QImage.Format.Format_RGBA64
+    if kind == "gray16+alpha":
+        rows = [b"".join(struct.pack(">HH", (x * 700 + y * 1300) % 65536,
+                                     ((x + y) * 300) % 65536) for x in range(IW))
+                for y in range(IH)]
+        _write_png(path, IW, IH, 4, 16, rows)
+        return QImage.Format.Format_RGBA64
+    rows = [bytes(v for x in range(IW) for v in ((x * 7 + y * 13) % 256, (x + y) % 256))
+            for y in range(IH)]
+    _write_png(path, IW, IH, 4, 8, rows)
+    return QImage.Format.Format_ARGB32
+
+
+@pytest.mark.parametrize("kind", ["rgba16", "gray16+alpha", "gray8+alpha"])
+def test_crop_only_keeps_the_values_of_an_image_with_alpha(qapp, real_series, tmp_path, kind):
+    """`get_crop_only` on an image with alpha gives the values the file holds.
+
+    The brightness and contrast optimizer reads this crop. Converting the
+    image to a premultiplied format at load scales every value by its alpha,
+    and sending a gray image with alpha to Grayscale8 drops the alpha; either
+    changes the optimizer's picks.
+    """
+    expected_format = _alpha_png(tmp_path / "grid.png", kind)
+    loaded = QImage(str(tmp_path / "grid.png"))
+    assert loaded.format() == expected_format and loaded.hasAlphaChannel()
+    # what the optimizer saw when the crop came straight from the file
+    want = loaded.convertToFormat(QImage.Format.Format_RGBA8888)
+    buf = np.frombuffer(want.constBits(), np.uint8, want.sizeInBytes())
+    want = buf.reshape(IH, want.bytesPerLine())[:, : IW * 4].reshape(IH, IW, 4)[:, :, 0].copy()
+
+    snum = sorted(real_series.sections)[0]
+    section = real_series.loadSection(snum)
+    real_series.src_dir = str(tmp_path)
+    section.src = "grid.png"
+    section.mag = MAG
+    layer = _layer(section, IDENTITY)
+    assert layer.image.hasAlphaChannel(), "the alpha channel was dropped at load"
+    got = layer.generateImageArray((IW, IH), [0, 0, IW * MAG, IH * MAG], get_crop_only=True)
+
+    assert got.shape == want.shape
+    differ = int((got != want).sum())
+    assert differ == 0, f"{differ} of {want.size} crop values differ from the file's"

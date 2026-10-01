@@ -343,7 +343,6 @@ class ImageLayer():
             flat += cols
             # out of range indices read some pixel or other; masked below
             screen = np.take(flat_src, flat, mode="clip")
-            screen[~inside] = 0
             x0, y0 = 0, 0
 
         if self.is_zarr_file:
@@ -352,6 +351,10 @@ class ImageLayer():
             fmt, lut = self._pixels.format, self._pixels.lut
         if lut is not None:
             screen = lut[screen]
+        if b != 0 or d != 0:
+            # after the color table, so an Indexed8 image's entry 0 is not
+            # mistaken for black outside the image
+            screen[~inside] = 0
         screen = np.ascontiguousarray(screen)
         im_screen = QImage(
             screen.data,
@@ -458,13 +461,17 @@ def _sampleableImage(image : QImage) -> QImage:
     """The image in a format with one byte or one 32-bit word per pixel.
 
     Those are read in place by _PixelView. Anything else (16-bit gray, 1-bit,
-    24-bit RGB) is converted once, here, and never again per view.
+    24-bit RGB, 16-bit RGBA) is converted once, here, and never again per
+    view. Gray without alpha becomes Grayscale8; everything else keeps its
+    alpha as ARGB32.
     """
     if image.format() in _BYTE_FORMATS or image.format() in _WORD_FORMATS:
         return image
-    if image.isGrayscale():
+    if image.isGrayscale() and not image.hasAlphaChannel():
         return image.convertToFormat(QImage.Format.Format_Grayscale8)
-    return image.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+    # not premultiplied: the brightness and contrast optimizer reads the
+    # crop's values, and premultiplying would change them under alpha
+    return image.convertToFormat(QImage.Format.Format_ARGB32)
 
 
 class _PixelView:
