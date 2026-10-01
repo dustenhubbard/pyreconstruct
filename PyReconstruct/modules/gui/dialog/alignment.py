@@ -117,7 +117,9 @@ class AlignmentDialog(QDialog):
         if alignments:
             a = alignments[0]
         else:
-            a = None
+            # nothing selected keeps the current alignment, under its new
+            # name if it was renamed here (None if it was removed)
+            a = self.table.current_name
         if confirmed:
             return (
                 a,
@@ -134,6 +136,9 @@ class AlignmentList(QTableWidget):
         for a in sorted(alignment_names):
             self.adict[a] = a
         self.current_alignment = current_alignment
+        # the name the current alignment will have once the dialog is
+        # accepted: follows a rename, None once it is removed
+        self.current_name = current_alignment
 
         super().__init__(0, 1, parent)
         
@@ -192,6 +197,8 @@ class AlignmentList(QTableWidget):
         if alignment not in self.adict or alignment == "no-alignment":
             return
         self.adict[alignment] = None
+        if alignment == self.current_name:
+            self.current_name = None
         self.createTable()
     
     def renameAlignment(self, alignment : str, new_name : str):
@@ -218,5 +225,7 @@ class AlignmentList(QTableWidget):
         ## 2026-08-28).
 
         self.adict[alignment] = None
+        if alignment == self.current_name:
+            self.current_name = new_name
 
         self.createTable()
