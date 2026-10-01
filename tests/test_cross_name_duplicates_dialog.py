@@ -501,3 +501,75 @@ def test_both_headings_explain_the_overlap_column_for_open_traces(qtbot,
     assert "for two closed traces, the area they share" in heading
     assert "for two open traces, how much of each line lies within a few" in heading
     assert "stay that close from end to end" in heading
+
+
+def _pair(name, index, other, other_index):
+    record = _record(name=name, other=other, section=5)
+    record["index"] = index
+    record["other_index"] = other_index
+    return record
+
+
+def _contour_table_delete(contours):
+    """A delete callback that removes the unkept trace from a contour table."""
+    def delete_unselected(choices):
+        for record, keep in choices:
+            if keep == "first":
+                contours[record["other_name"]].pop(record["other_index"])
+            else:
+                contours[record["name"]].pop(record["index"])
+        return choices
+    return delete_unselected
+
+
+def _rows_by_record(dialog):
+    return {
+        id(dialog._recordAtRow(r)): r for r in range(dialog.table.rowCount())
+    }
+
+
+def test_keeping_the_first_name_leaves_its_neighbors_indexes(qtbot,
+                                                            confirmed):
+    """Keeping a row's own name deletes the other trace, so only that shifts.
+
+    Section 5 holds `A` twice and `B` and `C` once: the first `A` duplicates
+    `B` and the second duplicates `C`. Keeping `A` in the first row deletes `B`.
+    The second row still names the second `A`, so "Go to trace" must frame it.
+    """
+    contours = {"A": ["A0", "A1"], "B": ["B0"], "C": ["C0"]}
+    first, second = _pair("A", 0, "B", 0), _pair("A", 1, "C", 0)
+    navigated = []
+    dialog = _dialog(
+        qtbot, [first, second],
+        navigate=lambda s, n, i: navigated.append((n, i)),
+        delete_unselected=_contour_table_delete(contours),
+    )
+    _tick(dialog, _rows_by_record(dialog)[id(first)], 0)
+    dialog.deleteUnselectedTraces()
+
+    assert contours == {"A": ["A0", "A1"], "B": [], "C": ["C0"]}
+    dialog.table.selectRow(0)
+    dialog.goToSelectedContour()
+    name, index = navigated[-1]
+    assert contours[name][index] == "A1"
+
+
+def test_a_deleted_trace_shifts_the_other_index_of_a_later_pair(qtbot,
+                                                                 confirmed):
+    """A row whose second trace sits after the deleted one is shifted too."""
+    contours = {"A": ["A0"], "B": ["B0", "B1"], "C": ["C0"]}
+    first, second = _pair("A", 0, "B", 0), _pair("C", 0, "B", 1)
+    navigated = []
+    dialog = _dialog(
+        qtbot, [first, second],
+        navigate=lambda s, n, i: navigated.append((n, i)),
+        delete_unselected=_contour_table_delete(contours),
+    )
+    _tick(dialog, _rows_by_record(dialog)[id(first)], 0)
+    dialog.deleteUnselectedTraces()
+
+    assert contours["B"] == ["B1"]
+    dialog.table.selectRow(0)
+    dialog.goToSelectedOtherContour()
+    name, index = navigated[-1]
+    assert contours[name][index] == "B1"
