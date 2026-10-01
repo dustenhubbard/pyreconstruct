@@ -824,7 +824,7 @@ class SeriesState():
             series.data.refresh()
         
         # specific case: switch to previous obj_columns if user_columns has been changed
-        if self.series_attrs["object_columns"] != pre_series_attrs["user_columns"]:
+        if self.series_attrs["user_columns"] != pre_series_attrs["user_columns"]:
             series.setOption("object_columns", self.series_attrs["object_columns"])
 
         self.series_attrs = pre_series_attrs
