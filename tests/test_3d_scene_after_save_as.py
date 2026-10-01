@@ -120,7 +120,6 @@ def test_double_click_after_save_as_jumps_to_the_object(
 
 
 def test_series_moved_leaves_other_series_alone():
-    from PyReconstruct.modules.gui.popup import custom_plotter as cp
     old_fp, new_fp, other_fp = "/a/old.jser", "/b/new.jser", "/c/other.jser"
     open_series = types.SimpleNamespace(jser_fp=old_fp, host_tree="open tree")
     other_series = types.SimpleNamespace(jser_fp=other_fp, host_tree="other tree")
