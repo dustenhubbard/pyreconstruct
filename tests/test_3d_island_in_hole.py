@@ -58,7 +58,11 @@ def _square(x0, y0, x1, y1):
 OUTER = _square(0, 0, 3, 3)
 HOLE = _square(1, 1, 2, 2)
 ISLAND = _square(1.3, 1.3, 1.7, 1.7)
-INNER_HOLE = _square(1.45, 1.45, 1.55, 1.55)
+INNER_HOLE = _square(1.4, 1.4, 1.6, 1.6)
+INNER_ISLAND = _square(1.47, 1.47, 1.53, 1.53)
+# positives with no area, drawn inside the hole
+COLLINEAR = [(1.2, 1.2), (1.5, 1.5), (1.8, 1.8)]
+ONE_POINT = [(1.5, 1.5), (1.5, 1.5), (1.5, 1.5)]
 
 
 def _surface(sections, nsec=3):
@@ -139,6 +143,39 @@ def test_hole_inside_an_island_clears():
     )
 
 
+def test_island_three_levels_deep_fills():
+    """An island inside a hole inside an island: the inner hole clears the
+    inner island after the first refill, so a later level must fill it again."""
+    surf = _surface([
+        (OUTER, False), (HOLE, True), (ISLAND, False),
+        (INNER_HOLE, True), (INNER_ISLAND, False),
+    ])
+    volume, _ = surf.generateVolume()
+    full = np.ones_like(volume)
+    inner_island = _count(full, INNER_ISLAND, surf)
+    assert inner_island > 0
+    assert _count(volume, INNER_ISLAND, surf) == inner_island
+    assert _count(volume, INNER_HOLE, surf) == inner_island
+    assert _count(volume, ISLAND, surf) == (
+        _count(full, ISLAND, surf) - _count(full, INNER_HOLE, surf) + inner_island
+    )
+
+
+def test_nested_fill_order_three_levels():
+    order = nestedFillOrder(
+        [OUTER, ISLAND, INNER_ISLAND], [HOLE, INNER_HOLE]
+    )
+    # the inner island is covered by the outer hole too, so it is drawn with
+    # the first islands; the inner hole clears it; the next level fills it
+    assert order == [
+        (OUTER, True), (ISLAND, True), (INNER_ISLAND, True),
+        (HOLE, False), (INNER_HOLE, False),
+        (ISLAND, True), (INNER_ISLAND, True),
+        (INNER_HOLE, False),
+        (INNER_ISLAND, True),
+    ]
+
+
 def test_island_only_on_some_sections():
     """The order is decided per section, so an island on one section does
     not change the sections without one."""
@@ -165,10 +202,23 @@ def test_nested_fill_order_shape():
 
 
 def test_nested_fill_order_ends_on_identical_outlines():
-    """A positive and a negative with the same outline cover each other; the
-    walk must stop rather than alternate forever."""
+    """A positive and a negative with the same outline are not nested, so the
+    order is the plain one and the walk does not alternate forever."""
     order = nestedFillOrder([HOLE], [HOLE])
-    assert order == [(HOLE, True), (HOLE, False), (HOLE, True), (HOLE, False)]
+    assert order == [(HOLE, True), (HOLE, False)]
+
+
+@pytest.mark.parametrize("points", [COLLINEAR, ONE_POINT])
+def test_zero_area_positive_in_a_hole_is_not_an_island(points):
+    """A positive with no area is not refilled: it would put voxels back along
+    a line where the old fill had cleared them."""
+    traces = [(OUTER, False), (HOLE, True), (points, False)]
+    surf = _surface(traces)
+    volume, _ = surf.generateVolume()
+    assert (volume == _reference_volume(surf)).all()
+    assert nestedFillOrder([OUTER, points], [HOLE]) == [
+        (OUTER, True), (points, True), (HOLE, False),
+    ]
 
 
 # ---------------------------------------------------- unchanged without one

@@ -105,27 +105,38 @@ class Object3D():
 
 
 def _tracePolygon(points : list):
-    """Return a shapely polygon for a trace, or None if it cannot be one."""
+    """Return a shapely polygon for a trace, or None if it cannot be one.
+
+    A trace with no area (a line, or one point repeated) is neither an island
+    nor a hole, so it comes back as None and fills the way it did before.
+    """
     from shapely.geometry import Polygon
 
     if len(points) < 3:
         return None
     try:
-        return Polygon(points)
+        poly = Polygon(points)
+        if poly.area == 0:
+            return None
     except Exception:
         return None
+    return poly
 
 
 def _covers(outer, inner) -> bool:
-    """Return whether one trace polygon covers another.
+    """Return whether one trace polygon covers another, different one.
 
-    A trace GEOS cannot compare (some self-crossing outlines) counts as not
-    covered, so it fills the way it did before.
+    Two identical outlines are not nested. A trace GEOS cannot compare (some
+    self-crossing outlines) counts as not covered, so it fills the way it did
+    before.
     """
     if outer is None or inner is None:
         return False
+    ob, ib = outer.bounds, inner.bounds
+    if ib[0] < ob[0] or ib[1] < ob[1] or ib[2] > ob[2] or ib[3] > ob[3]:
+        return False  # the box test is cheap and settles most pairs
     try:
-        return outer.covers(inner)
+        return outer.covers(inner) and not outer.equals(inner)
     except Exception:
         return False
 
@@ -136,8 +147,10 @@ def nestedFillOrder(pos : list, neg : list) -> list:
     Every positive trace fills first and every negative trace clears after it.
     A positive trace inside a negative trace is an island in that hole, so it
     fills again after the holes; a negative trace inside such an island clears
-    after that, and so on down the nesting. A section with no island comes
-    back in the same order as before.
+    after that, and so on down the nesting. Each level's islands come from the
+    holes of the level before, so an island inside a hole inside an island is
+    filled again after the hole that cleared it. A section with no island
+    comes back in the same order as before.
 
         Params:
             pos (list): the point lists of the positive traces
@@ -152,25 +165,24 @@ def nestedFillOrder(pos : list, neg : list) -> list:
     pos_polys = [_tracePolygon(pts) for pts in pos]
     neg_polys = [_tracePolygon(pts) for pts in neg]
 
-    islands = [
-        i for i, p in enumerate(pos_polys)
-        if any(_covers(n, p) for n in neg_polys)
-    ]
-    seen_pos = set(islands)
-    seen_neg = set()
-    while islands:
+    holes = range(len(neg))
+    # a level needs a smaller outline than the one before it, so the nesting
+    # cannot run deeper than the number of traces; the bound is a safeguard
+    for _ in range(len(pos) + len(neg)):
+        islands = [
+            i for i, p in enumerate(pos_polys)
+            if any(_covers(neg_polys[j], p) for j in holes)
+        ]
+        if not islands:
+            break
         order.extend((pos[i], True) for i in islands)
         holes = [
             j for j, n in enumerate(neg_polys)
-            if j not in seen_neg and any(_covers(pos_polys[i], n) for i in islands)
+            if any(_covers(pos_polys[i], n) for i in islands)
         ]
-        seen_neg.update(holes)
+        if not holes:
+            break
         order.extend((neg[j], False) for j in holes)
-        islands = [
-            i for i, p in enumerate(pos_polys)
-            if i not in seen_pos and any(_covers(neg_polys[j], p) for j in holes)
-        ]
-        seen_pos.update(islands)
 
     return order
 
