@@ -335,7 +335,7 @@ class Log():
             sections = range(*srange)
             new_section_ranges = []
             for s1, s2 in self.section_ranges.copy():
-                if s1 and s2 in sections:
+                if s1 in sections and s2 in sections:
                     new_section_ranges.append((s1, s2))
                 elif s1 in sections:
                     new_section_ranges.append((s1, srange[1]-1))
