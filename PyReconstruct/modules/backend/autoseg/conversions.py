@@ -120,7 +120,30 @@ def get_resolution(zarr_array):
 def get_thickness(zarr_array):
     """Get section thickness (in µm) of series in zarr format."""
 
-    return get_voxel_size_um(zarr_array)[0]
+    try:
+        return get_voxel_size_um(zarr_array)[0]
+    except KeyError:  # no resolution provided
+        return 0.05  # the default section thickness, as get_true_mag defaults
+
+
+def get_label_resolutions(labels_array, raw):
+    """Get the (labels, raw) resolutions for a label import.
+
+    An array with no ``resolution`` or ``voxel_size`` is taken to share the
+    other one's pixel grid. When neither says, both get the same placeholder,
+    which only ever appears as a ratio or next to a zero offset.
+    """
+
+    sizes = []
+    for zarr_array in (labels_array, raw):
+        try:
+            sizes.append(get_resolution(zarr_array))
+        except KeyError:
+            sizes.append(None)
+
+    labels_res, raw_res = sizes
+    labels_res = labels_res or raw_res or [1, 1, 1]
+    return labels_res, raw_res or labels_res
 
 
 def voxel_nm(size_um):
@@ -561,8 +584,8 @@ def getLabelsToObjectsData(data_fp: str, group: str, raw_attrs: dict = None) -> 
     labels_array = get_zarr_array(data_zg, group)
     sections = (raw.attrs if raw_attrs is None else raw_attrs)["sections"]
 
-    resolution_z = labels_array.attrs["voxel_size"][0]
-    offset_z = labels_array.attrs["offset"][0]
+    resolution_z = get_label_resolutions(labels_array, raw)[0][0]
+    offset_z = get_array_offset(labels_array)[0]
     section_start = round(offset_z / resolution_z)
 
     return data_zg, sections, section_start
@@ -640,8 +663,15 @@ def getExteriors(mask : np.ndarray) -> list[np.ndarray]:
     return exteriors
 
 
-def exterior_to_points(ext: list[np.ndarray], offset, resolution, raw, window, tform, mag):
-    """Convert exterior to trace points."""
+def exterior_to_points(ext: list[np.ndarray], offset, resolution, raw, window, tform, mag, raw_resolution=None):
+    """Convert exterior to trace points.
+
+    ``ext`` is in label pixels. ``raw_resolution`` (default: the same as
+    ``resolution``) gives the height of raw in label pixels for the y flip.
+    """
+
+    if raw_resolution is None:
+        raw_resolution = resolution
 
     ## Convert to float
     ext = ext.astype(np.float64)
@@ -651,7 +681,7 @@ def exterior_to_points(ext: list[np.ndarray], offset, resolution, raw, window, t
 
     ext[:,1] += offset[1] / resolution[1]  # y
     ext[:,1] *= -1
-    ext[:,1] += raw.shape[1]
+    ext[:,1] += raw.shape[1] * raw_resolution[1] / resolution[1]
 
     ## Convert to coordinates
     ext *= mag
@@ -800,12 +830,11 @@ def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
     """
     
     labels_array = get_zarr_array(data_zg, group)
-    resolution = get_resolution(labels_array)
+    raw = get_zarr_array(data_zg, "raw")
+    resolution, raw_resolution = get_label_resolutions(labels_array, raw)
+
     offset = get_array_offset(labels_array)
     z_offset = round(offset[0] / resolution[0])
-
-    raw = get_zarr_array(data_zg, "raw")
-    raw_resolution = get_resolution(raw)
     raw_offset = get_array_offset(raw)
 
     attrs = raw.attrs if raw_attrs is None else raw_attrs
@@ -917,7 +946,9 @@ def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
             trace_color = palette_color(id, palette, color_seed)
 
             trace = Trace(name=trace_name, color=trace_color)
-            trace.points = exterior_to_points(ext, offset, resolution, raw, window, tform, mag)
+            trace.points = exterior_to_points(
+                ext, offset, resolution, raw, window, tform, mag, raw_resolution
+            )
             trace.fill_mode = ("transparent", "unselected")
             
             section.addTrace(trace)
