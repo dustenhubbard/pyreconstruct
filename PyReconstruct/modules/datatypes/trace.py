@@ -1123,7 +1123,10 @@ def convertMode(arg):
         else:
             if arg[0] == "transparent":
                 mode = 9
-            elif arg[0] == "solid":
+            else:
+                # "solid", and the None style that the int branch above gives
+                # any Reconstruct mode other than 9, 11, 13 and 15. The field
+                # draws a None style at full opacity, so it goes out as solid.
                 mode = 13
             if arg[1] == "unselected":
                 mode *= -1
