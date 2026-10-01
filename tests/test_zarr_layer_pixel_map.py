@@ -1,20 +1,25 @@
 """The label overlay maps screen pixels to Zarr pixels the same way everywhere.
 
 `ZarrLayer.getID` (hover, select, and so merge) and `ZarrLayer.generateZarrLayer`
-(what is drawn) must both agree with the geometry: the label under a screen
-pixel is the Zarr pixel that contains its field point, found by flooring, which
-is also how `ImageLayer` crops and places the image under it. Before the fix,
-`getID` rounded (so the right half of every label pixel reported its neighbor)
-and the drawing truncated the crop start without applying the fractional
-remainder (so a pan by part of a Zarr pixel shifted the whole overlay).
+(what is drawn) must agree on every screen pixel, and both must match the
+geometry: the label under a screen pixel is the Zarr pixel that contains the
+pixel's center. Before the fix, `getID` rounded (so the right half of every
+label pixel reported its neighbor) and the drawing truncated the crop start
+without applying the fractional remainder (so a pan by part of a Zarr pixel
+shifted the whole overlay). Letting Qt scale the crop was not exact either: it
+samples source pixels its own way, so some pans and zooms drew one label where
+a click picked the next.
 """
+
+from fractions import Fraction
+import math
 
 import numpy as np
 import pytest
 import zarr
 
-N = 10  # the label array is N x N
-K = 4  # screen pixels per Zarr pixel
+N = 10  # the label array is N x N unless a test asks for more
+K = 4  # screen pixels per Zarr pixel at zoom 1
 
 
 def _distinct_ids(series, count):
@@ -37,8 +42,8 @@ def _distinct_ids(series, count):
     return ids
 
 
-def _build(series, tmp_path):
-    """A real `ZarrLayer` over an on-disk N x N label overlay on a real series.
+def _build(series, tmp_path, n=N):
+    """A real `ZarrLayer` over an on-disk n x n label overlay on a real series.
 
     One Zarr pixel is K screen pixels at the section's magnification, and the
     labels repeat a 3 x 3 tile so every neighbor of a pixel has another id.
@@ -49,15 +54,15 @@ def _build(series, tmp_path):
     mag = section.mag
     fp = str(tmp_path / "overlay.zarr")
     group = zarr.open_group(fp, mode="w")
-    raw = group.create_dataset("raw", shape=(1, N, N), dtype="u1")
+    raw = group.create_dataset("raw", shape=(1, n, n), dtype="u1")
     raw.attrs["resolution"] = [50, 2, 2]
-    raw.attrs["window"] = [0, 0, N * K * mag, N * K * mag]
+    raw.attrs["window"] = [0, 0, n * K * mag, n * K * mag]
     raw.attrs["sections"] = [section.n]
     raw.attrs["true_mag"] = K * mag
     tile = np.array(_distinct_ids(series, 9), dtype="u4")
-    rr, cc = np.meshgrid(np.arange(N), np.arange(N), indexing="ij")
+    rr, cc = np.meshgrid(np.arange(n), np.arange(n), indexing="ij")
     ids = tile[3 * (rr % 3) + cc % 3]
-    labels = group.create_dataset("labels", shape=(1, N, N), dtype="u4")
+    labels = group.create_dataset("labels", shape=(1, n, n), dtype="u4")
     labels[0] = ids
     labels.attrs["offset"] = [0, 0, 0]
     labels.attrs["resolution"] = [50, 2, 2]
@@ -92,70 +97,119 @@ def _shown(layer, section, dim, window):
     return shown
 
 
-def _true_id(ids, field_x, field_y, zmag):
-    """The label whose Zarr pixel contains a field point, or None outside it."""
-    c = int(np.floor(field_x / zmag))
-    r = int(np.floor(N - field_y / zmag))
-    if 0 <= c < N and 0 <= r < N:
-        return int(ids[r, c])
-    return None
+def _exact_index(layer, px, py, dim, window, n):
+    """The Zarr column and row under a screen pixel's center, in exact arithmetic.
+
+    Computed from the field window with fractions, independently of the code
+    under test. Also says whether the center sits exactly on a Zarr pixel edge.
+    """
+    pw, ph = (Fraction(d) for d in dim)
+    wx, wy, ww, wh = (Fraction(v) for v in window)
+    zx, zy, zmag = Fraction(layer.zarr_x), Fraction(layer.zarr_y), Fraction(layer.zarr_mag)
+    fx = wx + (px + Fraction(1, 2)) * ww / pw
+    fy = wy + (ph - py - Fraction(1, 2)) * wh / ph
+    x = (fx - zx) / zmag
+    y = n - (fy - zy) / zmag
+    near_edge = min(
+        abs(x - round(x)), abs(y - round(y))
+    ) < Fraction(1, 10**9)
+    return math.floor(x), math.floor(y), near_edge
 
 
-def _mismatches(layer, section, mag, ids, dim, window):
-    """Screen pixels where the drawing, `getID`, and the geometry disagree."""
-    from PyReconstruct.modules.calc import pixmapPointToField
+def _mismatches(layer, section, ids, dim, window):
+    """Screen pixels where the drawing, `getID`, and the geometry disagree.
 
+    The drawing and `getID` must agree on every pixel. The geometry is held to
+    the same standard except where a pixel center sits on a Zarr pixel edge to
+    within floating point, where either neighbor is a correct answer.
+    """
+    n = ids.shape[0]
     shown = _shown(layer, section, dim, window)
     bad = []
     for py in range(dim[1]):
         for px in range(dim[0]):
-            fx, fy = pixmapPointToField(px + 0.5, py + 0.5, dim, window, mag)
-            want = _true_id(ids, fx, fy, layer.zarr_mag)
+            c, r, near_edge = _exact_index(layer, px, py, dim, window, n)
+            want = int(ids[r, c]) if 0 <= c < n and 0 <= r < n else None
             got = layer.getID(px, py)
             got = None if got is None else int(got)
             drawn = int(shown[py, px])
-            if want is None:
-                # outside the overlay: nothing is drawn and nothing is picked
-                if got is not None or drawn != -1:
-                    bad.append((px, py, drawn, want, got))
-            elif drawn != want or got != want:
+            if (got is None) != (drawn == -1) or (got is not None and got != drawn):
+                bad.append((px, py, drawn, want, got))
+            elif got != want and not near_edge:
                 bad.append((px, py, drawn, want, got))
     return bad
 
 
+def _window(layer, mag, shift, dim, zoom):
+    """A field window starting `shift` Zarr pixels into the overlay.
+
+    `zoom` is screen pixels per image pixel, so a Zarr pixel spans `zoom * K`
+    screen pixels.
+    """
+    return [
+        shift[0] * layer.zarr_mag,
+        shift[1] * layer.zarr_mag,
+        dim[0] * mag / zoom,
+        dim[1] * mag / zoom,
+    ]
+
+
 # The window origin in Zarr pixels, per axis. 0 is edge aligned, the halves are
 # the pan from the report, and the negative ones put blank space on the left
-# and top so the placement has to include it. The zoom is screen pixels per
-# image pixel; the fractional ones make the scale itself fractional. No case
-# puts a screen pixel center exactly on a Zarr pixel edge, where the drawing
-# and the float geometry could break the tie differently.
+# and top. Several put pixel centers exactly on Zarr pixel edges: (0.125, 0)
+# at zoom 1 does on every fourth column, and so do the quarters.
 @pytest.mark.parametrize("zoom", [1, 1.3, 0.37], ids=["zoom1", "zoom1.3", "zoom0.37"])
 @pytest.mark.parametrize(
     "shift",
-    [(0, 0), (0.5, 0.5), (0.2, 0.7), (-1.5, -0.5), (2.3, -2.7)],
-    ids=["aligned", "half", "fraction", "blank-edge", "mixed"],
+    [(0, 0), (0.5, 0.5), (0.125, 0), (0.25, 0.75), (0.2, 0.7), (-1.5, -0.5), (2.3, -2.7)],
+    ids=["aligned", "half", "eighth", "quarter", "fraction", "blank-edge", "mixed"],
 )
 def test_drawn_and_picked_labels_match_geometry(
     qapp, real_series, tmp_path, shift, zoom
 ):
     layer, section, mag, ids = _build(real_series, tmp_path)
     dim = (32, 32)
-    window = [
-        shift[0] * layer.zarr_mag,
-        shift[1] * layer.zarr_mag,
-        dim[0] * mag / zoom,
-        dim[1] * mag / zoom,
-    ]
-    bad = _mismatches(layer, section, mag, ids, dim, window)
+    window = _window(layer, mag, shift, dim, zoom)
+    bad = _mismatches(layer, section, ids, dim, window)
     # (px, py, drawn, true, getID) for the first few, if any
     assert not bad, f"{len(bad)} of {dim[0] * dim[1]} pixels disagree: {bad[:6]}"
+
+
+# Zoomed out, so several Zarr pixels share one screen pixel: half a screen
+# pixel per Zarr pixel, then 5 and 6.3 Zarr pixels per screen pixel.
+@pytest.mark.parametrize(
+    "zoom", [0.5 / K, 1 / (5 * K), 1 / (6.3 * K)], ids=["half-px", "5x-out", "6.3x-out"]
+)
+@pytest.mark.parametrize("shift", [(0, 0), (0.5, 0.25), (-3.5, 1.2)], ids=["aligned", "pan", "blank-edge"])
+def test_zoomed_out_labels_match_geometry(qapp, real_series, tmp_path, shift, zoom):
+    layer, section, mag, ids = _build(real_series, tmp_path, n=210)
+    dim = (32, 32)
+    window = _window(layer, mag, shift, dim, zoom)
+    bad = _mismatches(layer, section, ids, dim, window)
+    assert not bad, f"{len(bad)} of {dim[0] * dim[1]} pixels disagree: {bad[:6]}"
+
+
+def test_pixel_center_on_the_overlay_edge(qapp, real_series, tmp_path):
+    """A 1 x 1 overlay seen through a window from -0.5 to 1.5 Zarr pixels.
+
+    The first screen pixel's center is exactly the overlay's left edge, so it
+    shows the label; the second's is exactly the right edge, outside it.
+    """
+    layer, section, mag, ids = _build(real_series, tmp_path, n=1)
+    zmag = layer.zarr_mag
+    dim = (2, 1)
+    window = [-0.5 * zmag, 0, 2 * zmag, 1 * zmag]
+    shown = _shown(layer, section, dim, window)
+    assert shown.tolist() == [[int(ids[0, 0]), -1]]
+    assert int(layer.getID(0, 0)) == int(ids[0, 0])
+    assert layer.getID(1, 0) is None
 
 
 def test_full_overlay_view_matches_geometry(qapp, real_series, tmp_path):
     layer, section, mag, ids = _build(real_series, tmp_path)
     dim = (N * K, N * K)
     window = [0, 0, N * K * mag, N * K * mag]
-    bad = _mismatches(layer, section, mag, ids, dim, window)
+    bad = _mismatches(layer, section, ids, dim, window)
     assert not bad, f"{len(bad)} of {dim[0] * dim[1]} pixels disagree: {bad[:6]}"
 
 
@@ -215,3 +269,45 @@ def _assert_merged(layer, series, ids, clicked):
     assert not (on_disk == gone).any()
     expected = np.where(ids == gone, keep, ids)
     np.testing.assert_array_equal(on_disk, expected)
+
+
+def test_rgb_overlay_matches_geometry(qapp, real_series, tmp_path):
+    """A color (not label) overlay goes through the same pixel mapping."""
+    from PySide6.QtGui import QImage
+
+    from PyReconstruct.modules.backend.view.zarr_layer import ZarrLayer
+
+    n = 12
+    section = real_series.loadSection(sorted(real_series.sections)[0])
+    mag = section.mag
+    fp = str(tmp_path / "rgb.zarr")
+    group = zarr.open_group(fp, mode="w")
+    raw = group.create_dataset("raw", shape=(1, n, n), dtype="u1")
+    raw.attrs["resolution"] = [50, 2, 2]
+    raw.attrs["window"] = [0, 0, n * K * mag, n * K * mag]
+    raw.attrs["sections"] = [section.n]
+    raw.attrs["true_mag"] = K * mag
+    rr, cc = np.meshgrid(np.arange(n), np.arange(n), indexing="ij")
+    rgb = np.stack([cc * 20, rr * 20, np.full_like(cc, 7)]).astype("u1")[:, None]
+    overlay = group.create_dataset("rgb", shape=rgb.shape, dtype="u1")
+    overlay[:] = rgb
+    overlay.attrs["offset"] = [0, 0, 0]
+    overlay.attrs["resolution"] = [50, 2, 2]
+    real_series.zarr_overlay_fp = fp
+    real_series.zarr_overlay_group = "rgb"
+    layer = ZarrLayer(real_series)
+
+    dim = (24, 24)
+    window = _window(layer, mag, (0.125, 0.6), dim, 1.3)
+    img = layer.generateZarrLayer(section, dim, window).toImage()
+    img = img.convertToFormat(QImage.Format.Format_RGB888)
+    bad = []
+    for py in range(dim[1]):
+        for px in range(dim[0]):
+            c, r, near_edge = _exact_index(layer, px, py, dim, window, n)
+            if near_edge or not (0 <= c < n and 0 <= r < n):
+                continue
+            color = img.pixelColor(px, py)
+            if (color.red(), color.green(), color.blue()) != (c * 20, r * 20, 7):
+                bad.append((px, py, c, r))
+    assert not bad, f"{len(bad)} pixels show the wrong color: {bad[:6]}"

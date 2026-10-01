@@ -1,11 +1,9 @@
 import os
-import math
 import zarr
 import numpy as np
 
 from PySide6.QtCore import (
-    Qt,
-    QRectF
+    Qt
 )
 from PySide6.QtGui import (
     QPixmap, 
@@ -18,8 +16,6 @@ from PyReconstruct.modules.datatypes import (
     Series,
     Section
 )
-
-from PyReconstruct.modules.calc import pixmapPointToField
 
 class ZarrLayer():
 
@@ -69,12 +65,34 @@ class ZarrLayer():
         if self.is_labels:
             self.id_colors = {}
     
+    def _screenGrid(self, pixmap_dim, window, bh):
+        """Map the screen onto zarr pixel coordinates.
+
+            Params:
+                pixmap_dim (tuple): the w and h of the screen in pixels
+                window (list): the x, y, w, and h of the field window
+                bh (int): the zarr height in pixels (rows count down from its top)
+            Returns:
+                (tuple) the zarr x and y at the screen's top left corner and the
+                screen pixels per zarr pixel in x and y, or None for an empty view
+        """
+        pixmap_w, pixmap_h = tuple(pixmap_dim)
+        window_x, window_y, window_w, window_h = tuple(window)
+        if pixmap_w <= 0 or pixmap_h <= 0 or window_w <= 0 or window_h <= 0:
+            return None
+        wxmin = (window_x - self.zarr_x) / self.zarr_mag
+        wymin = bh - (window_y + window_h - self.zarr_y) / self.zarr_mag
+        sx = pixmap_w * self.zarr_mag / window_w
+        sy = pixmap_h * self.zarr_mag / window_h
+        return wxmin, wymin, sx, sy
+
     def getID(self, pix_x : int, pix_y : int):
         """Get the ID drawn at a screen pixel.
 
         The coordinates name a screen pixel the way a mouse event does, by its
-        top left corner. The ID is read at the pixel's center, which is where
-        generateZarrLayer samples the label it draws there.
+        top left corner. The ID is read at the pixel's center through
+        _zarrIndex, which generateZarrLayer also uses to pick the label it
+        draws there, so the two always agree.
 
             Params:
                 pix_x (int): the x coord in screen pixels
@@ -89,18 +107,14 @@ class ZarrLayer():
         if not 0 <= z < bz:
             return None
         
-        # convert the pixel's center to field coordinates
-        field_x, field_y = pixmapPointToField(
-            pix_x + 0.5, pix_y + 0.5,
-            self.pixmap_dim,
-            self.series.window,
-            self.section.mag
-        )
-
-        # get zarr coordinates from field coordinates: the pixel that contains
-        # the point, so floor (as the drawing in generateZarrLayer does)
-        image_x = math.floor((field_x - self.zarr_x) / self.zarr_mag)
-        image_y = math.floor(bh - (field_y - self.zarr_y) / self.zarr_mag)
+        # the zarr pixel under the screen pixel's center, by the same mapping
+        # generateZarrLayer draws with
+        grid = self._screenGrid(self.pixmap_dim, self.series.window, bh)
+        if grid is None:
+            return None
+        wxmin, wymin, sx, sy = grid
+        image_x = int(_zarrIndex(pix_x, wxmin, sx))
+        image_y = int(_zarrIndex(pix_y, wymin, sy))
 
         if not 0 <= image_x < bw:
             return None
@@ -193,35 +207,43 @@ class ZarrLayer():
         self.pixmap_dim = pixmap_dim
         self.series.window = window
         pixmap_w, pixmap_h = tuple(pixmap_dim)
-        window_x, window_y, window_w, window_h = tuple(window) 
 
-        # scaling: ratio of screen pixels to actual image pixels (should be equal)
-        x_scaling = pixmap_w / (window_w / section.mag)
-        y_scaling = pixmap_h / (window_h / section.mag)
-        # assert(abs(x_scaling - y_scaling) < 1e-6)
-        self.zarr_scaling = x_scaling * self.zarr_mag / section.mag
-
-        # the window in zarr pixel coordinates (floats; rows count down from
-        # the top of the zarr)
-        wxmin = (window_x - self.zarr_x) / self.zarr_mag
-        wxmax = (window_x + window_w - self.zarr_x) / self.zarr_mag
-        wymin = bh - (window_y + window_h - self.zarr_y) / self.zarr_mag
-        wymax = bh - (window_y - self.zarr_y) / self.zarr_mag
-
-        # return nothing if the requested view is completely out of bounds
-        if wxmin >= bw or wxmax <= 0 or wymin >= bh or wymax <= 0:
+        # the zarr pixel under each screen pixel's center, one index per
+        # screen column and one per screen row (see _zarrIndex)
+        grid = self._screenGrid(pixmap_dim, window, bh)
+        if grid is None:
             return None
+        wxmin, wymin, sx, sy = grid
+        self.zarr_scaling = sx
+        cols = _zarrIndex(np.arange(pixmap_w), wxmin, sx)
+        rows = _zarrIndex(np.arange(pixmap_h), wymin, sy)
 
-        # crop outward to whole pixels, within the zarr, so the crop covers
-        # the whole window; the crop is placed below by its exact fractional
-        # offset from the window edge, the way ImageLayer places its crop
-        xmin = max(0, math.floor(wxmin))
-        ymin = max(0, math.floor(wymin))
-        xmax = min(bw, math.ceil(wxmax))
-        ymax = min(bh, math.ceil(wymax))
+        # the screen columns and rows that land inside the zarr; the indices
+        # only grow across the screen, so each is one contiguous run
+        in_x = np.flatnonzero((cols >= 0) & (cols < bw))
+        in_y = np.flatnonzero((rows >= 0) & (rows < bh))
+        # return nothing if the requested view is completely out of bounds
+        if in_x.size == 0 or in_y.size == 0:
+            return None
+        x0, x1 = int(in_x[0]), int(in_x[-1]) + 1
+        y0, y1 = int(in_y[0]), int(in_y[-1]) + 1
+        cols = cols[x0:x1]
+        rows = rows[y0:y1]
+
+        # read the zarr pixels under the visible part of the screen; they are
+        # repeated or skipped below so there is exactly one per screen pixel
+        c0, c1 = int(cols[0]), int(cols[-1]) + 1
+        r0, r1 = int(rows[0]), int(rows[-1]) + 1
+        rows = rows - r0
+        cols = cols - c0
+        w, h = x1 - x0, y1 - y0
+
+        def toScreen(a):
+            """Pick a crop-shaped array's entry for each screen pixel."""
+            return np.take(np.take(a, rows, axis=0), cols, axis=1)
 
         if self.is_labels:
-            zarr_crop = self.zarr[z, ymin:ymax, xmin:xmax]
+            crop = self.zarr[z, r0:r1, c0:c1]
             # color each label the way autoseg import colors its trace, so the
             # overlay preview matches the imported objects exactly. id 0 is
             # background (not a segment); keep it the neutral gray the previous
@@ -234,60 +256,74 @@ class ZarrLayer():
             )
             palette = self.series.getOption("autoseg_color_palette") or None
             seed = self.series.getOption("autoseg_color_seed") or 0
-            zarr_crop_colors = np.ascontiguousarray(
-                palette_color_array(
-                    zarr_crop, palette, seed, background=(100, 100, 100)
-                )
+            # zoomed in, the crop is the smaller array, so color it and then
+            # repeat the colors; zoomed out, pick the screen's labels first
+            color_first = crop.size <= w * h
+            ids = crop if color_first else toScreen(crop)
+            colors = palette_color_array(
+                ids, palette, seed, background=(100, 100, 100)
             )
-            im_crop = QImage(
-                zarr_crop_colors.data,
-                xmax-xmin,
-                ymax-ymin,
-                zarr_crop_colors.strides[0],
+            if color_first:
+                colors = toScreen(colors)
+            screen_colors = np.ascontiguousarray(colors, dtype=np.uint8)
+            im_screen = QImage(
+                screen_colors.data,
+                w,
+                h,
+                screen_colors.strides[0],
                 QImage.Format.Format_RGB888
             )
             # generate overlay for selected labels
             if self.selected_ids:
-                zarr_crop_selected = np.zeros(zarr_crop.shape, dtype=np.uint8)
-                for label_id in self.selected_ids:
-                    zarr_crop_selected[zarr_crop == label_id] = 255
-                im_crop_selected = QImage(
-                    zarr_crop_selected.data,
-                    xmax-xmin,
-                    ymax-ymin,
-                    zarr_crop_selected.strides[0],
+                selected = np.where(
+                    np.isin(ids, self.selected_ids), 255, 0
+                ).astype(np.uint8)
+                if color_first:
+                    selected = toScreen(selected)
+                screen_selected = np.ascontiguousarray(selected)
+                im_screen_selected = QImage(
+                    screen_selected.data,
+                    w,
+                    h,
+                    screen_selected.strides[0],
                     QImage.Format.Format_Grayscale8
                 )
-                painter = QPainter(im_crop)
+                painter = QPainter(im_screen)
                 painter.setOpacity(0.5)
-                painter.drawImage(0, 0, im_crop_selected)
+                painter.drawImage(0, 0, im_screen_selected)
                 painter.end()
         else:
-            zarr_crop = self.zarr[:3, z, ymin:ymax, xmin:xmax]
-            zarr_crop_colors = np.ascontiguousarray(np.moveaxis(zarr_crop, 0, -1))
-            im_crop = QImage(
-                zarr_crop_colors.data,
-                xmax-xmin,
-                ymax-ymin,
-                zarr_crop_colors.strides[0],
+            crop = np.moveaxis(self.zarr[:3, z, r0:r1, c0:c1], 0, -1)
+            screen_colors = np.ascontiguousarray(toScreen(crop), dtype=np.uint8)
+            im_screen = QImage(
+                screen_colors.data,
+                w,
+                h,
+                screen_colors.strides[0],
                 QImage.Format.Format_RGB888
             )
 
-        # draw the crop scaled to the screen at its exact offset from the
-        # window's top left corner; without smoothing, each screen pixel shows
-        # the zarr pixel that contains its center, the one getID returns
+        # one image pixel per screen pixel, so Qt does no scaling or sampling
         zarr_layer = QPixmap(pixmap_w, pixmap_h)
         zarr_layer.fill(Qt.transparent)
         painter = QPainter(zarr_layer)
-        painter.drawImage(
-            QRectF(
-                (xmin - wxmin) * self.zarr_scaling,
-                (ymin - wymin) * self.zarr_scaling,
-                (xmax - xmin) * self.zarr_scaling,
-                (ymax - ymin) * self.zarr_scaling
-            ),
-            im_crop
-        )
+        painter.drawImage(x0, y0, im_screen)
         painter.end()
 
         return zarr_layer
+
+
+def _zarrIndex(pix, start, scale):
+    """The zarr pixel index under the center of a screen pixel.
+
+    Shared by getID and generateZarrLayer, so what is picked is always what is
+    drawn. Works on one index or on an array of them.
+
+        Params:
+            pix (int or array): the screen pixel index (column or row)
+            start (float): the zarr coordinate at the screen's edge
+            scale (float): screen pixels per zarr pixel
+        Returns:
+            (int or array) the zarr pixel index, which may be out of range
+    """
+    return np.floor(start + (np.asarray(pix) + 0.5) / scale).astype(np.int64)
