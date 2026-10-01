@@ -8,6 +8,8 @@ QPainter's integer arithmetic. With a target of 128/60, an image at 63/20
 rendered at 253/22 and one at 100/20 at 172/40. These tests measure the image
 `ImageLayer.generateImageLayer` actually draws after `optimizeSeriesBC`.
 """
+import tracemalloc
+
 import cv2
 import numpy as np
 import pytest
@@ -137,3 +139,36 @@ def test_window_with_no_image_changes_nothing(real_series, image_section):
     optimizeSectionBC(section, 128, 60, window=[w * 3, 0, w, h])
 
     assert (section.brightness, section.contrast) == (12, -34)
+
+
+@pytest.mark.parametrize("case", list(CASES))
+def test_uint8_image_scores_like_its_float_copy(qapp, case):
+    """Counting levels straight from a uint8 image picks what the float path picks."""
+    kind, mean, std, target_mean, target_std = CASES[case]
+    pixels = _image(kind, mean, std)
+
+    for view in (pixels, pixels[3:, ::3]):
+        assert adjustPixelsToStats(view, target_mean, target_std) == adjustPixelsToStats(
+            view.astype(np.float64), target_mean, target_std
+        )
+
+
+def test_uint8_image_is_not_copied_to_floats(qapp):
+    """A 16384 x 16384 section took 2 GB extra for each float copy."""
+    pixels = np.random.default_rng(0).integers(0, 256, (4096, 4096), dtype=np.uint8)
+    adjustPixelsToStats(pixels[:8, :8], 128, 60)  # build the lookup tables first
+
+    tracemalloc.start()
+    try:
+        adjustPixelsToStats(pixels, 128, 60)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
+    # one float copy is eight times the image
+    assert peak < 8 * pixels.nbytes
+
+
+def test_all_black_uint8_image_changes_nothing(qapp):
+    assert adjustPixelsToStats(np.zeros((8, 8), np.uint8), 128, 60) == (None, None)
+    assert adjustPixelsToStats(np.zeros((0, 8), np.uint8), 128, 60) == (None, None)
