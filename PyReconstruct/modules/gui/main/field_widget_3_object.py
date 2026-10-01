@@ -856,9 +856,11 @@ class FieldWidgetObject(FieldWidgetTrace):
         group_diffs = set(starting_groups) - set(obj_groups.getGroupList())
         if group_diffs:
 
-            ## Loop over each group that differs and rm from group viz
+            ## Loop over each group that differs and rm from group viz. A
+            ## series undo can bring a group back without its visibility
+            ## entry, so the entry may already be gone.
             for diff in group_diffs:
-                del self.series.groups_visibility[diff]
+                self.series.groups_visibility.pop(diff, None)
             
             ## Update menubar
             self.mainwindow.createMenuBar()
@@ -952,6 +954,19 @@ class FieldWidgetObject(FieldWidgetTrace):
             return False
         
         new_type, new_opacity = response
+
+        ## Leave the series alone when no object would change: a state added
+        ## here would end the redo history for an edit that did nothing.
+        changed = any(
+            (new_type and self.series.getAttr(name, "3D_mode") != new_type) or
+            (
+                new_opacity is not None and
+                self.series.getAttr(name, "3D_opacity") != new_opacity
+            )
+            for name in obj_names
+        )
+        if not changed:
+            return False
 
         self.series_states.addState()
 
