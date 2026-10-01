@@ -10,8 +10,13 @@ keeps its clockwise points in memory, so it was one of the ones flipped.
 Reconstruct reads the direction after applying the contour's transform, so on
 a section whose transform is mirrored, points that run counterclockwise in
 PyReconstruct run clockwise in Reconstruct. Export and import both have to
-check the transformed points.
+check the transformed points. They read the sign from the raw points and
+the transform's determinant instead of transforming the points, so rounding
+cannot give a flat trace a sign and the inexact polynomial inverse cannot
+flip one.
 """
+import math
+
 import pytest
 
 from PyReconstruct.modules.backend.func.xml_json_conversions import (
@@ -82,6 +87,40 @@ def test_mirrored_import_reads_the_transformed_direction(points, negative):
     )
 
     assert Trace.fromXMLObj(contour, MIRROR).negative is negative
+
+
+_C, _S = math.cos(math.radians(30)), math.sin(math.radians(30))
+ROTATE_30 = XMLTransform(xcoef=[0, _C, -_S, 0, 0, 0], ycoef=[0, _S, _C, 0, 0, 0])
+# a closed trace with no area: its points lie on one line
+FLAT = [(1, 2), (2, 4), (3, 6), (4, 8)]
+
+
+@pytest.mark.parametrize("points", [FLAT, FLAT[::-1]], ids=["up", "down"])
+def test_flat_trace_on_a_rotated_section_imports_positive(points):
+    contour = XMLContour(
+        name="t", closed=True, mode=9, border=[1, 0, 0], fill=[1, 0, 0],
+        hidden=False, points=list(points), transform=ROTATE_30,
+    )
+
+    assert Trace.fromXMLObj(contour, ROTATE_30).negative is False
+
+
+@pytest.mark.parametrize("points", [FLAT, FLAT[::-1]], ids=["up", "down"])
+def test_flat_trace_on_a_rotated_section_exports_in_order(points):
+    trace = Trace("t", [255, 0, 0], True)
+    trace.points = list(points)
+
+    assert trace.getXMLObj(ROTATE_30).points == points
+
+
+def test_counterclockwise_trace_on_a_nonlinear_section_imports_positive():
+    tform = XMLTransform(xcoef=[0, 1, 0, 0, 1, 0], ycoef=[0, 0, 1, 0, 0, 0])
+    contour = XMLContour(
+        name="t", closed=True, mode=9, border=[1, 0, 0], fill=[1, 0, 0],
+        hidden=False, points=[(2, 0), (3, 0), (3, 1), (2, 1)], transform=tform,
+    )
+
+    assert Trace.fromXMLObj(contour).negative is False
 
 
 @pytest.mark.parametrize("negative", [True, False])

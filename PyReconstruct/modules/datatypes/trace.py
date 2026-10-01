@@ -22,11 +22,24 @@ def _xmlIsNegative(points : list, xml_tform : XMLTransform = None) -> bool:
     """Return True if Reconstruct reads closed contour points as negative.
 
     Reconstruct finds a contour's area after applying the contour's transform,
-    so a mirrored transform reverses which way the points run.
+    so a mirrored transform reverses which way the points run. The sign comes
+    from the raw points and the determinant of the transform's linear part
+    rather than from transformed points: transforming would let rounding give
+    a flat trace a sign, and the polynomial inverse is not exact.
     """
+    signed_area = 0
+    for i in range(len(points)):
+        x1, y1 = points[i-1]
+        x2, y2 = points[i]
+        signed_area += (x2 - x1) * (y2 + y1)
+    if signed_area == 0:
+        return False
+    negative = signed_area > 0
     if xml_tform is not None:
-        points = xml_tform.transformPoints(list(points))
-    return XMLContour(closed=True, points=points).isNegative()
+        x, y = xml_tform.xcoef, xml_tform.ycoef
+        if x[1] * y[2] - x[2] * y[1] < 0:
+            negative = not negative
+    return negative
 
 
 def normalizeObjectName(value : str) -> str:
