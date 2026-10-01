@@ -575,6 +575,47 @@ def test_a_deleted_trace_shifts_the_other_index_of_a_later_pair(qtbot,
     assert contours[name][index] == "B1"
 
 
+def test_a_row_whose_other_trace_was_deleted_goes_too(qtbot, confirmed):
+    """`A` and `C` both duplicate the first `B`. Keeping `A` deletes that `B`,
+    so the row for `C` has nothing left to compare and must not frame the
+    second `B` in its place."""
+    contours = {"A": ["A0"], "B": ["B0", "B1"], "C": ["C0"], "D": ["D0"]}
+    first, second = _pair("A", 0, "B", 0), _pair("C", 0, "B", 0)
+    third = _pair("B", 1, "D", 0)
+    navigated = []
+    dialog = _dialog(
+        qtbot, [first, second, third],
+        navigate=lambda s, n, i: navigated.append((n, i)),
+        delete_unselected=_contour_table_delete(contours),
+    )
+    _tick(dialog, _rows_by_record(dialog)[id(first)], 0)
+    dialog.deleteUnselectedTraces()
+
+    assert contours["B"] == ["B1"]
+    assert dialog.records == [third]
+    assert dialog.table.rowCount() == 1
+    dialog.table.selectRow(0)
+    dialog.goToSelectedContour()
+    name, index = navigated[-1]
+    assert contours[name][index] == "B1"
+
+
+def test_a_row_whose_own_trace_was_deleted_goes_too(qtbot, confirmed):
+    """The same when the deleted `B` is the row's own trace, not its other."""
+    contours = {"A": ["A0"], "B": ["B0"], "C": ["C0"]}
+    first, second = _pair("A", 0, "B", 0), _pair("B", 0, "C", 0)
+    dialog = _dialog(
+        qtbot, [first, second],
+        delete_unselected=_contour_table_delete(contours),
+    )
+    _tick(dialog, _rows_by_record(dialog)[id(first)], 0)
+    dialog.deleteUnselectedTraces()
+
+    assert contours["B"] == []
+    assert dialog.records == []
+    assert dialog.table.rowCount() == 0
+
+
 def test_two_rows_deleting_one_trace_shift_their_neighbors_once(qtbot,
                                                                  confirmed):
     """Keeping `A` in one row and `C` in the other deletes the first `B` once,
