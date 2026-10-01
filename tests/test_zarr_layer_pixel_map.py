@@ -111,7 +111,7 @@ def _mismatches(layer, section, mag, ids, dim, window):
         for px in range(dim[0]):
             fx, fy = pixmapPointToField(px + 0.5, py + 0.5, dim, window, mag)
             want = _true_id(ids, fx, fy, layer.zarr_mag)
-            got = layer.getID(px + 0.5, py + 0.5)
+            got = layer.getID(px, py)
             got = None if got is None else int(got)
             drawn = int(shown[py, px])
             if want is None:
@@ -170,18 +170,47 @@ def test_merge_rewrites_the_labels_that_were_clicked(qapp, real_series, tmp_path
     window = [0, 0, N * K * mag, N * K * mag]
     layer.generateZarrLayer(section, dim, window)
 
-    # screen x = (column + 0.75) * K; screen y at the middle of row 5
+    # screen x = (column + 0.75) * K; screen y in the middle of row 5
     first, second = (2, 5), (4, 5)
     for col, row in (first, second):
-        assert layer.selectID((col + 0.75) * K, (row + 0.5) * K)
+        assert layer.selectID(int((col + 0.75) * K), int((row + 0.5) * K))
     clicked = {int(ids[first[1], first[0]]), int(ids[second[1], second[0]])}
     assert {int(i) for i in layer.selected_ids} == clicked
     # the selection highlight draws over the same crop
     assert layer.generateZarrLayer(section, dim, window) is not None
 
-    layer.mergeLabels()
+    _assert_merged(layer, real_series, ids, clicked)
 
-    on_disk = zarr.open_group(real_series.zarr_overlay_fp, mode="r")["labels"][0]
+
+def test_click_after_partial_pan_merges_the_drawn_labels(
+    qapp, real_series, tmp_path
+):
+    """A click comes in as whole screen pixels, the way a mouse event gives it.
+
+    After a pan of (0.2, 0.7) Zarr pixels, screen pixels (3, 0) and (7, 0) sit
+    at the left edge of their labels: their corners fall in the label to the
+    left, their centers in the label that is drawn there. The click must merge
+    the drawn labels.
+    """
+    layer, section, mag, ids = _build(real_series, tmp_path)
+    dim = (32, 32)
+    window = [0.2 * layer.zarr_mag, 0.7 * layer.zarr_mag, dim[0] * mag, dim[1] * mag]
+    shown = _shown(layer, section, dim, window)
+
+    clicks = [(3, 0), (7, 0)]
+    drawn = {int(shown[py, px]) for px, py in clicks}
+    assert len(drawn) == 2
+    for px, py in clicks:
+        assert layer.selectID(px, py)
+    assert {int(i) for i in layer.selected_ids} == drawn
+
+    _assert_merged(layer, real_series, ids, drawn)
+
+
+def _assert_merged(layer, series, ids, clicked):
+    """Merge the selection and check only the clicked labels changed on disk."""
+    layer.mergeLabels()
+    on_disk = zarr.open_group(series.zarr_overlay_fp, mode="r")["labels"][0]
     keep, gone = min(clicked), max(clicked)
     assert not (on_disk == gone).any()
     expected = np.where(ids == gone, keep, ids)

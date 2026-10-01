@@ -70,9 +70,13 @@ class ZarrLayer():
             self.id_colors = {}
     
     def getID(self, pix_x : int, pix_y : int):
-        """Get an ID from screen pixel coordinates.
-        
-            Params: 
+        """Get the ID drawn at a screen pixel.
+
+        The coordinates name a screen pixel the way a mouse event does, by its
+        top left corner. The ID is read at the pixel's center, which is where
+        generateZarrLayer samples the label it draws there.
+
+            Params:
                 pix_x (int): the x coord in screen pixels
                 pix_y (int): the y coord in screen pixels
         """
@@ -85,9 +89,9 @@ class ZarrLayer():
         if not 0 <= z < bz:
             return None
         
-        # convert to field coordinates
+        # convert the pixel's center to field coordinates
         field_x, field_y = pixmapPointToField(
-            pix_x, pix_y,
+            pix_x + 0.5, pix_y + 0.5,
             self.pixmap_dim,
             self.series.window,
             self.section.mag
@@ -106,7 +110,7 @@ class ZarrLayer():
         return self.zarr[z, image_y, image_x]
 
     def selectID(self, pix_x : int, pix_y : int):
-        """Select the ID at a given screen coord.
+        """Select the ID at a given screen pixel (see getID).
         
             Params: 
                 pix_x (int): the x coord in screen pixels
