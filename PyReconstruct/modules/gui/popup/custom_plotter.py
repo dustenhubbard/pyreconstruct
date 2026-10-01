@@ -1305,6 +1305,31 @@ class CustomPlotter(QVTKRenderWindowInteractor):
 
         self.plt.organizeScene(group_by_host, axis, spacing)
         
+    def seriesMoved(self, old_fp : str, new_fp : str):
+        """Follow the open series to its new path after a Save As.
+
+        Scene objects, host trees and undo states record their series by
+        path, and the open series is told apart from the others by comparing
+        that path with its jser_fp.
+
+            Params:
+                old_fp (str): the series path before the Save As
+                new_fp (str): the series path after it
+        """
+        if old_fp == new_fp:
+            return
+        self.plt.objs.moveSeries(old_fp, new_fp)
+        for state in self.undo_states + self.redo_states:
+            series_fps = state["scene_objects"]["series_fps"]
+            if old_fp not in series_fps:
+                continue
+            moved = series_fps.pop(old_fp)
+            if new_fp in series_fps:
+                for data_type, dicts in moved.items():
+                    series_fps[new_fp].setdefault(data_type, []).extend(dicts)
+            else:
+                series_fps[new_fp] = moved
+
     def saveState(self):
         """Save an undo state."""
         self.undo_states.append(self.saveScene(return_dict=True))
@@ -1770,6 +1795,19 @@ class SceneObjectList():
         if remove_id in self.scene_objects:
             del(self.scene_objects[remove_id])
         self.stale_ids.discard(remove_id)
+
+    def moveSeries(self, old_fp : str, new_fp : str):
+        """Point every scene object from one series path at another.
+
+            Params:
+                old_fp (str): the series path the objects hold now
+                new_fp (str): the series path to give them
+        """
+        for scene_obj in self.values():
+            if scene_obj.series_fp == old_fp:
+                scene_obj.series_fp = new_fp
+        if old_fp in self.host_trees:
+            self.host_trees[new_fp] = self.host_trees.pop(old_fp)
 
     def markStale(self, obj_names=None, ztrace_names=None, series_fp=None):
         """Mark scene objects as stale: their 2D data changed after their mesh
