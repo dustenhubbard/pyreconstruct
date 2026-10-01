@@ -419,6 +419,7 @@ class FieldWidgetBase:
         # that adds or removes an alignment leaves the submenu listing a name the
         # sections no longer carry
         alignments_before = set(self.series.alignments)
+        groups_before = set(self.series.object_groups.getGroupList())
 
         self.series_states.undoState(redo)
         self.reload()
@@ -433,6 +434,13 @@ class FieldWidgetBase:
         # (traces, groups, attributes) leave the alignments alone
         if set(self.series.alignments) != alignments_before:
             self.mainwindow.createContextMenus()
+
+        # the Groups menu, as undoState does: a series undo can bring back a
+        # group removed with its last object, and the menu has no row for it
+        # until createMenuBar runs again
+        if set(self.series.object_groups.getGroupList()) != groups_before:
+            if hasattr(self.mainwindow, "createMenuBar"):
+                self.mainwindow.createMenuBar()
     
     def swapABsections(self) -> None:
         """Switch the A and B sections.
