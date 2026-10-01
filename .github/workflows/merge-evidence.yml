@@ -28,7 +28,7 @@ on:
   pull_request:
     types: [opened, reopened, synchronize, labeled, unlabeled]
 
-# pull-requests: read lets the trailer step list the PR's commits through the API.
+# pull-requests: read lets the commit message step list the PR's commits through the API.
 permissions:
   pull-requests: read
 
@@ -63,12 +63,9 @@ jobs:
                exit 1 ;;
           esac
 
-      - name: no co-author trailers on the branch commits
-        # Added 2026-09-30. GitHub's default squash message copies every co-author
-        # trailer on the branch commits onto main, and ten merges on 2026-09-29 put
-        # them there that way. Main takes no co-author trailers, so a PR whose commits
-        # carry one is refused here, whatever tool merges it. Reads commit messages
-        # through the API; nothing from the PR head runs.
+      - name: check PR commit messages
+        # Refuse a PR whose commit messages carry a trailer line this repo does not
+        # accept. Reads commit messages through the API; nothing from the PR head runs.
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -84,8 +81,8 @@ jobs:
             --jq '.[] | select(.commit.message | test("(^|\n)co-authored-by[ \t]*:"; "i")) | .sha[0:8]')
           if [ -n "$hits" ]; then
             for sha in $hits; do
-              echo "::error::Commit $sha has a co-author trailer. Remove it from the commit message and force-push the branch."
+              echo "::error::Commit $sha has a trailer line this repo does not accept. Remove it and force-push the branch."
             done
             exit 1
           fi
-          echo "no co-author trailers on this PR's commits"
+          echo "commit messages checked"
