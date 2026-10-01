@@ -2486,7 +2486,9 @@ class Series():
                     the trace later). Empty when nothing was skipped.
         """
 
-        window = self.getOption("roll_window")
+        # each object smooths with its own window (getSmoothWindow), so two
+        # objects in one call can use two values
+        windows = {name: self.getSmoothWindow(name) for name in obj_names}
 
         if log_event:
 
@@ -2514,7 +2516,7 @@ class Series():
 
                     for index, trace in enumerate(obj.traces):
 
-                        if trace.smooth(window=window, spacing=0.004):
+                        if trace.smooth(window=windows[obj_name], spacing=0.004):
 
                             smoothed_any = True
 
@@ -4333,7 +4335,26 @@ class Series():
                 return
         else:
             return attrs[name][attr_name]
-    
+
+    def getSmoothWindow(self, name : str) -> int:
+        """Get the rolling average window that smooths an object's traces.
+
+        The object's own value (obj_attrs "smooth_window", set from the
+        object list's `Edit attributes...`) when it has one, otherwise the
+        series option `roll_window`. A value an object does not carry means
+        "follow the series option", so the key is left out rather than
+        written as the option's number, and the option can still change it.
+
+            Params:
+                name (str): the name of the object
+            Returns:
+                (int): the window, in points spaced along the trace
+        """
+        window = self.getAttr(name, "smooth_window")
+        if isinstance(window, int) and not isinstance(window, bool) and window > 0:
+            return window
+        return self.getOption("roll_window")
+
     def setAttr(self, name : str, attr_name : str, value, ztrace=False):
         """Set the attributes for an object in the series.
         

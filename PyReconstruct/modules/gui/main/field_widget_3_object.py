@@ -218,6 +218,14 @@ class FieldWidgetObject(FieldWidgetTrace):
 
         displayed_color, color_mixed = object_color_seed(self.series.data, obj_names)
 
+        # the Smoothing row: the one window the selection shares, or blank
+        # when the objects disagree (an untouched blank leaves each alone)
+        smooth_values = {
+            self.series.getAttr(n, "smooth_window") for n in obj_names
+        }
+        smooth_mixed = len(smooth_values) > 1
+        smooth_window = None if smooth_mixed else smooth_values.pop()
+
         dialog = TraceDialog(
             self,
             name=displayed_name,
@@ -226,6 +234,9 @@ class FieldWidgetObject(FieldWidgetTrace):
             tags=tags,
             is_obj_list=True,
             tag_sets=self.series.tag_sets,
+            smooth_default=self.series.getOption("roll_window"),
+            smooth_window=smooth_window,
+            smooth_mixed=smooth_mixed,
         )
         response, confirmed = dialog.exec()
 
@@ -259,6 +270,18 @@ class FieldWidgetObject(FieldWidgetTrace):
             add_tags=not tags_displayed,
             tag_choices=dialog.tag_choices,
         )
+
+        ## The smoothing window goes on the object the user addressed: the
+        ## new name after a rename, else each selected object. Written after
+        ## editObjectAttributes, whose section loop made the series undo
+        ## state, so one undo takes the window back with the rest. 0 clears
+        ## the value (setAttr drops a None), and the object follows the
+        ## series option again. getattr: test stand-ins for the dialog
+        ## predate this row.
+        smooth_choice = getattr(dialog, "smooth_choice", None)
+        if smooth_choice is not None:
+            for n in ([name] if name else obj_names):
+                self.series.setAttr(n, "smooth_window", smooth_choice or None)
 
         ## Decorator will not know to update new name and host trees if name is changed
         if name:
