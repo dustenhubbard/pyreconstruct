@@ -317,7 +317,7 @@ def test_trace_get_selected_stops_when_unlock_is_refused(trace_table):
 
 
 class _FakeCheckItem:
-    """The three accessors `itemChanged` reads off a `QTableWidgetItem`."""
+    """The accessors `itemChanged` uses on a `QTableWidgetItem`."""
 
     def __init__(self, column, row, checked):
         from PySide6.QtCore import Qt
@@ -336,6 +336,9 @@ class _FakeCheckItem:
 
     def checkState(self):
         return self._state
+
+    def setCheckState(self, state):
+        self._state = state
 
 
 def test_trace_item_changed_proceeds_when_unlock_is_accepted(trace_table):
