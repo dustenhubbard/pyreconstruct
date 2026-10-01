@@ -152,3 +152,60 @@ def test_a_whole_pixel_at_one_to_one_is_not_duplicated(grid_section):
         assert (dcol[py, px], drow[py, px]) == (px, IH - 1 - (pmh - 1 - py)), (
             f"screen ({px}, {py}) shows image ({dcol[py, px]}, {drow[py, px]})"
         )
+
+
+def _zarr_section(real_series, tmp_path):
+    """A section over a two-level Zarr whose values encode their own pixel.
+
+    Each level is its own image: at scale 2 a value names a scale-2 pixel, so
+    the test also pins which level is read and how its pixels are indexed.
+    """
+    import zarr
+
+    fp = tmp_path / "images.zarr"
+    group = zarr.open_group(str(fp), mode="w")
+    levels = {}
+    for k in (1, 2):
+        rr, cc = np.meshgrid(np.arange(IH // k), np.arange(IW // k), indexing="ij")
+        values = ((cc * 7 + rr * 13) % 255 + 1).astype("u1")
+        group.create_group(f"scale_{k}").create_dataset("grid.png", data=values)
+        levels[k] = values
+    snum = sorted(real_series.sections)[0]
+    section = real_series.loadSection(snum)
+    real_series.src_dir = str(fp)
+    section.src = "grid.png"
+    section.mag = MAG
+    return section, levels
+
+
+def _zarr_mismatches(layer, levels, window, tform):
+    """Like _mismatches, for a gray Zarr read at whichever level the layer picked."""
+    image = layer._generateImage(DIM, window, bc=False)
+    image = image.convertToFormat(QImage.Format.Format_RGBA8888)
+    w, h = image.width(), image.height()
+    buf = np.frombuffer(image.constBits(), np.uint8, image.sizeInBytes())
+    gray = buf.reshape(h, image.bytesPerLine())[:, : w * 4].reshape(h, w, 4)[:, :, 0]
+    col, row, on_edge = _expected(window, tform)
+    inside = (col >= 0) & (col < IW) & (row >= 0) & (row < IH)
+    k = layer.selected_scale
+    level = levels[k]
+    want = level[np.clip(row // k, 0, level.shape[0] - 1), np.clip(col // k, 0, level.shape[1] - 1)]
+    right = np.where(inside, gray == want, gray == 0)
+    wrong = ~right & ~on_edge
+    return int(wrong.sum()), int(inside.sum()), k
+
+
+@pytest.mark.parametrize("tform", [TRANSLATE, ROTATE], ids=["translate", "rotate"])
+@pytest.mark.parametrize("zoom", [0.37, 1.7, 25.3])
+@pytest.mark.parametrize("shift", SHIFTS, ids=["aligned", "half", "fraction", "far"])
+def test_zarr_image_pixels_land_where_the_traces_say(qapp, real_series, tmp_path, tform, zoom, shift):
+    """The Zarr path reads the right level and the right pixel in it."""
+    section, levels = _zarr_section(real_series, tmp_path)
+    layer = _layer(section, tform)
+    assert layer.is_zarr_file
+    wrong, total, k = _zarr_mismatches(layer, levels, _window(zoom, shift), tform)
+    assert k == (2 if zoom < 0.5 else 1), f"read scale_{k} at zoom {zoom}"
+    assert wrong == 0, (
+        f"{wrong} of {total} screen pixels show a neighboring scale_{k} pixel "
+        f"at zoom {zoom}, pan {shift}"
+    )
