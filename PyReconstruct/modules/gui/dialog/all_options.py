@@ -237,9 +237,9 @@ class AllOptionsDialog(QDialog):
         w, h, dx, dy, nx, ny = self.series.getOption("grid", use_defaults)
         structure = [
             [None, "X", "Y"],
-            ["Element size:", ("float", w), ("float", h)],
-            ["Distance:", ("float", dx), ("float", dy)],
-            ["Number", ("int", nx), ("int", ny)],
+            ["Element size:", (True, "float", w), (True, "float", h)],
+            ["Distance:", (True, "float", dx), (True, "float", dy)],
+            ["Number", (True, "int", nx), (True, "int", ny)],
             [("check", ("Sampling frame", self.series.getOption("sampling_frame_grid", use_defaults)))]
         ]
         def setOption(response):
@@ -268,7 +268,7 @@ class AllOptionsDialog(QDialog):
             ["When using the knife, objects smaller than this percent"],
             ["of the original trace area will be automatically deleted."],
             None,
-            ["Knife delete threshold (%):", ("float", self.series.getOption("knife_del_threshold", use_defaults), (0, 100)), None],
+            ["Knife delete threshold (%):", (True, "float", self.series.getOption("knife_del_threshold", use_defaults), (0, 100)), None],
             None,
             ["A press of another mouse button while a cut is being drawn"],
             ["can be ignored, so that a tablet's barrel button does not"],
@@ -310,8 +310,8 @@ class AllOptionsDialog(QDialog):
                 ("Mutable Diffusion Laplacian", opt == "mut_dif_laplacian"),
                 ("Taubin", opt == "taubin"),
                 ("None (least smooth)", opt == "none"))],
-            ["Smoothing iterations:", ("int", self.series.getOption("smoothing_iterations", use_defaults))],
-            ["Screenshot resolution (dpi):", ("int", self.series.getOption("screenshot_res", use_defaults))],
+            ["Smoothing iterations:", (True, "int", self.series.getOption("smoothing_iterations", use_defaults))],
+            ["Screenshot resolution (dpi):", (True, "int", self.series.getOption("screenshot_res", use_defaults))],
             [("check", ("Auto-refresh edited objects", self.series.getOption("3D_auto_refresh", use_defaults)))]
         ]
 
@@ -433,7 +433,7 @@ class AllOptionsDialog(QDialog):
               ("Only unresolved flags", show_flags == "unresolved"),
               ("No flags", show_flags == "none")
             )],
-            ["Flag size:", ("int", flag_size)]
+            ["Flag size:", (True, "int", flag_size)]
         ]
         def setOption(response):
             if response[0][0][1]: show_flags = "all"
@@ -445,7 +445,7 @@ class AllOptionsDialog(QDialog):
 
         # fill_opacity
         structure = [
-            ["Transparent fill opacity:", ("float", self.series.getOption("fill_opacity", use_defaults))]
+            ["Transparent fill opacity:", (True, "float", self.series.getOption("fill_opacity", use_defaults))]
         ]
         def setOption(response):
             self.series.setOption("fill_opacity", response[0])
@@ -453,7 +453,7 @@ class AllOptionsDialog(QDialog):
 
         # find_zoom
         structure = [
-            ["Zoom level for finding contours:", ("float", self.series.getOption("find_zoom", use_defaults))]
+            ["Zoom level for finding contours:", (True, "float", self.series.getOption("find_zoom", use_defaults))]
         ]
         def setOption(response):
             self.series.setOption("find_zoom", response[0])
@@ -563,9 +563,9 @@ class AllOptionsDialog(QDialog):
 
         # 2D step
         structure = [
-            ["Coarse step:", ("float", self.series.getOption("big_dist", use_defaults))],
-            ["Fine step:", ("float", self.series.getOption("med_dist", use_defaults))],
-            ["Finest step:", ("float", self.series.getOption("small_dist", use_defaults))]
+            ["Coarse step:", (True, "float", self.series.getOption("big_dist", use_defaults))],
+            ["Fine step:", (True, "float", self.series.getOption("med_dist", use_defaults))],
+            ["Finest step:", (True, "float", self.series.getOption("small_dist", use_defaults))]
         ]
         def setOption(response):
             self.series.setOption("big_dist", response[0])
@@ -575,8 +575,8 @@ class AllOptionsDialog(QDialog):
 
         # 3D step
         structure = [
-            ["Translate step:", ("float", self.series.getOption("translate_step_3D", use_defaults))],
-            ["Rotate step (degrees):", ("float", self.series.getOption("rotate_step_3D", use_defaults))],
+            ["Translate step:", (True, "float", self.series.getOption("translate_step_3D", use_defaults))],
+            ["Rotate step (degrees):", (True, "float", self.series.getOption("rotate_step_3D", use_defaults))],
         ]
         def setOption(response):
             self.series.setOption("translate_step_3D", response[0])
