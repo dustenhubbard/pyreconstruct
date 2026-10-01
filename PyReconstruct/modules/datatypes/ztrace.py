@@ -1,5 +1,6 @@
 from PyReconstruct.modules.calc import distance3D, rolling_average
 from PyReconstruct.modules.datatypes.transform import alignment_tform
+from PyReconstruct.modules.datatypes.trace import xmlColorChannel
 
 from PyReconstruct.modules.datatypes_legacy import ZContour as XMLZContour
 
@@ -129,7 +130,9 @@ class Ztrace():
             pt = (*tform.map(x, y), snum)
             tform_pts.append(pt)
         
-        color = [c/255 for c in self.color]
+        # three decimals in the .ser, picked so the import reads the same
+        # color back
+        color = [xmlColorChannel(c) for c in self.color]
 
         xml_zcontour = XMLZContour(
             name = self.name,
