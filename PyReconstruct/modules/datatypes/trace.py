@@ -1,5 +1,6 @@
 import re
 from typing import Union
+from xml.sax.saxutils import escape
 
 import numpy as np
 
@@ -467,6 +468,10 @@ class Trace():
             ## Deal with brackets in trace palette names (not allowable in legacy Reconstruct)
             if re.search(r"<|\{", xml_contour.name):
                 xml_contour.name = re.sub(r"[<>{}]", "", xml_contour.name)
+
+            ## The name goes into XML text that is parsed next, so an & or a
+            ## quote in it must be written as an entity
+            xml_contour.name = escape(xml_contour.name, {'"': "&quot;"})
             
             xml_text = xml_text.replace("[NAME]", xml_contour.name)
             xml_text = xml_text.replace("[CLOSED]", str(xml_contour.closed))
