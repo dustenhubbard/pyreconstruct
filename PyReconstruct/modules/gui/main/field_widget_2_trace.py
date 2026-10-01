@@ -621,7 +621,7 @@ class FieldWidgetTrace(FieldWidgetBase):
 
         if simplify:
 
-            window = self.series.getOption("roll_window")
+            window = self.series.getSmoothWindow(new_trace.name)
             interpol_spacing = self.series.avg_mag / 2
             new_trace.smooth(window=window, spacing=interpol_spacing)  # spacing a function of pixel mag
         
@@ -1446,12 +1446,11 @@ class FieldWidgetTrace(FieldWidgetBase):
     def smoothTraces(self, traces: list):
         """Smooth traces."""
 
-        window = self.series.getOption("roll_window")
-
         for trace in traces:
 
             self.section.modified_contours.add(trace.name)
-            trace.smooth(window, spacing=0.004)
+            # the trace's object may carry its own window
+            trace.smooth(self.series.getSmoothWindow(trace.name), spacing=0.004)
             self.series.addLog(trace.name, self.section.n, "Smoothed trace(s)")
 
         if traces:
