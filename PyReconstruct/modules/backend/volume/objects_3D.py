@@ -104,6 +104,77 @@ class Object3D():
         self.addToExtremes(max(xs), max(ys), s)
 
 
+def _tracePolygon(points : list):
+    """Return a shapely polygon for a trace, or None if it cannot be one."""
+    from shapely.geometry import Polygon
+
+    if len(points) < 3:
+        return None
+    try:
+        return Polygon(points)
+    except Exception:
+        return None
+
+
+def _covers(outer, inner) -> bool:
+    """Return whether one trace polygon covers another.
+
+    A trace GEOS cannot compare (some self-crossing outlines) counts as not
+    covered, so it fills the way it did before.
+    """
+    if outer is None or inner is None:
+        return False
+    try:
+        return outer.covers(inner)
+    except Exception:
+        return False
+
+
+def nestedFillOrder(pos : list, neg : list) -> list:
+    """Return the traces of one section in the order they fill the volume.
+
+    Every positive trace fills first and every negative trace clears after it.
+    A positive trace inside a negative trace is an island in that hole, so it
+    fills again after the holes; a negative trace inside such an island clears
+    after that, and so on down the nesting. A section with no island comes
+    back in the same order as before.
+
+        Params:
+            pos (list): the point lists of the positive traces
+            neg (list): the point lists of the negative traces
+        Returns:
+            (list): (points, fill) pairs in fill order
+    """
+    order = [(pts, True) for pts in pos] + [(pts, False) for pts in neg]
+    if not pos or not neg:
+        return order
+
+    pos_polys = [_tracePolygon(pts) for pts in pos]
+    neg_polys = [_tracePolygon(pts) for pts in neg]
+
+    islands = [
+        i for i, p in enumerate(pos_polys)
+        if any(_covers(n, p) for n in neg_polys)
+    ]
+    seen_pos = set(islands)
+    seen_neg = set()
+    while islands:
+        order.extend((pos[i], True) for i in islands)
+        holes = [
+            j for j, n in enumerate(neg_polys)
+            if j not in seen_neg and any(_covers(pos_polys[i], n) for i in islands)
+        ]
+        seen_neg.update(holes)
+        order.extend((neg[j], False) for j in holes)
+        islands = [
+            i for i, p in enumerate(pos_polys)
+            if i not in seen_pos and any(_covers(neg_polys[j], p) for j in holes)
+        ]
+        seen_pos.update(islands)
+
+    return order
+
+
 class Surface(Object3D):
 
     def __init__(self, *args):
@@ -130,8 +201,13 @@ class Surface(Object3D):
         else:
             self.traces[snum]["pos"].append(pts)
 
-    def generateTrimesh(self):
-        """Generate a trimesh object from traces."""
+    def generateVolume(self):
+        """Fill the voxel volume the mesh is built from.
+
+            Returns:
+                (np.ndarray): the boolean volume, indexed x, y, section
+                (float): the xy size of a voxel
+        """
         # calculate the xy resolution for the volume
         vres_min = min(self.series.avg_mag, self.series.avg_thickness)
         vres_max = max(self.series.avg_mag, self.series.avg_thickness)
@@ -144,13 +220,14 @@ class Surface(Object3D):
             round((ymax-ymin)/vres)+1,
             smax-smin+1
         )
-    
+
         # create empty numpy volume
         volume = np.zeros(vshape, dtype=bool)
 
-        # add the traces to the volume
+        # add the traces to the volume: positives fill, negatives clear, and
+        # a positive inside a negative (an island in a hole) fills again after it
         for snum, trace_lists in self.traces.items():
-            for trace in trace_lists["pos"]:
+            for trace, fill in nestedFillOrder(trace_lists["pos"], trace_lists["neg"]):
                 x_values = []
                 y_values = []
                 for x, y in trace:
@@ -160,19 +237,14 @@ class Surface(Object3D):
                     np.array(x_values),
                     np.array(y_values)
                 )
-                volume[x_pos, y_pos, snum - smin] = True
-            # subtract out the negative traces
-            for trace in trace_lists["neg"]:
-                x_values = []
-                y_values = []
-                for x, y in trace:
-                    x_values.append(round((x-xmin) / vres))
-                    y_values.append(round((y-ymin) / vres))
-                x_pos, y_pos = polygon(
-                    np.array(x_values),
-                    np.array(y_values)
-                )
-                volume[x_pos, y_pos, snum - smin] = False
+                volume[x_pos, y_pos, snum - smin] = fill
+
+        return volume, vres
+
+    def generateTrimesh(self):
+        """Generate a trimesh object from traces."""
+        xmin, xmax, ymin, ymax, smin, smax = tuple(self.extremes)
+        volume, vres = self.generateVolume()
 
         # generate trimesh
         tm = trimesh.voxel.ops.matrix_to_marching_cubes(volume)
