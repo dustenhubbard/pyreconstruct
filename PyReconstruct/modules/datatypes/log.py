@@ -80,16 +80,20 @@ def _readQuoted(s : str, pos : int):
         return "".join(parts), k + 1
 
 
-def _onlyQuotedShape(value : str) -> bool:
-    """Whether a decoded quoted field could only have come from quoteField.
+def _onlyQuotedShape(value : str, is_obj : bool) -> bool:
+    """Whether a decoded quoted field is one quoteField would have quoted.
 
     Older versions wrote names as they were, so a name such as '"alice"' is
     literal text in their logs. quoteField quotes a value only when it holds
-    ", ", opens with a quote or is "-", so a decoded value that holds ", " or
-    a quote, or is "-", is one no older row can have meant as a plain name.
-    Anything else is read the old way.
+    ", " or opens with a quote, and forces quotes on an object named "-"
+    (never on a user). A decoded value of any other shape cannot have come
+    from it, so it is read the old way.
     """
-    return ", " in value or '"' in value or value == "-"
+    return (
+        ", " in value
+        or value.startswith('"')
+        or (is_obj and value == "-")
+    )
 
 
 def splitRow(s : str, decode : bool = True):
@@ -112,7 +116,7 @@ def splitRow(s : str, decode : bool = True):
             if (
                 quoted
                 and s.startswith(", ", quoted[1])
-                and _onlyQuotedShape(quoted[0])
+                and _onlyQuotedShape(quoted[0], i == 3)
             ):
                 fields.append((quoted[0], True))
                 pos = quoted[1] + 2

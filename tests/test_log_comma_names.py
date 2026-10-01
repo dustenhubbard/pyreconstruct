@@ -122,6 +122,10 @@ def test_an_older_name_opening_with_a_quote_still_reads():
     '26-06-29, 12:00, "alice", axon, 3, Modify trace(s)',
     '26-06-29, 12:00, alice, "axon", 3, Modify trace(s)',
     '26-06-29, 12:00, "alice, axon", 3, Modify trace(s)',
+    '26-06-29, 12:00, alice, "a""", 3, Modify trace(s)',
+    '26-06-29, 12:00, "x1""-b""", axon, 3, Modify trace(s)',
+    '26-06-29, 12:00, alice, "x1""-b""", 3, Modify trace(s)',
+    '26-06-29, 12:00, "-", axon, 3, Modify trace(s)',
 ])
 def test_quotes_an_older_version_wrote_stay_literal(row):
     """Older versions wrote names as they were, quotes included. Those
