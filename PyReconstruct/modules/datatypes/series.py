@@ -2505,6 +2505,7 @@ class Series():
         ):
 
             section_modified = False
+            section_start = len(malformed)
 
             for obj_name in obj_names:
 
@@ -2562,6 +2563,10 @@ class Series():
                         section.modified_contours.add(obj_name)
                         section_modified = True
 
+            # counted once the section is smoothed: a skipped trace and its
+            # lookalikes keep their points, so the count is the scan-time one
+            self._recordLookalikes(section, malformed[section_start:])
+
             # only re-serialize sections that actually changed (previously every
             # section was saved, recomputing its full geometry index each time)
             if section_modified:
@@ -2585,7 +2590,7 @@ class Series():
 
         return malformed
 
-    def deleteMalformedTraces(self, records : list, series_states=None, message="Deleting malformed contours...") -> list:
+    def deleteMalformedTraces(self, records : list, series_states=None, message="Deleting malformed contours...", ambiguous : list = None) -> list:
         """Delete specific malformed traces reported by smoothObject.
 
         Also used by the data clean-up operations (pixel-dust / empty traces),
@@ -2594,16 +2599,23 @@ class Series():
 
         Each record must carry the keys produced by smoothObject — in
         particular "name", "section" and "match" (a {"color", "points"}
-        signature). Because sections are reloaded fresh from disk, the stored
-        signature is matched against each candidate trace by color and
-        7-decimal-rounded points rather than by object identity, so the exact
-        trace is removed even across a save/reload. A record whose trace can no
-        longer be found (e.g. it was edited or re-smoothed in the meantime) is
-        skipped and left out of the returned list.
+        signature), and normally "index". Because sections are reloaded fresh
+        from disk, the trace is re-found rather than held by identity: the
+        trace at the recorded "index" when it still matches the signature by
+        color and 7-decimal-rounded points, otherwise the one unclaimed trace
+        that matches (see _resolveRecordedTraces). The index is what tells
+        identical traces under one name apart; matching the signature alone
+        deleted the first of them, whichever the record named. A record whose
+        trace can no longer be found (e.g. it was edited or re-smoothed in the
+        meantime) is skipped and left out of the returned list. So is a record
+        whose index no longer fits and whose signature fits more than one
+        trace: nothing is deleted for it rather than a guess.
 
             Params:
                 records (list): malformed-contour records to delete
                 series_states: the series states as stored in the GUI (undo)
+                ambiguous (list): optional; receives each record skipped
+                    because more than one trace could be the one it names
             Returns:
                 (list): the records whose trace was found and deleted
         """
@@ -2624,23 +2636,248 @@ class Series():
             series_states=series_states,
             section_numbers=sorted(by_section)
         ):
-            removed_any = False
-            for record in by_section.get(snum, []):
-                contour = section.contours.get(record["name"])
-                if not contour:
+            section_records = by_section.get(snum, [])
+            found, unsure = self._resolveRecordedTraces(
+                section, section_records
+            )
+            if ambiguous is not None:
+                ambiguous.extend(unsure)
+            # remove only after every record is resolved: the recorded indexes
+            # all describe the contour as it stands before this delete
+            removed = set()
+            for record in section_records:
+                trace = found.get(id(record))
+                if trace is None:
                     continue
-                for trace in contour:
-                    if self._traceMatchesSignature(trace, record["match"]):
-                        section.removeTrace(trace)
-                        deleted.append(record)
-                        removed_any = True
-                        break
-            if removed_any:
+                if id(trace) not in removed:
+                    section.removeTrace(trace)
+                    removed.add(id(trace))
+                deleted.append(record)
+            if removed:
                 section.save()
 
         if deleted:
             self.modified = True
         return deleted
+
+    @classmethod
+    def _resolveRecordedTraces(cls, section, records : list) -> tuple:
+        """Find the trace each clean-up record names on a loaded section.
+
+        A record names its trace by position ("index") and by its color and
+        points ("match"). The position decides between identical traces under
+        one name, which the signature alone cannot tell apart, so the trace at
+        the recorded index is used when it still matches the signature.
+
+        Otherwise (an edit since the scan moved it, or a record with no index)
+        the signature has to find it alone, and it is only trusted when it is
+        unambiguous: exactly one matching trace that no other record has
+        claimed. When more than one fits, the record is set aside and nothing
+        is deleted for it, because deleting the wrong one of two identical
+        traces is the failure this exists to prevent.
+
+        An index that still lands on a matching trace can be stale too: with
+        identical traces b0, b1 and b2, deleting b0 elsewhere puts b2 where b1
+        was, and deleting an unrelated trace earlier in the contour shifts
+        every index after it. So a record from a scan that counted its
+        lookalikes resolves by that count instead of by index (see
+        _resolveByLookalikes), counting as lookalikes only traces whose saved
+        data is the same in every field. A record with no "lookalikes" keeps
+        the index.
+
+        Records that name the same target resolve together, so one trace is
+        deleted once however many rows name it: the same name, index and
+        signature share a trace, and a record with no index shares the trace
+        of an indexed record with its name and signature.
+
+            Returns:
+                (tuple): (found, ambiguous). found maps id(record) -> trace for
+                    the records that were found; ambiguous lists the records
+                    set aside because more than one trace could be theirs
+        """
+        found = {}
+        ambiguous = []
+        claimed = set()
+        by_target = {}
+        unsure_targets = set()
+        unresolved = []
+        identities = {}  # name -> each trace's identity, read once
+        for record in records:
+            contour = section.contours.get(record["name"])
+            if not contour:
+                continue
+            target = cls._recordTarget(record)
+            if record.get("identity") is not None and \
+                    record["name"] not in identities:
+                identities[record["name"]] = [
+                    cls._traceIdentity(t) for t in contour
+                ]
+            counted = cls._resolveByLookalikes(
+                contour, record, identities.get(record["name"])
+            )
+            if counted is not None:
+                outcome, trace = counted
+                if outcome == "ambiguous":
+                    ambiguous.append(record)
+                    unsure_targets.add(target)
+                elif outcome == "found":
+                    found[id(record)] = trace
+                    claimed.add(id(trace))
+                    by_target.setdefault(target, trace)
+                continue  # "missing": nothing left to delete
+            index = target[1]
+            if index is not None and 0 <= index < len(contour):
+                trace = contour[index]
+                if cls._traceMatchesSignature(trace, record["match"]):
+                    found[id(record)] = trace
+                    claimed.add(id(trace))
+                    by_target.setdefault(target, trace)
+                    continue
+            unresolved.append((record, contour, target))
+
+        for record, contour, target in unresolved:
+            name, index, signature = target
+            trace = by_target.get(target)
+            if trace is None and index is None:
+                trace = next(
+                    (t for (n, _i, sig), t in by_target.items()
+                     if n == name and sig == signature),
+                    None,
+                )
+            if trace is not None:
+                found[id(record)] = trace
+                continue
+            if target in unsure_targets:
+                ambiguous.append(record)
+                continue
+            matches = [
+                t for t in contour
+                if id(t) not in claimed
+                and cls._traceMatchesSignature(t, record["match"])
+            ]
+            if len(matches) == 1:
+                found[id(record)] = matches[0]
+                claimed.add(id(matches[0]))
+                by_target[target] = matches[0]
+            elif matches:
+                ambiguous.append(record)
+                unsure_targets.add(target)
+        return found, ambiguous
+
+    @classmethod
+    def _recordTarget(cls, record) -> tuple:
+        """(name, index or None, signature) naming a record's trace, hashable."""
+        index = record.get("index")
+        if isinstance(index, bool) or not isinstance(index, int):
+            index = None
+        return (record["name"], index, cls._signatureKey(record["match"]))
+
+    @classmethod
+    def _resolveByLookalikes(cls, contour, record, identities=None):
+        """Resolve a record by the fully identical traces its scan counted.
+
+        A record from a scan carries "identity" (every saved field of its
+        trace), "lookalikes" (how many traces under its name had that
+        identity) and "lookalike_ordinal" (its place among them, from 0). If
+        the count is unchanged, the trace is the one at that place among the
+        matches now, whatever its index. If the count changed and either count
+        is above 1, any of them could be the one the record named, so it is set
+        aside. A trace that was the only one of its kind and still is, is the
+        trace. ``identities`` optionally holds each trace's identity, in
+        contour order, so a batch reads each contour once.
+
+            Returns:
+                None when the record carries no count (resolve by index), or
+                ("found", trace), ("ambiguous", None) or ("missing", None)
+        """
+        recorded = record.get("lookalikes")
+        identity = record.get("identity")
+        if identity is None or isinstance(recorded, bool) or \
+                not isinstance(recorded, int):
+            return None
+        if identities is None:
+            identities = [cls._traceIdentity(t) for t in contour]
+        identity = cls._freeze(identity)
+        matches = [t for t, i in zip(contour, identities) if i == identity]
+        if not matches:
+            return ("missing", None)
+        if len(matches) != recorded:
+            return ("ambiguous", None)
+        if recorded == 1:
+            return ("found", matches[0])
+        ordinal = record.get("lookalike_ordinal")
+        if isinstance(ordinal, bool) or not isinstance(ordinal, int) or \
+                not 0 <= ordinal < len(matches):
+            return ("ambiguous", None)
+        return ("found", matches[ordinal])
+
+    @staticmethod
+    def _signatureKey(match) -> tuple:
+        """A record's {"color", "points"} signature as a hashable key."""
+        return (
+            tuple(match["color"]),
+            tuple(tuple(point) for point in match["points"]),
+        )
+
+    @classmethod
+    def _recordLookalikes(cls, section, records : list):
+        """Record each record's trace in full, and its fully identical traces.
+
+        Sets "identity" (every saved field of the trace but its name, from
+        Trace.getList: points, color, closed, negative, hidden, fill mode and
+        tags), "lookalikes" (how many traces under that name on the section
+        have that identity, the record's own included) and "lookalike_ordinal"
+        (its place among them, from 0), plus the same under "other_" on a pair
+        record. Traces that differ in anything saved are not lookalikes, so
+        each is found as the only match wherever it moved; the place only
+        chooses between traces whose data is the same. At delete time a
+        changed count sets the record aside (see _resolveByLookalikes). Each
+        contour is read once per scan.
+        """
+        positions = {}
+
+        def place(name, index):
+            entry = positions.get(name)
+            if entry is None:
+                contour = list(section.contours.get(name, []))
+                identities = [cls._traceIdentity(t) for t in contour]
+                by_identity = {}
+                for i, identity in enumerate(identities):
+                    by_identity.setdefault(identity, []).append(i)
+                entry = (identities, by_identity)
+                positions[name] = entry
+            identities, by_identity = entry
+            if not isinstance(index, int) or not 0 <= index < len(identities):
+                return None
+            identity = identities[index]
+            indexes = by_identity[identity]
+            return identity, len(indexes), indexes.index(index)
+
+        for record in records:
+            for prefix, name_key, index_key in (
+                ("", "name", "index"),
+                ("other_", "other_name", "other_index"),
+            ):
+                if name_key not in record:
+                    continue
+                placed = place(record[name_key], record.get(index_key))
+                if placed is None:
+                    continue
+                (record[f"{prefix}identity"],
+                 record[f"{prefix}lookalikes"],
+                 record[f"{prefix}lookalike_ordinal"]) = placed
+
+    @classmethod
+    def _traceIdentity(cls, trace) -> tuple:
+        """Every saved field of a trace but its name, as a hashable key."""
+        return cls._freeze(trace.getList(include_name=False))
+
+    @classmethod
+    def _freeze(cls, value):
+        """Lists and tuples, nested, as tuples, so the value can be a key."""
+        if isinstance(value, (list, tuple)):
+            return tuple(cls._freeze(v) for v in value)
+        return value
 
     @staticmethod
     def _traceMatchesSignature(trace, signature) -> bool:
@@ -2741,6 +2978,7 @@ class Series():
         for snum, section in self.enumerateSections(
             message="Scanning for pixel-dust traces...",
         ):
+            section_start = len(candidates)
             tform = section.tform
             mag2 = section.mag ** 2  # (um/px)^2, this section's pixel scale
             threshold_um2 = threshold_px * mag2  # px^2 cutoff -> this section's um^2
@@ -2762,6 +3000,7 @@ class Series():
                             area=area,
                             area_px=area_px,
                         ))
+            self._recordLookalikes(section, candidates[section_start:])
         return candidates
 
     def findSelfCrossingTraces(self, max_discard_ratio=0.05) -> list:
@@ -2876,6 +3115,7 @@ class Series():
         for snum, section in self.enumerateSections(
             message="Scanning for empty traces...",
         ):
+            section_start = len(candidates)
             tform = section.tform
             for cname in section.contours:
                 if not include_locked and self.getAttr(cname, "locked"):
@@ -2900,6 +3140,7 @@ class Series():
                     candidates.append(self._cleanupRecord(
                         cname, snum, index, trace, reason=reason,
                     ))
+            self._recordLookalikes(section, candidates[section_start:])
         return candidates
 
     ## A pair of traces is only worth measuring an overlap ratio for if that
@@ -3096,6 +3337,7 @@ class Series():
         for snum, section in self.enumerateSections(
             message="Scanning for duplicates named differently...",
         ):
+            section_start = len(candidates)
             tform = section.tform
             entries = []
             for cname in section.contours:
@@ -3143,12 +3385,14 @@ class Series():
                 record["other_area"] = other["area"]
                 record["other_match"] = other["match"]
                 candidates.append(record)
+            self._recordLookalikes(section, candidates[section_start:])
 
         return candidates
 
     def deleteDifferentlyNamedDuplicates(self, choices : list,
                                          series_states=None,
-                                         log_event=True) -> list:
+                                         log_event=True,
+                                         ambiguous : list = None) -> list:
         """Delete the unkept side of cross-name duplicate pairs the user chose.
 
         The removal half of findDifferentlyNamedDuplicates. Each choice is a
@@ -3175,12 +3419,16 @@ class Series():
         pixel-dust and empty-trace clean-ups use, so it is one undoable
         operation (enumerateSections records the undo state into
         ``series_states``) and each trace is re-found after its section is
-        reloaded by its stored color+points signature rather than by identity.
+        reloaded by its recorded index and color+points signature rather than
+        by identity.
 
             Params:
                 choices (list): (record, keep) tuples, described above
                 series_states (dict): optional dict of undo states for GUI
                 log_event (bool): True if events should be logged
+                ambiguous (list): optional; receives each (record, keep) tuple
+                    left alone because more than one identical trace could be
+                    the one to delete (see deleteMalformedTraces)
             Returns:
                 (list): the (record, keep) tuples whose trace was found and
                     deleted, so a caller can prune exactly those rows
@@ -3190,10 +3438,18 @@ class Series():
             record, keep = choice
             if keep == "first":
                 delete_name = record["other_name"]
+                delete_index = record.get("other_index")
+                delete_lookalikes = record.get("other_lookalikes")
+                delete_ordinal = record.get("other_lookalike_ordinal")
+                delete_identity = record.get("other_identity")
                 delete_match = record["other_match"]
                 keep_name = record["name"]
             elif keep == "other":
                 delete_name = record["name"]
+                delete_index = record.get("index")
+                delete_lookalikes = record.get("lookalikes")
+                delete_ordinal = record.get("lookalike_ordinal")
+                delete_identity = record.get("identity")
                 delete_match = record["match"]
                 keep_name = record["other_name"]
             else:
@@ -3203,6 +3459,11 @@ class Series():
             targets.append({
                 "name": delete_name,
                 "section": record["section"],
+                # tells identical traces under one name apart
+                "index": delete_index,
+                "lookalikes": delete_lookalikes,
+                "lookalike_ordinal": delete_ordinal,
+                "identity": delete_identity,
                 "match": delete_match,
                 ## carried through deleteMalformedTraces, which returns the very
                 ## dicts it deleted, so the log and the return value can name
@@ -3214,11 +3475,15 @@ class Series():
         if not targets:
             return []
 
+        unsure = []
         deleted = self.deleteMalformedTraces(
             targets,
             series_states=series_states,
             message="Deleting duplicates named differently...",
+            ambiguous=unsure,
         )
+        if ambiguous is not None:
+            ambiguous.extend(target["choice"] for target in unsure)
 
         if log_event:
             for target in deleted:
