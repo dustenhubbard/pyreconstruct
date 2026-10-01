@@ -389,10 +389,11 @@ class MalformedContoursDialog(QDialog):
                              deleted_ids):
         """Take each deleted trace off the "lookalikes" count of the rows left.
 
-        A record counts the identical traces its scan saw, and the delete path
-        refuses a record whose count has changed (the index may then land on
-        the wrong one of them). A delete made from this list is one the list
-        has accounted for, so the survivors' counts follow it.
+        A record counts the identical traces its scan saw and its place among
+        them, and the delete path refuses a record whose count has changed. A
+        delete made from this list is one the list has accounted for, so the
+        survivors' counts and places follow it. Run before the index shift:
+        the indexes compared here are the ones from before the delete.
         """
         if not deleted_matches:
             return
@@ -410,20 +411,29 @@ class MalformedContoursDialog(QDialog):
             if match is not None:
                 gone[tuple(trace)] = _signatureKey(match)
         for record in counted:
-            for name_key, match_key, count_key in (
-                ("name", "match", "lookalikes"),
-                ("other_name", "other_match", "other_lookalikes"),
+            for name_key, index_key, match_key, count_key, ordinal_key in (
+                ("name", "index", "match", "lookalikes",
+                 "lookalike_ordinal"),
+                ("other_name", "other_index", "other_match",
+                 "other_lookalikes", "other_lookalike_ordinal"),
             ):
                 if not isinstance(record.get(count_key), int):
                     continue
                 signature = _signatureKey(record[match_key])
-                drop = sum(
-                    1 for (section, name, _index), key in gone.items()
+                same = [
+                    index for (section, name, index), key in gone.items()
                     if section == record["section"]
                     and name == record[name_key] and key == signature
-                )
-                if drop:
-                    record[count_key] -= drop
+                ]
+                if not same:
+                    continue
+                record[count_key] -= len(same)
+                # the place among the lookalikes drops by one for each
+                # deleted lookalike that sat before this trace
+                own = record.get(index_key)
+                if isinstance(record.get(ordinal_key), int) and \
+                        isinstance(own, int):
+                    record[ordinal_key] -= sum(1 for i in same if i < own)
 
     def _rows_for_export(self):
         """Return the report as a list of rows (header first).

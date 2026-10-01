@@ -68,11 +68,21 @@ def object_color_seed(series_data, obj_names : list):
 def notifyAmbiguousTraces(entries : list, shown : int = 10):
     """Say which listed traces were left because more than one could be them.
 
-    ``entries`` are (object name, section number) pairs, one per row that
-    Series.deleteMalformedTraces set aside. Nothing is shown for none.
+    ``entries`` are (object name, section number, index, match) tuples, one
+    per row that Series.deleteMalformedTraces set aside. Rows naming the same
+    trace are one trace here. Nothing is shown for none.
     """
-    if not entries:
+    targets = {}
+    for name, snum, index, match in entries:
+        key = (
+            snum, name, index,
+            tuple(match["color"]),
+            tuple(tuple(point) for point in match["points"]),
+        )
+        targets.setdefault(key, (name, snum))
+    if not targets:
         return
+    entries = list(targets.values())
     count = len(entries)
     lines = [f"  {name} on section {snum}" for name, snum in entries[:shown]]
     if count > shown:
@@ -453,7 +463,10 @@ class FieldWidgetObject(FieldWidgetTrace):
             self.reload()
             self.mainwindow.seriesModified(True)
 
-        notifyAmbiguousTraces([(r["name"], r["section"]) for r in ambiguous])
+        notifyAmbiguousTraces([
+            (r["name"], r["section"], r.get("index"), r["match"])
+            for r in ambiguous
+        ])
 
         missed = len(records) - len(deleted) - len(ambiguous)
         if missed:
@@ -521,8 +534,11 @@ class FieldWidgetObject(FieldWidgetTrace):
             self.mainwindow.seriesModified(True)
 
         notifyAmbiguousTraces([
-            (record["other_name"] if keep == "first" else record["name"],
-             record["section"])
+            (record["other_name"], record["section"],
+             record.get("other_index"), record["other_match"])
+            if keep == "first" else
+            (record["name"], record["section"], record.get("index"),
+             record["match"])
             for record, keep in ambiguous
         ])
 

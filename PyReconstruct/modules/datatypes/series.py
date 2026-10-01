@@ -3,7 +3,6 @@ import uuid
 import re
 import json
 import shutil
-from collections import Counter
 from datetime import datetime
 from copy import copy, deepcopy
 from pathlib import Path
@@ -2679,10 +2678,10 @@ class Series():
 
         An index that still lands on a matching trace can be stale too: with
         identical traces b0, b1 and b2, deleting b0 elsewhere puts b2 where b1
-        was. So a record carrying "lookalikes" (the count of identical traces
-        its scan saw) is also set aside when that count has changed and more
-        than one identical trace is left. An unchanged count, or a record with
-        no "lookalikes", keeps the index.
+        was, and deleting an unrelated trace earlier in the contour shifts
+        every index after it. So a record from a scan that counted its
+        lookalikes resolves by that count instead of by index (see
+        _resolveByLookalikes). A record with no "lookalikes" keeps the index.
 
         Records that name the same target resolve together, so one trace is
         deleted once however many rows name it: the same name, index and
@@ -2705,14 +2704,21 @@ class Series():
             if not contour:
                 continue
             target = cls._recordTarget(record)
+            counted = cls._resolveByLookalikes(contour, record)
+            if counted is not None:
+                outcome, trace = counted
+                if outcome == "ambiguous":
+                    ambiguous.append(record)
+                    unsure_targets.add(target)
+                elif outcome == "found":
+                    found[id(record)] = trace
+                    claimed.add(id(trace))
+                    by_target.setdefault(target, trace)
+                continue  # "missing": nothing left to delete
             index = target[1]
             if index is not None and 0 <= index < len(contour):
                 trace = contour[index]
                 if cls._traceMatchesSignature(trace, record["match"]):
-                    if cls._lookalikesChanged(contour, record):
-                        ambiguous.append(record)
-                        unsure_targets.add(target)
-                        continue
                     found[id(record)] = trace
                     claimed.add(id(trace))
                     by_target.setdefault(target, trace)
@@ -2757,17 +2763,40 @@ class Series():
         return (record["name"], index, cls._signatureKey(record["match"]))
 
     @classmethod
-    def _lookalikesChanged(cls, contour, record) -> bool:
-        """Whether a record's identical traces changed in number since its scan,
-        leaving more than one, so its index may now land on the wrong one."""
+    def _resolveByLookalikes(cls, contour, record):
+        """Resolve a record by the identical traces its scan counted.
+
+        A record from a scan carries "lookalikes" (how many traces under its
+        name had its color and points) and "lookalike_ordinal" (its place among
+        them, from 0). If the count is unchanged, the trace is the one at that
+        place among the matches now, whatever its index. If the count changed
+        and either count is above 1, any of them could be the one the record
+        named, so it is set aside. A single trace that is still single is the
+        trace.
+
+            Returns:
+                None when the record carries no count (resolve by index), or
+                ("found", trace), ("ambiguous", None) or ("missing", None)
+        """
         recorded = record.get("lookalikes")
         if isinstance(recorded, bool) or not isinstance(recorded, int):
-            return False
-        current = sum(
-            1 for t in contour
+            return None
+        matches = [
+            t for t in contour
             if cls._traceMatchesSignature(t, record["match"])
-        )
-        return current != recorded and current > 1
+        ]
+        if not matches:
+            return ("missing", None)
+        if len(matches) != recorded:
+            return ("ambiguous", None)
+        if recorded == 1:
+            return ("found", matches[0])
+        ordinal = record.get("lookalike_ordinal")
+        if isinstance(ordinal, bool) or not isinstance(ordinal, int):
+            return None
+        if not 0 <= ordinal < len(matches):
+            return ("ambiguous", None)
+        return ("found", matches[ordinal])
 
     @staticmethod
     def _signatureKey(match) -> tuple:
@@ -2791,26 +2820,35 @@ class Series():
 
         Sets "lookalikes" (and "other_lookalikes" on a pair record): the number
         of traces under that name on the section with the same color and
-        points, the record's own trace included. At delete time a changed count
-        means the index can no longer be trusted to tell them apart (see
-        _resolveRecordedTraces). Each contour is counted once per scan.
+        points, the record's own trace included, and "lookalike_ordinal" (and
+        "other_lookalike_ordinal"): the trace's place among them, from 0. At
+        delete time these find the trace even when its index has shifted, and
+        a changed count sets the record aside (see _resolveByLookalikes). Each
+        contour is counted once per scan.
         """
-        counters = {}
+        positions = {}
 
-        def count(name, match):
-            counter = counters.get(name)
-            if counter is None:
-                counter = Counter(
-                    cls._traceKey(t) for t in section.contours.get(name, [])
-                )
-                counters[name] = counter
-            return counter[cls._signatureKey(match)]
+        def place(name, match, index):
+            by_key = positions.get(name)
+            if by_key is None:
+                by_key = {}
+                for i, t in enumerate(section.contours.get(name, [])):
+                    by_key.setdefault(cls._traceKey(t), []).append(i)
+                positions[name] = by_key
+            indexes = by_key.get(cls._signatureKey(match), [])
+            ordinal = indexes.index(index) if index in indexes else None
+            return len(indexes), ordinal
 
         for record in records:
-            record["lookalikes"] = count(record["name"], record["match"])
+            (record["lookalikes"],
+             record["lookalike_ordinal"]) = place(
+                record["name"], record["match"], record.get("index")
+            )
             if "other_match" in record:
-                record["other_lookalikes"] = count(
-                    record["other_name"], record["other_match"]
+                (record["other_lookalikes"],
+                 record["other_lookalike_ordinal"]) = place(
+                    record["other_name"], record["other_match"],
+                    record.get("other_index"),
                 )
 
     @staticmethod
@@ -3374,12 +3412,14 @@ class Series():
                 delete_name = record["other_name"]
                 delete_index = record.get("other_index")
                 delete_lookalikes = record.get("other_lookalikes")
+                delete_ordinal = record.get("other_lookalike_ordinal")
                 delete_match = record["other_match"]
                 keep_name = record["name"]
             elif keep == "other":
                 delete_name = record["name"]
                 delete_index = record.get("index")
                 delete_lookalikes = record.get("lookalikes")
+                delete_ordinal = record.get("lookalike_ordinal")
                 delete_match = record["match"]
                 keep_name = record["other_name"]
             else:
@@ -3392,6 +3432,7 @@ class Series():
                 # tells identical traces under one name apart
                 "index": delete_index,
                 "lookalikes": delete_lookalikes,
+                "lookalike_ordinal": delete_ordinal,
                 "match": delete_match,
                 ## carried through deleteMalformedTraces, which returns the very
                 ## dicts it deleted, so the log and the return value can name

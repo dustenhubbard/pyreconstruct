@@ -213,10 +213,10 @@ def _remove_first(series, snum, name):
     section.save()
 
 
-def test_two_rows_naming_a_moved_trace_delete_it_once(tmp_path):
+def test_two_rows_naming_a_moved_trace_delete_nothing(tmp_path):
     """Both rows name the third `B`. The first `B` is deleted after the scan,
-    so the index no longer fits; the one remaining lookalike is the trace,
-    and both rows count as applied."""
+    which leaves one `B` of that shape, but the scan saw two, and the one
+    left could be either. Nothing is deleted, and both rows are reported."""
     series = _load_series(tmp_path)
     snum = _seed(series, [
         ("A", SQUARE, "a"),
@@ -234,9 +234,9 @@ def test_two_rows_naming_a_moved_trace_delete_it_once(tmp_path):
         choices, series_states=_states(series), ambiguous=ambiguous
     )
 
-    assert applied == choices
-    assert ambiguous == []
-    assert _tags(series, snum, "B") == [["b1"]]
+    assert applied == []
+    assert ambiguous == choices
+    assert _tags(series, snum, "B") == [["b1"], ["b2"]]
 
 
 def test_two_rows_naming_a_moved_trace_with_two_lookalikes_delete_none(
@@ -312,7 +312,11 @@ def test_one_record_twice_with_no_index_does_not_guess(tmp_path):
         r for r in series.findPixelDustTraces(1e9)
         if r["name"] == "DUST" and r["section"] == snum
     )
-    no_index = {k: v for k, v in record.items() if k != "index"}
+    # a record from before the count existed, with nothing to place it by
+    no_index = {
+        k: v for k, v in record.items()
+        if k not in ("index", "lookalikes", "lookalike_ordinal")
+    }
 
     ambiguous = []
     assert series.deleteMalformedTraces(
@@ -386,11 +390,12 @@ def test_the_pairs_list_is_told_which_rows_were_left(tmp_path, monkeypatch):
 
     assert applied == []
     assert notices == [
-        "PyReconstruct did not delete 2 traces. The section changed after the "
+        # two rows, one trace: the notice counts traces
+        "PyReconstruct did not delete 1 trace. The section changed after the "
         "scan, and PyReconstruct cannot tell which of the identical traces "
         "you chose:\n\n"
-        f"  B on section {snum}\n  B on section {snum}\n\n"
-        "Run the scan again to list them where they are now."
+        f"  B on section {snum}\n\n"
+        "Run the scan again to list it where it is now."
     ]
 
 
@@ -441,12 +446,16 @@ def test_scans_record_how_many_lookalikes_each_trace_has(tmp_path):
         ("DUST", DUST, "d1"),
         ("DUST", DUST, "d2"),
     ])
-    assert [r["lookalikes"] for r in _dust_records(series, snum)] == [3, 3, 3]
+    dust = _dust_records(series, snum)
+    assert [r["lookalikes"] for r in dust] == [3, 3, 3]
+    assert [r["lookalike_ordinal"] for r in dust] == [0, 1, 2]
     record = _row(series.findDifferentlyNamedDuplicates(0.95), "A", 1, "B")[0]
     a_side = "" if record["name"] == "A" else "other_"
     b_side = "other_" if a_side == "" else ""
     assert record[f"{a_side}lookalikes"] == 2
+    assert record[f"{a_side}lookalike_ordinal"] == 1
     assert record[f"{b_side}lookalikes"] == 1
+    assert record[f"{b_side}lookalike_ordinal"] == 0
 
 
 def test_an_index_that_lands_on_a_lookalike_deletes_nothing(tmp_path):
@@ -548,7 +557,41 @@ def test_a_delete_made_from_the_list_does_not_make_the_rest_ambiguous(
     dialog._deleteRecords([records[0]])
     assert records[2]["index"] == 1
     assert records[2]["lookalikes"] == 2
+    assert records[2]["lookalike_ordinal"] == 1
     dialog._deleteRecords([records[2]])
 
     assert ambiguous == []
     assert _tags(series, snum, "DUST") == [["d1"]]
+
+
+def test_an_unchanged_count_finds_the_trace_after_its_index_shifts(tmp_path):
+    """An unrelated trace before both lookalikes is deleted by hand. The count
+    is the same, but index 1 now holds `second`; the place among the
+    lookalikes still names `first`."""
+    series = _load_series(tmp_path)
+    snum = _seed(series, [
+        ("DUST", FAR, "other"),
+        ("DUST", DUST, "first"),
+        ("DUST", DUST, "second"),
+    ])
+    record = _dust_records(series, snum)
+    record = next(r for r in record if r["index"] == 1)
+    assert record["lookalike_ordinal"] == 0
+    _remove_first(series, snum, "DUST")
+
+    assert series.deleteMalformedTraces([record]) == [record]
+    assert _tags(series, snum, "DUST") == [["second"]]
+
+
+def test_the_twin_of_a_trace_deleted_by_hand_is_left(tmp_path):
+    """I pick `b0` of two identical traces, then delete `b0` by hand. One
+    match is left, but it is the twin, so nothing is deleted."""
+    series = _load_series(tmp_path)
+    snum = _seed(series, [("DUST", DUST, "b0"), ("DUST", DUST, "b1")])
+    record = _dust_records(series, snum)[0]
+    _remove_first(series, snum, "DUST")
+
+    ambiguous = []
+    assert series.deleteMalformedTraces([record], ambiguous=ambiguous) == []
+    assert ambiguous == [record]
+    assert _tags(series, snum, "DUST") == [["b1"]]
