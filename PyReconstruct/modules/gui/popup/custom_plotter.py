@@ -428,25 +428,63 @@ class VPlotter(vedo.Plotter):
 
         self.saveState()
 
-        for obj in self.selected:
-            # Get the original color from the series
-            if obj.type == "object":
-                # For objects, find the original trace color by loading all sections
-                found = False
-                for snum in self.series.sections.keys():
-                    if found:
-                        break
-                    section = self.series.loadSection(snum)
-                    if obj.name in section.contours:
-                        trace = section.contours[obj.name][0]
-                        obj.setColor(trace.color)
-                        found = True
-            elif obj.type == "ztrace":
-                # For ztraces, find the original ztrace color
-                if obj.name in self.series.ztraces:
-                    obj.setColor(self.series.ztraces[obj.name].color)
+        # An object added with "From other series..." keeps that series'
+        # path, and its original color is in that series, not the open one.
+        # Each other series is opened once, read, and closed again, the way
+        # generateVolumes opens it to build the meshes.
+        opened = {}
+        try:
+            for obj in self.selected:
+                series = self._seriesForRevert(obj.series_fp, opened)
+                if series is None:
+                    continue
+                # Get the original color from the series
+                if obj.type == "object":
+                    # For objects, find the original trace color by loading all sections
+                    found = False
+                    for snum in series.sections.keys():
+                        if found:
+                            break
+                        section = series.loadSection(snum)
+                        if obj.name in section.contours:
+                            trace = section.contours[obj.name][0]
+                            obj.setColor(trace.color)
+                            found = True
+                elif obj.type == "ztrace":
+                    # For ztraces, find the original ztrace color
+                    if obj.name in series.ztraces:
+                        obj.setColor(series.ztraces[obj.name].color)
+        finally:
+            for series in opened.values():
+                if series is not None:
+                    series.close()
 
         self.render()
+
+    def _seriesForRevert(self, series_fp, opened : dict):
+        """Return the series a scene object came from, opening it if needed.
+
+            Params:
+                series_fp (str): the scene object's series path
+                opened (dict): series opened so far, by path; the caller
+                    closes them
+            Returns:
+                (Series): the series, or None if it could not be opened
+        """
+        if series_fp == self.series.jser_fp:
+            return self.series
+        if series_fp not in opened:
+            from PyReconstruct.modules.backend.notifier import NullNotifier
+            from PyReconstruct.modules.backend.progress import NullProgressReporter
+            try:
+                opened[series_fp] = Series.openJser(
+                    series_fp,
+                    progress=NullProgressReporter,
+                    notifier=NullNotifier(),
+                )
+            except Exception:
+                opened[series_fp] = None
+        return opened[series_fp]
 
     def incAlpha(self, i : float):
         """Increment the transparency of the selected meshes.
@@ -1267,6 +1305,31 @@ class CustomPlotter(QVTKRenderWindowInteractor):
 
         self.plt.organizeScene(group_by_host, axis, spacing)
         
+    def seriesMoved(self, old_fp : str, new_fp : str):
+        """Follow the open series to its new path after a Save As.
+
+        Scene objects, host trees and undo states record their series by
+        path, and the open series is told apart from the others by comparing
+        that path with its jser_fp.
+
+            Params:
+                old_fp (str): the series path before the Save As
+                new_fp (str): the series path after it
+        """
+        if old_fp == new_fp:
+            return
+        self.plt.objs.moveSeries(old_fp, new_fp)
+        for state in self.undo_states + self.redo_states:
+            series_fps = state["scene_objects"]["series_fps"]
+            if old_fp not in series_fps:
+                continue
+            moved = series_fps.pop(old_fp)
+            if new_fp in series_fps:
+                for data_type, dicts in moved.items():
+                    series_fps[new_fp].setdefault(data_type, []).extend(dicts)
+            else:
+                series_fps[new_fp] = moved
+
     def saveState(self):
         """Save an undo state."""
         self.undo_states.append(self.saveScene(return_dict=True))
@@ -1732,6 +1795,19 @@ class SceneObjectList():
         if remove_id in self.scene_objects:
             del(self.scene_objects[remove_id])
         self.stale_ids.discard(remove_id)
+
+    def moveSeries(self, old_fp : str, new_fp : str):
+        """Point every scene object from one series path at another.
+
+            Params:
+                old_fp (str): the series path the objects hold now
+                new_fp (str): the series path to give them
+        """
+        for scene_obj in self.values():
+            if scene_obj.series_fp == old_fp:
+                scene_obj.series_fp = new_fp
+        if old_fp in self.host_trees:
+            self.host_trees[new_fp] = self.host_trees.pop(old_fp)
 
     def markStale(self, obj_names=None, ztrace_names=None, series_fp=None):
         """Mark scene objects as stale: their 2D data changed after their mesh

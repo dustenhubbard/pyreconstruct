@@ -2624,11 +2624,16 @@ class MainWindow(QMainWindow):
             return "cancel"
 
         ## Move hidden folder to new jser directory
+        old_jser_fp = self.series.jser_fp
         self.series.move(
             new_jser_fp,
             self.field.section,
             self.field.b_section
         )
+
+        # the 3D scene tells the open series' objects apart by path
+        if self.viewer and not self.viewer.is_closed:
+            self.viewer.seriesMoved(old_jser_fp, self.series.jser_fp)
         
         # clear section states
         self.field.series_states.clear()
