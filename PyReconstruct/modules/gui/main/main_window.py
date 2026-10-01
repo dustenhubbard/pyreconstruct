@@ -3332,6 +3332,7 @@ class MainWindow(QMainWindow):
                 "--groups"        : groups,
                 "--start_section" : start,
                 "--end_section"   : end,
+                "--padding"       : padding,
                 "--max_tissue"    : max_tissue,
                 "--output"        : output
                 
@@ -3343,6 +3344,7 @@ class MainWindow(QMainWindow):
                 
                 "--start_section" : start,
                 "--end_section"   : end,
+                "--padding"       : padding,
                 "--output"        : output,
                 "--groups"        : groups,
                 

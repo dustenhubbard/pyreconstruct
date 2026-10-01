@@ -105,6 +105,8 @@ img_corners = [list(map(convert_microns, elem)) for elem in img_corners]
 
 get_all = (bool(max_tissue) or not bool(groups))
 
+padding_um = padding * img_mag  # padding is given in image pixels
+
 ## Procedures
 
 if get_all:  # request all available tissue
@@ -133,8 +135,7 @@ if get_all:  # request all available tissue
 
 else:  # request only around group(s)
 
-    if padding: padding *= img_mag  # convert to μm
-    window, _ = groupsToVolume(series, groups, padding)
+    window, _ = groupsToVolume(series, groups, padding_um)
 
 additional_attrs = {
     
@@ -180,7 +181,6 @@ else:
 ## Add labels to zarr if groups provided
 if groups:
 
-    padding *= img_mag
     raw_section_bounds = [min(sections), max(sections)]
 
     for group in groups:
@@ -190,20 +190,17 @@ if groups:
         window_group = groupsToVolume(
             series,
             [group],
-            padding,
+            padding_um,
             restrict_to_sections=raw_section_bounds
         )
 
-        section_diff = min(window_group[1]) - raw_section_bounds[0]
-        
         if not seriesToLabels(
             series,
             zarr_fp,
             group,
             window=window_group,
             img_mag=img_mag,
-            raw_window=window,
-            section_diff=section_diff
+            raw_window=window
         ):
             series.close()
             sys.exit(f"Conversion failed: group {group} could not be exported.")

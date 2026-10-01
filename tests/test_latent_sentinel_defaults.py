@@ -221,6 +221,8 @@ def test_series_to_labels_still_prefers_an_explicit_window(labels_zarr):
     from PyReconstruct.modules.backend.autoseg.conversions import seriesToLabels
 
     group, pools = labels_zarr
+    ## the range picks from the sections the zarr holds (fork #601)
+    group["raw"].attrs["sections"] = [0, 1, 2, 5, 6]
 
     seriesToLabels(
         _SERIES,
@@ -232,6 +234,8 @@ def test_series_to_labels_still_prefers_an_explicit_window(labels_zarr):
 
     assert [args[1] for args in pools[0].workers] == [5, 6]
     assert group.created["labels_mito"]["shape"][0] == 2
+    ## section 5 is raw slice 3, so the labels start 3 slices of 50 nm in
+    assert group["labels_mito"].attrs["offset"][0] == 150
 
 
 # --------------------------------------------------------------------------- #
