@@ -83,9 +83,10 @@ def fit_spline(pts: Points, closed: bool) -> Points:
     ImageJ evaluates a fitted spline at one point per 2 pixels of length,
     and never fewer than 100 points.
     """
-    if len(pts) < 4:
-        return pts
+    # a cubic needs 4 points: a closed triangle has them once its ring closes
     ring = pts + [pts[0]] if closed else pts
+    if len(ring) < 4:
+        return pts
     x = np.array([p[0] for p in ring])
     y = np.array([p[1] for p in ring])
     length = float(np.sum(np.hypot(np.diff(x), np.diff(y))))
@@ -108,17 +109,50 @@ def holes(shapes: List[Points]) -> List[bool]:
     """Return which outlines of a composite roi are holes.
 
     ImageJ fills a composite shape even-odd: an outline inside an odd number
-    of the others is a hole. One vertex decides, since the sub-paths of a
-    shape do not cross.
+    of the others is a hole. The sub-paths of a shape do not cross, so any
+    point of one outline that is not on the other decides; a point on the
+    other's edge would count as inside or outside depending on the side.
     """
+    def is_inside(shape, other):
+        for point in candidates(shape):
+            if not on_boundary(point, other):
+                return inside(point, other)
+        return False  # the same outline twice: neither holds the other
+
     return [
-        sum(inside(shape[0], other) for other in shapes if other is not shape) % 2 == 1
+        sum(is_inside(shape, other) for other in shapes if other is not shape) % 2 == 1
         for shape in shapes
     ]
 
 
+def candidates(shape: Points):
+    """Yield the vertices of an outline, then the midpoints of its edges."""
+    yield from shape
+    for (x1, y1), (x2, y2) in zip(shape, shape[1:] + shape[:1]):
+        yield ((x1 + x2) / 2, (y1 + y2) / 2)
+
+
+def on_boundary(point: Tuple[float, float], polygon: Points) -> bool:
+    """Return true if the point lies on an edge of the closed polygon."""
+    x, y = point
+    xs = [p[0] for p in polygon]
+    ys = [p[1] for p in polygon]
+    tol = 1e-9 * max(max(xs) - min(xs), max(ys) - min(ys), 1e-12)
+    for (x1, y1), (x2, y2) in zip(polygon, polygon[1:] + polygon[:1]):
+        cross = (x2 - x1) * (y - y1) - (y2 - y1) * (x - x1)
+        if abs(cross) > tol * max(np.hypot(x2 - x1, y2 - y1), tol):
+            continue
+        if (min(x1, x2) - tol <= x <= max(x1, x2) + tol
+                and min(y1, y2) - tol <= y <= max(y1, y2) + tol):
+            return True
+    return False
+
+
 def inside(point: Tuple[float, float], polygon: Points) -> bool:
-    """Return true if the point is inside the closed polygon (ray casting)."""
+    """Return true if the point is inside the closed polygon (ray casting).
+
+    A point on an edge may come out either way; callers avoid those.
+    """
     x, y = point
     result = False
     for (x1, y1), (x2, y2) in zip(polygon, polygon[1:] + polygon[:1]):

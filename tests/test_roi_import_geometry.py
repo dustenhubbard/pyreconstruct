@@ -176,6 +176,45 @@ def test_a_nested_outline_of_a_composite_roi_is_a_hole(tmp_path, squares, expect
     assert holes(shapes) == expected
 
 
+OUTER = [(0.0, 0.0), (200.0, 0.0), (200.0, 200.0), (0.0, 200.0)]
+
+
+@pytest.mark.parametrize(
+    "outline, is_hole",
+    [
+        # a hole whose first vertex sits on the outer outline
+        ([(200, 50), (150, 50), (150, 100), (200, 100)], True),   # right edge
+        ([(50, 200), (50, 150), (100, 150), (100, 200)], True),   # top edge
+        ([(200, 200), (150, 200), (150, 150), (200, 150)], True), # corner
+        ([(0, 50), (50, 50), (50, 100), (0, 100)], True),         # left edge
+        ([(0, 0), (50, 0), (50, 50), (0, 50)], True),             # (0, 0)
+        # a separate outline whose first vertex touches the other one
+        ([(0, 50), (-50, 50), (-50, 100), (0, 100)], False),      # left edge
+        ([(50, 0), (50, -50), (100, -50), (100, 0)], False),      # bottom edge
+        ([(0, 0), (-50, 0), (-50, -50), (0, -50)], False),        # (0, 0)
+        ([(200, 50), (250, 50), (250, 100), (200, 100)], False),  # right edge
+    ],
+)
+def test_an_outline_touching_another_is_judged_off_the_edge(outline, is_hole):
+    from PyReconstruct.modules.backend.imports.imagej_roi import holes
+
+    outline = [(float(x), float(y)) for x, y in outline]
+    assert holes([OUTER, outline]) == [False, is_hole]
+
+
+def test_a_spline_fit_triangle_is_fitted(tmp_path):
+    roifile = pytest.importorskip("roifile")
+    triangle = [(10.0, 10.0), (110.0, 10.0), (60.0, 110.0)]
+    roi = _import(
+        tmp_path, triangle, roifile.ROI_TYPE.POLYGON, roifile.ROI_OPTIONS.SPLINE_FIT
+    )
+
+    (shape,) = roi.get_field_shapes(200, 1.0)
+    assert len(shape) >= 100
+    for p in _field(triangle):
+        assert min(np.hypot(*(np.array(shape) - p).T)) < 3.0
+
+
 def test_a_point_roi_gives_one_shape_per_marker(tmp_path):
     roifile = pytest.importorskip("roifile")
     puncta = [(10.0, 10.0), (50.0, 20.0), (90.0, 80.0), (30.0, 70.0), (60.0, 50.0)]
