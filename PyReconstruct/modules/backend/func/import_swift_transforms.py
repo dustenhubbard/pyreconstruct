@@ -148,12 +148,19 @@ def importSwiftTransforms(series: Series, project_fp: str, scale: int = 1, cal_g
     section_nums = sorted(series.sections)
 
     if len(transforms_list) != len(section_nums):
-        stack_size = len(transforms_list) - 1 if cal_grid else len(transforms_list)
-        cal_grid_note = " plus the cal grid" if cal_grid else ""
-        raise IncorrectSecNumError(
-            f"The SWiFT project has {stack_size} sections{cal_grid_note}, "
-            f"and this series has {len(section_nums)}."
-        )
+        if cal_grid:
+            stack_size = len(transforms_list) - 1
+            message = (
+                f"The SWiFT project has {stack_size} sections, so with the cal "
+                f"grid this series needs {stack_size + 1}, and it has "
+                f"{len(section_nums)}."
+            )
+        else:
+            message = (
+                f"The SWiFT project has {len(transforms_list)} sections, "
+                f"and this series has {len(section_nums)}."
+            )
+        raise IncorrectSecNumError(message)
 
     tforms = {}  # Empty dictionary to hold transformations
     

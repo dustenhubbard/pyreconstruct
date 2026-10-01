@@ -113,6 +113,26 @@ def test_txt_with_an_unknown_section_says_which_line(
 
 
 @pytest.mark.gui
+@pytest.mark.parametrize("content", ["", "\n\n   \n"], ids=["empty", "blank-lines"])
+def test_txt_with_no_transforms_is_a_notice(
+    main_window, main_window_dialogs, tmp_path, content
+):
+    window = main_window
+    before = set(window.series.alignments)
+    current = window.series.alignment
+    path = tmp_path / "tforms.txt"
+    path.write_text(content)
+
+    window.importTransforms(str(path))
+
+    assert set(window.series.alignments) == before
+    assert window.series.alignment == current
+    assert main_window_dialogs.notices == [
+        "No transforms were imported. The file has no transforms."
+    ]
+
+
+@pytest.mark.gui
 def test_swift_count_mismatch_is_a_notice(
     main_window, main_window_dialogs, tmp_path
 ):
@@ -129,6 +149,26 @@ def test_swift_count_mismatch_is_a_notice(
     assert main_window_dialogs.notices == [
         f"No transforms were imported. The SWiFT project has {n - 1} sections, "
         f"and this series has {n}."
+    ]
+
+
+@pytest.mark.gui
+def test_swift_count_mismatch_with_cal_grid_is_a_notice(
+    main_window, main_window_dialogs, tmp_path
+):
+    window = main_window
+    before = set(window.series.alignments)
+    n = len(window.series.sections)
+    main_window_dialogs.responses.append(
+        (["1", [("Includes cal grid", True)]], True)
+    )
+
+    window.importSwiftTransforms(_write_swift(tmp_path / "p.json", n))
+
+    assert set(window.series.alignments) == before
+    assert main_window_dialogs.notices == [
+        f"No transforms were imported. The SWiFT project has {n} sections, "
+        f"so with the cal grid this series needs {n + 1}, and it has {n}."
     ]
 
 

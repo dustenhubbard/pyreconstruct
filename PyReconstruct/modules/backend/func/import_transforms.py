@@ -40,6 +40,8 @@ def importTransforms(series : Series, tforms_fp : str, series_states=None, log_e
                     "which is not in this series."
                 )
             tforms[section_num] = tform
+        if not tforms:
+            raise TransformImportError("The file has no transforms.")
         
         # set tforms
         fname = os.path.basename(tforms_fp)

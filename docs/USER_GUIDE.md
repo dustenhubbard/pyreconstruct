@@ -789,9 +789,9 @@ propagation.
   number followed by the six transform numbers). Every section number must exist in
   the series; the translation terms are interpreted in pixels and scaled by the
   section magnification. Blank lines are skipped, and any other line that does not
-  fit stops the import with a message that names it. The imported transforms are
-  written to a new alignment named after the file (with the date appended), and
-  the series switches to it.
+  fit stops the import with a message that names it. A file with no transforms
+  stops it too. The imported transforms are written to a new alignment named
+  after the file (with the date appended), and the series switches to it.
 - **SWiFT project**: import transforms from an AlignEM-SWiFT project; you choose
   the scale to import. The number of transforms must match the number of sections.
   They go to the sections in order, so the series does not have to start at
