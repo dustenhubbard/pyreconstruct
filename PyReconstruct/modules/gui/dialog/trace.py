@@ -35,9 +35,12 @@ class TraceDialog(QDialog):
             is_obj_list=False,
             pos=None,
             tag_sets=None,
-            series=None):
+            series=None,
+            smooth_default=None,
+            smooth_window=None,
+            smooth_mixed=False):
         """Create an attribute dialog.
-        
+
             Params:
                 parent (QWidget): the parent widget
                 traces (list): a list of traces
@@ -48,6 +51,14 @@ class TraceDialog(QDialog):
                 series (Series): for a palette item, the open series. Its
                     object groups and custom columns become rows the item can
                     hand to a new object (fork #419). None hides those rows.
+                smooth_default (int): on the object list, the series' rolling
+                    average window (`roll_window`), shown as the Smoothing
+                    row's "Default (N)" choice. None hides the row.
+                smooth_window (int): the objects' own window, or None when
+                    they follow the default
+                smooth_mixed (bool): True when the selected objects disagree,
+                    so the row starts blank and an untouched OK leaves each
+                    object's value alone
 
         After exec(), ``tag_choices`` holds the pick-one rows' answer as
         ``TagSets.apply`` reads it: set name -> value, "" for cleared, None
@@ -55,10 +66,18 @@ class TraceDialog(QDialog):
         empty when the series has no pick-one set. The returned trace's
         ``tags`` is the free Tags rows' answer only, so a consumer combines
         the two with ``TagSets.resolve``.
+
+        ``smooth_choice`` holds the Smoothing row's answer: None to leave the
+        objects' values alone (no row, or a mixed row left blank), 0 for the
+        default (the object follows `roll_window` again), or the window.
         """
         super().__init__(parent)
         self.tag_sets = tag_sets
         self.tag_choices = {}
+        self.smooth_choice = None
+        self.smooth_input = None
+        self.smooth_initial = None
+        self.smooth_default = smooth_default
 
         # the pick-one sets, and every value they hold. Those values are shown
         # in their own dropdowns and hidden from the free Tags rows, so the
@@ -347,6 +366,43 @@ class TraceDialog(QDialog):
                 )
                 defaults_rows.addWidget(self.columns_input)
         
+        if self.is_obj_list and smooth_default is not None:
+            # the rolling average window for these objects' traces: the
+            # series option first, then a run of windows; typed values are
+            # taken too. Stored on the object (Series.getSmoothWindow), so
+            # the smooth actions and smoothing while scribbling use it.
+            smooth_row = QHBoxLayout()
+            smooth_text = QLabel(self, text="Smoothing:")
+            smooth_text.setToolTip(
+                "The rolling average window used to smooth this object's "
+                "traces. Default follows the window in the trace mode options."
+            )
+            self.smooth_input = QComboBox(self)
+            self.smooth_input.setEditable(True)
+            if smooth_mixed:
+                self.smooth_input.addItem("")
+            self.smooth_input.addItem(f"Default ({smooth_default})")
+            windows = [2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, 40, 50]
+            if smooth_window and smooth_window not in windows:
+                windows.append(smooth_window)
+                windows.sort()
+            for w in windows:
+                self.smooth_input.addItem(str(w))
+            if smooth_mixed:
+                self.smooth_input.setCurrentIndex(0)
+            elif smooth_window:
+                self.smooth_input.setCurrentText(str(smooth_window))
+            else:
+                self.smooth_input.setCurrentIndex(0)
+            # what the row showed on open: a row left as seeded answers
+            # None, so a rename onto an object with its own window does not
+            # write the seed over it (renameObjAttrs: the target's own
+            # attributes win)
+            self.smooth_initial = self.smooth_input.currentText()
+            smooth_row.addWidget(smooth_text)
+            smooth_row.addWidget(self.smooth_input)
+            smooth_row.addStretch()
+
         if self.is_obj_list:
             range_row = QHBoxLayout()
             range_text1 = QLabel(self, text="From section")
@@ -386,6 +442,7 @@ class TraceDialog(QDialog):
         vlayout.addWidget(tags_text)
         vlayout.addWidget(self.tags_input)
         if self.groups_input is not None: vlayout.addLayout(defaults_rows)
+        if self.smooth_input is not None: vlayout.addLayout(smooth_row)
         if self.is_obj_list: vlayout.addLayout(range_row)
         vlayout.addWidget(buttonbox)
 
@@ -439,8 +496,32 @@ class TraceDialog(QDialog):
             if r1 < 0 or r2 < 0 or r1 > r2:
                 notify("Please enter a valid range.")
                 return
-        
+        if self.smooth_input is not None and self.readSmoothChoice() is False:
+            notify("Please enter a whole number of 2 or more for the smoothing window.")
+            return
+
         super().accept()
+
+    def readSmoothChoice(self):
+        """Read the Smoothing row.
+
+            Returns:
+                None (leave alone: the row is blank or still as it opened),
+                0 (default), the window (int), or False when the typed text
+                is not a usable window
+        """
+        text = self.smooth_input.currentText().strip()
+        if text == "" or text == self.smooth_initial:
+            return None
+        if text == f"Default ({self.smooth_default})" or text.lower() == "default":
+            return 0
+        try:
+            window = int(text)
+        except ValueError:
+            return False
+        if window < 2:
+            return False
+        return window
     
     def exec(self):
         """Run the dialog."""
@@ -557,6 +638,10 @@ class TraceDialog(QDialog):
                 r1 = int(self.range_input1.text())
                 r2 = int(self.range_input2.text())
                 sections = tuple(range(r1, r2+1))
+
+            # smoothing window
+            if self.smooth_input is not None:
+                self.smooth_choice = self.readSmoothChoice()
             
             # notify user if name is changed
             if trace.name and trace.name != self.name_input.text():
