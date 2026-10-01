@@ -143,14 +143,18 @@ def write_log(series, *rows):
 def test_the_bad_row_really_is_a_parse_failure():
     """The premise the rest of the module rests on.
 
-    ``BAD`` is not arbitrary garbage: it is what ``Log.__str__`` writes for an
-    object literally named ``weird, name``, which is why a legacy file can hold
-    it. Recorded here so a later change to ``fromStr`` that happens to make this
-    row readable turns into a visible failure rather than a silently vacuous
-    test.
+    ``BAD`` is not arbitrary garbage: it is what ``Log.__str__`` wrote for an
+    object literally named ``weird, name`` before it quoted such names, which
+    is why a legacy file can hold it. The writer quotes that name now (see
+    ``tests/test_log_comma_names.py``), but rows already on disk keep the old
+    shape, and nothing in the row says where the name ends. Recorded here so a
+    later change to ``fromStr`` that happens to make this row readable turns
+    into a visible failure rather than a silently vacuous test.
     """
-    assert BAD == str(Log("26-06-30", "13:00", "bob", "weird, name", 7,
-                          "Modify trace(s)"))
+    assert str(Log("26-06-30", "13:00", "bob", "weird, name", 7,
+                   "Modify trace(s)")) == (
+        '26-06-30, 13:00, bob, "weird, name", 7, Modify trace(s)'
+    )
     with pytest.raises(ValueError):
         Log.fromStr(BAD)
     # ... while the good row reads, and reads as alice's
@@ -196,21 +200,19 @@ def test_the_log_writer_can_no_longer_leave_a_short_last_line(series):
     -- was emitted verbatim, so one ``Log`` became two physical lines: a head
     with six comma fields already, and an orphaned tail after it.
 
-    ``Log.__str__`` now replaces the newline, so the row is one line. The
-    comma in the name still breaks it -- that is a different, older defect and
-    is deliberately untouched here -- so bob's row is still skipped and alice
-    is still kept. What changed is the *count*: one lost row instead of two
-    lost file lines, because there is only one line now.
+    ``Log.__str__`` now replaces the newline, so the row is one line, and it
+    quotes a name holding ``", "``, so the comma no longer breaks the row
+    either. Both rows read and both editors are kept.
     """
     row = str(Log("26-06-30", "13:00", "bob", "a, b, c\nd", 7, "Modify trace(s)"))
     assert "\n" not in row, "the writer must not emit a row spanning two lines"
     assert "\r" not in row
-    assert row == "26-06-30, 13:00, bob, a, b, c_d, 7, Modify trace(s)"
+    assert row == '26-06-30, 13:00, bob, "a, b, c_d", 7, Modify trace(s)'
 
     write_log(series, GOOD, row)
 
-    assert series.getEditorsFromHistory() == {"alice"}
-    assert len(series.getFullHistory(skip_corrupt=True).skipped_rows) == 1
+    assert series.getEditorsFromHistory() == {"alice", "bob"}
+    assert series.getFullHistory(skip_corrupt=True).skipped_rows == []
 
 
 # --------------------------------------------------------------------------- #
@@ -959,10 +961,13 @@ def test_sanitizing_changes_nothing_that_was_not_already_broken():
     A row with no terminator in any field must render byte for byte as it did
     before. Measured over 300,000 generated renders (0 differences); this pins
     the property on the shapes that carry the format's own punctuation.
+
+    ("weird, name" and an object literally named "-" are left out: the writer
+    quotes those now, which tests/test_log_comma_names.py covers.)
     """
     for name, event in (
-        ("obj_a", "Modify trace(s)"), ("weird, name", "Modify trace(s)"),
-        ("d001sp003", "Rename alignment old to new"), ("-", "Create series"),
+        ("obj_a", "Modify trace(s)"), ("weird,name", "Modify trace(s)"),
+        ("d001sp003", "Rename alignment old to new"), ("-x", "Create series"),
         ("5", "Add to group 'x'"), ("é ü", "Set user column c as tab\there"),
     ):
         log = Log("26-06-30", "13:00", "bob", name, [(1, 3), (7, 7)], event)
