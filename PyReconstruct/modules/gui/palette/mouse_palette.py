@@ -942,8 +942,18 @@ class MousePalette():
         if not confirmed:
             return
         
-        self.modifyPalette(self.series.palette_traces[self.series.palette_index[0]])
-        self.activatePaletteButton(self.series.palette_index[1])
+        # the dialog can make a palette of another length current, by
+        # switching to its tab or by removing the current one
+        self.series.clampPaletteIndex()
+        g, i = self.series.palette_index
+        traces = self.series.palette_traces[g]
+        if len(traces) == len(self.palette_buttons):
+            self.modifyPalette(traces)
+        else:
+            # the buttons belong to the old palette: build new ones, and draw
+            # with the new current button, which reset() checks but not clicks
+            self.reset()
+            self.mainwindow.changeTracingTrace(traces[i])
     
     def setFlag(self, name : str = None, color : tuple = None, font_size : int = None, display_flags : str = None):
         """Set the default flag in the palette."""
@@ -1097,8 +1107,14 @@ class MousePalette():
 
     def reset(self):
         """Reset the mouse palette when opening a new series."""
+        mode = self.mainwindow.field.mouse_mode
         self.close()
         self.__init__(self.mainwindow)
+        # the new buttons start on Pointer, but the field keeps its mode
+        for name, (button, mouse_mode, _) in self.mode_buttons.items():
+            button.setChecked(mouse_mode == mode)
+            if mouse_mode == mode:
+                self.selected_mode = name
 
     def close(self):
         """Close all buttons"""
