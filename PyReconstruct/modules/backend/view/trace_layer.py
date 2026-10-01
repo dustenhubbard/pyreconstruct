@@ -718,19 +718,27 @@ class TraceLayer():
         arr = np.zeros(shape=(pixmap_h, pixmap_w), dtype=np.uint32)   
 
         id_lookup_table = {}
-        
+
+        ## Draw one object at a time: its traces fill a mask and its negative
+        ## traces cut their holes out of it, so a hole stays 0 and another
+        ## object drawn inside the hole keeps its label.
+        by_name = {}
         for trace in traces:
+            by_name.setdefault(trace.name, []).append(trace)
 
-            name = trace.name
+        for name, name_traces in by_name.items():
+
             name_id = name_ids[name]
-            
-            self._drawTraceLabel(
-                arr, 
-                trace, 
-                name_id, 
-                tform
-            )
+            mask = np.zeros(arr.shape, dtype=bool)
 
+            for trace in name_traces:
+                if not trace.negative:
+                    self._drawTraceLabel(mask, trace, True, tform)
+            for trace in name_traces:
+                if trace.negative:
+                    self._drawTraceLabel(mask, trace, False, tform)
+
+            arr[mask] = name_id
             id_lookup_table.update({name: name_id})
 
         return arr, id_lookup_table

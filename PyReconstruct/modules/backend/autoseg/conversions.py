@@ -123,6 +123,17 @@ def get_thickness(zarr_array):
     return get_voxel_size_um(zarr_array)[0]
 
 
+def voxel_nm(size_um):
+    """A size in µm as nm for ``voxel_size``.
+
+    Whole numbers stay ints, as they always were. Anything else keeps its
+    fraction: int() made 2.54 nm pixels 2 nm and 0.5 nm pixels 0.
+    """
+
+    nm = round(size_um * 1000, 6)
+    return int(nm) if float(nm).is_integer() else nm
+
+
 def get_offset(window, resolution, img_mag, relative_to, section_diff=0):
     """Calculate offset from a window."""
 
@@ -354,8 +365,8 @@ def seriesToZarr(series : Series,
 
     ## Get values for saving zarr files (from last known section)
     section_thickness = series.loadSection(sections[0]).thickness
-    z_res = int(section_thickness * 1000)
-    xy_res = int(mag * 1000)
+    z_res = voxel_nm(section_thickness)
+    xy_res = voxel_nm(mag)
     resolution = [z_res, xy_res, xy_res]
     offset = [0, 0, 0]
 
