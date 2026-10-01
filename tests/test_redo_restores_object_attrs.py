@@ -111,26 +111,20 @@ def test_redo_lists_a_returned_group_in_the_groups_menu(window):
     """Redo can bring back a group no object holds any more. The Groups menu
     must list it again, which means rebuilding the menubar."""
     series = window.series
-    other = NAME + "_b"
     _draw_from_palette(window, NAME, {"groups": ["shared"]}, offset=0.2)
-    _draw_from_palette(window, other, {"groups": ["shared"]}, offset=0.6)
 
-    window.undo()                       # takes back the second draw only
-    assert other not in series.data["objects"]
-    assert "shared" in series.object_groups.getGroupList()
-
-    # Remove the last member the way the object list's "Remove from all
-    # groups" does. It records a series step only, so the redo stays.
-    series_states = window.field.series_states
-    series_states.addState()
-    series.object_groups.removeObject(NAME)
-    del series.groups_visibility["shared"]
-    window.createMenuBar()
+    # Undoing the only member's trace deletes the object and the group with
+    # it. (A new series action here would end the redo, so the menu is
+    # rebuilt directly instead.)
+    window.undo()
+    assert NAME not in series.data["objects"]
     assert "shared" not in series.object_groups.getGroupList()
+    series.groups_visibility.pop("shared", None)
+    window.createMenuBar()
     assert not hasattr(window, "shared_viz_act")
 
     window.field.undoState(redo=True)
-    assert "shared" in series.object_groups.getObjectGroups(other)
+    assert "shared" in series.object_groups.getObjectGroups(NAME)
     assert hasattr(window, "shared_viz_act"), (
         "the returned group is missing from the Groups menu"
     )

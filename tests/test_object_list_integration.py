@@ -496,8 +496,8 @@ def test_real_cr_handler_partial_assigns_when_confirmed(qapp):
 
 def test_real_cr_handler_partial_cancel_reverts(qapp):
     """PartiallyChecked CR with the dialog cancelled reverts the row and makes
-    no series change (returns False) -- the "not confirmed" branch. addState was
-    already pushed (matching the old behavior), but no curation/modified call."""
+    no series change (returns False) -- the "not confirmed" branch. No undo
+    state is pushed either, since a new state would clear redo."""
     obj = _make_cr_handler()
 
     with mock.patch(
@@ -507,6 +507,7 @@ def test_real_cr_handler_partial_cancel_reverts(qapp):
         result = obj.onCheckStateChanged(0, 1, Qt.CheckState.PartiallyChecked)
 
     assert result is False
+    obj.series_states.addState.assert_not_called()
     obj.series.setCuration.assert_not_called()
     obj.manager.updateObjects.assert_not_called()
     obj.mainwindow.seriesModified.assert_not_called()

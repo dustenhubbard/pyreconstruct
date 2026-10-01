@@ -864,6 +864,14 @@ class SeriesStates():
             Params:
                 breakable (bool): True if series state can be broken (aka dissolved and left as individual section events)
         """
+        # A new action ends every redo, series and section alike. A series
+        # redo left in place replays its whole snapshot of groups, attributes
+        # and z-traces over whatever the user did since, and a section redo can
+        # name a z-trace this action deletes or renames, which made the redo
+        # raise KeyError halfway through.
+        self.redos = []
+        for states in self.section_states_dict.values():
+            states.redo_states = []
         new_state = SeriesState(breakable)
         new_state.resetSeriesAttributes(self.series)
         self.undos.append(new_state)
@@ -1079,10 +1087,16 @@ class SeriesStates():
         if self.undos and snum in self.undos[-1].undo_lens:
             if self.undos[-1].undo_lens[snum] == len(self[snum].undo_states):
                 self.undos.pop()
-        # clear series redos
-        for redo in self.redos.copy():
-            if snum in redo.undo_lens:
-                self.redos.remove(redo)
+        # a new section action ends every series redo, not only the ones that
+        # touched this section: a series redo restores the series attributes
+        # whole, so one from before this action would overwrite it. The
+        # per-section parts of those redos go with them, so none is left to be
+        # redone alone on its section (which an unbreakable set forbids).
+        for redo in self.redos:
+            for other in redo.undo_lens:
+                if other in self.section_states_dict:
+                    self.section_states_dict[other].redo_states = []
+        self.redos = []
 
     
 
