@@ -834,8 +834,10 @@ class ObjectTableWidget(DataTable):
                 self.manager.updateObjects([name])
                 return False
 
-            self.series_states.addState()
+            # the undo state is added only once the edit is certain: a new
+            # state clears redo, so cancelling the dialog must not add one
             if state == Qt.CheckState.Unchecked:
+                self.series_states.addState()
                 self.series.setCuration([name], "")
             elif state == Qt.CheckState.PartiallyChecked:
                 assign_to, confirmed = QInputDialog.getText(
@@ -846,8 +848,10 @@ class ObjectTableWidget(DataTable):
                 if not confirmed:
                     self.model.refreshRow(row)
                     return False
+                self.series_states.addState()
                 self.series.setCuration([name], "Needs curation", assign_to)
             elif state == Qt.CheckState.Checked:
+                self.series_states.addState()
                 self.series.setCuration([name], "Curated")
 
             self.model.refreshRow(row)
