@@ -16,6 +16,9 @@ from PyReconstruct.modules.gui.dialog import (
     TableColumnsDialog
 )
 
+# list columns shown as a checkbox with no text; an export writes "yes" or "no"
+CHECKBOX_EXPORT_COLUMNS = ("Hidden", "Closed", "Locked")
+
 class _ListBody(QMainWindow):
     """The internal window each list renders into, with an honest width hint.
 
@@ -737,8 +740,8 @@ class DataTable(QDockWidget):
             header_item = self.table.horizontalHeaderItem(c)
             header_title = header_item.text()
 
-            ## Track checkable item cols
-            if header_title in ("Hidden", "Closed"):
+            ## Track checkbox cols, whose cells have no text
+            if header_title in CHECKBOX_EXPORT_COLUMNS:
                 checkable.append(c)
             
             items.append(header_title)
@@ -754,7 +757,7 @@ class DataTable(QDockWidget):
 
                 cell = self.table.item(r, c)
                 
-                if c in checkable:  # hidden and closed cols
+                if c in checkable:  # hidden, closed and locked cols
 
                     if cell.checkState() == Qt.Checked:
 

@@ -12,7 +12,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtCore import Qt, QItemSelection, QItemSelectionModel
 
-from .data_table import DataTable
+from .data_table import DataTable, CHECKBOX_EXPORT_COLUMNS
 from .object_model import ObjectTableModel, ObjectTableView
 from PyReconstruct.modules.gui.utils import sortList
 
@@ -922,7 +922,7 @@ class ObjectTableWidget(DataTable):
             checkable = []
             for c in range(n_cols):
                 header_title = model.headerData(c, Qt.Horizontal, Qt.DisplayRole)
-                if header_title in ("Hidden", "Closed"):
+                if header_title in CHECKBOX_EXPORT_COLUMNS:
                     checkable.append(c)
                 items.append(header_title)
             csv_file.write(",".join(items) + "\n")
@@ -932,14 +932,10 @@ class ObjectTableWidget(DataTable):
                 items = []
                 for c in range(n_cols):
                     index = model.index(r, c)
-                    if c in checkable:  # hidden and closed cols
+                    if c in checkable:  # the "Locked" col
                         # The model returns the int Qt stores for CheckStateRole,
                         # so comparing to the Qt.Checked enum directly is always
-                        # False. Coerce to Qt.CheckState before comparing. (The
-                        # object list has no checkable export columns today --
-                        # "Hidden"/"Closed" are trace-only -- so this branch is
-                        # currently unreachable here, but the comparison must be
-                        # correct if those columns are ever added.)
+                        # False. Coerce to Qt.CheckState before comparing.
                         check_state = model.data(index, Qt.CheckStateRole)
                         if Qt.CheckState(check_state) == Qt.CheckState.Checked:
                             cell_text = "yes"
