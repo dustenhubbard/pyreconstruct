@@ -326,7 +326,8 @@ class MalformedContoursDialog(QDialog):
 
     def _pruneRecords(self, deleted, deleted_traces=None,
                       deleted_identities=None):
-        """Remove the rows/records that were actually deleted.
+        """Remove the rows/records that were actually deleted, and any row
+        whose trace was deleted through another row.
 
             Params:
                 deleted (list): the records whose rows go
@@ -345,12 +346,23 @@ class MalformedContoursDialog(QDialog):
                 (d["section"], d["name"], d["index"]) for d in deleted
             ]
             deleted_identities = [d.get("identity") for d in deleted]
-        self._countDownLookalikes(
-            deleted_traces, deleted_identities, deleted_ids
-        )
         # two rows can delete one trace (both duplicating it), and it went
         # once, so each distinct trace shifts the rest once
         distinct = set(deleted_traces)
+        # One trace can sit in several rows of the pairs list (`A` and `C`
+        # both duplicating one `B`). A row whose own or other trace was just
+        # deleted goes too: left in, its index named whichever trace moved
+        # into that place, and "Go to" framed it.
+        for record in self._records_by_key.values():
+            for name_key, index_key in (("name", "index"),
+                                        ("other_name", "other_index")):
+                if index_key in record and (
+                    record["section"], record[name_key], record[index_key]
+                ) in distinct:
+                    deleted_ids.add(id(record))
+        self._countDownLookalikes(
+            deleted_traces, deleted_identities, deleted_ids
+        )
         # The surviving records' scan-time indexes shift when earlier traces
         # of the SAME contour on the SAME section are deleted: "Go to trace"
         # then framed a different trace than the row named, and the user
