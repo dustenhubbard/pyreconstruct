@@ -24,7 +24,7 @@ def _other_row(table, name):
 
 
 @pytest.mark.parametrize("column", ["Hidden", "Closed"])
-def test_a_declined_unlock_puts_the_box_back(trace_table, column):
+def test_a_declined_unlock_puts_the_box_back(trace_table, column):  # noqa: F811  (fixture)
     table = trace_table.table
     field = trace_table.mainwindow.field
     locked_name = table.item(0, 0).text()
@@ -44,7 +44,7 @@ def test_a_declined_unlock_puts_the_box_back(trace_table, column):
     assert "closeTraces" not in field.calls
 
 
-def test_checkboxes_still_work_after_a_declined_unlock(trace_table):
+def test_checkboxes_still_work_after_a_declined_unlock(trace_table):  # noqa: F811  (fixture)
     table = trace_table.table
     field = trace_table.mainwindow.field
     locked_name = table.item(0, 0).text()
