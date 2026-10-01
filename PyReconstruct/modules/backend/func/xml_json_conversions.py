@@ -1,6 +1,7 @@
 import os
 import re
 import json
+from xml.sax.saxutils import escape
 
 from PyReconstruct.modules.calc import reducePoints
 
@@ -457,7 +458,9 @@ def sectionJSONtoXML(series : Series, section : Section, new_dir : str, name : s
     xml_text = xml_text.replace("[XCOEF]", "0 1 0 0 0 0")  # to be replaced
     xml_text = xml_text.replace("[YCOEF]", "0 0 1 0 0 0")  # to be replaced
     xml_text = xml_text.replace("[IMAGE_MAG]", sec_mag)
-    xml_text = xml_text.replace("[IMAGE_SOURCE]", sec_src)
+    # escaped because the text is parsed as XML below; the parsed image
+    # then gets the plain sec_src, which the writer escapes itself
+    xml_text = xml_text.replace("[IMAGE_SOURCE]", escape(sec_src, {'"': "&quot;"}))
     xml_text = xml_text.replace("[IMAGE_LENGTH]", "100000")
     xml_text = xml_text.replace("[IMAGE_HEIGHT]", "100000")
 
