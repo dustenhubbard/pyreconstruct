@@ -129,6 +129,7 @@ def export3DData(series: Series, obj_names: list, output_fp: str, notify_user: b
     series_code = series.code
 
     errors = {}
+    skipped = []
 
     ## Build all meshes in a single pass over the sections
     meshes = get_3D_meshes(series, obj_names)
@@ -138,6 +139,13 @@ def export3DData(series: Series, obj_names: list, output_fp: str, notify_user: b
     try:
         for i, obj in enumerate(obj_names):
             progress.set_progress(100 * i / max(len(obj_names), 1))
+
+            # a contours-mode object is open slabs with no surface or volume;
+            # counting it as an error kept the whole CSV from being written,
+            # so the objects that did measure were lost too (found 2026-09-30)
+            if type(meshes[obj]) is Contours:
+                skipped.append(obj)
+                continue
 
             try:
 
@@ -156,13 +164,27 @@ def export3DData(series: Series, obj_names: list, output_fp: str, notify_user: b
     finally:
         progress.finish()
 
-    if not errors:
+    skipped_note = ""
+    if skipped:
+        names = ", ".join(sorted(skipped))
+        skipped_note = (
+            f"\nNot measured (3D mode is 'contours', which has no surface or "
+            f"volume): {names}. Switch their 3D mode to surface or spheres to "
+            f"measure them."
+        )
+
+    if not errors and skipped and len(skipped) == len(obj_names):
+
+        if notify_user:
+            notify("No data exported.\n" + skipped_note)
+
+    elif not errors:
 
         with open(output_fp, "w") as fp:
             fp.write(csv_str)
 
         if notify_user:
-            notify(f"Data exported to:\n\n{Path(output_fp).absolute()}\n")
+            notify(f"Data exported to:\n\n{Path(output_fp).absolute()}\n" + skipped_note)
 
     if errors:
 
