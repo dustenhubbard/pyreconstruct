@@ -357,13 +357,15 @@ def real_series(series_jser):
 
 
 class StubField:
-    """The two attributes of MainWindow.field that the list slots touch."""
+    """The attributes of MainWindow.field that the list slots touch."""
 
     def __init__(self, section):
         self.section = section
+        self.b_section = None
+        self.b_section_layer = None
         self.reload_count = 0
 
-    def reload(self):
+    def reload(self, clear_states=False):
         self.reload_count += 1
 
     def clearStates(self):
