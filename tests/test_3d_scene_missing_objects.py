@@ -10,8 +10,6 @@ building the VTK plotter offscreen is impractical. The series is real.
 """
 import types
 
-import pytest
-
 
 def _run(real_series, monkeypatch, objects, answer=False):
     from PyReconstruct.modules.gui.popup import custom_plotter as cp
