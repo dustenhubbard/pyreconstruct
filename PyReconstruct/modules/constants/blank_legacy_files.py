@@ -484,4 +484,4 @@ blank_series_no_contours = """<?xml version="1.0"?>
 [CONTOURS]
 </Series>"""
 
-blank_palette_contour = """<Contour name="[NAME]" closed="true" border="[BORDER]" fill="[FILL]" mode="[MODE]" points="[POINTS] "/>"""
+blank_palette_contour = """<Contour name="[NAME]" closed="[CLOSED]" border="[BORDER]" fill="[FILL]" mode="[MODE]" points="[POINTS] "/>"""
