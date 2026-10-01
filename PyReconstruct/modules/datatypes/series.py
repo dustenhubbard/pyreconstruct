@@ -2594,12 +2594,15 @@ class Series():
 
         Each record must carry the keys produced by smoothObject — in
         particular "name", "section" and "match" (a {"color", "points"}
-        signature). Because sections are reloaded fresh from disk, the stored
-        signature is matched against each candidate trace by color and
-        7-decimal-rounded points rather than by object identity, so the exact
-        trace is removed even across a save/reload. A record whose trace can no
-        longer be found (e.g. it was edited or re-smoothed in the meantime) is
-        skipped and left out of the returned list.
+        signature), and normally "index". Because sections are reloaded fresh
+        from disk, the trace is re-found rather than held by identity: the
+        trace at the recorded "index" when it still matches the signature by
+        color and 7-decimal-rounded points, otherwise the first unclaimed trace
+        that matches (see _resolveRecordedTraces). The index is what tells
+        identical traces under one name apart; matching the signature alone
+        deleted the first of them, whichever the record named. A record whose
+        trace can no longer be found (e.g. it was edited or re-smoothed in the
+        meantime) is skipped and left out of the returned list.
 
             Params:
                 records (list): malformed-contour records to delete
@@ -2624,23 +2627,65 @@ class Series():
             series_states=series_states,
             section_numbers=sorted(by_section)
         ):
-            removed_any = False
-            for record in by_section.get(snum, []):
-                contour = section.contours.get(record["name"])
-                if not contour:
+            section_records = by_section.get(snum, [])
+            found = self._resolveRecordedTraces(section, section_records)
+            # remove only after every record is resolved: the recorded indexes
+            # all describe the contour as it stands before this delete
+            removed = set()
+            for record in section_records:
+                trace = found.get(id(record))
+                if trace is None:
                     continue
-                for trace in contour:
-                    if self._traceMatchesSignature(trace, record["match"]):
-                        section.removeTrace(trace)
-                        deleted.append(record)
-                        removed_any = True
-                        break
-            if removed_any:
+                if id(trace) not in removed:
+                    section.removeTrace(trace)
+                    removed.add(id(trace))
+                deleted.append(record)
+            if removed:
                 section.save()
 
         if deleted:
             self.modified = True
         return deleted
+
+    @classmethod
+    def _resolveRecordedTraces(cls, section, records : list) -> dict:
+        """Find the trace each clean-up record names on a loaded section.
+
+        A record names its trace by position ("index") and by its color and
+        points ("match"). The position decides between identical traces under
+        one name, which the signature alone cannot tell apart: the trace at the
+        recorded index is used when it still matches the signature. Otherwise
+        (an edit since the scan moved it) the first matching trace that no
+        other record has claimed is used. Two records naming the same index of
+        the same contour resolve to the same trace, which is deleted once.
+
+            Returns:
+                (dict): id(record) -> trace, for the records that were found
+        """
+        found = {}
+        claimed = set()
+        unresolved = []
+        for record in records:
+            contour = section.contours.get(record["name"])
+            if not contour:
+                continue
+            index = record.get("index")
+            if isinstance(index, int) and 0 <= index < len(contour):
+                trace = contour[index]
+                if cls._traceMatchesSignature(trace, record["match"]):
+                    found[id(record)] = trace
+                    claimed.add(id(trace))
+                    continue
+            unresolved.append((record, contour))
+        for record, contour in unresolved:
+            for trace in contour:
+                if id(trace) in claimed:
+                    continue
+                if cls._traceMatchesSignature(trace, record["match"]):
+                    found[id(record)] = trace
+                    claimed.add(id(trace))
+                    break
+        return found
 
     @staticmethod
     def _traceMatchesSignature(trace, signature) -> bool:
@@ -3175,7 +3220,8 @@ class Series():
         pixel-dust and empty-trace clean-ups use, so it is one undoable
         operation (enumerateSections records the undo state into
         ``series_states``) and each trace is re-found after its section is
-        reloaded by its stored color+points signature rather than by identity.
+        reloaded by its recorded index and color+points signature rather than
+        by identity.
 
             Params:
                 choices (list): (record, keep) tuples, described above
@@ -3190,10 +3236,12 @@ class Series():
             record, keep = choice
             if keep == "first":
                 delete_name = record["other_name"]
+                delete_index = record.get("other_index")
                 delete_match = record["other_match"]
                 keep_name = record["name"]
             elif keep == "other":
                 delete_name = record["name"]
+                delete_index = record.get("index")
                 delete_match = record["match"]
                 keep_name = record["other_name"]
             else:
@@ -3203,6 +3251,8 @@ class Series():
             targets.append({
                 "name": delete_name,
                 "section": record["section"],
+                # tells identical traces under one name apart
+                "index": delete_index,
                 "match": delete_match,
                 ## carried through deleteMalformedTraces, which returns the very
                 ## dicts it deleted, so the log and the return value can name
