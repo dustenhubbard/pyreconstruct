@@ -450,6 +450,9 @@ class Series():
             for trace, d in zip(traces, defaults):
                 trace.obj_defaults = copyObjDefaults(d)
         self.palette_index = series_data["palette_index"]
+        # a header-only palette CSV import saved a palette with no buttons,
+        # and a file holding one crashed when that palette was shown
+        self.dropEmptyPalettes()
         # a palette CSV import could save an index past the end of the new
         # palette, and such a file could not be opened (fork #530)
         self.clampPaletteIndex()
@@ -4737,6 +4740,18 @@ class Series():
         with open(fp, "w", encoding="utf-8") as f:
             f.write(csv_str)
     
+    def dropEmptyPalettes(self):
+        """Remove every palette that has no buttons.
+
+        A palette with no buttons has nothing to select. If no palette is
+        left, the default palette is added as `palette1`.
+        """
+        for name in [n for n, p in self.palette_traces.items() if not p]:
+            del self.palette_traces[name]
+            self.forgetPaletteToken(name)
+        if not self.palette_traces:
+            self.palette_traces["palette1"] = Series.getDefaultPaletteTraces()
+
     def clampPaletteIndex(self):
         """Point palette_index at a palette and a button that exist.
 

@@ -210,6 +210,16 @@ class TracePaletteDialog(QuickTabDialog):
                     )
                     return None, False
 
+        # a palette with no buttons has nothing to select, and showing it
+        # crashed the mouse palette
+        for palette_name, inputs in response.items():
+            if palette_name != "current_tab_text" and not inputs:
+                notify(
+                    f"The palette {palette_name} has no buttons. "
+                    "Nothing was changed."
+                )
+                return None, False
+
         # modify the series directly
         self.series.palette_index[0] = response["current_tab_text"]
         del(response["current_tab_text"])
