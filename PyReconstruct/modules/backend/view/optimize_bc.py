@@ -1,40 +1,50 @@
 import os
+from types import SimpleNamespace
+
 import cv2
 import zarr
 import numpy as np
+from PySide6.QtCore import QPoint
+from PySide6.QtGui import QImage, QPolygon
 
 from PyReconstruct.modules.datatypes import Series, Section
+from .image_layer import ImageLayer
 from .section_layer import SectionLayer
 
 # Brightness and contrast are whole numbers from -100 to 100 (the field clamps
-# them there), and ImageLayer draws them in this order:
-#   brightness b >= 0: white over the image at opacity b/100
-#   brightness b < 0:  black over the image at opacity |b|/100
-#   contrast c >= 0:   the image composited onto itself in Overlay mode c/20
-#                      times (the fraction as one pass at partial opacity)
-#   contrast c < 0:    gray 128 over the image at opacity |c|/100
-# Overlay of an image onto itself is not a linear stretch. It maps a level x
-# (0-1) to 2x^2 below 0.5 and 1 - 2(1-x)^2 above, an S-curve around 128.
-# QPainter stores whole levels after every pass, so the curves round there
-# too; on a low contrast image that needs four or five passes it adds up.
-LEVELS = np.arange(256, dtype=np.float64)
+# them there). ImageLayer paints brightness as a white or black blend and then
+# contrast as Overlay passes of the image onto itself or a gray blend, all in
+# QPainter's 8-bit integer arithmetic. Every step acts on each pixel by its
+# level alone, so a strip of the 256 levels painted once per setting gives
+# lookup tables that match the render exactly, rounding included.
 SETTINGS = np.arange(-100, 101)
+_tables = None
 
 
-def _overlay(levels):
-    """Composite levels (0-255) onto themselves in Overlay mode."""
-    x = levels / 255
-    return np.rint(np.where(x < 0.5, 2 * x * x, 1 - 2 * (1 - x) ** 2) * 255)
+def _paintStrip(brightness, contrast):
+    """Paint the 256 levels with ImageLayer's own brightness and contrast code."""
+    levels = np.arange(256, dtype=np.uint8).reshape(1, 256).copy()
+    gray = QImage(levels.data, 256, 1, 256, QImage.Format.Format_Grayscale8)
+    strip = gray.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+    # the polygon reaches past the strip so its outline never lands on it
+    layer = SimpleNamespace(
+        section=SimpleNamespace(brightness=brightness, contrast=contrast),
+        bc_poly=QPolygon([QPoint(-4, -4), QPoint(-4, 5), QPoint(260, 5), QPoint(260, -4)]),
+    )
+    ImageLayer._drawBrightness(layer, strip)
+    ImageLayer._drawContrast(layer, strip)
+    rgba = strip.convertToFormat(QImage.Format.Format_RGBA8888)
+    return np.frombuffer(rgba.constBits(), np.uint8, rgba.sizeInBytes())[:1024:4].copy()
 
 
-def _brightnessCurves():
-    """Return every brightness setting's level curve, one row per setting."""
-    b = SETTINGS[:, None] / 100
-    return np.rint(np.where(
-        b >= 0,
-        LEVELS + (255 - LEVELS) * b,
-        LEVELS * (1 + b),
-    ))
+def _lookupTables():
+    """Return the brightness and contrast tables, one row of 256 levels per setting."""
+    global _tables
+    if _tables is None:
+        bright = np.array([_paintStrip(int(b), 0) for b in SETTINGS])
+        contrast = np.array([_paintStrip(0, int(c)) for c in SETTINGS])
+        _tables = bright, contrast
+    return _tables
 
 
 def applyContrastAndBrightness(levels, brightness : int, contrast : int):
@@ -45,27 +55,17 @@ def applyContrastAndBrightness(levels, brightness : int, contrast : int):
             brightness (int): the brightness setting (-100 to 100)
             contrast (int): the contrast setting (-100 to 100)
     """
-    x = np.asarray(levels, dtype=np.float64)
-    b = brightness / 100
-    x = np.rint(x + (255 - x) * b if b >= 0 else x * (1 + b))
-    if contrast >= 0:
-        passes = contrast / 20
-        for _ in range(int(passes)):
-            x = _overlay(x)
-        opacity = passes % 1
-        if opacity > 0:
-            x = x + (_overlay(x) - x) * opacity
-    else:
-        opacity = abs(contrast) / 100
-        x = x * (1 - opacity) + 128 * opacity
-    return x
+    bright, contrast_table = _lookupTables()
+    curve = contrast_table[contrast + 100][bright[brightness + 100]]
+    pixels = np.clip(np.rint(np.asarray(levels, dtype=np.float64)), 0, 255)
+    return curve[pixels.astype(np.intp)].astype(np.float64)
 
 
 def adjustPixelsToStats(image, desired_mean, desired_std):
     """Find the brightness and contrast that render an image closest to a mean and standard deviation.
 
     Every whole-number pair from -100 to 100 is scored on the image's histogram
-    with the same curves ImageLayer draws, and the closest one wins.
+    with the lookup tables above, and the closest one wins.
 
     Params:
         image (array): image as numpy array
@@ -73,15 +73,15 @@ def adjustPixelsToStats(image, desired_mean, desired_std):
         desired_std (float): The target standard deviation for the adjusted pixels.
 
     Returns:
-        brightness (int): The brightness setting (-100 to 100), None for an empty image.
-        contrast (int): The contrast setting (-100 to 100), None if the image has
-            no spread for contrast to act on.
+        brightness (int): The brightness setting (-100 to 100), None when the
+            image is empty or all black (a window with no image in it).
+        contrast (int): The contrast setting (-100 to 100), 0 for a flat image,
+            None along with brightness.
     """
     pixels = np.clip(np.rint(np.asarray(image, dtype=np.float64)), 0, 255)
-    if pixels.size == 0:
+    if pixels.size == 0 or not pixels.any():
         return None, None
     weights = np.bincount(pixels.astype(np.intp).ravel(), minlength=256) / pixels.size
-    flat = np.std(pixels) < 1e-6
 
     def score(curves):
         # a plain weighted sum, not a matrix product: on a busy machine the
@@ -91,27 +91,16 @@ def adjustPixelsToStats(image, desired_mean, desired_std):
         std = np.sqrt(np.maximum(var, 0))
         return (mean - desired_mean) ** 2 + (std - desired_std) ** 2
 
-    # one row per brightness setting, after brightness and before contrast
-    bright = _brightnessCurves()
-    if flat:
-        return int(SETTINGS[np.argmin(score(bright))]), None
-
-    # the curves after 0 to 5 full Overlay passes
-    passes = [bright]
-    for _ in range(5):
-        passes.append(_overlay(passes[-1]))
+    bright, contrast_table = _lookupTables()
+    bright = bright.astype(np.intp)
+    # a flat image has no spread for contrast to act on
+    if np.std(pixels) < 1e-6:
+        return int(SETTINGS[np.argmin(score(bright.astype(np.float64)))]), 0
 
     best = (np.inf, 0, 0)
-    for c in SETTINGS:
-        if c >= 0:
-            full, opacity = divmod(c, 20)
-            curves = passes[full]
-            if opacity:
-                curves = curves + (passes[full + 1] - curves) * (opacity / 20)
-        else:
-            opacity = -c / 100
-            curves = bright * (1 - opacity) + 128 * opacity
-        errors = score(curves)
+    for c, table in zip(SETTINGS, contrast_table.astype(np.float64)):
+        # one row per brightness setting, brightness first and then contrast
+        errors = score(table[bright])
         i = int(np.argmin(errors))
         if errors[i] < best[0]:
             best = (errors[i], int(SETTINGS[i]), int(c))

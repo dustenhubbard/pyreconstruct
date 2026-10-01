@@ -3,10 +3,10 @@
 `adjustPixelsToStats` used to assume brightness shifts every pixel by the same
 fraction of the mean and contrast stretches linearly by `1 + c/20`. Neither is
 how `ImageLayer` draws them: positive brightness blends toward white, and
-positive contrast composites the image onto itself in Overlay mode. With a
-target of 128/60, an image at 63/20 rendered at 253/22 and one at 100/20 at
-172/40. These tests measure the image `ImageLayer.generateImageLayer` actually
-draws after `optimizeSeriesBC`.
+positive contrast composites the image onto itself in Overlay mode, in
+QPainter's integer arithmetic. With a target of 128/60, an image at 63/20
+rendered at 253/22 and one at 100/20 at 172/40. These tests measure the image
+`ImageLayer.generateImageLayer` actually draws after `optimizeSeriesBC`.
 """
 import cv2
 import numpy as np
@@ -17,6 +17,7 @@ from PyReconstruct.modules.backend.view.image_layer import ImageLayer
 from PyReconstruct.modules.backend.view.optimize_bc import (
     adjustPixelsToStats,
     applyContrastAndBrightness,
+    optimizeSectionBC,
     optimizeSeriesBC,
 )
 from PyReconstruct.modules.datatypes import Transform
@@ -24,9 +25,10 @@ from PyReconstruct.modules.datatypes import Transform
 MEAN_TOLERANCE = 5
 STD_TOLERANCE = 3
 # An image with a std of 10 or less needs four or more Overlay passes, and one
-# contrast step moves it a long way. Checked over every whole-number pair, the
-# closest these two can get is about 8 and 5.5 from the target mean.
-FLAT_MEAN_TOLERANCE = 9
+# contrast step moves it a long way. Over every whole-number pair that keeps
+# the deviation within 3, the closest these two render is 5.30 and 5.35 from
+# the target mean, and the search's picks land 5.4 and 5.6 away.
+FLAT_MEAN_TOLERANCE = 6
 FLAT = {"very_dark_flat", "gray_flat"}
 
 # (distribution, input mean, input std, target mean, target std)
@@ -39,6 +41,7 @@ CASES = {
     "gray_flat": ("gauss", 128, 5, 128, 60),
     "too_much_contrast": ("bimodal", 128, 90, 128, 60),
     "other_target": ("gauss", 150, 30, 90, 40),
+    "barely_any_contrast": ("gauss", 128, 3, 90, 40),
 }
 
 
@@ -102,8 +105,8 @@ def test_optimized_section_renders_at_the_target(real_series, image_section, cas
     assert abs(pixels.std() - target_std) < STD_TOLERANCE, detail
 
 
-@pytest.mark.parametrize("brightness", [-70, -25, 0, 25, 70])
-@pytest.mark.parametrize("contrast", [-60, -15, 0, 10, 30, 50, 75])
+@pytest.mark.parametrize("brightness", [-100, -70, -25, 0, 25, 70, 100])
+@pytest.mark.parametrize("contrast", [-100, -60, -15, 0, 10, 30, 50, 75, 100])
 def test_model_matches_what_image_layer_draws(real_series, image_section, brightness, contrast):
     """The curve the search scores is the one ImageLayer paints."""
     pixels = _image("gauss", 128, 40)
@@ -114,11 +117,23 @@ def test_model_matches_what_image_layer_draws(real_series, image_section, bright
     drawn = _rendered(section, real_series)
     modeled = applyContrastAndBrightness(pixels[1:, 1:], brightness, contrast)
 
-    assert abs(drawn.mean() - modeled.mean()) < 1.5
-    assert abs(drawn.std() - modeled.std()) < 1.5
+    assert np.array_equal(drawn, modeled)
 
 
-def test_flat_image_sets_brightness_only():
+def test_flat_image_sets_brightness_and_no_contrast(qapp):
     b, c = adjustPixelsToStats(np.full((8, 8), 64, np.uint8), 128, 60)
-    assert c is None
+    assert c == 0
     assert abs(applyContrastAndBrightness(64, b, 0) - 128) < 2
+
+
+def test_window_with_no_image_changes_nothing(real_series, image_section):
+    snum = image_section(_image("gauss", 63, 20))
+    section = real_series.loadSection(snum)
+    section.brightness, section.contrast = 12, -34
+    layer = ImageLayer(section, real_series)
+    w, h = layer.bw * section.mag, layer.bh * section.mag
+
+    # a window well off the image's right edge
+    optimizeSectionBC(section, 128, 60, window=[w * 3, 0, w, h])
+
+    assert (section.brightness, section.contrast) == (12, -34)
