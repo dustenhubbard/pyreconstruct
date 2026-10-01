@@ -97,12 +97,13 @@ def test_new_series_from_a_zarr_with_no_attributes(tmp_path, monkeypatch):
         series.close()
 
 
-def _new_series(tmp_path, monkeypatch, labels, **label_attrs):
-    """A new series from a 2 by 32 by 32 raw with no attributes."""
+def _new_series(tmp_path, monkeypatch, labels, raw_attrs=None, **label_attrs):
+    """A new series from a 2 by 32 by 32 raw, with no attributes by default."""
     monkeypatch.setattr(conversions, "ThreadPoolProgBar", _InlinePool)
     fp = str(tmp_path / "plain.zarr")
     zg = zarr.open(fp, "w")
-    zg.create_dataset("raw", data=np.full((2, 32, 32), 9, dtype=np.uint8))
+    raw = zg.create_dataset("raw", data=np.full((2, 32, 32), 9, dtype=np.uint8))
+    raw.attrs.update(raw_attrs or {})
     zg.create_dataset("labels_cells", data=labels).attrs.update(label_attrs)
     return conversions.zarrToNewSeries(fp, ["labels_cells"], "fresh")
 
@@ -137,5 +138,44 @@ def test_label_offset_is_in_nm_when_neither_has_a_voxel_size(tmp_path, monkeypat
             x0, x1, y0, y1 = _bounds(series.loadSection(snum), "autoseg_3")
             assert (x0, x1) == (pytest.approx(0.032), pytest.approx(0.060))
             assert (y0, y1) == (pytest.approx(0.068), pytest.approx(0.096))
+    finally:
+        series.close()
+
+
+def _assert_label_rows_4_to_7_at_8_nm(series):
+    """Label rows and columns 4 to 7 at 8 nm are raw's 8 to 15 at 4 nm."""
+    for snum in (0, 1):
+        x0, x1, y0, y1 = _bounds(series.loadSection(snum), "autoseg_3")
+        assert (x0, x1) == (pytest.approx(0.032), pytest.approx(0.056))
+        assert (y0, y1) == (pytest.approx(0.072), pytest.approx(0.096))
+
+
+def test_labels_in_um_over_raw_without_a_voxel_size(tmp_path, monkeypatch):
+    labels = np.zeros((2, 16, 16), dtype=np.uint64)
+    labels[:, 4:8, 4:8] = 3
+
+    series = _new_series(
+        tmp_path, monkeypatch, labels,
+        voxel_size=[0.05, 0.008, 0.008], units="um", offset=[0, 0, 0],
+    )
+    try:
+        _assert_label_rows_4_to_7_at_8_nm(series)
+    finally:
+        series.close()
+
+
+def test_raw_and_labels_both_in_um(tmp_path, monkeypatch):
+    """The 0.032 um label offset is 4 label pixels, so rows 0 to 3 land on 4 to 7."""
+    labels = np.zeros((2, 16, 16), dtype=np.uint64)
+    labels[:, 0:4, 0:4] = 3
+
+    series = _new_series(
+        tmp_path, monkeypatch, labels,
+        raw_attrs={"voxel_size": [0.05, 0.004, 0.004], "units": "um"},
+        voxel_size=[0.05, 0.008, 0.008], units="um", offset=[0, 0.032, 0.032],
+    )
+    try:
+        assert series.loadSection(0).mag == pytest.approx(0.004)
+        _assert_label_rows_4_to_7_at_8_nm(series)
     finally:
         series.close()

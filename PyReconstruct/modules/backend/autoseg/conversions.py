@@ -67,13 +67,28 @@ def get_voxel_size_um(zarr_array):
 
     voxel_size = get_resolution(zarr_array)
 
+    return [
+        v if um else v / 1000
+        for v, um in zip(voxel_size, _in_um(zarr_array, len(voxel_size)))
+    ]
+
+
+def _in_um(zarr_array, n):
+    """For each of n axes, True if the zarr's ``units`` say µm (default nm)."""
+
     units = zarr_array.attrs.get("units", "nm")
     if isinstance(units, str):
-        units = [units] * len(voxel_size)
+        units = [units] * n
+
+    return [str(u).lower() in ("um", "µm", "μm", "micrometer", "micron") for u in units]
+
+
+def as_nm(values, zarr_array):
+    """Sizes or offsets given in a zarr's ``units``, in nm."""
 
     return [
-        v if str(u).lower() in ("um", "µm", "μm", "micrometer", "micron") else v / 1000
-        for v, u in zip(voxel_size, units)
+        v * 1000 if um else v
+        for v, um in zip(values, _in_um(zarr_array, len(values)))
     ]
 
 
@@ -129,19 +144,20 @@ def get_thickness(zarr_array):
 def get_label_resolutions(labels_array, raw):
     """Get the (labels, raw) resolutions for a label import.
 
-    Raw with no ``resolution`` or ``voxel_size`` gets the grid PyReconstruct
-    builds the series on: its thickness and true mag, in nm. Labels with
-    neither share raw's grid.
+    Both come back in nm, whatever ``units`` each array declares. Raw with no
+    ``resolution`` or ``voxel_size`` gets the grid PyReconstruct builds the
+    series on: its thickness and true mag. Labels with neither share raw's
+    grid. Read offsets with ``as_nm`` to match.
     """
 
     try:
-        raw_res = get_resolution(raw)
+        raw_res = as_nm(get_resolution(raw), raw)
     except KeyError:
         mag_nm = get_true_mag(raw) * 1000
         raw_res = [get_thickness(raw) * 1000, mag_nm, mag_nm]
 
     try:
-        labels_res = get_resolution(labels_array)
+        labels_res = as_nm(get_resolution(labels_array), labels_array)
     except KeyError:
         labels_res = None
 
@@ -587,7 +603,7 @@ def getLabelsToObjectsData(data_fp: str, group: str, raw_attrs: dict = None) -> 
     sections = (raw.attrs if raw_attrs is None else raw_attrs)["sections"]
 
     resolution_z = get_label_resolutions(labels_array, raw)[0][0]
-    offset_z = get_array_offset(labels_array)[0]
+    offset_z = as_nm(get_array_offset(labels_array), labels_array)[0]
     section_start = round(offset_z / resolution_z)
 
     return data_zg, sections, section_start
@@ -835,9 +851,9 @@ def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
     raw = get_zarr_array(data_zg, "raw")
     resolution, raw_resolution = get_label_resolutions(labels_array, raw)
 
-    offset = get_array_offset(labels_array)
+    offset = as_nm(get_array_offset(labels_array), labels_array)
     z_offset = round(offset[0] / resolution[0])
-    raw_offset = get_array_offset(raw)
+    raw_offset = as_nm(get_array_offset(raw), raw)
 
     attrs = raw.attrs if raw_attrs is None else raw_attrs
     window = attrs["window"]
