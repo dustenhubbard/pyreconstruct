@@ -428,25 +428,63 @@ class VPlotter(vedo.Plotter):
 
         self.saveState()
 
-        for obj in self.selected:
-            # Get the original color from the series
-            if obj.type == "object":
-                # For objects, find the original trace color by loading all sections
-                found = False
-                for snum in self.series.sections.keys():
-                    if found:
-                        break
-                    section = self.series.loadSection(snum)
-                    if obj.name in section.contours:
-                        trace = section.contours[obj.name][0]
-                        obj.setColor(trace.color)
-                        found = True
-            elif obj.type == "ztrace":
-                # For ztraces, find the original ztrace color
-                if obj.name in self.series.ztraces:
-                    obj.setColor(self.series.ztraces[obj.name].color)
+        # An object added with "From other series..." keeps that series'
+        # path, and its original color is in that series, not the open one.
+        # Each other series is opened once, read, and closed again, the way
+        # generateVolumes opens it to build the meshes.
+        opened = {}
+        try:
+            for obj in self.selected:
+                series = self._seriesForRevert(obj.series_fp, opened)
+                if series is None:
+                    continue
+                # Get the original color from the series
+                if obj.type == "object":
+                    # For objects, find the original trace color by loading all sections
+                    found = False
+                    for snum in series.sections.keys():
+                        if found:
+                            break
+                        section = series.loadSection(snum)
+                        if obj.name in section.contours:
+                            trace = section.contours[obj.name][0]
+                            obj.setColor(trace.color)
+                            found = True
+                elif obj.type == "ztrace":
+                    # For ztraces, find the original ztrace color
+                    if obj.name in series.ztraces:
+                        obj.setColor(series.ztraces[obj.name].color)
+        finally:
+            for series in opened.values():
+                if series is not None:
+                    series.close()
 
         self.render()
+
+    def _seriesForRevert(self, series_fp, opened : dict):
+        """Return the series a scene object came from, opening it if needed.
+
+            Params:
+                series_fp (str): the scene object's series path
+                opened (dict): series opened so far, by path; the caller
+                    closes them
+            Returns:
+                (Series): the series, or None if it could not be opened
+        """
+        if series_fp == self.series.jser_fp:
+            return self.series
+        if series_fp not in opened:
+            from PyReconstruct.modules.backend.notifier import NullNotifier
+            from PyReconstruct.modules.backend.progress import NullProgressReporter
+            try:
+                opened[series_fp] = Series.openJser(
+                    series_fp,
+                    progress=NullProgressReporter,
+                    notifier=NullNotifier(),
+                )
+            except Exception:
+                opened[series_fp] = None
+        return opened[series_fp]
 
     def incAlpha(self, i : float):
         """Increment the transparency of the selected meshes.
