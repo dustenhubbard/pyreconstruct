@@ -22,6 +22,8 @@ QApplication.instance() or QApplication(["test"])
 
 from PyReconstruct.modules.backend.volume.objects_3D import (  # noqa: E402
     Surface,
+    _covers,
+    _tracePolygon,
     nestedFillOrder,
 )
 
@@ -208,6 +210,79 @@ def test_nested_fill_order_ends_on_identical_outlines():
     assert order == [(HOLE, True), (HOLE, False)]
 
 
+def test_coincident_negative_cancels_the_island():
+    """A negative with the island's own outline is applied again after the
+    island refills, so the pair cancels as it did in the old fill."""
+    traces = [(OUTER, False), (HOLE, True), (ISLAND, False), (ISLAND, True)]
+    surf = _surface(traces)
+    volume, _ = surf.generateVolume()
+    assert (volume == _reference_volume(surf)).all()
+    order = nestedFillOrder([OUTER, ISLAND], [HOLE, ISLAND])
+    assert order[-1] == (ISLAND, False)
+    assert order == [
+        (OUTER, True), (ISLAND, True), (HOLE, False), (ISLAND, False),
+        (ISLAND, True), (ISLAND, False),
+    ]
+
+
+def _pairwise_order(pos, neg):
+    """The walk with every pair compared, no index; the shipped walk must
+    give the same answer."""
+    order = [(pts, True) for pts in pos] + [(pts, False) for pts in neg]
+    if not pos or not neg:
+        return order
+    pos_polys = [_tracePolygon(pts) for pts in pos]
+    neg_polys = [_tracePolygon(pts) for pts in neg]
+    holes = range(len(neg))
+    for _ in range(len(pos) + len(neg)):
+        islands = [
+            i for i, p in enumerate(pos_polys)
+            if any(_covers(neg_polys[j], p) for j in holes)
+        ]
+        if not islands:
+            break
+        order.extend((pos[i], True) for i in islands)
+        holes = [
+            j for j, n in enumerate(neg_polys)
+            if any(_covers(pos_polys[i], n, allow_equal=True) for i in islands)
+        ]
+        if not holes:
+            break
+        order.extend((neg[j], False) for j in holes)
+    return order
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2, 3])
+def test_indexed_walk_matches_the_pairwise_walk(seed):
+    """Random squares, many of them nested, a few duplicated, some with no
+    area: the tree only narrows the pairs, it must not change the answer."""
+    rng = np.random.default_rng(seed)
+
+    def random_square():
+        x, y = rng.uniform(0, 10, 2)
+        side = float(rng.choice([0.0, 0.1, 0.4, 1.0, 2.5, 6.0]))
+        return _square(float(x), float(y), float(x) + side, float(y) + side)
+
+    pos = [random_square() for _ in range(80)]
+    neg = [random_square() for _ in range(80)]
+    # nested chains with alternating sign, duplicates on both sides
+    for k in range(5):
+        base = k * 2.0
+        pos.append(_square(base, base, base + 1.6, base + 1.6))
+        neg.append(_square(base + 0.2, base + 0.2, base + 1.4, base + 1.4))
+        pos.append(_square(base + 0.4, base + 0.4, base + 1.2, base + 1.2))
+        neg.append(_square(base + 0.6, base + 0.6, base + 1.0, base + 1.0))
+        pos.append(_square(base + 0.7, base + 0.7, base + 0.9, base + 0.9))
+    neg.append(pos[-1])
+    pos.append(neg[0])
+    neg.append(COLLINEAR)
+    pos.append(ONE_POINT)
+
+    got = nestedFillOrder(pos, neg)
+    assert got == _pairwise_order(pos, neg)
+    assert len(got) > len(pos) + len(neg), "the case has islands"
+
+
 @pytest.mark.parametrize("points", [COLLINEAR, ONE_POINT])
 def test_zero_area_positive_in_a_hole_is_not_an_island(points):
     """A positive with no area is not refilled: it would put voxels back along
@@ -234,6 +309,7 @@ def test_zero_area_positive_in_a_hole_is_not_an_island(points):
     ("hole_touching_the_edge", [(OUTER, False), (_square(2, 1, 3, 2), True)]),
     ("two_holes", [(OUTER, False), (_square(0.2, 0.2, 0.8, 0.8), True), (HOLE, True)]),
     ("two_point_trace", [(OUTER, False), ([(1, 1), (2, 2)], True), (ISLAND, False)]),
+    ("coincident_pair_no_hole", [(OUTER, False), (ISLAND, False), (ISLAND, True)]),
 ])
 def test_without_an_island_the_fill_is_unchanged(name, traces):
     surf = _surface(traces)

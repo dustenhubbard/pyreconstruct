@@ -123,12 +123,14 @@ def _tracePolygon(points : list):
     return poly
 
 
-def _covers(outer, inner) -> bool:
-    """Return whether one trace polygon covers another, different one.
+def _covers(outer, inner, allow_equal=False) -> bool:
+    """Return whether one trace polygon covers another.
 
-    Two identical outlines are not nested. A trace GEOS cannot compare (some
-    self-crossing outlines) counts as not covered, so it fills the way it did
-    before.
+    Two identical outlines are not nested unless ``allow_equal`` says so: a
+    negative with the same outline as an island cancels that island, so the
+    step that picks the holes after a refill allows it. A trace GEOS cannot
+    compare (some self-crossing outlines) counts as not covered, so it fills
+    the way it did before.
     """
     if outer is None or inner is None:
         return False
@@ -136,9 +138,50 @@ def _covers(outer, inner) -> bool:
     if ib[0] < ob[0] or ib[1] < ob[1] or ib[2] > ob[2] or ib[3] > ob[3]:
         return False  # the box test is cheap and settles most pairs
     try:
-        return outer.covers(inner) and not outer.equals(inner)
+        if not outer.covers(inner):
+            return False
+        return allow_equal or not outer.equals(inner)
     except Exception:
         return False
+
+
+def _coveredBy(inner_polys : list, outer_polys : list, outer_idx, allow_equal=False) -> list:
+    """Return the indices of the inner polygons that one of the chosen outer
+    polygons covers.
+
+    A tree over the chosen outers narrows each inner to the outers whose box
+    touches its own, and only those pairs go through ``_covers``. A polygon
+    that covers another has a box around it, so the answer is the one a scan
+    of every pair gives, in the same order.
+
+        Params:
+            inner_polys (list): the polygons that may be covered (None allowed)
+            outer_polys (list): the polygons that may cover (None allowed)
+            outer_idx: the indices into outer_polys to consider
+            allow_equal (bool): whether an identical outline counts
+        Returns:
+            (list): the indices into inner_polys, ascending
+    """
+    from shapely import STRtree
+
+    outers = [j for j in outer_idx if outer_polys[j] is not None]
+    inners = [i for i, p in enumerate(inner_polys) if p is not None]
+    if not outers or not inners:
+        return []
+
+    tree = STRtree([outer_polys[j] for j in outers])
+    hits = tree.query([inner_polys[i] for i in inners])
+    candidates = {}
+    for a, b in zip(*hits):
+        candidates.setdefault(inners[int(a)], []).append(outers[int(b)])
+
+    return [
+        i for i in inners
+        if any(
+            _covers(outer_polys[j], inner_polys[i], allow_equal)
+            for j in candidates.get(i, ())
+        )
+    ]
 
 
 def nestedFillOrder(pos : list, neg : list) -> list:
@@ -166,20 +209,16 @@ def nestedFillOrder(pos : list, neg : list) -> list:
     neg_polys = [_tracePolygon(pts) for pts in neg]
 
     holes = range(len(neg))
-    # a level needs a smaller outline than the one before it, so the nesting
-    # cannot run deeper than the number of traces; the bound is a safeguard
+    # an island sits strictly inside a hole of the level before, so the
+    # nesting cannot run deeper than the number of traces; the bound is a
+    # safeguard
     for _ in range(len(pos) + len(neg)):
-        islands = [
-            i for i, p in enumerate(pos_polys)
-            if any(_covers(neg_polys[j], p) for j in holes)
-        ]
+        islands = _coveredBy(pos_polys, neg_polys, holes)
         if not islands:
             break
         order.extend((pos[i], True) for i in islands)
-        holes = [
-            j for j, n in enumerate(neg_polys)
-            if any(_covers(pos_polys[i], n) for i in islands)
-        ]
+        # a negative with the island's own outline cancels it, so it counts
+        holes = _coveredBy(neg_polys, pos_polys, islands, allow_equal=True)
         if not holes:
             break
         order.extend((neg[j], False) for j in holes)
