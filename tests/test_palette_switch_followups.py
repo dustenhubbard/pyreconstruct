@@ -228,3 +228,43 @@ def test_refresh_after_import_fixes_a_negative_index(main_window):
     mw.refreshPaletteAfterImport({g})
 
     _assert_palette_shows(mw, g, 0)
+
+
+# ---------------------------------------------------------------------------
+# The mode buttons after a rebuild
+# ---------------------------------------------------------------------------
+
+def _checked_mode(mp):
+    checked = [m for b, m, _ in mp.mode_buttons.values() if b.isChecked()]
+    assert len(checked) == 1
+    return checked[0]
+
+
+@pytest.mark.parametrize("tool", ["Closed Trace", "Stamp"])
+def test_switching_palette_length_keeps_the_tool(
+    main_window, run_palette_dialog, tool
+):
+    mw = main_window
+    _add_palette(mw.series, "short", 5)
+    mw.mouse_palette.activateModeButton(tool)
+    mode = mw.mouse_palette.mode_buttons[tool][1]
+
+    run_palette_dialog(lambda d: _select_tab(d, "short"))
+    mw.mouse_palette.modifyAllPaletteButtons()
+
+    assert mw.field.mouse_mode == mode
+    assert _checked_mode(mw.mouse_palette) == mode
+
+
+def test_csv_import_keeps_the_tool(main_window, main_window_dialogs, tmp_path):
+    mw = main_window
+    mw.mouse_palette.activateModeButton("Stamp")
+    mode = mw.mouse_palette.mode_buttons["Stamp"][1]
+
+    main_window_dialogs.file_responses = [
+        str(_palette_csv(mw.series, tmp_path, 5))
+    ]
+    mw.importTracePaletteCSV()
+
+    assert mw.field.mouse_mode == mode
+    assert _checked_mode(mw.mouse_palette) == mode

@@ -1107,8 +1107,14 @@ class MousePalette():
 
     def reset(self):
         """Reset the mouse palette when opening a new series."""
+        mode = self.mainwindow.field.mouse_mode
         self.close()
         self.__init__(self.mainwindow)
+        # the new buttons start on Pointer, but the field keeps its mode
+        for name, (button, mouse_mode, _) in self.mode_buttons.items():
+            button.setChecked(mouse_mode == mode)
+            if mouse_mode == mode:
+                self.selected_mode = name
 
     def close(self):
         """Close all buttons"""
