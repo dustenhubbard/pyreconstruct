@@ -20,6 +20,13 @@ from PyReconstruct.modules.gui.utils import undo_chord
 from PyReconstruct.modules.gui.utils import notifyConfirm
 
 
+def _freeze(value):
+    """Lists and tuples, nested, as tuples, so the value can be a key."""
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(v) for v in value)
+    return value
+
+
 class MalformedContoursDialog(QDialog):
     """Report traces skipped during object smoothing.
 
@@ -317,7 +324,8 @@ class MalformedContoursDialog(QDialog):
         deleted = self.delete(records)
         self._pruneRecords(deleted or [])
 
-    def _pruneRecords(self, deleted, deleted_traces=None):
+    def _pruneRecords(self, deleted, deleted_traces=None,
+                      deleted_identities=None):
         """Remove the rows/records that were actually deleted.
 
             Params:
@@ -325,6 +333,9 @@ class MalformedContoursDialog(QDialog):
                 deleted_traces (list): optional (section, name, index) of each
                     trace that was deleted. Defaults to each record's own
                     trace; the pairs list passes the side it really deleted.
+                deleted_identities (list): the scan's "identity" of each entry
+                    of deleted_traces, in the same order (None where it has
+                    none). Defaults to each record's own.
         """
         if not deleted:
             return
@@ -333,6 +344,13 @@ class MalformedContoursDialog(QDialog):
             deleted_traces = [
                 (d["section"], d["name"], d["index"]) for d in deleted
             ]
+            deleted_identities = [d.get("identity") for d in deleted]
+        self._countDownLookalikes(
+            deleted_traces, deleted_identities, deleted_ids
+        )
+        # two rows can delete one trace (both duplicating it), and it went
+        # once, so each distinct trace shifts the rest once
+        distinct = set(deleted_traces)
         # The surviving records' scan-time indexes shift when earlier traces
         # of the SAME contour on the SAME section are deleted: "Go to trace"
         # then framed a different trace than the row named, and the user
@@ -348,7 +366,7 @@ class MalformedContoursDialog(QDialog):
                 if index_key not in record:
                     continue
                 shift = sum(
-                    1 for section, name, index in deleted_traces
+                    1 for section, name, index in distinct
                     if section == record["section"]
                     and name == record[name_key]
                     and index < record[index_key]
@@ -370,6 +388,57 @@ class MalformedContoursDialog(QDialog):
         if self.delete_all_button is not None:
             self.delete_all_button.setEnabled(bool(self.records))
         self._updateRowActionButtons()
+
+    def _countDownLookalikes(self, deleted_traces, deleted_identities,
+                             deleted_ids):
+        """Take each deleted trace off the "lookalikes" count of the rows left.
+
+        A record counts the identical traces its scan saw and its place among
+        them, and the delete path refuses a record whose count has changed. A
+        delete made from this list is one the list has accounted for, so the
+        survivors' counts and places follow it. Run before the index shift:
+        the indexes compared here are the ones from before the delete.
+        """
+        if not deleted_identities:
+            return
+        counted = [
+            record for record in self._records_by_key.values()
+            if id(record) not in deleted_ids and (
+                isinstance(record.get("lookalikes"), int)
+                or isinstance(record.get("other_lookalikes"), int)
+            )
+        ]
+        if not counted:
+            return  # records from before the count existed
+        gone = {}
+        for trace, identity in zip(deleted_traces, deleted_identities):
+            if identity is not None:
+                gone[tuple(trace)] = _freeze(identity)
+        for record in counted:
+            for name_key, index_key, identity_key, count_key, ordinal_key in (
+                ("name", "index", "identity", "lookalikes",
+                 "lookalike_ordinal"),
+                ("other_name", "other_index", "other_identity",
+                 "other_lookalikes", "other_lookalike_ordinal"),
+            ):
+                if not isinstance(record.get(count_key), int) or \
+                        record.get(identity_key) is None:
+                    continue
+                identity = _freeze(record[identity_key])
+                same = [
+                    index for (section, name, index), key in gone.items()
+                    if section == record["section"]
+                    and name == record[name_key] and key == identity
+                ]
+                if not same:
+                    continue
+                record[count_key] -= len(same)
+                # the place among the lookalikes drops by one for each
+                # deleted lookalike that sat before this trace
+                own = record.get(index_key)
+                if isinstance(record.get(ordinal_key), int) and \
+                        isinstance(own, int):
+                    record[ordinal_key] -= sum(1 for i in same if i < own)
 
     def _rows_for_export(self):
         """Return the report as a list of rows (header first).
@@ -687,18 +756,22 @@ class DifferentlyNamedDuplicatesDialog(MalformedContoursDialog):
         # the trace that went is the side that was NOT kept, so "keep first"
         # deleted the record's other trace, not its own
         deleted_traces = []
+        deleted_identities = []
         for record, keep in applied:
             if keep == "first":
                 deleted_traces.append(
                     (record["section"], record["other_name"],
                      record["other_index"])
                 )
+                deleted_identities.append(record.get("other_identity"))
             else:
                 deleted_traces.append(
                     (record["section"], record["name"], record["index"])
                 )
+                deleted_identities.append(record.get("identity"))
         self._pruneRecords(
-            [record for record, _keep in applied], deleted_traces
+            [record for record, _keep in applied], deleted_traces,
+            deleted_identities,
         )
 
     def _columnSpecs(self):

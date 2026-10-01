@@ -573,3 +573,43 @@ def test_a_deleted_trace_shifts_the_other_index_of_a_later_pair(qtbot,
     dialog.goToSelectedOtherContour()
     name, index = navigated[-1]
     assert contours[name][index] == "B1"
+
+
+def test_two_rows_deleting_one_trace_shift_their_neighbors_once(qtbot,
+                                                                 confirmed):
+    """Keeping `A` in one row and `C` in the other deletes the first `B` once,
+    so the row for the second `B` moves down by one, not two."""
+    contours = {"A": ["A0"], "B": ["B0", "B1"], "C": ["C0"], "D": ["D0"]}
+    first, second = _pair("A", 0, "B", 0), _pair("C", 0, "B", 0)
+    third = _pair("B", 1, "D", 0)
+
+    def delete_once(choices):
+        # what Series.deleteDifferentlyNamedDuplicates does: each trace the
+        # rows name is deleted once, however many rows name it
+        gone = {
+            (record["other_name"], record["other_index"]) if keep == "first"
+            else (record["name"], record["index"])
+            for record, keep in choices
+        }
+        for name, index in sorted(gone, reverse=True):
+            contours[name].pop(index)
+        return choices
+
+    navigated = []
+    dialog = _dialog(
+        qtbot, [first, second, third],
+        navigate=lambda s, n, i: navigated.append((n, i)),
+        delete_unselected=delete_once,
+    )
+    rows = _rows_by_record(dialog)
+    _tick(dialog, rows[id(first)], 0)
+    _tick(dialog, rows[id(second)], 0)
+    dialog.deleteUnselectedTraces()
+
+    assert contours["B"] == ["B1"]
+    assert dialog.records == [third]
+    dialog.table.selectRow(0)
+    dialog.goToSelectedContour()
+    # compared as a pair: a shift of two gives -1, which Python would read
+    # as the last trace and so as the right one
+    assert navigated[-1] == ("B", 0)
