@@ -2,8 +2,10 @@
 
 An object name cannot hold whitespace or a comma. That is not decoration: the
 log is a ``", "``-delimited CSV whose fourth field is the object name
-(``Log.__str__`` / ``Log.fromStr``), so a name holding that pair shifts every
-field after it and ``Log.fromStr`` raises on the section range it then reads.
+(``Log.__str__`` / ``Log.fromStr``), so a name holding that pair shifted every
+field after it and ``Log.fromStr`` raised on the section range it then read.
+The writer quotes such a name now, but rows older versions wrote are still
+unreadable, and older versions cannot read the quoted form.
 ``test_comma_and_space_in_a_name_makes_its_log_entry_unreadable`` below is the
 proof, and it is what justifies keeping the rule.
 
@@ -81,21 +83,25 @@ def a_trace(x0):
 # ---------------------------------------------------------------------------
 
 def test_comma_and_space_in_a_name_makes_its_log_entry_unreadable():
-    """An object name holding ``", "`` produces a log line that cannot be read.
+    """An object name holding ``", "`` wrote a log line that cannot be read.
 
     ``Log.fromStr`` splits on ``", "`` and repairs a comma in the *event* by
-    rejoining the tail. There is no such repair for the object name, so the
-    extra field shifts the section range one place and the parse raises. This is
-    the constraint the normalization protects, so it is asserted here rather
-    than asserted about.
+    rejoining the tail. There is no such repair for an unquoted object name, so
+    the extra field shifts the section range one place and the parse raises.
+    ``Log.__str__`` quotes such a name now (``tests/test_log_comma_names.py``),
+    but rows already written that way stay unreadable. This is the constraint
+    the normalization protects, so it is asserted here rather than asserted
+    about.
 
     Measured, not assumed: a comma with no space after it survives the split,
     and so does a space with no comma. It is the pair that is fatal, and either
     character alone is one edit away from it, which is why the rule covers both.
     """
-    entry = Log("24-01-01", "1200", "u", "my, trace", 3, "Create trace(s)")
     with pytest.raises(ValueError):
-        Log.fromStr(str(entry))
+        Log.fromStr("24-01-01, 1200, u, my, trace, 3, Create trace(s)")
+
+    entry = Log("24-01-01", "1200", "u", "my, trace", 3, "Create trace(s)")
+    assert str(entry) == '24-01-01, 1200, u, "my, trace", 3, Create trace(s)'
 
     for survivable in ("my,trace", "my trace"):
         line = Log("24-01-01", "1200", "u", survivable, 3, "Create trace(s)")
