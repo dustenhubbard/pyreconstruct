@@ -145,42 +145,90 @@ def _covers(outer, inner, allow_equal=False) -> bool:
         return False
 
 
-def _coveredBy(inner_polys : list, outer_polys : list, outer_idx, allow_equal=False) -> list:
-    """Return the indices of the inner polygons that one of the chosen outer
-    polygons covers.
+def _coversOrEquals(outer, inner) -> bool:
+    """``_covers`` with an identical outline counted."""
+    return _covers(outer, inner, allow_equal=True)
 
-    A tree over the chosen outers narrows each inner to the outers whose box
-    touches its own, and only those pairs go through ``_covers``. A polygon
-    that covers another has a box around it, so the answer is the one a scan
+
+def _boxesApart(a, b) -> bool:
+    """Return whether the boxes of two shapes miss each other."""
+    ab, bb = a.bounds, b.bounds
+    return bb[0] > ab[2] or bb[2] < ab[0] or bb[1] > ab[3] or bb[3] < ab[1]
+
+
+def _overlaps(a, b) -> bool:
+    """Return whether two trace polygons share area with neither covering
+    the other, so one cuts across the other's edge."""
+    if a is None or b is None or _boxesApart(a, b):
+        return False
+    try:
+        return a.overlaps(b)
+    except Exception:
+        return False
+
+
+def _intersects(a, b) -> bool:
+    """Return whether two trace shapes touch at all."""
+    if a is None or b is None or _boxesApart(a, b):
+        return False
+    try:
+        return a.intersects(b)
+    except Exception:
+        return False
+
+
+def _traceLine(points : list):
+    """Return a trace with no area as a line or a point, or None.
+
+    Such a negative still clears the voxels it runs along, so after an
+    island refills it has to be applied again if it touches the island.
+    """
+    from shapely.geometry import LineString, Point
+
+    distinct = list(dict.fromkeys(tuple(pt) for pt in points))
+    try:
+        if len(distinct) >= 2:
+            return LineString(distinct)
+        if distinct:
+            return Point(distinct[0])
+    except Exception:
+        return None
+    return None
+
+
+def _matching(geoms : list, others : list, other_idx, test) -> list:
+    """Return the indices of the geometries that ``test`` relates to one of
+    the chosen others.
+
+    A tree over the chosen others narrows each geometry to the others whose
+    box touches its own, and only those pairs go through ``test``. Every test
+    used here needs the two boxes to touch, so the answer is the one a scan
     of every pair gives, in the same order.
 
         Params:
-            inner_polys (list): the polygons that may be covered (None allowed)
-            outer_polys (list): the polygons that may cover (None allowed)
-            outer_idx: the indices into outer_polys to consider
-            allow_equal (bool): whether an identical outline counts
+            geoms (list): the shapes to report (None allowed)
+            others (list): the shapes to compare against (None allowed)
+            other_idx: the indices into others to consider
+            test: ``test(other, geom)`` -> bool
         Returns:
-            (list): the indices into inner_polys, ascending
+            (list): the indices into geoms, ascending
     """
     from shapely import STRtree
 
-    outers = [j for j in outer_idx if outer_polys[j] is not None]
-    inners = [i for i, p in enumerate(inner_polys) if p is not None]
-    if not outers or not inners:
+    chosen = [j for j in other_idx if others[j] is not None]
+    present = [i for i, g in enumerate(geoms) if g is not None]
+    if not chosen or not present:
         return []
 
-    tree = STRtree([outer_polys[j] for j in outers])
-    hits = tree.query([inner_polys[i] for i in inners])
+    tree = STRtree([others[j] for j in chosen])
+    hits = tree.query([geoms[i] for i in present])
     candidates = {}
     for a, b in zip(*hits):
-        candidates.setdefault(inners[int(a)], []).append(outers[int(b)])
+        candidates.setdefault(present[int(a)], []).append(chosen[int(b)])
 
     return [
-        i for i in inners
-        if any(
-            _covers(outer_polys[j], inner_polys[i], allow_equal)
-            for j in candidates.get(i, ())
-        )
+        i for i in present
+        if any(test(others[j], geoms[i]) for j in candidates.get(i, ()))
     ]
 
 
@@ -189,11 +237,12 @@ def nestedFillOrder(pos : list, neg : list) -> list:
 
     Every positive trace fills first and every negative trace clears after it.
     A positive trace inside a negative trace is an island in that hole, so it
-    fills again after the holes; a negative trace inside such an island clears
-    after that, and so on down the nesting. Each level's islands come from the
-    holes of the level before, so an island inside a hole inside an island is
-    filled again after the hole that cleared it. A section with no island
-    comes back in the same order as before.
+    fills again after the holes. The negatives that touch the refilled island
+    without being the hole around it clear again after that: one inside the
+    island (or with its own outline, which cancels it), one that cuts across
+    its edge, and one with no area that runs over it. Islands inside those
+    fill next, and so on down the nesting. A section with no island comes
+    back in the same order as before.
 
         Params:
             pos (list): the point lists of the positive traces
@@ -207,18 +256,26 @@ def nestedFillOrder(pos : list, neg : list) -> list:
 
     pos_polys = [_tracePolygon(pts) for pts in pos]
     neg_polys = [_tracePolygon(pts) for pts in neg]
+    neg_lines = [
+        None if poly is not None else _traceLine(pts)
+        for poly, pts in zip(neg_polys, neg)
+    ]
 
     holes = range(len(neg))
-    # an island sits strictly inside a hole of the level before, so the
-    # nesting cannot run deeper than the number of traces; the bound is a
-    # safeguard
+    seen = set()
+    # each level follows from the islands of the one before, so a set of
+    # islands that comes back is a cycle of crossing traces with no end;
+    # the walk stops there, and the count bound is a second safeguard
     for _ in range(len(pos) + len(neg)):
-        islands = _coveredBy(pos_polys, neg_polys, holes)
-        if not islands:
+        islands = _matching(pos_polys, neg_polys, holes, _covers)
+        if not islands or tuple(islands) in seen:
             break
+        seen.add(tuple(islands))
         order.extend((pos[i], True) for i in islands)
-        # a negative with the island's own outline cancels it, so it counts
-        holes = _coveredBy(neg_polys, pos_polys, islands, allow_equal=True)
+        inside = _matching(neg_polys, pos_polys, islands, _coversOrEquals)
+        across = _matching(neg_polys, pos_polys, islands, _overlaps)
+        along = _matching(neg_lines, pos_polys, islands, _intersects)
+        holes = sorted({*inside, *across, *along})
         if not holes:
             break
         order.extend((neg[j], False) for j in holes)

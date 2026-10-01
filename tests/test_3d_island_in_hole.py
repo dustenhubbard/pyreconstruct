@@ -23,6 +23,9 @@ QApplication.instance() or QApplication(["test"])
 from PyReconstruct.modules.backend.volume.objects_3D import (  # noqa: E402
     Surface,
     _covers,
+    _intersects,
+    _overlaps,
+    _traceLine,
     _tracePolygon,
     nestedFillOrder,
 )
@@ -65,6 +68,10 @@ INNER_ISLAND = _square(1.47, 1.47, 1.53, 1.53)
 # positives with no area, drawn inside the hole
 COLLINEAR = [(1.2, 1.2), (1.5, 1.5), (1.8, 1.8)]
 ONE_POINT = [(1.5, 1.5), (1.5, 1.5), (1.5, 1.5)]
+# a negative that cuts across the island's edge, and one with no area that
+# runs over the island
+CROSS = _square(1.5, 1.5, 1.9, 1.9)
+LINE = [(1.5, 1.35), (1.5, 1.65)]
 
 
 def _surface(sections, nsec=3):
@@ -225,6 +232,47 @@ def test_coincident_negative_cancels_the_island():
     ]
 
 
+@pytest.mark.parametrize("hole", [True, False])
+def test_negative_across_the_island_edge_still_cuts_it(hole):
+    """A negative that crosses the island's edge is applied again after the
+    refill. With no hole around the island the old fill already cut it, and
+    the island inside a hole must end up cut the same way."""
+    cut = _surface([(OUTER, False), (ISLAND, False), (CROSS, True)])
+    cut_ref = _reference_volume(cut)
+    full = np.ones_like(cut_ref)
+    assert 0 < _count(cut_ref, ISLAND, cut) < _count(full, ISLAND, cut)
+
+    traces = [(OUTER, False), (ISLAND, False), (CROSS, True)]
+    if hole:
+        traces.insert(1, (HOLE, True))
+    volume, _ = _surface(traces).generateVolume()
+    assert _count(volume, ISLAND, cut) == _count(cut_ref, ISLAND, cut)
+    assert _count(volume, CROSS, cut) == 0
+    if not hole:
+        assert (volume == cut_ref).all()
+
+
+def test_zero_area_negative_over_the_island_still_cuts_it():
+    cut = _surface([(OUTER, False), (ISLAND, False), (LINE, True)])
+    cut_ref = _reference_volume(cut)
+    full = np.ones_like(cut_ref)
+    assert 0 < _count(cut_ref, ISLAND, cut) < _count(full, ISLAND, cut)
+
+    volume, _ = _surface(
+        [(OUTER, False), (HOLE, True), (ISLAND, False), (LINE, True)]
+    ).generateVolume()
+    assert _count(volume, ISLAND, cut) == _count(cut_ref, ISLAND, cut)
+
+
+def test_nested_fill_order_reapplies_cutting_negatives():
+    assert nestedFillOrder([OUTER, ISLAND], [HOLE, CROSS, LINE]) == [
+        (OUTER, True), (ISLAND, True),
+        (HOLE, False), (CROSS, False), (LINE, False),
+        (ISLAND, True),
+        (CROSS, False), (LINE, False),
+    ]
+
+
 def _pairwise_order(pos, neg):
     """The walk with every pair compared, no index; the shipped walk must
     give the same answer."""
@@ -233,19 +281,28 @@ def _pairwise_order(pos, neg):
         return order
     pos_polys = [_tracePolygon(pts) for pts in pos]
     neg_polys = [_tracePolygon(pts) for pts in neg]
+    neg_lines = [None if poly is not None else _traceLine(pts)
+                 for poly, pts in zip(neg_polys, neg)]
     holes = range(len(neg))
+    seen = set()
     for _ in range(len(pos) + len(neg)):
         islands = [
             i for i, p in enumerate(pos_polys)
             if any(_covers(neg_polys[j], p) for j in holes)
         ]
-        if not islands:
+        if not islands or tuple(islands) in seen:
             break
+        seen.add(tuple(islands))
         order.extend((pos[i], True) for i in islands)
-        holes = [
-            j for j, n in enumerate(neg_polys)
-            if any(_covers(pos_polys[i], n, allow_equal=True) for i in islands)
-        ]
+        holes = sorted(
+            j for j in range(len(neg))
+            if any(
+                _covers(pos_polys[i], neg_polys[j], allow_equal=True)
+                or _overlaps(pos_polys[i], neg_polys[j])
+                or _intersects(pos_polys[i], neg_lines[j])
+                for i in islands
+            )
+        )
         if not holes:
             break
         order.extend((neg[j], False) for j in holes)
@@ -277,6 +334,10 @@ def test_indexed_walk_matches_the_pairwise_walk(seed):
     pos.append(neg[0])
     neg.append(COLLINEAR)
     pos.append(ONE_POINT)
+    # negatives with no area laid over the nested chains
+    for k in range(5):
+        neg.append([(k * 2.0 + 0.8, k * 2.0 + 0.1), (k * 2.0 + 0.8, k * 2.0 + 1.5)])
+        neg.append([(k * 2.0 + 0.8, k * 2.0 + 0.8)] * 3)
 
     got = nestedFillOrder(pos, neg)
     assert got == _pairwise_order(pos, neg)
