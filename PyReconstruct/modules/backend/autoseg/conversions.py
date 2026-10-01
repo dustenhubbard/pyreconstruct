@@ -409,8 +409,7 @@ def seriesToLabels(series: Series,
                    window: Union[List, None] = None,
                    img_mag: float = 0.00254,
                    chunk_size: tuple = (1, 256, 256),
-                   raw_window: Union[List, None] = None,
-                   section_diff: int=0):
+                   raw_window: Union[List, None] = None):
     """Export contours as labels to an existing zarr.
     
         Params:
@@ -433,15 +432,24 @@ def seriesToLabels(series: Series,
     if window:
 
         ## window is (x, y, w, h), (start, end): the section range is its
-        ## second element, so it can only be read inside this branch
-        sections = list(range(*window[1]))
+        ## second element, so it can only be read inside this branch. Only
+        ## sections in the zarr count: a deleted section leaves a gap in the
+        ## numbers but no slice in raw, so the labels start at the z where
+        ## their first section sits in raw, not at a section number offset.
+        start, end = window[1]
+        raw_sections = list(raw.attrs["sections"])
+        sections = [snum for snum in raw_sections if start <= snum < end]
+        if not sections:
+            raise ValueError(
+                f"the zarr has no sections between {start} and {end - 1}."
+            )
 
         offset = get_offset(
             window,
             resolution,
             img_mag,
             relative_to=raw_window,
-            section_diff=section_diff
+            section_diff=raw_sections.index(sections[0])
         )
 
         window = window[0]
