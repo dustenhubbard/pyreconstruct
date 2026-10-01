@@ -1,37 +1,71 @@
 import os
+from types import SimpleNamespace
+
 import cv2
 import zarr
 import numpy as np
+from PySide6.QtCore import QPoint
+from PySide6.QtGui import QImage, QPolygon
 
 from PyReconstruct.modules.datatypes import Series, Section
+from .image_layer import ImageLayer
 from .section_layer import SectionLayer
 
-# just here for reference, not actually used
-def applyContrastAndBrightness(pixel : int, brightness : int, contrast : int):
-    """Apply brightness and contrast to a single pixel.
-    
+# Brightness and contrast are whole numbers from -100 to 100 (the field clamps
+# them there). ImageLayer paints brightness as a white or black blend and then
+# contrast as Overlay passes of the image onto itself or a gray blend, all in
+# QPainter's 8-bit integer arithmetic. Every step acts on each pixel by its
+# level alone, so a strip of the 256 levels painted once per setting gives
+# lookup tables that match the render exactly, rounding included.
+SETTINGS = np.arange(-100, 101)
+_tables = None
+
+
+def _paintStrip(brightness, contrast):
+    """Paint the 256 levels with ImageLayer's own brightness and contrast code."""
+    levels = np.arange(256, dtype=np.uint8).reshape(1, 256).copy()
+    gray = QImage(levels.data, 256, 1, 256, QImage.Format.Format_Grayscale8)
+    strip = gray.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+    # the polygon reaches past the strip so its outline never lands on it
+    layer = SimpleNamespace(
+        section=SimpleNamespace(brightness=brightness, contrast=contrast),
+        bc_poly=QPolygon([QPoint(-4, -4), QPoint(-4, 5), QPoint(260, 5), QPoint(260, -4)]),
+    )
+    ImageLayer._drawBrightness(layer, strip)
+    ImageLayer._drawContrast(layer, strip)
+    rgba = strip.convertToFormat(QImage.Format.Format_RGBA8888)
+    return np.frombuffer(rgba.constBits(), np.uint8, rgba.sizeInBytes())[:1024:4].copy()
+
+
+def _lookupTables():
+    """Return the brightness and contrast tables, one row of 256 levels per setting."""
+    global _tables
+    if _tables is None:
+        bright = np.array([_paintStrip(int(b), 0) for b in SETTINGS])
+        contrast = np.array([_paintStrip(0, int(c)) for c in SETTINGS])
+        _tables = bright, contrast
+    return _tables
+
+
+def applyContrastAndBrightness(levels, brightness : int, contrast : int):
+    """Return levels (0-255) as ImageLayer renders them with this brightness and contrast.
+
         Params:
-            pixel (int): the pixel value (0-255)
-            brightness (int): the brightness adjustment (-100-100)
-            contrast (int): the contrast adjustment (-100-100)
+            levels (array): pixel values from 0 to 255
+            brightness (int): the brightness setting (-100 to 100)
+            contrast (int): the contrast setting (-100 to 100)
     """
-    # apply brightness
-    if brightness >= 0:
-        pixel += (255 - pixel) * (brightness / 100)
-    else:
-        pixel += (pixel) * (brightness / 100)
-    
-    # apply contrast
-    if contrast >= 0:
-        pixel = (pixel - 128) * (contrast / 20 + 1) + 128
-    else:
-        pixel = (pixel - 128) * (1 - abs(contrast) / 100) + 128
-    
-    # round and clamp pixel value
-    pixel = max(0, min(255, round(pixel)))
+    bright, contrast_table = _lookupTables()
+    curve = contrast_table[contrast + 100][bright[brightness + 100]]
+    pixels = np.clip(np.rint(np.asarray(levels, dtype=np.float64)), 0, 255)
+    return curve[pixels.astype(np.intp)].astype(np.float64)
+
 
 def adjustPixelsToStats(image, desired_mean, desired_std):
-    """Adjust a set of pixels to have the desired mean and standard deviation.
+    """Find the brightness and contrast that render an image closest to a mean and standard deviation.
+
+    Every whole-number pair from -100 to 100 is scored on the image's histogram
+    with the lookup tables above, and the closest one wins.
 
     Params:
         image (array): image as numpy array
@@ -39,26 +73,39 @@ def adjustPixelsToStats(image, desired_mean, desired_std):
         desired_std (float): The target standard deviation for the adjusted pixels.
 
     Returns:
-        brightness (float): The calculated brightness adjustment (-100 to 100).
-        contrast (float): The calculated contrast adjustment (-100 to 100).
+        brightness (int): The brightness setting (-100 to 100), None when the
+            image is empty or all black (a window with no image in it).
+        contrast (int): The contrast setting (-100 to 100), 0 for a flat image,
+            None along with brightness.
     """
-    # Calculate the current mean and standard deviation of the input pixels
-    current_mean = np.mean(image)
-    current_std = np.std(image)
+    pixels = np.clip(np.rint(np.asarray(image, dtype=np.float64)), 0, 255)
+    if pixels.size == 0 or not pixels.any():
+        return None, None
+    weights = np.bincount(pixels.astype(np.intp).ravel(), minlength=256) / pixels.size
 
-    # Calculate the required brightness and contrast adjustments
-    if abs(current_mean) > 1e-6:
-        brightness = ((desired_mean - current_mean) / current_mean) * 100
-        brightness = max(-100, min(100, round(brightness)))
-    else:
-        brightness = None
-    if abs(current_std) > 1e-6:
-        contrast = ((desired_std / current_std) - 1) * 20
-        contrast = max(-100, min(100, round(contrast)))
-    else:
-        contrast = None
-    
-    return brightness, contrast
+    def score(curves):
+        # a plain weighted sum, not a matrix product: on a busy machine the
+        # threaded matrix product took about 20 ms a call, this takes 0.1 ms
+        mean = (curves * weights).sum(axis=1)
+        var = (curves * curves * weights).sum(axis=1) - mean ** 2
+        std = np.sqrt(np.maximum(var, 0))
+        return (mean - desired_mean) ** 2 + (std - desired_std) ** 2
+
+    bright, contrast_table = _lookupTables()
+    bright = bright.astype(np.intp)
+    # a flat image has no spread for contrast to act on
+    if np.std(pixels) < 1e-6:
+        return int(SETTINGS[np.argmin(score(bright.astype(np.float64)))]), 0
+
+    best = (np.inf, 0, 0)
+    for c, table in zip(SETTINGS, contrast_table.astype(np.float64)):
+        # one row per brightness setting, brightness first and then contrast
+        errors = score(table[bright])
+        i = int(np.argmin(errors))
+        if errors[i] < best[0]:
+            best = (errors[i], int(SETTINGS[i]), int(c))
+
+    return best[1], best[2]
 
 def optimizeSectionBC(section : Section, desired_mean=128, desired_std=60, window=None, lowest_res=True):
     """Optimize the brightness and contrast of the image for a single section.
