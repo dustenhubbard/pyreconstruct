@@ -428,12 +428,6 @@ class Trace():
         # element type changed under it halfway through the loop.
         border_color = [c / 255 for c in self.color]
 
-        # reverse point order if negative trace
-        if self.negative:
-            points = self.points[::-1]
-        else:
-            points = self.points
-
         xml_contour = XMLContour(
             name = self.name,
             comment = "",
@@ -443,9 +437,17 @@ class Trace():
             mode = convertMode(self.fill_mode),
             border = border_color,
             fill = border_color,
-            points = points,
+            points = self.points,
             transform = xml_image_tform
         )
+
+        # Reconstruct has no negative flag: a closed contour is negative when
+        # its points run clockwise, which is what isNegative checks on import.
+        # So the points go out in the direction that matches the flag, however
+        # they were drawn. Reversing every negative trace flipped one whose
+        # points already ran clockwise, like a hole imported from XML.
+        if self.closed and xml_contour.isNegative() != bool(self.negative):
+            xml_contour.points.reverse()
 
         if legacy_format:
 
