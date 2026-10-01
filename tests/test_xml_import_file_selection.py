@@ -319,3 +319,108 @@ def test_dev_script_reports_a_refusal(
     assert _run_script(monkeypatch, d / "Alpha.ser", tmp_path / "out.jser") == 1
     assert "No section files for Alpha.ser" in capsys.readouterr().out
     assert sorted(os.listdir(d)) == ["Alpha.ser"]
+
+
+def _write_reconcropper(path, *section_files, tag="ALIGNMENT_A"):
+    import json
+    coef = {"xcoef": [0, 1, 0, 0, 0, 0], "ycoef": [0, 0, 1, 0, 0, 0]}
+    with open(path, "w") as f:
+        json.dump({tag: {name: coef for name in section_files}}, f)
+
+
+def _alignments(series, snum):
+    import json
+    with open(os.path.join(series.getwdir(), series.sections[snum])) as f:
+        return set(json.load(f)["tforms"])
+
+
+def test_each_series_uses_its_own_reconcropper_file(
+    qapp, settings_isolated, tmp_path
+):
+    d = tmp_path / "xml"
+    d.mkdir()
+    for name, tag in (("Alpha", "ALIGNMENT_A"), ("Beta", "ALIGNMENT_B")):
+        _write_ser(d / f"{name}.ser")
+        _write_section(d / f"{name}.1", 1)
+        _write_reconcropper(d / f"{name}.json", f"{name}.1", tag=tag)
+
+    alpha = conv.xmlToJSON(str(d / "Alpha.ser"))
+    beta = conv.xmlToJSON(str(d / "Beta.ser"))
+    assert _alignments(alpha, 1) == {"default", "ALIGNMENT_A"}
+    assert _alignments(beta, 1) == {"default", "ALIGNMENT_B"}
+
+
+def test_another_series_reconcropper_file_is_not_used(
+    qapp, settings_isolated, tmp_path
+):
+    d = tmp_path / "xml"
+    d.mkdir()
+    _write_ser(d / "Alpha.ser")
+    _write_section(d / "Alpha.1", 1)
+    _write_ser(d / "Beta.ser")
+    _write_reconcropper(d / "Beta.json", "Alpha.1", tag="ALIGNMENT_B")
+
+    alpha = conv.xmlToJSON(str(d / "Alpha.ser"))
+    assert _alignments(alpha, 1) == {"default"}
+
+
+def test_the_only_json_is_used_and_an_unrelated_one_is_skipped(
+    qapp, settings_isolated, tmp_path
+):
+    d = tmp_path / "xml"
+    d.mkdir()
+    _write_ser(d / "Alpha.ser")
+    _write_section(d / "Alpha.1", 1)
+    _write_reconcropper(d / "cropped.json", "Alpha.1")
+
+    assert _alignments(conv.xmlToJSON(str(d / "Alpha.ser")), 1) == {
+        "default", "ALIGNMENT_A"
+    }
+
+    (d / "cropped.json").write_text("[1, 2, 3]")  # not reconcropper data
+    assert _alignments(conv.xmlToJSON(str(d / "Alpha.ser")), 1) == {"default"}
+
+
+def test_a_same_name_ser_in_another_case_keeps_its_sections(
+    qapp, settings_isolated, tmp_path, monkeypatch
+):
+    # Alpha.ser and alpha.ser side by side need a case-sensitive disk, so on
+    # a case-insensitive one alpha.ser is added to the listing and treated as
+    # a different file.
+    d = tmp_path / "xml"
+    d.mkdir()
+    _write_ser(d / "Alpha.ser")
+    _write_section(d / "Alpha.1", 1)
+    _write_section(d / "alpha.2", 2)
+    _write_reconcropper(d / "alpha.json", "Alpha.1", tag="ALIGNMENT_LOWER")
+    if _case_insensitive(d):
+        real_listdir, real_samefile = os.listdir, os.path.samefile
+        monkeypatch.setattr(
+            os, "listdir",
+            lambda p: real_listdir(p) + (["alpha.ser"] if p == str(d) else []),
+        )
+        monkeypatch.setattr(
+            os.path, "samefile",
+            lambda a, b: os.path.basename(a) == os.path.basename(b)
+            and real_samefile(a, b),
+        )
+    else:
+        _write_ser(d / "alpha.ser")
+
+    series = conv.xmlToJSON(str(d / "Alpha.ser"))
+    assert sorted(series.sections) == [1]
+    assert _alignments(series, 1) == {"default"}
+
+
+def test_dev_script_does_not_replace_an_existing_jser(
+    qapp, settings_isolated, tmp_path, monkeypatch, capsys
+):
+    d = tmp_path / "xml"
+    d.mkdir()
+    _write_ser(d / "Alpha.ser")
+    _write_section(d / "Alpha.1", 1)
+    (d / "Alpha.jser").write_text("my converted series")
+
+    assert _run_script(monkeypatch, d) == 1
+    assert "already exists" in capsys.readouterr().out
+    assert (d / "Alpha.jser").read_text() == "my converted series"

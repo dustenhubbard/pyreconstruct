@@ -51,17 +51,27 @@ def xmlToJSON(series_fp : str) -> Series:
 
     print("Gathering files...")
     
+    files = [
+        f for f in sorted(os.listdir(xml_dir))
+        if os.path.isfile(os.path.join(xml_dir, f))
+    ]
     # the prefix is matched in any case, as a case-insensitive disk would;
-    # if two files differ only in case, the one matching the .ser wins
+    # if two files differ only in case, the one matching the .ser wins. If
+    # another .ser differs from this one only in case (a case-sensitive
+    # disk), the sections in the other case are its own, so match exactly.
     prefix = series_name + "."
-    for f in sorted(os.listdir(xml_dir)):
+    other_case_ser = any(
+        f != base and f.lower() == base.lower()
+        and not os.path.samefile(os.path.join(xml_dir, f), series_fp)
+        for f in files
+    )
+    for f in files:
         fp = os.path.join(xml_dir, f)
-        if not os.path.isfile(fp):
+        if f.lower().endswith(".json"):
             continue
-        if f.endswith(".json"):
-            json_fp = fp
-        elif (
-            f.lower().startswith(prefix.lower())
+        if (
+            (f.startswith(prefix) if other_case_ser
+             else f.lower().startswith(prefix.lower()))
             and re.fullmatch(r"[0-9]+", f[len(prefix):])
         ):
             snum = int(f[len(prefix):])
@@ -72,6 +82,29 @@ def xmlToJSON(series_fp : str) -> Series:
             f"No section files for {base} were found. "
             f"They are named {series_name}.1, {series_name}.2, and so on."
         )
+
+    # the reconcropper alignments: the .json named for this series (in the
+    # same case if another .ser differs only in case), or else the only .json
+    # in the folder unless it is named for another series there
+    def stem(f):
+        return f[:f.rfind(".")]
+    json_fps = [f for f in files if f.lower().endswith(".json")]
+    named = [
+        f for f in json_fps
+        if stem(f) == series_name
+        or (not other_case_ser and stem(f).lower() == series_name.lower())
+    ]
+    named.sort(key=lambda f: stem(f) != series_name)  # exact case first
+    other_series = {
+        stem(f).lower() for f in files
+        if f.lower().endswith(".ser")
+        and not os.path.samefile(os.path.join(xml_dir, f), series_fp)
+    }
+    json_is_named = bool(named)
+    if named:
+        json_fp = os.path.join(xml_dir, named[0])
+    elif len(json_fps) == 1 and stem(json_fps[0]).lower() not in other_series:
+        json_fp = os.path.join(xml_dir, json_fps[0])
 
     print("Creating hidden folder...")
     
@@ -99,10 +132,15 @@ def xmlToJSON(series_fp : str) -> Series:
     progbar.setValue(progress/final_value * 100)
 
     # get the reconcropper data
-    if json_fp:
+    alignment_dict = None
+    if json_is_named:
         alignment_dict = getReconcropperData(json_fp)
-    else:
-        alignment_dict = None
+    elif json_fp:
+        # the only .json in the folder may not be a reconcropper file
+        try:
+            alignment_dict = getReconcropperData(json_fp)
+        except Exception as e:
+            print(f"Skipping {json_fp}: not reconcropper data ({e!r})")
     if progbar.wasCanceled(): return
     progress += 1
     progbar.setValue(progress/final_value * 100)

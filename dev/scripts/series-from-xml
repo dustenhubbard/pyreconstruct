@@ -42,6 +42,11 @@ if not jser:
     
     jser = xml.with_suffix(".jser")
 
+    if jser.exists():
+
+        print(f"{jser} already exists. Please give an output jser filepath.")
+        sys.exit(1)
+
 else:
 
     jser = Path(jser[0]).with_suffix(".jser")  # guarantee .jser as ext
