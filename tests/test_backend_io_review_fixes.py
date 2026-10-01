@@ -122,7 +122,7 @@ def test_an_open_polyline_keeps_its_endpoints(tmp_path):
     )
     assert roi.closed is False
 
-    coords = roi.get_field_coordinates(img_height=100, mag=1.0)
+    (coords,) = roi.get_field_shapes(img_height=100, mag=1.0)
     xs = [x for x, y in coords]
     # A periodic spline bent this straight line into a loop: the evaluated
     # points swung back toward x=0 and the true endpoint at x=100 was lost.
@@ -136,8 +136,7 @@ def test_a_point_roi_imports_without_crashing(tmp_path):
     roi = _import_roi(tmp_path, [(10.0, 20.0)], roifile.ROI_TYPE.POINT)
     assert roi.closed is False
 
-    coords = roi.get_field_coordinates(img_height=100, mag=0.5)
-    assert coords == [(5.0, 40.0)]
+    assert roi.get_field_shapes(img_height=100, mag=0.5) == [[(5.0, 40.0)]]
 
 
 def test_a_two_point_line_imports_without_crashing(tmp_path):
@@ -150,9 +149,9 @@ def test_a_two_point_line_imports_without_crashing(tmp_path):
         tmp_path, [(0.0, 0.0), (10.0, 10.0)], roifile.ROI_TYPE.POLYLINE
     )
     assert roi.closed is False
-    coords = roi.get_field_coordinates(img_height=100, mag=1.0)
-    # too short to smooth: imported as its own two points, not crashed at k=3
-    assert coords == [(0.0, 100.0), (10.0, 90.0)]
+    shapes = roi.get_field_shapes(img_height=100, mag=1.0)
+    # imported as its own two points, not force-closed and crashed at k=3
+    assert shapes == [[(0.0, 100.0), (10.0, 90.0)]]
 
 
 def test_a_closed_roi_closes_first_against_last(tmp_path):
@@ -162,8 +161,9 @@ def test_a_closed_roi_closes_first_against_last(tmp_path):
     pts = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 0.0)]
     roi = _import_roi(tmp_path, pts, roifile.ROI_TYPE.POLYGON)
     assert roi.closed is True
-    coords = roi.get_field_coordinates(img_height=100, mag=1.0)
-    assert len(coords) == 100          # splined cleanly, no duplicate crash
+    # the closing duplicate is dropped; the trace closes itself
+    shapes = roi.get_field_shapes(img_height=100, mag=1.0)
+    assert shapes == [[(0.0, 100.0), (10.0, 100.0), (10.0, 90.0)]]
 
 
 def test_the_importer_refuses_to_half_construct(monkeypatch, tmp_path):

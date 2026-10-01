@@ -7,6 +7,20 @@ import numpy as np
 from .mod_imports import modules_available
 
 
+## ImageJ roi types (ij.gui.Roi, and roifile.ROI_TYPE). Areas are closed,
+## lines are open, and POINT is a set of separate markers. TRACED is the
+## wand tool's outline, an area; ANGLE is a 3-point line.
+POLYGON, RECT, OVAL, LINE, FREELINE, POLYLINE = 0, 1, 2, 3, 4, 5
+FREEHAND, TRACED, ANGLE, POINT = 7, 8, 9, 10
+CLOSED_TYPES = (POLYGON, RECT, OVAL, FREEHAND, TRACED)
+
+## ImageJ stores a spline-fitted roi as its control points plus this option
+## bit, and fits the spline again when it opens the file.
+SPLINE_FIT = 1
+
+Points = List[Tuple[float, float]]
+
+
 class Roi:
 
     def __init__(self, roi_fp):
@@ -22,57 +36,126 @@ class Roi:
 
         self.roi_fp = roi_fp
         self.roi = roifile.ImagejRoi.fromfile(roi_fp)
+        self.composite = bool(getattr(self.roi, "composite", False))
+        self.markers = self.roi.roitype == POINT and not self.composite
+        self.spline_fit = bool(self.roi.options & SPLINE_FIT) and not self.markers
         self.closed = self.trace_closed_p()
 
     def trace_closed_p(self) -> bool:
         """Return true if trace closed else false.
 
-        LINE (3) and POINT (10) are NOT in the closed set: they were, and a
-        point ROI crashed on the closure check while a two-point line was
-        force-closed and then crashed the cubic spline (found 2026-08-28).
+        Every sub-path of a composite roi is an area, whatever roitype the
+        file carries (a Combine is saved as RECT).
         """
+        return self.composite or self.roi.roitype in CLOSED_TYPES
 
-        roi_closed_types = [0, 1, 2, 7, 9]
+    def get_field_shapes(self, img_height: int, mag: float) -> List[Points]:
+        """Return each outline, line, or marker of the roi in field coordinates.
 
-        if self.roi.roitype in roi_closed_types:
+        A composite roi gives one shape per sub-path, and a POINT roi one
+        single-point shape per marker. Everything else keeps its own vertices;
+        only a roi saved with ImageJ's spline fit is fitted again.
+        """
+        def to_field(pts):
+            return [(x * mag, (img_height - y) * mag) for x, y in pts]
+
+        shapes = []
+        for path in self.roi.coordinates(multi=True):
+            pts = [(float(x), float(y)) for x, y in np.asarray(path).tolist()]
+            if self.markers:
+                shapes.extend([p] for p in to_field(pts))
+                continue
+            # a repeated vertex is a zero-length segment: it adds nothing and
+            # FITPACK refuses it
+            pts = [p for i, p in enumerate(pts) if i == 0 or p != pts[i - 1]]
+            if self.closed and len(pts) > 1 and pts[0] == pts[-1]:
+                pts.pop()
+            if self.spline_fit:
+                pts = fit_spline(pts, self.closed)
+            if pts:
+                shapes.append(to_field(pts))
+        return shapes
+
+
+def fit_spline(pts: Points, closed: bool) -> Points:
+    """Fit a cubic spline through pixel points the way ImageJ does.
+
+    ImageJ evaluates a fitted spline at one point per 2 pixels of length,
+    and never fewer than 100 points.
+    """
+    # a cubic needs 4 points: a closed triangle has them once its ring closes
+    ring = pts + [pts[0]] if closed else pts
+    if len(ring) < 4:
+        return pts
+    x = np.array([p[0] for p in ring])
+    y = np.array([p[1] for p in ring])
+    length = float(np.sum(np.hypot(np.diff(x), np.diff(y))))
+    n = max(100, int(length / 2))
+
+    from scipy.interpolate import splprep, splev  # deferred: scipy is slow to import
+    try:
+        # Periodic ONLY for a closed outline: per=1 wraps the curve back to
+        # the start, so an open polyline came back bent into a loop with its
+        # true endpoint lost (found 2026-08-28).
+        tck, _ = splprep([x, y], s=0, per=1 if closed else 0, k=3)
+    except ValueError:
+        return pts
+    u = np.linspace(0, 1, n, endpoint=not closed)
+    sx, sy = splev(u, tck)
+    return list(zip(map(float, sx), map(float, sy)))
+
+
+def holes(shapes: List[Points]) -> List[bool]:
+    """Return which outlines of a composite roi are holes.
+
+    ImageJ fills a composite shape even-odd: an outline inside an odd number
+    of the others is a hole. The sub-paths of a shape do not cross, so any
+    point of one outline that is not on the other decides; a point on the
+    other's edge would count as inside or outside depending on the side.
+    """
+    def is_inside(shape, other):
+        for point in candidates(shape):
+            if not on_boundary(point, other):
+                return inside(point, other)
+        return False  # the same outline twice: neither holds the other
+
+    return [
+        sum(is_inside(shape, other) for other in shapes if other is not shape) % 2 == 1
+        for shape in shapes
+    ]
+
+
+def candidates(shape: Points):
+    """Yield the vertices of an outline, then the midpoints of its edges."""
+    yield from shape
+    for (x1, y1), (x2, y2) in zip(shape, shape[1:] + shape[:1]):
+        yield ((x1 + x2) / 2, (y1 + y2) / 2)
+
+
+def on_boundary(point: Tuple[float, float], polygon: Points) -> bool:
+    """Return true if the point lies on an edge of the closed polygon."""
+    x, y = point
+    xs = [p[0] for p in polygon]
+    ys = [p[1] for p in polygon]
+    tol = 1e-9 * max(max(xs) - min(xs), max(ys) - min(ys), 1e-12)
+    for (x1, y1), (x2, y2) in zip(polygon, polygon[1:] + polygon[:1]):
+        cross = (x2 - x1) * (y - y1) - (y2 - y1) * (x - x1)
+        if abs(cross) > tol * max(np.hypot(x2 - x1, y2 - y1), tol):
+            continue
+        if (min(x1, x2) - tol <= x <= max(x1, x2) + tol
+                and min(y1, y2) - tol <= y <= max(y1, y2) + tol):
             return True
-        else:
-            return False
+    return False
 
-    def get_field_coordinates(self, img_height: int, mag: float) -> List[Tuple[float]]:
-        """Return field coordinates of roi trace."""
 
-        coords = self.roi.coordinates().tolist()
+def inside(point: Tuple[float, float], polygon: Points) -> bool:
+    """Return true if the point is inside the closed polygon (ray casting).
 
-        # first against LAST: comparing the first two points closed nothing
-        # (an already-closed list got a redundant duplicate, a degenerate one
-        # never closed) and crashed outright on a one-point ROI
-        if self.closed and len(coords) > 1 and coords[0] != coords[-1]:
-            coords.append(coords[0])
-
-        x = np.array([p[0] for p in coords])
-        y = np.array([img_height - p[1] for p in coords])
-
-        # A spline needs more points than its degree, and FITPACK wants
-        # slack beyond that; a point or short line ROI has nothing to smooth
-        # anyway, so it imports as its own points instead of raising from
-        # inside FITPACK.
-        if len(coords) < 4:
-            return [(px * mag, py * mag) for px, py in zip(x, y)]
-        k = min(3, len(coords) - 1)
-
-        # Exact interpolation (s=0). Periodic ONLY for a closed outline:
-        # per=1 wraps the fitted curve back to the start and ignores the
-        # final input point, so an open polyline came back bent into a loop
-        # with its true endpoint lost (found 2026-08-28).
-        from scipy.interpolate import splprep, splev  # deferred: scipy is slow to import
-        tck, u = splprep([x, y], s=0, per=1 if self.closed else 0, k=k)
-
-        # Evaluate the spline at more points
-        u_new = np.linspace(0, 1, 100)
-        smooth_x, smooth_y = splev(u_new, tck)
-
-        smooth_x = [x * mag for x in smooth_x]
-        smooth_y = [y * mag for y in smooth_y]
-
-        return list(zip(smooth_x, smooth_y))
+    A point on an edge may come out either way; callers avoid those.
+    """
+    x, y = point
+    result = False
+    for (x1, y1), (x2, y2) in zip(polygon, polygon[1:] + polygon[:1]):
+        if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+            result = not result
+    return result
