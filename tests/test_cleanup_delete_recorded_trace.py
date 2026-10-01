@@ -213,10 +213,10 @@ def _remove_first(series, snum, name):
     section.save()
 
 
-def test_two_rows_naming_a_moved_trace_delete_nothing(tmp_path):
+def test_two_rows_naming_a_moved_trace_delete_it_once(tmp_path):
     """Both rows name the third `B`. The first `B` is deleted after the scan,
-    which leaves one `B` of that shape, but the scan saw two, and the one
-    left could be either. Nothing is deleted, and both rows are reported."""
+    so the index no longer fits, but the third differs from it in its tags,
+    so it is still the only trace with its saved data. It goes, once."""
     series = _load_series(tmp_path)
     snum = _seed(series, [
         ("A", SQUARE, "a"),
@@ -234,22 +234,23 @@ def test_two_rows_naming_a_moved_trace_delete_nothing(tmp_path):
         choices, series_states=_states(series), ambiguous=ambiguous
     )
 
-    assert applied == []
-    assert ambiguous == choices
-    assert _tags(series, snum, "B") == [["b1"], ["b2"]]
+    assert applied == choices
+    assert ambiguous == []
+    assert _tags(series, snum, "B") == [["b1"]]
 
 
 def test_two_rows_naming_a_moved_trace_with_two_lookalikes_delete_none(
         tmp_path):
-    """The same two rows, but two identical `B` traces could now be the third
-    one. Nothing is deleted for either row, and both are reported."""
+    """The same two rows, but the three `B` traces are identical in every
+    saved field, and one fewer is left. Nothing is deleted for either row,
+    and both are reported."""
     series = _load_series(tmp_path)
     snum = _seed(series, [
         ("A", SQUARE, "a"),
         ("C", SQUARE, "c"),
-        ("B", SQUARE, "b0"),
-        ("B", SQUARE, "b1"),
-        ("B", SQUARE, "b2"),
+        ("B", SQUARE, "same"),
+        ("B", SQUARE, "same"),
+        ("B", SQUARE, "same"),
     ])
     records = series.findDifferentlyNamedDuplicates(0.95)
     choices = [_row(records, "B", 2, "A"), _row(records, "B", 2, "C")]
@@ -262,7 +263,7 @@ def test_two_rows_naming_a_moved_trace_with_two_lookalikes_delete_none(
 
     assert applied == []
     assert ambiguous == choices
-    assert _tags(series, snum, "B") == [["b1"], ["b2"]]
+    assert _tags(series, snum, "B") == [["same"], ["same"]]
 
 
 def test_a_moved_index_with_two_lookalikes_deletes_nothing(tmp_path):
@@ -270,9 +271,9 @@ def test_a_moved_index_with_two_lookalikes_deletes_nothing(tmp_path):
     first is deleted: two traces could be it, so neither goes."""
     series = _load_series(tmp_path)
     snum = _seed(series, [
-        ("DUST", DUST, "d0"),
-        ("DUST", DUST, "d1"),
-        ("DUST", DUST, "d2"),
+        ("DUST", DUST, "same"),
+        ("DUST", DUST, "same"),
+        ("DUST", DUST, "same"),
     ])
     record = [
         r for r in series.findPixelDustTraces(1e9)
@@ -283,7 +284,7 @@ def test_a_moved_index_with_two_lookalikes_deletes_nothing(tmp_path):
     ambiguous = []
     assert series.deleteMalformedTraces([record], ambiguous=ambiguous) == []
     assert ambiguous == [record]
-    assert _tags(series, snum, "DUST") == [["d1"], ["d2"]]
+    assert _tags(series, snum, "DUST") == [["same"], ["same"]]
 
 
 # ---------------------------------------------------------------------------
@@ -375,9 +376,9 @@ def test_the_pairs_list_is_told_which_rows_were_left(tmp_path, monkeypatch):
     snum = _seed(series, [
         ("A", SQUARE, "a"),
         ("C", SQUARE, "c"),
-        ("B", SQUARE, "b0"),
-        ("B", SQUARE, "b1"),
-        ("B", SQUARE, "b2"),
+        ("B", SQUARE, "same"),
+        ("B", SQUARE, "same"),
+        ("B", SQUARE, "same"),
     ])
     records = series.findDifferentlyNamedDuplicates(0.95)
     choices = [_row(records, "B", 2, "A"), _row(records, "B", 2, "C")]
@@ -402,9 +403,9 @@ def test_the_pairs_list_is_told_which_rows_were_left(tmp_path, monkeypatch):
 def test_a_cleanup_list_is_told_which_row_was_left(tmp_path, monkeypatch):
     series = _load_series(tmp_path)
     snum = _seed(series, [
-        ("DUST", DUST, "d0"),
-        ("DUST", DUST, "d1"),
-        ("DUST", DUST, "d2"),
+        ("DUST", DUST, "same"),
+        ("DUST", DUST, "same"),
+        ("DUST", DUST, "same"),
     ])
     record = [
         r for r in series.findPixelDustTraces(1e9)
@@ -439,12 +440,13 @@ def _dust_records(series, snum):
 def test_scans_record_how_many_lookalikes_each_trace_has(tmp_path):
     series = _load_series(tmp_path)
     snum = _seed(series, [
-        ("A", SQUARE, "a0"),
-        ("A", SQUARE, "a1"),
+        ("A", SQUARE, "same"),
+        ("A", SQUARE, "same"),
+        ("A", SQUARE, "tagged differently"),
         ("B", SQUARE, "b"),
-        ("DUST", DUST, "d0"),
-        ("DUST", DUST, "d1"),
-        ("DUST", DUST, "d2"),
+        ("DUST", DUST, "same"),
+        ("DUST", DUST, "same"),
+        ("DUST", DUST, "same"),
     ])
     dust = _dust_records(series, snum)
     assert [r["lookalikes"] for r in dust] == [3, 3, 3]
@@ -458,10 +460,10 @@ def test_scans_record_how_many_lookalikes_each_trace_has(tmp_path):
     assert record[f"{b_side}lookalike_ordinal"] == 0
 
 
-def test_an_index_that_lands_on_a_lookalike_deletes_nothing(tmp_path):
-    """I pick the second of three identical traces, then the first is
-    deleted outside the list. Index 1 now holds the third, which matches the
-    signature, so only the changed count shows the row is stale."""
+def test_a_trace_that_differs_in_its_tags_is_found_where_it_moved(tmp_path):
+    """I pick the second of three traces with the same color and points but
+    different tags, then the first is deleted outside the list. Index 1 now
+    holds the third, but the second is the only trace with its saved data."""
     series = _load_series(tmp_path)
     snum = _seed(series, [
         ("DUST", DUST, "b0"),
@@ -471,10 +473,8 @@ def test_an_index_that_lands_on_a_lookalike_deletes_nothing(tmp_path):
     record = _dust_records(series, snum)[1]
     _remove_first(series, snum, "DUST")
 
-    ambiguous = []
-    assert series.deleteMalformedTraces([record], ambiguous=ambiguous) == []
-    assert ambiguous == [record]
-    assert _tags(series, snum, "DUST") == [["b1"], ["b2"]]
+    assert series.deleteMalformedTraces([record]) == [record]
+    assert _tags(series, snum, "DUST") == [["b2"]]
 
 
 def test_a_pair_row_whose_index_lands_on_a_lookalike_deletes_nothing(
@@ -482,9 +482,9 @@ def test_a_pair_row_whose_index_lands_on_a_lookalike_deletes_nothing(
     series = _load_series(tmp_path)
     snum = _seed(series, [
         ("A", SQUARE, "a"),
-        ("B", SQUARE, "b0"),
-        ("B", SQUARE, "b1"),
-        ("B", SQUARE, "b2"),
+        ("B", SQUARE, "same"),
+        ("B", SQUARE, "same"),
+        ("B", SQUARE, "same"),
     ])
     choice = _row(series.findDifferentlyNamedDuplicates(0.95), "B", 1, "A")
     _remove_first(series, snum, "B")
@@ -494,7 +494,7 @@ def test_a_pair_row_whose_index_lands_on_a_lookalike_deletes_nothing(
         [choice], ambiguous=ambiguous
     ) == []
     assert ambiguous == [choice]
-    assert _tags(series, snum, "B") == [["b1"], ["b2"]]
+    assert _tags(series, snum, "B") == [["same"], ["same"]]
 
 
 def test_an_unchanged_count_keeps_the_index(tmp_path):
@@ -540,9 +540,9 @@ def test_a_delete_made_from_the_list_does_not_make_the_rest_ambiguous(
     )
     series = _load_series(tmp_path)
     snum = _seed(series, [
-        ("DUST", DUST, "d0"),
-        ("DUST", DUST, "d1"),
-        ("DUST", DUST, "d2"),
+        ("DUST", DUST, "same"),
+        ("DUST", DUST, "same"),
+        ("DUST", DUST, "same"),
     ])
     records = _dust_records(series, snum)
     ambiguous = []
@@ -561,7 +561,7 @@ def test_a_delete_made_from_the_list_does_not_make_the_rest_ambiguous(
     dialog._deleteRecords([records[2]])
 
     assert ambiguous == []
-    assert _tags(series, snum, "DUST") == [["d1"]]
+    assert _tags(series, snum, "DUST") == [["same"]]
 
 
 def test_an_unchanged_count_finds_the_trace_after_its_index_shifts(tmp_path):
@@ -587,11 +587,58 @@ def test_the_twin_of_a_trace_deleted_by_hand_is_left(tmp_path):
     """I pick `b0` of two identical traces, then delete `b0` by hand. One
     match is left, but it is the twin, so nothing is deleted."""
     series = _load_series(tmp_path)
-    snum = _seed(series, [("DUST", DUST, "b0"), ("DUST", DUST, "b1")])
+    snum = _seed(series, [("DUST", DUST, "same"), ("DUST", DUST, "same")])
     record = _dust_records(series, snum)[0]
     _remove_first(series, snum, "DUST")
 
     ambiguous = []
     assert series.deleteMalformedTraces([record], ambiguous=ambiguous) == []
     assert ambiguous == [record]
-    assert _tags(series, snum, "DUST") == [["b1"]]
+    assert _tags(series, snum, "DUST") == [["same"]]
+
+
+def test_an_index_that_lands_on_an_identical_trace_deletes_nothing(tmp_path):
+    """Three traces identical in every saved field, I pick the second, and
+    the first is deleted outside the list. One fewer is left, so nothing is
+    deleted."""
+    series = _load_series(tmp_path)
+    snum = _seed(series, [
+        ("DUST", DUST, "same"),
+        ("DUST", DUST, "same"),
+        ("DUST", DUST, "same"),
+    ])
+    record = _dust_records(series, snum)[1]
+    _remove_first(series, snum, "DUST")
+
+    ambiguous = []
+    assert series.deleteMalformedTraces([record], ambiguous=ambiguous) == []
+    assert ambiguous == [record]
+    assert _tags(series, snum, "DUST") == [["same"], ["same"]]
+
+
+def test_editing_a_twin_after_the_scan_never_deletes_it_for_me(tmp_path):
+    """Two identical traces and an unrelated one. I pick the second, then
+    edit the first's tags, which moves it to the end of the object. The
+    trace I picked must not be the one left behind."""
+    series = _load_series(tmp_path)
+    snum = _seed(series, [
+        ("DUST", DUST, "b"),
+        ("DUST", DUST, "b"),
+        ("DUST", FAR, "x"),
+    ])
+    record = next(r for r in _dust_records(series, snum) if r["index"] == 1)
+    section = series.loadSection(snum)
+    section.editTraceAttributes(
+        [section.contours["DUST"][0]], None, None, {"b", "edited"}, None,
+        log_event=False,
+    )
+    section.save()
+    assert _tags(series, snum, "DUST") == [["b"], ["x"], ["b", "edited"]]
+
+    ambiguous = []
+    deleted = series.deleteMalformedTraces([record], ambiguous=ambiguous)
+
+    left = _tags(series, snum, "DUST")
+    assert left in ([["x"], ["b", "edited"]], [["b"], ["x"], ["b", "edited"]])
+    # the count of identical traces fell from 2 to 1, so this row is left
+    assert deleted == [] and ambiguous == [record]
