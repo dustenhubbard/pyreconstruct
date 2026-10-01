@@ -563,7 +563,7 @@ def getLabelsToObjectsData(data_fp: str, group: str, raw_attrs: dict = None) -> 
 
     resolution_z = labels_array.attrs["voxel_size"][0]
     offset_z = labels_array.attrs["offset"][0]
-    section_start = int(offset_z / resolution_z)
+    section_start = round(offset_z / resolution_z)
 
     return data_zg, sections, section_start
 
@@ -802,7 +802,7 @@ def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
     labels_array = get_zarr_array(data_zg, group)
     resolution = get_resolution(labels_array)
     offset = get_array_offset(labels_array)
-    z_offset = int(offset[0] / resolution[0])
+    z_offset = round(offset[0] / resolution[0])
 
     raw = get_zarr_array(data_zg, "raw")
     raw_resolution = get_resolution(raw)

@@ -125,3 +125,15 @@ def test_traces_without_holes_draw_as_before(tmp_path, monkeypatch):
     ## b is drawn after a, so it wins where they overlap
     assert _at(arr, 25, 25) == ids["b"]
     assert _at(arr, 50, 50) == 0
+
+
+def test_holed_object_off_the_edge_is_clipped(tmp_path, monkeypatch):
+    ## the mask covers only the object's box, cut to the array
+    donut = [_square("donut", -20, 60), _square("donut", 10, 30, negative=True)]
+
+    arr, ids = _export(tmp_path, monkeypatch, {"donut": _Contour(donut)})
+
+    assert _at(arr, 5, 5) == ids["donut"]
+    assert _at(arr, 50, 50) == ids["donut"]
+    assert _at(arr, 20, 20) == 0  # the hole
+    assert _at(arr, 80, 80) == 0  # outside the donut
