@@ -361,6 +361,12 @@ class TraceTableWidget(DataTable):
         if self.series.getAttr(name, "locked"):
             unlocked = self.mainwindow.field.notifyLocked(name)
             if not unlocked:
+                # put the box back as the trace still is, and keep listening:
+                # returning with the flag off ignored every later checkbox
+                item.setCheckState(
+                    Qt.CheckState.Unchecked if value else Qt.CheckState.Checked
+                )
+                self.process_check_event = True
                 return
 
         if self.horizontal_headers[c] == "Hidden":
