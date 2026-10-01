@@ -30,7 +30,7 @@ def _state(series, name):
     )
 
 
-def test_redo_of_partial_rename_keeps_new_object_attrs(rich_series):
+def test_redo_of_partial_rename_keeps_new_object_attrs(rich_series):  # noqa: F811
     series = rich_series
     first = sorted(series.getObjectSections(["star"]))[0]
     states = SeriesStates(series)
