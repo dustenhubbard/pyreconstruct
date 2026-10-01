@@ -129,21 +129,23 @@ def get_thickness(zarr_array):
 def get_label_resolutions(labels_array, raw):
     """Get the (labels, raw) resolutions for a label import.
 
-    An array with no ``resolution`` or ``voxel_size`` is taken to share the
-    other one's pixel grid. When neither says, both get the same placeholder,
-    which only ever appears as a ratio or next to a zero offset.
+    Raw with no ``resolution`` or ``voxel_size`` gets the grid PyReconstruct
+    builds the series on: its thickness and true mag, in nm. Labels with
+    neither share raw's grid.
     """
 
-    sizes = []
-    for zarr_array in (labels_array, raw):
-        try:
-            sizes.append(get_resolution(zarr_array))
-        except KeyError:
-            sizes.append(None)
+    try:
+        raw_res = get_resolution(raw)
+    except KeyError:
+        mag_nm = get_true_mag(raw) * 1000
+        raw_res = [get_thickness(raw) * 1000, mag_nm, mag_nm]
 
-    labels_res, raw_res = sizes
-    labels_res = labels_res or raw_res or [1, 1, 1]
-    return labels_res, raw_res or labels_res
+    try:
+        labels_res = get_resolution(labels_array)
+    except KeyError:
+        labels_res = None
+
+    return labels_res or raw_res, raw_res
 
 
 def voxel_nm(size_um):
