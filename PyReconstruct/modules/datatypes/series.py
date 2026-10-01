@@ -3,6 +3,7 @@ import uuid
 import re
 import json
 import shutil
+from collections import Counter
 from datetime import datetime
 from copy import copy, deepcopy
 from pathlib import Path
@@ -2505,6 +2506,7 @@ class Series():
         ):
 
             section_modified = False
+            section_start = len(malformed)
 
             for obj_name in obj_names:
 
@@ -2561,6 +2563,10 @@ class Series():
 
                         section.modified_contours.add(obj_name)
                         section_modified = True
+
+            # counted once the section is smoothed: a skipped trace and its
+            # lookalikes keep their points, so the count is the scan-time one
+            self._recordLookalikes(section, malformed[section_start:])
 
             # only re-serialize sections that actually changed (previously every
             # section was saved, recomputing its full geometry index each time)
@@ -2671,6 +2677,13 @@ class Series():
         is deleted for it, because deleting the wrong one of two identical
         traces is the failure this exists to prevent.
 
+        An index that still lands on a matching trace can be stale too: with
+        identical traces b0, b1 and b2, deleting b0 elsewhere puts b2 where b1
+        was. So a record carrying "lookalikes" (the count of identical traces
+        its scan saw) is also set aside when that count has changed and more
+        than one identical trace is left. An unchanged count, or a record with
+        no "lookalikes", keeps the index.
+
         Records that name the same target resolve together, so one trace is
         deleted once however many rows name it: the same name, index and
         signature share a trace, and a record with no index shares the trace
@@ -2696,6 +2709,10 @@ class Series():
             if index is not None and 0 <= index < len(contour):
                 trace = contour[index]
                 if cls._traceMatchesSignature(trace, record["match"]):
+                    if cls._lookalikesChanged(contour, record):
+                        ambiguous.append(record)
+                        unsure_targets.add(target)
+                        continue
                     found[id(record)] = trace
                     claimed.add(id(trace))
                     by_target.setdefault(target, trace)
@@ -2731,18 +2748,70 @@ class Series():
                 unsure_targets.add(target)
         return found, ambiguous
 
-    @staticmethod
-    def _recordTarget(record) -> tuple:
+    @classmethod
+    def _recordTarget(cls, record) -> tuple:
         """(name, index or None, signature) naming a record's trace, hashable."""
         index = record.get("index")
         if isinstance(index, bool) or not isinstance(index, int):
             index = None
-        match = record["match"]
-        signature = (
+        return (record["name"], index, cls._signatureKey(record["match"]))
+
+    @classmethod
+    def _lookalikesChanged(cls, contour, record) -> bool:
+        """Whether a record's identical traces changed in number since its scan,
+        leaving more than one, so its index may now land on the wrong one."""
+        recorded = record.get("lookalikes")
+        if isinstance(recorded, bool) or not isinstance(recorded, int):
+            return False
+        current = sum(
+            1 for t in contour
+            if cls._traceMatchesSignature(t, record["match"])
+        )
+        return current != recorded and current > 1
+
+    @staticmethod
+    def _signatureKey(match) -> tuple:
+        """A record's {"color", "points"} signature as a hashable key."""
+        return (
             tuple(match["color"]),
             tuple(tuple(point) for point in match["points"]),
         )
-        return (record["name"], index, signature)
+
+    @staticmethod
+    def _traceKey(trace) -> tuple:
+        """The signature key a trace would be recorded under."""
+        return (
+            tuple(trace.color),
+            tuple((round(x, 7), round(y, 7)) for x, y in trace.points),
+        )
+
+    @classmethod
+    def _recordLookalikes(cls, section, records : list):
+        """Record how many identical traces each record's trace has.
+
+        Sets "lookalikes" (and "other_lookalikes" on a pair record): the number
+        of traces under that name on the section with the same color and
+        points, the record's own trace included. At delete time a changed count
+        means the index can no longer be trusted to tell them apart (see
+        _resolveRecordedTraces). Each contour is counted once per scan.
+        """
+        counters = {}
+
+        def count(name, match):
+            counter = counters.get(name)
+            if counter is None:
+                counter = Counter(
+                    cls._traceKey(t) for t in section.contours.get(name, [])
+                )
+                counters[name] = counter
+            return counter[cls._signatureKey(match)]
+
+        for record in records:
+            record["lookalikes"] = count(record["name"], record["match"])
+            if "other_match" in record:
+                record["other_lookalikes"] = count(
+                    record["other_name"], record["other_match"]
+                )
 
     @staticmethod
     def _traceMatchesSignature(trace, signature) -> bool:
@@ -2843,6 +2912,7 @@ class Series():
         for snum, section in self.enumerateSections(
             message="Scanning for pixel-dust traces...",
         ):
+            section_start = len(candidates)
             tform = section.tform
             mag2 = section.mag ** 2  # (um/px)^2, this section's pixel scale
             threshold_um2 = threshold_px * mag2  # px^2 cutoff -> this section's um^2
@@ -2864,6 +2934,7 @@ class Series():
                             area=area,
                             area_px=area_px,
                         ))
+            self._recordLookalikes(section, candidates[section_start:])
         return candidates
 
     def findSelfCrossingTraces(self, max_discard_ratio=0.05) -> list:
@@ -2978,6 +3049,7 @@ class Series():
         for snum, section in self.enumerateSections(
             message="Scanning for empty traces...",
         ):
+            section_start = len(candidates)
             tform = section.tform
             for cname in section.contours:
                 if not include_locked and self.getAttr(cname, "locked"):
@@ -3002,6 +3074,7 @@ class Series():
                     candidates.append(self._cleanupRecord(
                         cname, snum, index, trace, reason=reason,
                     ))
+            self._recordLookalikes(section, candidates[section_start:])
         return candidates
 
     ## A pair of traces is only worth measuring an overlap ratio for if that
@@ -3198,6 +3271,7 @@ class Series():
         for snum, section in self.enumerateSections(
             message="Scanning for duplicates named differently...",
         ):
+            section_start = len(candidates)
             tform = section.tform
             entries = []
             for cname in section.contours:
@@ -3245,6 +3319,7 @@ class Series():
                 record["other_area"] = other["area"]
                 record["other_match"] = other["match"]
                 candidates.append(record)
+            self._recordLookalikes(section, candidates[section_start:])
 
         return candidates
 
@@ -3298,11 +3373,13 @@ class Series():
             if keep == "first":
                 delete_name = record["other_name"]
                 delete_index = record.get("other_index")
+                delete_lookalikes = record.get("other_lookalikes")
                 delete_match = record["other_match"]
                 keep_name = record["name"]
             elif keep == "other":
                 delete_name = record["name"]
                 delete_index = record.get("index")
+                delete_lookalikes = record.get("lookalikes")
                 delete_match = record["match"]
                 keep_name = record["other_name"]
             else:
@@ -3314,6 +3391,7 @@ class Series():
                 "section": record["section"],
                 # tells identical traces under one name apart
                 "index": delete_index,
+                "lookalikes": delete_lookalikes,
                 "match": delete_match,
                 ## carried through deleteMalformedTraces, which returns the very
                 ## dicts it deleted, so the log and the return value can name

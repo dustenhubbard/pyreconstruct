@@ -386,8 +386,8 @@ def test_the_pairs_list_is_told_which_rows_were_left(tmp_path, monkeypatch):
 
     assert applied == []
     assert notices == [
-        "PyReconstruct did not delete 2 traces. They moved after the scan, "
-        "and more than one identical trace under each name could be the one "
+        "PyReconstruct did not delete 2 traces. The section changed after the "
+        "scan, and PyReconstruct cannot tell which of the identical traces "
         "you chose:\n\n"
         f"  B on section {snum}\n  B on section {snum}\n\n"
         "Run the scan again to list them where they are now."
@@ -412,9 +412,143 @@ def test_a_cleanup_list_is_told_which_row_was_left(tmp_path, monkeypatch):
         _StubField(series), [record]
     ) == []
     assert notices == [
-        "PyReconstruct did not delete 1 trace. It moved after the scan, and "
-        "more than one identical trace under its name could be the one you "
-        "chose:\n\n"
+        "PyReconstruct did not delete 1 trace. The section changed after the "
+        "scan, and PyReconstruct cannot tell which of the identical traces "
+        "you chose:\n\n"
         f"  DUST on section {snum}\n\n"
         "Run the scan again to list it where it is now."
     ]
+
+
+# ---------------------------------------------------------------------------
+# an index that still lands on a lookalike: the recorded count catches it
+# ---------------------------------------------------------------------------
+
+def _dust_records(series, snum):
+    return [
+        r for r in series.findPixelDustTraces(1e9)
+        if r["name"] == "DUST" and r["section"] == snum
+    ]
+
+
+def test_scans_record_how_many_lookalikes_each_trace_has(tmp_path):
+    series = _load_series(tmp_path)
+    snum = _seed(series, [
+        ("A", SQUARE, "a0"),
+        ("A", SQUARE, "a1"),
+        ("B", SQUARE, "b"),
+        ("DUST", DUST, "d0"),
+        ("DUST", DUST, "d1"),
+        ("DUST", DUST, "d2"),
+    ])
+    assert [r["lookalikes"] for r in _dust_records(series, snum)] == [3, 3, 3]
+    record = _row(series.findDifferentlyNamedDuplicates(0.95), "A", 1, "B")[0]
+    a_side = "" if record["name"] == "A" else "other_"
+    b_side = "other_" if a_side == "" else ""
+    assert record[f"{a_side}lookalikes"] == 2
+    assert record[f"{b_side}lookalikes"] == 1
+
+
+def test_an_index_that_lands_on_a_lookalike_deletes_nothing(tmp_path):
+    """I pick the second of three identical traces, then the first is
+    deleted outside the list. Index 1 now holds the third, which matches the
+    signature, so only the changed count shows the row is stale."""
+    series = _load_series(tmp_path)
+    snum = _seed(series, [
+        ("DUST", DUST, "b0"),
+        ("DUST", DUST, "b1"),
+        ("DUST", DUST, "b2"),
+    ])
+    record = _dust_records(series, snum)[1]
+    _remove_first(series, snum, "DUST")
+
+    ambiguous = []
+    assert series.deleteMalformedTraces([record], ambiguous=ambiguous) == []
+    assert ambiguous == [record]
+    assert _tags(series, snum, "DUST") == [["b1"], ["b2"]]
+
+
+def test_a_pair_row_whose_index_lands_on_a_lookalike_deletes_nothing(
+        tmp_path):
+    series = _load_series(tmp_path)
+    snum = _seed(series, [
+        ("A", SQUARE, "a"),
+        ("B", SQUARE, "b0"),
+        ("B", SQUARE, "b1"),
+        ("B", SQUARE, "b2"),
+    ])
+    choice = _row(series.findDifferentlyNamedDuplicates(0.95), "B", 1, "A")
+    _remove_first(series, snum, "B")
+
+    ambiguous = []
+    assert series.deleteDifferentlyNamedDuplicates(
+        [choice], ambiguous=ambiguous
+    ) == []
+    assert ambiguous == [choice]
+    assert _tags(series, snum, "B") == [["b1"], ["b2"]]
+
+
+def test_an_unchanged_count_keeps_the_index(tmp_path):
+    """A change elsewhere on the section does not make a row ambiguous."""
+    series = _load_series(tmp_path)
+    snum = _seed(series, [
+        ("DUST", DUST, "d0"),
+        ("DUST", DUST, "d1"),
+        ("OTHER", FAR, "o"),
+    ])
+    record = _dust_records(series, snum)[1]
+    _remove_first(series, snum, "OTHER")
+
+    assert series.deleteMalformedTraces([record]) == [record]
+    assert _tags(series, snum, "DUST") == [["d0"]]
+
+
+def test_a_record_without_a_count_keeps_the_index(tmp_path):
+    """Records made before the count existed behave as they did."""
+    series = _load_series(tmp_path)
+    snum = _seed(series, [
+        ("DUST", DUST, "b0"),
+        ("DUST", DUST, "b1"),
+        ("DUST", DUST, "b2"),
+    ])
+    record = _dust_records(series, snum)[1]
+    del record["lookalikes"]
+    _remove_first(series, snum, "DUST")
+
+    assert series.deleteMalformedTraces([record]) == [record]
+    assert _tags(series, snum, "DUST") == [["b1"]]
+
+
+@pytest.mark.gui
+def test_a_delete_made_from_the_list_does_not_make_the_rest_ambiguous(
+        tmp_path, qtbot, monkeypatch):
+    """The list counts its own deletes off the rows it keeps, so the next
+    delete from it still goes through."""
+    from PyReconstruct.modules.gui.dialog import PixelDustDialog
+    from PyReconstruct.modules.gui.dialog import malformed_contours
+    monkeypatch.setattr(
+        malformed_contours, "notifyConfirm", lambda *a, **k: True
+    )
+    series = _load_series(tmp_path)
+    snum = _seed(series, [
+        ("DUST", DUST, "d0"),
+        ("DUST", DUST, "d1"),
+        ("DUST", DUST, "d2"),
+    ])
+    records = _dust_records(series, snum)
+    ambiguous = []
+    dialog = PixelDustDialog(
+        None, records,
+        delete=lambda recs: series.deleteMalformedTraces(
+            recs, ambiguous=ambiguous
+        ),
+    )
+    qtbot.addWidget(dialog)
+
+    dialog._deleteRecords([records[0]])
+    assert records[2]["index"] == 1
+    assert records[2]["lookalikes"] == 2
+    dialog._deleteRecords([records[2]])
+
+    assert ambiguous == []
+    assert _tags(series, snum, "DUST") == [["d1"]]

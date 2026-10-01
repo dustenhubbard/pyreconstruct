@@ -77,20 +77,16 @@ def notifyAmbiguousTraces(entries : list, shown : int = 10):
     lines = [f"  {name} on section {snum}" for name, snum in entries[:shown]]
     if count > shown:
         lines.append(f"  and {count - shown} more")
-    if count == 1:
-        lead = (
-            "PyReconstruct did not delete 1 trace. It moved after the scan, "
-            "and more than one identical trace under its name could be the "
-            "one you chose:"
-        )
-        tail = "Run the scan again to list it where it is now."
-    else:
-        lead = (
-            f"PyReconstruct did not delete {count} traces. They moved after "
-            "the scan, and more than one identical trace under each name "
-            "could be the one you chose:"
-        )
-        tail = "Run the scan again to list them where they are now."
+    noun = "1 trace" if count == 1 else f"{count} traces"
+    lead = (
+        f"PyReconstruct did not delete {noun}. The section changed after the "
+        "scan, and PyReconstruct cannot tell which of the identical traces "
+        "you chose:"
+    )
+    tail = (
+        "Run the scan again to list it where it is now." if count == 1
+        else "Run the scan again to list them where they are now."
+    )
     notify(lead + "\n\n" + "\n".join(lines) + "\n\n" + tail)
 
 

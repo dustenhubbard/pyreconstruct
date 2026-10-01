@@ -20,6 +20,14 @@ from PyReconstruct.modules.gui.utils import undo_chord
 from PyReconstruct.modules.gui.utils import notifyConfirm
 
 
+def _signatureKey(match):
+    """A record's {"color", "points"} signature as a hashable key."""
+    return (
+        tuple(match["color"]),
+        tuple(tuple(point) for point in match["points"]),
+    )
+
+
 class MalformedContoursDialog(QDialog):
     """Report traces skipped during object smoothing.
 
@@ -317,7 +325,8 @@ class MalformedContoursDialog(QDialog):
         deleted = self.delete(records)
         self._pruneRecords(deleted or [])
 
-    def _pruneRecords(self, deleted, deleted_traces=None):
+    def _pruneRecords(self, deleted, deleted_traces=None,
+                      deleted_matches=None):
         """Remove the rows/records that were actually deleted.
 
             Params:
@@ -325,6 +334,9 @@ class MalformedContoursDialog(QDialog):
                 deleted_traces (list): optional (section, name, index) of each
                     trace that was deleted. Defaults to each record's own
                     trace; the pairs list passes the side it really deleted.
+                deleted_matches (list): the "match" signature of each entry
+                    of deleted_traces, in the same order. Defaults to each
+                    record's own.
         """
         if not deleted:
             return
@@ -333,6 +345,8 @@ class MalformedContoursDialog(QDialog):
             deleted_traces = [
                 (d["section"], d["name"], d["index"]) for d in deleted
             ]
+            deleted_matches = [d.get("match") for d in deleted]
+        self._countDownLookalikes(deleted_traces, deleted_matches, deleted_ids)
         # The surviving records' scan-time indexes shift when earlier traces
         # of the SAME contour on the SAME section are deleted: "Go to trace"
         # then framed a different trace than the row named, and the user
@@ -370,6 +384,46 @@ class MalformedContoursDialog(QDialog):
         if self.delete_all_button is not None:
             self.delete_all_button.setEnabled(bool(self.records))
         self._updateRowActionButtons()
+
+    def _countDownLookalikes(self, deleted_traces, deleted_matches,
+                             deleted_ids):
+        """Take each deleted trace off the "lookalikes" count of the rows left.
+
+        A record counts the identical traces its scan saw, and the delete path
+        refuses a record whose count has changed (the index may then land on
+        the wrong one of them). A delete made from this list is one the list
+        has accounted for, so the survivors' counts follow it.
+        """
+        if not deleted_matches:
+            return
+        counted = [
+            record for record in self._records_by_key.values()
+            if id(record) not in deleted_ids and (
+                isinstance(record.get("lookalikes"), int)
+                or isinstance(record.get("other_lookalikes"), int)
+            )
+        ]
+        if not counted:
+            return  # records from before the count existed
+        gone = {}
+        for trace, match in zip(deleted_traces, deleted_matches):
+            if match is not None:
+                gone[tuple(trace)] = _signatureKey(match)
+        for record in counted:
+            for name_key, match_key, count_key in (
+                ("name", "match", "lookalikes"),
+                ("other_name", "other_match", "other_lookalikes"),
+            ):
+                if not isinstance(record.get(count_key), int):
+                    continue
+                signature = _signatureKey(record[match_key])
+                drop = sum(
+                    1 for (section, name, _index), key in gone.items()
+                    if section == record["section"]
+                    and name == record[name_key] and key == signature
+                )
+                if drop:
+                    record[count_key] -= drop
 
     def _rows_for_export(self):
         """Return the report as a list of rows (header first).
@@ -687,18 +741,22 @@ class DifferentlyNamedDuplicatesDialog(MalformedContoursDialog):
         # the trace that went is the side that was NOT kept, so "keep first"
         # deleted the record's other trace, not its own
         deleted_traces = []
+        deleted_matches = []
         for record, keep in applied:
             if keep == "first":
                 deleted_traces.append(
                     (record["section"], record["other_name"],
                      record["other_index"])
                 )
+                deleted_matches.append(record.get("other_match"))
             else:
                 deleted_traces.append(
                     (record["section"], record["name"], record["index"])
                 )
+                deleted_matches.append(record.get("match"))
         self._pruneRecords(
-            [record for record, _keep in applied], deleted_traces
+            [record for record, _keep in applied], deleted_traces,
+            deleted_matches,
         )
 
     def _columnSpecs(self):
