@@ -707,3 +707,56 @@ def test_export_csv_matches_old_path(qapp, tmp_path, monkeypatch):
     # sanity: the export actually produced the expected shape
     assert old_csv.splitlines()[0].split(",")[0] == "Name"
     assert len(old_csv.splitlines()) == len(src.getFiltered()) + 1
+
+
+def test_export_csv_writes_the_locked_column(qapp, tmp_path, monkeypatch):
+    """A locked object exports "yes" under Locked, an unlocked one "no".
+
+    The Locked cell is a checkbox with no text, so writing its text left the
+    column blank for every object.
+    """
+    series = _load_series(tmp_path)
+    names = sortList(list(series.data["objects"].keys()))
+    series.setAttr(names[0], "locked", True)
+    for name in names[1:]:
+        series.setAttr(name, "locked", False)
+    cols = [(k, k == "Locked") for k, _ in series.getOption("object_columns")]
+    src = _RealObjectSource(series, cols)
+
+    out = str(tmp_path / "out.csv")
+    obj = ObjectTableWidget.__new__(ObjectTableWidget)
+    obj.model = ObjectTableModel(src)
+    obj.name = "object"
+    monkeypatch.setattr(
+        "PyReconstruct.modules.gui.table.object.FileDialog.get",
+        staticmethod(lambda *a, **k: out),
+    )
+    obj.export()
+
+    with open(out) as f:
+        rows = [line.split(",") for line in f.read().splitlines()]
+    assert rows[0] == ["Name", "Locked"]
+    locked = {name: value for name, value in rows[1:]}
+    assert locked[names[0]] == "yes"
+    assert all(locked[name] == "no" for name in names[1:])
+
+
+def test_table_export_writes_the_locked_column(qapp, tmp_path, monkeypatch):
+    """The QTableWidget export (the section list's) does the same."""
+    tw = CopyTableWidget(None, 2, 2)
+    tw.setHorizontalHeaderLabels(["Section", "Locked"])
+    for r, checked in enumerate((True, False)):
+        tw.setItem(r, 0, QTableWidgetItem(str(r)))
+        tw.setItem(r, 1, _locked_item(checked))
+    out = str(tmp_path / "sections.csv")
+    table = DataTable.__new__(DataTable)
+    table.table = tw
+    table.name = "section"
+    monkeypatch.setattr(
+        "PyReconstruct.modules.gui.table.data_table.FileDialog.get",
+        staticmethod(lambda *a, **k: out),
+    )
+    table.export()
+
+    with open(out) as f:
+        assert f.read().splitlines() == ["Section,Locked", "0,yes", "1,no"]
