@@ -42,6 +42,17 @@ def old_from_str(s):
     date, time, user, obj_name, sections, event = tuple(l)
     if obj_name == "-":
         obj_name = None
+    if sections == "-":
+        sections = None
+    else:
+        ranges = []
+        for sr in sections.split(" "):
+            ends = sr.split("-")
+            if len(ends) == 1:
+                ranges.append((int(sr), int(sr)))
+            else:
+                ranges.append((int(ends[0]), int(ends[1])))
+        sections = ranges
     return date, time, user, obj_name, sections, event.strip()
 
 
@@ -102,9 +113,7 @@ def test_older_rows_read_as_they_always_did(row):
     byte for byte."""
     log = Log.fromStr(row)
     date, time, user, obj_name, sections, event = old_from_str(row)
-    assert (log.date, log.time, log.user, log.obj_name, log.event) == (
-        date, time, user, obj_name, event
-    )
+    assert fields(log) == (date, time, user, obj_name, sections, event)
     assert str(log) == row
 
 
@@ -133,10 +142,28 @@ def test_quotes_an_older_version_wrote_stay_literal(row):
     way is read the old way."""
     log = Log.fromStr(row)
     date, time, user, obj_name, sections, event = old_from_str(row)
-    assert (log.date, log.time, log.user, log.obj_name, log.event) == (
-        date, time, user, obj_name, event
-    )
+    assert fields(log) == (date, time, user, obj_name, sections, event)
     assert fields(Log.fromStr(str(log))) == fields(log)
+
+
+def test_a_quoted_field_can_span_what_an_older_row_meant_as_fields():
+    """An older object name that opens with a quote can close the quote
+    fields later. When the rest parses, the row reads the new way. That is
+    the one shape older rows read differently, pinned here."""
+    row = '26-09-30, 1200, bob, "d01, -, Rename object to d02", 3, x'
+    assert fields(Log.fromStr(row)) == (
+        "26-09-30", "1200", "bob", "d01, -, Rename object to d02", [(3, 3)],
+        "x",
+    )
+
+
+def test_the_same_row_falls_back_to_the_old_reading_when_it_must():
+    row = '26-09-30, 1200, bob, "d01, -, Rename object to d02", q, x'
+    assert fields(Log.fromStr(row)) == (
+        "26-09-30", "1200", "bob", '"d01', None,
+        'Rename object to d02", q, x',
+    )
+    assert fields(Log.fromStr(row)) == old_from_str(row)
 
 
 def test_an_older_row_with_a_comma_name_is_still_a_parse_failure():
