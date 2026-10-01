@@ -2387,6 +2387,15 @@ class Series():
                 else:
                     self.addLog(obj_name, None, "Modify object")
         
+        ## A rename limited to some sections leaves each object that has
+        ## traces elsewhere in place, and that object keeps its hosts and
+        ## travelers (renameObjAttrs)
+        kept = set()
+        if name and sections is not None:
+            for obj_name in obj_names:
+                if self.getObjectSections([obj_name]) - set(sections):
+                    kept.add(obj_name)
+
         ## Modify object on every section
         attrs_migrated = False
         for snum, section in self.enumerateSections(
@@ -2407,7 +2416,9 @@ class Series():
                 for obj_name in obj_names:
 
                     if obj_name != name:
-                        self.renameObjAttrs(obj_name, name)
+                        self.renameObjAttrs(
+                            obj_name, name, keep_old=obj_name in kept
+                        )
                         
                 attrs_migrated = True
             
@@ -2446,7 +2457,9 @@ class Series():
         if name and not attrs_migrated:
             for obj_name in obj_names:
                 if obj_name != name:
-                    self.renameObjAttrs(obj_name, name)
+                    self.renameObjAttrs(
+                        obj_name, name, keep_old=obj_name in kept
+                    )
             attrs_migrated = True
 
         self.modified = True
@@ -4373,7 +4386,7 @@ class Series():
         # object host
         self.host_tree.removeObject(name)
 
-    def renameObjAttrs(self, old_name, new_name):
+    def renameObjAttrs(self, old_name, new_name, keep_old=False):
         """Change the attibutes for an object that was renamed.
 
         (Automatically called when object is renamed.)
@@ -4381,6 +4394,8 @@ class Series():
             Params:
                 old_name (str): the original name of the object
                 new_name (str): the new name for the object
+                keep_old (bool): True if the old object keeps traces on other
+                    sections, so it keeps its hosts and travelers too
         """
         # if new_name in self.data["objects"]:
         #     return  # do not overwrite if object exists
@@ -4425,7 +4440,7 @@ class Series():
             ## 2026-08-28).
 
         # rename obj hosts
-        self.host_tree.renameObject(old_name, new_name)
+        self.host_tree.renameObject(old_name, new_name, keep_old=keep_old)
     
     def getAlignments(self) -> list:
         """Return a list of alignment names."""
