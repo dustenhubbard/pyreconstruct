@@ -76,6 +76,7 @@ class TraceDialog(QDialog):
         self.tag_choices = {}
         self.smooth_choice = None
         self.smooth_input = None
+        self.smooth_initial = None
         self.smooth_default = smooth_default
 
         # the pick-one sets, and every value they hold. Those values are shown
@@ -393,6 +394,11 @@ class TraceDialog(QDialog):
                 self.smooth_input.setCurrentText(str(smooth_window))
             else:
                 self.smooth_input.setCurrentIndex(0)
+            # what the row showed on open: a row left as seeded answers
+            # None, so a rename onto an object with its own window does not
+            # write the seed over it (renameObjAttrs: the target's own
+            # attributes win)
+            self.smooth_initial = self.smooth_input.currentText()
             smooth_row.addWidget(smooth_text)
             smooth_row.addWidget(self.smooth_input)
             smooth_row.addStretch()
@@ -500,11 +506,12 @@ class TraceDialog(QDialog):
         """Read the Smoothing row.
 
             Returns:
-                None (leave alone), 0 (default), the window (int), or False
-                when the typed text is not a usable window
+                None (leave alone: the row is blank or still as it opened),
+                0 (default), the window (int), or False when the typed text
+                is not a usable window
         """
         text = self.smooth_input.currentText().strip()
-        if text == "":
+        if text == "" or text == self.smooth_initial:
             return None
         if text == f"Default ({self.smooth_default})" or text.lower() == "default":
             return 0

@@ -4340,7 +4340,7 @@ class Series():
         """Get the rolling average window that smooths an object's traces.
 
         The object's own value (obj_attrs "smooth_window", set from the
-        object list's `Edit attributes...`) when it has one, otherwise the
+        object list's `Edit attributes of traces...`) when it has one, otherwise the
         series option `roll_window`. A value an object does not carry means
         "follow the series option", so the key is left out rather than
         written as the option's number, and the option can still change it.

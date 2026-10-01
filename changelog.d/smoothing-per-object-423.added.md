@@ -1,5 +1,3 @@
-- **Each object can have its own smoothing window.** `Edit attributes...` in
-  the object list has a Smoothing drop-down with the trace mode option as the
-  default. `Smooth object traces`, `Smooth traces` and the rolling average
-  while scribbling use the object's value, and an object with none smooths as
-  before.
+- **Each object can have its own smoothing window.** Set it in the Smoothing
+  drop-down of `Edit attributes of traces...` in the object list; the trace
+  mode option stays the default.

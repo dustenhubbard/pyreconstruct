@@ -3,7 +3,7 @@
 The rolling average window used to smooth traces was one series option
 (`roll_window`, trace mode options). An object can now hold its own window in
 its `obj_attrs` entry under "smooth_window", set from the object list's
-`Edit attributes...` Smoothing row. `Series.getSmoothWindow` returns that
+`Edit attributes of traces...` Smoothing row. `Series.getSmoothWindow` returns that
 value, or the series option when the object has none, and every smoothing
 path reads it: `Smooth object traces`, `Smooth traces`, and the rolling
 average while scribbling.
@@ -256,6 +256,10 @@ def test_row_offers_the_default_first(parent):
     assert items[0] == "Default (10)"
     assert "10" in items and "4" in items
     assert dlg.smooth_input.currentText() == "Default (10)"
+    # left as it opened: nothing to write, so a rename onto an object with
+    # its own window does not clear it
+    assert dlg.readSmoothChoice() is None
+    dlg.smooth_input.setCurrentText("Default")
     assert dlg.readSmoothChoice() == 0
 
 
@@ -272,7 +276,11 @@ def test_row_shows_the_object_value(parent):
     from PyReconstruct.modules.gui.dialog.trace import TraceDialog
     dlg = TraceDialog(parent, name="obj", is_obj_list=True, smooth_default=10, smooth_window=7)
     assert dlg.smooth_input.currentText() == "7"
-    assert dlg.readSmoothChoice() == 7
+    assert dlg.readSmoothChoice() is None
+    dlg.smooth_input.setCurrentText("7 ")
+    assert dlg.readSmoothChoice() is None
+    dlg.smooth_input.setCurrentText("8")
+    assert dlg.readSmoothChoice() == 8
 
 
 @pytest.mark.gui
@@ -476,3 +484,79 @@ def test_scribble_smoothing_uses_the_object_value(main_window, monkeypatch):
                    reduce_points=False, simplify=True)
 
     assert ("scribble_probe", 3) in seen
+
+
+class _RealDialog:
+    """The real `TraceDialog`, run without a modal loop.
+
+    `name` is typed into the Name row before OK; `cancel` presses Cancel.
+    `opened` records the Smoothing row's text on open.
+    """
+
+    name = None
+    cancel = False
+    opened = []
+
+    def __new__(cls, parent, *args, **kwargs):
+        from PySide6.QtWidgets import QDialog
+        from PyReconstruct.modules.gui.dialog.trace import TraceDialog
+        dlg = TraceDialog(parent, *args, **kwargs)
+        cls.opened.append(dlg.smooth_input.currentText())
+        if cls.name is not None:
+            dlg.name_input.setText(cls.name)
+        real_exec = dlg.exec
+
+        def exec_():
+            QDialog.exec = lambda self: 0 if cls.cancel else 1
+            try:
+                return real_exec()
+            finally:
+                del QDialog.exec
+        dlg.exec = exec_
+        return dlg
+
+
+@pytest.fixture
+def real_dialog(monkeypatch):
+    from PyReconstruct.modules.gui.main import field_widget_3_object
+    monkeypatch.setattr(field_widget_3_object, "TraceDialog", _RealDialog)
+    _RealDialog.name = None
+    _RealDialog.cancel = False
+    _RealDialog.opened = []
+    return _RealDialog
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("junk", ["4", 2.5, True])
+def test_a_junk_stored_value_opens_the_dialog_as_default(main_window, real_dialog, junk):
+    """A hand-edited .jser can hold anything under smooth_window. The row
+    must open (a "4" used to break the sort of the window list) and seed as
+    the default, the way getSmoothWindow reads it."""
+    field = main_window.field
+    series = main_window.series
+    series.setAttr(ON_OPEN_SECTION, "smooth_window", junk)
+    real_dialog.cancel = True
+
+    _select_object(field, ON_OPEN_SECTION)
+    field.editAttributes()
+
+    assert real_dialog.opened == [f"Default ({series.getOption('roll_window')})"]
+    assert series.getAttr(ON_OPEN_SECTION, "smooth_window") == junk
+
+
+@pytest.mark.gui
+def test_rename_onto_an_object_keeps_its_own_window(main_window, real_dialog):
+    """Rename B (no value) onto A (window 8) with the Smoothing row left as
+    it opened: A keeps 8. The row showed B's default, and an untouched row
+    writes nothing, as renameObjAttrs lets A's own attributes win."""
+    field = main_window.field
+    series = main_window.series
+    a, b = ON_OPEN_SECTION, ALSO_ON_OPEN_SECTION
+    series.setAttr(a, "smooth_window", 8)
+    real_dialog.name = a
+
+    _select_object(field, b)
+    field.editAttributes()
+
+    assert b not in field.section.contours
+    assert series.getSmoothWindow(a) == 8

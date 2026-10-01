@@ -219,10 +219,16 @@ class FieldWidgetObject(FieldWidgetTrace):
         displayed_color, color_mixed = object_color_seed(self.series.data, obj_names)
 
         # the Smoothing row: the one window the selection shares, or blank
-        # when the objects disagree (an untouched blank leaves each alone)
-        smooth_values = {
-            self.series.getAttr(n, "smooth_window") for n in obj_names
-        }
+        # when the objects disagree (an untouched blank leaves each alone).
+        # A stored value is read by getSmoothWindow's rule, so a hand-edited
+        # "4" or 2.5 seeds the row as the default instead of breaking it.
+        smooth_values = set()
+        for n in obj_names:
+            w = self.series.getAttr(n, "smooth_window")
+            smooth_values.add(
+                w if isinstance(w, int) and not isinstance(w, bool) and w > 0
+                else None
+            )
         smooth_mixed = len(smooth_values) > 1
         smooth_window = None if smooth_mixed else smooth_values.pop()
 
