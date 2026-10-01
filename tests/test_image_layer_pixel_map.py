@@ -311,3 +311,62 @@ def test_crop_only_keeps_the_values_of_an_image_with_alpha(qapp, real_series, tm
     assert got.shape == want.shape
     differ = int((got != want).sum())
     assert differ == 0, f"{differ} of {want.size} crop values differ from the file's"
+
+
+def _rotated_alpha(real_series, tmp_path, img):
+    """Alpha per screen pixel of a rotated view that reaches past the image,
+    plus the outside mask from the geometry."""
+    img.save(str(tmp_path / "grid.png"))
+    snum = sorted(real_series.sections)[0]
+    section = real_series.loadSection(snum)
+    real_series.src_dir = str(tmp_path)
+    section.src = "grid.png"
+    section.mag = MAG
+    layer = _layer(section, ROTATE)
+    window = _window(1.7, (13.37, 7.77))
+    out = layer._generateImage(DIM, window, bc=False)
+    assert out.format() == QImage.Format.Format_ARGB32_Premultiplied
+    rgba = out.convertToFormat(QImage.Format.Format_RGBA8888)
+    buf = np.frombuffer(rgba.constBits(), np.uint8, rgba.sizeInBytes())
+    rgba = buf.reshape(DIM[1], rgba.bytesPerLine())[:, : DIM[0] * 4].reshape(DIM[1], DIM[0], 4)
+    col, row, on_edge = _expected(window, ROTATE)
+    inside = (col >= 0) & (col < IW) & (row >= 0) & (row < IH)
+    assert (~inside).sum() > 1000, "the view should reach past the image"
+    return layer, rgba, inside, on_edge
+
+
+def test_rgb32_outside_a_rotated_image_is_opaque_black(qapp, real_series, tmp_path):
+    """An 8-bit RGB image (loaded as RGB32) leaves no see-through area.
+
+    RGB32 has no alpha of its own, so Qt copies the word as is; a fill of 0
+    arrived as alpha 0 and the window background showed through outside the
+    image. The fill has to be opaque black.
+    """
+    img = QImage(IW, IH, QImage.Format.Format_RGB32)
+    img.fill(QColor(90, 120, 150))
+    layer, rgba, inside, on_edge = _rotated_alpha(real_series, tmp_path, img)
+    assert layer.image.format() == QImage.Format.Format_RGB32
+    see_through = int((rgba[:, :, 3] != 255).sum())
+    assert see_through == 0, f"{see_through} screen pixels are not opaque"
+    outside = ~inside & ~on_edge
+    assert int((rgba[outside][:, :3] != 0).sum()) == 0, "the area outside the image is not black"
+    assert (rgba[inside & ~on_edge][:, :3] == (90, 120, 150)).all()
+
+
+def test_indexed8_with_a_short_palette_draws_rotated(qapp, real_series, tmp_path):
+    """A palette image with four colors renders a rotated view.
+
+    The lookup table is padded to 256 entries, so a row's padding bytes or a
+    value past the palette cannot index beyond it.
+    """
+    img = QImage(IW, IH, QImage.Format.Format_Indexed8)
+    img.setColorTable([QColor(200, 30, 30).rgb(), QColor(10, 200, 10).rgb(),
+                       QColor(10, 10, 200).rgb(), QColor(250, 250, 250).rgb()])
+    img.fill(2)
+    layer, rgba, inside, on_edge = _rotated_alpha(real_series, tmp_path, img)
+    assert layer.image.format() == QImage.Format.Format_Indexed8
+    assert layer._pixels.lut.shape == (256,)
+    assert int((rgba[:, :, 3] != 255).sum()) == 0, "not every screen pixel is opaque"
+    outside = ~inside & ~on_edge
+    assert int((rgba[outside][:, :3] != 0).sum()) == 0, "the area outside the image is not black"
+    assert (rgba[inside & ~on_edge][:, :3] == (10, 10, 200)).all()

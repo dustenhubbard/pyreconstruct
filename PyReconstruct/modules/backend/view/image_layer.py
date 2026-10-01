@@ -353,8 +353,9 @@ class ImageLayer():
             screen = lut[screen]
         if b != 0 or d != 0:
             # after the color table, so an Indexed8 image's entry 0 is not
-            # mistaken for black outside the image
-            screen[~inside] = 0
+            # mistaken for black outside the image; opaque black for the
+            # 32-bit formats, since Qt copies an RGB32 word's alpha as is
+            screen[~inside] = 0xFF000000 if screen.dtype == np.uint32 else 0
         screen = np.ascontiguousarray(screen)
         im_screen = QImage(
             screen.data,
@@ -498,7 +499,12 @@ class _PixelView:
             self.stride = bpl
             self.pixels = buf.reshape(h, bpl)[:, :w]
             if image.format() == QImage.Format.Format_Indexed8:
-                self.lut = np.array(image.colorTable(), dtype=np.uint32)
+                # all 256 entries, opaque black past the palette: a row's
+                # padding bytes or a value beyond a short palette must not
+                # index past the table
+                table = image.colorTable()
+                self.lut = np.full(256, 0xFF000000, dtype=np.uint32)
+                self.lut[:len(table)] = np.array(table, dtype=np.uint32)
                 self.format = QImage.Format.Format_ARGB32
             else:
                 self.format = QImage.Format.Format_Grayscale8
