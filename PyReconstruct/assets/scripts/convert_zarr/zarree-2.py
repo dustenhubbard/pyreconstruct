@@ -399,6 +399,10 @@ if __name__ == "__main__":
         for filename, scales, duration in p.imap(create2D, args):
 
             for scale_group, arr in scales.items():
+                # the up-front groups come from the first image only, so a
+                # larger image can need a scale none of the others had
+                if scale_group not in zg:
+                    zg.create_group(scale_group)
                 if filename not in zg[scale_group]:
                     zg[scale_group].create_dataset(filename, data=arr)
 
