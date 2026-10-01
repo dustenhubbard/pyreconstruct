@@ -699,7 +699,7 @@ def exterior_to_points(ext: list[np.ndarray], offset, resolution, raw, window, t
 
     ext[:,1] += offset[1] / resolution[1]  # y
     ext[:,1] *= -1
-    ext[:,1] += raw.shape[1] * raw_resolution[1] / resolution[1]
+    ext[:,1] += raw.shape[1] * (raw_resolution[1] / resolution[1])
 
     ## Convert to coordinates
     ext *= mag

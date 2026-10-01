@@ -179,3 +179,17 @@ def test_raw_and_labels_both_in_um(tmp_path, monkeypatch):
         _assert_label_rows_4_to_7_at_8_nm(series)
     finally:
         series.close()
+
+
+@pytest.mark.parametrize("height", [40, 43, 101])
+@pytest.mark.parametrize("nm", [4.0, 25.4, 33.3])
+def test_y_flip_is_exact_when_raw_and_labels_share_a_grid(height, nm):
+    """Same resolution on both arrays: the flip uses raw's height exactly, as before."""
+    raw = np.zeros((1, height, 10), dtype=np.uint8)
+    res = [nm, nm, nm]
+    ext = np.array([[0, 0]])
+    tform = Transform([1, 0, 0, 0, 1, 0])
+    points = conversions.exterior_to_points(
+        ext, [0, 0, 0], res, raw, (0, 0), tform, 1, raw_resolution=list(res)
+    )
+    assert points[0][1] == float(height)
