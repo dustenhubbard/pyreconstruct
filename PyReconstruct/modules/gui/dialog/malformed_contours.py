@@ -317,28 +317,44 @@ class MalformedContoursDialog(QDialog):
         deleted = self.delete(records)
         self._pruneRecords(deleted or [])
 
-    def _pruneRecords(self, deleted):
-        """Remove the rows/records that were actually deleted."""
+    def _pruneRecords(self, deleted, deleted_traces=None):
+        """Remove the rows/records that were actually deleted.
+
+            Params:
+                deleted (list): the records whose rows go
+                deleted_traces (list): optional (section, name, index) of each
+                    trace that was deleted. Defaults to each record's own
+                    trace; the pairs list passes the side it really deleted.
+        """
         if not deleted:
             return
         deleted_ids = {id(r) for r in deleted}
+        if deleted_traces is None:
+            deleted_traces = [
+                (d["section"], d["name"], d["index"]) for d in deleted
+            ]
         # The surviving records' scan-time indexes shift when earlier traces
         # of the SAME contour on the SAME section are deleted: "Go to trace"
         # then framed a different trace than the row named, and the user
         # could delete a legitimate one believing they had inspected it
         # (found 2026-08-28). Decrement each survivor by how many deleted
-        # records sat below its index in its own contour.
+        # traces sat below its index in its own contour. A pair record
+        # carries a second trace under the "other_" keys, shifted the same way.
         for record in self._records_by_key.values():
             if id(record) in deleted_ids:
                 continue
-            shift = sum(
-                1 for d in deleted
-                if d["section"] == record["section"]
-                and d["name"] == record["name"]
-                and d["index"] < record["index"]
-            )
-            if shift:
-                record["index"] -= shift
+            for name_key, index_key in (("name", "index"),
+                                        ("other_name", "other_index")):
+                if index_key not in record:
+                    continue
+                shift = sum(
+                    1 for section, name, index in deleted_traces
+                    if section == record["section"]
+                    and name == record[name_key]
+                    and index < record[index_key]
+                )
+                if shift:
+                    record[index_key] -= shift
         # remove bottom-up so earlier row indices stay valid
         for row in range(self.table.rowCount() - 1, -1, -1):
             item = self.table.item(row, 0)
@@ -668,7 +684,22 @@ class DifferentlyNamedDuplicatesDialog(MalformedContoursDialog):
         ):
             return
         applied = self.delete_unselected(choices) or []
-        self._pruneRecords([record for record, _keep in applied])
+        # the trace that went is the side that was NOT kept, so "keep first"
+        # deleted the record's other trace, not its own
+        deleted_traces = []
+        for record, keep in applied:
+            if keep == "first":
+                deleted_traces.append(
+                    (record["section"], record["other_name"],
+                     record["other_index"])
+                )
+            else:
+                deleted_traces.append(
+                    (record["section"], record["name"], record["index"])
+                )
+        self._pruneRecords(
+            [record for record, _keep in applied], deleted_traces
+        )
 
     def _columnSpecs(self):
         return [
