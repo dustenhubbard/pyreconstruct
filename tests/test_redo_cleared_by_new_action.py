@@ -167,3 +167,47 @@ def test_redo_after_a_new_group_action_through_the_window(
     window.undo(redo=True)
 
     assert set(series.object_groups.getObjectGroups(name)) == {"H"}
+
+
+def test_cancelled_curation_dialog_keeps_redo(qapp, states, real_series):
+    """Cancelling the `Assign to` dialog on the CR box is not an action, so
+    both the series redo and the section redo survive it."""
+    from unittest import mock
+
+    from PySide6.QtCore import Qt
+
+    from PyReconstruct.modules.gui.table.object import ObjectTableWidget
+
+    snum = real_series.current_section
+    section = real_series.loadSection(snum)
+
+    # a series step, then a section step, both undone
+    add_to_group(states, real_series, "G")
+    section.modified_contours.add(OBJECT)
+    states[section].addState(section, real_series)
+    states.checkOverwrite(snum)
+    states.undoSection(section)
+    states.undoState()
+    assert len(states.redos) == 1
+    assert len(states[section].redo_states) == 1
+
+    table = ObjectTableWidget.__new__(ObjectTableWidget)
+    table.horizontal_headers = ["CR"]
+    table.model = mock.Mock()
+    table.model.nameAt.return_value = OBJECT
+    table.series = real_series
+    table.series_states = states
+    table.manager = mock.Mock()
+    table.mainwindow = mock.Mock()
+
+    with mock.patch(
+        "PyReconstruct.modules.gui.table.object.QInputDialog.getText",
+        return_value=("", False),
+    ):
+        accepted = table.onCheckStateChanged(
+            0, 0, Qt.CheckState.PartiallyChecked
+        )
+
+    assert accepted is False
+    assert len(states.redos) == 1
+    assert len(states[section].redo_states) == 1
