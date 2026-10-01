@@ -19,6 +19,8 @@ from .section_layer import SectionLayer
 # lookup tables that match the render exactly, rounding included.
 SETTINGS = np.arange(-100, 101)
 _tables = None
+# pixels counted per bincount call (a 32 MB working copy)
+_CHUNK = 1 << 22
 
 
 def _paintStrip(brightness, contrast):
@@ -78,10 +80,21 @@ def adjustPixelsToStats(image, desired_mean, desired_std):
         contrast (int): The contrast setting (-100 to 100), 0 for a flat image,
             None along with brightness.
     """
-    pixels = np.clip(np.rint(np.asarray(image, dtype=np.float64)), 0, 255)
-    if pixels.size == 0 or not pixels.any():
+    image = np.asarray(image)
+    if image.dtype == np.uint8:
+        # count the levels straight from the image, a slice at a time:
+        # bincount works on a 64-bit copy of what it gets, and a float copy
+        # of a 16384 x 16384 section takes 2 GB and most of the time
+        flat = image.ravel()
+        counts = np.zeros(256, dtype=np.intp)
+        for start in range(0, flat.size, _CHUNK):
+            counts += np.bincount(flat[start:start + _CHUNK], minlength=256)
+    else:
+        pixels = np.clip(np.rint(image.astype(np.float64)), 0, 255)
+        counts = np.bincount(pixels.astype(np.intp).ravel(), minlength=256)
+    if image.size == 0 or counts[0] == image.size:
         return None, None
-    weights = np.bincount(pixels.astype(np.intp).ravel(), minlength=256) / pixels.size
+    weights = counts / image.size
 
     def score(curves):
         # a plain weighted sum, not a matrix product: on a busy machine the
@@ -94,7 +107,7 @@ def adjustPixelsToStats(image, desired_mean, desired_std):
     bright, contrast_table = _lookupTables()
     bright = bright.astype(np.intp)
     # a flat image has no spread for contrast to act on
-    if np.std(pixels) < 1e-6:
+    if np.count_nonzero(counts) == 1:
         return int(SETTINGS[np.argmin(score(bright.astype(np.float64)))]), 0
 
     best = (np.inf, 0, 0)
