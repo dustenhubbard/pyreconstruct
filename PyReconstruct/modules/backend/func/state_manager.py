@@ -778,13 +778,15 @@ class SeriesState():
         """
         self.series_attrs = SeriesState.getSeriesAttributes(series)
     
-    def applySeriesAttributes(self, series : Series):
+    def applySeriesAttributes(self, series : Series, pre_series_attrs : dict):
         """Apply the stored series attributes to a series.
         
             Params:
                 series (Series): the series to apply attributes to
+                pre_series_attrs (dict): the series attributes to keep for the
+                    opposite step (getSeriesAttributes), captured before the
+                    sections were restored
         """
-        pre_series_attrs = SeriesState.getSeriesAttributes(series)
         self.swapPaletteChanges(series)
         for attr, value in self.series_attrs.items():
             if attr == "object_columns":
@@ -1007,6 +1009,12 @@ class SeriesStates():
             return
         
         state = self.redos[-1] if redo else self.undos[-1]
+
+        # what the opposite step puts back, captured before any section is
+        # restored: restoring a section can delete an object (undoing a partial
+        # rename deletes the new one), and that clears its attributes, groups
+        # and hosts, so a snapshot taken afterward would redo without them
+        pre_series_attrs = SeriesState.getSeriesAttributes(self.series)
         
         # undo/redo the inidividual sections. A section can be in this set for
         # either of two reasons: it has a per-section undo state belonging to
@@ -1030,7 +1038,7 @@ class SeriesStates():
                 section.save()
         
         # undo/redo the series attributes
-        state.applySeriesAttributes(self.series)
+        state.applySeriesAttributes(self.series, pre_series_attrs)
 
         # move the state accordingly, stamped as it goes onto the other stack
         # the way SectionStates stamps its states: favor3D compares these
