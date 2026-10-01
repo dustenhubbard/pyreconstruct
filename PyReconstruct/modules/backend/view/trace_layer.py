@@ -695,6 +695,43 @@ class TraceLayer():
         # insert in trace_layer
         arr[yy, xx] = label
     
+    def _drawHoledLabel(self, arr : np.ndarray, traces : list[Trace], label : int, tform : Transform = None):
+        """Draw one object's traces as a label, with its negative traces as holes.
+
+        The mask covers only the box of the object's positive traces, not the
+        whole array, so a large export stays fast.
+
+            Params:
+                arr (np.ndarray): the array to draw the label on
+                traces (list[Trace]): the object's traces
+                label (int): the label to use
+                tform (Transform): the transform to apply to the traces
+        """
+        from skimage.draw import polygon  # deferred: skimage is slow to import
+
+        pix = [(self.traceToPixArray(trace, tform), trace.negative) for trace in traces]
+        positive = [pts for pts, negative in pix if not negative and len(pts)]
+        if not positive:
+            return
+
+        h, w = arr.shape
+        pts = np.concatenate(positive)
+        x0, y0 = np.maximum(pts.min(axis=0), 0)
+        x1 = min(int(pts[:, 0].max()) + 1, w)
+        y1 = min(int(pts[:, 1].max()) + 1, h)
+        if x0 >= x1 or y0 >= y1:
+            return  # entirely outside the array
+
+        mask = np.zeros((y1 - y0, x1 - x0), dtype=bool)
+        for fill in (True, False):  # positives first, then the holes
+            for pts, negative in pix:
+                if negative == fill or not len(pts):
+                    continue
+                yy, xx = polygon(pts[:, 1] - y0, pts[:, 0] - x0, mask.shape)
+                mask[yy, xx] = fill
+
+        arr[y0:y1, x0:x1][mask] = label
+
     def generateLabelsArray(self, pixmap_dim : tuple, window : list, traces : list[Trace], tform : Transform = None, name_ids : dict = None):
         """Generate numpy array with traces drawn as labels.
         
@@ -718,18 +755,24 @@ class TraceLayer():
         arr = np.zeros(shape=(pixmap_h, pixmap_w), dtype=np.uint32)   
 
         id_lookup_table = {}
-        
-        for trace in traces:
 
-            name = trace.name
+        ## Draw one object at a time. An object with no negative traces is
+        ## drawn straight into the array. One with holes fills a mask over its
+        ## own box and its negative traces cut the holes out of it, so a hole
+        ## stays 0 and another object drawn inside the hole keeps its label.
+        by_name = {}
+        for trace in traces:
+            by_name.setdefault(trace.name, []).append(trace)
+
+        for name, name_traces in by_name.items():
+
             name_id = name_ids[name]
-            
-            self._drawTraceLabel(
-                arr, 
-                trace, 
-                name_id, 
-                tform
-            )
+
+            if any(trace.negative for trace in name_traces):
+                self._drawHoledLabel(arr, name_traces, name_id, tform)
+            else:
+                for trace in name_traces:
+                    self._drawTraceLabel(arr, trace, name_id, tform)
 
             id_lookup_table.update({name: name_id})
 
