@@ -1006,12 +1006,14 @@ def test_teeth_unrecorded_focus_split_loses_a_trace(rich_series, field):
 # ---------------------------------------------------------------------------
 
 class _StubField:
-    """The two attributes of ``MainWindow.field`` the section list touches."""
+    """The attributes of ``MainWindow.field`` the section list touches."""
 
     def __init__(self, section):
         self.section = section
+        self.b_section = None
+        self.b_section_layer = None
 
-    def reload(self):
+    def reload(self, clear_states=False):
         pass
 
     def reloadImage(self):
