@@ -206,6 +206,12 @@ class Surface(Object3D):
 
         return tm
 
+    def measure(self):
+        """Return the surface area and volume of the mesh."""
+
+        tm = self.generateTrimesh()
+        return tm.area, tm.volume
+
     def exportTrimesh(self, output_file, export_type):
         """Export trimesh object to file."""
 
@@ -272,6 +278,20 @@ class Spheres(Object3D):
             verts += sphere.vertices.tolist()
         
         return trimesh.util.concatenate(all_spheres)
+
+    def measure(self):
+        """Return the summed surface area and volume of the spheres.
+
+        Taken from the radii, not from the mesh. The mesh is an icosphere with
+        one subdivision, which holds about 87% of a sphere's volume and 93% of
+        its area. Only a single sphere measured exactly, because concatenating
+        one primitive returns the primitive, whose area and volume are exact;
+        two or more came back as a plain mesh (found 2026-09-30).
+        """
+
+        area = sum(4 * np.pi * r ** 2 for r in self.radii)
+        volume = sum(4 / 3 * np.pi * r ** 3 for r in self.radii)
+        return area, volume
 
     def exportTrimesh(self, output_file, export_type):
         """Export trimesh sphere(s) to file."""
