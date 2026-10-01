@@ -35,7 +35,7 @@ def test_tree_keep_old_copies_relationships():
     }
 
 
-def test_partial_rename_keeps_old_hosts_and_travelers(rich_series):
+def test_partial_rename_keeps_old_hosts_and_travelers(rich_series):  # noqa: F811
     secs = _setup(rich_series)
     rich_series.editObjectAttributes(
         ["square"], name="new", sections=secs[:1], log_event=False
@@ -52,7 +52,7 @@ def test_partial_rename_keeps_old_hosts_and_travelers(rich_series):
 
 
 @pytest.mark.parametrize("every_section", [False, True])
-def test_full_rename_moves_hosts_and_travelers(rich_series, every_section):
+def test_full_rename_moves_hosts_and_travelers(rich_series, every_section):  # noqa: F811
     secs = _setup(rich_series)
     rich_series.editObjectAttributes(
         ["square"], name="new",
