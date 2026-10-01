@@ -756,6 +756,11 @@ class SeriesState():
         object_columns = deepcopy(series.getOption("object_columns"))
 
         host_tree = series.host_tree.copy()
+
+        # kept only to give a group the undo brings back the visibility it had:
+        # removing the last object from a group deletes its entry, and the
+        # Groups menu lists groups from these keys
+        groups_visibility = dict(series.groups_visibility)
         
         return {
             "obj_attrs" : obj_attrs,
@@ -767,7 +772,8 @@ class SeriesState():
             "ztraces" : ztraces,
             "user_columns": user_columns,
             "object_columns": object_columns,
-            "host_tree": host_tree
+            "host_tree": host_tree,
+            "groups_visibility": groups_visibility,
         }
     
     def resetSeriesAttributes(self, series : Series):
@@ -791,7 +797,27 @@ class SeriesState():
         for attr, value in self.series_attrs.items():
             if attr == "object_columns":
                 continue  # only replace obj columns under specific circumstances (below)
+            if attr == "groups_visibility":
+                continue  # only fills in missing entries (below)
             setattr(series, attr, value)
+
+        # a group the step brings back gets the visibility it had when the
+        # state was made, or shown for a group with no entry then. Entries
+        # already present are left alone, so a toggle made since stays.
+        stored_viz = self.series_attrs["groups_visibility"]
+        for group in series.object_groups.getGroupList():
+            if group not in series.groups_visibility:
+                series.groups_visibility[group] = stored_viz.get(group, True)
+
+        # a group the step removes loses its entry, as removing its last
+        # object does, or the Groups menu keeps a row for it. pre_series_attrs
+        # still holds the entry, so the opposite step brings the value back.
+        removed_groups = (
+            set(pre_series_attrs["object_groups"].getGroupList()) -
+            set(series.object_groups.getGroupList())
+        )
+        for group in removed_groups:
+            series.groups_visibility.pop(group, None)
 
         # specific case: no sections modified but the series data needs to be refreshed bc preferred alignments changed
         if not self.undo_lens and alignmentPreferencesChanged(pre_series_attrs, self.series_attrs):
