@@ -2091,6 +2091,7 @@ class MainWindow(QMainWindow):
         # coordinates and applies the inverse section transform itself
         tform = self.field.section.tform
         stamp = self.field.tracing_trace.points
+        from PyReconstruct.modules.backend.imports.imagej_roi import holes as roi_holes
 
         failed = []
         for fp in fps:
@@ -2114,7 +2115,13 @@ class MainWindow(QMainWindow):
                 (255, 255, 0)
             )
 
-            for shape in shapes:
+            # a composite roi is filled even-odd, so a nested outline is a hole
+            hole = roi_holes(shapes) if roi.composite else [False] * len(shapes)
+            hole_trace = trace.copy()
+            hole_trace.negative = True
+
+            made = 0
+            for shape, is_hole in zip(shapes, hole):
                 points = [tform.map(x, y) for x, y in shape]
                 closed = roi.closed
                 if roi.markers:
@@ -2122,14 +2129,16 @@ class MainWindow(QMainWindow):
                     (cx, cy), = points
                     points = [(cx + x, cy + y) for x, y in stamp]
                     closed = True
-                self.field.newTrace(
+                made += bool(self.field.newTrace(
                     points,
-                    trace,
+                    hole_trace if is_hole else trace,
                     points_as_pix=False,  # provide as coordinates
                     closed=closed,
                     reduce_points=False,
                     simplify=False
-                )
+                ))
+            if not made:
+                failed.append(f"{Path(fp).name}: too few points for a trace")
 
         if failed:
             imported = len(fps) - len(failed)

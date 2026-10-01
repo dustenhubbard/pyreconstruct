@@ -134,25 +134,46 @@ def _square_path(x0, y0, s):
     return [0, x0, y0, 1, x0 + s, y0, 1, x0 + s, y0 + s, 1, x0, y0 + s, 4]
 
 
-def test_every_sub_path_of_a_composite_roi_imports(tmp_path):
+def _write_composite(fp, *squares):
     roifile = pytest.importorskip("roifile")
-    from PyReconstruct.modules.backend.imports.imagej_roi import Roi
-
-    path = _square_path(50, 50, 200) + _square_path(120, 120, 60)
-    fp = tmp_path / "donut.roi"
+    path = sum((_square_path(*sq) for sq in squares), [])
     roifile.ImagejRoi(
         roitype=roifile.ROI_TYPE.RECT,
         multi_coordinates=np.array(path, dtype=np.float32),
-        left=50, top=50, right=250, bottom=250,
+        left=0, top=0, right=400, bottom=400,
         shape_roi_size=len(path),
     ).tofile(str(fp))
+    return str(fp)
 
-    roi = Roi(str(fp))
+
+DONUT = [(50, 50, 200), (120, 120, 60)]
+
+
+def test_every_sub_path_of_a_composite_roi_imports(tmp_path):
+    from PyReconstruct.modules.backend.imports.imagej_roi import Roi
+
+    roi = Roi(_write_composite(tmp_path / "donut.roi", *DONUT))
     shapes = roi.get_field_shapes(400, 1.0)
 
     assert roi.closed is True
     assert len(shapes) == 2
     assert sorted(_area(s) for s in shapes) == pytest.approx([3600.0, 40000.0])
+
+
+@pytest.mark.parametrize(
+    "squares, expected",
+    [
+        (DONUT, [False, True]),
+        ([(10, 10, 100), (300, 300, 40)], [False, False]),
+        # an island inside the hole is filled again
+        ([(0, 0, 300), (50, 50, 200), (120, 120, 60)], [False, True, False]),
+    ],
+)
+def test_a_nested_outline_of_a_composite_roi_is_a_hole(tmp_path, squares, expected):
+    from PyReconstruct.modules.backend.imports.imagej_roi import Roi, holes
+
+    shapes = Roi(_write_composite(tmp_path / "c.roi", *squares)).get_field_shapes(400, 1.0)
+    assert holes(shapes) == expected
 
 
 def test_a_point_roi_gives_one_shape_per_marker(tmp_path):
@@ -251,3 +272,33 @@ def test_each_marker_of_a_point_roi_becomes_a_stamp(
     stamp = np.mean(main_window.field.tracing_trace.points, axis=0)
     assert np.allclose(centers, np.array(expected) + stamp, atol=1e-9)
     assert all(t.closed for t in traces)
+
+
+def test_a_composite_hole_imports_as_a_negative_trace(
+    main_window, main_window_dialogs, section_with_image, tmp_path
+):
+    fp = _write_composite(tmp_path / "donut.roi", *DONUT)
+
+    _run_import(main_window, main_window_dialogs, [fp])
+
+    traces = section_with_image.contours["donut"].traces
+    mag = section_with_image.mag
+    areas = sorted(
+        (t.negative, round(_area(t.points) / mag**2)) for t in traces
+    )
+    assert areas == [(False, 40000), (True, 3600)]
+
+
+def test_a_file_that_makes_no_trace_is_reported(
+    main_window, main_window_dialogs, section_with_image, tmp_path
+):
+    roifile = pytest.importorskip("roifile")
+    good = _write_roi(tmp_path / "good.roi", SQUARE, roifile.ROI_TYPE.POLYGON)
+    # every vertex the same: one point, too few for a trace
+    dot = _write_roi(tmp_path / "dot.roi", [SQUARE[0]] * 3, roifile.ROI_TYPE.POLYGON)
+
+    _run_import(main_window, main_window_dialogs, [good, dot])
+
+    (notice,) = main_window_dialogs.notices
+    assert "1 of 2" in notice
+    assert "dot.roi" in notice

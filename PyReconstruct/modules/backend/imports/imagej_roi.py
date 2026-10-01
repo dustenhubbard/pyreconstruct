@@ -102,3 +102,26 @@ def fit_spline(pts: Points, closed: bool) -> Points:
     u = np.linspace(0, 1, n, endpoint=not closed)
     sx, sy = splev(u, tck)
     return list(zip(map(float, sx), map(float, sy)))
+
+
+def holes(shapes: List[Points]) -> List[bool]:
+    """Return which outlines of a composite roi are holes.
+
+    ImageJ fills a composite shape even-odd: an outline inside an odd number
+    of the others is a hole. One vertex decides, since the sub-paths of a
+    shape do not cross.
+    """
+    return [
+        sum(inside(shape[0], other) for other in shapes if other is not shape) % 2 == 1
+        for shape in shapes
+    ]
+
+
+def inside(point: Tuple[float, float], polygon: Points) -> bool:
+    """Return true if the point is inside the closed polygon (ray casting)."""
+    x, y = point
+    result = False
+    for (x1, y1), (x2, y2) in zip(polygon, polygon[1:] + polygon[:1]):
+        if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+            result = not result
+    return result
