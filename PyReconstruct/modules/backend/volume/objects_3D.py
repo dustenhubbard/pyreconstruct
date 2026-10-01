@@ -46,8 +46,7 @@ def mapTracePoints(points : list, tform : Transform = None) -> list:
     bit-for-bit identical to map() for the affine transforms used here, so the
     resulting mesh is unchanged.
 
-    With no transform the coordinates are passed through untouched -- integer
-    trace coordinates must stay integers, since the callers round them.
+    With no transform the coordinates are passed through untouched.
 
         Params:
             points (list): the trace points
@@ -59,6 +58,36 @@ def mapTracePoints(points : list, tform : Transform = None) -> list:
         return [(x, y) for x, y in tform.mapPointsArray(points).tolist()]
     else:
         return [(x, y) for x, y in points]
+
+
+def tracePixels(trace : list, xmin : float, ymin : float, vres : float, shape : tuple) -> tuple:
+    """Return the indices of the voxels a trace fills on its section.
+
+    Voxel i spans xmin + i*vres to xmin + (i+1)*vres, and it is filled when its
+    center is inside the trace, so the surface marching cubes puts halfway
+    between filled and empty voxels lands on the trace outline. The grid used
+    to put voxel centers at xmin + i*vres with the points rounded onto them,
+    and skimage's polygon counts a center on the outline as inside: a square
+    10 voxels wide filled 11 by 11, and every surface came out about half a
+    voxel too big all around (found 2026-09-30).
+
+    A trace too small or thin to hold a voxel center falls back to the voxels
+    its outline passes through, as before, so it does not drop out.
+
+        Params:
+            trace (list): the trace's (x, y) points in field coordinates
+            xmin, ymin (float): the corner of the voxel grid
+            vres (float): the voxel width
+            shape (tuple): the grid size in x and y
+        Returns:
+            (tuple) the x and y voxel indices
+    """
+    xs = np.array([(x - xmin) / vres - 0.5 for x, _ in trace])
+    ys = np.array([(y - ymin) / vres - 0.5 for _, y in trace])
+    x_pos, y_pos = polygon(xs, ys, shape=shape)
+    if len(x_pos) == 0 and len(xs):
+        x_pos, y_pos = polygon(np.rint(xs), np.rint(ys), shape=shape)
+    return x_pos, y_pos
 
 
 class Object3D():
@@ -151,27 +180,11 @@ class Surface(Object3D):
         # add the traces to the volume
         for snum, trace_lists in self.traces.items():
             for trace in trace_lists["pos"]:
-                x_values = []
-                y_values = []
-                for x, y in trace:
-                    x_values.append(round((x-xmin) / vres))
-                    y_values.append(round((y-ymin) / vres))
-                x_pos, y_pos = polygon(
-                    np.array(x_values),
-                    np.array(y_values)
-                )
+                x_pos, y_pos = tracePixels(trace, xmin, ymin, vres, vshape[:2])
                 volume[x_pos, y_pos, snum - smin] = True
             # subtract out the negative traces
             for trace in trace_lists["neg"]:
-                x_values = []
-                y_values = []
-                for x, y in trace:
-                    x_values.append(round((x-xmin) / vres))
-                    y_values.append(round((y-ymin) / vres))
-                x_pos, y_pos = polygon(
-                    np.array(x_values),
-                    np.array(y_values)
-                )
+                x_pos, y_pos = tracePixels(trace, xmin, ymin, vres, vshape[:2])
                 volume[x_pos, y_pos, snum - smin] = False
 
         # generate trimesh
@@ -198,6 +211,8 @@ class Surface(Object3D):
 
         # provide real vertex locations
         # (i.e., normalize to real world dimensions)
+        # voxel i spans xmin + i*vres to xmin + (i+1)*vres (see tracePixels)
+        tm.vertices[:,:2] += 0.5
         tm.vertices[:,:2] *= vres
         tm.vertices[:,0] += xmin
         tm.vertices[:,1] += ymin
