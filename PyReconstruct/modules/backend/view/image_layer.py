@@ -80,12 +80,17 @@ class ImageLayer():
             if self.image.isNull():
                 self.image_found = False
             else:
-                self.image = _sampleableImage(self.image)
+                loaded = self.image
+                # the crop the brightness and contrast optimizer reads
+                self.image = _sampleableImage(loaded)
                 self.bw, self.bh = self.image.width(), self.image.height()
                 self.base_corners = [(0, 0), (0, self.bh), (self.bw, self.bh), (self.bw, 0)]
                 self.image_found = True
-                # read in place by _sampleWindow: no per-view copy of the image
-                self._pixels = _PixelView(self.image)
+                # what _sampleWindow draws from, read in place with no
+                # per-view copy; the same image unless alpha has to be
+                # premultiplied at full depth first
+                self._draw_image = _drawableImage(loaded, self.image)
+                self._pixels = _PixelView(self._draw_image)
     
     def _calcTformCorners(self, base_pixmap : QPixmap, tform : Transform) -> tuple:
         """Calculate the vector for each corner of a transformed image.
@@ -473,6 +478,21 @@ def _sampleableImage(image : QImage) -> QImage:
     # not premultiplied: the brightness and contrast optimizer reads the
     # crop's values, and premultiplying would change them under alpha
     return image.convertToFormat(QImage.Format.Format_ARGB32)
+
+
+def _drawableImage(loaded : QImage, sampleable : QImage) -> QImage:
+    """The image _sampleWindow draws from.
+
+    A 16-bit image with alpha is premultiplied at 16 bits and then brought
+    to 8, which rounds once, as drawing the 16-bit image itself would. Going
+    through the 8-bit ARGB32 kept for the crop would round twice and land a
+    level off on about a quarter of the pixels.
+    """
+    if sampleable is loaded or not loaded.hasAlphaChannel():
+        return sampleable
+    return loaded.convertToFormat(
+        QImage.Format.Format_RGBA64_Premultiplied
+    ).convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
 
 
 class _PixelView:

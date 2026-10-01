@@ -15,7 +15,8 @@ import math
 import numpy as np
 import pytest
 
-from PySide6.QtGui import QColor, QImage
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QImage, QPainter
 
 pytestmark = pytest.mark.gui
 
@@ -328,7 +329,8 @@ def _rotated_alpha(real_series, tmp_path, img):
     assert out.format() == QImage.Format.Format_ARGB32_Premultiplied
     rgba = out.convertToFormat(QImage.Format.Format_RGBA8888)
     buf = np.frombuffer(rgba.constBits(), np.uint8, rgba.sizeInBytes())
-    rgba = buf.reshape(DIM[1], rgba.bytesPerLine())[:, : DIM[0] * 4].reshape(DIM[1], DIM[0], 4)
+    # copied: rebinding `rgba` frees the QImage that `buf` points into
+    rgba = buf.reshape(DIM[1], rgba.bytesPerLine())[:, : DIM[0] * 4].reshape(DIM[1], DIM[0], 4).copy()
     col, row, on_edge = _expected(window, ROTATE)
     inside = (col >= 0) & (col < IW) & (row >= 0) & (row < IH)
     assert (~inside).sum() > 1000, "the view should reach past the image"
@@ -370,3 +372,39 @@ def test_indexed8_with_a_short_palette_draws_rotated(qapp, real_series, tmp_path
     outside = ~inside & ~on_edge
     assert int((rgba[outside][:, :3] != 0).sum()) == 0, "the area outside the image is not black"
     assert (rgba[inside & ~on_edge][:, :3] == (10, 10, 200)).all()
+
+
+def _premultiplied_bytes(image):
+    """The raw bytes of an ARGB32_Premultiplied image, one row per screen row."""
+    assert image.format() == QImage.Format.Format_ARGB32_Premultiplied
+    buf = np.frombuffer(image.constBits(), np.uint8, image.sizeInBytes())
+    return buf.reshape(image.height(), image.bytesPerLine())[:, : image.width() * 4].copy()
+
+
+@pytest.mark.parametrize("kind", ["rgba16", "gray16+alpha", "gray8+alpha"])
+def test_image_with_alpha_draws_as_qt_draws_it(qapp, real_series, tmp_path, kind):
+    """At one screen pixel per image pixel the layer matches a direct Qt draw.
+
+    A 16-bit image with alpha is premultiplied at 16 bits before it comes
+    down to 8, the way Qt draws the file itself. Drawing from the 8-bit copy
+    kept for the crop would round twice and leave a quarter of the pixels one
+    level off.
+    """
+    _alpha_png(tmp_path / "grid.png", kind)
+    loaded = QImage(str(tmp_path / "grid.png"))
+    want = QImage(IW, IH, QImage.Format.Format_ARGB32_Premultiplied)
+    want.fill(Qt.black)
+    painter = QPainter(want)
+    painter.drawImage(0, 0, loaded)
+    painter.end()
+
+    snum = sorted(real_series.sections)[0]
+    section = real_series.loadSection(snum)
+    real_series.src_dir = str(tmp_path)
+    section.src = "grid.png"
+    section.mag = MAG
+    layer = _layer(section, IDENTITY)
+    got = layer._generateImage((IW, IH), [0, 0, IW * MAG, IH * MAG], bc=False)
+
+    differ = int((_premultiplied_bytes(got) != _premultiplied_bytes(want)).sum())
+    assert differ == 0, f"{differ} of {IW * IH * 4} drawn bytes differ from a direct Qt draw"
