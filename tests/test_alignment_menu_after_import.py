@@ -213,9 +213,9 @@ def test_a_malformed_transforms_file_does_not_rebuild_the_menus(
     """The rebuild is conditional on the names actually changing.
 
     `createContextMenus()` recreates on the order of 200 actions, and the
-    importer bails out on a bad file without touching any alignment (it prints
-    "Incorrect transform file format" and returns). Guards the condition, not
-    just the happy path.
+    importer bails out on a bad file without touching any alignment (it raises
+    `TransformImportError` and the menu action shows a notice). Guards the
+    condition, not just the happy path.
     """
     window = main_window
     rebuilds = []
