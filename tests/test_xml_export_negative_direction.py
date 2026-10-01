@@ -6,6 +6,11 @@ run clockwise, and `XMLContour.isNegative` reads it that way on import.
 negative trace whose points already ran clockwise went out positive, and a
 positive trace drawn clockwise went out negative. A hole imported from XML
 keeps its clockwise points in memory, so it was one of the ones flipped.
+
+Reconstruct reads the direction after applying the contour's transform, so on
+a section whose transform is mirrored, points that run counterclockwise in
+PyReconstruct run clockwise in Reconstruct. Export and import both have to
+check the transformed points.
 """
 import pytest
 
@@ -15,10 +20,25 @@ from PyReconstruct.modules.backend.func.xml_json_conversions import (
 )
 from PyReconstruct.modules.constants import blank_series
 from PyReconstruct.modules.datatypes import Trace
-from PyReconstruct.modules.datatypes_legacy import process_section_file
+from PyReconstruct.modules.datatypes_legacy import (
+    Contour as XMLContour,
+    Transform as XMLTransform,
+    process_section_file,
+)
 
 CCW = [(0, 0), (2, 0), (2, 2), (0, 2)]
 CW = CCW[::-1]
+
+# x' = 10 - x: a mirrored (negative determinant) section transform
+MIRROR = XMLTransform(xcoef=[10, -1, 0, 0, 0, 0], ycoef=[0, 0, 1, 0, 0, 0])
+
+
+def reads_negative(contour):
+    """How Reconstruct reads the contour: direction after its transform."""
+    points = contour.points
+    if contour.transform is not None:
+        points = contour.transform.transformPoints(points)
+    return XMLContour(closed=True, points=points).isNegative()
 
 
 @pytest.mark.parametrize("negative", [True, False])
@@ -33,6 +53,35 @@ def test_exported_direction_matches_the_flag(points, negative):
     assert contour.isNegative() is negative
     assert sorted(contour.points) == sorted(points)
     assert trace.points == points  # the trace itself is not reordered
+
+
+@pytest.mark.parametrize("negative", [True, False])
+@pytest.mark.parametrize("points", [CW, CCW], ids=["cw", "ccw"])
+def test_mirrored_export_direction_matches_the_flag(points, negative):
+    trace = Trace("t", [255, 0, 0], True)
+    trace.points = list(points)
+    trace.negative = negative
+
+    contour = trace.getXMLObj(MIRROR)
+
+    assert reads_negative(contour) is negative
+    assert sorted(contour.points) == sorted(points)
+    assert trace.points == points
+
+
+@pytest.mark.parametrize(
+    "points, negative",
+    # mirrored, so counterclockwise points read clockwise (negative)
+    [(CCW, True), (CW, False)],
+    ids=["ccw-negative", "cw-positive"],
+)
+def test_mirrored_import_reads_the_transformed_direction(points, negative):
+    contour = XMLContour(
+        name="t", closed=True, mode=9, border=[1, 0, 0], fill=[1, 0, 0],
+        hidden=False, points=list(points), transform=MIRROR,
+    )
+
+    assert Trace.fromXMLObj(contour, MIRROR).negative is negative
 
 
 @pytest.mark.parametrize("negative", [True, False])
@@ -63,7 +112,21 @@ SECTION = """<?xml version="1.0"?>
 </Section>"""
 
 
-def test_xml_round_trip_keeps_negative_flags(qapp, tmp_path):
+# The same section with every transform mirrored (x' = 10 - x). Points that
+# run clockwise here run counterclockwise in Reconstruct, so the cell is drawn
+# clockwise and the hole counterclockwise.
+MIRRORED_SECTION = (
+    SECTION.replace('xcoef=" 0 1 0 0 0 0"', 'xcoef=" 10 -1 0 0 0 0"')
+    .replace('points="0 0, 2 0, 2 2, 0 2, "', 'points="0 2, 2 2, 2 0, 0 0, "')
+    .replace(
+        'points="0.5 0.5, 0.5 1.5, 1.5 1.5, 1.5 0.5, "',
+        'points="1.5 0.5, 1.5 1.5, 0.5 1.5, 0.5 0.5, "',
+    )
+)
+
+
+@pytest.mark.parametrize("section_xml", [SECTION, MIRRORED_SECTION], ids=["plain", "mirrored"])
+def test_xml_round_trip_keeps_negative_flags(qapp, tmp_path, section_xml):
     xml_in = tmp_path / "xml_in"
     xml_out = tmp_path / "xml_out"
     xml_in.mkdir()
@@ -74,7 +137,7 @@ def test_xml_round_trip_keeps_negative_flags(qapp, tmp_path):
         .replace("[LAST3DSECTION]", "0")
         .replace("[LASTTHUMBSECTION]", "0")
     )
-    (xml_in / "neg.0").write_text(SECTION)
+    (xml_in / "neg.0").write_text(section_xml)
 
     series = xmlToJSON(str(xml_in / "neg.ser"))
     try:
@@ -99,7 +162,7 @@ def test_xml_round_trip_keeps_negative_flags(qapp, tmp_path):
         series.close()
 
     exported = process_section_file(str(xml_out / "neg.0"))
-    assert {c.name: c.isNegative() for c in exported.contours} == expected
+    assert {c.name: reads_negative(c) for c in exported.contours} == expected
 
     again = xmlToJSON(str(xml_out / "neg.ser"))
     try:
