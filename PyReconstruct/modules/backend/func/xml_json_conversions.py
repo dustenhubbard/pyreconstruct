@@ -445,7 +445,9 @@ def sectionJSONtoXML(series : Series, section : Section, new_dir : str, name : s
 
     sec_index      = str(section.n)
     sec_thickness  = str(round(section.thickness, 4))
-    sec_mag        = str(round(section.mag, 4))
+    # written in full: rounding to 4 places made 0.00254 into 0.0025, which
+    # scales the image 1.6% off its traces
+    sec_mag        = str(float(section.mag))
     sec_src        = section.src
     sec_locked     = section.align_locked
     
