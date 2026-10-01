@@ -1,3 +1,4 @@
+import math
 import re
 from typing import Union
 from xml.sax.saxutils import escape
@@ -453,10 +454,10 @@ class Trace():
             
             xml_text = blank_palette_contour
 
-            border = list(map(lambda x: round(x, 3), xml_contour.border))
+            border = [xmlColorChannel(c) for c in self.color]
             border = f'{border[0]} {border[1]} {border[2]}'
 
-            fill = list(map(lambda x: round(x, 3), xml_contour.fill))
+            fill = [xmlColorChannel(c) for c in self.color]
             fill = f'{fill[0]} {fill[1]} {fill[2]}'
 
             xml_points = ''
@@ -1138,6 +1139,19 @@ def convertMode(arg):
             if arg[1] == "unselected":
                 mode *= -1
         return mode
+
+
+def xmlColorChannel(c) -> float:
+    """Return a 0-255 color channel as the 0-1 value a .ser stores.
+
+    A .ser keeps palette and z-trace colors to three decimals, and the import
+    reads a channel back as int(v * 255), which truncates. So c / 255 rounded
+    to three places can come back one lower: 76 is 0.298, and 0.298 * 255 is
+    75.99. This is the smallest three place value at or above c / 255. It is
+    less than 0.001 above, so it reads back as c whether a reader truncates or
+    rounds.
+    """
+    return math.ceil(c * 1000 / 255) / 1000
 
 
 def getLegacyRadius(trace : Trace):
