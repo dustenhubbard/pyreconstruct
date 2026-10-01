@@ -579,6 +579,8 @@ class Trace():
         new_trace.points = points
         new_trace.fill_mode = convertMode(xml_trace.mode)
         new_trace.negative = negative
+        # palette contours carry no hidden attribute, so None is shown
+        new_trace.hidden = bool(xml_trace.hidden)
         
         return new_trace
 
