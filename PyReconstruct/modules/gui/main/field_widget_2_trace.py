@@ -1052,7 +1052,14 @@ class FieldWidgetTrace(FieldWidgetBase):
         
         if not self.clipboard:
             return False
-        
+
+        # a pasted trace keeps its name, so it lands in the object it was
+        # copied from. Copying a locked object is allowed (it reads only), so
+        # the clipboard can hold its traces, and pasting them adds traces to
+        # it. Same refusal as drawing into a locked object.
+        if self.refuseLockedTraces(self.clipboard):
+            return False
+
         # paste traces
         for trace in self.clipboard:
             
