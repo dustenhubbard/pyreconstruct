@@ -174,6 +174,12 @@ class ZtraceTableWidget(DataTable):
         """Update the specified ztraces."""
         for name in ztrace_names:
             r, is_in_table = self.table.getRowIndex(name)
+            # a z-trace the regex or group filters hide stays off the list,
+            # as it is after a full rebuild
+            if name in self.series.ztraces and not self.passesFilters(name):
+                if is_in_table:
+                    self.table.removeRow(r)
+                continue
             if not is_in_table:
                 self.table.insertRow(r)
             self.setRow(name, r)
