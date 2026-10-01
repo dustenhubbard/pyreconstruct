@@ -52,6 +52,14 @@ def launch(main_window, monkeypatch):
     checks = []
 
     def fake_check(self, channel, on_result, on_error, kind=None):
+        # Only this test's window counts. Every MainWindow schedules
+        # checkForUpdatesStartup 2.5 s after it is built, and a window from an
+        # earlier test is only deleteLater()ed, so its timer can still be
+        # pending. pytest-qt runs processEvents right after fixture setup, and
+        # a timer that comes due then reaches this class-wide patch with
+        # install_kind already faked, which put an extra "release" in checks.
+        if self is not main_window:
+            return
         checks.append(channel)
         if fake_check.during is not None:
             fake_check.during()  # what the user does while the worker runs
@@ -243,6 +251,24 @@ def test_turning_off_the_automatic_check_clears_the_notice(launch, main_window):
 
     assert notice.isHidden()
     assert not _settings(KEY).contains(KEY)
+
+
+def test_a_startup_check_from_an_earlier_window_is_not_counted(launch, main_window):
+    """What an earlier test's window does when its startup timer comes due
+    during this test's setup: it runs the real launch check on itself."""
+    import types
+
+    from PyReconstruct.modules.gui.main import main_window as MW
+
+    earlier = types.SimpleNamespace(series=main_window.series,
+                                    restoreUpdateNotice=lambda: None)
+    earlier._runUpdateCheck = types.MethodType(MW.MainWindow._runUpdateCheck, earlier)
+    MW.MainWindow.checkForUpdatesStartup(earlier)
+
+    launch(_newer())
+    launch(None)
+
+    assert launch.checks == ["release"]
 
 
 def test_the_notice_is_kept_per_app(monkeypatch):
