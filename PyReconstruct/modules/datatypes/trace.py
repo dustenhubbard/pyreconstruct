@@ -474,7 +474,7 @@ class Trace():
             xml_contour.name = escape(xml_contour.name, {'"': "&quot;"})
             
             xml_text = xml_text.replace("[NAME]", xml_contour.name)
-            xml_text = xml_text.replace("[CLOSED]", str(xml_contour.closed))
+            xml_text = xml_text.replace("[CLOSED]", str(bool(xml_contour.closed)).lower())
             xml_text = xml_text.replace("[BORDER]", border)
             xml_text = xml_text.replace("[FILL]", fill)
             xml_text = xml_text.replace("[MODE]", str(xml_contour.mode))
