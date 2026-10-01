@@ -64,11 +64,8 @@ jobs:
           esac
 
       - name: check PR commit messages
-        # Added 2026-09-30. GitHub's default squash message copies every co-author
-        # trailer on the branch commits onto main, and ten merges on 2026-09-29 put
-        # them there that way. Main takes no co-author trailers, so a PR whose commits
-        # carry one is refused here, whatever tool merges it. Reads commit messages
-        # through the API; nothing from the PR head runs.
+        # Refuse a PR whose commit messages carry a trailer line this repo does not
+        # accept. Reads commit messages through the API; nothing from the PR head runs.
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
