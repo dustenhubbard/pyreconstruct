@@ -654,11 +654,11 @@ class VPlotter(vedo.Plotter):
                 ("object", obj_names, series.data["objects"]), 
                 ("ztrace", ztrace_names, series.ztraces)
             ]:
-                # check for objects that don't exist in the series
-                removed = []
-                for i, name in enumerate(names.copy()):
-                    if name not in check_in:
-                        removed.append(names.pop(i))
+                # check for objects that don't exist in the series (popping
+                # by position while enumerating a copy skipped the name after
+                # each removal, and raised once two were missing)
+                removed = [name for name in names if name not in check_in]
+                names[:] = [name for name in names if name in check_in]
                 if removed:
                     if not names:
                         notify(f"None of the requested {s}s exist in this series.")
