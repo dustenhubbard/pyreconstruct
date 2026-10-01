@@ -498,28 +498,21 @@ class _RealDialog:
     opened = []
 
     def __new__(cls, parent, *args, **kwargs):
-        from PySide6.QtWidgets import QDialog
         from PyReconstruct.modules.gui.dialog.trace import TraceDialog
         dlg = TraceDialog(parent, *args, **kwargs)
         cls.opened.append(dlg.smooth_input.currentText())
         if cls.name is not None:
             dlg.name_input.setText(cls.name)
-        real_exec = dlg.exec
-
-        def exec_():
-            QDialog.exec = lambda self: 0 if cls.cancel else 1
-            try:
-                return real_exec()
-            finally:
-                del QDialog.exec
-        dlg.exec = exec_
         return dlg
 
 
 @pytest.fixture
 def real_dialog(monkeypatch):
+    from PySide6.QtWidgets import QDialog
     from PyReconstruct.modules.gui.main import field_widget_3_object
     monkeypatch.setattr(field_widget_3_object, "TraceDialog", _RealDialog)
+    # the modal loop only; monkeypatch puts the real method back afterward
+    monkeypatch.setattr(QDialog, "exec", lambda self: 0 if _RealDialog.cancel else 1)
     _RealDialog.name = None
     _RealDialog.cancel = False
     _RealDialog.opened = []
