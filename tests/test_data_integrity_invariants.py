@@ -82,11 +82,9 @@ Not asserted, deliberately:
   bidirectional form would fail on the honest path, so I2 asserts only that the
   index never *lacks* a live section, which is the direction that hides data.
 * Anything about which undo layer wins when both a section-level and a
-  series-level undo are available. ``FieldState.updateTime`` stores
-  ``round(time.time()*10)``, and ``SeriesStates.favor3D`` picks a layer by
-  comparing those stamps with ``>``. Two states recorded inside the same 100 ms
-  bucket compare equal, which is exactly what happens in a test. That is
-  inherently timing-dependent, so it is left out rather than made flaky.
+  series-level undo are available. ``SeriesStates.favor3D`` picks a layer by
+  comparing the states' stamps, and that order has its own tests in
+  ``test_redo_order_series_then_section.py``.
 * Whether an operation writes outside the series directory (the bundled-asset
   defect). That is an install-layout property, not a series property: it needs a
   read-only installation to reproduce and it belongs with the code that picks the
