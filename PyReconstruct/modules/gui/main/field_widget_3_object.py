@@ -65,6 +65,35 @@ def object_color_seed(series_data, obj_names : list):
     return predominant, len(counts) > 1
 
 
+def notifyAmbiguousTraces(entries : list, shown : int = 10):
+    """Say which listed traces were left because more than one could be them.
+
+    ``entries`` are (object name, section number) pairs, one per row that
+    Series.deleteMalformedTraces set aside. Nothing is shown for none.
+    """
+    if not entries:
+        return
+    count = len(entries)
+    lines = [f"  {name} on section {snum}" for name, snum in entries[:shown]]
+    if count > shown:
+        lines.append(f"  and {count - shown} more")
+    if count == 1:
+        lead = (
+            "PyReconstruct did not delete 1 trace. It moved after the scan, "
+            "and more than one identical trace under its name could be the "
+            "one you chose:"
+        )
+        tail = "Run the scan again to list it where it is now."
+    else:
+        lead = (
+            f"PyReconstruct did not delete {count} traces. They moved after "
+            "the scan, and more than one identical trace under each name "
+            "could be the one you chose:"
+        )
+        tail = "Run the scan again to list them where they are now."
+    notify(lead + "\n\n" + "\n".join(lines) + "\n\n" + tail)
+
+
 class FieldWidgetObject(FieldWidgetTrace):
     """
     OBJECT FUNCTIONS
@@ -416,9 +445,11 @@ class FieldWidgetObject(FieldWidgetTrace):
         # persist field edits to section data before reloading sections
         self.mainwindow.saveAllData()
 
+        ambiguous = []
         deleted = self.series.deleteMalformedTraces(
             records,
             series_states=self.series_states,
+            ambiguous=ambiguous,
         )
 
         if deleted:
@@ -426,7 +457,9 @@ class FieldWidgetObject(FieldWidgetTrace):
             self.reload()
             self.mainwindow.seriesModified(True)
 
-        missed = len(records) - len(deleted)
+        notifyAmbiguousTraces([(r["name"], r["section"]) for r in ambiguous])
+
+        missed = len(records) - len(deleted) - len(ambiguous)
         if missed:
             were = "was" if missed == 1 else "were"
             notify(
@@ -475,9 +508,11 @@ class FieldWidgetObject(FieldWidgetTrace):
         # persist field edits to section data before reloading sections
         self.mainwindow.saveAllData()
 
+        ambiguous = []
         applied = self.series.deleteDifferentlyNamedDuplicates(
             choices,
             series_states=self.series_states,
+            ambiguous=ambiguous,
         )
 
         if applied:
@@ -489,9 +524,16 @@ class FieldWidgetObject(FieldWidgetTrace):
             self.reload()
             self.mainwindow.seriesModified(True)
 
-        # a row can go unapplied because its object is locked (reported above)
-        # or because the trace is no longer where the scan saw it
-        missed = len(choices) - len(applied) - locked_rows
+        notifyAmbiguousTraces([
+            (record["other_name"] if keep == "first" else record["name"],
+             record["section"])
+            for record, keep in ambiguous
+        ])
+
+        # a row can go unapplied because its object is locked (reported above),
+        # because more than one trace could be it (reported just above), or
+        # because the trace is no longer where the scan saw it
+        missed = len(choices) - len(applied) - locked_rows - len(ambiguous)
         if missed > 0:
             were = "was" if missed == 1 else "were"
             notify(

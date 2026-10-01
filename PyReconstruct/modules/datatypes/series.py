@@ -2585,7 +2585,7 @@ class Series():
 
         return malformed
 
-    def deleteMalformedTraces(self, records : list, series_states=None, message="Deleting malformed contours...") -> list:
+    def deleteMalformedTraces(self, records : list, series_states=None, message="Deleting malformed contours...", ambiguous : list = None) -> list:
         """Delete specific malformed traces reported by smoothObject.
 
         Also used by the data clean-up operations (pixel-dust / empty traces),
@@ -2597,16 +2597,20 @@ class Series():
         signature), and normally "index". Because sections are reloaded fresh
         from disk, the trace is re-found rather than held by identity: the
         trace at the recorded "index" when it still matches the signature by
-        color and 7-decimal-rounded points, otherwise the first unclaimed trace
+        color and 7-decimal-rounded points, otherwise the one unclaimed trace
         that matches (see _resolveRecordedTraces). The index is what tells
         identical traces under one name apart; matching the signature alone
         deleted the first of them, whichever the record named. A record whose
         trace can no longer be found (e.g. it was edited or re-smoothed in the
-        meantime) is skipped and left out of the returned list.
+        meantime) is skipped and left out of the returned list. So is a record
+        whose index no longer fits and whose signature fits more than one
+        trace: nothing is deleted for it rather than a guess.
 
             Params:
                 records (list): malformed-contour records to delete
                 series_states: the series states as stored in the GUI (undo)
+                ambiguous (list): optional; receives each record skipped
+                    because more than one trace could be the one it names
             Returns:
                 (list): the records whose trace was found and deleted
         """
@@ -2628,7 +2632,11 @@ class Series():
             section_numbers=sorted(by_section)
         ):
             section_records = by_section.get(snum, [])
-            found = self._resolveRecordedTraces(section, section_records)
+            found, unsure = self._resolveRecordedTraces(
+                section, section_records
+            )
+            if ambiguous is not None:
+                ambiguous.extend(unsure)
             # remove only after every record is resolved: the recorded indexes
             # all describe the contour as it stands before this delete
             removed = set()
@@ -2648,44 +2656,93 @@ class Series():
         return deleted
 
     @classmethod
-    def _resolveRecordedTraces(cls, section, records : list) -> dict:
+    def _resolveRecordedTraces(cls, section, records : list) -> tuple:
         """Find the trace each clean-up record names on a loaded section.
 
         A record names its trace by position ("index") and by its color and
         points ("match"). The position decides between identical traces under
-        one name, which the signature alone cannot tell apart: the trace at the
-        recorded index is used when it still matches the signature. Otherwise
-        (an edit since the scan moved it) the first matching trace that no
-        other record has claimed is used. Two records naming the same index of
-        the same contour resolve to the same trace, which is deleted once.
+        one name, which the signature alone cannot tell apart, so the trace at
+        the recorded index is used when it still matches the signature.
+
+        Otherwise (an edit since the scan moved it, or a record with no index)
+        the signature has to find it alone, and it is only trusted when it is
+        unambiguous: exactly one matching trace that no other record has
+        claimed. When more than one fits, the record is set aside and nothing
+        is deleted for it, because deleting the wrong one of two identical
+        traces is the failure this exists to prevent.
+
+        Records that name the same target resolve together, so one trace is
+        deleted once however many rows name it: the same name, index and
+        signature share a trace, and a record with no index shares the trace
+        of an indexed record with its name and signature.
 
             Returns:
-                (dict): id(record) -> trace, for the records that were found
+                (tuple): (found, ambiguous). found maps id(record) -> trace for
+                    the records that were found; ambiguous lists the records
+                    set aside because more than one trace could be theirs
         """
         found = {}
+        ambiguous = []
         claimed = set()
+        by_target = {}
+        unsure_targets = set()
         unresolved = []
         for record in records:
             contour = section.contours.get(record["name"])
             if not contour:
                 continue
-            index = record.get("index")
-            if isinstance(index, int) and 0 <= index < len(contour):
+            target = cls._recordTarget(record)
+            index = target[1]
+            if index is not None and 0 <= index < len(contour):
                 trace = contour[index]
                 if cls._traceMatchesSignature(trace, record["match"]):
                     found[id(record)] = trace
                     claimed.add(id(trace))
+                    by_target.setdefault(target, trace)
                     continue
-            unresolved.append((record, contour))
-        for record, contour in unresolved:
-            for trace in contour:
-                if id(trace) in claimed:
-                    continue
-                if cls._traceMatchesSignature(trace, record["match"]):
-                    found[id(record)] = trace
-                    claimed.add(id(trace))
-                    break
-        return found
+            unresolved.append((record, contour, target))
+
+        for record, contour, target in unresolved:
+            name, index, signature = target
+            trace = by_target.get(target)
+            if trace is None and index is None:
+                trace = next(
+                    (t for (n, _i, sig), t in by_target.items()
+                     if n == name and sig == signature),
+                    None,
+                )
+            if trace is not None:
+                found[id(record)] = trace
+                continue
+            if target in unsure_targets:
+                ambiguous.append(record)
+                continue
+            matches = [
+                t for t in contour
+                if id(t) not in claimed
+                and cls._traceMatchesSignature(t, record["match"])
+            ]
+            if len(matches) == 1:
+                found[id(record)] = matches[0]
+                claimed.add(id(matches[0]))
+                by_target[target] = matches[0]
+            elif matches:
+                ambiguous.append(record)
+                unsure_targets.add(target)
+        return found, ambiguous
+
+    @staticmethod
+    def _recordTarget(record) -> tuple:
+        """(name, index or None, signature) naming a record's trace, hashable."""
+        index = record.get("index")
+        if isinstance(index, bool) or not isinstance(index, int):
+            index = None
+        match = record["match"]
+        signature = (
+            tuple(match["color"]),
+            tuple(tuple(point) for point in match["points"]),
+        )
+        return (record["name"], index, signature)
 
     @staticmethod
     def _traceMatchesSignature(trace, signature) -> bool:
@@ -3193,7 +3250,8 @@ class Series():
 
     def deleteDifferentlyNamedDuplicates(self, choices : list,
                                          series_states=None,
-                                         log_event=True) -> list:
+                                         log_event=True,
+                                         ambiguous : list = None) -> list:
         """Delete the unkept side of cross-name duplicate pairs the user chose.
 
         The removal half of findDifferentlyNamedDuplicates. Each choice is a
@@ -3227,6 +3285,9 @@ class Series():
                 choices (list): (record, keep) tuples, described above
                 series_states (dict): optional dict of undo states for GUI
                 log_event (bool): True if events should be logged
+                ambiguous (list): optional; receives each (record, keep) tuple
+                    left alone because more than one identical trace could be
+                    the one to delete (see deleteMalformedTraces)
             Returns:
                 (list): the (record, keep) tuples whose trace was found and
                     deleted, so a caller can prune exactly those rows
@@ -3264,11 +3325,15 @@ class Series():
         if not targets:
             return []
 
+        unsure = []
         deleted = self.deleteMalformedTraces(
             targets,
             series_states=series_states,
             message="Deleting duplicates named differently...",
+            ambiguous=unsure,
         )
+        if ambiguous is not None:
+            ambiguous.extend(target["choice"] for target in unsure)
 
         if log_event:
             for target in deleted:
