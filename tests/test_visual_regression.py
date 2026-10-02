@@ -284,3 +284,17 @@ def test_a_mismatch_writes_the_images_for_review(tmp_path, monkeypatch, qapp):
     copied = vr.accept(tmp_path / "diffs", vr.platform_key())
     assert [p.name for p in copied] == ["square.png"]
     vr.check_image(vr.array_to_image(changed), "square")
+
+
+def test_missing_linux_baselines_fail_instead_of_skipping(tmp_path, monkeypatch, qapp):
+    monkeypatch.setattr(vr, "BASELINE_ROOT", tmp_path)
+    monkeypatch.setattr(vr, "DIFF_DIR", tmp_path / "diffs")
+    monkeypatch.setattr(vr, "platform_key", lambda: "linux")
+    image = vr.array_to_image(np.zeros((4, 4, 3), dtype=np.uint8))
+    # a skip is a BaseException and would get past pytest.raises as a skipped
+    # test, so it is caught and failed here
+    try:
+        with pytest.raises(AssertionError, match="no visual baselines for linux"):
+            vr.check_image(image, "field")
+    except pytest.skip.Exception as skipped:
+        pytest.fail(f"skipped instead of failing: {skipped}")

@@ -7,9 +7,9 @@ which compares it against a reference image committed under
 
 Why a baseline per platform: text is drawn by FreeType on Linux and by
 CoreText on macOS, so the same dialog never matches pixel for pixel across the
-two. CI runs on Linux, so ``linux`` is the set that is committed and gated. A
-platform with no baseline folder skips these tests with a reason instead of
-failing.
+two. CI runs on Linux, so ``linux`` is the set that is committed and gated. Any
+other platform with no baseline folder skips these tests with a reason; on
+Linux a missing folder fails them.
 
 Tolerance, in two parts:
 
@@ -154,10 +154,15 @@ def check_image(image, name: str, update: bool = False) -> None:
         return
 
     if not baseline_dir().is_dir():
-        pytest.skip(
+        message = (
             f"no visual baselines for {platform_key()}; CI compares the linux "
             "set. Run with --update-baselines to make a local set."
         )
+        # linux is the committed set, so a missing folder there is a failure,
+        # not a reason to skip every check
+        if platform_key() == "linux":
+            raise AssertionError(message)
+        pytest.skip(message)
 
     if not baseline.exists():
         save_png(actual, DIFF_DIR / f"{name}.png")

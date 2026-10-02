@@ -441,8 +441,10 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           for i in 1 2 3; do sudo apt-get update && break || sleep 5; done
+          # fonts-dejavu-core: the screenshot tests run here too, as in `test`
           sudo apt-get install -y --no-install-recommends \
-            libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+            libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 \
+            fonts-dejavu-core
 
       - name: Install project + test deps (frozen against uv.lock)
         run: uv sync --frozen --no-default-groups --extra test
