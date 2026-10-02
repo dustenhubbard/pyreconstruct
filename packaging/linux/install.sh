@@ -179,8 +179,8 @@ resolve_python() {
   else
     local cand
     # 3.11 first: it is the version the frozen installers are built on.
-    for cand in python3.11 python3.12 python3 python \
-                /usr/bin/python3.11 /usr/local/bin/python3.11 \
+    for cand in python3.11 /usr/bin/python3.11 /usr/local/bin/python3.11 \
+                python3.12 python3 python \
                 /usr/bin/python3.12 /usr/local/bin/python3.12; do
       if have "$cand" && py_is_supported "$cand"; then PY="$cand"; break; fi
     done
@@ -304,7 +304,7 @@ build_venv() {
     "$VENV/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 || true
   fi
   "$VENV/bin/python" -m pip --version >/dev/null 2>&1 \
-    || die "the new virtual environment has no pip — install the python$("$PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)-venv package and retry"
+    || die "the new virtual environment has no pip; install the python$("$PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)-venv package and retry"
 
   log "Upgrading pip and wheel"
   "$VENV/bin/python" -m pip install --upgrade pip wheel >/dev/null

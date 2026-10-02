@@ -95,8 +95,8 @@ Mac its matching architecture.
 
 ### From source (Linux, other platforms, and developers)
 
-PyReconstruct requires **Python 3.11 or 3.12**, the versions the app and its
-native dependencies are tested on (the project pins `>=3.11,<3.13`). Your
+PyReconstruct requires **Python 3.11 or 3.12**. Its native dependencies are
+tested on those versions (the project pins `>=3.11,<3.13`). Your
 system `python3` may be newer, and installing against it will fail; the steps
 below get you 3.11 without changing your system Python (use `--python 3.12` in
 place of `--python 3.11` for 3.12). The recommended tool is

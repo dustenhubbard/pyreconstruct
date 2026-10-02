@@ -84,8 +84,8 @@ installation. A once-per-day startup check is on by default; turn it off under
 To track the latest commits on `main` (this replaces the old in-app "Developer"
 update channel), run a source install rather than a frozen build.
 
-PyReconstruct requires **Python 3.11 or 3.12**, the versions the app and its
-native dependencies are tested on (the project pins `>=3.11,<3.13`). The
+PyReconstruct requires **Python 3.11 or 3.12**. Its native dependencies are
+tested on those versions (the project pins `>=3.11,<3.13`). The
 canonical setup uses [uv](https://docs.astral.sh/uv/): it reads the checkout's
 `.python-version`, fetches Python 3.11 for you, and installs the exact
 dependency set recorded in the committed `uv.lock`. No system Python changes,
