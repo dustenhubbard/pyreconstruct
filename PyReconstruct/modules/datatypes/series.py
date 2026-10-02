@@ -465,6 +465,9 @@ class Series():
         
         self.object_groups = ObjGroupDict(self, "objects", series_data["object_groups"])
         self.groups_visibility = self.initGroupViz()
+        # group -> the visibility it had when an undo or redo last emptied
+        # it; not saved (see dropEmptiedGroups in state_manager)
+        self.emptied_group_viz = {}
 
         self.ztrace_groups = ObjGroupDict(self, "ztraces", series_data["ztrace_groups"])
 
@@ -519,6 +522,7 @@ class Series():
 
         ## Group visibility
         self.groups_visibility = self.initGroupViz()
+        self.emptied_group_viz = {}
 
     def __enter__(self):
         

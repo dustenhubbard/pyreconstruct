@@ -206,3 +206,58 @@ def test_edit3d_that_changes_one_object_adds_a_state(monkeypatch):
     assert field.series_states.calls == 1
     assert series.getAttr("a", "3D_opacity") == 0.8
     assert field.modified == [True]
+
+
+def _ok_untouched(monkeypatch):
+    """Build the real dialog and press OK without touching a field."""
+    from PyReconstruct.modules.gui.dialog.quick_dialog import QuickDialog
+
+    def get(parent, structure, title="Dialog", **kwargs):
+        dialog = QuickDialog(None, structure, title)
+        assert dialog.accept(close=False)
+        return dialog.responses, True
+
+    monkeypatch.setattr(fw3, "QuickDialog", types.SimpleNamespace(get=get))
+
+
+@pytest.mark.gui
+def test_edit3d_ok_untouched_keeps_an_opacity_with_more_digits(qapp,
+                                                               monkeypatch):
+    """The field shows 0.123456789 as 0.12345679. OK with it untouched is no
+    edit: no state, and the stored value keeps its digits."""
+    series = _Series({"a": {"3D_mode": "spheres", "3D_opacity": 0.123456789}})
+    field = _field(series, ["a"])
+    _ok_untouched(monkeypatch)
+
+    fw3.FieldWidgetObject.edit3D(field)
+
+    assert field.series_states.calls == 0
+    assert series.getAttr("a", "3D_opacity") == 0.123456789
+    assert field.modified == []
+
+
+@pytest.mark.gui
+def test_edit3d_type_change_leaves_the_opacity_digits(monkeypatch):
+    """Changing only the type writes only the type."""
+    series = _Series({"a": {"3D_mode": "spheres", "3D_opacity": 0.123456789}})
+    field = _field(series, ["a"])
+    _answer(monkeypatch, ["surface", 0.12345679])
+
+    fw3.FieldWidgetObject.edit3D(field)
+
+    assert field.series_states.calls == 1
+    assert series.getAttr("a", "3D_mode") == "surface"
+    assert series.getAttr("a", "3D_opacity") == 0.123456789
+
+
+@pytest.mark.gui
+def test_edit3d_opacity_change_below_the_shown_digits_is_not_an_edit(
+        monkeypatch):
+    series = _Series({"a": {"3D_mode": "spheres", "3D_opacity": 0.5}})
+    field = _field(series, ["a"])
+    _answer(monkeypatch, ["spheres", 0.5000000001])
+
+    fw3.FieldWidgetObject.edit3D(field)
+
+    assert field.series_states.calls == 0
+    assert series.getAttr("a", "3D_opacity") == 0.5
