@@ -12,7 +12,6 @@ import hashlib
 import io
 import json
 import os
-import shutil
 
 import pytest
 
