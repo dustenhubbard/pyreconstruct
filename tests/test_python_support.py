@@ -11,9 +11,11 @@ dependency, and the matrix is one line.
 """
 
 import re
+import shutil
 import tomllib
 from pathlib import Path
 
+import pytest
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 
@@ -106,3 +108,49 @@ def test_every_supported_python_gets_exactly_one_numpy():
             r for r in _pins("numpy") if r.marker is None or r.marker.evaluate(env)
         ]
         assert len(applying) == 1, f"{len(applying)} numpy pins apply on {minor}"
+
+
+LINUX_INSTALLER = REPO_ROOT / "packaging" / "linux" / "install.sh"
+
+
+def _installer_check():
+    """The py_is_supported function from install.sh, as bash source."""
+    text = LINUX_INSTALLER.read_text(encoding="utf-8")
+    fn = re.search(r"^py_is_supported\(\) \{\n.*?^\}\n", text, re.M | re.S)
+    assert fn, "install.sh has no py_is_supported function"
+    return fn.group(0)
+
+
+def test_linux_installer_accepts_every_supported_python():
+    """install.sh builds its venv with a system Python it finds itself, and
+    refuses any line outside its own list. That list has to be the one
+    requires-python admits, or the installer turns away a Python the project
+    supports (or picks one pip will refuse to install into)."""
+    check = _installer_check()
+    line = re.search(r"sys\.version_info\[:2\] in \(([^)]*\)(?:, \([^)]*\))*)\)", check)
+    assert line, "py_is_supported no longer checks sys.version_info[:2] against a tuple"
+    accepted = {f"{a}.{b}" for a, b in re.findall(r"\((\d+), (\d+)\)", line.group(1))}
+    assert accepted == _admitted_minors()
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+def test_linux_installer_accepts_the_running_python(tmp_path):
+    """Run the installer's check against this interpreter, which CI runs on
+    every supported line, and against a program that is not Python."""
+    import subprocess
+    import sys
+
+    not_python = tmp_path / "not-python"
+    not_python.write_text("#!/bin/sh\nexit 0\n")
+    not_python.chmod(0o755)
+    script = _installer_check() + 'py_is_supported "$1" && echo yes || echo no\n'
+
+    def run(interpreter):
+        out = subprocess.run(
+            ["bash", "-c", script, "check", str(interpreter)],
+            capture_output=True, text=True, check=True,
+        )
+        return out.stdout.strip()
+
+    assert run(sys.executable) == "yes"
+    assert run(not_python) == "no"
