@@ -80,12 +80,15 @@ def _object(series):
 @pytest.fixture
 def full_object(window):
     """An object with one trace, a group, a custom column value, a comment,
-    a 3D opacity, a host and a traveler."""
+    a 3D opacity, an alignment pin, a host and a traveler."""
     series = window.series
     series.addUserCol("Reviewer", ["KH", "DH"], log_event=False)
     _draw(window, {"groups": [GROUP], "user_columns": {"Reviewer": "KH"}})
     series.setAttr(NAME, "comment", "keep me")
     series.setAttr(NAME, "3D_opacity", 0.3)
+    # an alignment pin other than the current alignment
+    pin = next(a for a in series.alignments if a != series.alignment)
+    series.setAttr(NAME, "alignment", pin)
     others = sorted(n for n in series.data["objects"] if n != NAME)
     host, traveler = others[0], others[1]
     series.host_tree.add(NAME, [host])
@@ -93,6 +96,7 @@ def full_object(window):
     carried = _object(series)
     assert carried["groups"] == [GROUP]
     assert carried["attrs"]["user_columns"] == {"Reviewer": "KH"}
+    assert carried["attrs"]["alignment"] == pin
     assert carried["hosts"] == [host] and carried["travelers"] == [traveler]
     return carried
 
@@ -191,6 +195,43 @@ def test_a_group_emptied_by_deletes_on_two_sections_comes_back_hidden(window):
     assert GROUP not in series.groups_visibility
 
     window.changeSection(first)
+    window.undo()
+    assert series.object_groups.getGroupObjects(GROUP) == {NAME}
+    assert series.groups_visibility[GROUP] is False, (
+        "the group came back shown"
+    )
+
+
+def test_an_object_list_delete_undone_on_all_sections_keeps_it_hidden(
+        window, main_window_dialogs, monkeypatch):
+    """The object, on two sections, is alone in a hidden group. Delete it
+    from the object list, undo on all sections, redo, undo: the group comes
+    back hidden each time."""
+    series = window.series
+    first, second = sorted(series.sections)[:2]
+    window.changeSection(first)
+    _draw(window, {"groups": [GROUP]})
+    window.changeSection(second)
+    _draw(window, {"groups": [GROUP]})
+    series.groups_visibility[GROUP] = False
+
+    field = window.field
+    field.openList("object")
+    table = field.table_manager.tables["object"][0]
+    monkeypatch.setattr(field.table_manager, "hasFocus", lambda: table)
+    monkeypatch.setattr(table, "getSelected", lambda: [NAME])
+    field.deleteObjects()
+    assert NAME not in series.data["objects"]
+
+    main_window_dialogs.linked_undo_responses = ["all"] * 4
+    window.undo()
+    assert series.object_groups.getGroupObjects(GROUP) == {NAME}
+    assert series.groups_visibility[GROUP] is False
+
+    window.undo(redo=True)
+    assert NAME not in series.data["objects"]
+    assert GROUP not in series.groups_visibility
+
     window.undo()
     assert series.object_groups.getGroupObjects(GROUP) == {NAME}
     assert series.groups_visibility[GROUP] is False, (
