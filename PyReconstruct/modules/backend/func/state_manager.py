@@ -144,15 +144,9 @@ class FieldState():
         # stack; this is the floor under that, not a replacement for it.
         self.time = nextStamp()
 
-        # group -> visibility, for each group an undo away from this state
-        # emptied (see dropEmptiedGroups): the redo of this state brings the
-        # group back with it
-        self.group_viz = {}
-
     def copy(self):
         c = FieldState(self.contours, self.ztraces, self.tforms, self.flags, self.contours_fp)
         c.obj_snapshot = deepcopy(self.obj_snapshot)
-        c.group_viz = dict(self.group_viz)
         return c
     
     def getContours(self):
@@ -262,16 +256,13 @@ def objectSnapshot(series : Series, names) -> dict:
     return out
 
 
-def restoreObjectSnapshot(series : Series, snapshot : dict, recreated,
-                          group_viz : dict = None) -> None:
+def restoreObjectSnapshot(series : Series, snapshot : dict, recreated) -> None:
     """Put a snapshot back on the objects a redo just recreated.
 
     Only objects that did not exist before the redo are touched, so a redo
-    never overwrites attributes an existing object carries. ``group_viz``
-    holds the visibility of each group the undo before this redo emptied
-    (see dropEmptiedGroups).
+    never overwrites attributes an existing object carries.
     """
-    group_viz = group_viz or {}
+    emptied_viz = getattr(series, "emptied_group_viz", {})
     for name in recreated:
         entry = snapshot.get(name)
         if not entry:
@@ -279,16 +270,16 @@ def restoreObjectSnapshot(series : Series, snapshot : dict, recreated,
         for attr_name, value in entry["attrs"].items():
             series.setAttr(name, attr_name, deepcopy(value))
         for group in entry["groups"]:
-            # an entry still there is left alone. A group the undo emptied
-            # lost its entry, so it gets the visibility it had then: a
-            # hidden group comes back hidden. Only a group with no record
-            # defaults to shown.
+            # an entry still there is left alone. A group an undo or redo
+            # emptied lost its entry, so it gets the visibility it had then
+            # (see dropEmptiedGroups): a hidden group comes back hidden.
+            # Only a group with no record defaults to shown.
             if group not in series.groups_visibility:
-                series.groups_visibility[group] = group_viz.get(group, True)
+                series.groups_visibility[group] = emptied_viz.get(group, True)
             series.object_groups.add(group=group, obj=name)
 
 
-def dropEmptiedGroups(series : Series, groups_before, state=None) -> set:
+def dropEmptiedGroups(series : Series, groups_before) -> set:
     """Drop the visibility entry of each group a section undo or redo emptied.
 
     A section step that deletes an object's last trace deletes the object,
@@ -299,21 +290,26 @@ def dropEmptiedGroups(series : Series, groups_before, state=None) -> set:
     group had been hidden before. Removing a group's last object from the
     group drops the entry the same way.
 
+    Each dropped value goes into ``series.emptied_group_viz``, one record for
+    the series rather than one per undo state: any later step that brings
+    the group back, on any section, finds the value there. A per-state
+    record missed a group emptied by two steps, where only the last of them
+    saw the value. The record is not saved and starts over with the undo
+    history (SeriesStates).
+
         Params:
             series (Series): the series
             groups_before (iterable): the groups before the step
-            state (FieldState): optional; the state whose redo brings the
-                emptied groups back. It keeps each dropped value.
         Returns:
             (set): the groups the step emptied
     """
     emptied = set(groups_before) - set(series.object_groups.getGroupList())
+    record = getattr(series, "emptied_group_viz", None)
+    if record is None:
+        record = series.emptied_group_viz = {}
     for group in emptied:
-        if group not in series.groups_visibility:
-            continue
-        value = series.groups_visibility.pop(group)
-        if state is not None:
-            state.group_viz[group] = value
+        if group in series.groups_visibility:
+            record[group] = series.groups_visibility.pop(group)
     return emptied
 
 
@@ -608,8 +604,7 @@ class SectionStates():
             if n not in existed and len(state_contours[n])
         ]
         restoreObjectSnapshot(
-            series, getattr(redo_state, "obj_snapshot", {}), recreated,
-            getattr(redo_state, "group_viz", None),
+            series, getattr(redo_state, "obj_snapshot", {}), recreated
         )
         # restore the ztraces
         state_ztraces = redo_state.getZtraces()
@@ -909,6 +904,8 @@ class SeriesStates():
             self.section_states_dict[snum] = SectionStates()
         self.undos : list[SeriesState] = []
         self.redos : list[SeriesState] = []
+        # the visibility record of emptied groups belongs to this history
+        self.series.emptied_group_viz = {}
     
     def __iter__(self):
         """Return the iterator object for the series states"""
