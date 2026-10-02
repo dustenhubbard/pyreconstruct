@@ -97,6 +97,18 @@ SERIES_FIXTURE = (
 _TABLE_MODULES = ("section", "trace", "ztrace", "flag", "object")
 
 
+def pytest_addoption(parser):
+    """Options for the screenshot tests. They have to be declared here, in the
+    root conftest, for pytest to accept them on the command line."""
+    parser.addoption(
+        "--update-baselines",
+        action="store_true",
+        default=False,
+        help="rewrite the visual regression baselines for this platform "
+        "instead of comparing against them (tests/visual_regression.py)",
+    )
+
+
 def pytest_configure(config):
     """Register the suite's custom markers."""
     for marker in (

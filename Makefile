@@ -39,7 +39,7 @@ MYPY := mypy==2.3.0
 # any future scripted target inherit it too.
 export QT_QPA_PLATFORM = offscreen
 
-.PHONY: help env test fast lint type check
+.PHONY: help env test fast lint type check baselines
 
 # Bare `make` should explain itself rather than start a four-thousand-test run.
 help:
@@ -50,6 +50,7 @@ help:
 	@echo '  make lint    ruff, critical-error set (the CI gate)'
 	@echo '  make type    mypy over the Qt-free core (reporting only, not a gate)'
 	@echo '  make check   lint + fast -- run this before pushing'
+	@echo '  make baselines  rewrite the screenshot baselines for this platform'
 
 env:
 	uv sync --frozen --no-default-groups --extra test
@@ -79,3 +80,8 @@ type:
 	-$(UV) --with $(MYPY) python -m mypy
 
 check: lint fast
+
+# Rewrites tests/visual_baselines/<platform>/. Only the linux set is committed;
+# see tests/visual_regression.py for accepting the set CI rendered.
+baselines:
+	$(UV) python -m pytest tests/test_visual_regression.py --update-baselines
