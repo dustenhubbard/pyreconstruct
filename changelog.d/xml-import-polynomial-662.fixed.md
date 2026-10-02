@@ -1,4 +1,3 @@
-- **New series from a legacy `.ser` puts traces under a polynomial transform
-  where they were drawn.** The inverse of a nonlinear transform took its first
-  step from the wrong error, so it could settle on a second solution and move a
-  trace away from its place, or flip its sign.
+- **New series from a legacy `.ser` places traces under a polynomial transform
+  in the right place.** The inverse of a nonlinear transform could settle on the
+  wrong solution, so a trace opened in the wrong place or with the wrong sign.
