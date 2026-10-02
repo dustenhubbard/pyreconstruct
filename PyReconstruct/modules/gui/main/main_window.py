@@ -2838,8 +2838,12 @@ class MainWindow(QMainWindow):
             attr = getattr(self, f"{current_alignment}_alignment_act")  # generated from createContextMenu
             attr.setChecked(False)
             # the switch reloads the field from the section files, so an edit
-            # not yet written there (a trace just drawn) has to be written first
-            self.saveAllData()
+            # not yet written there (a trace just drawn) has to be written
+            # first. Not with overwrite: modifyAlignments saves, then rewrites
+            # the section files, and saving the field again here would put
+            # back the alignments it just renamed.
+            if not overwrite:
+                self.saveAllData()
             self.field.changeAlignment(new_alignment)
             # The readout names the alignment and `field.changeAlignment` does
             # not repaint synchronously, so without this the bar is stale on
