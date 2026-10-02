@@ -256,3 +256,36 @@ def test_clearing_the_undo_history_forgets_the_emptied_groups(window):
 
     window.field.series_states.clear()
     assert series.emptied_group_viz == {}
+
+
+def test_an_undo_that_empties_nothing_replaces_the_old_value(window):
+    """Draw A into GROUP, hide it, undo A, redo A; draw B into GROUP on
+    another section and show it; undo A, undo B, redo A. A's second undo
+    emptied nothing, so the False its first undo kept no longer applies, and
+    GROUP comes back shown."""
+    series = window.series
+    first, second = sorted(series.sections)[:2]
+    window.changeSection(first)
+    _draw_into_group(window, name=DRAWN)
+    series.groups_visibility[GROUP] = False
+    window.undo()
+    window.undo(redo=True)
+    assert series.groups_visibility[GROUP] is False
+
+    window.changeSection(second)
+    _draw_into_group(window, name=DRAWN + "_b")
+    series.groups_visibility[GROUP] = True
+
+    window.changeSection(first)
+    window.undo()                                    # A; B keeps GROUP
+    assert series.object_groups.getGroupObjects(GROUP) == {DRAWN + "_b"}
+    window.changeSection(second)
+    window.undo()                                    # B; GROUP empties
+    assert GROUP not in series.groups_visibility
+
+    window.changeSection(first)
+    window.undo(redo=True)                           # A
+    assert series.object_groups.getGroupObjects(GROUP) == {DRAWN}
+    assert series.groups_visibility[GROUP] is True, (
+        "the group came back hidden"
+    )

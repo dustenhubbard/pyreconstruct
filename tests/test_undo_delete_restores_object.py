@@ -237,3 +237,62 @@ def test_an_object_list_delete_undone_on_all_sections_keeps_it_hidden(
     assert series.groups_visibility[GROUP] is False, (
         "the group came back shown"
     )
+
+
+def test_a_redo_that_empties_nothing_replaces_the_old_value(window):
+    """Draw A into GROUP, hide it, delete A's last trace, undo the delete;
+    draw B into GROUP on another section and show it; redo A's delete,
+    delete B's last trace, undo A's delete. The redo emptied nothing, so the
+    False the first delete kept no longer applies, and GROUP comes back
+    shown."""
+    series = window.series
+    other = NAME + "_b"
+    first, second = sorted(series.sections)[:2]
+    window.changeSection(first)
+    _draw(window, {"groups": [GROUP]})
+    series.groups_visibility[GROUP] = False
+    _delete(window, _traces(window))
+    window.undo()
+    assert series.groups_visibility[GROUP] is False
+
+    window.changeSection(second)
+    _draw(window, {"groups": [GROUP]}, name=other)
+    series.groups_visibility[GROUP] = True
+
+    window.changeSection(first)
+    window.undo(redo=True)                           # A's delete; B keeps GROUP
+    assert series.object_groups.getGroupObjects(GROUP) == {other}
+    window.changeSection(second)
+    _delete(window, _traces(window, other))          # GROUP empties
+    assert GROUP not in series.groups_visibility
+
+    window.changeSection(first)
+    window.undo()                                    # A's delete
+    assert series.object_groups.getGroupObjects(GROUP) == {NAME}
+    assert series.groups_visibility[GROUP] is True, (
+        "the group came back hidden"
+    )
+
+
+def test_an_object_deleted_with_logging_off_loses_its_attributes(window):
+    """An import updates the series data with logging off. An object it
+    deletes must lose its attributes, or a later object of that name starts
+    with the old alignment pin."""
+    series = window.series
+    pin = next(a for a in series.alignments if a != series.alignment)
+    _draw(window)
+    series.setAttr(NAME, "alignment", pin)
+    section = window.field.section
+
+    series.data.supress_logging = True
+    try:
+        for trace in _traces(window):
+            section.removeTrace(trace, log_event=False)
+        series.data.updateSection(section, update_traces=True)
+    finally:
+        series.data.supress_logging = False
+    assert NAME not in series.data["objects"]
+    assert NAME not in series.obj_attrs
+
+    _draw(window, offset=0.6)
+    assert series.getAttr(NAME, "alignment") == series.alignment

@@ -118,7 +118,11 @@ def _accept(monkeypatch):
     monkeypatch.setattr(QDialog, "exec", lambda self: QDialog.Accepted)
 
 
-def test_palette_dialog_shows_groups_and_column_rows(tmp_path, monkeypatch):
+def _options(combo):
+    return [combo.itemText(i) for i in range(combo.count())]
+
+
+def test_palette_dialog_shows_a_dropdown_per_column(tmp_path, monkeypatch):
     from PyReconstruct.modules.gui.dialog.trace import TraceDialog
 
     s = _open(tmp_path)
@@ -132,14 +136,15 @@ def test_palette_dialog_shows_groups_and_column_rows(tmp_path, monkeypatch):
 
         dlg = TraceDialog(None, [item], is_palette=True, series=s)
         assert dlg.groups_input.getEntries() == ["axons"]
-        # one row, seeded from the item's defaults
+        # every column at once, in the object list's order, each seeded
+        # from the item's defaults or blank
+        combos = dlg.columns_input.combos
+        assert list(combos) == ["Reviewer", "Stage"]
+        assert _options(combos["Reviewer"]) == ["", "KH", "DH"]
+        assert _options(combos["Stage"]) == ["", "draft", "final"]
+        assert combos["Reviewer"].currentText() == ""
+        assert combos["Stage"].currentText() == "draft"
         assert dlg.columns_input.getValues() == {"Stage": "draft"}
-        _, col, val = dlg.columns_input.rows[0]
-        assert [col.itemText(i) for i in range(col.count())] == ["", "Reviewer", "Stage"]
-        assert [val.itemText(i) for i in range(val.count())] == ["", "draft", "final"]
-        # picking another column refills the values
-        col.setCurrentText("Reviewer")
-        assert [val.itemText(i) for i in range(val.count())] == ["", "KH", "DH"]
         dlg.close()
 
         plain = TraceDialog(None, [item], is_palette=True)
@@ -149,24 +154,92 @@ def test_palette_dialog_shows_groups_and_column_rows(tmp_path, monkeypatch):
         s.close()
 
 
-def test_column_rows_add_and_remove_like_groups(tmp_path):
-    from PyReconstruct.modules.gui.dialog.helper import ColumnValueInput
-    from PySide6.QtWidgets import QWidget, QVBoxLayout
+def test_each_column_dropdown_is_labeled_with_its_column(tmp_path):
+    from PyReconstruct.modules.gui.dialog.trace import TraceDialog
 
-    QApplication.instance() or QApplication(["test"])
-    host = QWidget()
-    host.setLayout(QVBoxLayout())
-    w = ColumnValueInput(host, {"A": ["1", "2"], "B": ["x"]})
-    host.layout().addWidget(w)
-    assert len(w.rows) == 1 and w.getValues() == {}
-    w.add()
-    w.rows[0][1].setCurrentText("A"); w.rows[0][2].setCurrentText("2")
-    w.rows[1][1].setCurrentText("B"); w.rows[1][2].setCurrentText("x")
-    assert w.getValues() == {"A": "2", "B": "x"}
-    w.remove()                      # the last row by default
-    assert w.getValues() == {"A": "2"} and len(w.rows) == 1
-    w.remove()                      # the last row clears instead of vanishing
-    assert len(w.rows) == 1 and w.getValues() == {}
+    s = _open(tmp_path)
+    try:
+        s.addUserCol("Reviewer", ["KH"], log_event=False)
+        s.addUserCol("Stage", ["draft"], log_event=False)
+        item = Trace("item", (1, 2, 3), True)
+        item.points = [(0, 0), (1, 0), (1, 1), (0, 1)]
+        dlg = TraceDialog(None, [item], is_palette=True, series=s)
+        order = _row_order(dlg)
+        dlg.close()
+        i_header = order.index("Custom Columns:")
+        assert order[i_header + 1:i_header + 3] == ["Reviewer:", "Stage:"], order
+    finally:
+        s.close()
+
+
+def test_a_column_with_no_options_is_shown_but_cannot_be_set(tmp_path, monkeypatch):
+    from PyReconstruct.modules.gui.dialog.helper import ColumnChoices
+    from PyReconstruct.modules.gui.dialog.trace import TraceDialog
+
+    s = _open(tmp_path)
+    try:
+        s.addUserCol("Notes", [], log_event=False)
+        s.addUserCol("Stage", ["draft"], log_event=False)
+        item = Trace("item", (1, 2, 3), True)
+        item.points = [(0, 0), (1, 0), (1, 1), (0, 1)]
+        dlg = TraceDialog(None, [item], is_palette=True, series=s)
+        notes = dlg.columns_input.combos["Notes"]
+        assert _options(notes) == [""]
+        assert not notes.isEnabled()
+        assert notes.toolTip() == ColumnChoices.NO_OPTIONS_TIP
+        assert dlg.columns_input.combos["Stage"].isEnabled()
+        _accept(monkeypatch)
+        t, _ = dlg.exec()
+        assert t.obj_defaults is None
+    finally:
+        s.close()
+
+
+def test_an_untouched_ok_keeps_the_saved_column_order(tmp_path, monkeypatch):
+    """The saved values come back as the same dict in the same key order, so
+    the palette data is written unchanged."""
+    from PyReconstruct.modules.gui.dialog.trace import TraceDialog
+
+    s = _open(tmp_path)
+    try:
+        s.addUserCol("A", ["1", "2"], log_event=False)
+        s.addUserCol("B", ["x"], log_event=False)
+        item = Trace("item", (1, 2, 3), True)
+        item.points = [(0, 0), (1, 0), (1, 1), (0, 1)]
+        item.obj_defaults = {"user_columns": {"B": "x", "A": "2"}}
+        dlg = TraceDialog(None, [item], is_palette=True, series=s)
+        _accept(monkeypatch)
+        t, _ = dlg.exec()
+        assert list(t.obj_defaults["user_columns"].items()) == [("B", "x"), ("A", "2")]
+    finally:
+        s.close()
+
+
+def test_dropdowns_follow_the_object_list_column_order(tmp_path):
+    """Reordering the columns with Set columns... reorders the dropdowns."""
+    from PyReconstruct.modules.gui.dialog.trace import TraceDialog
+
+    s = _open(tmp_path)
+    try:
+        s.addUserCol("Reviewer", ["KH"], log_event=False)
+        s.addUserCol("Stage", ["draft"], log_event=False)
+        s.addUserCol("Unlisted", ["u"], log_event=False)
+        item = Trace("item", (1, 2, 3), True)
+        item.points = [(0, 0), (1, 0), (1, 1), (0, 1)]
+        base = [c for c in s.getOption("object_columns") if c[0] not in s.user_columns]
+
+        def order():
+            dlg = TraceDialog(None, [item], is_palette=True, series=s)
+            names = list(dlg.columns_input.combos)
+            dlg.close()
+            return names
+
+        s.setOption("object_columns", base + [("Reviewer", True), ("Stage", True)])
+        assert order() == ["Reviewer", "Stage", "Unlisted"]
+        s.setOption("object_columns", [("Stage", False)] + base + [("Reviewer", True)])
+        assert order() == ["Stage", "Reviewer", "Unlisted"]
+    finally:
+        s.close()
 
 
 def test_palette_dialog_returns_the_defaults(tmp_path, monkeypatch):
@@ -175,21 +248,75 @@ def test_palette_dialog_returns_the_defaults(tmp_path, monkeypatch):
     s = _open(tmp_path)
     try:
         s.addUserCol("Reviewer", ["KH", "DH"], log_event=False)
+        s.addUserCol("Stage", ["draft", "final"], log_event=False)
         item = Trace("item", (1, 2, 3), True)
         item.points = [(0, 0), (1, 0), (1, 1), (0, 1)]
+        item.obj_defaults = {"user_columns": {"Stage": "draft"}}
         dlg = TraceDialog(None, [item], is_palette=True, series=s)
-        _, col, val = dlg.columns_input.rows[0]
-        col.setCurrentText("Reviewer"); val.setCurrentText("DH")
+        dlg.columns_input.combos["Reviewer"].setCurrentText("DH")
+        dlg.columns_input.combos["Stage"].setCurrentText("")   # cleared
         _accept(monkeypatch)
         t, confirmed = dlg.exec()
         assert confirmed
         assert t.obj_defaults == {"user_columns": {"Reviewer": "DH"}}
 
+        item.obj_defaults = None
         dlg2 = TraceDialog(None, [item], is_palette=True, series=s)
         t2, _ = dlg2.exec()
         assert t2.obj_defaults is None
     finally:
         s.close()
+
+
+def test_column_edits_on_a_button_survive_save_and_reopen(tmp_path, monkeypatch):
+    """Edit a palette button's columns through its own dialog, save the
+    series, open it again: the dialog shows the same values."""
+    from PyReconstruct.modules.gui.dialog.trace import TraceDialog
+    from PyReconstruct.modules.gui.palette import buttons as B
+    from PyReconstruct.modules.datatypes.series import Series
+
+    s = _open(tmp_path)
+    try:
+        s.object_groups.add("axons", "star")
+        s.addUserCol("Reviewer", ["KH", "DH"], log_event=False)
+        s.addUserCol("Stage", ["draft", "final"], log_event=False)
+        pal_name, idx = s.palette_index
+        item = s.palette_traces[pal_name][idx]
+
+        class Manager:
+            series = s
+            def paletteButtonChanged(self, b): pass
+
+        def pick(dlg):
+            dlg.groups_input.inputs[0].setCurrentText("axons")
+            dlg.columns_input.combos["Reviewer"].setCurrentText("KH")
+            dlg.columns_input.combos["Stage"].setCurrentText("final")
+            return QDialog.Accepted
+
+        monkeypatch.setattr(QDialog, "exec", pick)
+        btn = B.PaletteButton(None, Manager())
+        btn.setTrace(item)
+        btn.openDialog()
+        want = {"groups": ["axons"], "user_columns": {"Reviewer": "KH", "Stage": "final"}}
+        assert item.obj_defaults == want
+
+        s.save()
+        s.saveJser()
+        fp = s.jser_fp
+    finally:
+        s.close()
+
+    QApplication.instance() or QApplication(["test"])
+    s2 = Series.openJser(fp)
+    try:
+        again = s2.palette_traces[pal_name][idx]
+        assert again.obj_defaults == want
+        dlg = TraceDialog(None, [again], is_palette=True, series=s2)
+        assert dlg.groups_input.getEntries() == ["axons"]
+        assert dlg.columns_input.getValues() == {"Reviewer": "KH", "Stage": "final"}
+        dlg.close()
+    finally:
+        s2.close()
 
 
 def test_headings_carry_tooltips(tmp_path):
@@ -487,8 +614,9 @@ def test_a_value_that_is_no_longer_an_option_is_not_offered(tmp_path, monkeypatc
         item.points = [(0, 0), (1, 0), (1, 1), (0, 1)]
         item.obj_defaults = {"user_columns": {"Stage": "draft"}}
         dlg = TraceDialog(None, [item], is_palette=True, series=s)
-        _, col, val = dlg.columns_input.rows[0]
-        assert [val.itemText(i) for i in range(val.count())] == ["", "final"]
+        val = dlg.columns_input.combos["Stage"]
+        assert _options(val) == ["", "final"]
+        assert val.currentText() == ""
         _accept(monkeypatch)
         t, confirmed = dlg.exec()
         assert confirmed

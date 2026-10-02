@@ -371,7 +371,7 @@ class FieldWidgetBase:
         # its groups with it; their visibility entries go too, so the Groups
         # menu loses the row. The state keeps each value for its undo.
         dropped = dropEmptiedGroups(self.series, groups_before)
-        section_states.current_state.undo_group_viz.update(dropped)
+        section_states.current_state.undo_group_viz = dict(dropped)
         if dropped and hasattr(self.mainwindow, "createMenuBar"):
             self.mainwindow.createMenuBar()
 
@@ -416,13 +416,14 @@ class FieldWidgetBase:
         # its groups with it; their visibility entries go too. The dropped
         # values also go to the state whose opposite step brings the groups
         # back: an undo's to the state it put on the redo stack, a redo's to
-        # the state it redid.
+        # the state it redid. Replaced every time, even when the step empties
+        # nothing: a value left from an earlier step of the same state no
+        # longer describes it.
         dropped = dropEmptiedGroups(self.series, groups_before)
-        if dropped:
-            if not redo and len(section_states.redo_states) > redos_before:
-                section_states.redo_states[-1].group_viz.update(dropped)
-            elif redo and len(section_states.undo_states) > undos_before:
-                section_states.current_state.undo_group_viz.update(dropped)
+        if not redo and len(section_states.redo_states) > redos_before:
+            section_states.redo_states[-1].group_viz = dict(dropped)
+        elif redo and len(section_states.undo_states) > undos_before:
+            section_states.current_state.undo_group_viz = dict(dropped)
 
         # A redo can bring back a group that no object held a moment ago (the
         # object snapshot in state_manager), and the Groups menu lists groups

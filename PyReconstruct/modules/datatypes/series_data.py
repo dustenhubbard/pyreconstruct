@@ -314,8 +314,13 @@ class SeriesData():
                 for obj_name in removed_objects:
                     
                     self.series.addLog(obj_name, None, "Delete object")
-                    ## Remove object from object attributes dicts
-                    self.series.removeObjAttrs(obj_name)
+
+            ## Remove deleted objects from the object attributes dicts, logged
+            ## or not: an import runs with logging off, and an object it
+            ## deleted kept its attributes, so a later object of that name
+            ## started with the old ones (its alignment pin among them)
+            for obj_name in removed_objects:
+                self.series.removeObjAttrs(obj_name)
     
     def addTrace(self, trace : Trace, section : Section):
         """Add trace data to the existing object.
