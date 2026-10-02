@@ -7,6 +7,7 @@ throws while handling an error would mask the original problem.
 """
 import platform
 import traceback as _traceback
+from typing import Optional
 from urllib.parse import quote as _quote
 
 
@@ -100,14 +101,35 @@ ISSUE_URL_MAX_CHARS = 7000
 REPORT_TRIM_MARKER = "\n[...]\n"
 
 
+def _fit_report(prefix: str, report: str, max_chars: int, encode) -> Optional[str]:
+    """``prefix`` plus ``encode(report)``, cut in the middle to stay under ``max_chars``.
+
+    The head keeps the version lines and where the traceback starts, the tail
+    keeps the raise site and the message, which is the part that names the bug.
+    Returns None when even a short cut does not fit, so the caller can fall
+    back to a link without the report.
+    """
+    budget = max_chars - len(prefix)
+    encoded = encode(report)
+    keep = len(report)
+    while len(encoded) > budget:
+        # Shrink by a quarter each pass and re-measure: percent-encoding
+        # inflates unevenly, so the fit is checked on the encoded text.
+        keep = int(keep * 0.75)
+        if keep < 200:
+            return None
+        head = report[: keep // 3]
+        tail = report[-(keep - keep // 3):]
+        encoded = encode(head + REPORT_TRIM_MARKER + tail)
+    return prefix + encoded
+
+
 def issue_url_for_report(form_url: str, report: str) -> str:
     """The bug form with the setup field prefilled and ``report`` in the error field.
 
     Keeps the link under ``ISSUE_URL_MAX_CHARS`` by cutting the middle of the
-    report: the head keeps the version lines and where the traceback starts, the
-    tail keeps the raise site and the message, which is the part that names the
-    bug. Never raises: on any failure the setup-only link comes back, and failing
-    that the plain form.
+    report (see ``_fit_report``). Never raises: on any failure the setup-only
+    link comes back, and failing that the plain form.
     """
     try:
         base = prefilled_issue_url(form_url)
@@ -115,21 +137,46 @@ def issue_url_for_report(form_url: str, report: str) -> str:
             return base
         joiner = "&" if "?" in base else "?"
         prefix = f"{base}{joiner}{ISSUE_FORM_ERROR_FIELD}="
-        budget = ISSUE_URL_MAX_CHARS - len(prefix)
-        encoded = _quote(report, safe="")
-        keep = len(report)
-        while len(encoded) > budget:
-            # Shrink by a quarter each pass and re-measure: percent-encoding
-            # inflates unevenly, so the fit is checked on the encoded text.
-            keep = int(keep * 0.75)
-            if keep < 200:
-                return base
-            head = report[: keep // 3]
-            tail = report[-(keep - keep // 3):]
-            encoded = _quote(head + REPORT_TRIM_MARKER + tail, safe="")
-        return prefix + encoded
+        url = _fit_report(
+            prefix, report, ISSUE_URL_MAX_CHARS, lambda text: _quote(text, safe="")
+        )
+        return base if url is None else url
     except Exception:
         try:
             return prefilled_issue_url(form_url)
         except Exception:
             return form_url
+
+
+# Ceiling for a mailto link. Mail clients on Windows commonly cut a mailto link
+# at the old 2083-character URL limit, and some drop a longer one without a
+# word, so the mail body is trimmed harder than the bug form's field.
+MAILTO_MAX_CHARS = 2000
+
+
+def _mailto_quote(text: str) -> str:
+    # RFC 6068: line breaks in a mailto body are CRLF, percent-encoded.
+    return _quote(text.replace("\r\n", "\n").replace("\n", "\r\n"), safe="")
+
+
+def mailto_for_report(address: str, report: str) -> str:
+    """A mailto link to ``address`` with ``report`` as the body.
+
+    The subject is the report's first line ("PyReconstruct error report" or
+    "PyReconstruct diagnostic report"). The body is cut in the middle the same
+    way as the bug form's, to stay under ``MAILTO_MAX_CHARS``. Never raises: on
+    any failure, or with a report too long to cut down, the mail comes back
+    with the subject alone, and failing that the bare address.
+    """
+    base = f"mailto:{address}"
+    try:
+        if not report:
+            return base
+        subject = report.splitlines()[0].strip() or "PyReconstruct report"
+        with_subject = f"{base}?subject={_mailto_quote(subject)}"
+        url = _fit_report(
+            f"{with_subject}&body=", report, MAILTO_MAX_CHARS, _mailto_quote
+        )
+        return with_subject if url is None else url
+    except Exception:
+        return base

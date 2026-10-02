@@ -132,3 +132,37 @@ def test_issue_url_for_report_survives_a_broken_context(monkeypatch):
     assert query["template"] == ["bug.yml"]
     assert "setup" not in query
     assert query["error"] == ["ValueError: x"]
+
+
+def _mailto_parts(url):
+    parts = urlsplit(url)
+    return parts.scheme, parts.path, parse_qs(parts.query, strict_parsing=True)
+
+
+def test_mailto_for_report_puts_the_report_in_the_body():
+    # The error window's "Email developers" button: same address as the Help
+    # menu row, with the report as the body so there is nothing to paste (#470).
+    report = "PyReconstruct error report\nVersion:  1.24.0\n\nValueError: boom"
+    url = error_report.mailto_for_report(developers.developers_email, report)
+    scheme, address, query = _mailto_parts(url)
+    assert (scheme, address) == ("mailto", "issues@pyreconstruct.org")
+    assert query["subject"] == ["PyReconstruct error report"]
+    # RFC 6068 wants CRLF line breaks in a mailto body
+    assert query["body"] == [report.replace("\n", "\r\n")]
+    assert "+" not in url  # spaces are %20; "+" would arrive as a literal plus
+
+
+def test_mailto_for_report_trims_a_long_report_to_fit():
+    head = "PyReconstruct error report\nVersion:  1.24.0\n\nTraceback (most recent call last):\n"
+    frames = "".join(f'  File "deep/module_{i}.py", line {i}, in step\n    do_thing({i})\n' for i in range(600))
+    tail = "ValueError: the raise site names the bug"
+    url = error_report.mailto_for_report(developers.developers_email, head + frames + tail)
+    assert len(url) <= error_report.MAILTO_MAX_CHARS
+    body = _mailto_parts(url)[2]["body"][0].replace("\r\n", "\n")
+    assert body.startswith(head)
+    assert body.endswith(tail)
+    assert error_report.REPORT_TRIM_MARKER in body
+
+
+def test_mailto_for_report_without_a_report_is_the_bare_address():
+    assert error_report.mailto_for_report("issues@pyreconstruct.org", "") == "mailto:issues@pyreconstruct.org"
