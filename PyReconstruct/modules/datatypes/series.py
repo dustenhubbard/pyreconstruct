@@ -3,7 +3,7 @@ import uuid
 import re
 import json
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from copy import copy, deepcopy
 from pathlib import Path
 from typing import Union
@@ -5206,7 +5206,10 @@ class Series():
         if self.getOption("backup_filename"):
             fname_list.append(self.name)
         
-        now = datetime.utcnow() if self.getOption("utc") else datetime.now()
+        if self.getOption("utc"):
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+        else:
+            now = datetime.now()
 
         if self.getOption("backup_date"):
             date = now.strftime(self.getOption("backup_date_str"))

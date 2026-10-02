@@ -369,9 +369,10 @@ class FieldWidgetBase:
 
         # updateData deletes an object whose last trace the action took, and
         # its groups with it; their visibility entries go too, so the Groups
-        # menu loses the row. The series keeps each value for the undo.
-        if dropEmptiedGroups(self.series, groups_before) and \
-                hasattr(self.mainwindow, "createMenuBar"):
+        # menu loses the row. The state keeps each value for its undo.
+        dropped = dropEmptiedGroups(self.series, groups_before)
+        section_states.current_state.undo_group_viz.update(dropped)
+        if dropped and hasattr(self.mainwindow, "createMenuBar"):
             self.mainwindow.createMenuBar()
 
         # check if a series undo/redo has been overwritten
@@ -398,6 +399,9 @@ class FieldWidgetBase:
         # get the last undo state
         groups_before = set(self.series.object_groups.getGroupList())
         tform_before = self.section.tform.copy()
+        section_states = self.series_states[self.section.n]
+        undos_before = len(section_states.undo_states)
+        redos_before = len(section_states.redo_states)
         self.series_states.undoSection(self.section, redo)
 
         # an undo or redo that moves the section leaves no change to pick up
@@ -409,10 +413,16 @@ class FieldWidgetBase:
         self.updateData()
 
         # updateData deletes an object whose last trace the step took, and
-        # its groups with it; their visibility entries go too. The series
-        # keeps each dropped value, so the step that brings a group back
-        # brings a hidden group back hidden.
-        dropEmptiedGroups(self.series, groups_before)
+        # its groups with it; their visibility entries go too. The dropped
+        # values also go to the state whose opposite step brings the groups
+        # back: an undo's to the state it put on the redo stack, a redo's to
+        # the state it redid.
+        dropped = dropEmptiedGroups(self.series, groups_before)
+        if dropped:
+            if not redo and len(section_states.redo_states) > redos_before:
+                section_states.redo_states[-1].group_viz.update(dropped)
+            elif redo and len(section_states.undo_states) > undos_before:
+                section_states.current_state.undo_group_viz.update(dropped)
 
         # A redo can bring back a group that no object held a moment ago (the
         # object snapshot in state_manager), and the Groups menu lists groups
