@@ -470,8 +470,9 @@ class Trace():
         # what fromXMLObj checks on import. So the points go out in the
         # direction that matches the flag, however they were drawn. Reversing
         # every negative trace flipped one whose points already ran clockwise,
-        # like a hole imported from XML, and a mirrored transform reverses the
-        # direction, so the check runs on the transformed points.
+        # like a hole imported from XML. A mirrored transform reverses the
+        # direction, so _xmlIsNegative reads the raw points together with the
+        # sign of the transform's determinant.
         if self.closed and _xmlIsNegative(self.points, xml_image_tform) != bool(self.negative):
             xml_contour.points.reverse()
 

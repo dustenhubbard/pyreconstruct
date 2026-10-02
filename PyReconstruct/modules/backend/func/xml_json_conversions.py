@@ -430,8 +430,8 @@ def seriesJSONtoXML(series : Series, new_dir : str, thickness: str, last_section
     for ztrace in series.ztraces.values():
         xml_series.zcontours.append(ztrace.getXMLObj(series))
     
-    ## Set section thickness
-    xml_series.defaultThickness = round(series.avg_thickness, 4)
+    ## Set section thickness, written in full like the section files
+    xml_series.defaultThickness = float(series.avg_thickness)
     
     write_series(
         xml_series,
@@ -444,9 +444,10 @@ def seriesJSONtoXML(series : Series, new_dir : str, thickness: str, last_section
 def sectionJSONtoXML(series : Series, section : Section, new_dir : str, name : str = None):
 
     sec_index      = str(section.n)
-    sec_thickness  = str(round(section.thickness, 4))
-    # written in full: rounding to 4 places made 0.00254 into 0.0025, which
-    # scales the image 1.6% off its traces
+    # both written in full: rounding to 4 places made a 0.00254 mag into
+    # 0.0025, which scales the image 1.6% off its traces, and a 0.04787
+    # thickness into 0.0479
+    sec_thickness  = str(float(section.thickness))
     sec_mag        = str(float(section.mag))
     sec_src        = section.src
     sec_locked     = section.align_locked
