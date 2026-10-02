@@ -14,12 +14,24 @@ from PySide6.QtWidgets import (
 
 from .color_button import ColorButton
 from .shape_button import ShapeButton
-from .helper import resizeLineEdit, ColumnValueInput
+from .helper import resizeLineEdit, ColumnChoices
 from .quick_dialog import MultiInput
 
 from PyReconstruct.modules.datatypes import Trace
 from PyReconstruct.modules.datatypes.trace import copyObjDefaults
 from PyReconstruct.modules.gui.utils import notify
+
+def objectListColumns(series) -> dict:
+    """The series' custom columns (name -> options) in the order the object
+    list shows them (its Set columns... order), any it does not list last."""
+    names = []
+    for entry in series.getOption("object_columns") or []:
+        name = entry[0] if isinstance(entry, (list, tuple)) else entry
+        if name in series.user_columns and name not in names:
+            names.append(name)
+    names += [name for name in series.user_columns if name not in names]
+    return {name: series.user_columns[name] for name in names}
+
 
 class TraceDialog(QDialog):
 
@@ -352,7 +364,7 @@ class TraceDialog(QDialog):
             self.columns_input = None
             if series.user_columns:
                 # the object list's categorical columns (Columns > Create
-                # categorical column...), one row per column chosen
+                # categorical column...), one labeled dropdown per column
                 self.columns_text = QLabel(self, text="Custom Columns:")
                 self.columns_text.setToolTip(
                     "Values for the object list's custom columns, set on a new "
@@ -361,8 +373,8 @@ class TraceDialog(QDialog):
                     "categorical column..."
                 )
                 defaults_rows.addWidget(self.columns_text)
-                self.columns_input = ColumnValueInput(
-                    self, series.user_columns, seed.get("user_columns", {})
+                self.columns_input = ColumnChoices(
+                    self, objectListColumns(series), seed.get("user_columns", {})
                 )
                 defaults_rows.addWidget(self.columns_input)
         
