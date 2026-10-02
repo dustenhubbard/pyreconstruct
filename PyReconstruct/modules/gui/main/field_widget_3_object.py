@@ -102,6 +102,17 @@ def notifyAmbiguousTraces(entries : list, shown : int = 10,
     notify(lead + "\n\n" + "\n".join(lines) + "\n\n" + tail)
 
 
+def _opacityDiffers(stored, new) -> bool:
+    """Whether a 3D opacity from the settings dialog differs from the stored one.
+
+    Compared at the 8 decimals the dialog's field shows, so a stored value
+    with more digits is not changed by OK with the field untouched.
+    """
+    if isinstance(stored, bool) or not isinstance(stored, (int, float)):
+        return True
+    return round(stored, 8) != round(new, 8)
+
+
 class FieldWidgetObject(FieldWidgetTrace):
     """
     OBJECT FUNCTIONS
@@ -1047,31 +1058,36 @@ class FieldWidgetObject(FieldWidgetTrace):
         
         new_type, new_opacity = response
 
+        ## Only the objects whose value would change. The opacity is compared
+        ## at the dialog's precision: the field shows a stored 0.123456789 as
+        ## 0.12345679, and OK with it untouched is not an edit.
+        type_names = [
+            name for name in obj_names
+            if new_type and self.series.getAttr(name, "3D_mode") != new_type
+        ]
+        opacity_names = [
+            name for name in obj_names
+            if new_opacity is not None and _opacityDiffers(
+                self.series.getAttr(name, "3D_opacity"), new_opacity
+            )
+        ]
+
         ## Leave the series alone when no object would change: a state added
         ## here would end the redo history for an edit that did nothing.
-        changed = any(
-            (new_type and self.series.getAttr(name, "3D_mode") != new_type) or
-            (
-                new_opacity is not None and
-                self.series.getAttr(name, "3D_opacity") != new_opacity
-            )
-            for name in obj_names
-        )
-        if not changed:
+        if not type_names and not opacity_names:
             return False
 
         self.series_states.addState()
 
         # set the series settings
-        for name in obj_names:
-            if new_type:
-                self.series.setAttr(name, "3D_mode", new_type)
-            if new_opacity is not None:
-                self.series.setAttr(name, "3D_opacity", new_opacity)
+        for name in type_names:
+            self.series.setAttr(name, "3D_mode", new_type)
+        for name in opacity_names:
+            self.series.setAttr(name, "3D_opacity", new_opacity)
         
         # if this object exists in the 3D scene, update its opacity
         if self.mainwindow.viewer:
-            for name in obj_names:
+            for name in opacity_names:
                 scene_obj = self.mainwindow.viewer.plt.objs.search(
                     name,
                     "object",
