@@ -795,7 +795,11 @@ propagation.
 - **SWiFT project**: import transforms from an AlignEM-SWiFT project; you choose
   the scale to import. The number of transforms must match the number of sections.
   They go to the sections in order, so the series does not have to start at
-  section 0.
+  section 0. With `Includes cal grid` checked, the section marked as the cal grid
+  gets the identity transform and the SWiFT stack goes to the other sections. If
+  no section or more than one is marked, the first section gets it, and the
+  message after the import says so. A file that is not a SWiFT project, or has no
+  transforms at the chosen scale, stops the import with a message.
 
 The same alignment import is also one tab of **Series ▸ Import series data ▸ From
 another series…**, which is where to go when you want alignments *and* traces,

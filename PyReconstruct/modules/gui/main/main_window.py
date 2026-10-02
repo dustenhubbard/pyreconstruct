@@ -1893,23 +1893,12 @@ class MainWindow(QMainWindow):
             return
 
         # get scales from the swift project file
-        with open(swift_fp, "r") as fp: swift_json = json.load(fp)
+        try:
+            scales_available = swift_scales(read_swift_project(swift_fp))
+        except TransformImportError as e:
+            notify(f"No transforms were imported. {e}")
+            return
 
-        scale_names = swift_json.get("level_data")
-
-        if scale_names:  # new swift project file formatting
-        
-            scale_names = list(swift_json["level_data"].keys())
-            scales_available = [int(scale[1:]) for scale in scale_names]
-
-        else:  # old swift project file formatting
-
-            scales_data = swift_json["data"]["scales"]
-            scale_names = list(scales_data.keys())
-            scales_available = [int(scale[6:]) for scale in scale_names]
-
-        scales_available.sort()
-        
         print(f'Available SWiFT project scales: {scales_available}')
 
         structure = [
@@ -1929,7 +1918,7 @@ class MainWindow(QMainWindow):
         print(f'Importing SWiFT transforms at scale {scale}...')
         if cal_grid: print('Cal grid included in series')
         try:
-            importSwiftTransforms(self.series, swift_fp, scale, cal_grid, series_states=self.field.series_states)
+            note = importSwiftTransforms(self.series, swift_fp, scale, cal_grid, series_states=self.field.series_states)
         except TransformImportError as e:
             notify(f"No transforms were imported. {e}")
             return
@@ -1942,7 +1931,10 @@ class MainWindow(QMainWindow):
         # the import adds an alignment and makes it current
         self.refreshAlignmentActions(alignments_before)
 
-        notify("Transforms imported successfully.")
+        if note:
+            notify(f"Transforms imported successfully. {note}")
+        else:
+            notify("Transforms imported successfully.")
     
     def editImage(self, option : str, direction : str, log_event=True):
         """Edit the brightness or contrast of the image.

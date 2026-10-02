@@ -126,6 +126,10 @@ from PyReconstruct.modules.backend.func import (
     importSwiftTransforms
 )
 from PyReconstruct.modules.backend.func.import_transforms import TransformImportError
+from PyReconstruct.modules.backend.func.import_swift_transforms import (
+    read_swift_project,
+    swift_scales,
+)
 
 from PyReconstruct.modules.backend.view import (
     optimizeSeriesBC
