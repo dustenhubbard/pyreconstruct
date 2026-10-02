@@ -148,11 +148,15 @@ class FieldState():
         # emptied (see dropEmptiedGroups): the redo of this state brings the
         # group back with it
         self.group_viz = {}
+        # the same, for each group the action itself emptied (deleting an
+        # object's last trace): the undo of this state brings it back
+        self.undo_group_viz = {}
 
     def copy(self):
         c = FieldState(self.contours, self.ztraces, self.tforms, self.flags, self.contours_fp)
         c.obj_snapshot = deepcopy(self.obj_snapshot)
         c.group_viz = dict(self.group_viz)
+        c.undo_group_viz = dict(self.undo_group_viz)
         return c
     
     def getContours(self):
@@ -241,23 +245,31 @@ def objectSnapshot(series : Series, names) -> dict:
     undo states hold only traces, transforms and flags, so a redo used to bring
     the trace back bare: a palette button's groups and custom columns (fork
     #419), set when the trace was drawn, were gone. Each state now keeps a copy
-    of those for the objects it touched.
+    of those for the objects it touched, and of their hosts and travelers.
+
+    The copy is taken when the action's state is added, before SeriesData
+    sees the action, so a state whose action deletes an object still holds
+    what the object carried. Undoing that action puts it back.
 
         Params:
             series (Series): the series
             names (iterable): the object names the state touched
         Returns:
-            (dict): name -> {"attrs": dict, "groups": list}, only for names
-                that have attributes or groups
+            (dict): name -> {"attrs": dict, "groups": list, "hosts": list,
+                "travelers": list}, only for names that have any of them
     """
     out = {}
     for name in names:
         attrs = series.obj_attrs.get(name)
         groups = series.object_groups.getObjectGroups(name)
-        if attrs or groups:
+        hosts = series.host_tree.getHosts(name)
+        travelers = series.host_tree.getTravelers(name)
+        if attrs or groups or hosts or travelers:
             out[name] = {
                 "attrs": deepcopy(attrs) if attrs else {},
                 "groups": sorted(groups),
+                "hosts": sorted(hosts),
+                "travelers": sorted(travelers),
             }
     return out
 
@@ -272,6 +284,10 @@ def restoreObjectSnapshot(series : Series, snapshot : dict, recreated,
     (see dropEmptiedGroups).
     """
     group_viz = group_viz or {}
+    recreated = list(recreated)
+    # a host or traveler is put back only if it is an object now, or comes
+    # back in this same step: the tree must not gain a name nothing traces
+    present = set(series.data["objects"]) | set(recreated)
     for name in recreated:
         entry = snapshot.get(name)
         if not entry:
@@ -286,10 +302,16 @@ def restoreObjectSnapshot(series : Series, snapshot : dict, recreated,
             if group not in series.groups_visibility:
                 series.groups_visibility[group] = group_viz.get(group, True)
             series.object_groups.add(group=group, obj=name)
+        hosts = [h for h in entry.get("hosts", []) if h in present]
+        if hosts:
+            series.host_tree.add(name, hosts)
+        for traveler in entry.get("travelers", []):
+            if traveler in present:
+                series.host_tree.add(traveler, [name])
 
 
-def dropEmptiedGroups(series : Series, groups_before, state=None) -> set:
-    """Drop the visibility entry of each group a section undo or redo emptied.
+def dropEmptiedGroups(series : Series, groups_before) -> dict:
+    """Drop the visibility entry of each group a section step emptied.
 
     A section step that deletes an object's last trace deletes the object,
     and its groups go with it (removeObjAttrs), but nothing dropped their
@@ -297,24 +319,21 @@ def dropEmptiedGroups(series : Series, groups_before, state=None) -> set:
     entries. So an emptied group kept its row, and a later series undo that
     brought the group back found the stale entry and kept it, even when the
     group had been hidden before. Removing a group's last object from the
-    group drops the entry the same way.
+    group drops the entry the same way. The caller keeps the dropped values
+    on the state whose undo or redo brings the groups back.
 
         Params:
             series (Series): the series
             groups_before (iterable): the groups before the step
-            state (FieldState): optional; the state whose redo brings the
-                emptied groups back. It keeps each dropped value.
         Returns:
-            (set): the groups the step emptied
+            (dict): group -> its visibility, for each entry dropped
     """
     emptied = set(groups_before) - set(series.object_groups.getGroupList())
+    dropped = {}
     for group in emptied:
-        if group not in series.groups_visibility:
-            continue
-        value = series.groups_visibility.pop(group)
-        if state is not None:
-            state.group_viz[group] = value
-    return emptied
+        if group in series.groups_visibility:
+            dropped[group] = series.groups_visibility.pop(group)
+    return dropped
 
 
 class SectionStates():
@@ -531,6 +550,14 @@ class SectionStates():
             Returns:
                 (set, set): the names of the modified contours and ztraces
         """
+        # objects this undo brings back from nothing get what they carried
+        # when the action deleted them (see objectSnapshot). An object that
+        # is in the series data, or still has a trace here, is left alone.
+        existed = {
+            n for n in self.current_state.getModifiedContours()
+            if n in series.data["objects"] or len(section.contours.get(n, []))
+        }
+
         # if only one undo state exists
         if len(self.undo_states) == 1:
             state = self.undo_states[0]
@@ -582,6 +609,15 @@ class SectionStates():
             if last_changed_contours:
                 for contour in last_changed_contours:
                     section.contours[contour] = Contour(contour)
+
+        recreated = [
+            n for n in modified_contours
+            if n not in existed and len(section.contours.get(n, []))
+        ]
+        restoreObjectSnapshot(
+            series, getattr(self.current_state, "obj_snapshot", {}), recreated,
+            getattr(self.current_state, "undo_group_viz", None),
+        )
 
         return modified_contours, modified_ztraces
 
