@@ -51,7 +51,7 @@ Usage:
   install.sh --help           show this help
 
 Options:
-  --python PATH    Python 3.11 interpreter to build the venv with
+  --python PATH    Python 3.11 or 3.12 interpreter to build the venv with
   --source SPEC    pip source: a git URL, PyPI requirement, local path, or wheel
   --ref REF        git ref (tag/branch/commit) to append to a git source
   --prefix DIR     install root (default: \${XDG_DATA_HOME:-~/.local/share}/PyReconstruct)
@@ -146,24 +146,26 @@ fi
 # ------------------------------ python detection -----------------------------
 PY=""
 
-py_is_311() {
-  # True only for a real CPython 3.11.x with venv+ensurepip. Verify a printed
-  # token rather than just the exit status, so a non-Python that ignores -c and
-  # exits 0 (e.g. /bin/true) can't be mistaken for an interpreter.
+py_is_supported() {
+  # True only for a real CPython 3.11.x or 3.12.x with venv+ensurepip, the lines
+  # requires-python in pyproject.toml admits (tests/test_python_support.py checks
+  # the two match). Verify a printed token rather than just the exit status, so a
+  # non-Python that ignores -c and exits 0 (e.g. /bin/true) can't be mistaken for
+  # an interpreter.
   [ "$("$1" -c 'import sys, platform, venv, ensurepip
-print("PYOK" if (sys.version_info[:2] == (3, 11) and platform.python_implementation() == "CPython") else "no")' 2>/dev/null)" = "PYOK" ]
+print("PYOK" if (sys.version_info[:2] in ((3, 11), (3, 12)) and platform.python_implementation() == "CPython") else "no")' 2>/dev/null)" = "PYOK" ]
 }
 
 no_python_help() {
   cat >&2 <<EOF
-error: no usable Python 3.11 found.
+error: no usable Python 3.11 or 3.12 found.
 
-PyReconstruct requires CPython 3.11 with the venv module. Install it and retry:
+PyReconstruct requires CPython 3.11 or 3.12 with the venv module. Install one and retry:
   Debian/Ubuntu:  sudo apt install python3.11 python3.11-venv
   Fedora:         sudo dnf install python3.11
   Other:          https://www.python.org/downloads/  (or pyenv / conda / miniforge)
 
-Or point the installer at an existing 3.11 interpreter:
+Or point the installer at an existing 3.11 or 3.12 interpreter:
   bash install.sh --python /path/to/python3.11
   (a conda/miniforge env works too, e.g. ~/miniforge3/envs/<env>/bin/python)
 EOF
@@ -172,12 +174,15 @@ EOF
 
 resolve_python() {
   if [ -n "$PY_OVERRIDE" ]; then
-    py_is_311 "$PY_OVERRIDE" || die "the chosen Python ($PY_OVERRIDE) is not a usable CPython 3.11 with venv support"
+    py_is_supported "$PY_OVERRIDE" || die "the chosen Python ($PY_OVERRIDE) is not a usable CPython 3.11 or 3.12 with venv support"
     PY="$PY_OVERRIDE"
   else
     local cand
-    for cand in python3.11 python3 python /usr/bin/python3.11 /usr/local/bin/python3.11; do
-      if have "$cand" && py_is_311 "$cand"; then PY="$cand"; break; fi
+    # 3.11 first: it is the version the frozen installers are built on.
+    for cand in python3.11 /usr/bin/python3.11 /usr/local/bin/python3.11 \
+                python3.12 python3 python \
+                /usr/bin/python3.12 /usr/local/bin/python3.12; do
+      if have "$cand" && py_is_supported "$cand"; then PY="$cand"; break; fi
     done
     [ -n "$PY" ] || no_python_help
   fi
@@ -185,7 +190,7 @@ resolve_python() {
   local rl
   rl=$("$PY" -c 'import sys; print(sys.version_info.releaselevel)' 2>/dev/null) || rl="final"
   if [ "$rl" != "final" ]; then
-    warn "using a pre-release Python ($("$PY" -c 'import platform; print(platform.python_version())' 2>/dev/null)); a final 3.11 is recommended"
+    warn "using a pre-release Python ($("$PY" -c 'import platform; print(platform.python_version())' 2>/dev/null)); a final release is recommended"
   fi
   PY=$(command -v "$PY" 2>/dev/null) || true
   [ -n "$PY" ] || PY="$PY_OVERRIDE"
@@ -299,7 +304,7 @@ build_venv() {
     "$VENV/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 || true
   fi
   "$VENV/bin/python" -m pip --version >/dev/null 2>&1 \
-    || die "the new virtual environment has no pip — install the python3.11-venv package and retry"
+    || die "the new virtual environment has no pip; install the python$("$PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)-venv package and retry"
 
   log "Upgrading pip and wheel"
   "$VENV/bin/python" -m pip install --upgrade pip wheel >/dev/null
