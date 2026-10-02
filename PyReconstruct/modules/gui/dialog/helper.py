@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QHBoxLayout,
     QVBoxLayout,
+    QGridLayout,
     QRadioButton,
     QLabel,
     QApplication,
@@ -211,110 +212,59 @@ class MultiInput(QWidget):
             if t: l.append(t)
         return l
 
-class ColumnValueInput(QWidget):
-    """Rows of (custom column, value) pairs with the same "-" and "+" buttons
-    as MultiInput (fork #419). Each row picks a column, then one of that
-    column's options; changing the column refills the value list."""
+class ColumnChoices(QWidget):
+    """One labeled dropdown per custom column, in the object list's column
+    order (fork #419). Each dropdown offers a blank and the column's options,
+    so every column and its value show at once."""
 
-    def __init__(self, parent : QWidget, columns : dict, entries : dict = None):
+    NO_OPTIONS_TIP = (
+        "This column has no options yet. Add them in the object list under "
+        "Columns > Edit column."
+    )
+
+    def __init__(self, parent : QWidget, columns : dict, values : dict = None):
         """
             Params:
                 parent (QWidget): the widget that holds the field
                 columns (dict): column name -> list of its options
-                entries (dict): column name -> value, the starting rows
+                values (dict): column name -> value, what the dropdowns start on
         """
         super().__init__(parent)
-        self.container = parent
-        self.columns = columns
-
-        vbl = QVBoxLayout()
-        vbl.setContentsMargins(0, 0, 0, 0)
-        self.input_layout = QVBoxLayout()
-        self.rows = []
-        # a value for a column that no longer exists has nowhere to go
-        for col, value in (entries or {}).items():
-            if col in self.columns:
-                self.add(col, value)
-        if not self.rows:
-            self.add()
-        vbl.addLayout(self.input_layout)
-
-        ar_row = QHBoxLayout()
-        ar_row.addStretch(10)
-        remove = QPushButton(self, text="-")
-        remove.setFocusPolicy(Qt.NoFocus)
-        remove.clicked.connect(self.remove)
-        ar_row.addWidget(remove)
-        add = QPushButton(self, text="+")
-        add.setFocusPolicy(Qt.NoFocus)
-        add.clicked.connect(lambda: self.add())
-        ar_row.addWidget(add)
-        vbl.addLayout(ar_row)
-        self.setLayout(vbl)
-
-    def _fillValues(self, col_combo, val_combo, value=""):
-        val_combo.clear()
-        val_combo.addItem("")
-        opts = [str(opt) for opt in self.columns.get(col_combo.currentText(), [])]
-        for opt in opts:
-            val_combo.addItem(opt)
-        val_combo.setCurrentText(str(value))
-
-    def add(self, column="", value=""):
-        """Add a (column, value) row."""
-        row = QWidget(self)
-        hbl = QHBoxLayout(row)
-        hbl.setContentsMargins(0, 0, 0, 0)
-        col_combo = QComboBox(row)
-        col_combo.addItem("")
-        for name in sorted(self.columns):
-            col_combo.addItem(name)
-        col_combo.setCurrentText(column)
-        val_combo = QComboBox(row)
-        self._fillValues(col_combo, val_combo, value)
-        col_combo.currentTextChanged.connect(
-            lambda _, c=col_combo, v=val_combo: self._fillValues(c, v)
-        )
-        hbl.addWidget(col_combo)
-        hbl.addWidget(val_combo)
-        self.input_layout.addWidget(row)
-        self.rows.append((row, col_combo, val_combo))
-
-    def currentIndex(self):
-        """Index of the row the user is editing, or the last row."""
-        w = QApplication.focusWidget()
-        while w is not None:
-            for i, (row, _, _) in enumerate(self.rows):
-                if w is row:
-                    return i
-            w = w.parentWidget()
-        return len(self.rows) - 1
-
-    def remove(self):
-        """Remove the row being edited (the last by default); keep one row."""
-        if not self.rows:
-            return
-        if len(self.rows) == 1:
-            _, col_combo, _ = self.rows[0]
-            col_combo.setCurrentText("")
-            return
-        row, _, _ = self.rows.pop(self.currentIndex())
-        self.input_layout.removeWidget(row)
-        row.deleteLater()
-        self.layout().activate()
-        container_layout = self.container.layout()
-        if container_layout is not None:
-            container_layout.activate()
-        self.container.adjustSize()
+        values = values or {}
+        # the button's own key order, so an untouched OK hands back the same
+        # dict and the palette data is written unchanged
+        self.saved_order = [col for col in values if col in columns]
+        grid = QGridLayout(self)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setColumnStretch(1, 1)
+        self.combos = {}
+        for row, (col, opts) in enumerate(columns.items()):
+            combo = QComboBox(self)
+            combo.addItem("")
+            for opt in opts:
+                combo.addItem(str(opt))
+            # a value that is no longer an option has no entry, so the
+            # dropdown stays blank and OK drops it, as it is on objects
+            index = combo.findText(str(values.get(col, "")))
+            combo.setCurrentIndex(max(index, 0))
+            if not opts:
+                combo.setEnabled(False)
+                combo.setToolTip(self.NO_OPTIONS_TIP)
+            grid.addWidget(QLabel(f"{col}:", self), row, 0)
+            grid.addWidget(combo, row, 1)
+            self.combos[col] = combo
 
     def getValues(self) -> dict:
-        """Column -> value for every row with both set; a later row wins."""
-        out = {}
-        for _, col_combo, val_combo in self.rows:
-            col, val = col_combo.currentText(), val_combo.currentText()
-            if col and val:
-                out[col] = val
-        return out
+        """Column -> value for every dropdown that is not blank: the button's
+        saved columns first, in their saved order, then any newly set."""
+        order = self.saved_order + [
+            col for col in self.combos if col not in self.saved_order
+        ]
+        return {
+            col: self.combos[col].currentText()
+            for col in order
+            if self.combos[col].currentText()
+        }
 
 
 def defaultTickInterval(minimum : int, maximum : int) -> int:
