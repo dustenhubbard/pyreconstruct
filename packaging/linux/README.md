@@ -31,16 +31,16 @@ Then launch it from your application menu, or run `pyreconstruct`. If
 
 ### Requirements
 
-- **CPython 3.11** with `venv` (Debian/Ubuntu: `sudo apt install python3.11 python3.11-venv`).
-  The installer finds `python3.11` automatically; override with `--python /path/to/python3.11`
-  (a conda/miniforge 3.11 works) or `PYRECON_PYTHON`.
+- **CPython 3.11 or 3.12** with `venv` (Debian/Ubuntu: `sudo apt install python3.11 python3.11-venv`,
+  or `python3.12-venv` for 3.12). The installer looks for `python3.11` first, then `python3.12`;
+  override with `--python /path/to/python3.12` (a conda/miniforge env works) or `PYRECON_PYTHON`.
 - Internet access for the first install (it downloads several hundred MB of wheels).
 - x86_64 (the pinned PySide6/vtk/numpy wheels target it).
 
 ## Options
 
 ```
---python PATH    Python 3.11 interpreter to build the venv with
+--python PATH    Python 3.11 or 3.12 interpreter to build the venv with
 --source SPEC    pip source: git URL, PyPI requirement, local path, or wheel
 --ref REF        git ref (tag/branch/commit) appended to a git source
 --prefix DIR     install root (default: $XDG_DATA_HOME/PyReconstruct)
@@ -81,4 +81,4 @@ entry, icon). Your `.jser` series files and config are never touched.
 - Updating: re-run `install.sh`. The app's in-app *update* / *switch branch*
   actions assume a plain `pip` install and are not used for this isolated venv.
 - This installs from source (it is not a frozen bundle), so it relies on a
-  system Python 3.11 being present; the venv keeps its dependencies isolated.
+  system Python 3.11 or 3.12 being present; the venv keeps its dependencies isolated.

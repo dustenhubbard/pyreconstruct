@@ -95,10 +95,11 @@ Mac its matching architecture.
 
 ### From source (Linux, other platforms, and developers)
 
-PyReconstruct requires **Python 3.11**, the pinned version the app and its
-native dependencies are validated on (the project pins `>=3.11,<3.12`). Your
-system `python3` is likely newer, and installing against it will fail; the steps
-below get you 3.11 without changing your system Python. The recommended tool is
+PyReconstruct requires **Python 3.11 or 3.12**. Its native dependencies are
+tested on those versions (the project pins `>=3.11,<3.13`). Your
+system `python3` may be newer, and installing against it will fail; the steps
+below get you 3.11 without changing your system Python (use `--python 3.12` in
+place of `--python 3.11` for 3.12). The recommended tool is
 [uv](https://docs.astral.sh/uv/), which downloads Python 3.11 for you. Install
 it with `curl -LsSf https://astral.sh/uv/install.sh | sh` (or `brew install uv`).
 
@@ -118,8 +119,9 @@ scikit-image, shapely, trimesh, zarr, and others). If you already have
 To **track the latest unreleased code on `main`** (what the retired in-app
 "Developer" channel used to offer), clone the repository and let uv build the
 environment from the committed `uv.lock`. This is the canonical developer setup:
-`uv sync` reads the Python 3.11 pin, provisions the interpreter, and installs the
-exact pinned dependency set.
+`uv sync` reads the checkout's `.python-version` (3.11), provisions the
+interpreter, and installs the exact pinned dependency set. To use 3.12 instead,
+set `UV_PYTHON=3.12` in your shell before `uv sync` and `uv run`.
 
 ```
 git clone https://github.com/dustenhubbard/PyReconstruct

@@ -343,12 +343,16 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           for i in 1 2 3; do sudo apt-get update && break || sleep 5; done
+          # fonts-dejavu-core: the screenshot tests pin DejaVu Sans and DejaVu
+          # Sans Mono, so their baselines do not move when the runner image
+          # changes its fonts.
           sudo apt-get install -y --no-install-recommends \
-            libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+            libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 \
+            fonts-dejavu-core
 
       - name: Install project + test deps (frozen against uv.lock)
         # --frozen: use the committed lock exactly, fail if it drifted from pyproject.toml.
-        # uv provisions Python 3.11 itself from requires-python; --no-default-groups skips
+        # uv provisions Python 3.11 itself from .python-version; --no-default-groups skips
         # the git-built `dev` group (funlib) the suite does not need; --extra test adds pytest.
         run: uv sync --frozen --no-default-groups --extra test
 
@@ -384,6 +388,74 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: uv run --frozen --no-default-groups --extra test python -m pytest -ra   # -ra surfaces xfail/xpass/skip reasons if the gate goes red
+
+      - name: Upload the screenshots that did not match
+        # tests/test_visual_regression.py writes what it rendered, the baseline
+        # and a diff here when a check fails. If the change is intended, download
+        # this and run `python tests/visual_regression.py accept <folder>`.
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: visual-diffs
+          path: tests/visual_diffs/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # The suite on every other Python that requires-python admits. `test` above
+  # runs on 3.11, the version in .python-version and the one the installers
+  # build on, so this matrix lists the rest. tests/test_python_support.py fails
+  # if requires-python and the two lists stop matching, so widening
+  # requires-python without adding the version here goes red.
+  #
+  # Not a merge gate, for the reason `updater-apply` below gives: branch
+  # protection requires `test` by name, and a matrix on `test` itself would
+  # rename it to `test (3.11)` and the required check would never report.
+  #
+  # UV_PYTHON is set for the whole job, not only on the sync. It outranks
+  # .python-version, and without it the `uv run` below would read 3.11 from
+  # that file and rebuild the environment on 3.11 before running anything.
+  #
+  # Tags are fetched for the same reason as in `test`.
+  test-python:
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12"]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25   # the cold wheel install, as in `test`
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-tags: true
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          cache-suffix: py${{ matrix.python }}
+
+      - name: Install headless Qt system libs
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          for i in 1 2 3; do sudo apt-get update && break || sleep 5; done
+          # fonts-dejavu-core: the screenshot tests run here too, as in `test`
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 \
+            fonts-dejavu-core
+
+      - name: Install project + test deps (frozen against uv.lock)
+        run: uv sync --frozen --no-default-groups --extra test
+
+      - name: Python in use
+        run: uv run --frozen --no-default-groups --extra test python -VV
+
+      - name: Run test suite (headless / offscreen)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run --frozen --no-default-groups --extra test python -m pytest -ra
 
   # The in-place update swap engine renames install folders, waits on and stops
   # processes, and launches programs, and each of those behaves differently on
