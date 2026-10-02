@@ -113,22 +113,6 @@ def test_identity_and_affine_inverses_are_unchanged(name):
     assert results == expected
 
 
-@pytest.mark.parametrize("name", list(AFFINE_PINS))
-def test_identity_and_affine_det_forward_is_the_linear_determinant(name):
-    xcoef, ycoef, _ = AFFINE_PINS[name]
-    tform = XMLTransform(xcoef=xcoef, ycoef=ycoef)
-    linear = xcoef[1] * ycoef[2] - xcoef[2] * ycoef[1]
-
-    assert [tform.det_forward(*p) for p in AFFINE_POINTS] == [linear] * len(AFFINE_POINTS)
-
-
-def test_det_forward_changes_sign_across_a_fold():
-    tform = POLYNOMIALS["shear_xy"]  # determinant is 1 + y
-
-    assert tform.det_forward(0, 0) > 0
-    assert tform.det_forward(5, -2) < 0
-
-
 def test_from_xml_obj_places_the_trace_through_the_inverse():
     contour = XMLContour(
         name="t", closed=True, mode=9, border=[1, 0, 0], fill=[1, 0, 0],

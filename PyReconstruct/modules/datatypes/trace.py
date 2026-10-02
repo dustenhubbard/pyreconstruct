@@ -22,27 +22,33 @@ def _xmlIsNegative(points : list, xml_tform : XMLTransform = None) -> bool:
     """Return True if Reconstruct reads closed contour points as negative.
 
     Reconstruct finds a contour's area after applying the contour's transform,
-    so a mirrored transform reverses which way the points run. The sign comes
-    from the raw points and the sign of the transform's Jacobian determinant
-    where the contour lands, rather than from transformed points: transforming
-    would let rounding give a flat trace a sign. For an affine transform the
-    determinant is the same everywhere. A polynomial transform can fold
-    between the origin and the contour, so it is taken at the contour.
+    so a mirrored transform reverses which way the points run. A flat trace is
+    never negative, whatever its transform. Under an affine transform the sign
+    comes from the raw points and the determinant of the linear part, so
+    rounding cannot give a trace a sign it does not have. A polynomial
+    transform can fold, so the direction can differ along one trace; there the
+    sign comes from the transformed points, the way Reconstruct reads them.
     """
-    signed_area = 0
-    for i in range(len(points)):
-        x1, y1 = points[i-1]
-        x2, y2 = points[i]
-        signed_area += (x2 - x1) * (y2 + y1)
-    if signed_area == 0:
+    def signed_area(pts):
+        total = 0
+        for i in range(len(pts)):
+            x1, y1 = pts[i-1]
+            x2, y2 = pts[i]
+            total += (x2 - x1) * (y2 + y1)
+        return total
+
+    area = signed_area(points)
+    if area == 0:
         return False
-    negative = signed_area > 0
-    if xml_tform is not None:
-        cx = sum(p[0] for p in points) / len(points)
-        cy = sum(p[1] for p in points) / len(points)
-        if xml_tform.det_forward(*xml_tform.xy_inverse(cx, cy)) < 0:
+    if xml_tform is None:
+        return area > 0
+    if xml_tform.isAffine():
+        negative = area > 0
+        x, y = xml_tform.xcoef, xml_tform.ycoef
+        if x[1] * y[2] - x[2] * y[1] < 0:
             negative = not negative
-    return negative
+        return negative
+    return signed_area(xml_tform.transformPoints(points)) > 0
 
 
 def normalizeObjectName(value : str) -> str:

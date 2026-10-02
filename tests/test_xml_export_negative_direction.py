@@ -9,9 +9,11 @@ keeps its clockwise points in memory, so it was one of the ones flipped.
 
 Reconstruct reads the direction after applying the contour's transform, so on
 a section whose transform is mirrored, points that run counterclockwise in
-PyReconstruct run clockwise in Reconstruct. Export and import both read the
-sign from the raw points and the sign of the transform's determinant, not
-from transformed points, so rounding cannot give a flat trace a sign.
+PyReconstruct run clockwise in Reconstruct. Under an affine transform, export
+and import both read the sign from the raw points and the sign of the
+transform's determinant, not from transformed points, so rounding cannot give
+a flat trace a sign. A polynomial transform can fold inside one trace, so an
+import under one reads the transformed points, the way Reconstruct does.
 """
 import math
 
@@ -231,3 +233,18 @@ def test_import_reads_the_direction_where_the_trace_lands(points, negative):
     # what Reconstruct reads, and what the import now reads
     assert reads_negative(contour) is negative
     assert Trace.fromXMLObj(contour, FOLD).negative is negative
+
+
+# this rectangle straddles the fold at y = -1, so no single determinant gives
+# its direction: Reconstruct reads it from the transformed points
+STRADDLE = [(1, -2), (2, -2), (2, 0.5), (1, 0.5)]
+
+
+def test_import_reads_a_trace_across_a_fold_as_reconstruct_does():
+    contour = XMLContour(
+        name="t", closed=True, mode=9, border=[1, 0, 0], fill=[1, 0, 0],
+        hidden=False, points=list(STRADDLE), transform=FOLD,
+    )
+
+    assert reads_negative(contour) is True
+    assert Trace.fromXMLObj(contour, FOLD).negative is True

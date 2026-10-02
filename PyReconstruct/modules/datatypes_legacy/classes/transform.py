@@ -180,21 +180,7 @@ class Transform(object):
                 e = abs(u-u0) + abs(v-v0)  # compute closeness to goal
             x, y = x0, y0
         return [x, y]
-
-    def det_forward(self, x, y):
-        """Determinant of the forward transform's Jacobian at (x, y).
-
-        Constant for an affine transform. A polynomial transform can fold, so
-        its sign depends on where it is taken.
-        """
-        xcf = self.xcoef
-        ycf = self.ycoef
-        l = xcf[1] + xcf[3]*y + 2.0*xcf[4]*x
-        m = xcf[2] + xcf[3]*x + 2.0*xcf[5]*y
-        n = ycf[1] + ycf[3]*y + 2.0*ycf[4]*x
-        o = ycf[2] + ycf[3]*x + 2.0*ycf[5]*y
-        return l*o - m*n
-
+    
     def transformPoints(self, points):
         tform_points = points.copy()
         for i in range(len(tform_points)):
