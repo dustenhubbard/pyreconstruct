@@ -24,7 +24,22 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-PIN = re.compile(r"^([A-Za-z0-9._-]+)==(\S+)")
+
+def _pin_key(spec):
+    """Name, marker and pinned version for an exact pin, else None.
+
+    The marker is kept because a package can carry one pin per Python line
+    (numpy does: 1.24.1 below 3.12, 1.26.4 from 3.12). Read by name alone,
+    the second pin would silently overwrite the first and the 3.11 pin would
+    never be compared.
+    """
+    from packaging.requirements import Requirement
+
+    req = Requirement(spec)
+    pins = [s for s in req.specifier if s.operator == "=="]
+    if len(pins) != 1:
+        return None
+    return req.name.lower(), str(req.marker or ""), pins[0].version
 
 
 def _requirements_pins():
@@ -33,9 +48,12 @@ def _requirements_pins():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        m = PIN.match(line)
-        if m:
-            pins[m.group(1).lower()] = m.group(2)
+        pinned = _pin_key(line)
+        if pinned:
+            name, marker, version = pinned
+            by_marker = pins.setdefault(name, {})
+            assert marker not in by_marker, f"requirements.txt pins {name} twice"
+            by_marker[marker] = version
     return pins
 
 
@@ -43,9 +61,12 @@ def _pyproject_pins():
     data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
     pins = {}
     for spec in data["project"]["dependencies"]:
-        m = PIN.match(spec.strip())
-        if m:
-            pins[m.group(1).lower()] = m.group(2)
+        pinned = _pin_key(spec.strip())
+        if pinned:
+            name, marker, version = pinned
+            by_marker = pins.setdefault(name, {})
+            assert marker not in by_marker, f"pyproject.toml pins {name} twice"
+            by_marker[marker] = version
     return pins
 
 
@@ -80,7 +101,7 @@ def test_gitpython_is_at_or_above_the_patched_version():
         ("requirements.txt", _requirements_pins()),
         ("pyproject.toml", _pyproject_pins()),
     ):
-        pinned = pins.get("gitpython")
+        pinned = pins.get("gitpython", {}).get("")
         assert pinned is not None, f"gitpython vanished from {label}"
         assert Version(pinned) >= Version("3.1.58"), (
             f"{label} pins gitpython {pinned}; 3.1.58 is the patched version"
