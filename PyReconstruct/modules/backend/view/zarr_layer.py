@@ -34,17 +34,25 @@ class ZarrLayer():
 
     def loadZarrData(self):
         """Load the relevant data from the zarr file."""
+        # here, not at the top: conversions imports this package
+        from PyReconstruct.modules.backend.autoseg.conversions import (
+            as_nm,
+            get_label_offset,
+            get_resolution,
+        )
+
         group = zarr.open(self.series.zarr_overlay_fp)
         self.zarr = group[self.series.zarr_overlay_group]
         raw = group["raw"]
-        self.raw_resolution = raw.attrs["resolution"]
+        # sizes and offsets in nm, whatever units each array declares
+        self.raw_resolution = as_nm(get_resolution(raw), raw)
 
         # check if labels or otherwise
         self.is_labels = (len(self.zarr.shape) == 3)
 
         # get relevant data from overlay zarr
-        self.offset = self.zarr.attrs["offset"]
-        self.resolution = self.zarr.attrs["resolution"]
+        self.offset = get_label_offset(self.zarr, raw)
+        self.resolution = as_nm(get_resolution(self.zarr), self.zarr)
 
         # get the relevant data from the raw in the zarr folder
         self.zarr_x, self.zarr_y = tuple(raw.attrs["window"][:2])
