@@ -158,8 +158,8 @@ class Transform(object):
         elif dim in [4, 5, 6]:  # all hell breaks loose
             u, v = x, y  # (u, v) for which we want (x, y)
             x0, y0 = 0.0, 0.0  # initial (x, y) guess
-            u0 = self.x_forward(x, y)  # forward t-form of initial guess
-            v0 = self.y_forward(x, y)
+            u0 = self.x_forward(x0, y0)  # forward t-form of initial guess
+            v0 = self.y_forward(x0, y0)
             i = 0  # allow no more than 10 iterations
             e = 1.0  # to reduce error to this limit
             while e > epsilon and i < 10:
@@ -180,7 +180,21 @@ class Transform(object):
                 e = abs(u-u0) + abs(v-v0)  # compute closeness to goal
             x, y = x0, y0
         return [x, y]
-    
+
+    def det_forward(self, x, y):
+        """Determinant of the forward transform's Jacobian at (x, y).
+
+        Constant for an affine transform. A polynomial transform can fold, so
+        its sign depends on where it is taken.
+        """
+        xcf = self.xcoef
+        ycf = self.ycoef
+        l = xcf[1] + xcf[3]*y + 2.0*xcf[4]*x
+        m = xcf[2] + xcf[3]*x + 2.0*xcf[5]*y
+        n = ycf[1] + ycf[3]*y + 2.0*ycf[4]*x
+        o = ycf[2] + ycf[3]*x + 2.0*ycf[5]*y
+        return l*o - m*n
+
     def transformPoints(self, points):
         tform_points = points.copy()
         for i in range(len(tform_points)):

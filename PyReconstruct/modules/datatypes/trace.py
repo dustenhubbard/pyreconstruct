@@ -23,9 +23,11 @@ def _xmlIsNegative(points : list, xml_tform : XMLTransform = None) -> bool:
 
     Reconstruct finds a contour's area after applying the contour's transform,
     so a mirrored transform reverses which way the points run. The sign comes
-    from the raw points and the determinant of the transform's linear part
-    rather than from transformed points: transforming would let rounding give
-    a flat trace a sign, and the polynomial inverse is not exact.
+    from the raw points and the sign of the transform's Jacobian determinant
+    where the contour lands, rather than from transformed points: transforming
+    would let rounding give a flat trace a sign. For an affine transform the
+    determinant is the same everywhere. A polynomial transform can fold
+    between the origin and the contour, so it is taken at the contour.
     """
     signed_area = 0
     for i in range(len(points)):
@@ -36,8 +38,9 @@ def _xmlIsNegative(points : list, xml_tform : XMLTransform = None) -> bool:
         return False
     negative = signed_area > 0
     if xml_tform is not None:
-        x, y = xml_tform.xcoef, xml_tform.ycoef
-        if x[1] * y[2] - x[2] * y[1] < 0:
+        cx = sum(p[0] for p in points) / len(points)
+        cy = sum(p[1] for p in points) / len(points)
+        if xml_tform.det_forward(*xml_tform.xy_inverse(cx, cy)) < 0:
             negative = not negative
     return negative
 

@@ -206,3 +206,28 @@ def test_xml_round_trip_keeps_negative_flags(qapp, tmp_path, section_xml):
         assert {t.name: t.negative for t in again.loadSection(0).tracesAsList()} == expected
     finally:
         again.close()
+
+
+# x' = x + x*y: the Jacobian determinant is 1 + y, so the transform folds
+# along y = -1. The origin is on one side of the fold and this trace is on the
+# other, so the linear part's determinant (1) gives the wrong sign.
+FOLD = XMLTransform(xcoef=[0, 1, 0, 1, 0, 0], ycoef=[0, 0, 1, 0, 0, 0])
+# a counterclockwise square on each side of the fold
+ABOVE_FOLD = [(1, 0.5), (2, 0.5), (2, 1.5), (1, 1.5)]
+BELOW_FOLD = [(1, -2.5), (2, -2.5), (2, -1.5), (1, -1.5)]
+
+
+@pytest.mark.parametrize(
+    "points, negative",
+    [(ABOVE_FOLD, False), (BELOW_FOLD, True)],
+    ids=["above-positive", "below-negative"],
+)
+def test_import_reads_the_direction_where_the_trace_lands(points, negative):
+    contour = XMLContour(
+        name="t", closed=True, mode=9, border=[1, 0, 0], fill=[1, 0, 0],
+        hidden=False, points=list(points), transform=FOLD,
+    )
+
+    # what Reconstruct reads, and what the import now reads
+    assert reads_negative(contour) is negative
+    assert Trace.fromXMLObj(contour, FOLD).negative is negative
