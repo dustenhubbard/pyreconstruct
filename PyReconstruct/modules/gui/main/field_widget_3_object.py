@@ -65,12 +65,14 @@ def object_color_seed(series_data, obj_names : list):
     return predominant, len(counts) > 1
 
 
-def notifyAmbiguousTraces(entries : list, shown : int = 10):
+def notifyAmbiguousTraces(entries : list, shown : int = 10,
+                          verb : str = "delete"):
     """Say which listed traces were left because more than one could be them.
 
     ``entries`` are (object name, section number, index, match) tuples, one
-    per row that Series.deleteMalformedTraces set aside. Rows naming the same
-    trace are one trace here. Nothing is shown for none.
+    per row that Series.deleteMalformedTraces (or repairSelfCrossingTraces,
+    with ``verb`` "repair") set aside. Rows naming the same trace are one
+    trace here. Nothing is shown for none.
     """
     targets = {}
     for name, snum, index, match in entries:
@@ -89,7 +91,7 @@ def notifyAmbiguousTraces(entries : list, shown : int = 10):
         lines.append(f"  and {count - shown} more")
     noun = "1 trace" if count == 1 else f"{count} traces"
     lead = (
-        f"PyReconstruct did not delete {noun}. The section changed after the "
+        f"PyReconstruct did not {verb} {noun}. The section changed after the "
         "scan, and PyReconstruct cannot tell which of the identical traces "
         "you chose:"
     )
@@ -418,14 +420,21 @@ class FieldWidgetObject(FieldWidgetTrace):
 
         self.mainwindow.saveAllData()
 
+        ambiguous = []
         repaired = self.series.repairSelfCrossingTraces(
             records,
             series_states=self.series_states,
+            ambiguous=ambiguous,
         )
 
         if repaired:
             self.table_manager.updateObjects({r["name"] for r in repaired})
             self.reload()
+
+        notifyAmbiguousTraces([
+            (r["name"], r["section"], r.get("index"), r["match"])
+            for r in ambiguous
+        ], verb="repair")
         return repaired
 
     def deleteMalformedContours(self, records: list) -> list:
