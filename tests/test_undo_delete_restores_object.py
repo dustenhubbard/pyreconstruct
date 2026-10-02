@@ -274,25 +274,68 @@ def test_a_redo_that_empties_nothing_replaces_the_old_value(window):
     )
 
 
-def test_an_object_deleted_with_logging_off_loses_its_attributes(window):
-    """An import updates the series data with logging off. An object it
-    deletes must lose its attributes, or a later object of that name starts
-    with the old alignment pin."""
-    series = window.series
-    pin = next(a for a in series.alignments if a != series.alignment)
-    _draw(window)
-    series.setAttr(NAME, "alignment", pin)
-    section = window.field.section
+def test_an_import_that_moves_an_object_keeps_its_attributes(tmp_path,
+                                                              monkeypatch):
+    """A is only on one section and carries a comment. The imported copy
+    deleted A there and drew it on another section. The import removes A
+    from the first section before it adds A on the second, and A must come
+    out of it with its comment."""
+    import shutil
+    from pathlib import Path
 
-    series.data.supress_logging = True
+    from PyReconstruct.modules.backend.notifier import NullNotifier
+    from PyReconstruct.modules.backend.progress import NullProgressReporter
+    from PyReconstruct.modules.backend.settings_store import DictSettingsStore
+    from PyReconstruct.modules.datatypes.series import Series
+
+    fixture = (Path(__file__).resolve().parents[1] / "dev" / "assets" /
+               "checker" / "files" / "shapes1.jser")
+    if not fixture.exists():
+        pytest.skip("fixture shapes1.jser not found")
+    # the username is read from the settings; never set it on the series
+    monkeypatch.setattr(Series, "user", property(lambda self: "tester"))
+
+    def open_series(fp):
+        series = Series.openJser(str(fp), progress=NullProgressReporter,
+                                 notifier=NullNotifier())
+        series.setSettingsStore(DictSettingsStore())
+        return series
+
+    def square(series, snum, offset):
+        section = series.loadSection(snum)
+        t = Trace(NAME, (0, 255, 0), True)
+        x0 = y0 = offset
+        t.points = [(x0, y0), (x0 + 1, y0), (x0 + 1, y0 + 1), (x0, y0 + 1)]
+        section.addTrace(t)
+        section.save()
+
+    here_fp = tmp_path / "here" / "series.jser"
+    here_fp.parent.mkdir()
+    shutil.copyfile(fixture, here_fp)
+    here = open_series(here_fp)
+    first, second = sorted(here.sections)[:2]
+    square(here, first, 1.0)
+    here.setAttr(NAME, "comment", "keep me")
+    here.saveJser()
+
+    there_fp = tmp_path / "there" / "series.jser"
+    there_fp.parent.mkdir()
+    shutil.copyfile(here_fp, there_fp)
+    there = open_series(there_fp)
+    section = there.loadSection(first)
+    for trace in list(section.contours[NAME]):
+        section.removeTrace(trace)
+    section.save()
+    square(there, second, 3.0)
+    there.save()
+
     try:
-        for trace in _traces(window):
-            section.removeTrace(trace, log_event=False)
-        series.data.updateSection(section, update_traces=True)
+        here.importTraces(there)
+        assert NAME not in here.loadSection(first).contours or \
+            not len(here.loadSection(first).contours[NAME])
+        assert len(here.loadSection(second).contours[NAME]) == 1
+        assert here.getAttr(NAME, "comment") == "keep me"
     finally:
-        series.data.supress_logging = False
-    assert NAME not in series.data["objects"]
-    assert NAME not in series.obj_attrs
-
-    _draw(window, offset=0.6)
-    assert series.getAttr(NAME, "alignment") == series.alignment
+        for series in (here, there):
+            series.leave_open = False
+            series.close()

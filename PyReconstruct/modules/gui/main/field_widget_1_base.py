@@ -402,6 +402,7 @@ class FieldWidgetBase:
         section_states = self.series_states[self.section.n]
         undos_before = len(section_states.undo_states)
         redos_before = len(section_states.redo_states)
+        section_states.restored_alignments = {}
         self.series_states.undoSection(self.section, redo)
 
         # an undo or redo that moves the section leaves no change to pick up
@@ -411,6 +412,13 @@ class FieldWidgetBase:
 
         # update the data/tables
         self.updateData()
+
+        # updateData gave each object the step recreated the current
+        # alignment; put back the pin the object had
+        for name, alignment in section_states.restored_alignments.items():
+            if name in self.series.data["objects"]:
+                self.series.setAttr(name, "alignment", alignment)
+        section_states.restored_alignments = {}
 
         # updateData deletes an object whose last trace the step took, and
         # its groups with it; their visibility entries go too. The dropped

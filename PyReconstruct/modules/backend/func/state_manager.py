@@ -314,6 +314,22 @@ def restoreObjectSnapshot(series : Series, snapshot : dict, recreated,
                 series.host_tree.add(traveler, [name])
 
 
+def recreatedAlignments(snapshot : dict, recreated) -> dict:
+    """The alignment pin of each recreated object that had one.
+
+    SeriesData sets a new object's alignment to the current one when it
+    first sees it, so a section undo or redo that brings an object back loses
+    the pin it put back. The field puts it back again after that update
+    (FieldWidgetBase.undoState).
+    """
+    out = {}
+    for name in recreated:
+        alignment = (snapshot.get(name) or {}).get("attrs", {}).get("alignment")
+        if alignment is not None:
+            out[name] = alignment
+    return out
+
+
 def dropEmptiedGroups(series : Series, groups_before) -> dict:
     """Drop the visibility entry of each group a section undo or redo emptied.
 
@@ -369,6 +385,9 @@ class SectionStates():
         self.current_state = None
         self.undo_states = []
         self.redo_states = []
+        # name -> alignment pin, for each object the last undo or redo
+        # recreated (see recreatedAlignments)
+        self.restored_alignments = {}
         if section and series:
             self.initialize(section, series)
     
@@ -634,10 +653,12 @@ class SectionStates():
             n for n in modified_contours
             if n not in existed and len(section.contours.get(n, []))
         ]
+        snapshot = getattr(self.current_state, "obj_snapshot", {})
         restoreObjectSnapshot(
-            series, getattr(self.current_state, "obj_snapshot", {}), recreated,
+            series, snapshot, recreated,
             getattr(self.current_state, "undo_group_viz", None),
         )
+        self.restored_alignments = recreatedAlignments(snapshot, recreated)
 
         return modified_contours, modified_ztraces
 
@@ -663,10 +684,12 @@ class SectionStates():
             n for n in state_contours
             if n not in existed and len(state_contours[n])
         ]
+        snapshot = getattr(redo_state, "obj_snapshot", {})
         restoreObjectSnapshot(
-            series, getattr(redo_state, "obj_snapshot", {}), recreated,
+            series, snapshot, recreated,
             getattr(redo_state, "group_viz", None),
         )
+        self.restored_alignments = recreatedAlignments(snapshot, recreated)
         # restore the ztraces
         state_ztraces = redo_state.getZtraces()
         modified_ztraces = redo_state.getModifiedZtraces()

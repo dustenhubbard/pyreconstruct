@@ -304,23 +304,14 @@ class SeriesData():
                 for obj_name in added_objects:
                     
                     self.series.addLog(obj_name, None, "Create object")
-                    ## Set the fixed alignment of the object to creation. An
-                    ## undo that brings a deleted object back has already
-                    ## put its own alignment back (objectSnapshot); keep it.
-                    attrs = self.series.obj_attrs.get(obj_name) or {}
-                    if attrs.get("alignment") is None:
-                        self.series.setAttr(obj_name, "alignment", self.series.alignment)
+                    ## Set the fixed alignment of the object to creation
+                    self.series.setAttr(obj_name, "alignment", self.series.alignment)
                     
                 for obj_name in removed_objects:
                     
                     self.series.addLog(obj_name, None, "Delete object")
-
-            ## Remove deleted objects from the object attributes dicts, logged
-            ## or not: an import runs with logging off, and an object it
-            ## deleted kept its attributes, so a later object of that name
-            ## started with the old ones (its alignment pin among them)
-            for obj_name in removed_objects:
-                self.series.removeObjAttrs(obj_name)
+                    ## Remove object from object attributes dicts
+                    self.series.removeObjAttrs(obj_name)
     
     def addTrace(self, trace : Trace, section : Section):
         """Add trace data to the existing object.
