@@ -279,9 +279,12 @@ def test_getdatetime_uses_the_default_store_when_none_passed():
 
 def test_getdatetime_honors_utc_preference():
     """get_now returns UTC or local time according to the preference."""
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
     from PyReconstruct.modules.constants import get_now
+
+    def utcnow():
+        return datetime.now(timezone.utc).replace(tzinfo=None)
 
     original = default_settings_store()
     store = DictSettingsStore()
@@ -289,14 +292,14 @@ def test_getdatetime_honors_utc_preference():
         set_default_settings_store(store)
 
         store.set_value(None, "utc", True)
-        assert abs((get_now() - datetime.utcnow()).total_seconds()) < 5
+        assert abs((get_now() - utcnow()).total_seconds()) < 5
 
         store.set_value(None, "utc", False)
         assert abs((get_now() - datetime.now()).total_seconds()) < 5
 
         # a nonzero UTC offset makes the two branches distinguishable; skip the
         # assertion where local time *is* UTC (CI machines often run in UTC)
-        offset = abs((datetime.now() - datetime.utcnow()).total_seconds())
+        offset = abs((datetime.now() - utcnow()).total_seconds())
         if offset > 60:
             store.set_value(None, "utc", True)
             utc_now = get_now()

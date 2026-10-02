@@ -21,7 +21,7 @@ publisher" SmartScreen warning (click *More info → Run anyway*).
 
 ## Prerequisites
 
-- **Python 3.11** (the pinned `numpy==1.24.1` has no 3.12 wheels).
+- **Python 3.11**, the version the installers are built and tested on.
 - The project installed into that environment, which also generates
   `PyReconstruct/_version.py` (read by the frozen app for its version):
 

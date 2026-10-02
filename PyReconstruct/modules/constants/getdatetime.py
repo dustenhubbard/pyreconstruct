@@ -7,7 +7,7 @@ no Qt. GUI callers get the `QSettingsStore` default, i.e. the same
 org/app ("KHLab"/"PyReconstruct") and key this module read before.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from PyReconstruct.modules.backend.settings_store import (
@@ -60,7 +60,10 @@ def utc_p(store: Optional[SettingsStore] = None) -> bool:
 def get_now() -> datetime:
     """Return now's datetime object."""
 
-    return datetime.utcnow() if utc_p() else datetime.now()
+    if utc_p():
+        # Naive UTC, the same value utcnow gave before Python 3.12 deprecated it.
+        return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now()
 
 
 def remove_days_from_today(delta_days: int):

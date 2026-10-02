@@ -7,7 +7,10 @@ name = "pyreconstruct"
 dynamic = ["version"]
 description = "RECONSTRUCT in Python"
 readme = "README.md"
-requires-python = ">=3.11,<3.12"
+# 3.11 and 3.12, and CI runs the suite on both. 3.13 stays out until numpy
+# can move to 2.x, the first line with 3.13 wheels, and that needs a newer
+# opencv built against it.
+requires-python = ">=3.11,<3.13"
 license = { text = "GPL-3.0-or-later" }
 authors = [
     { name = "Julian Falco" },
@@ -23,7 +26,13 @@ dependencies = [
     "vtk==9.5.2",
     "vedo==2025.5.4",
     "opencv-python-headless==4.8.1.78",
-    "numpy==1.24.1",
+    # Two numpy pins, one per Python line. 1.24.1 has no wheels for 3.12, whose
+    # first numpy is 1.26. 3.11 keeps 1.24.1 so the installers, which build on
+    # 3.11, and every existing 3.11 environment resolve exactly what they did
+    # before 3.12 was allowed. The installer build reads the first numpy pin in
+    # this file for its macOS wheels, so the 3.11 line has to stay first.
+    "numpy==1.24.1; python_version < '3.12'",
+    "numpy==1.26.4; python_version >= '3.12'",
     "scipy==1.14.1",
     "scikit-image==0.23.2",
     "shapely==2.1.1",
