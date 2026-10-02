@@ -1,6 +1,6 @@
 import os
 import webbrowser
-from datetime import datetime
+from datetime import datetime, timezone
 
 from PySide6.QtWidgets import (
     QDialog, 
@@ -31,7 +31,10 @@ class BackupDialog(QDialog):
         self.series = series
 
         utc = self.series.getOption("utc")
-        self.now = datetime.utcnow() if utc else datetime.now()
+        if utc:
+            self.now = datetime.now(timezone.utc).replace(tzinfo=None)
+        else:
+            self.now = datetime.now()
         self.fp = ""
 
         vlayout = QVBoxLayout()

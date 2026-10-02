@@ -154,3 +154,42 @@ def test_linux_installer_accepts_the_running_python(tmp_path):
 
     assert run(sys.executable) == "yes"
     assert run(not_python) == "no"
+
+
+def test_no_datetime_utcnow_in_pyreconstruct():
+    """datetime.utcnow() warns from 3.12 and is slated for removal. The UTC
+    timestamps use datetime.now(timezone.utc) with the zone dropped, which is
+    the same naive value."""
+    package = REPO_ROOT / "PyReconstruct"
+    callers = sorted(
+        str(path.relative_to(REPO_ROOT))
+        for path in package.rglob("*.py")
+        if "utcnow(" in path.read_text(encoding="utf-8")
+    )
+    assert callers == []
+
+
+def test_get_now_in_utc_does_not_warn():
+    import warnings
+    from datetime import datetime, timezone
+
+    from PyReconstruct.modules.backend.settings_store import (
+        DictSettingsStore,
+        default_settings_store,
+        set_default_settings_store,
+    )
+    from PyReconstruct.modules.constants import get_now
+
+    original = default_settings_store()
+    store = DictSettingsStore()
+    try:
+        set_default_settings_store(store)
+        store.set_value(None, "utc", True)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", DeprecationWarning)
+            now = get_now()
+        assert now.tzinfo is None
+        expected = datetime.now(timezone.utc).replace(tzinfo=None)
+        assert abs((expected - now).total_seconds()) < 5
+    finally:
+        set_default_settings_store(original)
