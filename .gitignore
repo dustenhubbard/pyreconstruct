@@ -23,3 +23,8 @@ test.py
 PyReconstruct/_version.py
 # MkDocs build output
 site/
+# screenshot tests: diffs from a failed run, and local baseline sets. Only the
+# linux set, the one CI compares, is committed.
+tests/visual_diffs/
+tests/visual_baselines/*
+!tests/visual_baselines/linux/
