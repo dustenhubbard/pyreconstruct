@@ -168,3 +168,67 @@ def test_undoing_past_the_first_change_here_is_not_included(field):
     field.setPropagationMode(True)
 
     assert field.stored_tform.equals(Transform.identity())
+
+
+def test_a_redone_change_is_not_included(field):
+    # a redo moves the section like an undo does, so recording starts over
+    field.translateTform(3, 4)
+    moved = field.section.tform.copy()
+    field.undoState()
+    field.undoState(redo=True)
+    assert field.section.tform.equals(moved), "the redo should move the section back"
+
+    field.setPropagationMode(True)
+
+    assert field.stored_tform.equals(Transform.identity())
+
+
+def test_a_change_after_a_redo_is_included_alone(field):
+    field.translateTform(3, 4)
+    field.undoState()
+    field.undoState(redo=True)
+    field.translateTform(1, -2)
+
+    field.setPropagationMode(True)
+
+    assert field.stored_tform.equals(Transform([1, 0, 1, 0, 1, -2]))
+
+
+def _set_tforms(field, tforms):
+    for n, t in tforms.items():
+        section = field.series.loadSection(n)
+        section.tform = t
+        section.save()
+    field.reload()
+
+
+def test_affine_changes_that_do_not_commute_propagate_in_order(field):
+    start = field.section.n
+    later = [n for n in sorted(field.series.sections) if n > start]
+    assert later, "the fixture series needs a section after the current one"
+    # every section starts somewhere different, so the order matters
+    base = Transform([1.1, 0.2, 5, -0.1, 0.9, -3])
+    _set_tforms(field, {start: base, **{
+        n: Transform([1, 0.05 * i, 2 * i, 0, 1.2, -i]) for i, n in enumerate(later, 1)
+    }})
+    before_later = {n: field.series.loadSection(n).tform.copy() for n in later}
+
+    rotate = Transform([0, -1, 0, 1, 0, 0])
+    shear = Transform([1, 0.5, 0, 0, 1, 0])
+    assert not (rotate * shear).equals(shear * rotate), "pick transforms that do not commute"
+    field.changeTform(field.section.tform * rotate)
+    field.changeTform(field.section.tform * shear)
+    aligned = field.section.tform.copy()
+
+    field.setPropagationMode(True)
+    delta = aligned * base.inverted()
+    assert field.stored_tform.equals(delta)
+    assert not field.stored_tform.equals(base.inverted() * aligned)
+
+    field.propagateTo(to_end=True)
+
+    assert field.section.tform.equals(aligned), "the current section moved twice"
+    for n in later:
+        got = field.series.loadSection(n).tform
+        assert got.equals(delta * before_later[n]), f"section {n} was not propagated"
+        assert not got.equals(before_later[n] * delta), f"section {n} took the wrong order"

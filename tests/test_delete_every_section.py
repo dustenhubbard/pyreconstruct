@@ -59,6 +59,31 @@ def test_deleting_all_but_one_section_still_works(series):
     assert_consistent(series, everything[:1])
 
 
+def test_the_only_section_of_a_series_is_refused(series):
+    everything = sorted(series.sections)
+    series.deleteSections(everything[1:])
+    assert_consistent(series, everything[:1])
+
+    with pytest.raises(ValueError):
+        series.deleteSections(everything[:1])
+
+    assert_consistent(series, everything[:1])
+    assert logged_deletions(series) == set(everything[1:])
+
+
+def test_every_section_and_an_unknown_one_deletes_nothing(series):
+    everything = sorted(series.sections)
+    unknown = max(everything) + 100
+
+    # the unknown number is reported, as it is for any request, and nothing
+    # is deleted either way
+    with pytest.raises(KeyError):
+        series.deleteSections(everything + [unknown])
+
+    assert_consistent(series, everything)
+    assert not logged_deletions(series)
+
+
 # --------------------------------------------------------------------------
 # the section list
 # --------------------------------------------------------------------------
