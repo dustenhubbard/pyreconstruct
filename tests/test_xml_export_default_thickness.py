@@ -18,7 +18,9 @@ def test_default_thickness_is_written_without_float_noise(qapp, real_series, tmp
         section.thickness = THICKNESSES[i % len(THICKNESSES)]
         section.save()
     average = real_series.avg_thickness
-    assert repr(average) == "0.04700000000000001"  # the plain average is noisy
+    # The plain average is noisy. Python 3.12 sums floats with compensation, so the
+    # noise lands on the other side of 0.047 there; either way it is not 0.047.
+    assert average != 0.047 and abs(average - 0.047) < 1e-12
 
     out = tmp_path / "xml"
     out.mkdir()
