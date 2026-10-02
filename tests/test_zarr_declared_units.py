@@ -266,6 +266,29 @@ def test_overlay_places_labels_the_same_in_any_units(tmp_path, raw_attrs, label_
     assert _overlay(tmp_path, raw_attrs, label_attrs) == pytest.approx(NM_OVERLAY)
 
 
+## 4 nm raw and labels on raw's grid, 2 label pixels right, 1 down and 1 slice in
+RAW_GRID_OVERLAY = (0.004, 1.008, 2.004, 4)
+
+
+@pytest.mark.parametrize(
+    "raw_attrs, label_attrs",
+    [
+        # labels with no size share raw's grid, as import reads them
+        ({"resolution": [50, 4, 4]}, {"offset": [50, 4, 8]}),
+        ({"voxel_size": [0.05, 0.004, 0.004], "units": "um"}, {"offset": [50, 4, 8]}),
+        # raw with no size is on the series grid: true mag and 50 nm sections
+        ({}, {"offset": [50, 4, 8]}),
+        ({}, {"resolution": [50, 4, 4], "offset": [50, 4, 8]}),
+    ],
+)
+def test_overlay_puts_labels_with_no_size_on_raws_grid(tmp_path, raw_attrs, label_attrs):
+    assert _overlay(tmp_path, raw_attrs, label_attrs) == pytest.approx(RAW_GRID_OVERLAY)
+
+
+def test_overlay_with_no_size_on_either_array_starts_at_raws_corner(tmp_path):
+    assert _overlay(tmp_path, {}, {}) == pytest.approx((0.004, 1, 2, 3))
+
+
 ## ng_view.py
 
 
