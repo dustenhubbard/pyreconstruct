@@ -8,8 +8,8 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 import zarr
+import cv2
 
-from PySide6.QtGui import QImageReader
 from PySide6.QtWidgets import QApplication
 
 from PyReconstruct.modules.backend.imports import modules_available
@@ -25,8 +25,6 @@ from PyReconstruct.modules.backend.autoseg import (
     createZarrName,
     rechunk
 )
-
-from PyReconstruct.modules.backend.autoseg.conversions import get_true_mag
 
 from PyReconstruct.assets.scripts.create_ng_zarr.parser import (
     get_args,
@@ -80,32 +78,28 @@ for n in sorted(list(series.sections.keys())):
     if start <= n <= end:
         sections.append(n)
 
-## The first section's mag sets the padding and, without --mag, the zarr's
-## pixel size
+## Sample a section and get img mag and dim
+## Assume all sections same dim for now
 
-img_mag = series.loadSection(sections[0]).mag
-zarr_mag = mag if mag is not None else img_mag
+section = series.loadSection(sections[0])
+img_mag = section.mag
+
+## TODO: Validate Zarr container more appropriately
+if series.src_dir.endswith("zarr"):
+
+    img_scale_1 = os.path.join(series.src_dir, "scale_1", section.src)
+    h, w = zarr.open(img_scale_1).shape
+
+else:
+
+    img_fp = os.path.join(series.src_dir, section.src)
+    h, w, _ = cv2.imread(img_fp).shape
 
 
-def image_size(section):
-    """The w and h in pixels of a section's image, or None if it is missing.
+img_corners = [(0, 0), (w, 0), (w, h), (0, h)]
 
-    Reads the header, not the pixels.
-    """
-
-    ## TODO: Validate Zarr container more appropriately
-    if series.src_dir.endswith("zarr"):
-
-        img_scale_1 = os.path.join(series.src_dir, "scale_1", section.src)
-        try:
-            h, w = zarr.open(img_scale_1, "r").shape
-        except (KeyError, ValueError, AttributeError):
-            return None
-        return w, h
-
-    size = QImageReader(section.src_fp).size()
-    return (size.width(), size.height()) if size.isValid() else None
-
+convert_microns = lambda x: x * img_mag
+img_corners = [list(map(convert_microns, elem)) for elem in img_corners]
 
 ## Determine if req all tissue or crop
 
@@ -119,20 +113,10 @@ if get_all:  # request all available tissue
 
     x_mins, y_mins, x_maxs, y_maxs = ([], [], [], [])
 
-    for snum in sections:
+    for section in sections:
 
-        ## each section's own image: one size for all cropped any larger one
-        section = series.loadSection(snum)
-        size = image_size(section)
-        if size is None:
-            continue
-
-        w, h = size
-        img_corners = [
-            (x * section.mag, y * section.mag)
-            for x, y in [(0, 0), (w, 0), (w, h), (0, h)]
-        ]
-        corners_transformed = section.tform.map(img_corners)
+        sec_tform = series.loadSection(section).tform
+        corners_transformed = sec_tform.map(img_corners)
 
         x_vals, y_vals = list(zip(*corners_transformed))
 
@@ -141,10 +125,6 @@ if get_all:  # request all available tissue
         
         x_maxs.append(max(x_vals))
         y_maxs.append(max(y_vals))
-
-    if not x_mins:
-        series.close()
-        sys.exit("Conversion failed: no section image could be read.")
 
     window = [
         min(x_mins),                # x
@@ -184,7 +164,7 @@ if not labels_only:
     zarr_fp = seriesToZarr(
         series,
         sections,
-        zarr_mag,
+        img_mag,
         window=window,
         data_fp=output_zarr,
         other_attrs=additional_attrs
@@ -203,10 +183,6 @@ if groups:
 
     raw_section_bounds = [min(sections), max(sections)]
 
-    ## labels are drawn on raw's grid, which --labels_only may have written
-    ## at another --mag
-    raw_mag = get_true_mag(zarr.open(str(zarr_fp), "r")["raw"])
-
     for group in groups:
 
         print_flush(f"Converting group {group} to labels...")
@@ -223,7 +199,7 @@ if groups:
             zarr_fp,
             group,
             window=window_group,
-            img_mag=raw_mag,
+            img_mag=img_mag,
             raw_window=window
         ):
             series.close()
@@ -247,4 +223,4 @@ if modules_available("dask"):
 
 ## Print summary
 
-print_summary(series, window, start, end, zarr_mag, zarr_fp)
+print_summary(series, window, start, end, mag, zarr_fp)

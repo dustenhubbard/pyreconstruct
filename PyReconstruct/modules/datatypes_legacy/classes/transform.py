@@ -158,8 +158,8 @@ class Transform(object):
         elif dim in [4, 5, 6]:  # all hell breaks loose
             u, v = x, y  # (u, v) for which we want (x, y)
             x0, y0 = 0.0, 0.0  # initial (x, y) guess
-            u0 = self.x_forward(x0, y0)  # forward t-form of initial guess
-            v0 = self.y_forward(x0, y0)
+            u0 = self.x_forward(x, y)  # forward t-form of initial guess
+            v0 = self.y_forward(x, y)
             i = 0  # allow no more than 10 iterations
             e = 1.0  # to reduce error to this limit
             while e > epsilon and i < 10:

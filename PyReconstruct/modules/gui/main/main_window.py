@@ -5096,6 +5096,10 @@ class MainWindow(QMainWindow):
     def toggleGroupViz(self, group):
         """Toggle visibility of a group."""
 
+        # the reload below reads the sections from their files, so an edit
+        # not yet written there (a trace just drawn) has to be written first
+        self.saveAllData()
+
         group_viz = self.series.groups_visibility
         group_viz[group] = not group_viz[group]
 

@@ -193,13 +193,7 @@ def voxel_nm(size_um):
     fraction: int() made 2.54 nm pixels 2 nm and 0.5 nm pixels 0.
     """
 
-    return _exact_nm(size_um * 1000)
-
-
-def _exact_nm(nm):
-    """A length in nm, rounded to a millionth of a nm; whole numbers as ints."""
-
-    nm = round(nm, 6)
+    nm = round(size_um * 1000, 6)
     return int(nm) if float(nm).is_integer() else nm
 
 
@@ -229,9 +223,8 @@ def get_offset(window, resolution, img_mag, relative_to, section_diff=0):
     x_diff_scaled = x_diff_real * scale_x
     y_diff_scaled = y_diff_real * scale_y
 
-    ## the fraction stays: whole nm lost up to a pixel at 0.5 nm pixels
-    x = _exact_nm(x_diff_scaled * 1000)
-    y = _exact_nm(y_diff_scaled * 1000)
+    x = round(x_diff_scaled * 1000)
+    y = round(y_diff_scaled * 1000)
     
     z = section_diff * resolution[0]  # offset in z
 
