@@ -45,8 +45,8 @@ def get_args ():
         "--mag",
         "-m",
         type=float,
-        default=0.002,
-        help="output zarr lateral resolution (default %(default)s μm)",
+        default=None,
+        help="output zarr lateral resolution in μm (default: the first section's image)",
     )
 
     parser.add_argument(
@@ -110,6 +110,9 @@ def get_args ():
     if not args.jser or not os.path.exists(args.jser):
         parser.error("Please provide filepath to a valid jser.")
 
+    if args.mag is not None and not float(args.mag) > 0:
+        parser.error("--mag must be greater than 0.")
+
     return args
 
 
@@ -119,7 +122,7 @@ def parse_args(args):
     output_zarr = args.output
     start = args.start_section
     end = args.end_section
-    mag = float(args.mag)
+    mag = None if args.mag is None else float(args.mag)
     padding = int(args.padding)
     max_tissue = bool(args.max_tissue)
     labels_only = bool(args.labels_only)
