@@ -219,6 +219,10 @@ class FieldWidgetData(FieldWidgetObject):
         checking = getProgbar("Checking sections for propagation...", cancel=False)
         try:
             self.section.save()
+            # the flickered-away section can hold unsaved edits too, and the
+            # reload at the end reads both sections back from their files
+            if self.b_section:
+                self.b_section.save()
             included_sections = []
             for snum in self.series.sections:
                 if snum not in self.propagated_sections:
@@ -543,8 +547,7 @@ class FieldWidgetData(FieldWidgetObject):
             shift_y
         ])
         # the shift is measured in field space (post-transform), so compose it
-        # after the existing tform: A * B maps p -> B(A(p)) in this codebase
-        self.section.tform = current_tform * shift_tform
-
-        self.generateView()
-        self.saveState()
+        # after the existing tform: A * B maps p -> B(A(p)) in this codebase.
+        # changeTform records it for propagation, logs it and saves the state,
+        # the same as corrAlign
+        self.changeTform(current_tform * shift_tform)
