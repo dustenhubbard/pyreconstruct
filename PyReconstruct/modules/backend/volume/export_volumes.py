@@ -173,25 +173,32 @@ def export3DData(series: Series, obj_names: list, output_fp: str, notify_user: b
             f"measure them."
         )
 
-    if not errors and skipped and len(skipped) == len(obj_names):
+    # one object that fails to measure used to keep the whole CSV from being
+    # written; the rows that did measure are written and the failures named
+    error_note = ""
+    if errors:
+        print(errors)
+        names = ", ".join(sorted(errors))
+        error_note = f"\nCould not be measured (see console): {names}."
 
-        if notify_user:
-            notify("No data exported.\n" + skipped_note)
+    measured = len(obj_names) - len(skipped) - len(errors)
 
-    elif not errors:
+    if measured or not obj_names:
 
         with open(output_fp, "w") as fp:
             fp.write(csv_str)
 
         if notify_user:
-            notify(f"Data exported to:\n\n{Path(output_fp).absolute()}\n" + skipped_note)
+            notify(
+                f"Data exported to:\n\n{Path(output_fp).absolute()}\n"
+                + skipped_note + error_note
+            )
 
-    if errors:
+    elif notify_user:
 
-        print(errors)
-        notify("There were errors exporting data from some or all of the objects. See console.")
+        notify("No data exported.\n" + skipped_note + error_note)
 
-        
+
 def _init_3D_obj(series: Series, obj_name: str) -> Union[Surface, Spheres, Contours]:
     """Create the initial (empty) 3D object for the object's configured mode."""
 
