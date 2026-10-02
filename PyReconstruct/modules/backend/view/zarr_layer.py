@@ -36,28 +36,31 @@ class ZarrLayer():
         """Load the relevant data from the zarr file."""
         # here, not at the top: conversions imports this package
         from PyReconstruct.modules.backend.autoseg.conversions import (
-            as_nm,
             get_label_offset,
-            get_resolution,
+            get_label_resolutions,
+            get_true_mag,
         )
 
         group = zarr.open(self.series.zarr_overlay_fp)
         self.zarr = group[self.series.zarr_overlay_group]
         raw = group["raw"]
-        # sizes and offsets in nm, whatever units each array declares
-        self.raw_resolution = as_nm(get_resolution(raw), raw)
+        # sizes and offsets in nm, whatever units each array declares. An
+        # array with no size gets the grid label import gives it: raw the
+        # series grid, labels raw's grid
+        self.resolution, self.raw_resolution = get_label_resolutions(
+            self.zarr, raw
+        )
 
         # check if labels or otherwise
         self.is_labels = (len(self.zarr.shape) == 3)
 
         # get relevant data from overlay zarr
         self.offset = get_label_offset(self.zarr, raw)
-        self.resolution = as_nm(get_resolution(self.zarr), self.zarr)
 
         # get the relevant data from the raw in the zarr folder
         self.zarr_x, self.zarr_y = tuple(raw.attrs["window"][:2])
         self.zarr_s = raw.attrs["sections"][0]
-        self.zarr_mag = raw.attrs["true_mag"] * (self.resolution[-1] / self.raw_resolution[-1])
+        self.zarr_mag = get_true_mag(raw) * (self.resolution[-1] / self.raw_resolution[-1])
 
         # modify attributes
         pixel_offset = [o / r for o, r in zip(self.offset, self.resolution)]
