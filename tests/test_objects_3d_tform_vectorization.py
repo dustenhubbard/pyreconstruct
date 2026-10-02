@@ -15,8 +15,8 @@ They also pin two things that are easy to break while batching:
   per-trace min/max -- equivalent only because ``addToExtremes`` compares each
   coordinate independently;
 * the exact Python types in the emitted point tuples (``float`` when a tform is
-  applied, the *original* untouched values when it is not -- integer trace
-  coordinates must stay integers, since ``generateTrimesh`` rounds them).
+  applied, the *original* untouched values when it is not, so integer trace
+  coordinates stay integers, as they did in the scalar loop).
 
 ``Ztrace3D.generate3D`` is pinned here as well. It is deliberately *not*
 batched -- every point carries its own section, so its tform varies per point
