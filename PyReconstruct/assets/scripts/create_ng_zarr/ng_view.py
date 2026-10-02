@@ -9,6 +9,8 @@ import sys
 import zarr
 import neuroglancer
 
+from PyReconstruct.modules.backend.autoseg.conversions import as_nm, get_resolution
+
 ## Open zarr
 
 f = zarr.open(sys.argv[1])
@@ -24,7 +26,7 @@ viewer = neuroglancer.Viewer()
 
 ## Get resolution
 
-resolution = f['raw'].attrs.get("resolution")
+resolution = as_nm(get_resolution(f['raw']), f['raw'])  # in nm, whatever the units
 
 res = neuroglancer.CoordinateSpace(names = ['z', 'y', 'x'],
                                    units = ['nm', 'nm', 'nm'],

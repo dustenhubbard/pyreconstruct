@@ -226,8 +226,13 @@ def test_import_section_never_wraps_to_another_slice(real_series, monkeypatch):
             touched.append(z)
             return np.zeros((10, 10), dtype=np.uint64)
 
-    arr = RecordingArray()
-    monkeypatch.setattr(conversions, "get_zarr_array", lambda zg, name: arr)
+    class RawArray(RecordingArray):
+        attrs = {**RecordingArray.attrs, "offset": [0, 0, 0]}
+
+    arr, raw = RecordingArray(), RawArray()
+    monkeypatch.setattr(
+        conversions, "get_zarr_array", lambda zg, name: raw if name == "raw" else arr
+    )
 
     # z_offset = 100/50 = 2. Section 0 has z index 0, zi = -2: must be skipped.
     conversions.importSection(None, "labels_test", 0, real_series)
