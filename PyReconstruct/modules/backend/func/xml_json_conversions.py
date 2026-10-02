@@ -430,8 +430,9 @@ def seriesJSONtoXML(series : Series, new_dir : str, thickness: str, last_section
     for ztrace in series.ztraces.values():
         xml_series.zcontours.append(ztrace.getXMLObj(series))
     
-    ## Set section thickness, written in full like the section files
-    xml_series.defaultThickness = float(series.avg_thickness)
+    ## Set section thickness, written in full like the section files but
+    ## without the float noise an average can carry
+    xml_series.defaultThickness = float(f"{series.avg_thickness:.12g}")
     
     write_series(
         xml_series,
