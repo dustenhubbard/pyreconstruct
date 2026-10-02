@@ -15,7 +15,6 @@ import types
 
 import pytest
 
-from PyReconstruct.modules.datatypes import Transform
 from PyReconstruct.modules.datatypes.trace import Trace
 from PyReconstruct.modules.gui.main import field_widget_4_data as fw
 
