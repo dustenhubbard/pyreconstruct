@@ -195,6 +195,53 @@ def test_a_column_with_no_options_is_shown_but_cannot_be_set(tmp_path, monkeypat
         s.close()
 
 
+def test_an_untouched_ok_keeps_the_saved_column_order(tmp_path, monkeypatch):
+    """The saved values come back as the same dict in the same key order, so
+    the palette data is written unchanged."""
+    from PyReconstruct.modules.gui.dialog.trace import TraceDialog
+
+    s = _open(tmp_path)
+    try:
+        s.addUserCol("A", ["1", "2"], log_event=False)
+        s.addUserCol("B", ["x"], log_event=False)
+        item = Trace("item", (1, 2, 3), True)
+        item.points = [(0, 0), (1, 0), (1, 1), (0, 1)]
+        item.obj_defaults = {"user_columns": {"B": "x", "A": "2"}}
+        dlg = TraceDialog(None, [item], is_palette=True, series=s)
+        _accept(monkeypatch)
+        t, _ = dlg.exec()
+        assert list(t.obj_defaults["user_columns"].items()) == [("B", "x"), ("A", "2")]
+    finally:
+        s.close()
+
+
+def test_dropdowns_follow_the_object_list_column_order(tmp_path):
+    """Reordering the columns with Set columns... reorders the dropdowns."""
+    from PyReconstruct.modules.gui.dialog.trace import TraceDialog
+
+    s = _open(tmp_path)
+    try:
+        s.addUserCol("Reviewer", ["KH"], log_event=False)
+        s.addUserCol("Stage", ["draft"], log_event=False)
+        s.addUserCol("Unlisted", ["u"], log_event=False)
+        item = Trace("item", (1, 2, 3), True)
+        item.points = [(0, 0), (1, 0), (1, 1), (0, 1)]
+        base = [c for c in s.getOption("object_columns") if c[0] not in s.user_columns]
+
+        def order():
+            dlg = TraceDialog(None, [item], is_palette=True, series=s)
+            names = list(dlg.columns_input.combos)
+            dlg.close()
+            return names
+
+        s.setOption("object_columns", base + [("Reviewer", True), ("Stage", True)])
+        assert order() == ["Reviewer", "Stage", "Unlisted"]
+        s.setOption("object_columns", [("Stage", False)] + base + [("Reviewer", True)])
+        assert order() == ["Stage", "Reviewer", "Unlisted"]
+    finally:
+        s.close()
+
+
 def test_palette_dialog_returns_the_defaults(tmp_path, monkeypatch):
     from PyReconstruct.modules.gui.dialog.trace import TraceDialog
 

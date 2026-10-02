@@ -21,6 +21,18 @@ from PyReconstruct.modules.datatypes import Trace
 from PyReconstruct.modules.datatypes.trace import copyObjDefaults
 from PyReconstruct.modules.gui.utils import notify
 
+def objectListColumns(series) -> dict:
+    """The series' custom columns (name -> options) in the order the object
+    list shows them (its Set columns... order), any it does not list last."""
+    names = []
+    for entry in series.getOption("object_columns") or []:
+        name = entry[0] if isinstance(entry, (list, tuple)) else entry
+        if name in series.user_columns and name not in names:
+            names.append(name)
+    names += [name for name in series.user_columns if name not in names]
+    return {name: series.user_columns[name] for name in names}
+
+
 class TraceDialog(QDialog):
 
     def __init__(
@@ -362,7 +374,7 @@ class TraceDialog(QDialog):
                 )
                 defaults_rows.addWidget(self.columns_text)
                 self.columns_input = ColumnChoices(
-                    self, series.user_columns, seed.get("user_columns", {})
+                    self, objectListColumns(series), seed.get("user_columns", {})
                 )
                 defaults_rows.addWidget(self.columns_input)
         

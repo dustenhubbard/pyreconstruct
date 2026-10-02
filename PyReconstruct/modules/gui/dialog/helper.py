@@ -231,6 +231,9 @@ class ColumnChoices(QWidget):
         """
         super().__init__(parent)
         values = values or {}
+        # the button's own key order, so an untouched OK hands back the same
+        # dict and the palette data is written unchanged
+        self.saved_order = [col for col in values if col in columns]
         grid = QGridLayout(self)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setColumnStretch(1, 1)
@@ -252,11 +255,15 @@ class ColumnChoices(QWidget):
             self.combos[col] = combo
 
     def getValues(self) -> dict:
-        """Column -> value for every dropdown that is not blank."""
+        """Column -> value for every dropdown that is not blank: the button's
+        saved columns first, in their saved order, then any newly set."""
+        order = self.saved_order + [
+            col for col in self.combos if col not in self.saved_order
+        ]
         return {
-            col: combo.currentText()
-            for col, combo in self.combos.items()
-            if combo.currentText()
+            col: self.combos[col].currentText()
+            for col in order
+            if self.combos[col].currentText()
         }
 
 
