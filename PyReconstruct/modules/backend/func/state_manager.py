@@ -144,19 +144,9 @@ class FieldState():
         # stack; this is the floor under that, not a replacement for it.
         self.time = nextStamp()
 
-        # group -> visibility, for each group an undo away from this state
-        # emptied (see dropEmptiedGroups): the redo of this state brings the
-        # group back with it
-        self.group_viz = {}
-        # the same, for each group the action itself emptied (deleting an
-        # object's last trace): the undo of this state brings it back
-        self.undo_group_viz = {}
-
     def copy(self):
         c = FieldState(self.contours, self.ztraces, self.tforms, self.flags, self.contours_fp)
         c.obj_snapshot = deepcopy(self.obj_snapshot)
-        c.group_viz = dict(self.group_viz)
-        c.undo_group_viz = dict(self.undo_group_viz)
         return c
     
     def getContours(self):
@@ -274,16 +264,13 @@ def objectSnapshot(series : Series, names) -> dict:
     return out
 
 
-def restoreObjectSnapshot(series : Series, snapshot : dict, recreated,
-                          group_viz : dict = None) -> None:
-    """Put a snapshot back on the objects a redo just recreated.
+def restoreObjectSnapshot(series : Series, snapshot : dict, recreated) -> None:
+    """Put a snapshot back on the objects an undo or redo just recreated.
 
-    Only objects that did not exist before the redo are touched, so a redo
-    never overwrites attributes an existing object carries. ``group_viz``
-    holds the visibility of each group the undo before this redo emptied
-    (see dropEmptiedGroups).
+    Only objects that did not exist before the step are touched, so it never
+    overwrites attributes an existing object carries.
     """
-    group_viz = group_viz or {}
+    emptied_viz = getattr(series, "emptied_group_viz", {})
     recreated = list(recreated)
     # a host or traveler is put back only if it is an object now, or comes
     # back in this same step: the tree must not gain a name nothing traces
@@ -295,12 +282,12 @@ def restoreObjectSnapshot(series : Series, snapshot : dict, recreated,
         for attr_name, value in entry["attrs"].items():
             series.setAttr(name, attr_name, deepcopy(value))
         for group in entry["groups"]:
-            # an entry still there is left alone. A group the undo emptied
-            # lost its entry, so it gets the visibility it had then: a
-            # hidden group comes back hidden. Only a group with no record
-            # defaults to shown.
+            # an entry still there is left alone. A group an undo or redo
+            # emptied lost its entry, so it gets the visibility it had then
+            # (see dropEmptiedGroups): a hidden group comes back hidden.
+            # Only a group with no record defaults to shown.
             if group not in series.groups_visibility:
-                series.groups_visibility[group] = group_viz.get(group, True)
+                series.groups_visibility[group] = emptied_viz.get(group, True)
             series.object_groups.add(group=group, obj=name)
         hosts = [h for h in entry.get("hosts", []) if h in present]
         if hosts:
@@ -310,8 +297,8 @@ def restoreObjectSnapshot(series : Series, snapshot : dict, recreated,
                 series.host_tree.add(traveler, [name])
 
 
-def dropEmptiedGroups(series : Series, groups_before) -> dict:
-    """Drop the visibility entry of each group a section step emptied.
+def dropEmptiedGroups(series : Series, groups_before) -> set:
+    """Drop the visibility entry of each group a section undo or redo emptied.
 
     A section step that deletes an object's last trace deletes the object,
     and its groups go with it (removeObjAttrs), but nothing dropped their
@@ -319,21 +306,29 @@ def dropEmptiedGroups(series : Series, groups_before) -> dict:
     entries. So an emptied group kept its row, and a later series undo that
     brought the group back found the stale entry and kept it, even when the
     group had been hidden before. Removing a group's last object from the
-    group drops the entry the same way. The caller keeps the dropped values
-    on the state whose undo or redo brings the groups back.
+    group drops the entry the same way.
+
+    Each dropped value goes into ``series.emptied_group_viz``, one record for
+    the series rather than one per undo state: any later step that brings
+    the group back, on any section, finds the value there. A per-state
+    record missed a group emptied by two steps, where only the last of them
+    saw the value. The record is not saved and starts over with the undo
+    history (SeriesStates).
 
         Params:
             series (Series): the series
             groups_before (iterable): the groups before the step
         Returns:
-            (dict): group -> its visibility, for each entry dropped
+            (set): the groups the step emptied
     """
     emptied = set(groups_before) - set(series.object_groups.getGroupList())
-    dropped = {}
+    record = getattr(series, "emptied_group_viz", None)
+    if record is None:
+        record = series.emptied_group_viz = {}
     for group in emptied:
         if group in series.groups_visibility:
-            dropped[group] = series.groups_visibility.pop(group)
-    return dropped
+            record[group] = series.groups_visibility.pop(group)
+    return emptied
 
 
 class SectionStates():
@@ -615,8 +610,7 @@ class SectionStates():
             if n not in existed and len(section.contours.get(n, []))
         ]
         restoreObjectSnapshot(
-            series, getattr(self.current_state, "obj_snapshot", {}), recreated,
-            getattr(self.current_state, "undo_group_viz", None),
+            series, getattr(self.current_state, "obj_snapshot", {}), recreated
         )
 
         return modified_contours, modified_ztraces
@@ -644,8 +638,7 @@ class SectionStates():
             if n not in existed and len(state_contours[n])
         ]
         restoreObjectSnapshot(
-            series, getattr(redo_state, "obj_snapshot", {}), recreated,
-            getattr(redo_state, "group_viz", None),
+            series, getattr(redo_state, "obj_snapshot", {}), recreated
         )
         # restore the ztraces
         state_ztraces = redo_state.getZtraces()
@@ -945,6 +938,8 @@ class SeriesStates():
             self.section_states_dict[snum] = SectionStates()
         self.undos : list[SeriesState] = []
         self.redos : list[SeriesState] = []
+        # the visibility record of emptied groups belongs to this history
+        self.series.emptied_group_viz = {}
     
     def __iter__(self):
         """Return the iterator object for the series states"""

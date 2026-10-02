@@ -39,9 +39,9 @@ def _square(series, offset):
     return [(x0, y0), (x0 + side, y0), (x0 + side, y0 + side), (x0, y0 + side)]
 
 
-def _draw(window, defaults=None, offset=0.2):
+def _draw(window, defaults=None, offset=0.2, name=NAME):
     field = window.field
-    item = Trace(NAME, (0, 255, 0), True)
+    item = Trace(name, (0, 255, 0), True)
     item.obj_defaults = defaults
     field.setTracingTrace(item)
     # newTrace is a field_interaction: it saves its own undo step
@@ -49,8 +49,8 @@ def _draw(window, defaults=None, offset=0.2):
                    points_as_pix=False, reduce_points=False)
 
 
-def _traces(window):
-    return [t for t in window.field.section.tracesAsList() if t.name == NAME]
+def _traces(window, name=NAME):
+    return [t for t in window.field.section.tracesAsList() if t.name == name]
 
 
 def _delete(window, traces):
@@ -165,3 +165,34 @@ def test_undo_that_leaves_the_object_alone_keeps_its_attributes(window):
     window.undo()
     assert len(_traces(window)) == 2
     assert series.getAttr(NAME, "comment") == "after"
+
+
+def test_a_group_emptied_by_deletes_on_two_sections_comes_back_hidden(window):
+    """A on one section and B on another, both in a hidden GROUP. Deleting
+    A leaves B in the group; deleting B empties it. Undoing A's delete
+    brings the group back, and it must come back hidden."""
+    series = window.series
+    other = NAME + "_b"
+    first, second = sorted(series.sections)[:2]
+    window.changeSection(first)
+    _draw(window, {"groups": [GROUP]})
+    window.changeSection(second)
+    _draw(window, {"groups": [GROUP]}, name=other)
+    # set directly: `View` > `Groups` reloads the field, which is not under
+    # test here
+    series.groups_visibility[GROUP] = False
+
+    window.changeSection(first)
+    _delete(window, _traces(window))
+    assert series.groups_visibility[GROUP] is False
+    window.changeSection(second)
+    _delete(window, _traces(window, other))
+    assert GROUP not in series.object_groups.getGroupList()
+    assert GROUP not in series.groups_visibility
+
+    window.changeSection(first)
+    window.undo()
+    assert series.object_groups.getGroupObjects(GROUP) == {NAME}
+    assert series.groups_visibility[GROUP] is False, (
+        "the group came back shown"
+    )

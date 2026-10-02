@@ -465,6 +465,9 @@ class Series():
         
         self.object_groups = ObjGroupDict(self, "objects", series_data["object_groups"])
         self.groups_visibility = self.initGroupViz()
+        # group -> the visibility it had when an undo or redo last emptied
+        # it; not saved (see dropEmptiedGroups in state_manager)
+        self.emptied_group_viz = {}
 
         self.ztrace_groups = ObjGroupDict(self, "ztraces", series_data["ztrace_groups"])
 
@@ -519,6 +522,7 @@ class Series():
 
         ## Group visibility
         self.groups_visibility = self.initGroupViz()
+        self.emptied_group_viz = {}
 
     def __enter__(self):
         
@@ -3021,6 +3025,7 @@ class Series():
         for snum, section in self.enumerateSections(
             message="Scanning for self-crossing traces...",
         ):
+            section_start = len(candidates)
             for cname in section.contours:
                 if self.getAttr(cname, "locked"):
                     continue
@@ -3038,20 +3043,30 @@ class Series():
                     )
                     record["repairable"] = repaired is not None
                     candidates.append(record)
+            self._recordLookalikes(section, candidates[section_start:])
         return candidates
 
     def repairSelfCrossingTraces(self, records : list, series_states=None,
                                  max_discard_ratio=0.05,
-                                 message="Repairing self-crossing traces...") -> list:
+                                 message="Repairing self-crossing traces...",
+                                 ambiguous : list = None) -> list:
         """Repair the repairable records from findSelfCrossingTraces.
 
-        Mirrors deleteMalformedTraces: sections are reloaded, each record's
-        trace is re-found by its color-and-points signature, and the repair is
-        recomputed at apply time so an edit made since the scan cannot be
-        clobbered (an unmatched or no-longer-repairable trace is skipped and
-        left out of the returned list). The repaired trace replaces the
-        original through removeTrace/addTrace, so logs and tracking see an
+        Mirrors deleteMalformedTraces: sections are reloaded and each record's
+        trace is re-found the same way (_resolveRecordedTraces: its recorded
+        index, and the count of traces whose saved data is the same as it in
+        every field and its place among them), so the repair lands on the
+        trace the record names and not on the first trace of the same color
+        and points. The repair is recomputed at apply time so an edit made
+        since the scan cannot be clobbered (an unmatched or no-longer-
+        repairable trace is skipped and left out of the returned list). The
+        repaired trace replaces the original through removeTrace/addTrace, in
+        the original's place in its contour, so logs and tracking see an
         ordinary edit and undo restores the original.
+
+            Params:
+                ambiguous (list): optional; receives each record skipped
+                    because more than one trace could be the one it names
         """
         from PyReconstruct.modules.calc import repair_self_crossing
 
@@ -3070,26 +3085,33 @@ class Series():
             series_states=series_states,
             section_numbers=sorted(by_section)
         ):
-            changed = False
-            for record in by_section.get(snum, []):
-                contour = section.contours.get(record["name"])
-                if not contour:
+            section_records = by_section.get(snum, [])
+            found, unsure = self._resolveRecordedTraces(
+                section, section_records
+            )
+            if ambiguous is not None:
+                ambiguous.extend(unsure)
+            # replace only after every record is resolved: the recorded
+            # indexes all describe the contour as it stands before the repair
+            done = {}  # id(original trace) -> repaired or not
+            for record in section_records:
+                trace = found.get(id(record))
+                if trace is None:
                     continue
-                for trace in contour:
-                    if self._traceMatchesSignature(trace, record["match"]):
-                        new_points = repair_self_crossing(
-                            trace.points, max_discard_ratio
-                        )
-                        if new_points is None:
-                            break
+                if id(trace) not in done:
+                    new_points = repair_self_crossing(
+                        trace.points, max_discard_ratio
+                    )
+                    if new_points is not None:
+                        index = section.contours[trace.name].index(trace)
                         new_trace = trace.copy()
                         new_trace.points = new_points
                         section.removeTrace(trace)
-                        section.addTrace(new_trace)
-                        repaired_records.append(record)
-                        changed = True
-                        break
-            if changed:
+                        section.addTrace(new_trace, index=index)
+                    done[id(trace)] = new_points is not None
+                if done[id(trace)]:
+                    repaired_records.append(record)
+            if any(done.values()):
                 section.save()
 
         if repaired_records:

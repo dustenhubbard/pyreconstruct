@@ -9,11 +9,9 @@ keeps its clockwise points in memory, so it was one of the ones flipped.
 
 Reconstruct reads the direction after applying the contour's transform, so on
 a section whose transform is mirrored, points that run counterclockwise in
-PyReconstruct run clockwise in Reconstruct. Export and import both have to
-check the transformed points. They read the sign from the raw points and
-the transform's determinant instead of transforming the points, so rounding
-cannot give a flat trace a sign and the inexact polynomial inverse cannot
-flip one.
+PyReconstruct run clockwise in Reconstruct. Export and import both read the
+sign from the raw points and the sign of the transform's determinant, not
+from transformed points, so rounding cannot give a flat trace a sign.
 """
 import math
 

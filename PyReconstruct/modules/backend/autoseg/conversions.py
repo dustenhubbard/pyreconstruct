@@ -84,12 +84,34 @@ def _in_um(zarr_array, n):
 
 
 def as_nm(values, zarr_array):
-    """Sizes or offsets given in a zarr's ``units``, in nm."""
+    """Sizes or offsets given in a zarr's ``units``, in nm.
+
+    µm values round to a millionth of a nm, so a grid declared in µm reads
+    the same as that grid in nm (0.0041 µm is 4.1 nm, not
+    4.1000000000000005). nm values come back as they are.
+    """
 
     return [
-        v * 1000 if um else v
+        round(v * 1000, 6) if um else v
         for v, um in zip(values, _in_um(zarr_array, len(values)))
     ]
+
+
+def get_label_offset(labels_array, raw):
+    """Where a labels array starts against raw, in nm per (z, y, x) axis.
+
+    Both offsets are positions in the same space, so an offset the two
+    arrays share moves neither. Labels with no ``offset`` start at raw's
+    corner, as they always have.
+    """
+
+    if "offset" not in labels_array.attrs:
+        return [0, 0, 0]
+
+    offset = as_nm(get_array_offset(labels_array), labels_array)
+    raw_offset = as_nm(get_array_offset(raw), raw)
+
+    return [o - r for o, r in zip(offset, raw_offset)]
 
 
 def get_true_mag(zarr_array):
@@ -478,7 +500,9 @@ def seriesToLabels(series: Series,
 
     shape = raw.shape
     mag = get_true_mag(raw)
-    resolution = get_resolution(raw)
+    ## the labels are written in nm, whatever units raw declares
+    resolution = as_nm(get_resolution(raw), raw)
+    raw_offset = as_nm(get_array_offset(raw), raw)
     alignment = raw.attrs["alignment"]
 
     if window:
@@ -503,6 +527,7 @@ def seriesToLabels(series: Series,
             relative_to=raw_window,
             section_diff=raw_sections.index(sections[0])
         )
+        offset = [o + r for o, r in zip(offset, raw_offset)]
 
         window = window[0]
 
@@ -512,7 +537,7 @@ def seriesToLabels(series: Series,
         ## come back from the same place the window does
         sections = list(raw.attrs["sections"])
         window = raw.attrs["window"]
-        offset = raw.attrs["offset"]
+        offset = raw_offset
 
     # calculate field attributes
     shape = (
@@ -603,7 +628,7 @@ def getLabelsToObjectsData(data_fp: str, group: str, raw_attrs: dict = None) -> 
     sections = (raw.attrs if raw_attrs is None else raw_attrs)["sections"]
 
     resolution_z = get_label_resolutions(labels_array, raw)[0][0]
-    offset_z = as_nm(get_array_offset(labels_array), labels_array)[0]
+    offset_z = get_label_offset(labels_array, raw)[0]
     section_start = round(offset_z / resolution_z)
 
     return data_zg, sections, section_start
@@ -851,9 +876,8 @@ def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
     raw = get_zarr_array(data_zg, "raw")
     resolution, raw_resolution = get_label_resolutions(labels_array, raw)
 
-    offset = as_nm(get_array_offset(labels_array), labels_array)
+    offset = get_label_offset(labels_array, raw)
     z_offset = round(offset[0] / resolution[0])
-    raw_offset = as_nm(get_array_offset(raw), raw)
 
     attrs = raw.attrs if raw_attrs is None else raw_attrs
     window = attrs["window"]
@@ -903,8 +927,8 @@ def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
     field_width = pixmap_dim[0] * mag
     field_height = pixmap_dim[1] * mag
 
-    field_offset_x = (offset[2] / resolution[2] - raw_offset[2] / raw_resolution[2]) * mag
-    field_offset_y = (offset[1] / resolution[1] - raw_offset[1] / raw_resolution[1]) * mag
+    field_offset_x = offset[2] / resolution[2] * mag
+    field_offset_y = offset[1] / resolution[1] * mag
     field_offset_y = field_height - field_offset_y  # account for zarr origin at top of image
 
     zarr_window[0] += field_offset_x
