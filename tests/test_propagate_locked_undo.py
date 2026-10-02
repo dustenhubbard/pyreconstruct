@@ -208,6 +208,7 @@ def _real_stub(monkeypatch, series, current_section, stored_tform):
     cur = series.loadSection(current_section)
     stub = types.SimpleNamespace(
         section=cur,
+        b_section=None,
         section_layer=types.SimpleNamespace(section=cur),
         series=series,
         series_states=SeriesStates(series),

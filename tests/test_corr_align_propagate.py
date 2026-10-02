@@ -196,6 +196,7 @@ def _prop_stub(monkeypatch, base_tforms, current_section, locked=()):
     cur = sections[current_section]
     stub = types.SimpleNamespace(
         section=cur,
+        b_section=None,
         section_layer=types.SimpleNamespace(section=cur),
         series=types.SimpleNamespace(
             sections=sections,
