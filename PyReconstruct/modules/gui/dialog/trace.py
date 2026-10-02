@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 
 from .color_button import ColorButton
 from .shape_button import ShapeButton
-from .helper import resizeLineEdit, ColumnValueInput
+from .helper import resizeLineEdit, ColumnChoices
 from .quick_dialog import MultiInput
 
 from PyReconstruct.modules.datatypes import Trace
@@ -352,7 +352,7 @@ class TraceDialog(QDialog):
             self.columns_input = None
             if series.user_columns:
                 # the object list's categorical columns (Columns > Create
-                # categorical column...), one row per column chosen
+                # categorical column...), one labeled dropdown per column
                 self.columns_text = QLabel(self, text="Custom Columns:")
                 self.columns_text.setToolTip(
                     "Values for the object list's custom columns, set on a new "
@@ -361,7 +361,7 @@ class TraceDialog(QDialog):
                     "categorical column..."
                 )
                 defaults_rows.addWidget(self.columns_text)
-                self.columns_input = ColumnValueInput(
+                self.columns_input = ColumnChoices(
                     self, series.user_columns, seed.get("user_columns", {})
                 )
                 defaults_rows.addWidget(self.columns_input)
