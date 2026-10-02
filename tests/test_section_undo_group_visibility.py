@@ -207,3 +207,52 @@ def test_new_undo_history_forgets_the_emptied_groups(window):
 
     window.field.clearStates()
     assert series.emptied_group_viz == {}
+
+
+def test_redo_brings_back_the_value_its_own_undo_dropped(window, monkeypatch):
+    """Draw A into GROUP, hide it, `Remove from all groups`; draw B into
+    GROUP on another section (shown again). Undo B, the removal and A, then
+    redo all three: GROUP ends shown, as it was after B was drawn."""
+    series = window.series
+    first, second = sorted(series.sections)[:2]
+    window.changeSection(first)
+    _draw_into_group(window, name=DRAWN)
+    series.groups_visibility[GROUP] = False
+    field = _select(window, monkeypatch, [DRAWN])
+    field.removeFromAllGroups()
+    assert GROUP not in series.groups_visibility
+
+    window.changeSection(second)
+    _draw_into_group(window, name=DRAWN + "_b")
+    assert series.groups_visibility[GROUP] is True
+
+    window.undo()                                    # B
+    assert GROUP not in series.groups_visibility
+    window.undo()                                    # the removal
+    assert series.groups_visibility[GROUP] is False
+    window.changeSection(first)
+    window.undo()                                    # A
+    assert GROUP not in series.groups_visibility
+
+    window.undo(redo=True)                           # A
+    assert series.groups_visibility[GROUP] is False
+    window.undo(redo=True)                           # the removal
+    assert GROUP not in series.groups_visibility
+    window.changeSection(second)
+    window.undo(redo=True)                           # B
+    assert series.object_groups.getGroupObjects(GROUP) == {DRAWN + "_b"}
+    assert series.groups_visibility[GROUP] is True, (
+        "the group came back hidden"
+    )
+
+
+def test_clearing_the_undo_history_forgets_the_emptied_groups(window):
+    """Save As clears the history with SeriesStates.clear."""
+    series = window.series
+    _draw_into_group(window)
+    series.groups_visibility[GROUP] = False
+    window.undo()
+    assert series.emptied_group_viz == {GROUP: False}
+
+    window.field.series_states.clear()
+    assert series.emptied_group_viz == {}
