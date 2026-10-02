@@ -642,3 +642,39 @@ def test_editing_a_twin_after_the_scan_never_deletes_it_for_me(tmp_path):
     assert left in ([["x"], ["b", "edited"]], [["b"], ["x"], ["b", "edited"]])
     # the count of identical traces fell from 2 to 1, so this row is left
     assert deleted == [] and ambiguous == [record]
+
+
+def test_a_cleanup_list_is_told_a_trace_is_gone(tmp_path, monkeypatch):
+    series = _load_series(tmp_path)
+    snum = _seed(series, [("DUST", DUST, "only")])
+    record = next(
+        r for r in series.findPixelDustTraces(1e9)
+        if r["name"] == "DUST" and r["section"] == snum
+    )
+    _remove_first(series, snum, "DUST")
+    mod, notices = _notices(monkeypatch)
+
+    assert mod.FieldWidgetObject.deleteMalformedContours(
+        _StubField(series), [record]
+    ) == []
+    assert notices == [
+        "1 of 1 listed traces was not found and could not be deleted. It "
+        "may have changed or been deleted after the list was made."
+    ]
+
+
+def test_the_pairs_list_is_told_a_trace_is_gone(tmp_path, monkeypatch):
+    series = _load_series(tmp_path)
+    snum = _seed(series, [("A", SQUARE, "a"), ("B", SQUARE, "b")])
+    records = series.findDifferentlyNamedDuplicates(0.95)
+    choice = _row(records, "B", 0, "A")
+    _remove_first(series, snum, "B")
+    mod, notices = _notices(monkeypatch)
+
+    assert mod.FieldWidgetObject.deleteDifferentlyNamedDuplicates(
+        _StubField(series), [choice]
+    ) == []
+    assert notices == [
+        "1 of the traces you chose to delete was not found and could not be "
+        "deleted. It may have changed or been deleted after the scan."
+    ]

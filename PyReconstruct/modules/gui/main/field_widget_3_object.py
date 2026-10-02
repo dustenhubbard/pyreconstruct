@@ -470,11 +470,11 @@ class FieldWidgetObject(FieldWidgetTrace):
 
         missed = len(records) - len(deleted) - len(ambiguous)
         if missed:
-            were = "was" if missed == 1 else "were"
+            were, it = ("was", "It") if missed == 1 else ("were", "They")
             notify(
-                f"{missed} of {len(records)} listed contour(s) {were} not "
-                "found and could not be deleted — they may have been changed "
-                "or removed since smoothing."
+                f"{missed} of {len(records)} listed traces {were} not found "
+                f"and could not be deleted. {it} may have changed or been "
+                "deleted after the list was made."
             )
 
         return deleted
@@ -547,11 +547,11 @@ class FieldWidgetObject(FieldWidgetTrace):
         # because the trace is no longer where the scan saw it
         missed = len(choices) - len(applied) - locked_rows - len(ambiguous)
         if missed > 0:
-            were = "was" if missed == 1 else "were"
+            were, it = ("was", "It") if missed == 1 else ("were", "They")
             notify(
                 f"{missed} of the traces you chose to delete {were} not found "
-                "and could not be deleted — they may have been changed or "
-                "removed since the scan."
+                f"and could not be deleted. {it} may have changed or been "
+                "deleted after the scan."
             )
 
         return applied
