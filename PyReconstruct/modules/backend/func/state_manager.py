@@ -144,9 +144,15 @@ class FieldState():
         # stack; this is the floor under that, not a replacement for it.
         self.time = nextStamp()
 
+        # group -> visibility, for each group an undo away from this state
+        # emptied (see dropEmptiedGroups): the redo of this state brings the
+        # group back with it
+        self.group_viz = {}
+
     def copy(self):
         c = FieldState(self.contours, self.ztraces, self.tforms, self.flags, self.contours_fp)
         c.obj_snapshot = deepcopy(self.obj_snapshot)
+        c.group_viz = dict(self.group_viz)
         return c
     
     def getContours(self):
@@ -256,12 +262,16 @@ def objectSnapshot(series : Series, names) -> dict:
     return out
 
 
-def restoreObjectSnapshot(series : Series, snapshot : dict, recreated) -> None:
+def restoreObjectSnapshot(series : Series, snapshot : dict, recreated,
+                          group_viz : dict = None) -> None:
     """Put a snapshot back on the objects a redo just recreated.
 
     Only objects that did not exist before the redo are touched, so a redo
-    never overwrites attributes an existing object carries.
+    never overwrites attributes an existing object carries. ``group_viz``
+    holds the visibility of each group the undo before this redo emptied
+    (see dropEmptiedGroups).
     """
+    group_viz = group_viz or {}
     for name in recreated:
         entry = snapshot.get(name)
         if not entry:
@@ -269,11 +279,42 @@ def restoreObjectSnapshot(series : Series, snapshot : dict, recreated) -> None:
         for attr_name, value in entry["attrs"].items():
             series.setAttr(name, attr_name, deepcopy(value))
         for group in entry["groups"]:
-            # setdefault, not assignment: undo removes an emptied group but
-            # leaves its visibility behind, and a hidden group must come back
-            # hidden. Only a group the series has never seen defaults to shown.
-            series.groups_visibility.setdefault(group, True)
+            # an entry still there is left alone. A group the undo emptied
+            # lost its entry, so it gets the visibility it had then: a
+            # hidden group comes back hidden. Only a group with no record
+            # defaults to shown.
+            if group not in series.groups_visibility:
+                series.groups_visibility[group] = group_viz.get(group, True)
             series.object_groups.add(group=group, obj=name)
+
+
+def dropEmptiedGroups(series : Series, groups_before, state=None) -> set:
+    """Drop the visibility entry of each group a section undo or redo emptied.
+
+    A section step that deletes an object's last trace deletes the object,
+    and its groups go with it (removeObjAttrs), but nothing dropped their
+    visibility entries, and `View` > `Groups` lists groups from those
+    entries. So an emptied group kept its row, and a later series undo that
+    brought the group back found the stale entry and kept it, even when the
+    group had been hidden before. Removing a group's last object from the
+    group drops the entry the same way.
+
+        Params:
+            series (Series): the series
+            groups_before (iterable): the groups before the step
+            state (FieldState): optional; the state whose redo brings the
+                emptied groups back. It keeps each dropped value.
+        Returns:
+            (set): the groups the step emptied
+    """
+    emptied = set(groups_before) - set(series.object_groups.getGroupList())
+    for group in emptied:
+        if group not in series.groups_visibility:
+            continue
+        value = series.groups_visibility.pop(group)
+        if state is not None:
+            state.group_viz[group] = value
+    return emptied
 
 
 class SectionStates():
@@ -567,7 +608,8 @@ class SectionStates():
             if n not in existed and len(state_contours[n])
         ]
         restoreObjectSnapshot(
-            series, getattr(redo_state, "obj_snapshot", {}), recreated
+            series, getattr(redo_state, "obj_snapshot", {}), recreated,
+            getattr(redo_state, "group_viz", None),
         )
         # restore the ztraces
         state_ztraces = redo_state.getZtraces()

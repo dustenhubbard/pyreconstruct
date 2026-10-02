@@ -18,6 +18,7 @@ from PySide6.QtCore import (
 from PyReconstruct.modules.datatypes import Series, Section, Trace, Transform
 from PyReconstruct.modules.backend.view import SectionLayer, ZarrLayer
 from PyReconstruct.modules.backend.func import SeriesStates
+from PyReconstruct.modules.backend.func.state_manager import dropEmptiedGroups
 from PyReconstruct.modules.backend.table import TableManager
 
 
@@ -389,6 +390,8 @@ class FieldWidgetBase:
         # get the last undo state
         groups_before = set(self.series.object_groups.getGroupList())
         tform_before = self.section.tform.copy()
+        section_states = self.series_states[self.section.n]
+        redos_before = len(section_states.redo_states)
         self.series_states.undoSection(self.section, redo)
 
         # an undo or redo that moves the section leaves no change to pick up
@@ -398,6 +401,15 @@ class FieldWidgetBase:
 
         # update the data/tables
         self.updateData()
+
+        # updateData deletes an object whose last trace the step took, and
+        # its groups with it; their visibility entries go too. An undo hands
+        # the dropped values to the state it put on the redo stack, so the
+        # redo brings a hidden group back hidden.
+        undone = None
+        if not redo and len(section_states.redo_states) > redos_before:
+            undone = section_states.redo_states[-1]
+        dropEmptiedGroups(self.series, groups_before, undone)
 
         # A redo can bring back a group that no object held a moment ago (the
         # object snapshot in state_manager), and the Groups menu lists groups
