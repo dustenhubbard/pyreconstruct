@@ -138,8 +138,9 @@ def test_redo_keeps_the_visibility_the_group_had_at_the_undo(window):
     series = window.series
     _draw_into_group(window)
     assert series.groups_visibility[GROUP] is True
-    window.toggleGroupViz(GROUP)
-    assert series.groups_visibility[GROUP] is False
+    # set directly: `View` > `Groups` reloads the field, which is not under
+    # test here
+    series.groups_visibility[GROUP] = False
 
     window.undo()
     window.undo(redo=True)
@@ -172,8 +173,9 @@ def test_a_group_emptied_across_two_sections_comes_back_hidden(window):
     _draw_into_group(window, name=DRAWN, offset=0.6)
     window.changeSection(second)
     _draw_into_group(window, name=DRAWN + "_b", offset=0.6)
-    window.toggleGroupViz(GROUP)
-    assert series.groups_visibility[GROUP] is False
+    # set directly: `View` > `Groups` reloads the field, which is not under
+    # test here
+    series.groups_visibility[GROUP] = False
     assert series.object_groups.getGroupObjects(GROUP) == {DRAWN, DRAWN + "_b"}
 
     window.changeSection(first)
