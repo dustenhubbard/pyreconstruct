@@ -4,7 +4,7 @@ Reconstruct mode.
 On import, `convertMode` turns any Reconstruct mode other than 9, 11, 13 and
 15 into a fill style of `None`. On export it only knew `none`, `transparent`
 and `solid`, so such a trace raised `UnboundLocalError` and the export stopped
-after the first section file, with no `.ser`.
+at the section that held it, with no `.ser`.
 """
 import os
 
