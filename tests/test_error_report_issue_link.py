@@ -34,7 +34,10 @@ def fixed_context(monkeypatch):
 @pytest.fixture
 def opened(monkeypatch):
     urls = []
-    monkeypatch.setattr(errors, "_open_url", urls.append)
+    def fake_open(url):
+        urls.append(url)
+        return True
+    monkeypatch.setattr(errors, "_open_url", fake_open)
     return urls
 
 
@@ -134,3 +137,28 @@ def test_open_url_hands_qt_the_link_unchanged(monkeypatch):
     ):
         errors._open_url(url)
         assert got[-1].toString(QUrl.FullyEncoded) == url
+
+
+@pytest.mark.parametrize(
+    "label, program",
+    [("Email developers", "email program"), ("Report a bug on GitHub", "web browser")],
+)
+def test_a_link_the_os_cannot_open_says_so_and_names_the_address(
+    qtbot, monkeypatch, label, program
+):
+    # With no mail program set up, openUrl returns False. The click must not
+    # do nothing: a message names the copy button and the address (#470).
+    from PySide6.QtGui import QDesktopServices
+    monkeypatch.setattr(QDesktopServices, "openUrl", staticmethod(lambda url: False))
+    shown = []
+    monkeypatch.setattr(
+        errors.QMessageBox, "information", staticmethod(lambda *args: shown.append(args))
+    )
+    dialog = _dialog(qtbot, "<b>An error occurred</b>", REPORT)
+    qtbot.mouseClick(_buttons(dialog)[label], Qt.LeftButton)
+    assert len(shown) == 1
+    title, text = shown[0][1], shown[0][2]
+    assert title == "Could not open link"
+    assert f"could not open your {program}" in text
+    assert "Copy report to clipboard" in text
+    assert "issues@pyreconstruct.org" in text

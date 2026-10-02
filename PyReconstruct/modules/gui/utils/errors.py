@@ -49,12 +49,16 @@ def _standard_summary(lead_html: str, report: str = None) -> str:
     )
 
 
-def _open_url(url: str) -> None:
-    """Hand ``url`` to the system browser or mail client. Never raises."""
+def _open_url(url: str) -> bool:
+    """Hand ``url`` to the system browser or mail client. Never raises.
+
+    True when the OS took the link. False when it did not, for example a
+    mailto link on a machine with no mail program set up.
+    """
     try:
-        QDesktopServices.openUrl(QUrl.fromEncoded(url.encode("utf-8")))
+        return bool(QDesktopServices.openUrl(QUrl.fromEncoded(url.encode("utf-8"))))
     except Exception:
-        pass
+        return False
 
 
 class ErrorReportDialog(QDialog):
@@ -97,13 +101,13 @@ class ErrorReportDialog(QDialog):
         self._copy_btn = QPushButton("Copy report to clipboard")
         self._copy_btn.clicked.connect(self._copyReport)
         self._email_btn = QPushButton("Email developers")
-        self._email_btn.clicked.connect(lambda: _open_url(self._mailto_url))
+        self._email_btn.clicked.connect(lambda: self._open(self._mailto_url, "email program"))
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.accept)
         # Filing the report is what this window is for, so it is the default
         # button: drawn as the primary one, and what Enter presses.
         self._report_btn = QPushButton("Report a bug on GitHub")
-        self._report_btn.clicked.connect(lambda: _open_url(self._issue_url))
+        self._report_btn.clicked.connect(lambda: self._open(self._issue_url, "web browser"))
         self._report_btn.setDefault(True)
         buttons.addWidget(self._copy_btn)
         buttons.addWidget(self._email_btn)
@@ -113,6 +117,27 @@ class ErrorReportDialog(QDialog):
         layout.addLayout(buttons)
 
         self.resize(720, 480)
+
+    def _open(self, url: str, what: str) -> None:
+        """Open ``url``; if the OS cannot, say so and point to the copy button.
+
+        ``what`` names the program that should have opened ("email program" or
+        "web browser"). Without this, a click on a machine with no mail program
+        does nothing and the address appears nowhere.
+        """
+        if _open_url(url):
+            return
+        try:
+            QMessageBox.information(
+                self,
+                "Could not open link",
+                f"PyReconstruct could not open your {what}. Click "
+                "<b>Copy report to clipboard</b>, then paste the report into an "
+                f"email to {html.escape(developers_email)}.",
+                QMessageBox.Ok,
+            )
+        except Exception:
+            pass
 
     def _copyReport(self):
         """Copy the report, confirm it in the button, and celebrate a little.
