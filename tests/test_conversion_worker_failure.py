@@ -146,6 +146,7 @@ def test_import_labels_only_reports_success_on_success(monkeypatch, imported, no
         ),
         series=types.SimpleNamespace(zarr_overlay_fp="fp", zarr_overlay_group="labels_x"),
         removeZarrLayer=noop,
+        saveAllData=noop,
     )
 
     main_window.MainWindow.importLabels(window)
@@ -181,6 +182,7 @@ def test_menu_import_stops_only_on_a_failed_group(monkeypatch, results, attempte
     window = types.SimpleNamespace(
         series=object(),
         field=types.SimpleNamespace(reload=lambda: None),
+        saveAllData=lambda: None,
     )
 
     main_window.MainWindow.importFromZarrLabels(window)

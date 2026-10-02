@@ -2837,6 +2837,13 @@ class MainWindow(QMainWindow):
         if overwrite or new_alignment != current_alignment:
             attr = getattr(self, f"{current_alignment}_alignment_act")  # generated from createContextMenu
             attr.setChecked(False)
+            # the switch reloads the field from the section files, so an edit
+            # not yet written there (a trace just drawn) has to be written
+            # first. Not with overwrite: modifyAlignments saves, then rewrites
+            # the section files, and saving the field again here would put
+            # back the alignments it just renamed.
+            if not overwrite:
+                self.saveAllData()
             self.field.changeAlignment(new_alignment)
             # The readout names the alignment and `field.changeAlignment` does
             # not repaint synchronously, so without this the bar is stale on
@@ -3622,6 +3629,10 @@ class MainWindow(QMainWindow):
         group_name = self.series.zarr_overlay_group
 
         labels = None if all else self.field.zarr_layer.selected_ids
+
+        # the import rewrites the section files and the field then reloads
+        # from them, so an edit not yet written there has to be written first
+        self.saveAllData()
 
         imported = labelsToObjects(
             self.series,
@@ -5081,6 +5092,10 @@ class MainWindow(QMainWindow):
             return
         
         groups = response[0]
+
+        # the import rewrites the section files and the field then reloads
+        # from them, so an edit not yet written there has to be written first
+        self.saveAllData()
         
         for group in groups:
             if group in os.listdir(zarr_fp):
@@ -5095,6 +5110,10 @@ class MainWindow(QMainWindow):
         
     def toggleGroupViz(self, group):
         """Toggle visibility of a group."""
+
+        # the reload below reads the sections from their files, so an edit
+        # not yet written there (a trace just drawn) has to be written first
+        self.saveAllData()
 
         group_viz = self.series.groups_visibility
         group_viz[group] = not group_viz[group]
