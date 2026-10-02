@@ -3,8 +3,8 @@ import sys
 import html
 import traceback
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFontDatabase, QTextCursor
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices, QFontDatabase, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QMessageBox,
@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QPushButton,
 )
 
-from PyReconstruct.modules.constants import gh_issues, gh_bug_form
+from PyReconstruct.modules.constants import gh_issues, gh_bug_form, developers_email
 
 # Sibling module, relative like the package's own re-exports: an absolute import
 # here would re-enter `gui.utils.__init__`, which is what imports this file.
@@ -27,32 +27,34 @@ from PyReconstruct.modules.backend.func.error_report import (
     build_error_report,
     build_diagnostic_report,
     issue_url_for_report,
+    mailto_for_report,
     prefilled_issue_url,
 )
 
 
 def _standard_summary(lead_html: str, report: str = None) -> str:
-    """Wrap a lead line with the standard copy-and-report instructions + link.
+    """Wrap a lead line with what the dialog's buttons do.
 
-    The link opens the GitHub bug form (Help > Report a bug... goes to the same
-    place) with the setup field prefilled. Given ``report`` -- the crash or
-    save-failure text the dialog is showing -- the form's error field is
-    prefilled with it too, trimmed to fit a URL; without one (the diagnostic
-    report, which is only the setup lines) the setup field alone is filled.
+    The buttons themselves are ``ErrorReportDialog``'s. Given ``report`` (the
+    crash or save-failure text the dialog is showing) the bug form gets that
+    report; without one (the diagnostic report, which is only the setup lines)
+    it gets the version and OS alone, and the wording says which.
     """
-    if report is None:
-        url = prefilled_issue_url(gh_bug_form)
-        filled = "your version and OS"
-    else:
-        url = issue_url_for_report(gh_bug_form, report)
-        filled = "this report"
+    filled = "your version and OS" if report is None else "this report"
     return (
         f"{lead_html}<br><br>"
-        "Click <b>Copy report to clipboard</b> below, then paste it into a bug "
-        "report or email so we can help.<br><br>"
-        f'Or <a href="{html.escape(url, quote=True)}">open a bug report on GitHub</a> '
-        f"with {filled} already filled in."
+        f"<b>Report a bug on GitHub</b> opens the bug form with {filled} already "
+        "filled in. Add what you were doing, then submit it. "
+        "<b>Email developers</b> opens a new email with the report in it."
     )
+
+
+def _open_url(url: str) -> None:
+    """Hand ``url`` to the system browser or mail client. Never raises."""
+    try:
+        QDesktopServices.openUrl(QUrl.fromEncoded(url.encode("utf-8")))
+    except Exception:
+        pass
 
 
 class ErrorReportDialog(QDialog):
@@ -60,14 +62,21 @@ class ErrorReportDialog(QDialog):
 
     The frozen app has no console, so lay users cannot read the traceback that
     ``sys.__excepthook__`` prints to stderr. This shows the full report inline
-    and a one-click "Copy report to clipboard" button so it can be pasted into a
-    bug report or email.
+    with three ways to send it: "Report a bug on GitHub" (the default button)
+    opens the bug form with the report filled in, "Email developers" starts a
+    mail with the report as its body, and "Copy report to clipboard" copies it
+    for anywhere else. Both links are trimmed to fit a URL; the copy is always
+    the full text.
     """
 
-    def __init__(self, summary_html: str, report: str, parent=None):
+    def __init__(self, summary_html: str, report: str, parent=None, issue_url: str = None):
         super().__init__(parent)
         self.setWindowTitle("Error")
         self._report = report
+        # The bug form with the report in its error field, unless the caller
+        # has a better link (the diagnostic report has no error to put there).
+        self._issue_url = issue_url or issue_url_for_report(gh_bug_form, report)
+        self._mailto_url = mailto_for_report(developers_email, report)
 
         layout = QVBoxLayout(self)
 
@@ -87,12 +96,20 @@ class ErrorReportDialog(QDialog):
         buttons = QHBoxLayout()
         self._copy_btn = QPushButton("Copy report to clipboard")
         self._copy_btn.clicked.connect(self._copyReport)
+        self._email_btn = QPushButton("Email developers")
+        self._email_btn.clicked.connect(lambda: _open_url(self._mailto_url))
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.accept)
-        close_btn.setDefault(True)
+        # Filing the report is what this window is for, so it is the default
+        # button: drawn as the primary one, and what Enter presses.
+        self._report_btn = QPushButton("Report a bug on GitHub")
+        self._report_btn.clicked.connect(lambda: _open_url(self._issue_url))
+        self._report_btn.setDefault(True)
         buttons.addWidget(self._copy_btn)
+        buttons.addWidget(self._email_btn)
         buttons.addStretch()
         buttons.addWidget(close_btn)
+        buttons.addWidget(self._report_btn)
         layout.addLayout(buttons)
 
         self.resize(720, 480)
@@ -134,7 +151,9 @@ class ErrorReportDialog(QDialog):
 _showing_report = False
 
 
-def show_error_report(summary_html: str, report: str, parent=None, title="Error") -> bool:
+def show_error_report(
+    summary_html: str, report: str, parent=None, title="Error", issue_url: str = None
+) -> bool:
     """Show ``report`` in a copyable dialog, never letting the display itself fail.
 
     Shared by the global exception hook, the handled save-error path, and the
@@ -175,7 +194,7 @@ def show_error_report(summary_html: str, report: str, parent=None, title="Error"
     _showing_report = True
     try:
         try:
-            dialog = ErrorReportDialog(summary_html, report, parent)
+            dialog = ErrorReportDialog(summary_html, report, parent, issue_url)
             dialog.setWindowTitle(title)
             dialog.exec()
         except Exception:
@@ -287,7 +306,13 @@ def show_diagnostic_report(parent=None):
         "These details (your PyReconstruct version and operating system) help us "
         "diagnose problems."
     )
-    show_error_report(_standard_summary(lead), report, parent, title="Diagnostic report")
+    show_error_report(
+        _standard_summary(lead),
+        report,
+        parent,
+        title="Diagnostic report",
+        issue_url=prefilled_issue_url(gh_bug_form),
+    )
 
 
 # Faults already reported in this session, by _error_signature. See
