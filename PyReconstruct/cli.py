@@ -50,12 +50,22 @@ def main():
     parser.add_argument('-c', '--commit', action='store_true', help='Show current commit')
     parser.add_argument('-s', '--switch', type=str, required=False, default=None, help='Switch PyReconstruct branch')
     parser.add_argument('-V', '--version', action='store_true', help='Show version and exit')
+    parser.add_argument(
+        '--check-history', nargs='+', metavar='PATH', default=None,
+        help='List the history rows PyReconstruct cannot read in a .jser file, '
+             'or in every .jser file in a folder. Changes no file.',
+    )
 
     args = parser.parse_args()
 
     if args.version:
 
         print(_version_string())
+
+    elif args.check_history:
+
+        from PyReconstruct.modules.backend.func.check_history import checkHistory
+        sys.exit(checkHistory(args.check_history, sys.stdout))
 
     elif args.update:
 

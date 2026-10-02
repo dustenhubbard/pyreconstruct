@@ -361,6 +361,8 @@ class LogSet():
         # caller can say how much history it lost instead of silently showing
         # a partial one.
         self.skipped_rows = []
+        # the index in the fromList input of each entry in skipped_rows
+        self.skipped_indexes = []
 
     def addLog(self, user : str, obj_name : str, snum : int, event : str):
         """Add a log to the set.
@@ -710,6 +712,7 @@ class LogSet():
                     # skipped_rows entry per lost file line, no exceptions --
                     # because the one exception was that fabrication.
                     log_set.skipped_rows.append(log_list[start])
+                    log_set.skipped_indexes.append(start)
                     i = start + 1
                     continue
                 log_set.addExistingLog(log)

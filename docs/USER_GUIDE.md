@@ -706,6 +706,12 @@ the same window filtered to the selected objects. Long histories can be trimmed
 with **Series ▸ Log ▸ Offload log history…**, which exports older entries to an
 external CSV.
 
+Older versions could write a history row PyReconstruct cannot read back, when a
+name had a line break or a comma in it. From a source install,
+`PyReconstruct --check-history path/to/series.jser` lists those rows with the line
+and text of each. Give it a folder to check every .jser in it and its subfolders.
+It only reads the files and changes nothing.
+
 ---
 
 ## 10. Alignment
