@@ -610,6 +610,7 @@ allowed), and several can be open at once.
 | List | Open with | Shows |
 |---|---|---|
 | **Object list** | `Ctrl+Shift+O` | every object in the series, with quantities and attributes |
+| **Object list of selected traces** | (no shortcut) | the objects with a trace selected in the field, with the same columns |
 | **Trace list** | `Ctrl+Shift+T` | traces on the **current section** |
 | **Section list** | `Ctrl+Shift+S` | every section |
 | **Z-trace list** | `Ctrl+Shift+Z` | every z-trace |
@@ -651,6 +652,8 @@ columns you define.
   (add/remove/export meshes/export quantitative data/edit 3D settings), create a
   z-trace from it, view history, and delete.
 - **Filters**: regex, group, tag, curation, configuration, and host filters.
+  **Filter ▸ Selected traces only** limits the list to the objects with a trace
+  selected in the field, and the rows update when the selection changes.
 - **Find ▸ First / Last** jump to the object's first/last section.
 - The **Curate** columns can be toggled across all object lists with
   **View ▸ Toggle curation in object lists** (`Ctrl+Shift+C`).

@@ -85,8 +85,15 @@ class TableManager():
         # non-empty IS the collapsed state
         self._collapsed = []
     
-    def newTable(self, table_type : str, section=None):
-        """Create a new object list widget."""
+    def newTable(self, table_type : str, section=None, selected_only=False):
+        """Create a new object list widget.
+
+            Params:
+                table_type (str): object, trace, section, ztrace, or flag
+                section (Section): the section for a trace list
+                selected_only (bool): True to open an object list with the
+                    selected traces filter on
+        """
         # opening a list while the lists are collapsed reveals them first, so
         # the new list can tab onto a visible anchor and is actually seen
         if self._collapsed:
@@ -106,7 +113,11 @@ class TableManager():
                 self
             )
         
-        new_table = table_type_classes[table_type](*args)
+        kwargs = {}
+        if selected_only and table_type == "object":
+            kwargs["selected_names"] = self.selectedObjectNames()
+
+        new_table = table_type_classes[table_type](*args, **kwargs)
         self.tables[table_type].append(new_table)
 
         anchor = self._dockedAnchor(new_table)
@@ -429,6 +440,32 @@ class TableManager():
         if clear_tracking:
             self.section.clearTracking()
     
+    def selectedObjectNames(self, section : Section = None):
+        """The names of the objects with a trace selected on a section.
+
+            Params:
+                section (Section): the section (default: the current one)
+        """
+        if section is None:
+            section = self.section
+        return {trace.name for trace in section.selected_traces}
+
+    def syncSelection(self, section : Section = None):
+        """Update the object lists that show only the selected traces.
+
+        The field calls this each time it redraws, which covers every way a
+        selection can change. Lists without the filter cost nothing.
+
+            Params:
+                section (Section): the section shown in the field
+        """
+        tables = [t for t in self.tables["object"] if t.selected_only]
+        if not tables:
+            return
+        names = self.selectedObjectNames(section)
+        for table in tables:
+            table.syncSelectedNames(names)
+
     def updateSceneMarks(self, obj_names):
         """Refresh the Object List's 3D column for objects whose scene
         membership just changed.
