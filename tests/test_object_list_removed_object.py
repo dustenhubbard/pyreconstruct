@@ -85,6 +85,7 @@ class RealObjectSource:
         self.user_col_filters = {}
         self.host_filters = set()
         self.direct_hosts_only = False
+        self.selected_only = False
         self.curate_column = None
 
     def getFiltered(self):

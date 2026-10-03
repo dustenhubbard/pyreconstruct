@@ -287,6 +287,7 @@ def return_list_menu(self):
         "opts":
         [
             ("objectlist_act", "Object list", self.series, lambda : self.field.openList(list_type="object")),
+            ("selectedobjectlist_act", "Object list of selected traces", "", lambda : self.field.openList(list_type="object", selected_only=True)),
             ("tracelist_act", "Trace list", self.series, lambda : self.field.openList(list_type="trace")),
             ("sectionlist_act", "Section list", self.series, lambda : self.field.openList(list_type="section")),
             ("ztracelist_act", "Z-trace list", self.series, lambda : self.field.openList(list_type="ztrace")),

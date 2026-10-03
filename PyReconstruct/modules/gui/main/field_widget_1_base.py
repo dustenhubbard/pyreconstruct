@@ -347,6 +347,11 @@ class FieldWidgetBase:
             self.mainwindow.mouse_palette.setScale()
 
         self.mainwindow.checkActions()
+
+        # a redraw follows every selection change
+        if hasattr(self, "table_manager"):
+            self.table_manager.syncSelection(self.section)
+
         if update:
             self.update()
     
@@ -606,13 +611,15 @@ class FieldWidgetBase:
             self.b_section_layer.loadImage()
         self.generateView()
     
-    def openList(self, list_type : str):
+    def openList(self, list_type : str, selected_only=False):
         """Open a list.
         
             Params:
                 list_type (str): object, trace, section, ztrace, or flag
+                selected_only (bool): True to open an object list that shows
+                    only the objects with a selected trace
         """
-        self.table_manager.newTable(list_type, self.section)
+        self.table_manager.newTable(list_type, self.section, selected_only=selected_only)
     
     def updateData(self, clear_tracking=True) -> None:
         """Update the series data object and the tables.

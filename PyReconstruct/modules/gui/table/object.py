@@ -48,13 +48,15 @@ def invert_object_rows(row_names : list, selected : set):
 
 class ObjectTableWidget(DataTable):
     
-    def __init__(self, series : Series, mainwindow : QWidget, manager, hidden=False):
+    def __init__(self, series : Series, mainwindow : QWidget, manager, hidden=False, selected_names=None):
         """Create the object table dock widget.
         
             Params:
                 series (Series): the Series object
                 mainwindow (MainWindow): the main window the dock is connected to
                 manager: the object table manager
+                selected_names (set): when given, open with the selected
+                    traces filter on, showing these object names
         """
         # set the filter defaults
         self.re_filters = set([".*"])
@@ -74,6 +76,11 @@ class ObjectTableWidget(DataTable):
         self.user_col_filters = {}
         self.host_filters = set()
         self.direct_hosts_only = False
+        # the selected traces filter: show only the objects with a trace
+        # selected in the field (fork #438); the manager keeps the names
+        # current as the selection changes
+        self.selected_only = selected_names is not None
+        self.selected_names = set(selected_names or ())
 
         super().__init__("object", series, mainwindow, manager)
         self.static_columns = ["Name"]
@@ -169,6 +176,13 @@ class ObjectTableWidget(DataTable):
                 "text": "Filter",
                 "opts":
                 [
+                    (
+                        "selectedonlyfilter_act",
+                        "Selected traces only",
+                        "checkbox-True" if self.selected_only else "checkbox",
+                        self.toggleSelectedOnly
+                    ),
+                    None,
                     ("refilter_act", "Regex filter...", "", self.setREFilter),
                     ("groupfilter_act", "Group filter...", "", self.setGroupFilter),
                     ("tagfilter_act", "Tag filter...", "", self.setTagFilter),
@@ -301,10 +315,12 @@ class ObjectTableWidget(DataTable):
             bool(self.cr_user_filters) or not all(self.cr_status_filter.values())
         )
         is_user_col = bool(self.user_col_filters)
+        is_selected = self.selected_only
 
         title = "Object List "
-        if any((is_regex, is_tag, is_group, is_cr, is_user_col)):
+        if any((is_selected, is_regex, is_tag, is_group, is_cr, is_user_col)):
             strs = []
+            if is_selected: strs.append("selected traces")
             if is_regex: strs.append("regex")
             if is_tag: strs.append("tags")
             if is_group: strs.append("groups")
@@ -520,6 +536,10 @@ class ObjectTableWidget(DataTable):
 
         ## Return False if obj does not exists
         if name not in self.series.data["objects"]:
+            return False
+
+        ## Check the selected traces filter
+        if self.selected_only and name not in self.selected_names:
             return False
         
         ## Check user columns
@@ -952,6 +972,28 @@ class ObjectTableWidget(DataTable):
     ## Menu-related functions ##################################################
     ############################################################################
     
+    def toggleSelectedOnly(self):
+        """Turn the selected traces filter on or off."""
+        self.selected_only = not self.selected_only
+        self.selected_names = (
+            self.manager.selectedObjectNames() if self.selected_only else set()
+        )
+        self.manager.recreateTable(self)
+
+    def syncSelectedNames(self, names : set):
+        """Follow the field selection while the selected traces filter is on.
+
+        Only the rows for objects that joined or left the selection change.
+
+            Params:
+                names (set): the names of the objects with a selected trace
+        """
+        if not self.selected_only or names == self.selected_names:
+            return
+        changed = names ^ self.selected_names
+        self.selected_names = set(names)
+        self.updateData(changed)
+
     def setREFilter(self):
         """Set a new regex filter for the list."""
         structure = [
