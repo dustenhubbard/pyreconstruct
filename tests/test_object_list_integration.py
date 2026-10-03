@@ -742,6 +742,42 @@ def test_export_csv_writes_the_locked_column(qapp, tmp_path, monkeypatch):
     assert all(locked[name] == "no" for name in names[1:])
 
 
+def test_export_csv_writes_the_cr_column(qapp, tmp_path, monkeypatch):
+    """CR exports the box the list shows: "yes" when curated, "partial" when
+    it needs curation, "no" when blank.
+
+    The CR cell is a checkbox with no text, so writing its text left the
+    column blank for every object.
+    """
+    series = _load_series(tmp_path)
+    names = sortList(list(series.data["objects"].keys()))
+    assert len(names) >= 3
+    series.setCuration([names[0]], "Curated")
+    series.setCuration([names[1]], "Needs curation", "alice")
+    for name in names[2:]:
+        series.setCuration([name], "")
+    cols = [(k, k == "Curate") for k, _ in series.getOption("object_columns")]
+    src = _RealObjectSource(series, cols)
+
+    out = str(tmp_path / "out.csv")
+    obj = ObjectTableWidget.__new__(ObjectTableWidget)
+    obj.model = ObjectTableModel(src)
+    obj.name = "object"
+    monkeypatch.setattr(
+        "PyReconstruct.modules.gui.table.object.FileDialog.get",
+        staticmethod(lambda *a, **k: out),
+    )
+    obj.export()
+
+    with open(out) as f:
+        rows = [line.split(",") for line in f.read().splitlines()]
+    assert rows[0] == ["Name", "CR", "Status", "User", "Date"]
+    cr = {row[0]: (row[1], row[2]) for row in rows[1:]}
+    assert cr[names[0]] == ("yes", "Curated")
+    assert cr[names[1]] == ("partial", "Needs curation")
+    assert all(cr[name] == ("no", "") for name in names[2:])
+
+
 def test_table_export_writes_the_locked_column(qapp, tmp_path, monkeypatch):
     """The QTableWidget export (the section list's) does the same."""
     tw = CopyTableWidget(None, 2, 2)
