@@ -18,7 +18,9 @@ from PySide6.QtCore import (
 from PyReconstruct.modules.datatypes import Series, Section, Trace, Transform
 from PyReconstruct.modules.backend.view import SectionLayer, ZarrLayer
 from PyReconstruct.modules.backend.func import SeriesStates
-from PyReconstruct.modules.backend.func.state_manager import dropEmptiedGroups
+from PyReconstruct.modules.backend.func.state_manager import (
+    dropEmptiedGroups, forgetHostLinks, hostLinks, recordDroppedHostLinks,
+)
 from PyReconstruct.modules.backend.table import TableManager
 
 
@@ -370,7 +372,15 @@ class FieldWidgetBase:
 
         # update the data/tables
         groups_before = set(self.series.object_groups.getGroupList())
+        names = section_states.current_state.getModifiedContours()
+        objects_before = {n for n in names if n in self.series.data["objects"]}
+        links_before = hostLinks(self.series, names)
         self.updateData()
+        recordDroppedHostLinks(self.series, links_before)
+        forgetHostLinks(self.series, {
+            n for n in names
+            if n not in objects_before and n in self.series.data["objects"]
+        })
 
         # updateData deletes an object whose last trace the action took, and
         # its groups with it; their visibility entries go too, so the Groups
@@ -416,13 +426,22 @@ class FieldWidgetBase:
             self.tform_before_change = None
 
         # update the data/tables
+        links_before = hostLinks(self.series, self.section.getAllModifiedNames())
         self.updateData()
+        recordDroppedHostLinks(self.series, links_before)
 
         # updateData gave each object the step recreated the current
-        # alignment; put back the pin the object had
-        for name, alignment in section_states.restored_alignments.items():
-            if name in self.series.data["objects"]:
-                self.series.setAttr(name, "alignment", alignment)
+        # alignment; put back the pin the object had, and show it in the lists
+        pinned = [
+            name for name in section_states.restored_alignments
+            if name in self.series.data["objects"]
+        ]
+        for name in pinned:
+            self.series.setAttr(
+                name, "alignment", section_states.restored_alignments[name]
+            )
+        if pinned:
+            self.table_manager.updateObjects(pinned)
         section_states.restored_alignments = {}
 
         # updateData deletes an object whose last trace the step took, and
