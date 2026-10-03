@@ -218,13 +218,15 @@ def test_shared_z_offset_starts_at_raw_first_section(tmp_path):
 ## the label overlay
 
 
-def _overlay(tmp_path, raw_attrs, label_attrs):
+def _overlay(tmp_path, raw_attrs, label_attrs, true_mag=0.004):
     from PyReconstruct.modules.backend.view.zarr_layer import ZarrLayer
 
     fp = str(tmp_path / "overlay.zarr")
     group = zarr.open_group(fp, mode="w")
     raw = group.create_dataset("raw", shape=(1, 10, 10), dtype="u1")
-    raw.attrs.update({"window": [1, 2, 0.4, 0.4], "sections": [3], "true_mag": 0.004})
+    raw.attrs.update({"window": [1, 2, 0.4, 0.4], "sections": [3]})
+    if true_mag is not None:
+        raw.attrs["true_mag"] = true_mag
     raw.attrs.update(raw_attrs)
     labels = group.create_dataset("labels", shape=(1, 5, 5), dtype="u4")
     labels.attrs.update(label_attrs)
@@ -287,6 +289,20 @@ def test_overlay_puts_labels_with_no_size_on_raws_grid(tmp_path, raw_attrs, labe
 
 def test_overlay_with_no_size_on_either_array_starts_at_raws_corner(tmp_path):
     assert _overlay(tmp_path, {}, {}) == pytest.approx((0.004, 1, 2, 3))
+
+
+@pytest.mark.parametrize(
+    "raw_attrs, label_attrs, expected",
+    [
+        # true mag from raw's x voxel size, as label import reads it
+        ({"resolution": [50, 8, 8]}, {"offset": [50, 8, 16]}, (0.008, 1.016, 2.008, 4)),
+        ({"voxel_size": [0.05, 0.008, 0.008], "units": "um"}, {}, (0.008, 1, 2, 3)),
+        # no size at all: the 4 nm default
+        ({}, {}, (0.004, 1, 2, 3)),
+    ],
+)
+def test_overlay_reads_a_raw_with_no_true_mag(tmp_path, raw_attrs, label_attrs, expected):
+    assert _overlay(tmp_path, raw_attrs, label_attrs, true_mag=None) == pytest.approx(expected)
 
 
 ## ng_view.py

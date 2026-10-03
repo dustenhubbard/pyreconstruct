@@ -408,3 +408,44 @@ def test_image_with_alpha_draws_as_qt_draws_it(qapp, real_series, tmp_path, kind
 
     differ = int((_premultiplied_bytes(got) != _premultiplied_bytes(want)).sum())
     assert differ == 0, f"{differ} of {IW * IH * 4} drawn bytes differ from a direct Qt draw"
+
+
+def test_rgba8888_image_draws_as_qt_draws_it(qapp, real_series, tmp_path, monkeypatch):
+    """An 8-bit RGBA image in memory draws the same as a direct Qt draw.
+
+    No file loader returns Format_RGBA8888 today, so the loader is swapped
+    for one that does. Only images deeper than 32 bits take the 16-bit
+    premultiply; an 8-bit one sent that way lands a level off.
+    """
+    from PyReconstruct.modules.backend.view import image_layer
+
+    yy, xx = np.mgrid[0:IH, 0:IW]
+    pixels = np.stack([(xx * 7) % 256, (yy * 13) % 256, np.full_like(xx, 7),
+                       (xx + yy) % 256], -1).astype(np.uint8)
+    source = QImage(pixels.tobytes(), IW, IH, IW * 4, QImage.Format.Format_RGBA8888).copy()
+    assert source.format() == QImage.Format.Format_RGBA8888 and source.depth() == 32
+
+    class _Loader(QImage):
+        def __new__(cls, *args):
+            if len(args) == 1 and isinstance(args[0], str):
+                return source.copy()
+            return QImage(*args)
+
+    monkeypatch.setattr(image_layer, "QImage", _Loader)
+
+    want = QImage(IW, IH, QImage.Format.Format_ARGB32_Premultiplied)
+    want.fill(Qt.black)
+    painter = QPainter(want)
+    painter.drawImage(0, 0, source)
+    painter.end()
+
+    snum = sorted(real_series.sections)[0]
+    section = real_series.loadSection(snum)
+    real_series.src_dir = str(tmp_path)
+    section.src = "grid.png"
+    section.mag = MAG
+    layer = _layer(section, IDENTITY)
+    got = layer._generateImage((IW, IH), [0, 0, IW * MAG, IH * MAG], bc=False)
+
+    differ = int((_premultiplied_bytes(got) != _premultiplied_bytes(want)).sum())
+    assert differ == 0, f"{differ} of {IW * IH * 4} drawn bytes differ from a direct Qt draw"
