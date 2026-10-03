@@ -39,6 +39,9 @@ def _viewer(series):
         viewer.seriesMoved = types.MethodType(helper, viewer)
     else:  # before the fix, Save As never told the scene anything
         viewer.seriesMoved = lambda *_args: None
+    paths = getattr(cp.CustomPlotter, "seriesPaths", None)
+    if paths is not None:
+        viewer.seriesPaths = types.MethodType(paths, viewer)
     return viewer
 
 
@@ -147,3 +150,91 @@ def test_series_moved_leaves_other_series_alone():
         new_fp: {"objects": [{"id": "x"}], "ztraces": []},
         other_fp: {"objects": [{"id": "y"}], "ztraces": []},
     }
+
+
+def _scene_with_other_series(window, tmp_path, series_jser, monkeypatch):
+    """The open series and another one in the scene, both with a `d01`.
+
+    The other series is opened and closed the way `From other series...`
+    does it, so only its .jser is left on disk.
+    """
+    import shutil
+    from PyReconstruct.modules.datatypes import Series
+
+    other_jser = tmp_path / "other" / "other.jser"
+    other_jser.parent.mkdir()
+    shutil.copy(series_jser, other_jser)
+    other = Series.openJser(str(other_jser))
+    other.close()
+
+    series = window.series
+    viewer = _viewer(series)
+    monkeypatch.setattr(window, "viewer", viewer)
+    mine = viewer.plt.objs.add(_mesh(), series, "d01", "object", (1, 1, 1), 1)
+    theirs = viewer.plt.objs.add(_mesh(), other, "d01", "object", (2, 2, 2), 1)
+    return viewer, mine, theirs, str(other_jser)
+
+
+def test_save_as_refuses_a_series_in_the_scene(
+    main_window, main_window_dialogs, tmp_path, series_jser, monkeypatch
+):
+    """Saving over the .jser of another series in the scene would mix the two."""
+    window = main_window
+    viewer, mine, theirs, other_fp = _scene_with_other_series(
+        window, tmp_path, series_jser, monkeypatch
+    )
+    own_fp = window.series.jser_fp
+    with open(other_fp, "rb") as fh:
+        other_before = fh.read()
+
+    main_window_dialogs.file_responses.append(other_fp)
+    result = window.saveAsToJser()
+
+    assert result == "cancel"
+    assert window.series.jser_fp == own_fp
+    with open(other_fp, "rb") as fh:
+        assert fh.read() == other_before
+    assert mine.series_fp == own_fp
+    assert theirs.series_fp == other_fp
+    assert any(
+        "other.jser" in text and "3D scene" in text
+        for _title, text in main_window_dialogs.message_boxes
+    )
+
+
+def test_save_as_refuses_a_series_only_in_the_undo_history(
+    main_window, main_window_dialogs, tmp_path, series_jser, monkeypatch
+):
+    """An undo would bring the other series' objects back under this one."""
+    window = main_window
+    viewer, _mine, theirs, other_fp = _scene_with_other_series(
+        window, tmp_path, series_jser, monkeypatch
+    )
+    viewer.undo_states.append({"scene_objects": viewer.plt.objs.getExportDict()})
+    viewer.plt.objs.remove(theirs)
+    own_fp = window.series.jser_fp
+
+    main_window_dialogs.file_responses.append(other_fp)
+    result = window.saveAsToJser()
+
+    assert result == "cancel"
+    assert window.series.jser_fp == own_fp
+    assert other_fp in viewer.undo_states[0]["scene_objects"]["series_fps"]
+
+
+def test_save_as_over_itself_with_a_scene_still_saves(
+    main_window, main_window_dialogs, tmp_path, series_jser, monkeypatch
+):
+    window = main_window
+    _viewer_, mine, theirs, other_fp = _scene_with_other_series(
+        window, tmp_path, series_jser, monkeypatch
+    )
+    own_fp = window.series.jser_fp
+
+    main_window_dialogs.file_responses.append(own_fp)
+    result = window.saveAsToJser()
+
+    assert result is None
+    assert window.series.jser_fp == own_fp
+    assert main_window_dialogs.message_boxes == []
+    assert mine.series_fp == own_fp and theirs.series_fp == other_fp

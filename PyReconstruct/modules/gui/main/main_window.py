@@ -99,6 +99,21 @@ def _sameDir(a, b):
     except (OSError, TypeError, ValueError):
         return False
 
+
+def _samePath(a, b):
+    """True if two paths name the same file, or would if it existed.
+
+    Asks the filesystem when both exist, like _sameDir; otherwise compares
+    the normalized paths, so a path whose file is gone still matches itself.
+    """
+    if not a or not b:
+        return False
+    if _sameDir(a, b):
+        return True
+    norm = lambda p: os.path.normcase(os.path.abspath(p))
+    return norm(a) == norm(b)
+
+
 ## How fresh a timer file in a hidden series dir has to be for the series to
 ## count as open in another window. The open window rewrites that file every 5
 ## seconds (FieldWidget.markTime), so this has to stay comfortably above 5 or a
@@ -1398,6 +1413,25 @@ class MainWindow(QMainWindow):
         """
         sname = os.path.basename(new_jser_fp)
         sname = sname[:sname.rfind(".")]
+
+        # the 3D scene tells series apart by path; saving over another
+        # series in it would put both under one path, with one host tree
+        # and one undo history
+        if self.viewer and not self.viewer.is_closed:
+            own_fp = self.series.jser_fp
+            for fp in self.viewer.seriesPaths():
+                if _samePath(fp, own_fp) or not _samePath(fp, new_jser_fp):
+                    continue
+                QMessageBox.information(
+                    self,
+                    "Series In Use",
+                    f"{sname}.jser has objects in the 3D scene or its undo history.\n"
+                    "Saving over it would mix them with this series. "
+                    "Close the 3D scene first, or save under another name.",
+                    QMessageBox.Ok
+                )
+                return False
+
         dest_dir = os.path.join(os.path.dirname(new_jser_fp), f".{sname}")
         if not os.path.isdir(dest_dir):
             return True

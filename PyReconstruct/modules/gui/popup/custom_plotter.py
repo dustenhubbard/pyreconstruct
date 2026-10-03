@@ -1330,6 +1330,18 @@ class CustomPlotter(QVTKRenderWindowInteractor):
             else:
                 series_fps[new_fp] = moved
 
+    def seriesPaths(self):
+        """The series paths the scene and its undo and redo states hold.
+
+            Returns:
+                (set): the .jser path of every series in the scene or its
+                    undo history
+        """
+        paths = {o.series_fp for o in self.plt.objs.values()}
+        for state in self.undo_states + self.redo_states:
+            paths.update(state["scene_objects"]["series_fps"])
+        return paths
+
     def saveState(self):
         """Save an undo state."""
         self.undo_states.append(self.saveScene(return_dict=True))
