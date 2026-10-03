@@ -239,3 +239,31 @@ def test_a_new_object_with_the_old_name_does_not_take_the_link(window):
     window.undo()
     assert traveler in series.data["objects"]
     assert series.host_tree.getHosts(traveler) == []
+
+
+def test_an_object_renamed_to_the_old_name_does_not_take_the_link(window):
+    """Delete T, then rename another object to T from the object list.
+    Deleting and undoing the new T must not make H its host."""
+    series = window.series
+    host, traveler, other = NAME, OTHER, "undofu_x"
+    first, second, third = sorted(series.sections)[:3]
+    window.changeSection(first)
+    _draw(window, host)
+    window.changeSection(second)
+    _draw(window, traveler)
+    window.changeSection(third)
+    _draw(window, other)
+    series.host_tree.add(traveler, [host])
+
+    window.changeSection(second)
+    _delete(window, _traces(window, traveler))
+    window.saveAllData()
+    series.editObjectAttributes([other], name=traveler,
+                                series_states=window.field.series_states)
+    window.field.reload()
+
+    window.changeSection(third)
+    _delete(window, _traces(window, traveler))
+    window.undo()
+    assert traveler in series.data["objects"]
+    assert series.host_tree.getHosts(traveler) == []

@@ -1100,6 +1100,7 @@ class SeriesStates():
             states.redo_states = []
         new_state = SeriesState(breakable)
         new_state.resetSeriesAttributes(self.series)
+        new_state.objects_before = set(self.series.data["objects"])
         self.undos.append(new_state)
     
     def recordBCProfiles(self, snum : int, bc_profiles : dict):
@@ -1145,6 +1146,15 @@ class SeriesStates():
             state.obj_snapshot.update(objectSnapshot(
                 self.series, names, self.undos[-1].series_attrs
             ))
+
+        # an object the action created (a rename to a deleted object's name)
+        # does not take the links that deleted object had
+        before = getattr(self.undos[-1], "objects_before", None)
+        if before is not None:
+            forgetHostLinks(self.series, {
+                n for n in state.getModifiedContours()
+                if n not in before and n in self.series.data["objects"]
+            })
 
     def clear(self):
         """Clear all state tracking."""
