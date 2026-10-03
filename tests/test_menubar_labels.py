@@ -378,7 +378,14 @@ _RECOLOR_ALL_ROW = (1, "act", "recolorallfrompalette_act")
 # feature row, directly under it, at depth 1 because #463 had already
 # flattened the reporting submenu into Help itself.
 _REQUEST_FEATURE_ROW = (1, "act", "requestfeature_act")
+# Lists > "Object list of selected traces" (fork #438): an object list that
+# shows only the objects with a selected trace, directly under "Object list".
+_SELECTED_OBJECT_LIST_ROW = (1, "act", "selectedobjectlist_act")
 MENUBAR_EXPECTED = list(MENUBAR_BASELINE)
+MENUBAR_EXPECTED.insert(
+    MENUBAR_EXPECTED.index((1, "act", "objectlist_act")) + 1,
+    _SELECTED_OBJECT_LIST_ROW,
+)
 MENUBAR_EXPECTED.insert(
     MENUBAR_BASELINE.index((1, "menu", "openrecentmenu")) + 1, _CLEAR_RECENTS_ROW
 )
@@ -535,10 +542,11 @@ def test_menubar_action_and_submenu_counts():
     level adds and removes nothing, and an action count that moved here would
     mean a move had dropped or duplicated one. Additions 4 and 5 (the what's-new toggle
     and the series-wide recolor, both 2026-08-12, built on separate branches)
-    each took the count up one, 117 to 119 together.
+    each took the count up one, 117 to 119 together. Lists > Object list of
+    selected traces (fork #438) took it from 125 to 126.
     """
     rows = _rows()
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 125
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 126
     assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 30
 
 
