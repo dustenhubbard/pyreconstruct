@@ -69,11 +69,9 @@ Type: files; Name: "{app}\*.dll"
 ; updater's own folder so an uninstall leaves nothing behind.
 Type: filesandordirs; Name: "{app}\_internal"
 Type: filesandordirs; Name: "{app}\_updater"
-; The in-place updater's staging folder sits beside the install, not in it,
-; so a swap is one rename on one volume. It holds only what the updater put
-; there (a download, the staged tree, a backup, its logs), and its name is
-; this app's alone, so an uninstall removes it too.
-Type: filesandordirs; Name: "{app}\..\.{#PYR_NAME}-update"
+; The in-place updater's staging folder sits beside the install, not in it.
+; It is not removed here: an entry here deletes whatever has that name. The
+; [Code] section below removes it after checking it is the updater's.
 
 [Files]
 Source: "..\..\dist\{#PYR_NAME}\*"; DestDir: "{app}"; \
@@ -108,3 +106,55 @@ Root: HKA; Subkey: "Software\Classes\{#PYR_PROGID}\shell\open\command"; \
 [Run]
 Filename: "{app}\{#PYR_NAME}.exe"; Description: "Launch {#PYR_NAME}"; \
     Flags: nowait postinstall skipifsilent
+
+[Code]
+// The in-place updater stages an update in .<AppName>-update beside the
+// install, so a swap is one rename on one volume. It holds only what the
+// updater put there (a download, the staged tree, a backup, its logs), so an
+// uninstall removes it too. It sits outside {app}, though, so the uninstaller
+// first checks that the folder is the updater's: a real folder, not a link or
+// junction, holding one of the files only the updater writes there (see the
+// staging layout in PyReconstruct/modules/backend/updater/apply.py).
+// Anything else with that name is left alone.
+
+function UpdateStagingDir(): String;
+begin
+  Result := AddBackslash(ExtractFileDir(RemoveBackslashUnlessRoot(ExpandConstant('{app}'))))
+    + '.{#PYR_NAME}-update';
+end;
+
+function IsUpdateStagingDir(const Dir: String): Boolean;
+var
+  FindRec: TFindRec;
+  RealDir: Boolean;
+begin
+  Result := False;
+  // without a wildcard, FindFirst reports the folder itself
+  if not FindFirst(Dir, FindRec) then
+    exit;
+  try
+    RealDir := ((FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0)
+      and ((FindRec.Attributes and FILE_ATTRIBUTE_REPARSE_POINT) = 0);
+  finally
+    FindClose(FindRec);
+  end;
+  if not RealDir then
+    exit;
+  Result := FileExists(Dir + '\plan.json')
+    or FileExists(Dir + '\state.json')
+    or FileExists(Dir + '\result.json')
+    or FileExists(Dir + '\failed-versions.json')
+    or FileExists(Dir + '\helper.log');
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Dir: String;
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    Dir := UpdateStagingDir();
+    if IsUpdateStagingDir(Dir) then
+      DelTree(Dir, True, True, True);
+  end;
+end;

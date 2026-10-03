@@ -4,7 +4,9 @@ Inno Setup's uninstaller deletes only what its own install log lists. An
 in-place update swaps in a newer install folder without the installer, so any
 file that is new in that tree is unknown to the log and would survive an
 uninstall. ``[UninstallDelete]`` removes the PyInstaller payload
-(``_internal``) and the updater's folder (``_updater``) outright.
+(``_internal``) and the updater's folder (``_updater``) outright. The
+staging folder beside the install is removed by ``[Code]``, and only when it
+is a real folder holding a file the updater writes there.
 
 The two AppIds are pinned here too. The in-place updater will find a Windows
 install through its uninstall registry key, which Inno Setup names after the
@@ -54,33 +56,50 @@ def test_uninstall_deletes_the_payload_and_the_updater_folder():
     assert ("filesandordirs", r"{app}\_updater") in targets
 
 
-STAGING = "{app}\\..\\.{#PYR_NAME}-update"
-
-
 def test_uninstall_delete_stays_inside_the_install_folder():
-    """A filesandordirs entry outside {app} could delete user data.
-
-    The one exception is the updater's staging folder beside the install,
-    named for this app alone.
-    """
+    """A filesandordirs entry deletes whatever has its name, so every entry
+    stays inside {app}. The updater's staging folder beside the install is
+    removed by [Code] instead, after a check."""
     entries = [_entry(line) for line in _sections(ISS.read_text(encoding="utf-8")).get("UninstallDelete", [])]
 
     assert entries
     for e in entries:
-        if e["name"] == STAGING:
-            continue
         assert e["name"].startswith("{app}\\"), e
         assert e["name"] != "{app}\\", e
         assert ".." not in e["name"], e
+        assert "-update" not in e["name"], e
 
 
-def test_uninstall_removes_the_staging_folder_the_helper_uses():
-    """The name the helper insists on for its staging folder, beside the install."""
-    entries = [_entry(line) for line in _sections(ISS.read_text(encoding="utf-8")).get("UninstallDelete", [])]
-    assert ("filesandordirs", STAGING) in {(e.get("type"), e.get("name")) for e in entries}
+def _code():
+    text = ISS.read_text(encoding="utf-8")
+    return text[text.index("[Code]"):]
 
+
+def test_uninstall_removes_the_staging_folder_only_after_the_check():
+    code = _code()
+    # the name the helper insists on, beside the install
+    assert "ExtractFileDir(RemoveBackslashUnlessRoot(ExpandConstant('{app}')))" in code
+    assert "'.{#PYR_NAME}-update'" in code
     apply_py = (ISS.parents[2] / "PyReconstruct" / "modules" / "backend" / "updater" / "apply.py").read_text()
     assert "os.path.basename(staging) != f\".{plan['app_name']}-update\"" in apply_py
+
+    # after the uninstaller's own files are gone, and only through the check
+    step = code[code.index("procedure CurUninstallStepChanged"):]
+    assert "CurUninstallStep = usPostUninstall" in step
+    assert re.search(r"if IsUpdateStagingDir\(Dir\) then\s+DelTree\(Dir, True, True, True\);", step)
+    assert code.count("DelTree(") == 1
+
+
+def test_the_check_refuses_a_link_and_a_folder_the_updater_did_not_write():
+    code = _code()
+    check = code[code.index("function IsUpdateStagingDir"):code.index("procedure CurUninstallStepChanged")]
+    assert "FILE_ATTRIBUTE_DIRECTORY) <> 0" in check
+    assert "FILE_ATTRIBUTE_REPARSE_POINT) = 0" in check
+
+    # the marker files are the updater's own names, as apply.py spells them
+    from PyReconstruct.modules.backend.updater import apply
+    markers = set(re.findall(r"FileExists\(Dir \+ '\\([^']+)'\)", check))
+    assert markers == {apply.PLAN, apply.STATE, apply.RESULT, apply.FAILED_VERSIONS, apply.LOG}
 
 
 def test_the_two_appids_are_unchanged():
