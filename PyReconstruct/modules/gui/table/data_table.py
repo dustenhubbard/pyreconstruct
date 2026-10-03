@@ -16,8 +16,19 @@ from PyReconstruct.modules.gui.dialog import (
     TableColumnsDialog
 )
 
-# list columns shown as a checkbox with no text; an export writes "yes" or "no"
-CHECKBOX_EXPORT_COLUMNS = ("Hidden", "Closed", "Locked")
+# list columns shown as a checkbox with no text; an export writes "yes" or
+# "no", and "partial" for CR's partly checked box (needs curation)
+CHECKBOX_EXPORT_COLUMNS = ("Hidden", "Closed", "Locked", "CR")
+
+
+def checkboxExportText(state):
+    """The text an export writes for a checkbox cell's check state."""
+    state = Qt.CheckState(state)
+    if state == Qt.CheckState.Checked:
+        return "yes"
+    if state == Qt.CheckState.PartiallyChecked:
+        return "partial"
+    return "no"
 
 class _ListBody(QMainWindow):
     """The internal window each list renders into, with an honest width hint.
@@ -756,16 +767,12 @@ class DataTable(QDockWidget):
             for c in range(self.table.columnCount()):
 
                 cell = self.table.item(r, c)
+                # None for a text cell, such as a user column named "CR"
+                check_state = cell.data(Qt.CheckStateRole)
                 
-                if c in checkable:  # hidden, closed and locked cols
+                if c in checkable and check_state is not None:
 
-                    if cell.checkState() == Qt.Checked:
-
-                        cell_text = "yes"
-
-                    else:
-
-                        cell_text = "no"
+                    cell_text = checkboxExportText(check_state)
 
                 else:
 
