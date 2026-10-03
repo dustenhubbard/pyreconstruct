@@ -22,6 +22,8 @@ from PyReconstruct.modules.gui.utils import (
     getProgbar,
 )
 
+from PyReconstruct.modules.backend.func.state_manager import FieldState, nextStamp
+
 from .field_widget_3_object import FieldWidgetObject
 
 class FieldWidgetData(FieldWidgetObject):
@@ -503,12 +505,48 @@ class FieldWidgetData(FieldWidgetObject):
         if not math.isfinite(new_mag) or new_mag <= 0:
             raise ValueError(f"magnification must be greater than zero, got {new_mag}")
 
-        # apply new mag to every section
+        # apply new mag to every section, as one undo that cannot be split
+        # into section undos: a section undone alone would sit at the old mag
+        # while the rest of the series stays at the new one
+        self.series_states.addState(breakable=False)
+        mag_states = []
         for snum, section in self.series.enumerateSections(
             message="Changing series magnification..."
         ):
+            # the state before the change, read from the section's file
+            section_states = self.series_states[section]
+            self.series_states.recordMag(snum, section.mag)
             section.setMag(new_mag)
             section.save()
+            # A state on every section that holds every trace at the new mag,
+            # so an undo returns to the old traces exactly and a later edit on
+            # the section undoes back to the new ones. The traces stay on disk
+            # as a copy of the saved file, as the section's first state does,
+            # so a large series is not held in memory.
+            section_states.addState(section, self.series)
+            if self.series.isWelcomeSeries():
+                contours_fp = None
+            else:
+                contours_fp = os.path.join(
+                    self.series.hidden_dir,
+                    f"{self.series.sections[snum]}.m{nextStamp()}"
+                )
+            section_states.current_state = FieldState(
+                section.contours,
+                {},
+                section.tforms,
+                section.flags,
+                contours_fp,
+                src_fp=section.filepath if contours_fp else None,
+            )
+            mag_states.append(section_states.current_state)
+            self.series_states.addSectionUndo(snum)
+
+        # every z-trace moved too: one copy at the new mag, shared by the
+        # sections' states, which read it and never change it
+        ztraces = {name: z.copy() for name, z in self.series.ztraces.items()}
+        for state in mag_states:
+            state.ztraces = ztraces
         
         if log_event:
             self.series.addLog(None, None, "Calibrate series")
