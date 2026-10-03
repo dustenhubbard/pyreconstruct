@@ -767,10 +767,12 @@ class DataTable(QDockWidget):
             for c in range(self.table.columnCount()):
 
                 cell = self.table.item(r, c)
+                # None for a text cell, such as a user column named "CR"
+                check_state = cell.data(Qt.CheckStateRole)
                 
-                if c in checkable:  # hidden, closed, locked and CR cols
+                if c in checkable and check_state is not None:
 
-                    cell_text = checkboxExportText(cell.checkState())
+                    cell_text = checkboxExportText(check_state)
 
                 else:
 

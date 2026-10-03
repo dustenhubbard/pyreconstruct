@@ -778,6 +778,50 @@ def test_export_csv_writes_the_cr_column(qapp, tmp_path, monkeypatch):
     assert all(cr[name] == ("no", "") for name in names[2:])
 
 
+def test_export_csv_keeps_a_user_column_named_cr(qapp, tmp_path, monkeypatch):
+    """A categorical column the user named CR exports its own values.
+
+    Its cells are text with no check state, so both exports write the text.
+    """
+    series = _load_series(tmp_path)
+    names = sortList(list(series.data["objects"].keys()))
+    series.addUserCol("CR", ["done", "todo"], log_event=False)
+    series.setUserColAttr(names[0], "CR", "done")
+    cols = [(k, False) for k, _ in series.getOption("object_columns")] + [("CR", True)]
+    src = _RealObjectSource(series, cols)
+
+    out = str(tmp_path / "out.csv")
+    obj = ObjectTableWidget.__new__(ObjectTableWidget)
+    obj.model = ObjectTableModel(src)
+    obj.name = "object"
+    monkeypatch.setattr(
+        "PyReconstruct.modules.gui.table.object.FileDialog.get",
+        staticmethod(lambda *a, **k: out),
+    )
+    obj.export()
+
+    with open(out) as f:
+        rows = [line.split(",") for line in f.read().splitlines()]
+    assert rows[0] == ["Name", "CR"]
+    values = {name: value for name, value in rows[1:]}
+    assert values[names[0]] == "done"
+    assert all(values[name] == "" for name in names[1:])
+
+    # the QTableWidget export reads the same cells the same way
+    tw, _ = _build_old_widget(src)
+    old_out = str(tmp_path / "old.csv")
+    table = DataTable.__new__(DataTable)
+    table.table = tw
+    table.name = "object"
+    monkeypatch.setattr(
+        "PyReconstruct.modules.gui.table.data_table.FileDialog.get",
+        staticmethod(lambda *a, **k: old_out),
+    )
+    table.export()
+    with open(old_out) as f:
+        assert f.read() == open(out).read()
+
+
 def test_table_export_writes_the_locked_column(qapp, tmp_path, monkeypatch):
     """The QTableWidget export (the section list's) does the same."""
     tw = CopyTableWidget(None, 2, 2)
