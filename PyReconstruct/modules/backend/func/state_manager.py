@@ -846,9 +846,9 @@ class SeriesState():
         """Store a section's mag as it was before the action.
 
         Kept here and not in FieldState for the reason bc_profiles is: only a
-        magnification change rewrites it. The traces are not copied either.
-        A mag change scales every trace on every section, and a copy of each
-        would hold the whole series in memory. swapMag scales them back.
+        magnification change rewrites it. The traces, tforms, flags and
+        z-traces come back through the section's own states, which
+        FieldWidget.setMag records for every section.
 
             Params:
                 snum (int): the section number
@@ -858,13 +858,11 @@ class SeriesState():
             self.mags[snum] = mag
 
     def swapMag(self, section : Section) -> bool:
-        """Exchange a section's mag with the stored one, scaling its traces.
+        """Exchange a section's mag with the stored one.
 
-        Run before the section's own undo or redo, which then puts back its
-        tforms and flags exactly as they were stored. The series attributes
-        put back the z-traces. Only the traces are scaled, and the section
-        file stores them rounded to 7 places, so the file after an undo
-        matches the file before the change.
+        Only the number: the section's own undo or redo puts back the traces,
+        tforms and flags from the states it stored. Scaling them back instead
+        would not be exact, because the section file rounds every point.
 
             Params:
                 section (Section): the section to restore
@@ -875,7 +873,7 @@ class SeriesState():
             return False
         stored = self.mags[section.n]
         self.mags[section.n] = section.mag
-        section.setMag(stored)
+        section.mag = stored
         return True
 
     def recordPaletteChanges(self, changes : list):
@@ -1326,8 +1324,7 @@ class SeriesStates():
             ):
                 if snum not in sections:
                     continue
-                # before the section's own step, which then puts back the
-                # tforms and flags this scales
+                # the mag only; the section's own step puts back its traces
                 state.swapMag(section)
                 if snum in state.undo_lens:
                     states = self[snum]

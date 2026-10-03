@@ -8,14 +8,13 @@ The tests compare the section files byte for byte: after an undo they must
 match the files before the change, and after a redo the files right after it.
 """
 
-import json
 import os
 
 import pytest
 
 from PyReconstruct.modules.backend.func.state_manager import SeriesStates
 from PyReconstruct.modules.backend.progress import NullProgressReporter
-from PyReconstruct.modules.datatypes import Flag, Series, Ztrace
+from PyReconstruct.modules.datatypes import Flag, Series, Trace, Ztrace
 from PyReconstruct.modules.gui.main.field_widget_4_data import FieldWidgetData
 
 
@@ -171,3 +170,103 @@ def test_calibrate_undo_keeps_the_series_data_in_step(series):
     field.series_states.undoState()
     for n in names:
         assert series.data.getFlatArea(n) == pytest.approx(areas[n])
+
+
+def _edit(field, snum, change):
+    """An edit on one section, recorded the way FieldWidget.saveState does."""
+    series = field.series
+    section = series.loadSection(snum)
+    states = field.series_states[section]
+    change(section)
+    states.addState(section, series)
+    field.series_states.checkOverwrite(snum)
+    section.save()
+
+
+def _undo_section(field, snum):
+    """Cmd+Z on one section, as FieldWidget.undoState does it."""
+    field.series.current_section = snum
+    section = field.series.loadSection(snum)
+    _, can_2D, _ = field.series_states.canUndo(snum)
+    assert can_2D
+    field.series_states.undoSection(section)
+    section.save()
+
+
+def _odd_trace(name):
+    trace = Trace(name, (0, 255, 0))
+    trace.points = [(1.0000001, 1.0000001), (2.0000001, 1.0000001), (2.0000001, 2.0000003)]
+    return trace
+
+
+def test_an_edit_after_calibrating_undoes_to_the_new_scale(series):
+    """Calibrate, add a trace to an object that is already on the section,
+    then undo that edit alone: the object's other traces stay at the new
+    scale. Undoing the calibration after that restores every file."""
+    field = _Field(series)
+    snum = next(n for n in sorted(series.sections) if series.loadSection(n).tracesAsList())
+    name = series.loadSection(snum).tracesAsList()[0].name
+    files_before = _files(series)
+
+    field.setMag(series.loadSection(snum).mag * 2)
+    files_after = _files(series)
+
+    _edit(field, snum, lambda s: s.addTrace(_odd_trace(name)))
+    _undo_section(field, snum)
+    assert _files(series) == files_after
+
+    field.series_states.undoState()
+    assert _files(series) == files_before
+    field.series_states.undoState(redo=True)
+    assert _files(series) == files_after
+
+
+def test_a_ztrace_edit_after_calibrating_undoes_to_the_new_scale(series):
+    field = _Field(series)
+    snums = sorted(series.sections)
+    snum = snums[0]
+    z_before = _ztraces(series)
+
+    field.setMag(series.loadSection(snum).mag * 2)
+    z_after = _ztraces(series)
+
+    def move(section):
+        z = series.ztraces["calibrate-z"]
+        z.points[0] = (9.0, 9.0, snum)
+        series.modified_ztraces.add("calibrate-z")
+
+    _edit(field, snum, move)
+    series.modified_ztraces = set()
+    assert _ztraces(series) != z_after
+    _undo_section(field, snum)
+    assert _ztraces(series) == z_after
+
+    field.series_states.undoState()
+    assert _ztraces(series) == z_before
+
+
+@pytest.mark.parametrize("factor", [1 / 3, 3])
+def test_undo_is_exact_on_a_section_with_earlier_history(series, factor):
+    """An earlier edit on the section means the undo cannot fall back on the
+    section's first state, so it must not rebuild the traces by scaling."""
+    field = _Field(series)
+    snum = next(n for n in sorted(series.sections) if series.loadSection(n).tracesAsList())
+    _edit(field, snum, lambda s: s.addTrace(_odd_trace("calibrate-odd")))
+    files_before = _files(series)
+
+    field.setMag(series.loadSection(snum).mag * factor)
+    files_after = _files(series)
+    assert files_after != files_before
+
+    field.series_states.undoState()
+    assert _files(series) == files_before
+    field.series_states.undoState(redo=True)
+    assert _files(series) == files_after
+
+    # two calibrations in a row undo one at a time
+    field.setMag(series.loadSection(snum).mag * factor)
+    field.series_states.undoState()
+    assert _files(series) == files_after
+    field.series_states.undoState()
+    assert _files(series) == files_before
+
