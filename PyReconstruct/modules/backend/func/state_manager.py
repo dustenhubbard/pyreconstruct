@@ -338,12 +338,15 @@ def restoreObjectSnapshot(series : Series, snapshot : dict, recreated,
         record -= back
 
 
-def hostLinks(series : Series, names) -> set:
-    """The (traveler, host) links that touch these objects."""
+def hostLinks(series : Series, names, host_tree=None) -> set:
+    """The (traveler, host) links that touch these objects, in the series
+    host tree or in ``host_tree`` if given."""
+    if host_tree is None:
+        host_tree = series.host_tree
     links = set()
     for name in names:
-        links.update((name, h) for h in series.host_tree.getHosts(name))
-        links.update((t, name) for t in series.host_tree.getTravelers(name))
+        links.update((name, h) for h in host_tree.getHosts(name))
+        links.update((t, name) for t in host_tree.getTravelers(name))
     return links
 
 
@@ -1181,6 +1184,19 @@ class SeriesStates():
         """
         self.undos[-1].undo_lens[snum] = len(self[snum].undo_states)
 
+        # an object the action deleted dropped its host links. Keep them, as
+        # a field step does (recordDroppedHostLinks), read from the host tree
+        # as it was before the action.
+        series_state = self.undos[-1]
+        before = getattr(series_state, "objects_before", None)
+        if before is not None:
+            objects = self.series.data["objects"]
+            deleted = {n for n in before if n not in objects}
+            if deleted:
+                recordDroppedHostLinks(self.series, hostLinks(
+                    self.series, deleted, series_state.series_attrs["host_tree"]
+                ))
+
         # the action saved the section before its state was added, so an
         # object the save deleted had already lost its attributes, groups and
         # hosts. Its copy comes from the series state, taken before the action.
@@ -1311,7 +1327,8 @@ class SeriesStates():
         # rename deletes the new one), and that clears its attributes, groups
         # and hosts, so a snapshot taken afterward would redo without them
         pre_series_attrs = SeriesState.getSeriesAttributes(self.series)
-        
+        objects_before = set(self.series.data["objects"])
+
         # undo/redo the inidividual sections. A section can be in this set for
         # either of two reasons: it has a per-section undo state belonging to
         # this series state (undo_lens), or the action rewrote its
@@ -1337,6 +1354,15 @@ class SeriesStates():
         
         # undo/redo the series attributes
         state.applySeriesAttributes(self.series, pre_series_attrs)
+
+        # the host links of objects the step deleted, as addSectionUndo keeps
+        # them for the action
+        objects = self.series.data["objects"]
+        deleted = {n for n in objects_before if n not in objects}
+        if deleted:
+            recordDroppedHostLinks(self.series, hostLinks(
+                self.series, deleted, pre_series_attrs["host_tree"]
+            ))
 
         # move the state accordingly, stamped as it goes onto the other stack
         # the way SectionStates stamps its states: favor3D compares these
