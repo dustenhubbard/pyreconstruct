@@ -4351,10 +4351,16 @@ class Series():
             Returns:
                 (list): the list of the default palette traces
         """
-        palette_traces = []
-        for l in default_traces:
-            palette_traces.append(Trace.fromList(l.copy()))
-        return palette_traces * 2
+        # two rows of the same ten shapes, each button its own trace: a
+        # button edit changes its trace in place, so a list repeated with
+        # `* 2` made buttons 0-9 and 10-19 the same objects, and editing one
+        # changed its pair. deepcopy, so no trace shares its color or fill
+        # list with the other row or with default_traces.
+        return [
+            Trace.fromList(deepcopy(l))
+            for _ in range(2)
+            for l in default_traces
+        ]
     
     def getRecentSegGroup(self) -> str:
         """Return the most recent segmentation group name.
