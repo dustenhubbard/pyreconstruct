@@ -1,0 +1,106 @@
+"""The wording of the clean-up list headings and the Zarr converter window."""
+import importlib.util
+import re
+import time
+from pathlib import Path
+
+import pytest
+
+pytestmark = pytest.mark.gui
+
+from PyReconstruct.modules.gui.dialog import (
+    DifferentlyNamedDuplicatesDialog,
+    MalformedContoursDialog,
+    PixelDustDialog,
+)
+
+START_PROCESS = (
+    Path(__file__).resolve().parents[1]
+    / "PyReconstruct" / "assets" / "scripts" / "start_process.py"
+)
+
+
+def _record(**extra):
+    record = {
+        "name": "OBJ", "section": 1, "index": 0, "points": 2,
+        "location": (0.0, 0.0), "reason": "Too few points",
+        "match": {"color": [1, 2, 3], "points": [(0.0, 0.0)]},
+    }
+    record.update(extra)
+    return record
+
+
+def _pair():
+    return _record(
+        name="A", other_name="B", other_index=1, other_points=14,
+        other_location=(0.1, 0.0), area=0.5, other_area=0.52, ratio=0.97,
+        reason="Overlap 0.97 with 'B' (above 0.95)",
+        other_match={"color": [1, 2, 3], "points": [(0.1, 0.0)]},
+    )
+
+
+def _heading(qtbot, dialog):
+    qtbot.addWidget(dialog)
+    return dialog.heading.text()
+
+
+def test_the_smoothing_list_says_why_a_trace_is_skipped(qtbot):
+    heading = _heading(qtbot, MalformedContoursDialog(None, [_record()]))
+    assert (
+        "A trace is skipped when it cannot be smoothed, usually because it "
+        "has too few points"
+    ) in heading
+
+
+def test_the_pixel_dust_list_explains_the_area_column(qtbot):
+    record = _record(name="DUST", reason="Area 3 px^2", area=1e-4,
+                     area_px=3.0)
+    heading = _heading(
+        qtbot, PixelDustDialog(None, [record], delete=lambda recs: [])
+    )
+    assert (
+        "The Area is shown in pixels (px^2), the same units as the "
+        "threshold, with the physical area (um^2) next to it. Each "
+        "section's magnification can differ, so"
+    ) in heading
+    assert (
+        "Review the candidates below. Select a row and click “Go to trace” "
+        "to inspect one, and deselect"
+    ) in heading
+
+
+def test_the_pairs_heading_asks_for_one_name_per_row(qtbot):
+    heading = _heading(
+        qtbot,
+        DifferentlyNamedDuplicatesDialog(None, [_pair()],
+                                         delete_unselected=lambda c: []),
+    )
+    assert "then tick the name you want to KEEP, one name per row." in heading
+
+
+@pytest.fixture
+def zarr_window(qtbot):
+    spec = importlib.util.spec_from_file_location("start_process",
+                                                  START_PROCESS)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    window = module.MainWindow()
+    qtbot.addWidget(window)
+    return window
+
+
+def test_the_zarr_window_shows_count_and_time_left(zarr_window):
+    zarr_window.update_progress("@@PROGRESS@@ TOTAL 4")
+    assert zarr_window.eta.text() == "0 / 4, estimating time remaining…"
+
+    zarr_window._progress_start = time.monotonic() - 10
+    zarr_window.update_progress("@@PROGRESS@@ STEP 1 4")
+    eta = zarr_window.eta.text()
+    assert re.fullmatch(r"1 / 4, ~\d+s remaining", eta), eta
+
+
+def test_the_zarr_window_says_where_to_look_on_failure(zarr_window):
+    zarr_window.process_finished(1)
+    assert zarr_window.heading.text() == (
+        "Zarr processing did not finish. See the messages above."
+    )
