@@ -61,6 +61,7 @@ from PyReconstruct.modules.gui.main import main_window as MW
 
 ORG = "KHLab"
 APP = "PyReconstruct"
+DEV_APP = "PyReconstruct Dev"
 STAMP_KEY = "last_update_check_epoch"
 DAY = 24 * 3600
 
@@ -172,15 +173,28 @@ class _Stamp:
 
 @pytest.fixture
 def stamp():
-    """A clean throttle stamp before and after each test.
+    """A clean throttle stamp before and after each test, in both flavors.
 
     The stamp is one global key, so it outlives a test unless it is cleared;
     leaving it set would silently throttle whatever ran next.
+
+    The key is per app, so the Dev flavor keeps its stamp in
+    ``KHLab / PyReconstruct Dev``. That domain is cleared too. A Dev stamp
+    written earlier in the session otherwise throttled the Dev test here,
+    which then saw no dispatch at all. One writer was measured: every real
+    ``MainWindow`` schedules its launch check 2.5 s after it is built, and
+    a window from an earlier test can come due in pytest-qt's teardown
+    event processing of a Dev test in ``test_linux_update_kinds.py``,
+    while that test still fakes the Dev environment and an AppImage
+    install. On a slow runner that left a fresh Dev stamp behind.
     """
     s = _Stamp()
+    dev = _Stamp(DEV_APP)
     s.clear()
+    dev.clear()
     yield s
     s.clear()
+    dev.clear()
 
 
 # --------------------------------------------------------------------------- #
@@ -298,9 +312,12 @@ def test_the_channel_the_check_runs_on_is_the_builds_not_the_stored_one(monkeypa
     assert window.dispatched == ["release"]
 
 def test_the_dev_flavor_checks_the_prerelease_channel(monkeypatch, stamp):
-    monkeypatch.setenv("PYRECON_APP_NAME", "PyReconstruct Dev")
+    monkeypatch.setenv("PYRECON_APP_NAME", DEV_APP)
     window = _launch(_Window(_Series()), monkeypatch=monkeypatch)
     assert window.dispatched == ["prerelease"]
+    # The Dev throttle is its own key: the stable stamp stays untouched.
+    assert _Stamp(DEV_APP).present()
+    assert not stamp.present()
 
 
 # --------------------------------------------------------------------------- #
