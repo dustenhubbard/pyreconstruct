@@ -150,12 +150,16 @@ class FieldState():
         # the same, for each group this state's action or its redo emptied
         # (deleting an object's last trace); the undo of this state reads it
         self.undo_group_viz = {}
+        # object name -> the recorded host links this state's action forgot
+        # because it created an object with that name (forgetHostLinks)
+        self.forgotten_links = {}
 
     def copy(self):
         c = FieldState(self.contours, self.ztraces, self.tforms, self.flags, self.contours_fp)
         c.obj_snapshot = deepcopy(self.obj_snapshot)
         c.group_viz = dict(self.group_viz)
         c.undo_group_viz = dict(self.undo_group_viz)
+        c.forgotten_links = {n: set(l) for n, l in self.forgotten_links.items()}
         return c
     
     def getContours(self):
@@ -374,13 +378,45 @@ def recordDroppedHostLinks(series : Series, links_before) -> None:
         record |= dropped
 
 
-def forgetHostLinks(series : Series, names) -> None:
+def forgetHostLinks(series : Series, names) -> dict:
     """Drop the recorded links of objects an action just created: a new
-    object with an old name does not take the old object's links."""
+    object with an old name does not take the old object's links.
+
+        Returns:
+            (dict): name -> the links dropped for it, for the state of the
+                action to keep (restoreForgottenLinks)
+    """
     record = getattr(series, "dropped_host_links", None)
+    forgotten = {}
     if record:
-        names = set(names)
-        record -= {(t, h) for t, h in record if t in names or h in names}
+        for name in names:
+            links = {(t, h) for t, h in record if name in (t, h)}
+            if links:
+                forgotten[name] = links
+                record -= links
+    return forgotten
+
+
+def restoreForgottenLinks(series : Series, section : Section, forgotten : dict) -> None:
+    """Put back the links an action forgot (forgetHostLinks) for each object
+    it created that its undo deletes again.
+
+    An object is deleted again if it has no trace on this section after the
+    undo and none on any other section. The series data is not updated yet,
+    so it still lists this section for the object.
+    """
+    if not forgotten:
+        return
+    objects = series.data["objects"]
+    record = getattr(series, "dropped_host_links", None)
+    if record is None:
+        record = series.dropped_host_links = set()
+    for name, links in forgotten.items():
+        if len(section.contours.get(name, [])):
+            continue
+        if name in objects and set(objects[name].traces) - {section.n}:
+            continue
+        record |= links
 
 
 def recreatedAlignments(snapshot : dict, recreated) -> dict:
@@ -722,6 +758,11 @@ class SectionStates():
             n for n in modified_contours
             if n not in existed and len(section.contours.get(n, []))
         ]
+        # an object the undone action created under an old name is gone
+        # again, so the old object's links are kept again
+        restoreForgottenLinks(
+            series, section, getattr(self.current_state, "forgotten_links", {})
+        )
         snapshot = getattr(self.current_state, "obj_snapshot", {})
         restoreObjectSnapshot(
             series, snapshot, recreated,
@@ -753,6 +794,9 @@ class SectionStates():
             n for n in state_contours
             if n not in existed and len(state_contours[n])
         ]
+        # the redone action creates its objects again, and they again do
+        # not take the old objects' links
+        forgetHostLinks(series, getattr(redo_state, "forgotten_links", {}))
         snapshot = getattr(redo_state, "obj_snapshot", {})
         restoreObjectSnapshot(
             series, snapshot, recreated,
@@ -1198,7 +1242,7 @@ class SeriesStates():
         # does not take the links that deleted object had
         before = getattr(self.undos[-1], "objects_before", None)
         if before is not None:
-            forgetHostLinks(self.series, {
+            state.forgotten_links = forgetHostLinks(self.series, {
                 n for n in state.getModifiedContours()
                 if n not in before and n in self.series.data["objects"]
             })
