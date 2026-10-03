@@ -9,7 +9,7 @@ series opened with no palette both use this list.
 import pytest
 
 from PyReconstruct.modules.constants import traces as trace_constants
-from PyReconstruct.modules.datatypes import Series, Trace
+from PyReconstruct.modules.datatypes import Series
 from PyReconstruct.modules.gui.palette import buttons
 
 
