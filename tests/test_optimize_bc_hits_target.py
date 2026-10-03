@@ -153,6 +153,22 @@ def test_uint8_image_scores_like_its_float_copy(qapp, case):
         )
 
 
+@pytest.mark.parametrize("case", list(CASES))
+def test_uint8_image_counted_in_many_chunks_scores_like_its_float_copy(qapp, monkeypatch, case):
+    """Every chunk's counts add up: a small chunk splits the image many times,
+    with a short one at the end, and the pick still matches the float path."""
+    from PyReconstruct.modules.backend.view import optimize_bc
+
+    kind, mean, std, target_mean, target_std = CASES[case]
+    pixels = _image(kind, mean, std)
+    monkeypatch.setattr(optimize_bc, "_CHUNK", 997)
+    assert pixels.size > 3 * 997 and pixels.size % 997
+
+    assert adjustPixelsToStats(pixels, target_mean, target_std) == adjustPixelsToStats(
+        pixels.astype(np.float64), target_mean, target_std
+    )
+
+
 def test_uint8_image_is_not_copied_to_floats(qapp):
     """A 16384 x 16384 section took 2 GB extra for each float copy."""
     pixels = np.random.default_rng(0).integers(0, 256, (4096, 4096), dtype=np.uint8)
