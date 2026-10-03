@@ -102,5 +102,5 @@ def test_the_zarr_window_shows_count_and_time_left(zarr_window):
 def test_the_zarr_window_says_where_to_look_on_failure(zarr_window):
     zarr_window.process_finished(1)
     assert zarr_window.heading.text() == (
-        "Zarr processing did not finish. See the messages above."
+        "Zarr processing did not finish. See the messages below."
     )

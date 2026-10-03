@@ -156,7 +156,7 @@ class MainWindow(QMainWindow):
 
             self.eta.setText("Stopped before completion.")
             self.message(f"Zarr processing exited with code {exit_code}.")
-            self.heading.setText("Zarr processing did not finish. See the messages above.")
+            self.heading.setText("Zarr processing did not finish. See the messages below.")
 
         self.p = None
 
