@@ -348,6 +348,12 @@ def jsonToXML(series : Series, new_dir : str, name : str = None):
     if not name:
         name = series.name
 
+    ## The .ser names its last section and takes its thickness from the
+    ## sections, so a series with none has no .ser to write. Refuse before
+    ## writing anything; the loop below left snum unbound instead.
+    if not series.sections:
+        raise ValueError("the series has no sections to export")
+
     ## Convert sections
     for snum, section in series.enumerateSections(message="Exporting series as XML..."):
         thickness = sectionJSONtoXML(series, section, new_dir, name)
