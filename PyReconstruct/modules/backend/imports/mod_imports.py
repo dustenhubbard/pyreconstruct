@@ -311,18 +311,18 @@ def _run_pip(cmd) -> subprocess.CompletedProcess:
         return subprocess.run(cmd, capture_output=True, text=True)
 
     from PySide6.QtCore import QEventLoop, Qt
-    from PySide6.QtWidgets import QProgressDialog
 
     from PyReconstruct.modules.backend.threading import ThreadPool
     from PyReconstruct.modules.gui.utils.utils import getProgbar
 
+    # The modality has to be set before getProgbar shows the dialog. Qt
+    # applies a window's modality when it is shown, so raising it to
+    # application modal afterward changes the property and nothing else:
+    # other windows stay clickable during the install.
     progbar = getProgbar(
-        f"Installing {cmd[-1]}\u2026", cancel=False, maximum=0
+        f"Installing {cmd[-1]}\u2026", cancel=False, maximum=0,
+        window_modality=Qt.ApplicationModal,
     )
-    if isinstance(progbar, QProgressDialog):
-        progbar.setWindowModality(Qt.ApplicationModal)
-        # An indeterminate dialog receives no progress updates to auto-show it.
-        progbar.show()
     loop = QEventLoop()
     outcome = {}
 

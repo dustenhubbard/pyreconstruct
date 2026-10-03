@@ -77,13 +77,38 @@ def test_with_a_user_pip_runs_off_the_gui_thread(qapp, monkeypatch):
 def test_install_shows_a_modal_dialog_until_worker_finishes(
     qapp, qtbot, monkeypatch, fails
 ):
-    """Check the real dialog during the wait, including error-path teardown."""
-    from PySide6.QtCore import QTimer, Qt
-    from PySide6.QtWidgets import QProgressDialog, QWidget
+    """Check the real dialog during the wait, including error-path teardown.
+
+    Application modal means another top-level window is blocked too, so the
+    test clicks one. Reading windowModality() alone is not enough: Qt applies
+    modality when a window is shown, and a dialog raised to application modal
+    after it is already on screen reports the new value and blocks nothing
+    outside its parent.
+    """
+    from PySide6.QtCore import QPoint, QTimer, Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QProgressDialog, QPushButton, QWidget
 
     parent = QWidget()
     qtbot.addWidget(parent)
     parent.show()
+    other_window = QPushButton("another window")
+    qtbot.addWidget(other_window)
+    other_window.resize(120, 40)
+    with qtbot.waitExposed(other_window):
+        other_window.show()
+    other_clicks = []
+    other_window.clicked.connect(lambda: other_clicks.append(True))
+
+    def click_other_window():
+        QTest.mouseClick(
+            other_window.windowHandle(), Qt.LeftButton,
+            Qt.NoModifier, QPoint(10, 10),
+        )
+
+    click_other_window()
+    assert other_clicks == [True], "the click reaches the window before install"
+    other_clicks.clear()
     monkeypatch.setattr(gui_utils, "mainwindow", parent)
     monkeypatch.setattr(gui_utils, "user_is_present", lambda: True)
 
@@ -108,6 +133,8 @@ def test_install_shows_a_modal_dialog_until_worker_finishes(
                 observed["modal"] = qapp.activeModalWidget() is dialog
                 observed["modality"] = dialog.windowModality()
                 observed["range"] = (dialog.minimum(), dialog.maximum())
+                click_other_window()
+                observed["other_clicked"] = bool(other_clicks)
         finally:
             release_worker.set()
 
@@ -128,6 +155,9 @@ def test_install_shows_a_modal_dialog_until_worker_finishes(
     assert observed.get("visible"), "the install progress dialog was never shown"
     assert observed["modal"], "the parent window remained interactive during install"
     assert observed["modality"] == Qt.ApplicationModal
+    assert observed["other_clicked"] is False, (
+        "another window took a click during install"
+    )
     assert observed["range"] == (0, 0)
     assert not observed["dialog"].isVisible()
     assert qapp.activeModalWidget() is None
