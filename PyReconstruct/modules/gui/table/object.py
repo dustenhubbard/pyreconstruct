@@ -12,7 +12,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtCore import Qt, QItemSelection, QItemSelectionModel
 
-from .data_table import DataTable, CHECKBOX_EXPORT_COLUMNS
+from .data_table import DataTable, CHECKBOX_EXPORT_COLUMNS, checkboxExportText
 from .object_model import ObjectTableModel, ObjectTableView
 from PyReconstruct.modules.gui.utils import sortList
 
@@ -920,7 +920,7 @@ class ObjectTableWidget(DataTable):
 
         Model-backed equivalent of DataTable.export (which reads QTableWidget
         items): same headers, same row order, same per-cell text and the same
-        checkable-column ("Hidden"/"Closed") handling.
+        checkable-column (Locked, CR) handling.
         """
         file_path = FileDialog.get(
             "save",
@@ -952,15 +952,11 @@ class ObjectTableWidget(DataTable):
                 items = []
                 for c in range(n_cols):
                     index = model.index(r, c)
-                    if c in checkable:  # the "Locked" col
-                        # The model returns the int Qt stores for CheckStateRole,
-                        # so comparing to the Qt.Checked enum directly is always
-                        # False. Coerce to Qt.CheckState before comparing.
-                        check_state = model.data(index, Qt.CheckStateRole)
-                        if Qt.CheckState(check_state) == Qt.CheckState.Checked:
-                            cell_text = "yes"
-                        else:
-                            cell_text = "no"
+                    # the model returns the int Qt stores for CheckStateRole,
+                    # or None for a text cell (a user column named "CR")
+                    check_state = model.data(index, Qt.CheckStateRole)
+                    if c in checkable and check_state is not None:
+                        cell_text = checkboxExportText(check_state)
                     else:
                         cell_text = model.data(index, Qt.DisplayRole) or ""
                         if "," in cell_text:  # e.g., multiple tags
