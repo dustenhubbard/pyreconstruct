@@ -503,12 +503,24 @@ class FieldWidgetData(FieldWidgetObject):
         if not math.isfinite(new_mag) or new_mag <= 0:
             raise ValueError(f"magnification must be greater than zero, got {new_mag}")
 
-        # apply new mag to every section
+        # apply new mag to every section, as one undo that cannot be split
+        # into section undos: a section undone alone would sit at the old mag
+        # while the rest of the series stays at the new one
+        self.series_states.addState(breakable=False)
         for snum, section in self.series.enumerateSections(
             message="Changing series magnification..."
         ):
+            # the state before the change, read from the section's file
+            section_states = self.series_states[section]
+            self.series_states.recordMag(snum, section.mag)
             section.setMag(new_mag)
             section.save()
+            # a state on every section, even one whose tforms and flags did
+            # not move: it restores them exactly and keeps the undo in order
+            # with later edits on that section. It holds no traces; the undo
+            # scales those back (SeriesState.swapMag).
+            section_states.addState(section, self.series)
+            self.series_states.addSectionUndo(snum)
         
         if log_event:
             self.series.addLog(None, None, "Calibrate series")

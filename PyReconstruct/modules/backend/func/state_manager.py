@@ -838,6 +838,45 @@ class SeriesState():
         # empty for every other kind of series state.
         self.palette_changes = []
         self.palette_changes_applied = True
+        # section number : the section's mag before this state's action.
+        # Populated only by a magnification change (FieldWidget.setMag).
+        self.mags = {}
+
+    def recordMag(self, snum : int, mag : float):
+        """Store a section's mag as it was before the action.
+
+        Kept here and not in FieldState for the reason bc_profiles is: only a
+        magnification change rewrites it. The traces are not copied either.
+        A mag change scales every trace on every section, and a copy of each
+        would hold the whole series in memory. swapMag scales them back.
+
+            Params:
+                snum (int): the section number
+                mag (float): the section's mag
+        """
+        if snum not in self.mags:
+            self.mags[snum] = mag
+
+    def swapMag(self, section : Section) -> bool:
+        """Exchange a section's mag with the stored one, scaling its traces.
+
+        Run before the section's own undo or redo, which then puts back its
+        tforms and flags exactly as they were stored. The series attributes
+        put back the z-traces. Only the traces are scaled, and the section
+        file stores them rounded to 7 places, so the file after an undo
+        matches the file before the change.
+
+            Params:
+                section (Section): the section to restore
+            Returns:
+                (bool): True if this state had a mag stored for the section
+        """
+        if section.n not in self.mags:
+            return False
+        stored = self.mags[section.n]
+        self.mags[section.n] = section.mag
+        section.setMag(stored)
+        return True
 
     def recordPaletteChanges(self, changes : list):
         """Keep the button values a custom column edit changed, to reverse on
@@ -1120,6 +1159,16 @@ class SeriesStates():
         if self.undos:
             self.undos[-1].recordBCProfiles(snum, bc_profiles)
 
+    def recordMag(self, snum : int, mag : float):
+        """Store a section's mag on the newest series state (SeriesState.recordMag).
+
+            Params:
+                snum (int): the section number
+                mag (float): the section's mag before the change
+        """
+        if self.undos:
+            self.undos[-1].recordMag(snum, mag)
+
     def recordPaletteChanges(self, changes : list):
         """Attach the button values a custom column edit changed to the
         newest series state. Called right after the edit."""
@@ -1277,6 +1326,9 @@ class SeriesStates():
             ):
                 if snum not in sections:
                     continue
+                # before the section's own step, which then puts back the
+                # tforms and flags this scales
+                state.swapMag(section)
                 if snum in state.undo_lens:
                     states = self[snum]
                     if redo:
