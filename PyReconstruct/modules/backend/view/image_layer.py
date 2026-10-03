@@ -486,11 +486,13 @@ def _drawableImage(loaded : QImage, sampleable : QImage) -> QImage:
     A 16-bit image with alpha is premultiplied at 16 bits and then brought
     to 8, which rounds once, as drawing the 16-bit image itself would. Going
     through the 8-bit ARGB32 kept for the crop would round twice and land a
-    level off on about a quarter of the pixels. An 8-bit image with alpha
+    level off on about a quarter of the pixels. A 32-bit image with alpha
     (RGBA8888, say) draws from the ARGB32 copy, as Qt premultiplies it at 8.
+    Smaller formats with alpha, such as a 1-bit palette with a transparent
+    entry, keep the 16-bit route.
     """
     if (sampleable is loaded or not loaded.hasAlphaChannel()
-            or loaded.depth() <= 32):
+            or loaded.depth() == 32):
         return sampleable
     return loaded.convertToFormat(
         QImage.Format.Format_RGBA64_Premultiplied
