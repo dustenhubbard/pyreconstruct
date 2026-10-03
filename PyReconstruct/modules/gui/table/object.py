@@ -952,10 +952,10 @@ class ObjectTableWidget(DataTable):
                 items = []
                 for c in range(n_cols):
                     index = model.index(r, c)
-                    if c in checkable:  # the "Locked" and "CR" cols
-                        # the model returns the int Qt stores for
-                        # CheckStateRole; checkboxExportText coerces it
-                        check_state = model.data(index, Qt.CheckStateRole)
+                    # the model returns the int Qt stores for CheckStateRole,
+                    # or None for a text cell (a user column named "CR")
+                    check_state = model.data(index, Qt.CheckStateRole)
+                    if c in checkable and check_state is not None:
                         cell_text = checkboxExportText(check_state)
                     else:
                         cell_text = model.data(index, Qt.DisplayRole) or ""
