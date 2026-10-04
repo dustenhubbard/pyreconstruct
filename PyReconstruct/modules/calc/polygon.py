@@ -6,11 +6,12 @@ from shapely.geometry import (
     Polygon,
     GeometryCollection,
     LineString,
+    MultiLineString,
     MultiPoint,
     MultiPolygon,
     Point
 )
-from shapely.ops import substring
+from shapely.ops import linemerge, substring
 
 
 def uncuttable_closed_traces(trace_list) -> List[int]:
@@ -206,18 +207,36 @@ def cut_open_trace(line, intersection):
     if isinstance(intersection, Point):
         # Single intersection point
         return cut_at_point(line, intersection)
-    elif isinstance(intersection, MultiPoint):
-        # Multiple intersection points
-        return cut_at_points(line, intersection)
-    elif isinstance(intersection, GeometryCollection):
-        # Mixed geometry - extract points
-        points = []
-        for geom in intersection.geoms:
-            if isinstance(geom, Point):
-                points.append(geom)
-        if points:
-            return cut_at_points(line, points)
-    
+
+    # Where the knife runs along the trace, the intersection holds that shared
+    # stretch as a line rather than as points. It used to be skipped, so a
+    # knife drawn along an edge (easy on a straight pixel edge) cut nothing
+    # there, while the same stroke a hair to one side cut at both ends of the
+    # stretch. Cut at the ends of each shared stretch, as a crossing would.
+    # shapely splits a stretch at every trace vertex inside it, so the parts
+    # are merged first to keep those vertices from becoming cuts.
+    points = []
+    stretches = []
+    parts = getattr(intersection, "geoms", [intersection])
+    for geom in parts:
+        if isinstance(geom, Point):
+            points.append(geom)
+        elif isinstance(geom, MultiPoint):
+            points.extend(geom.geoms)
+        elif isinstance(geom, LineString):
+            stretches.append(geom)
+        elif isinstance(geom, MultiLineString):
+            stretches.extend(geom.geoms)
+
+    if stretches:
+        merged = linemerge(stretches)
+        for stretch in getattr(merged, "geoms", [merged]):
+            points.append(Point(stretch.coords[0]))
+            points.append(Point(stretch.coords[-1]))
+
+    if points:
+        return cut_at_points(line, points)
+
     # Fallback - return original
     return [line]
 
