@@ -8,7 +8,7 @@
 # close that class (vcs-guard-hook.md, accepted gap 3).
 #
 # Deliberately label-only. The label is the durable evidence vcs-guard already requires
-# and merge_gate.py already applies for tier B/C; an approving review satisfies the
+# and is applied once a pull request has been checked; an approving review satisfies the
 # maintainer path by him adding the label, which is one click. Checking reviews here too
 # would need a second trigger (`pull_request_review`) whose check runs land on a separate
 # event and race the label runs for "latest" -- complexity that buys nothing the label
@@ -57,9 +57,7 @@ jobs:
         run: |
           case ",$LABELS," in
             *,reviewed,*) echo "reviewed label present -- evidence recorded" ;;
-            *) echo "::error::No 'reviewed' label. Apply it via scripts/merge_gate.py (tier B/C)"; \
-               echo "::error::or by the maintainer's hand (tier A). An unlabeled merge is refused"; \
-               echo "::error::server-side by design -- see specs/postmortem-drain-2026-08-02.md H3'."; \
+            *) echo "::error::No 'reviewed' label. A merge to main needs it."; \
                exit 1 ;;
           esac
 
