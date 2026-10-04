@@ -204,6 +204,22 @@ def test_labels_offset_from_raw_move_by_the_difference(tmp_path, real_series):
     assert bounds == pytest.approx((x0 + 0.04, x1 + 0.04, y0 - 0.04, y1 - 0.04))
 
 
+@pytest.mark.parametrize("raw_offset", [[0, 0, 0], [0, 40, 80]])
+@pytest.mark.parametrize("units", ["nm", "um"])
+def test_raw_offset_shifts_imported_points(tmp_path, real_series, raw_offset, units):
+    stored_offset = [v / 1000 for v in raw_offset] if units == "um" else raw_offset
+    bounds = _import_box(
+        tmp_path, real_series,
+        {"voxel_size": [0.05, 0.004, 0.004] if units == "um" else [50, 4, 4],
+         "offset": stored_offset, "units": units},
+        {"voxel_size": [50, 4, 4], "offset": [0, 0, 0]},
+    )
+
+    x0, x1, y0, y1 = AT_ZERO
+    dx, dy = -raw_offset[2] / 1000, raw_offset[1] / 1000
+    assert bounds == pytest.approx((x0 + dx, x1 + dx, y0 + dy, y1 + dy))
+
+
 def test_shared_z_offset_starts_at_raw_first_section(tmp_path):
     fp = str(tmp_path / "z.zarr")
     zg = zarr.open(fp, "w")
@@ -230,7 +246,9 @@ def _overlay(tmp_path, raw_attrs, label_attrs, true_mag=0.004):
     raw.attrs.update(raw_attrs)
     labels = group.create_dataset("labels", shape=(1, 5, 5), dtype="u4")
     labels.attrs.update(label_attrs)
-    series = types.SimpleNamespace(zarr_overlay_fp=fp, zarr_overlay_group="labels")
+    series = types.SimpleNamespace(
+        zarr_overlay_fp=fp, zarr_overlay_group="labels", sections={}, data={"sections": {}}
+    )
     layer = ZarrLayer(series)
     return layer.zarr_mag, layer.zarr_x, layer.zarr_y, layer.zarr_s
 
@@ -289,6 +307,30 @@ def test_overlay_puts_labels_with_no_size_on_raws_grid(tmp_path, raw_attrs, labe
 
 def test_overlay_with_no_size_on_either_array_starts_at_raws_corner(tmp_path):
     assert _overlay(tmp_path, {}, {}) == pytest.approx((0.004, 1, 2, 3))
+
+
+@pytest.mark.parametrize("raw_attrs", [{"voxel_size": [25.4, 0, 0]}, {}])
+def test_overlay_recovers_legacy_grid_with_series_thickness(tmp_path, raw_attrs):
+    from PyReconstruct.modules.backend.view.zarr_layer import ZarrLayer
+
+    fp = str(tmp_path / "legacy-overlay.zarr")
+    group = zarr.open_group(fp, mode="w")
+    raw = group.create_dataset("raw", shape=(1, 10, 10), dtype="u1")
+    raw.attrs.update({
+        "window": [1, 2, 0.005, 0.005], "sections": [3], "true_mag": 0.0005,
+        **raw_attrs,
+    })
+    labels = group.create_dataset("labels", shape=raw.shape, dtype="u4")
+    labels.attrs["voxel_size"] = [0, 0, 0]
+    series = types.SimpleNamespace(
+        zarr_overlay_fp=fp, zarr_overlay_group="labels", sections={3: "section3"},
+        data={"sections": {3: {"thickness": 0.0254}}},
+    )
+
+    layer = ZarrLayer(series)
+    assert layer.raw_resolution == layer.resolution == [25.4, 0.5, 0.5]
+    assert layer.zarr_mag == pytest.approx(0.0005)
+    assert (layer.zarr_x, layer.zarr_y, layer.zarr_s) == (1, 2, 3)
 
 
 @pytest.mark.parametrize(
