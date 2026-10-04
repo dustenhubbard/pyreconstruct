@@ -616,7 +616,7 @@ class Trace():
 
         # get the transform
         if xml_trace.transform is not None:
-            points = xml_trace.transform.transformPoints(xml_trace.points)
+            points = xml_trace.transform.transformPoints(points)
         if xml_image_tform is not None:
             points = xml_image_tform.inverseTransformPoints(points)
         
@@ -1183,6 +1183,8 @@ def convertMode(arg):
                 # any Reconstruct mode other than 9, 11, 13 and 15. The field
                 # draws a None style at full opacity, so it goes out as solid.
                 mode = 13
+            # Reconstruct keeps the fill condition only as the sign of the
+            # mode, so "always" has no form of its own and goes out as selected.
             if arg[1] == "unselected":
                 mode *= -1
         return mode

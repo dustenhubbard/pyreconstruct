@@ -34,6 +34,27 @@ from PyReconstruct.modules.datatypes_legacy import (
 CCW = [(0, 0), (2, 0), (2, 2), (0, 2)]
 CW = CCW[::-1]
 
+
+@pytest.mark.parametrize("points, negative", [(CW, True), (CCW, False)])
+def test_translated_import_keeps_the_same_point_order(points, negative):
+    translation = XMLTransform(
+        xcoef=[-10, 1, 0, 0, 0, 0], ycoef=[-20, 0, 1, 0, 0, 0],
+    )
+    contour = XMLContour(
+        name="t", closed=True, mode=9, border=[1, 0, 0], fill=[1, 0, 0],
+        hidden=False, points=points,
+    )
+    plain = Trace.fromXMLObj(contour)
+    contour.transform = translation
+    translated = Trace.fromXMLObj(contour)
+
+    # Legacy coefficients describe the inverse: these move points by (+10, +20).
+    assert [(x - 10, y - 20) for x, y in translated.points] == plain.points
+    assert plain.points == (points[::-1] if negative else points)
+    assert plain.negative is translated.negative is negative
+    assert contour.points == points
+
+
 # x' = 10 - x: a mirrored (negative determinant) section transform
 MIRROR = XMLTransform(xcoef=[10, -1, 0, 0, 0, 0], ycoef=[0, 0, 1, 0, 0, 0])
 
