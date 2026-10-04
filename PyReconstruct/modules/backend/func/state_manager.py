@@ -415,6 +415,61 @@ def setNewObjects(series : Series, snum : int, new_names : dict) -> None:
     sections[snum] = dict(new_names)
 
 
+def oldTracesHere(series : Series, section : Section, names) -> set:
+    """The names that have traces on this section that are not a new
+    object's (markNewObjects), read before an undo or redo changes them."""
+    sections = getattr(series, "new_object_sections", None) or {}
+    new_here = sections.get(section.n, {})
+    return {
+        n for n in names
+        if n not in new_here and len(section.contours.get(n, []))
+    }
+
+
+def dropReplacedLinks(series : Series, section : Section, old_here) -> None:
+    """Take an old object's links off the new object that is all that is
+    left of its name.
+
+    An undo or redo that takes the last old traces of a name off this
+    section, while a new object with that name stays on other sections,
+    leaves only the new object. The old links it hides (hiddenHostLinks)
+    come off the host tree and go back to the record of dropped links, as a
+    delete of the old object would leave them. The series data is not
+    updated yet, so it still lists this section for the object.
+
+        Params:
+            series (Series): the series
+            section (Section): the section just restored
+            old_here (set): oldTracesHere, read before the step
+    """
+    hidden = getattr(series, "hidden_host_links", None) or {}
+    sections = getattr(series, "new_object_sections", None) or {}
+    objects = series.data["objects"]
+    tree = series.host_tree
+    for name in old_here:
+        if name not in objects:
+            continue
+        if (len(section.contours.get(name, []))
+                and name not in sections.get(section.n, {})):
+            continue
+        others = set(objects[name].traces) - {section.n}
+        keys = {sections.get(snum, {}).get(name) for snum in others}
+        if not others or None in keys:
+            continue
+        for key in keys:
+            for traveler, host in hidden.get(key, ()):
+                if name not in (traveler, host):
+                    continue
+                if host not in tree.getHosts(traveler):
+                    continue
+                tree.objects[traveler]["hosts"].discard(host)
+                tree.objects[host]["travelers"].discard(traveler)
+                record = getattr(series, "dropped_host_links", None)
+                if record is None:
+                    record = series.dropped_host_links = set()
+                record.add((traveler, host))
+
+
 def hiddenHostLinks(series : Series) -> set:
     """The recorded links that stay hidden now: those of each old object
     whose name a new object on some section has. A link is hidden while
@@ -753,6 +808,9 @@ class SectionStates():
             n for n in self.current_state.getModifiedContours()
             if n in series.data["objects"] or len(section.contours.get(n, []))
         }
+        old_here = oldTracesHere(
+            series, section, self.current_state.getModifiedContours()
+        )
 
         # if only one undo state exists
         if len(self.undo_states) == 1:
@@ -814,6 +872,7 @@ class SectionStates():
         setNewObjects(
             series, section.n, getattr(self.undo_states[-1], "new_names", {})
         )
+        dropReplacedLinks(series, section, old_here)
         snapshot = getattr(self.current_state, "obj_snapshot", {})
         restoreObjectSnapshot(
             series, snapshot, recreated,
@@ -837,6 +896,7 @@ class SectionStates():
         state_contours = redo_state.getContours()
         modified_contours = redo_state.getModifiedContours()
         existed = {n for n in state_contours if n in series.data["objects"]}
+        old_here = oldTracesHere(series, section, modified_contours)
         for contour_name in state_contours:
             section.contours[contour_name] = state_contours[contour_name]
         # objects this redo brings back from nothing get their attributes and
@@ -847,6 +907,7 @@ class SectionStates():
         ]
         # the section goes on to the new objects of the state it redoes
         setNewObjects(series, section.n, getattr(redo_state, "new_names", {}))
+        dropReplacedLinks(series, section, old_here)
         snapshot = getattr(redo_state, "obj_snapshot", {})
         restoreObjectSnapshot(
             series, snapshot, recreated,
