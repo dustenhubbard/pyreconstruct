@@ -100,20 +100,64 @@ def _sameDir(a, b):
         return False
 
 
+def _existingAncestor(p):
+    """The nearest existing folder above a path, and the parts below it.
+
+        Params:
+            p (str): the path
+        Returns:
+            (str): the path itself if it exists, else its nearest existing
+                ancestor
+            (list): the names from that ancestor down to the path
+    """
+    p = os.path.abspath(p)
+    rest = []
+    while not os.path.lexists(p):
+        head, tail = os.path.split(p)
+        if head == p:
+            break
+        rest.insert(0, tail)
+        p = head
+    return p, rest
+
+
+def _caseInsensitive(folder):
+    """True if a folder's volume ignores case in names.
+
+    Asks the filesystem whether the case-swapped spelling of the folder is
+    the same folder. A folder with no letters in its path says nothing, so
+    it counts as case-sensitive.
+    """
+    swapped = folder.swapcase()
+    return swapped != folder and _sameDir(folder, swapped)
+
+
 def _samePath(a, b):
     """True if two paths name the same file, or would if it existed.
 
     Asks the filesystem when both exist, like _sameDir, so a symlink or hard
     link matches its target. Otherwise compares the resolved paths, so a path
     whose file is gone still matches itself under another spelling of its
-    folder (/tmp and /private/tmp on macOS).
+    folder (/tmp and /private/tmp on macOS). Failing that, it compares the
+    nearest folders that exist, and the names below them, ignoring case when
+    that folder's volume does (Data/B.jser and data/b.jser on macOS).
     """
     if not a or not b:
         return False
     if _sameDir(a, b):
         return True
     norm = lambda p: os.path.normcase(os.path.realpath(p))
-    return norm(a) == norm(b)
+    if norm(a) == norm(b):
+        return True
+    a_dir, a_rest = _existingAncestor(a)
+    b_dir, b_rest = _existingAncestor(b)
+    if not a_rest or len(a_rest) != len(b_rest) or not _sameDir(a_dir, b_dir):
+        return False
+    if a_rest == b_rest:
+        return True
+    return _caseInsensitive(a_dir) and (
+        [n.casefold() for n in a_rest] == [n.casefold() for n in b_rest]
+    )
 
 
 ## How fresh a timer file in a hidden series dir has to be for the series to

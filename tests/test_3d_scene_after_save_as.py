@@ -319,3 +319,53 @@ def test_same_path_matches_a_missing_file_through_a_folder_link(tmp_path):
 
     assert _samePath(str(alias / "B.jser"), str(real / "B.jser"))
     assert not _samePath(str(alias / "B.jser"), str(real / "C.jser"))
+
+
+def _volume_ignores_case(folder):
+    """Probe the volume rather than the platform: is the swapped spelling the same folder?"""
+    import os
+    swapped = str(folder).swapcase()
+    return os.path.exists(swapped) and os.path.samefile(str(folder), swapped)
+
+
+def test_same_path_ignores_case_for_missing_files_where_the_volume_does(tmp_path):
+    """With the file gone, Data/B.jser and data/b.jser still name one file."""
+    from PyReconstruct.modules.gui.main.main_window import _samePath
+
+    data = tmp_path / "Data"
+    data.mkdir()
+    if not _volume_ignores_case(data):
+        pytest.skip("this volume is case-sensitive")
+    lower = tmp_path / "data"
+
+    assert _samePath(str(data / "B.jser"), str(data / "b.jser"))
+    assert _samePath(str(data / "B.jser"), str(lower / "B.jser"))
+    assert _samePath(str(data / "B.jser"), str(lower / "b.jser"))
+    assert _samePath(str(data / "Sub" / "B.jser"), str(lower / "sub" / "b.jser"))
+    assert not _samePath(str(data / "B.jser"), str(data / "C.jser"))
+    assert not _samePath(str(data / "B.jser"), str(data / "Sub" / "B.jser"))
+
+
+def test_save_as_refuses_a_missing_scene_series_spelled_in_other_case(
+    main_window, main_window_dialogs, tmp_path, series_jser, monkeypatch
+):
+    """Once the other series' .jser is gone, its path in another case is still taken."""
+    import os
+
+    window = main_window
+    viewer, _mine, theirs, other_fp = _scene_with_other_series(
+        window, tmp_path, series_jser, monkeypatch
+    )
+    if not _volume_ignores_case(os.path.dirname(other_fp)):
+        pytest.skip("this volume is case-sensitive")
+    os.remove(other_fp)
+    own_fp = window.series.jser_fp
+    chosen = os.path.join(str(tmp_path), "OTHER", "Other.jser")
+
+    main_window_dialogs.file_responses.append(chosen)
+    result = window.saveAsToJser()
+
+    assert result == "cancel"
+    assert window.series.jser_fp == own_fp
+    assert theirs.series_fp == other_fp
+    assert not os.path.exists(other_fp)
