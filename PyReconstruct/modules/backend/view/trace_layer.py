@@ -29,6 +29,7 @@ from PyReconstruct.modules.calc import (
     getDistanceFromTrace,
     getExterior
 )
+from PyReconstruct.modules.calc.nesting import nestedFillOrder
 from PyReconstruct.modules.gui.utils import drawOutlinedText
 
 # How a selected trace is drawn: (color, pen width in pixels), widest first.
@@ -698,8 +699,10 @@ class TraceLayer():
     def _drawHoledLabel(self, arr : np.ndarray, traces : list[Trace], label : int, tform : Transform = None):
         """Draw one object's traces as a label, with its negative traces as holes.
 
-        The mask covers only the box of the object's positive traces, not the
-        whole array, so a large export stays fast.
+        The positives fill and then the holes clear, in the order
+        nestedFillOrder gives, so a positive inside a hole (an island) fills
+        again after the hole. The mask covers only the box of the object's
+        positive traces, not the whole array, so a large export stays fast.
 
             Params:
                 arr (np.ndarray): the array to draw the label on
@@ -711,6 +714,7 @@ class TraceLayer():
 
         pix = [(self.traceToPixArray(trace, tform), trace.negative) for trace in traces]
         positive = [pts for pts, negative in pix if not negative and len(pts)]
+        holes = [pts for pts, negative in pix if negative and len(pts)]
         if not positive:
             return
 
@@ -723,12 +727,9 @@ class TraceLayer():
             return  # entirely outside the array
 
         mask = np.zeros((y1 - y0, x1 - x0), dtype=bool)
-        for fill in (True, False):  # positives first, then the holes
-            for pts, negative in pix:
-                if negative == fill or not len(pts):
-                    continue
-                yy, xx = polygon(pts[:, 1] - y0, pts[:, 0] - x0, mask.shape)
-                mask[yy, xx] = fill
+        for pts, fill in nestedFillOrder(positive, holes):
+            yy, xx = polygon(pts[:, 1] - y0, pts[:, 0] - x0, mask.shape)
+            mask[yy, xx] = fill
 
         arr[y0:y1, x0:x1][mask] = label
 

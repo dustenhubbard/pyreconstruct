@@ -137,3 +137,18 @@ def test_holed_object_off_the_edge_is_clipped(tmp_path, monkeypatch):
     assert _at(arr, 50, 50) == ids["donut"]
     assert _at(arr, 20, 20) == 0  # the hole
     assert _at(arr, 80, 80) == 0  # outside the donut
+
+
+def test_island_inside_its_own_hole_keeps_the_label(tmp_path, monkeypatch):
+    ## a ring, its hole, and an island of the same object inside the hole
+    donut = [
+        _square("donut", 10, 90),
+        _square("donut", 30, 70, negative=True),
+        _square("donut", 45, 55),
+    ]
+
+    arr, ids = _export(tmp_path, monkeypatch, {"donut": _Contour(donut)})
+
+    assert _at(arr, 50, 50) == ids["donut"]  # the island
+    assert _at(arr, 35, 35) == 0  # the hole, outside the island
+    assert _at(arr, 20, 20) == ids["donut"]  # the ring
