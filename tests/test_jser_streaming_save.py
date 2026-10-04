@@ -17,10 +17,14 @@ The other half is atomicity: a section that cannot be read partway through the
 stream fails the save, removes the temp file, and leaves the old .jser as it was.
 """
 
+import errno
 import filecmp
 import io
+import json
 import os
+import random
 import shutil
+import tracemalloc
 
 import pytest
 
@@ -36,6 +40,7 @@ from PyReconstruct.modules.constants import (
 from PyReconstruct.modules.constants import fast_json
 from PyReconstruct.modules.constants.jser_format import PRETTY_ENV_VAR
 from PyReconstruct.modules.datatypes import Series
+from PyReconstruct.modules.datatypes import series as series_mod
 from PyReconstruct.modules.datatypes.series import SeriesSaveError
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -248,3 +253,272 @@ def test_a_section_file_gone_mid_save_fails_the_save_and_keeps_the_old_file(
     finally:
         series.leave_open = False
         series.close()
+
+
+# --------------------------------------------------------------------------
+# the save really streams
+# --------------------------------------------------------------------------
+
+def synthetic_series(tmp_path, n_sections=50, section_kb=100):
+    """A real series whose hidden dir holds `n_sections` files of about `section_kb` KB."""
+    series = open_copy(tmp_path, FIXTURES[1])
+    base = fast_loads(open(
+        os.path.join(series.hidden_dir, series.sections[min(series.sections)]), "rb"
+    ).read())
+    for filename in series.sections.values():
+        os.remove(os.path.join(series.hidden_dir, filename))
+    series.sections.clear()
+
+    rng = random.Random(437)
+    section = dict(base)
+    section["contours"] = {}
+    raw = b""
+    while len(raw) < section_kb * 1024:
+        name = f"obj{len(section['contours']):04d}"
+        section["contours"][name] = [
+            [
+                [round(rng.uniform(0, 50), 6) for _ in range(60)],
+                [round(rng.uniform(0, 50), 6) for _ in range(60)],
+                [255, 0, 0], True, False, False, "none", [],
+            ]
+            for _ in range(5)
+        ]
+        raw = json.dumps(section).encode()
+    for snum in range(n_sections):
+        filename = f"{series.name}.{snum}"
+        with open(os.path.join(series.hidden_dir, filename), "wb") as f:
+            f.write(raw)
+        series.sections[snum] = filename
+    series.save()
+    return series
+
+
+def test_a_save_holds_far_less_than_the_file_in_memory(tmp_path):
+    """Reading every section first held about five times the file size.
+
+    Measured on 200 sections of 200 KB: 203 MB peak before, 3.3 MB after, for a
+    39 MB file. Here, 100 sections of 100 KB make a file of about 9.7 MB, and
+    the streaming path peaks near 1.8 MB however many sections there are. The
+    bound is half the file size: the old path misses it by about ten times, and
+    the streaming path clears it by more than two and a half times.
+    """
+    series = synthetic_series(tmp_path, n_sections=100)
+    try:
+        tracemalloc.start()
+        try:
+            series.saveJser()
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        size = os.path.getsize(series.jser_fp)
+        assert size > 8 * 1024 * 1024
+        assert peak < size / 2, f"peak {peak} bytes for a {size} byte file"
+    finally:
+        series.close()
+
+
+def test_a_save_writes_the_temp_file_in_pieces(tmp_path, monkeypatch):
+    """The temp file is written section by section, not handed one block of bytes."""
+    series = synthetic_series(tmp_path, n_sections=20, section_kb=10)
+    writes = []
+    real_atomic = series_mod._atomicWrite
+
+    class Counting:
+        def __init__(self, f):
+            self.f = f
+
+        def write(self, b):
+            writes.append(len(b))
+            return self.f.write(b)
+
+        def __getattr__(self, name):
+            return getattr(self.f, name)
+
+    def counting_atomic(fp, data):
+        if fp != series.jser_fp:  # the .ser in the hidden dir
+            return real_atomic(fp, data)
+        assert callable(data), "the save built the whole file before writing it"
+        return real_atomic(fp, lambda f: data(Counting(f)))
+
+    monkeypatch.setattr(series_mod, "_atomicWrite", counting_atomic)
+    try:
+        series.saveJser()
+        assert len(writes) > len(series.sections)
+        assert max(writes) < os.path.getsize(series.jser_fp) / 10
+    finally:
+        monkeypatch.undo()
+        series.close()
+
+
+# --------------------------------------------------------------------------
+# every way the streaming save can fail leaves the old file as it was
+# --------------------------------------------------------------------------
+
+class RecordingNotifier(NullNotifier):
+    def __init__(self):
+        self.errors = []
+
+    def notify_error(self, message, report):
+        self.errors.append(message)
+        return True
+
+
+@pytest.fixture
+def saved(tmp_path):
+    """A series saved once, so there is a good .jser to keep, and its bytes."""
+    series = open_copy(tmp_path, FIXTURES[1])
+    series.saveJser()
+    notifier = RecordingNotifier()
+    series.setNotifier(notifier)
+    good = open(series.jser_fp, "rb").read()
+    yield series, good, notifier
+    series.leave_open = False
+    series.close()
+
+
+def assert_untouched(series, good):
+    assert open(series.jser_fp, "rb").read() == good
+    assert not os.path.exists(series.jser_fp + ".tmp")
+
+
+def assert_save_failed_shown(notifier):
+    assert len(notifier.errors) == 1
+    assert "Save failed" in notifier.errors[0]
+    assert "existing file was left unchanged" in notifier.errors[0]
+
+
+def lone_surrogate_in_last_section(series):
+    """orjson cannot encode a lone surrogate, so the save takes the stdlib pass."""
+    fp = os.path.join(series.hidden_dir, series.sections[max(series.sections)])
+    data = json.loads(open(fp, "rb").read())
+    data["note"] = "\ud800"
+    with open(fp, "w") as f:
+        f.write(json.dumps(data))
+
+
+def failing_writes(monkeypatch, should_fail):
+    """Wrap the temp file so `should_fail(state)` can end a write with ENOSPC."""
+    real_write_jser = series_mod.write_jser
+    state = {"writes": 0, "truncated": False}
+
+    class DiskFull:
+        def __init__(self, f):
+            self.f = f
+
+        def write(self, b):
+            state["writes"] += 1
+            if should_fail(state):
+                raise OSError(errno.ENOSPC, "No space left on device")
+            return self.f.write(b)
+
+        def writelines(self, lines):
+            for line in lines:
+                self.write(line)
+
+        def truncate(self, *args):
+            state["truncated"] = True
+            state["writes"] = 0
+            return self.f.truncate(*args)
+
+        def __getattr__(self, name):
+            return getattr(self.f, name)
+
+    monkeypatch.setattr(
+        series_mod, "write_jser",
+        lambda f, *a, **k: real_write_jser(DiskFull(f), *a, **k),
+    )
+    return state
+
+
+@pytest.mark.parametrize("nth", [1, 2, 5])
+def test_a_full_disk_mid_stream_keeps_the_old_file(saved, monkeypatch, nth):
+    series, good, notifier = saved
+    failing_writes(monkeypatch, lambda st: st["writes"] == nth)
+
+    with pytest.raises(OSError) as excinfo:
+        series.saveJser()
+
+    assert excinfo.value.errno == errno.ENOSPC
+    assert_untouched(series, good)
+    assert_save_failed_shown(notifier)
+
+
+def test_a_failure_in_the_stdlib_pass_keeps_the_old_file(saved, monkeypatch):
+    series, good, notifier = saved
+    lone_surrogate_in_last_section(series)
+    state = failing_writes(
+        monkeypatch, lambda st: st["truncated"] and st["writes"] == 2
+    )
+
+    with pytest.raises(OSError):
+        series.saveJser()
+
+    assert state["truncated"], "the save never reached the stdlib pass"
+    assert_untouched(series, good)
+    assert_save_failed_shown(notifier)
+
+
+def test_the_stdlib_pass_on_its_own_matches_the_old_path(saved):
+    series, _, _ = saved
+    lone_surrogate_in_last_section(series)
+    expected = old_path_bytes(series)
+    assert b'{"sections": [' in expected[:20]
+
+    series.saveJser()
+
+    assert open(series.jser_fp, "rb").read() == expected
+
+
+def test_an_fsync_failure_keeps_the_old_file(saved, monkeypatch):
+    series, good, notifier = saved
+    real_fsync = os.fsync
+
+    def failing_fsync(fd):
+        if os.path.exists(series.jser_fp + ".tmp"):
+            raise OSError(errno.EIO, "Input/output error")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", failing_fsync)
+    with pytest.raises(OSError):
+        series.saveJser()
+    monkeypatch.undo()
+
+    assert_untouched(series, good)
+    assert_save_failed_shown(notifier)
+
+
+def test_a_replace_failure_keeps_the_old_file(saved, monkeypatch):
+    series, good, notifier = saved
+    real_replace = os.replace
+
+    def failing_replace(src, dst):
+        if src == series.jser_fp + ".tmp":
+            raise OSError(errno.EROFS, "Read-only file system")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", failing_replace)
+    with pytest.raises(OSError):
+        series.saveJser()
+    monkeypatch.undo()
+
+    assert_untouched(series, good)
+    assert_save_failed_shown(notifier)
+
+
+def test_an_unreadable_series_file_shows_save_failed_and_keeps_the_old_file(
+        saved, monkeypatch):
+    """The .ser is now read while the temp file is open, so its error is surfaced."""
+    series, good, notifier = saved
+
+    def guarded_open(fp, mode="r", *args, **kwargs):
+        if fp == series.filepath and "r" in mode:
+            raise PermissionError(errno.EACCES, "Permission denied", fp)
+        return open(fp, mode, *args, **kwargs)
+
+    monkeypatch.setattr(series_mod, "open", guarded_open, raising=False)
+    with pytest.raises(PermissionError):
+        series.saveJser()
+    monkeypatch.undo()
+
+    assert_untouched(series, good)
+    assert_save_failed_shown(notifier)

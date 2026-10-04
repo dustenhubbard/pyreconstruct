@@ -856,8 +856,10 @@ class Series():
             the save reported success, and the atomic write replaced the last
             good .jser with one short a section
 
-        Both disagreements now refuse, before anything is written, rather than
-        write a .jser that is missing a section. A missing or unreadable section
+        Both disagreements now refuse, before the existing .jser is replaced,
+        rather than write a .jser that is missing a section. A missing file is
+        caught before anything is written. An unreadable one is found while the
+        sections stream into the temp file, and that temp file is removed. A missing or unreadable section
         file means the data is already gone from the working copy that was being
         edited, so no save can preserve it, and refusing costs nothing that
         proceeding would have saved: every section file that does exist stays in
@@ -872,8 +874,8 @@ class Series():
                 close (bool): True if series should be closed after saving
             Raises:
                 SeriesSaveError: if the series cannot be written without losing a
-                    section. Nothing is written, so the existing .jser is still
-                    the last good copy.
+                    section. Any temp file is removed and the existing .jser is
+                    not replaced, so it is still the last good copy.
         """
         self.save()
 
