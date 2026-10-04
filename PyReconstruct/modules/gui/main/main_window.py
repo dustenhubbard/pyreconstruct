@@ -99,6 +99,117 @@ def _sameDir(a, b):
     except (OSError, TypeError, ValueError):
         return False
 
+
+def _existingAncestor(p):
+    """The nearest existing folder above a path, and the parts below it.
+
+        Params:
+            p (str): the path
+        Returns:
+            (str): the path itself if it exists, else its nearest existing
+                ancestor, with links resolved
+            (list): the names from that ancestor down to the path
+    """
+    p = os.path.abspath(p)
+    rest = []
+    while not os.path.lexists(p):
+        head, tail = os.path.split(p)
+        if head == p:
+            break
+        rest.insert(0, tail)
+        p = head
+    # resolve links, so a folder reached through a directory symlink is
+    # probed on the volume it points to, not the one the link sits on
+    return os.path.realpath(p), rest
+
+
+def _probeEntries(folder):
+    """Whether names inside a folder ignore case, judged by its entries.
+
+    An entry whose case-swapped name reaches the same entry means the
+    folder's volume ignores case. Nothing is written to the folder.
+
+        Returns:
+            (bool or None): None if no entry has letters to swap
+    """
+    try:
+        entries = os.listdir(folder)
+    except OSError:
+        entries = []
+    for name in entries:
+        swapped = name.swapcase()
+        if swapped == name:
+            continue  # no letters to swap
+        try:
+            st = os.lstat(os.path.join(folder, name))
+        except OSError:
+            continue  # gone since the listing
+        if swapped in entries:
+            return False  # both spellings listed as separate entries
+        try:
+            alt = os.lstat(os.path.join(folder, swapped))
+        except OSError:
+            return False
+        return (alt.st_dev, alt.st_ino) == (st.st_dev, st.st_ino)
+    return None
+
+
+def _caseInsensitive(folder):
+    """True if names inside a folder ignore case.
+
+    Probes inside the folder first, since folders above it can sit on
+    another volume. With no entry to probe, it looks the folder's own name
+    up in its parent in the other case, which tests the parent's volume:
+    the best available guess, wrong only when the folder is a mount point.
+    A name with no letters (2026) says nothing either, so it walks up one
+    folder at a time and asks the same of each.
+    """
+    folder = os.path.realpath(folder)
+    while True:
+        found = _probeEntries(folder)
+        if found is not None:
+            return found
+        parent, name = os.path.split(folder)
+        swapped = name.swapcase()
+        if name and swapped != name:
+            return _sameDir(folder, os.path.join(parent, swapped))
+        if not name or parent == folder:
+            # Nothing on the way up could tell. Say case-insensitive: the
+            # caller then treats names differing only in case as one file,
+            # which can only refuse a save, never allow one over a series
+            # in the 3D scene.
+            return True
+        folder = parent
+
+
+def _samePath(a, b):
+    """True if two paths name the same file, or would if it existed.
+
+    Asks the filesystem when both exist, like _sameDir, so a symlink or hard
+    link matches its target. Otherwise compares the resolved paths, so a path
+    whose file is gone still matches itself under another spelling of its
+    folder (/tmp and /private/tmp on macOS). Failing that, it compares the
+    nearest folders that exist, and the names below them, ignoring case when
+    that folder's volume does (Data/B.jser and data/b.jser on macOS).
+    """
+    if not a or not b:
+        return False
+    if _sameDir(a, b):
+        return True
+    norm = lambda p: os.path.normcase(os.path.realpath(p))
+    if norm(a) == norm(b):
+        return True
+    a_dir, a_rest = _existingAncestor(a)
+    b_dir, b_rest = _existingAncestor(b)
+    if not a_rest or len(a_rest) != len(b_rest) or not _sameDir(a_dir, b_dir):
+        return False
+    if a_rest == b_rest:
+        return True
+    return _caseInsensitive(a_dir) and (
+        [n.casefold() for n in a_rest] == [n.casefold() for n in b_rest]
+    )
+
+
 ## How fresh a timer file in a hidden series dir has to be for the series to
 ## count as open in another window. The open window rewrites that file every 5
 ## seconds (FieldWidget.markTime), so this has to stay comfortably above 5 or a
@@ -1398,6 +1509,27 @@ class MainWindow(QMainWindow):
         """
         sname = os.path.basename(new_jser_fp)
         sname = sname[:sname.rfind(".")]
+
+        # the 3D scene tells series apart by path string; saving over another
+        # series in it would put both under one path, with one host tree
+        # and one undo history. A scene path that is a link to this series'
+        # own .jser is still another series to the scene, so only the exact
+        # path counts as this one.
+        own_fp = self.series.jser_fp
+        if self.viewer and not self.viewer.is_closed and new_jser_fp != own_fp:
+            for fp in self.viewer.seriesPaths():
+                if fp == own_fp or not _samePath(fp, new_jser_fp):
+                    continue
+                QMessageBox.information(
+                    self,
+                    "Series In Use",
+                    f"{sname}.jser has objects in the 3D scene or its undo history.\n"
+                    "Saving over it would mix them with this series. "
+                    "Close the 3D scene first, or save under another name.",
+                    QMessageBox.Ok
+                )
+                return False
+
         dest_dir = os.path.join(os.path.dirname(new_jser_fp), f".{sname}")
         if not os.path.isdir(dest_dir):
             return True
