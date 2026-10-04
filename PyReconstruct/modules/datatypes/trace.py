@@ -1119,9 +1119,13 @@ class Trace():
 
         # A trace smaller than the interpolation spacing comes back as one
         # or two points. Storing that would leave a closed trace with no
-        # area, and it would be dropped on the next save. Keep the original
-        # points instead and report the trace as skipped.
-        min_points = 3 if self.closed else 2
+        # area, and it would be dropped on the next save. A closed trace
+        # only a little larger, four or five spacings around, can come back as
+        # three points: a thin triangle that no longer resembles the shape
+        # that was drawn. Keep the original points in both cases and report
+        # the trace as skipped. A closed trace drawn with three points may
+        # still smooth to three.
+        min_points = min(4, len(self.points)) if self.closed else 2
 
         if len(smoothed) < min_points:
 
