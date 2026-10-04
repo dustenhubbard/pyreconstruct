@@ -15,11 +15,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 
-FIXTURE = os.path.join(
-    os.path.dirname(__file__), "..", "dev", "assets",
-    "checker", "files", "shapes1.jser",
-)
-
 W, H = 400, 400
 PPU = 100.0                      # pixels per field unit
 MAGENTA = (255, 0, 255)
@@ -30,13 +25,11 @@ COLUMN_X = 300                   # a pixel column crossing that edge
 
 
 @pytest.fixture
-def series():
-    if not os.path.exists(FIXTURE):
-        pytest.skip("fixture shapes1.jser not found")
+def series(shapes1_jser):
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication(["test"])
     from PyReconstruct.modules.datatypes.series import Series
-    s = Series.openJser(FIXTURE)
+    s = Series.openJser(str(shapes1_jser))
     yield s
     s.close()
 

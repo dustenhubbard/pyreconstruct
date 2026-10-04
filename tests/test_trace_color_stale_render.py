@@ -21,25 +21,16 @@ are always drawn. Selection-only refreshes stay on the fast path.
 These tests drive a real section render headlessly (offscreen Qt) and record
 the trace objects actually handed to ``_drawTrace``.
 """
-import os
-import pytest
-
-FIXTURE = os.path.join(
-    os.path.dirname(__file__), "..", "dev", "assets",
-    "checker", "files", "shapes1.jser",
-)
 
 OLD_IS_YELLOW = (255, 255, 0)
 NEW_GREEN = (0, 255, 0)
 
 
-def _series():
-    if not os.path.exists(FIXTURE):
-        pytest.skip("fixture shapes1.jser not found")
+def _series(shapes1_jser):
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication(["test"])
     from PyReconstruct.modules.datatypes.series import Series
-    return Series.openJser(FIXTURE)
+    return Series.openJser(str(shapes1_jser))
 
 
 def _layer(series, section):
@@ -71,8 +62,8 @@ def _drawn_for(calls, name):
 # --------------------------------------------------------------------------
 # Path 1: Section.editTraceAttributes (field dialog / trace list / paste)
 # --------------------------------------------------------------------------
-def test_incremental_render_after_editTraceAttributes_uses_new_color():
-    series = _series()
+def test_incremental_render_after_editTraceAttributes_uses_new_color(shapes1_jser):
+    series = _series(shapes1_jser)
     try:
         snum = list(series.sections.keys())[0]
         section = series.loadSection(snum)
@@ -119,9 +110,9 @@ def test_incremental_render_after_editTraceAttributes_uses_new_color():
         series.close()
 
 
-def test_line_and_highlight_agree_after_color_change():
+def test_line_and_highlight_agree_after_color_change(shapes1_jser):
     """The exact reported symptom: highlight new, line old. Both must match."""
-    series = _series()
+    series = _series(shapes1_jser)
     try:
         snum = list(series.sections.keys())[0]
         section = series.loadSection(snum)
@@ -158,8 +149,8 @@ def test_line_and_highlight_agree_after_color_change():
 # --------------------------------------------------------------------------
 # Path 2: Series.editObjectAttributes (object list, bulk/import recolor)
 # --------------------------------------------------------------------------
-def test_incremental_render_after_editObjectAttributes_uses_new_color():
-    series = _series()
+def test_incremental_render_after_editObjectAttributes_uses_new_color(shapes1_jser):
+    series = _series(shapes1_jser)
     try:
         snum = list(series.sections.keys())[0]
         section = series.loadSection(snum)
@@ -196,8 +187,8 @@ def test_incremental_render_after_editObjectAttributes_uses_new_color():
 # --------------------------------------------------------------------------
 # Sibling attribute: a name change replaces the object the same way.
 # --------------------------------------------------------------------------
-def test_incremental_render_after_name_change_not_stale():
-    series = _series()
+def test_incremental_render_after_name_change_not_stale(shapes1_jser):
+    series = _series(shapes1_jser)
     try:
         snum = list(series.sections.keys())[0]
         section = series.loadSection(snum)
@@ -231,8 +222,8 @@ def test_incremental_render_after_name_change_not_stale():
 # Perf guard: a selection-only incremental refresh must NOT rebuild the full
 # trace list (that would defeat the incremental optimization on large series).
 # --------------------------------------------------------------------------
-def test_selection_only_refresh_stays_incremental():
-    series = _series()
+def test_selection_only_refresh_stays_incremental(shapes1_jser):
+    series = _series(shapes1_jser)
     try:
         snum = list(series.sections.keys())[0]
         section = series.loadSection(snum)
