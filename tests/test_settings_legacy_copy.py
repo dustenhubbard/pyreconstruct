@@ -47,7 +47,11 @@ def _apps():
 
 
 def _wipe():
-    """Remove every probe key and marker these tests write, in both orgs."""
+    """Remove every probe key and marker these tests write, in both orgs, and
+    forget what this session learned about which copies are pending."""
+    from PyReconstruct.modules.constants import settings_domain
+
+    getattr(settings_domain, "_copy_pending", {}).clear()
     for org in (SETTINGS_ORG, LEGACY_SETTINGS_ORG):
         for app in _apps():
             s = _settings(org, app)
@@ -505,6 +509,9 @@ def window_series(main_window, clean, monkeypatch):
     apps = (f"{SHARED_APP}-{code}", f"{DEV}-{code}")
 
     def wipe():
+        from PyReconstruct.modules.constants import settings_domain
+
+        getattr(settings_domain, "_copy_pending", {}).clear()
         for org in (SETTINGS_ORG, LEGACY_SETTINGS_ORG):
             for app in apps:
                 s = _settings(org, app)
@@ -559,3 +566,152 @@ def test_the_window_folds_the_series_dev_store_once_its_copy_succeeds(
 
     assert _settings(SETTINGS_ORG, shared_app).value("legacy_probe_dev_only") == "dev"
     assert _settings(SETTINGS_ORG, dev_app).value(FOLD_MARKER, type=bool) is True
+
+
+# --- a session between a failed copy and its retry ------------------------------
+
+
+@pytest.fixture
+def real_store_series(main_window):
+    """The open series, reading through the QSettings-backed store."""
+    from PyReconstruct.modules.backend.settings_store import QSettingsStore
+
+    series = main_window.series
+    before = getattr(series, "_settings_store", None)
+    series.setSettingsStore(QSettingsStore())
+    yield series
+    series.setSettingsStore(before)
+
+
+def _forget(app, key):
+    s = _settings(SETTINGS_ORG, app)
+    s.remove(key)
+    s.sync()
+
+
+def test_a_session_after_a_failed_copy_does_not_save_defaults(
+    real_store_series, clean, monkeypatch,
+):
+    """Failed copy, then a normal session that reads an option the new store
+    lacks, then a successful retry: the old value wins, not the default the
+    session read."""
+    series = real_store_series
+    _forget(SHARED_APP, "left_handed")
+    _legacy(SHARED_APP, left_handed=True)
+    try:
+        with monkeypatch.context() as broken:
+            _unreadable_legacy(broken, SHARED_APP)
+            assert _launch().complete is False
+
+        assert series.getOption("left_handed") is False
+        assert not _settings(SETTINGS_ORG, SHARED_APP).contains("left_handed")
+
+        assert _launch().complete is True
+        assert _settings(SETTINGS_ORG, SHARED_APP).value("left_handed", type=bool) is True
+        assert series.getOption("left_handed") is True
+    finally:
+        _forget(SHARED_APP, "left_handed")
+        old = _settings(LEGACY_SETTINGS_ORG, SHARED_APP)
+        old.remove("left_handed")
+        old.sync()
+
+
+def test_a_session_after_a_failed_series_copy_does_not_save_defaults(
+    real_store_series, window_series, monkeypatch,
+):
+    series = real_store_series
+    window, (shared_app, dev_app) = window_series
+    monkeypatch.delenv("PYRECON_APP_NAME", raising=False)
+    _forget(shared_app, "autobackup")
+    _legacy(shared_app, autobackup=True)
+    try:
+        with monkeypatch.context() as broken:
+            _unreadable_legacy(broken, shared_app)
+            window._foldSeriesSettings()
+
+        assert series.getOption("autobackup") is False
+        assert not _settings(SETTINGS_ORG, shared_app).contains("autobackup")
+
+        window._foldSeriesSettings()
+        assert _settings(SETTINGS_ORG, shared_app).value("autobackup", type=bool) is True
+        assert series.getOption("autobackup") is True
+    finally:
+        for org in (SETTINGS_ORG, LEGACY_SETTINGS_ORG):
+            s = _settings(org, shared_app)
+            s.remove("autobackup")
+            s.sync()
+
+
+def test_a_store_with_old_values_and_no_marker_is_pending(clean):
+    """Before the copy has run at all, the same rule holds."""
+    from PyReconstruct.modules.backend.settings_store import QSettingsStore
+
+    _legacy(SHARED_APP, legacy_probe_name="Ada")
+    assert QSettingsStore().may_save_defaults(None) is False
+    assert copy_legacy_settings_once().complete is True
+    assert QSettingsStore().may_save_defaults(None) is True
+
+
+def test_the_update_check_default_waits_for_the_copy(clean, monkeypatch):
+    from PyReconstruct.modules.backend.settings_migrations import (
+        UPDATE_CHECK_DEFAULT_APPLIED_KEY,
+        apply_update_check_on_startup_default,
+    )
+    from PyReconstruct.modules.backend.settings_store import QSettingsStore
+
+    _legacy(SHARED_APP, legacy_probe_name="Ada")
+    new = _settings(SETTINGS_ORG, SHARED_APP)
+    had = new.contains(UPDATE_CHECK_DEFAULT_APPLIED_KEY)
+    marker = new.value(UPDATE_CHECK_DEFAULT_APPLIED_KEY)
+    new.remove(UPDATE_CHECK_DEFAULT_APPLIED_KEY)
+    new.sync()
+    try:
+        with monkeypatch.context() as broken:
+            _unreadable_legacy(broken, SHARED_APP)
+            assert _launch().complete is False
+        apply_update_check_on_startup_default(QSettingsStore())
+        assert not _settings(SETTINGS_ORG, SHARED_APP).contains(
+            UPDATE_CHECK_DEFAULT_APPLIED_KEY
+        )
+    finally:
+        new = _settings(SETTINGS_ORG, SHARED_APP)
+        if had:
+            new.setValue(UPDATE_CHECK_DEFAULT_APPLIED_KEY, marker)
+        else:
+            new.remove(UPDATE_CHECK_DEFAULT_APPLIED_KEY)
+        new.sync()
+
+
+def test_a_marker_that_failed_to_sync_is_not_trusted_on_reopen(
+    window_series, monkeypatch,
+):
+    """The marker write fails, the series is opened again in the same
+    session: the marker visible in memory does not count, so the fold still
+    waits. Once a sync succeeds the fold runs."""
+    import PySide6.QtCore as qtcore
+
+    window, (shared_app, dev_app) = window_series
+    _legacy(dev_app, legacy_probe_dev_only="dev")
+    cls = qtcore.QSettings
+    real_status = cls.status
+
+    def status(self):
+        if (
+            (self.organizationName(), self.applicationName())
+            == (SETTINGS_ORG, dev_app)
+            and self.contains(LEGACY_COPY_MARKER)
+        ):
+            return cls.AccessError
+        return real_status(self)
+
+    with monkeypatch.context() as broken:
+        broken.setattr(cls, "status", status)
+        window._foldSeriesSettings()
+        window._foldSeriesSettings()
+        assert not copy_legacy_series_settings_once(window.series.code).complete
+
+    assert not _settings(SETTINGS_ORG, shared_app).contains("legacy_probe_dev_only")
+    assert not _settings(SETTINGS_ORG, dev_app).contains(FOLD_MARKER)
+
+    window._foldSeriesSettings()
+    assert _settings(SETTINGS_ORG, shared_app).value("legacy_probe_dev_only") == "dev"

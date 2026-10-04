@@ -259,6 +259,43 @@ def fold_series_settings_once(code, flavored=None, shared=None):
 LEGACY_COPY_MARKER = "meta/copied_from_khlab"
 
 
+# Stores whose copy from ``KHLab`` is known, this session, to be unfinished
+# (True) or done (False), by application name. Filled by the copy and by
+# legacy_copy_pending; tests clear it between cases.
+_copy_pending = {}
+
+
+def legacy_copy_pending(app):
+    """True while ``PyReconstruct / <app>`` still owes a copy from ``KHLab``.
+
+    That is: the copy failed this session, or it has not run and the old
+    store holds something while the new one carries no marker. While a store
+    is pending, nothing writes a default into it (``Series.getOption`` reads
+    the default through instead), because the retry never overwrites a key
+    the new store already holds, and a default written in the meantime would
+    win over the value the retry was meant to bring back. Never raises; when
+    the stores cannot be read the answer is True, which only means a default
+    is not saved yet.
+    """
+    if app in _copy_pending:
+        return _copy_pending[app]
+    try:
+        from PySide6.QtCore import QSettings
+
+        new = QSettings(SETTINGS_ORG, app)
+        new.setFallbacksEnabled(False)
+        if new.contains(LEGACY_COPY_MARKER):
+            pending = False
+        else:
+            old = QSettings(LEGACY_SETTINGS_ORG, app)
+            old.setFallbacksEnabled(False)
+            pending = bool(old.allKeys())
+    except Exception:
+        return True
+    _copy_pending[app] = pending
+    return pending
+
+
 class LegacyCopyResult(dict):
     """The keys a legacy copy wrote, by application name, plus whether it
     finished.
@@ -287,6 +324,8 @@ def _copy_legacy_domain(app, mark_always):
     changed or removed in the new store afterwards is never brought back from
     the old one. When the old store cannot be read, or the new one cannot be
     written or marked, the call reports failure and the next one tries again.
+    A marker already in the new store counts only once a sync confirms it is
+    on disk.
 
     ``mark_always`` writes the marker even when the old store is empty. The
     global stores want that; a per-series store does not, so opening a
@@ -303,7 +342,11 @@ def _copy_legacy_domain(app, mark_always):
     new = QSettings(SETTINGS_ORG, app)
     new.setFallbacksEnabled(False)
     if new.contains(LEGACY_COPY_MARKER):
-        return []
+        # A marker whose write failed earlier this session is still visible
+        # in memory. Trust it only once a sync says it reached the disk.
+        new.sync()
+        if new.status() == QSettings.NoError:
+            return []
     old = QSettings(LEGACY_SETTINGS_ORG, app)
     old.setFallbacksEnabled(False)
     keys = [key for key in old.allKeys() if key != LEGACY_COPY_MARKER]
@@ -344,6 +387,7 @@ def _copy_legacy_domains(apps, mark_always):
             keys = _copy_legacy_domain(app, mark_always=mark_always)
         except Exception:
             keys = None
+        _copy_pending[app] = keys is None
         if keys is None:
             result.complete = False
         elif keys:

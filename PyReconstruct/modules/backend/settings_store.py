@@ -46,6 +46,15 @@ class SettingsStore(ABC):
     def set_value(self, code: Optional[str], key: str, value) -> None:
         """Store ``value`` under ``key`` in the given scope."""
 
+    def may_save_defaults(self, code: Optional[str]) -> bool:
+        """Whether a default read on a miss may be written into the scope.
+
+        True unless the scope is waiting on a settings copy that has not
+        finished (``QSettingsStore``); a default saved then would block the
+        value the copy is meant to bring.
+        """
+        return True
+
 
 class QSettingsStore(SettingsStore):
     """Default store backed by ``QSettings`` (identical to prior behavior).
@@ -81,6 +90,13 @@ class QSettingsStore(SettingsStore):
 
     def set_value(self, code, key, value):
         self._settings(code).setValue(key, value)
+
+    def may_save_defaults(self, code):
+        from PyReconstruct.modules.constants.settings_domain import (
+            legacy_copy_pending,
+        )
+        app = self.APP if code is None else f"{self.APP}-{code}"
+        return not legacy_copy_pending(app)
 
 
 class DictSettingsStore(SettingsStore):
