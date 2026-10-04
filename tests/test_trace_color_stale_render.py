@@ -21,7 +21,6 @@ are always drawn. Selection-only refreshes stay on the fast path.
 These tests drive a real section render headlessly (offscreen Qt) and record
 the trace objects actually handed to ``_drawTrace``.
 """
-import pytest
 
 OLD_IS_YELLOW = (255, 255, 0)
 NEW_GREEN = (0, 255, 0)

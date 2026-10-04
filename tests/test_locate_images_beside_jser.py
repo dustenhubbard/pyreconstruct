@@ -24,7 +24,6 @@ event loop is required.
 import os
 import types
 
-import pytest
 
 from PyReconstruct.modules.gui.main import main_window as mw
 
