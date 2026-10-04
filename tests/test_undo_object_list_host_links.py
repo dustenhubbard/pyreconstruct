@@ -108,3 +108,39 @@ def test_a_redone_object_list_delete_keeps_the_link_too(
     window.undo()
     assert traveler in series.data["objects"]
     assert series.host_tree.getHosts(traveler) == [host]
+
+
+def test_a_redone_draw_of_the_deleted_name_does_not_take_the_link(
+        window, monkeypatch, main_window_dialogs):
+    """H is deleted from the object list and a new H is drawn. Undo both and
+    redo both: the redo of the delete saves H's link again, and the redo of
+    the draw creates a new H that does not take it."""
+    series = window.series
+    host, traveler = NAME, OTHER
+    first, second, third = sorted(series.sections)[:3]
+    window.changeSection(first)
+    _draw(window, host)
+    window.changeSection(second)
+    _draw(window, traveler)
+    series.host_tree.add(traveler, [host])
+
+    window.changeSection(first)
+    _object_list(window, monkeypatch, [host])
+    window.field.deleteObjects()
+    window.changeSection(third)
+    _draw(window, host, offset=0.5)
+    assert series.host_tree.getHosts(traveler) == []
+
+    window.undo()
+    assert host not in series.data["objects"]
+    window.changeSection(first)
+    main_window_dialogs.linked_undo_responses = ["all", "all"]
+    window.undo()
+    assert series.host_tree.getHosts(traveler) == [host]
+
+    window.undo(redo=True)
+    assert host not in series.data["objects"]
+    window.changeSection(third)
+    window.undo(redo=True)
+    assert host in series.data["objects"]
+    assert series.host_tree.getHosts(traveler) == []
