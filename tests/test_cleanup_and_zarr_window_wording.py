@@ -1,8 +1,7 @@
 """The wording of the clean-up list headings and the Zarr converter window."""
 import importlib.util
-import re
-import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -79,24 +78,44 @@ def test_the_pairs_heading_asks_for_one_name_per_row(qtbot):
 
 
 @pytest.fixture
-def zarr_window(qtbot):
+def start_process():
     spec = importlib.util.spec_from_file_location("start_process",
                                                   START_PROCESS)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    window = module.MainWindow()
+    return module
+
+
+@pytest.fixture
+def zarr_window(qtbot, start_process):
+    window = start_process.MainWindow()
     qtbot.addWidget(window)
     return window
 
 
-def test_the_zarr_window_shows_count_and_time_left(zarr_window):
+@pytest.fixture
+def clock(monkeypatch, start_process):
+    """A clock the test sets by hand, read by the window in place of the real one."""
+    now = SimpleNamespace(value=1000.0)
+    monkeypatch.setattr(
+        start_process, "time", SimpleNamespace(monotonic=lambda: now.value)
+    )
+    return now
+
+
+def test_the_zarr_window_shows_count_and_time_left(zarr_window, clock):
     zarr_window.update_progress("@@PROGRESS@@ TOTAL 4")
     assert zarr_window.eta.text() == "0 / 4, estimating time remaining…"
 
-    zarr_window._progress_start = time.monotonic() - 10
+    # 10 s for the first of 4 steps leaves 3 more at the same pace
+    clock.value += 10
     zarr_window.update_progress("@@PROGRESS@@ STEP 1 4")
-    eta = zarr_window.eta.text()
-    assert re.fullmatch(r"1 / 4, ~\d+s remaining", eta), eta
+    assert zarr_window.eta.text() == "1 / 4, ~30s remaining"
+
+    # 60 s for 2 of 4 leaves another 60 s, shown in minutes
+    clock.value += 50
+    zarr_window.update_progress("@@PROGRESS@@ STEP 2 4")
+    assert zarr_window.eta.text() == "2 / 4, ~1m 00s remaining"
 
 
 def test_the_zarr_window_says_where_to_look_on_failure(zarr_window):
