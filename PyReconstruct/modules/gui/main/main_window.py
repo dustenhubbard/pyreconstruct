@@ -121,12 +121,14 @@ def _existingAncestor(p):
     return p, rest
 
 
-def _caseInsensitive(folder):
-    """True if names inside a folder ignore case.
+def _probeEntries(folder):
+    """Whether names inside a folder ignore case, judged by its entries.
 
-    Probes inside the folder only, since folders above it can sit on another
-    volume: an entry whose case-swapped name reaches the same entry means
-    the folder's volume ignores case. Nothing is written to the folder.
+    An entry whose case-swapped name reaches the same entry means the
+    folder's volume ignores case. Nothing is written to the folder.
+
+        Returns:
+            (bool or None): None if no entry has letters to swap
     """
     try:
         entries = os.listdir(folder)
@@ -147,16 +149,35 @@ def _caseInsensitive(folder):
         except OSError:
             return False
         return (alt.st_dev, alt.st_ino) == (st.st_dev, st.st_ino)
+    return None
 
-    # An empty folder has nothing to probe inside. Look its own name up in
-    # its parent in the other case instead. That tests the parent's volume,
-    # which is the best available guess, and is wrong only when this folder
-    # is itself a mount point.
-    parent, name = os.path.split(os.path.normpath(folder))
-    swapped = name.swapcase()
-    if not name or swapped == name:
-        return False
-    return _sameDir(folder, os.path.join(parent, swapped))
+
+def _caseInsensitive(folder):
+    """True if names inside a folder ignore case.
+
+    Probes inside the folder first, since folders above it can sit on
+    another volume. With no entry to probe, it looks the folder's own name
+    up in its parent in the other case, which tests the parent's volume:
+    the best available guess, wrong only when the folder is a mount point.
+    A name with no letters (2026) says nothing either, so it walks up one
+    folder at a time and asks the same of each.
+    """
+    folder = os.path.normpath(os.path.abspath(folder))
+    while True:
+        found = _probeEntries(folder)
+        if found is not None:
+            return found
+        parent, name = os.path.split(folder)
+        swapped = name.swapcase()
+        if name and swapped != name:
+            return _sameDir(folder, os.path.join(parent, swapped))
+        if not name or parent == folder:
+            # Nothing on the way up could tell. Say case-insensitive: the
+            # caller then treats names differing only in case as one file,
+            # which can only refuse a save, never allow one over a series
+            # in the 3D scene.
+            return True
+        folder = parent
 
 
 def _samePath(a, b):

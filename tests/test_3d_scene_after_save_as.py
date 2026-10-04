@@ -439,3 +439,36 @@ def test_case_probe_trusts_a_case_sensitive_folder_below(tmp_path, monkeypatch):
     with monkeypatch.context() as m:
         _fake_case_rules(m, reject)
         assert not _samePath(str(data / "B.jser"), str(data / "b.jser"))
+
+
+def test_case_probe_walks_up_from_an_empty_numeric_folder(tmp_path):
+    """An empty 2026 folder has no letters to probe, so the folder above decides."""
+    from PyReconstruct.modules.gui.main.main_window import _samePath
+
+    year = tmp_path / "2026"
+    year.mkdir()
+    if not _volume_ignores_case(year):
+        pytest.skip("this volume is case-sensitive")
+
+    assert _samePath(str(year / "B.jser"), str(year / "b.jser"))
+    assert not _samePath(str(year / "B.jser"), str(year / "C.jser"))
+
+
+def test_case_probe_walk_up_trusts_a_case_sensitive_parent(tmp_path, monkeypatch):
+    """Walking up from 2026 to a case-sensitive folder keeps case."""
+    import os
+    from PyReconstruct.modules.gui.main.main_window import _samePath
+
+    case = tmp_path / "Case"
+    year = case / "2026"
+    year.mkdir(parents=True)
+    exact = str(case)
+
+    def reject(p):  # Case and everything in it must match its exact spelling
+        head = p[:len(exact)]
+        return head != exact and head.casefold() == exact.casefold()
+
+    with monkeypatch.context() as m:
+        _fake_case_rules(m, reject)
+        assert not _samePath(str(year / "B.jser"), str(year / "b.jser"))
+    assert os.listdir(year) == []
