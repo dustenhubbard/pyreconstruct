@@ -4968,7 +4968,11 @@ class Series():
                 option = json.loads(option)
         else:
             option = Series._fromDefaults(defaults, option_name)
-            self.setOption(option_name, option)
+            # saved so the stored file lists every option, unless the store
+            # still owes a copy from the old KHLab settings: a default saved
+            # now would win over the value that copy brings
+            if store.may_save_defaults(scope_code):
+                self.setOption(option_name, option)
         
         ## CHECKS FOR UPDATES
 

@@ -123,6 +123,11 @@ def apply_update_check_on_startup_default(
         if store.contains(None, UPDATE_CHECK_DEFAULT_APPLIED_KEY):
             return False
 
+        # Wait for the copy from the old KHLab settings: marking this done on
+        # a store the copy has not filled yet would skip the stored value.
+        if not store.may_save_defaults(None):
+            return False
+
         wrote = False
         if store.contains(None, UPDATE_CHECK_KEY):
             if _reads_as_off(store.value(None, UPDATE_CHECK_KEY, bool)):
