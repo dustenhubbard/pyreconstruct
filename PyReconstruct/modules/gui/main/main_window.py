@@ -107,7 +107,7 @@ def _existingAncestor(p):
             p (str): the path
         Returns:
             (str): the path itself if it exists, else its nearest existing
-                ancestor
+                ancestor, with links resolved
             (list): the names from that ancestor down to the path
     """
     p = os.path.abspath(p)
@@ -118,7 +118,9 @@ def _existingAncestor(p):
             break
         rest.insert(0, tail)
         p = head
-    return p, rest
+    # resolve links, so a folder reached through a directory symlink is
+    # probed on the volume it points to, not the one the link sits on
+    return os.path.realpath(p), rest
 
 
 def _probeEntries(folder):
@@ -162,7 +164,7 @@ def _caseInsensitive(folder):
     A name with no letters (2026) says nothing either, so it walks up one
     folder at a time and asks the same of each.
     """
-    folder = os.path.normpath(os.path.abspath(folder))
+    folder = os.path.realpath(folder)
     while True:
         found = _probeEntries(folder)
         if found is not None:

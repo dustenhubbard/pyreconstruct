@@ -379,6 +379,14 @@ def test_save_as_refuses_a_missing_scene_series_spelled_in_other_case(
     assert not os.path.exists(other_fp)
 
 
+def _same_both_ways(a, b):
+    """_samePath, checked to give the same answer in either order."""
+    from PyReconstruct.modules.gui.main.main_window import _samePath
+    result = _samePath(a, b)
+    assert _samePath(b, a) == result
+    return result
+
+
 def _fake_case_rules(monkeypatch, reject):
     """Make os.stat and os.lstat fail for paths `reject` says do not exist.
 
@@ -401,7 +409,6 @@ def _fake_case_rules(monkeypatch, reject):
 
 def test_case_probe_ignores_a_case_sensitive_folder_above(tmp_path, monkeypatch):
     """A case-insensitive folder below case-sensitive ones still ignores case."""
-    from PyReconstruct.modules.gui.main.main_window import _samePath
 
     data = tmp_path / "Data"
     data.mkdir()
@@ -416,14 +423,13 @@ def test_case_probe_ignores_a_case_sensitive_folder_above(tmp_path, monkeypatch)
 
     with monkeypatch.context() as m:
         _fake_case_rules(m, reject)
-        assert _samePath(str(data / "B.jser"), str(data / "b.jser"))
-        assert not _samePath(str(data / "B.jser"), str(data / "C.jser"))
+        assert _same_both_ways(str(data / "B.jser"), str(data / "b.jser"))
+        assert not _same_both_ways(str(data / "B.jser"), str(data / "C.jser"))
 
 
 def test_case_probe_trusts_a_case_sensitive_folder_below(tmp_path, monkeypatch):
     """A case-sensitive folder inside a case-insensitive one keeps case."""
     import os
-    from PyReconstruct.modules.gui.main.main_window import _samePath
 
     data = tmp_path / "Data"
     data.mkdir()
@@ -438,7 +444,7 @@ def test_case_probe_trusts_a_case_sensitive_folder_below(tmp_path, monkeypatch):
 
     with monkeypatch.context() as m:
         _fake_case_rules(m, reject)
-        assert not _samePath(str(data / "B.jser"), str(data / "b.jser"))
+        assert not _same_both_ways(str(data / "B.jser"), str(data / "b.jser"))
 
 
 def test_case_probe_walks_up_from_an_empty_numeric_folder(tmp_path):
@@ -457,7 +463,6 @@ def test_case_probe_walks_up_from_an_empty_numeric_folder(tmp_path):
 def test_case_probe_walk_up_trusts_a_case_sensitive_parent(tmp_path, monkeypatch):
     """Walking up from 2026 to a case-sensitive folder keeps case."""
     import os
-    from PyReconstruct.modules.gui.main.main_window import _samePath
 
     case = tmp_path / "Case"
     year = case / "2026"
@@ -470,5 +475,33 @@ def test_case_probe_walk_up_trusts_a_case_sensitive_parent(tmp_path, monkeypatch
 
     with monkeypatch.context() as m:
         _fake_case_rules(m, reject)
-        assert not _samePath(str(year / "B.jser"), str(year / "b.jser"))
+        assert not _same_both_ways(str(year / "B.jser"), str(year / "b.jser"))
     assert os.listdir(year) == []
+
+
+def test_case_probe_follows_a_folder_symlink_in_either_order(tmp_path, monkeypatch):
+    """An empty folder reached through a link is judged where it really is."""
+    import os
+
+    data = tmp_path / "volume" / "Data"
+    data.mkdir(parents=True)
+    if not _volume_ignores_case(data):
+        pytest.skip("this volume is case-sensitive")
+    links = tmp_path / "links"
+    links.mkdir()
+    alias = links / "Alias"
+    try:
+        os.symlink(data, alias, target_is_directory=True)
+    except (OSError, NotImplementedError) as e:
+        pytest.skip(f"cannot make a symlink here: {e}")
+    inside = str(links) + os.sep
+
+    def reject(p):  # the folder holding the link minds case
+        if not p.startswith(inside):
+            return False
+        return p[len(inside):].split(os.sep)[0] not in os.listdir(links)
+
+    with monkeypatch.context() as m:
+        _fake_case_rules(m, reject)
+        assert _same_both_ways(str(alias / "B.jser"), str(data / "b.jser"))
+        assert not _same_both_ways(str(alias / "B.jser"), str(data / "C.jser"))
