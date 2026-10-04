@@ -85,6 +85,11 @@ def copyObjDefaults(defaults):
     return out
 
 
+def _ownList(value):
+    """A new list with the same items if ``value`` is a list, else ``value``."""
+    return list(value) if isinstance(value, list) else value
+
+
 class Trace():
 
     # Declared on the class rather than as `self.fill_mode : ... = ...` in
@@ -173,14 +178,14 @@ class Trace():
         adding a field to ``__init__`` without extending ``copy`` a visible
         omission rather than something that keeps working by accident.
 
-        The depth per field is exactly what the dict copy gave, field for field,
-        because this is a refactor and nothing should be able to observe a
-        difference:
+        The depth per field:
 
-          * ``color`` and ``fill_mode`` are shared by reference. Both are tuples
-            when a trace is built in memory but both come back off disk as lists
-            (see ``__init__``), so both can be mutable and neither was ever
-            copied.
+          * ``color`` and ``fill_mode`` are tuples when a trace is built in
+            memory but come back off disk as lists (see ``__init__``). A list
+            gets a new list of the same values, so an in-place edit of one
+            trace's color or fill mode never reaches the other (palette import
+            and palette paste both hand out copies). A tuple, or a ``None``
+            color, is immutable and is shared as is; the type never changes.
           * ``points`` and ``tags`` get their own list and set -- the two
             explicit ``.copy()`` calls that were already here. The copy owns its
             containers; the point tuples inside the list and the tag strings
@@ -200,11 +205,11 @@ class Trace():
         ## copy, which the dict copy never did.
         copy_trace._name     = self._name
 
-        copy_trace.color     = self.color
+        copy_trace.color     = _ownList(self.color)
         copy_trace.closed    = self.closed
         copy_trace.negative  = self.negative
         copy_trace.hidden    = self.hidden
-        copy_trace.fill_mode = self.fill_mode
+        copy_trace.fill_mode = _ownList(self.fill_mode)
 
         copy_trace.points    = self.points.copy()
         copy_trace.tags      = self.tags.copy()
