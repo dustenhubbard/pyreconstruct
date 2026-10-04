@@ -47,7 +47,12 @@ class FieldWidgetData(FieldWidgetObject):
     def unlockSection(self):
         """Unlock the current section."""
         self.section.align_locked = False
-        self.updateData()
+        # only the lock changed, so only the section list is refreshed. A
+        # full updateData here would publish a scissors cut in progress: the
+        # pickup has taken the trace out of the section, so the object's row
+        # would leave the Object List and nothing would bring it back.
+        self.series.data.updateSection(self.section, update_traces=False)
+        self.table_manager.updateSections()
         self.mainwindow.seriesModified()
     
     def usingLocked(self):
