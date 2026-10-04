@@ -15,6 +15,7 @@ from PyReconstruct.modules.backend.func.xml_json_conversions import (
     xmlToJSON,
 )
 from PyReconstruct.modules.constants import blank_section, blank_series
+from PyReconstruct.modules.datatypes import Trace
 from PyReconstruct.modules.datatypes.trace import convertMode
 from PyReconstruct.modules.datatypes_legacy import process_section_file
 
@@ -71,6 +72,27 @@ def test_import_of_an_unusual_mode_is_unchanged(mode, pair):
 )
 def test_export_mode(pair, mode):
     assert convertMode(pair) == mode
+
+
+@pytest.mark.parametrize(
+    "fill_mode",
+    [
+        ("none", "none"),
+        ("transparent", "selected"),
+        ("transparent", "unselected"),
+        ("solid", "selected"),
+        ("solid", "unselected"),
+    ],
+)
+def test_representable_fill_modes_round_trip(fill_mode):
+    # The XML mode stores the condition only as its sign, so "always" is left out.
+    trace = Trace("t", [255, 0, 0], True)
+    trace.points = [(0, 0), (2, 0), (2, 2), (0, 2)]
+    trace.fill_mode = fill_mode
+
+    imported = Trace.fromXMLObj(trace.getXMLObj())
+
+    assert imported.fill_mode == fill_mode
 
 
 @pytest.mark.parametrize("mode, expected", [(7, 13), (-7, -13)])
