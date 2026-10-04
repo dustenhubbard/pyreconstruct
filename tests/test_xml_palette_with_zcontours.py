@@ -79,7 +79,7 @@ def test_full_palette_without_zcontours_is_unchanged(tmp_path):
     assert _palette_names(path) == [f"mine{i}" for i in range(20)]
 
 
-@pytest.mark.parametrize("n_zcontours", [0, 1])
+@pytest.mark.parametrize("n_zcontours", [0, 1, 20])
 def test_missing_palette_still_gets_the_defaults(tmp_path, n_zcontours):
     path = tmp_path / "S.ser"
     _write_ser(path, 0, n_zcontours)
