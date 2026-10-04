@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from PyReconstruct.modules.backend.view.trace_layer import TraceLayer
+from PyReconstruct.modules.calc.nesting import nestedFillOrder
 from PyReconstruct.modules.datatypes import Trace, Transform
 
 SIZE = 100
@@ -92,6 +93,11 @@ PLAIN_LAYOUTS = {
         _square("a", -20, 60),
         _square("a", 10, 30, negative=True),
     ],
+    "positive across the hole edge by less than a pixel": [
+        _square("a", 10, 90),
+        _square("a", 30, 70, negative=True),
+        _square("a", 40, 70.4),
+    ],
     "another object in the hole": [
         _square("a", 10, 90),
         _square("a", 30, 70, negative=True),
@@ -154,3 +160,34 @@ def test_island_order_does_not_matter():
     assert _at(arr, 50, 50) == ids["a"]
     assert _at(arr, 35, 35) == 0
     assert _at(arr, 20, 20) == ids["a"]
+
+
+def test_order_comes_from_the_unrounded_traces():
+    ## 40 to 70.4 rounds to 40 to 70, inside the hole, but the trace itself
+    ## crosses the hole's edge, so it is no island and the hole clears it
+    traces = PLAIN_LAYOUTS["positive across the hole edge by less than a pixel"]
+
+    arr, ids = _labels(traces)
+
+    assert _at(arr, 50, 50) == 0
+    assert _at(arr, 20, 20) == ids["a"]
+
+
+def test_island_smaller_than_a_pixel_draws_one_pixel():
+    ## the 3D order counts it as an island, so it fills again after the hole,
+    ## and its outline rounds to one pixel
+    outer, hole, island = (
+        _square("a", 10, 90),
+        _square("a", 30, 70, negative=True),
+        _square("a", 49.9, 50.1),
+    )
+    pos, neg = [outer.points, island.points], [hole.points]
+    assert nestedFillOrder(pos, neg)[-1] == (island.points, True)
+
+    arr, ids = _labels([outer, hole, island])
+
+    ## inside the hole, only the pixel that series point (50, 50) rounds to
+    ## (row 100 - 50) carries the label
+    hole_px = arr[35:66, 35:66]
+    assert np.argwhere(hole_px == ids["a"]).tolist() == [[50 - 35, 50 - 35]]
+    assert int(np.count_nonzero(hole_px)) == 1

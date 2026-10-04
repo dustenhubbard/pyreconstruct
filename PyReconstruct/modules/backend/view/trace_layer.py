@@ -701,8 +701,11 @@ class TraceLayer():
 
         The positives fill and then the holes clear, in the order
         nestedFillOrder gives, so a positive inside a hole (an island) fills
-        again after the hole. The mask covers only the box of the object's
-        positive traces, not the whole array, so a large export stays fast.
+        again after the hole. The order comes from the traces before they are
+        rounded to pixels, the same points the 3D volume uses, so rounding
+        cannot make a trace an island or stop it being one. The mask covers
+        only the box of the object's positive traces, not the whole array, so
+        a large export stays fast.
 
             Params:
                 arr (np.ndarray): the array to draw the label on
@@ -712,14 +715,19 @@ class TraceLayer():
         """
         from skimage.draw import polygon  # deferred: skimage is slow to import
 
-        pix = [(self.traceToPixArray(trace, tform), trace.negative) for trace in traces]
-        positive = [pts for pts, negative in pix if not negative and len(pts)]
-        holes = [pts for pts, negative in pix if negative and len(pts)]
+        map_tform = tform if tform is not None else self.section.tform
+        positive, holes, pix = [], [], {}
+        for trace in traces:
+            if not trace.points:
+                continue
+            field = map_tform.mapPointsArray(trace.points)
+            pix[id(field)] = self.traceToPixArray(trace, tform)
+            (holes if trace.negative else positive).append(field)
         if not positive:
             return
 
         h, w = arr.shape
-        pts = np.concatenate(positive)
+        pts = np.concatenate([pix[id(field)] for field in positive])
         x0, y0 = np.maximum(pts.min(axis=0), 0)
         x1 = min(int(pts[:, 0].max()) + 1, w)
         y1 = min(int(pts[:, 1].max()) + 1, h)
@@ -727,7 +735,8 @@ class TraceLayer():
             return  # entirely outside the array
 
         mask = np.zeros((y1 - y0, x1 - x0), dtype=bool)
-        for pts, fill in nestedFillOrder(positive, holes):
+        for field, fill in nestedFillOrder(positive, holes):
+            pts = pix[id(field)]
             yy, xx = polygon(pts[:, 1] - y0, pts[:, 0] - x0, mask.shape)
             mask[yy, xx] = fill
 
