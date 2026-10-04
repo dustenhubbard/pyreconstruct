@@ -2744,6 +2744,13 @@ class MainWindow(QMainWindow):
         )
         if not new_jser_fp:
             return "cancel"
+        # A Save As that arrives while a save is running (the progress dialog
+        # lets queued events through) would move the series and then have its
+        # save refused, leaving the series pointed at a path with no file.
+        # Refuse before anything moves.
+        if self.series.jserSaveRunning():
+            self.series.refuseNestedSave(new_jser_fp)
+            return "cancel"
         if not self._saveAsTargetFree(new_jser_fp):
             return "cancel"
 

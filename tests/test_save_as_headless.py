@@ -62,3 +62,55 @@ def test_save_as_headless_writes_jser(
     )
     assert window.series.jser_fp == str(dest)
     assert window.series.modified is False
+
+
+def test_save_as_during_a_save_is_refused_before_the_series_moves(
+    tmp_path, main_window, main_window_dialogs
+):
+    """A Save As let in by the progress dialog must not move the series.
+
+    The move happens before ``saveJser``, so a Save As refused only by
+    ``saveJser`` left the series pointed at a path with no file.
+    """
+    from PyReconstruct.modules.backend.notifier import NullNotifier
+    from PyReconstruct.modules.backend.progress import NullProgressReporter
+
+    class Recording(NullNotifier):
+        def __init__(self):
+            self.errors = []
+
+        def notify_error(self, message, report):
+            self.errors.append(message)
+            return True
+
+    window = main_window
+    series = window.series
+    notifier = Recording()
+    series.setNotifier(notifier)
+    old_jser, old_hidden = series.jser_fp, series.hidden_dir
+    dest = tmp_path / "saved_as" / "elsewhere.jser"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    main_window_dialogs.file_responses.append(str(dest))
+    result = {}
+
+    class SaveAsFromProgress(NullProgressReporter):
+        calls = 0
+
+        def set_progress(self, percent):
+            SaveAsFromProgress.calls += 1
+            if SaveAsFromProgress.calls == 1:
+                result["save_as"] = window.saveAsToJser()
+
+    series.setProgressReporter(SaveAsFromProgress)
+    try:
+        series.saveJser()
+    finally:
+        series.setProgressReporter(NullProgressReporter)
+
+    assert result["save_as"] == "cancel"
+    assert series.jser_fp == old_jser
+    assert series.hidden_dir == old_hidden
+    assert not dest.exists()
+    assert len(notifier.errors) == 1
+    assert notifier.errors[0].startswith("Save skipped")
+    assert str(dest) in notifier.errors[0]

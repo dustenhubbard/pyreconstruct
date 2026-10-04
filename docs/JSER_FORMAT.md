@@ -1400,6 +1400,7 @@ symbol, treat the corresponding claim in this page as unverified until re-checke
 | Non-finite and out-of-range integer caveats | `PyReconstruct/modules/constants/fast_json.py:9-17` |
 | `orjson` is a pinned dependency | `pyproject.toml:38`, `requirements.txt:9` |
 | Atomic replace of the `.jser` | `PyReconstruct/modules/datatypes/series.py:88-115` |
+| Written one section at a time, same bytes as `dumps_jser` | `PyReconstruct/modules/constants/jser_format.py` (`write_jser`), `PyReconstruct/modules/datatypes/series.py` (`Series.saveJser`) |
 | Structural pretty printer (opt-in); `PYRECON_JSER_PRETTY` | `PyReconstruct/modules/constants/jser_format.py` (`dumps_jser`, `pretty_default`) |
 | Canonical key order and unknown-key preservation | `PyReconstruct/modules/constants/jser_format.py` (`canon_keys`, `SECTION_KEYS`, `SERIES_KEYS`) |
 | Section key order and contour sort applied | `PyReconstruct/modules/datatypes/section.py` (end of `Section.updateJSON`, `Section.getDict`) |

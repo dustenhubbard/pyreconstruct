@@ -63,6 +63,7 @@ from .fast_json import (
 
 from .jser_format import (
     dumps_jser,
+    write_jser,
     canon_keys,
     canon_keys_inplace,
     fill_mode_row_key,
