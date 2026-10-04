@@ -1460,14 +1460,20 @@ class CustomPlotter(QVTKRenderWindowInteractor):
             obj_files, failed = self.plt.objs.exportAsObjs(scratch)
 
             # an object that fails is left out of the scene and named in the
-            # notice; with none written there is no scene to save
+            # notice
             error_note = ""
             if failed:
                 names = ", ".join(sorted(failed))
                 error_note = f"\nCould not be exported (see console): {names}."
-                if not obj_files:
-                    notify("No scene exported.\n" + error_note)
-                    return
+
+            # with none written (all failed, or the scene is empty) there is
+            # no scene to save
+            if not obj_files:
+                notify(
+                    "No scene exported.\n"
+                    + (error_note or "\nThe scene has no objects.")
+                )
+                return
 
             mtl_files = [f.with_suffix(".mtl") for f in obj_files]
 

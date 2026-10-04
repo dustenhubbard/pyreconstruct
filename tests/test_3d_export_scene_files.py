@@ -210,3 +210,16 @@ def test_an_object_whose_material_fails_is_left_out(cp, open_series, tmp_path, m
     assert "o d01\n" in obj_text and "o d02\n" not in obj_text
     assert "newmtl d02" not in (out / "scene.mtl").read_text()
     assert len(notes) == 1 and "d02" in notes[0]
+
+
+def test_an_empty_scene_writes_nothing_and_says_so(cp, tmp_path, monkeypatch):
+    out = tmp_path / "out"
+    out.mkdir()
+    objs = cp.SceneObjectList()
+
+    notes, _ = run_export(cp, objs, out / "scene.obj", monkeypatch)
+
+    assert listing(out) == []
+    assert len(notes) == 1
+    assert "Scene exported" not in notes[0]
+    assert "No scene exported" in notes[0]
