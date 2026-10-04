@@ -1227,13 +1227,19 @@ class SeriesStates():
 
         # the action saved the section before its state was added, so an
         # object the save deleted had already lost its attributes, groups and
-        # hosts. Its copy comes from the series state, taken before the action.
+        # hosts, and a rename has already moved an object's hosts to the new
+        # name. So each object the action took off this section gets its copy
+        # from the series state, taken before the action. Only an undo reads
+        # that copy: a redo brings back only objects with traces here.
         state = self[snum].current_state
+        objects = self.series.data["objects"]
         names = [
             n for n in state.getModifiedContours()
-            if n not in self.series.data["objects"] and n not in state.obj_snapshot
+            if n not in objects or snum not in objects[n].traces
         ]
         if names:
+            for name in names:
+                state.obj_snapshot.pop(name, None)
             state.obj_snapshot.update(objectSnapshot(
                 self.series, names, self.undos[-1].series_attrs
             ))

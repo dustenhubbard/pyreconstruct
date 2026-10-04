@@ -358,7 +358,8 @@ if __name__ == "__main__":
     # fail fast if the target volume cannot hold the new scales
     check_disk_space(images)
 
-    # pre-create every scale group up front so workers never create groups
+    # make the scale groups the first image needs; the write loop below adds
+    # any group a larger image needs
     ensure_scale_groups(zg, images)
 
     processes = max(1, min(cores, MAX_WORKERS))

@@ -96,7 +96,7 @@ class MainWindow(QMainWindow):
             self.progress.setRange(0, total)
             self.progress.setValue(0)
             self._progress_start = time.monotonic()
-            self.eta.setText(f"0 / {total} — estimating time remaining…")
+            self.eta.setText(f"0 / {total}, estimating time remaining…")
 
         elif kind == "STEP" and len(parts) >= 4:
             done, total = int(parts[2]), int(parts[3])
@@ -110,7 +110,7 @@ class MainWindow(QMainWindow):
             return f"{done} / {total}"
         elapsed = time.monotonic() - self._progress_start
         remaining = (elapsed / done) * (total - done)
-        return f"{done} / {total} — ~{self._format_duration(remaining)} remaining"
+        return f"{done} / {total}, ~{self._format_duration(remaining)} remaining"
 
     @staticmethod
     def _format_duration(seconds):
@@ -156,7 +156,7 @@ class MainWindow(QMainWindow):
 
             self.eta.setText("Stopped before completion.")
             self.message(f"Zarr processing exited with code {exit_code}.")
-            self.heading.setText("Zarr processing did not finish — see messages above.")
+            self.heading.setText("Zarr processing did not finish. See the messages below.")
 
         self.p = None
 
