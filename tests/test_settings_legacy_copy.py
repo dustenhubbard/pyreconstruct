@@ -390,3 +390,172 @@ def test_the_window_copies_the_open_series(main_window, clean):
             s.remove(LEGACY_COPY_MARKER)
             s.sync()
         old.sync()
+
+
+# --- a copy that fails holds the Dev fold until it succeeds ----------------------
+
+
+def _unreadable_legacy(monkeypatch, app):
+    """Make ``KHLab / <app>`` report a read error, as a damaged store would."""
+    import PySide6.QtCore as qtcore
+
+    cls = qtcore.QSettings
+    real_status = cls.status
+
+    def status(self):
+        if (self.organizationName(), self.applicationName()) == (
+            LEGACY_SETTINGS_ORG, app,
+        ):
+            return cls.FormatError
+        return real_status(self)
+
+    monkeypatch.setattr(cls, "status", status)
+
+
+def _launch():
+    """The settings steps of ``run.runPyReconstruct``, in its order."""
+    result = copy_legacy_settings_once()
+    if result.complete:
+        fold_flavor_settings_once()
+    return result
+
+
+def test_startup_folds_only_after_a_complete_copy():
+    from PyReconstruct import run
+
+    source = inspect.getsource(run.runPyReconstruct)
+    assert "if copy_legacy_settings_once().complete:" in source
+
+
+def test_a_failed_shared_copy_keeps_the_dev_value_out(clean, monkeypatch):
+    """The stable store's copy fails on a Dev launch. The fold waits, so the
+    Dev value cannot take the shared key the stable value is still owed."""
+    monkeypatch.setenv("PYRECON_APP_NAME", DEV)
+    _legacy(SHARED_APP, legacy_probe_theme="stable")
+    _legacy(DEV, legacy_probe_theme="dev", legacy_probe_dev_only="dev")
+
+    with monkeypatch.context() as broken:
+        _unreadable_legacy(broken, SHARED_APP)
+        assert _launch().complete is False
+
+    shared = _settings(SETTINGS_ORG, SHARED_APP)
+    assert not shared.contains("legacy_probe_theme")
+    assert not _settings(SETTINGS_ORG, DEV).contains(FOLD_MARKER)
+
+    assert _launch().complete is True
+
+    shared = _settings(SETTINGS_ORG, SHARED_APP)
+    assert shared.value("legacy_probe_theme") == "stable"
+    assert shared.value("legacy_probe_dev_only") == "dev"
+    assert _settings(SETTINGS_ORG, DEV).value(FOLD_MARKER, type=bool) is True
+
+
+def test_a_failed_dev_copy_leaves_the_dev_store_unfolded(clean, monkeypatch):
+    """The Dev store's copy fails. The fold waits instead of marking the
+    empty Dev store as folded, so its preferences still reach the shared
+    store once the copy succeeds."""
+    monkeypatch.setenv("PYRECON_APP_NAME", DEV)
+    _legacy(DEV, legacy_probe_dev_only="dev")
+
+    with monkeypatch.context() as broken:
+        _unreadable_legacy(broken, DEV)
+        assert _launch().complete is False
+
+    assert not _settings(SETTINGS_ORG, DEV).contains(FOLD_MARKER)
+    assert not _settings(SETTINGS_ORG, SHARED_APP).contains("legacy_probe_dev_only")
+
+    assert _launch().complete is True
+
+    assert _settings(SETTINGS_ORG, SHARED_APP).value("legacy_probe_dev_only") == "dev"
+    assert _settings(SETTINGS_ORG, DEV).value(FOLD_MARKER, type=bool) is True
+
+
+def test_a_marker_that_does_not_land_is_a_failed_copy(clean, monkeypatch):
+    """The last write is the marker. If it fails, the copy is not finished:
+    the result says so and the Dev fold waits."""
+    import PySide6.QtCore as qtcore
+
+    monkeypatch.setenv("PYRECON_APP_NAME", DEV)
+    _legacy(SHARED_APP, legacy_probe_theme="stable")
+    _legacy(DEV, legacy_probe_dev_only="dev")
+    cls = qtcore.QSettings
+    real_status = cls.status
+
+    def status(self):
+        if (
+            (self.organizationName(), self.applicationName())
+            == (SETTINGS_ORG, SHARED_APP)
+            and self.contains(LEGACY_COPY_MARKER)
+        ):
+            return cls.AccessError
+        return real_status(self)
+
+    with monkeypatch.context() as broken:
+        broken.setattr(cls, "status", status)
+        result = _launch()
+    assert result.complete is False
+    assert not _settings(SETTINGS_ORG, DEV).contains(FOLD_MARKER)
+
+
+@pytest.fixture
+def window_series(main_window, clean, monkeypatch):
+    """The open series' stores, wiped before and after, in the Dev flavor."""
+    code = main_window.series.code
+    assert code, "the fixture series carries a code"
+    apps = (f"{SHARED_APP}-{code}", f"{DEV}-{code}")
+
+    def wipe():
+        for org in (SETTINGS_ORG, LEGACY_SETTINGS_ORG):
+            for app in apps:
+                s = _settings(org, app)
+                for key in list(s.allKeys()):
+                    if key.startswith(PROBE) or key in (
+                        LEGACY_COPY_MARKER, FOLD_MARKER,
+                    ):
+                        s.remove(key)
+                s.sync()
+
+    wipe()
+    monkeypatch.setenv("PYRECON_APP_NAME", DEV)
+    yield main_window, apps
+    wipe()
+
+
+def test_the_window_holds_the_series_fold_after_a_failed_shared_copy(
+    window_series, monkeypatch,
+):
+    window, (shared_app, dev_app) = window_series
+    _legacy(shared_app, legacy_probe_backup="stable")
+    _legacy(dev_app, legacy_probe_backup="dev")
+
+    with monkeypatch.context() as broken:
+        _unreadable_legacy(broken, shared_app)
+        window._foldSeriesSettings()
+
+    assert not _settings(SETTINGS_ORG, shared_app).contains("legacy_probe_backup")
+    assert not _settings(SETTINGS_ORG, dev_app).contains(FOLD_MARKER)
+
+    window._foldSeriesSettings()
+
+    # the fold ran and the stable value kept its key; a per-series Dev store
+    # that gave nothing stays unmarked by design
+    assert _settings(SETTINGS_ORG, shared_app).value("legacy_probe_backup") == "stable"
+
+
+def test_the_window_folds_the_series_dev_store_once_its_copy_succeeds(
+    window_series, monkeypatch,
+):
+    window, (shared_app, dev_app) = window_series
+    _legacy(dev_app, legacy_probe_dev_only="dev")
+
+    with monkeypatch.context() as broken:
+        _unreadable_legacy(broken, dev_app)
+        window._foldSeriesSettings()
+
+    assert not _settings(SETTINGS_ORG, dev_app).contains(FOLD_MARKER)
+    assert not _settings(SETTINGS_ORG, shared_app).contains("legacy_probe_dev_only")
+
+    window._foldSeriesSettings()
+
+    assert _settings(SETTINGS_ORG, shared_app).value("legacy_probe_dev_only") == "dev"
+    assert _settings(SETTINGS_ORG, dev_app).value(FOLD_MARKER, type=bool) is True

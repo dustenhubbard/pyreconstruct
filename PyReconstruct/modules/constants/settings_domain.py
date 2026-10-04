@@ -259,6 +259,20 @@ def fold_series_settings_once(code, flavored=None, shared=None):
 LEGACY_COPY_MARKER = "meta/copied_from_khlab"
 
 
+class LegacyCopyResult(dict):
+    """The keys a legacy copy wrote, by application name, plus whether it
+    finished.
+
+    ``complete`` is False while any store still needs a retry: its old store
+    could not be read, or its new store could not be written or marked. The
+    Dev fold waits for a complete copy. Folding first would let a Dev value
+    fill a shared key the stable value was still to fill, or mark an empty
+    Dev store as folded, and a later retry could undo neither.
+    """
+
+    complete = True
+
+
 def _copy_legacy_domain(app, mark_always):
     """Copy ``KHLab / <app>`` into ``PyReconstruct / <app>``, once.
 
@@ -271,13 +285,13 @@ def _copy_legacy_domain(app, mark_always):
     Once the copy has been written, LEGACY_COPY_MARKER goes into the new store
     and later calls return at once. That is what makes it happen once: a value
     changed or removed in the new store afterwards is never brought back from
-    the old one. When the old store cannot be read or the new one cannot be
-    written, nothing is marked and the next call tries again.
+    the old one. When the old store cannot be read, or the new one cannot be
+    written or marked, the call reports failure and the next one tries again.
 
     ``mark_always`` writes the marker even when the old store is empty. The
     global stores want that; a per-series store does not, so opening a
     series with no old settings never creates a store holding only a marker.
-    Returns the keys that were copied.
+    Returns the keys that were copied, or None when the copy did not finish.
 
     Both stores are read with fallbacks off, so only what was stored for
     this application counts. With fallbacks on, ``allKeys()`` on macOS also
@@ -294,7 +308,7 @@ def _copy_legacy_domain(app, mark_always):
     old.setFallbacksEnabled(False)
     keys = [key for key in old.allKeys() if key != LEGACY_COPY_MARKER]
     if old.status() != QSettings.NoError:
-        return []
+        return None
     if not keys and not mark_always:
         return []
     copied = []
@@ -307,9 +321,12 @@ def _copy_legacy_domain(app, mark_always):
         # the values are on disk before the marker that says they are
         new.sync()
         if new.status() != QSettings.NoError:
-            return []
+            return None
     new.setValue(LEGACY_COPY_MARKER, True)
     new.sync()
+    if new.status() != QSettings.NoError:
+        # the marker may not have landed; say so, so the fold waits
+        return None
     return copied
 
 
@@ -319,41 +336,44 @@ def _this_app_and_shared(suffix=""):
     return list(dict.fromkeys(names))
 
 
+def _copy_legacy_domains(apps, mark_always):
+    """Run the copy for each of ``apps``; never raises."""
+    result = LegacyCopyResult()
+    for app in apps:
+        try:
+            keys = _copy_legacy_domain(app, mark_always=mark_always)
+        except Exception:
+            keys = None
+        if keys is None:
+            result.complete = False
+        elif keys:
+            result[app] = keys
+    return result
+
+
 def copy_legacy_settings_once():
     """First launch after the move from ``KHLab``: copy the global stores.
 
     Covers the shared store and, in a flavored build, that flavor's own
-    store. Runs before the Dev fold, which then works on the copied stores.
-    Never raises: a settings carry-over must not stop the app from opening.
-    Returns the keys copied, by application name.
+    store. Runs before the Dev fold, which then works on the copied stores,
+    and only when ``complete`` is True on the result. Never raises: a
+    settings carry-over must not stop the app from opening. Returns a
+    LegacyCopyResult: the keys copied, by application name.
     """
-    copied = {}
-    for app in _this_app_and_shared():
-        try:
-            keys = _copy_legacy_domain(app, mark_always=True)
-        except Exception:
-            continue
-        if keys:
-            copied[app] = keys
-    return copied
+    return _copy_legacy_domains(_this_app_and_shared(), mark_always=True)
 
 
 def copy_legacy_series_settings_once(code):
     """Copy one series' ``KHLab`` per-series stores the first time it opens.
 
     Per-series stores cannot be listed portably, so this runs when a series
-    opens, before its first per-series read. Same rule as the global copy.
-    A series without a code has no per-series store. Never raises. Returns
-    the keys copied, by application name.
+    opens, before its first per-series read. Same rule as the global copy,
+    and the per-series fold waits for ``complete`` the same way. A series
+    without a code has no per-series store. Never raises. Returns a
+    LegacyCopyResult.
     """
     if not code:
-        return {}
-    copied = {}
-    for app in _this_app_and_shared(f"-{code}"):
-        try:
-            keys = _copy_legacy_domain(app, mark_always=False)
-        except Exception:
-            continue
-        if keys:
-            copied[app] = keys
-    return copied
+        return LegacyCopyResult()
+    return _copy_legacy_domains(
+        _this_app_and_shared(f"-{code}"), mark_always=False
+    )
