@@ -377,12 +377,12 @@ class FieldWidgetBase:
         links_before = hostLinks(self.series, names)
         self.updateData()
         recordDroppedHostLinks(self.series, links_before)
-        # the state keeps what it forgot, for its undo (restoreForgottenLinks)
-        section_states.current_state.forgotten_links = forgetHostLinks(
+        # the state keeps its new objects, for its redo (forgetHostLinks)
+        section_states.current_state.new_names = forgetHostLinks(
             self.series, {
                 n for n in names
                 if n not in objects_before and n in self.series.data["objects"]
-            }
+            }, names
         )
 
         # updateData deletes an object whose last trace the action took, and

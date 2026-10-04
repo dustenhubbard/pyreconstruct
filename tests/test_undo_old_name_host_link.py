@@ -3,9 +3,9 @@ its host link back.
 
 H hosts T. T is deleted on one section, then H on another, so H's copy has no
 traveler and only the record of dropped links keeps the link
-(recordDroppedHostLinks). A new object named H forgets that link, so it does
-not take it. Undoing the new H now puts the link back in the record, and
-undoing both deletes brings back T hosted by H.
+(recordDroppedHostLinks). A new object named H hides that link, so it does
+not take it. Undoing the new H shows the link again, and undoing both
+deletes brings back T hosted by H.
 """
 import pytest
 
@@ -182,5 +182,73 @@ def test_a_redone_section_of_a_rename_does_not_take_the_link(
 
     window.changeSection(fourth)
     window.undo(redo=True)
+    assert HOST in series.data["objects"]
+    assert series.host_tree.getHosts(TRAVELER) == []
+
+
+def test_undoing_two_draws_of_the_old_name_gives_the_link_back(window):
+    """The new H is drawn on two sections as two actions; only the first one
+    created it. Undoing the first draw leaves H on the other section, and
+    undoing the second draw deletes it."""
+    series = window.series
+    first, second, third = _setup(window)
+    fourth = sorted(series.sections)[3]
+    window.changeSection(third)
+    _draw(window, HOST, offset=0.5)
+    window.changeSection(fourth)
+    _draw(window, HOST, offset=0.5)
+
+    window.changeSection(third)
+    window.undo()
+    assert HOST in series.data["objects"]
+    window.changeSection(fourth)
+    window.undo()
+    assert HOST not in series.data["objects"]
+    assert _undo_both_deletes(window, first, second) == [HOST]
+
+
+def test_a_redo_that_adds_to_the_old_object_keeps_its_link(
+        window, main_window_dialogs):
+    """After the rename is undone and the old H is back, a redo on one
+    section adds traces to that H rather than creating a new one, so the
+    old link stays saved for T."""
+    series = window.series
+    first, second, third = _setup(window, host_first=True)
+    fourth = _rename_spare_on_two_sections(window)
+
+    main_window_dialogs.linked_undo_responses = ["all", "section"]
+    window.changeSection(third)
+    window.undo()
+    assert HOST not in series.data["objects"]
+    window.changeSection(first)
+    window.undo()
+    assert HOST in series.data["objects"]
+
+    window.changeSection(fourth)
+    window.undo(redo=True)
+    window.undo()
+    window.changeSection(second)
+    window.undo()
+    assert TRAVELER in series.data["objects"]
+    assert series.host_tree.getHosts(TRAVELER) == [HOST]
+
+
+def test_the_old_link_does_not_reach_a_new_traveler(
+        window, main_window_dialogs):
+    """A new T is drawn while the new H exists. Undoing the rename and the
+    old H's delete brings back the old H, and the new T stays unlinked."""
+    series = window.series
+    first, second, third = _setup(window)
+    _rename_spare_on_two_sections(window)
+    fifth = sorted(series.sections)[4]
+    window.changeSection(fifth)
+    _draw(window, TRAVELER, offset=0.5)
+
+    main_window_dialogs.linked_undo_responses = ["all"]
+    window.changeSection(third)
+    window.undo()
+    assert HOST not in series.data["objects"]
+    window.changeSection(first)
+    window.undo()
     assert HOST in series.data["objects"]
     assert series.host_tree.getHosts(TRAVELER) == []
