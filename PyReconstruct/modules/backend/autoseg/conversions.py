@@ -163,27 +163,45 @@ def get_thickness(zarr_array):
         return 0.05  # the default section thickness, as get_true_mag defaults
 
 
-def get_label_resolutions(labels_array, raw):
+def get_label_resolutions(labels_array, raw, series=None, raw_attrs=None):
     """Get the (labels, raw) resolutions for a label import.
 
-    Both come back in nm, whatever ``units`` each array declares. Raw with no
-    ``resolution`` or ``voxel_size`` gets the grid PyReconstruct builds the
-    series on: its thickness and true mag. Labels with neither share raw's
-    grid. Read offsets with ``as_nm`` to match.
+    Both come back in nm, whatever ``units`` each array declares. Missing or
+    zero raw axes use the exporter's grid: the first exported section's
+    thickness and the saved export mag (or raw's metadata/default mag). Missing or
+    zero label axes share raw's grid. The existing metadata/default fallback
+    applies when the series section is unavailable.
     """
 
     try:
         raw_res = as_nm(get_resolution(raw), raw)
     except KeyError:
-        mag_nm = get_true_mag(raw) * 1000
-        raw_res = [get_thickness(raw) * 1000, mag_nm, mag_nm]
+        raw_res = [0, 0, 0]
+
+    if 0 in raw_res:
+        attrs = raw.attrs if raw_attrs is None else raw_attrs
+        thickness = get_thickness(raw)
+        if series is not None and raw_res[0] == 0:
+            sections = attrs.get("sections", [])
+            if sections and sections[0] in series.sections:
+                thickness = series.data["sections"][sections[0]]["thickness"]
+        mag = attrs.get("true_mag") or get_true_mag(raw)
+        fallback = [voxel_nm(thickness), voxel_nm(mag), voxel_nm(mag)]
+        raw_res = [r if r != 0 else f for r, f in zip(raw_res, fallback)]
+        if any(r <= 0 for r in raw_res):
+            raise ValueError("Cannot recover a nonzero series resolution for this Zarr.")
 
     try:
         labels_res = as_nm(get_resolution(labels_array), labels_array)
     except KeyError:
-        labels_res = None
+        labels_res = [0, 0, 0]
 
-    return labels_res or raw_res, raw_res
+    if 0 in labels_res:  # only fill zero axes; keep any axes raw lacks
+        labels_res = [
+            r if r != 0 or i >= len(raw_res) else raw_res[i]
+            for i, r in enumerate(labels_res)
+        ]
+    return labels_res, raw_res
 
 
 def voxel_nm(size_um):
@@ -623,7 +641,7 @@ def seriesToLabels(series: Series,
     return True
 
 
-def getLabelsToObjectsData(data_fp: str, group: str, raw_attrs: dict = None) -> tuple:
+def getLabelsToObjectsData(data_fp: str, group: str, raw_attrs: dict = None, series=None) -> tuple:
 
     data_zg = zarr.open(data_fp, "r")
     
@@ -634,7 +652,7 @@ def getLabelsToObjectsData(data_fp: str, group: str, raw_attrs: dict = None) -> 
     labels_array = get_zarr_array(data_zg, group)
     sections = (raw.attrs if raw_attrs is None else raw_attrs)["sections"]
 
-    resolution_z = get_label_resolutions(labels_array, raw)[0][0]
+    resolution_z = get_label_resolutions(labels_array, raw, series, raw_attrs)[0][0]
     offset_z = get_label_offset(labels_array, raw)[0]
     section_start = round(offset_z / resolution_z)
 
@@ -655,7 +673,7 @@ def labelsToObjects(series : Series, data_fp : str, group : str, ids: list = Non
             (bool) True if every section imported (None if group is missing)
     """
 
-    data = getLabelsToObjectsData(data_fp, group, raw_attrs=raw_attrs)
+    data = getLabelsToObjectsData(data_fp, group, raw_attrs=raw_attrs, series=series)
     if data is None:  # group not present in the zarr
         return
     data_zg, sections, section_start = data
@@ -718,6 +736,8 @@ def exterior_to_points(ext: list[np.ndarray], offset, resolution, raw, window, t
 
     ``ext`` is in label pixels. ``raw_resolution`` (default: the same as
     ``resolution``) gives the height of raw in label pixels for the y flip.
+    ``offset`` is already relative to raw, from ``get_label_offset``; raw's
+    own offset must not be applied a second time here.
     """
 
     if raw_resolution is None:
@@ -881,7 +901,7 @@ def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
     
     labels_array = get_zarr_array(data_zg, group)
     raw = get_zarr_array(data_zg, "raw")
-    resolution, raw_resolution = get_label_resolutions(labels_array, raw)
+    resolution, raw_resolution = get_label_resolutions(labels_array, raw, series, raw_attrs)
 
     offset = get_label_offset(labels_array, raw)
     z_offset = round(offset[0] / resolution[0])
