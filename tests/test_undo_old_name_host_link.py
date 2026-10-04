@@ -127,3 +127,60 @@ def test_undoing_a_rename_to_the_old_name_gives_the_link_back(
     assert HOST not in series.data["objects"]
     assert SPARE in series.data["objects"]
     assert _undo_both_deletes(window, first, second) == [HOST]
+
+
+def _rename_spare_on_two_sections(window):
+    """Put the spare on a fourth section too, then rename it to H on all
+    sections."""
+    series = window.series
+    fourth = sorted(series.sections)[3]
+    window.changeSection(fourth)
+    _draw(window, SPARE)
+    window.saveAllData()
+    series.editObjectAttributes([SPARE], name=HOST,
+                                series_states=window.field.series_states)
+    window.field.reload()
+    assert HOST in series.data["objects"]
+    return fourth
+
+
+def test_undoing_a_rename_on_two_sections_gives_the_link_back(
+        window, main_window_dialogs):
+    """Only the first section of the rename forgot the link; the undo of
+    the last section is the one that deletes the new H."""
+    series = window.series
+    first, second, third = _setup(window)
+    _rename_spare_on_two_sections(window)
+
+    main_window_dialogs.linked_undo_responses = ["all"]
+    window.changeSection(third)
+    window.undo()
+    assert HOST not in series.data["objects"]
+    assert _undo_both_deletes(window, first, second) == [HOST]
+
+
+def test_a_redone_section_of_a_rename_does_not_take_the_link(
+        window, main_window_dialogs):
+    """Undo the rename on each section, the last section first, so the link
+    is back in the record. A redo on the last section alone creates a new H
+    again, and it does not take the link."""
+    series = window.series
+    first, second, third = _setup(window)
+    fourth = _rename_spare_on_two_sections(window)
+
+    main_window_dialogs.linked_undo_responses = ["section"]
+    window.changeSection(fourth)
+    window.undo()
+    assert HOST in series.data["objects"]
+    window.changeSection(third)
+    window.undo()
+    assert HOST not in series.data["objects"]
+    window.changeSection(second)
+    window.undo()
+    assert TRAVELER in series.data["objects"]
+    assert series.host_tree.getHosts(TRAVELER) == []
+
+    window.changeSection(fourth)
+    window.undo(redo=True)
+    assert HOST in series.data["objects"]
+    assert series.host_tree.getHosts(TRAVELER) == []
