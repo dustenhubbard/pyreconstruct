@@ -118,6 +118,17 @@ def test_the_zarr_window_shows_count_and_time_left(zarr_window, clock):
     assert zarr_window.eta.text() == "2 / 4, ~1m 00s remaining"
 
 
+def test_the_zarr_window_estimates_time_left_from_a_zero_start(zarr_window,
+                                                              clock):
+    # a clock that reads 0.0 at the first total is still a real start time
+    clock.value = 0.0
+    zarr_window.update_progress("@@PROGRESS@@ TOTAL 4")
+
+    clock.value += 10
+    zarr_window.update_progress("@@PROGRESS@@ STEP 1 4")
+    assert zarr_window.eta.text() == "1 / 4, ~30s remaining"
+
+
 def test_the_zarr_window_says_where_to_look_on_failure(zarr_window):
     zarr_window.process_finished(1)
     assert zarr_window.heading.text() == (
