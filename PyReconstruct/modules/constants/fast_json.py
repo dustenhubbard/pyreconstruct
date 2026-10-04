@@ -92,12 +92,34 @@ def fast_loads(data):
     return json.loads(data)
 
 
+def orjson_dumps(obj) -> bytes:
+    """``fast_dumps``'s orjson leg on its own: raises where it would fall back.
+
+    Only callable when orjson is installed (``HAVE_ORJSON``).
+    """
+    return _to_ascii(orjson.dumps(obj, option=orjson.OPT_NON_STR_KEYS))
+
+
+def stdlib_dumps(obj) -> bytes:
+    """``fast_dumps``'s stdlib leg on its own.
+
+    stdlib json.dumps defaults to ensure_ascii=True, so this is already pure
+    ASCII. Its separators are ``", "`` and ``": "``, not orjson's ``","`` and
+    ``":"``, so a document has to come from one leg or the other, never both.
+    """
+    return json.dumps(obj).encode("utf-8")
+
+
+def have_orjson() -> bool:
+    """Whether ``fast_dumps`` tries orjson first, read at call time."""
+    return _HAVE_ORJSON
+
+
 def fast_dumps(obj) -> bytes:
     """Serialize an object to compact ASCII JSON bytes (non-ASCII -> \\uXXXX)."""
     if _HAVE_ORJSON:
         try:
-            return _to_ascii(orjson.dumps(obj, option=orjson.OPT_NON_STR_KEYS))
+            return orjson_dumps(obj)
         except Exception:
             pass
-    # stdlib json.dumps defaults to ensure_ascii=True -> already pure ASCII.
-    return json.dumps(obj).encode("utf-8")
+    return stdlib_dumps(obj)

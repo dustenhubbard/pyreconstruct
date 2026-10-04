@@ -69,7 +69,7 @@ before turning it on.
 
 import os
 
-from .fast_json import fast_dumps
+from .fast_json import fast_dumps, have_orjson, orjson_dumps, stdlib_dumps
 
 
 #: Environment variable that opts a whole process into pretty output.
@@ -674,3 +674,129 @@ def dumps_jser(jser_data : dict, pretty : bool = None) -> bytes:
         members.append(_dump_key(k) + b": " + fast_dumps(jser_data[k]))
 
     return b"{" + _NL + (b"," + _NL).join(members) + _NL + b"}"
+
+
+# ---------------------------------------------------------------------------
+# the streaming writer
+# ---------------------------------------------------------------------------
+#
+# ``write_jser`` writes the same bytes ``dumps_jser`` returns, straight into an
+# open file, one section at a time, so a save never holds every section at once
+# or the joined document. ``dumps_jser`` stays the reference: the tests compare
+# the two byte for byte.
+#
+# Two things make the compact form harder to stream than it looks, and both come
+# from ``fast_dumps`` deciding once for the whole document:
+#
+# - If orjson raises anywhere in the document, the WHOLE document goes through
+#   the stdlib, and the stdlib writes ``", "`` and ``": "`` where orjson writes
+#   ``","`` and ``":"``. A part orjson cannot encode therefore changes the bytes
+#   of every other part. The writer tries orjson for every part, and on the
+#   first failure it truncates the file and writes the whole document again
+#   through the stdlib. That costs a second read of the sections, and only for
+#   a document orjson refuses (an integer past 64 bits, a lone surrogate).
+# - orjson has a nesting limit, so a part is encoded at the depth it has inside
+#   the document: a section as ``[[section]]`` and a top-level member as
+#   ``{key: value}``, with the wrapper bytes sliced off afterwards. That also
+#   coerces a top-level key exactly as the whole-document dump does.
+
+
+class _NeedsStdlib(Exception):
+    """orjson refused a part, so the whole document has to come from the stdlib."""
+
+
+def _orjson_part(obj) -> bytes:
+    try:
+        return orjson_dumps(obj)
+    except Exception as e:
+        raise _NeedsStdlib() from e
+
+
+def _write_compact(f, sections, tail, encode, item_sep : bytes, key_sep : bytes):
+    """One pass of the minified form, every part through `encode`."""
+    f.write(b'{"sections"' + key_sep + b"[")
+    first = True
+    for sd in sections:
+        if not first:
+            f.write(item_sep)
+        first = False
+        raw = encode([[sd]])
+        f.write(memoryview(raw)[2:-2])
+        # drop this section before the next one is read
+        del raw, sd
+    f.write(b"]")
+    for k, v in tail().items():
+        raw = encode({k: v})
+        f.write(item_sep)
+        f.write(memoryview(raw)[1:-1])
+        del raw
+    f.write(b"}")
+
+
+def _write_pretty(f, sections, tail) -> None:
+    """The structural pretty form, laid out exactly as ``dumps_jser`` lays it out."""
+    f.write(b"{" + _NL + b'"sections": [' + _NL)
+    first = True
+    for sd in sections:
+        if not first:
+            f.write(b"," + _NL)
+        first = False
+        if sd is None:
+            f.write(b"null")
+        else:
+            part = []
+            _dump_section(sd, 0, part)
+            f.writelines(part)
+            del part
+        del sd
+    if not first:
+        f.write(_NL)
+    f.write(b"]")
+
+    rest = tail()
+    if "series" in rest:
+        part = [b"," + _NL + b'"series": ']
+        _dump_series(rest["series"], 0, part)
+        f.writelines(part)
+        del part
+    if "log" in rest:
+        f.write(b"," + _NL + b'"log": ' + fast_dumps(rest["log"]))
+    for k in sorted((k for k in rest if k not in TOP_LEVEL_KEYS), key=str):
+        f.write(b"," + _NL + _dump_key(k) + b": " + fast_dumps(rest[k]))
+    f.write(_NL + b"}")
+
+
+def write_jser(f, sections, tail, pretty : bool = None) -> None:
+    """Write a .jser document into the binary file `f` without building it whole.
+
+    The bytes are exactly ``dumps_jser({"sections": list(sections()),
+    **tail()}, pretty)``.
+
+    `sections` and `tail` are callables so that the reads stay in the order a
+    save has always done them (every section, then the series and the log) and
+    so that the compact form can start over when it has to (see the comment
+    above). Each may be called more than once.
+
+        Params:
+            f: a binary file opened for writing, at position 0, seekable
+            sections (callable): returns an iterable of section dicts (or None
+                for a gap), in order
+            tail (callable): returns a dict of the other top-level members, in
+                order, normally ``{"series": ..., "log": ...}``; called after
+                the sections are consumed
+            pretty (bool): force pretty on/off; None consults the environment
+    """
+    if pretty is None:
+        pretty = pretty_default()
+    if pretty:
+        _write_pretty(f, sections(), tail)
+        return
+    if have_orjson():
+        start = f.tell()
+        try:
+            _write_compact(f, sections(), tail, _orjson_part, b",", b":")
+            return
+        except _NeedsStdlib:
+            f.seek(start)
+            f.truncate()
+    _write_compact(f, sections(), tail, stdlib_dumps, b", ", b": ")

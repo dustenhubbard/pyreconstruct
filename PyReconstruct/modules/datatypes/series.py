@@ -31,7 +31,7 @@ from PyReconstruct.modules.constants import (
     getDateTime,
     fast_loads,
     fast_dumps,
-    dumps_jser,
+    write_jser,
     canon_keys_inplace,
     JSER_SCHEMA_VERSION,
     SERIES_KEYS,
@@ -46,8 +46,8 @@ class SeriesOpenError(Exception):
 class SeriesSaveError(Exception):
     """Raised when a series cannot be written without losing a section.
 
-    Always raised before anything is written, so the existing .jser on disk is
-    still the last good copy when this reaches the caller.
+    Always raised before the existing .jser is replaced, so it is still the
+    last good copy when this reaches the caller.
     """
 
 
@@ -345,29 +345,40 @@ def _default_notifier():
     return _NOTIFIER
 
 
-def _atomicWrite(fp : str, data : bytes):
+def _atomicWrite(fp : str, data):
     """Write bytes to a file atomically.
 
     Writes to a temp file in the same directory, flushes and fsyncs it, then
     os.replace()s it over the destination so a crash, power loss, or full disk
     mid-write can never leave a truncated file behind.
 
+    `data` may also be a callable that writes into the open temp file, so a
+    caller can stream a file too large to build in memory first. Anything it
+    raises removes the temp file and leaves the destination as it was.
+
         Params:
             fp (str): the destination filepath
-            data (bytes): the bytes to write
+            data (bytes or callable): the bytes to write, or a function taking
+                the open binary file and writing the contents into it
     """
     tmp_fp = fp + ".tmp"
     try:
         with open(tmp_fp, "wb") as f:
-            f.write(data)
+            if callable(data):
+                data(f)
+            else:
+                f.write(data)
             f.flush()
             os.fsync(f.fileno())
         # retry a transiently-locked replace (Windows AV/indexer/sync) so a
         # background save doesn't fail spuriously; real errors still propagate
         from PyReconstruct.modules.backend.func.atomic_io import replace_with_retry
         replace_with_retry(tmp_fp, fp)
-    except OSError:
-        # best-effort cleanup of the temp file; the destination is untouched
+    except BaseException:
+        # best-effort cleanup of the temp file; the destination is untouched.
+        # Not only on OSError: a streaming writer can stop for any reason (a
+        # section it cannot read, an encoding error), and its half-written temp
+        # file must not be left beside the series.
         try:
             if os.path.isfile(tmp_fp):
                 os.remove(tmp_fp)
@@ -894,8 +905,6 @@ class Series():
                 "doing anything else."
             )
 
-        jser_data = {}
-
         reporter = self._progressReporterFactory()(
             text="Saving series...",
             cancel=False
@@ -903,109 +912,119 @@ class Series():
         # finish() in a finally: an exception used to leave the progress dialog
         # on screen with no way to dismiss it.
         try:
-            progress = 0
             final_value = len(snums) + 2  # the sections, the .ser, the log
 
             # Sized from the index, and every index below comes from the same
-            # dict, so a section number can no longer be out of range.
-            jser_data["sections"] = [None] * (snums[-1] + 1)
-            jser_data["series"] = {}
-            jser_data["log"] = ""
-
+            # dict, so a section number can no longer be out of range. A slot
+            # with no section is written as null.
+            slots = [None] * (snums[-1] + 1)
             for snum in snums:
-                fp = os.path.join(self.hidden_dir, self.sections[snum])
-                try:
-                    with open(fp, "rb") as f:
-                        jser_data["sections"][snum] = fast_loads(f.read())
-                except (OSError, ValueError) as e:
-                    # Same reasoning as a missing file: refuse rather than write
-                    # the section out as null.
-                    self._refuseSave(
-                        jser_fp,
-                        f"the working file for section {snum} could not be read "
-                        f"({e}). Saving now would write a series without it."
-                    )
+                slots[snum] = snum
 
-                progress += 1
-                reporter.set_progress(progress/final_value * 100)
+            # The document is written as it is read, one section at a time
+            # (fork #437). Only the section being written is in memory, never
+            # every section plus the joined bytes. write_jser may call both of
+            # these twice; see its comment in jser_format.py.
+            def sections():
+                progress = 0
+                for snum in slots:
+                    if snum is None:
+                        yield None
+                        continue
+                    fp = os.path.join(self.hidden_dir, self.sections[snum])
+                    try:
+                        with open(fp, "rb") as f:
+                            section_data = fast_loads(f.read())
+                    except (OSError, ValueError) as e:
+                        # Same reasoning as a missing file: refuse rather than
+                        # write the section out as null. The temp file is
+                        # removed and the existing .jser is not touched.
+                        self._refuseSave(
+                            jser_fp,
+                            f"the working file for section {snum} could not be read "
+                            f"({e}). Saving now would write a series without it."
+                        )
 
-            # the series file itself (self.filepath is the .ser in the hidden dir)
-            with open(self.filepath, "rb") as f:
-                filedata = fast_loads(f.read())
-            # `log_set` is the hidden dir's working accumulator, not part of the
-            # .jser: its rows are flattened into the "log" text a few lines down
-            # and `openJser` overwrites the key with [] on the way back in, so a
-            # copy in the series dict would be dead weight at best. Removed
-            # unconditionally. It used to be `if filedata.get("log_set")`, a
-            # truthiness test standing in for an existence test, which skipped
-            # the removal for a present-but-empty log set and wrote `"log_set":
-            # []` into the file. No content was ever lost -- the removal is not
-            # what carries the rows out -- but the key's presence tracked
-            # session activity rather than series content, so save, reopen, save
-            # was not byte-idempotent for any series that logged an event.
-            filedata.pop("log_set", None)
-            # add the log_set string to the log
-            log_set_str = str(self.log_set)
-            if log_set_str:
-                jser_data["log"] += "\n" + log_set_str
-            # save the series
-            jser_data["series"] = filedata
-            progress += 1
-            reporter.set_progress(progress/final_value * 100)
+                    progress += 1
+                    reporter.set_progress(progress/final_value * 100)
+                    yield section_data
+                    del section_data
 
-            # The series history: this session's entries appended to everything
-            # the file already carried, written as one string under "log".
-            #
-            # The .jser audit filed this as "one unbounded escaped string ...
-            # growing monotonically until exported". It does grow monotonically,
-            # and that is DELIBERATELY LEFT AS IS, for two measured reasons.
-            #
-            # It is slow. On a real 276-section series, one simulated hour of
-            # dense tracing (600 edits, the same workload as the undo-stack
-            # measurement) adds 25.0-46.3 KB, the range spanning full LogSet
-            # coalescing to none. Per hour that is ~1/85th of what the undo
-            # stacks take in memory over the same hour, and the dataset's own
-            # four months of real work by a real user amount to 60,379 B -- one
-            # eighth of one percent of the 51 MB file.
-            #
-            # And it is already rotatable. LogSet.exportLogHistory offloads
-            # entries older than N days to an external CSV and rewrites
-            # existing_log.csv with the remainder; the GUI exposes it as
-            # MainWindow.exportLog. So the audit's own "until exported" names a
-            # feature, not a gap.
-            #
-            # Truncating it here instead would discard user history, which is
-            # the one thing this string must not do: LogSet is the series-level
-            # record and a superset of the per-trace history field. If the rate
-            # ever needs revisiting, measure it -- do not cap it silently.
-            # See measurements/log_string_growth.py in the notes repo.
-            existing_log_fp = os.path.join(self.hidden_dir, "existing_log.csv")
-            if os.path.isfile(existing_log_fp):
-                with open(existing_log_fp, "r", encoding="utf-8", errors="replace") as f:
-                    existing_log = ""
-                    for line in f.readlines():
-                        if line.strip():
-                            existing_log += line
-                jser_data["log"] = existing_log + jser_data["log"]
-            progress += 1
-            reporter.set_progress(progress/final_value * 100)
+            def tail():
+                # the series file itself (self.filepath is the .ser in the hidden dir)
+                with open(self.filepath, "rb") as f:
+                    filedata = fast_loads(f.read())
+                # `log_set` is the hidden dir's working accumulator, not part of the
+                # .jser: its rows are flattened into the "log" text a few lines down
+                # and `openJser` overwrites the key with [] on the way back in, so a
+                # copy in the series dict would be dead weight at best. Removed
+                # unconditionally. It used to be `if filedata.get("log_set")`, a
+                # truthiness test standing in for an existence test, which skipped
+                # the removal for a present-but-empty log set and wrote `"log_set":
+                # []` into the file. No content was ever lost -- the removal is not
+                # what carries the rows out -- but the key's presence tracked
+                # session activity rather than series content, so save, reopen, save
+                # was not byte-idempotent for any series that logged an event.
+                filedata.pop("log_set", None)
+                # add the log_set string to the log
+                log = ""
+                log_set_str = str(self.log_set)
+                if log_set_str:
+                    log += "\n" + log_set_str
+                reporter.set_progress((len(snums) + 1)/final_value * 100)
 
-            # Canonical series key order. The .ser in the hidden dir is written from
-            # Series.getDict (already canonical), so this only matters for a series
-            # object that reached this point by some other route.
-            canon_keys_inplace(jser_data["series"], SERIES_KEYS)
+                # The series history: this session's entries appended to everything
+                # the file already carried, written as one string under "log".
+                #
+                # The .jser audit filed this as "one unbounded escaped string ...
+                # growing monotonically until exported". It does grow monotonically,
+                # and that is DELIBERATELY LEFT AS IS, for two measured reasons.
+                #
+                # It is slow. On a real 276-section series, one simulated hour of
+                # dense tracing (600 edits, the same workload as the undo-stack
+                # measurement) adds 25.0-46.3 KB, the range spanning full LogSet
+                # coalescing to none. Per hour that is ~1/85th of what the undo
+                # stacks take in memory over the same hour, and the dataset's own
+                # four months of real work by a real user amount to 60,379 B -- one
+                # eighth of one percent of the 51 MB file.
+                #
+                # And it is already rotatable. LogSet.exportLogHistory offloads
+                # entries older than N days to an external CSV and rewrites
+                # existing_log.csv with the remainder; the GUI exposes it as
+                # MainWindow.exportLog. So the audit's own "until exported" names a
+                # feature, not a gap.
+                #
+                # Truncating it here instead would discard user history, which is
+                # the one thing this string must not do: LogSet is the series-level
+                # record and a superset of the per-trace history field. If the rate
+                # ever needs revisiting, measure it -- do not cap it silently.
+                # See measurements/log_string_growth.py in the notes repo.
+                existing_log_fp = os.path.join(self.hidden_dir, "existing_log.csv")
+                if os.path.isfile(existing_log_fp):
+                    with open(existing_log_fp, "r", encoding="utf-8", errors="replace") as f:
+                        existing_log = ""
+                        for line in f.readlines():
+                            if line.strip():
+                                existing_log += line
+                    log = existing_log + log
+                reporter.set_progress((len(snums) + 2)/final_value * 100)
 
-            # Minified, with canonical ordering applied. Ordering is what makes two
-            # saves of the same content byte-identical and it costs nothing; the
-            # structural pretty printer costs +11% wall time and ~27% more transient
-            # memory in this call (an extra copy of the document: it builds a list of
-            # row fragments and joins it), so it is opt-in via PYRECON_JSER_PRETTY=1
-            # for when a human is going to read the diff.
-            save_bytes = dumps_jser(jser_data)
+                # Canonical series key order. The .ser in the hidden dir is
+                # written from Series.getDict (already canonical), so this only
+                # matters for a series object that reached this point by some
+                # other route.
+                canon_keys_inplace(filedata, SERIES_KEYS)
 
+                return {"series": filedata, "log": log}
+
+            # Minified, with canonical ordering applied. Ordering is what makes
+            # two saves of the same content byte-identical and it costs nothing.
+            # The structural pretty printer is opt-in via PYRECON_JSER_PRETTY=1
+            # for when a human is going to read the diff. Either way the bytes
+            # are exactly what dumps_jser returns for the same document.
             try:
                 # atomic: the previous .jser stays intact until the new one is complete
-                _atomicWrite(jser_fp, save_bytes)
+                _atomicWrite(jser_fp, lambda f: write_jser(f, sections, tail))
             except OSError as e:
                 self._surfaceSaveError(jser_fp, e)
                 raise
