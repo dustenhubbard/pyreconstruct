@@ -150,17 +150,17 @@ class FieldState():
         # the same, for each group this state's action or its redo emptied
         # (deleting an object's last trace); the undo of this state reads it
         self.undo_group_viz = {}
-        # each object this state's action created -> the recorded host links
-        # the action forgot for it (forgetHostLinks), maybe none. Its undo puts
-        # them back and its redo forgets that name's links again.
-        self.forgotten_links = {}
+        # the objects this state's action created under an old name, or
+        # added to while they were such a new object (forgetHostLinks). A redo
+        # that creates one again hides the old object's links again.
+        self.new_names = set()
 
     def copy(self):
         c = FieldState(self.contours, self.ztraces, self.tforms, self.flags, self.contours_fp)
         c.obj_snapshot = deepcopy(self.obj_snapshot)
         c.group_viz = dict(self.group_viz)
         c.undo_group_viz = dict(self.undo_group_viz)
-        c.forgotten_links = {n: set(l) for n, l in self.forgotten_links.items()}
+        c.new_names = set(self.new_names)
         return c
     
     def getContours(self):
@@ -331,12 +331,15 @@ def restoreObjectSnapshot(series : Series, snapshot : dict, recreated,
                 series.host_tree.add(traveler, [name])
 
     # a link a delete dropped comes back once both its objects are back
-    # (see recordDroppedHostLinks)
+    # (see recordDroppedHostLinks), unless a new object took the name of one
+    # of them (forgetHostLinks)
     record = getattr(series, "dropped_host_links", None)
     if record:
+        hidden = hiddenHostLinks(series)
         back = {
             (t, h) for t, h in record
             if (t in recreated or h in recreated) and t in present and h in present
+            and (t, h) not in hidden
         }
         for traveler, host in sorted(back):
             series.host_tree.add(traveler, [host])
@@ -382,45 +385,73 @@ def recordDroppedHostLinks(series : Series, links_before) -> None:
         record |= dropped
 
 
-def forgetHostLinks(series : Series, names) -> dict:
-    """Drop the recorded links of objects an action just created: a new
+def forgetHostLinks(series : Series, created, touched=()) -> set:
+    """Hide the recorded links of objects an action just created: a new
     object with an old name does not take the old object's links.
 
+    The links stay in the record, so the old object can still get them back
+    once the new one is gone. Each reused name keeps the links it hides
+    (``series.hidden_host_links``) and is in ``series.new_host_names`` while
+    its new object is in place. A link is hidden while either of its names
+    is, so a new traveler with an old name does not take the old host's link.
+
+        Params:
+            series (Series): the series
+            created (iterable): the objects the action created
+            touched (iterable): the other objects the action changed
         Returns:
-            (dict): each name -> the links dropped for it, an empty set if
-                none, for the state of the action to keep
-                (restoreForgottenLinks)
+            (set): the names for the action's state to keep
+                (FieldState.new_names): the created objects and each touched
+                one that is still such a new object
     """
-    record = getattr(series, "dropped_host_links", None)
-    forgotten = {}
-    for name in names:
-        links = {(t, h) for t, h in record if name in (t, h)} if record else set()
-        forgotten[name] = links
-        if links:
-            record -= links
-    return forgotten
+    record = getattr(series, "dropped_host_links", None) or set()
+    hidden, new_names = _hiddenRecords(series)
+    created = set(created)
+    for name in created:
+        hidden.setdefault(name, set()).update(
+            (t, h) for t, h in record if name in (t, h)
+        )
+        new_names.add(name)
+    objects = series.data["objects"]
+    return created | {n for n in touched if n in new_names and n in objects}
 
 
-def restoreForgottenLinks(series : Series, section : Section, forgotten : dict) -> None:
-    """Put back the links an action forgot (forgetHostLinks) for each object
-    it created that its undo deletes again.
+def _hiddenRecords(series : Series):
+    """The record of hidden links and the names that hide them now."""
+    hidden = getattr(series, "hidden_host_links", None)
+    if hidden is None:
+        hidden = series.hidden_host_links = {}
+    new_names = getattr(series, "new_host_names", None)
+    if new_names is None:
+        new_names = series.new_host_names = set()
+    return hidden, new_names
+
+
+def hiddenHostLinks(series : Series) -> set:
+    """The recorded links a new object with an old name hides now."""
+    hidden, new_names = _hiddenRecords(series)
+    out = set()
+    for name in new_names:
+        out |= hidden.get(name, set())
+    return out
+
+
+def releaseHostLinks(series : Series, section : Section, names) -> None:
+    """Show again the links each new object hid (forgetHostLinks) once an
+    undo deletes it again, whichever of its sections that undo is on.
 
     An object is deleted again if it has no trace on this section after the
     undo and none on any other section. The series data is not updated yet,
     so it still lists this section for the object.
     """
-    if not forgotten:
-        return
+    hidden, new_names = _hiddenRecords(series)
     objects = series.data["objects"]
-    record = getattr(series, "dropped_host_links", None)
-    if record is None:
-        record = series.dropped_host_links = set()
-    for name, links in forgotten.items():
+    for name in set(names) & new_names:
         if len(section.contours.get(name, [])):
             continue
         if name in objects and set(objects[name].traces) - {section.n}:
             continue
-        record |= links
+        new_names.discard(name)
 
 
 def recreatedAlignments(snapshot : dict, recreated) -> dict:
@@ -762,10 +793,10 @@ class SectionStates():
             n for n in modified_contours
             if n not in existed and len(section.contours.get(n, []))
         ]
-        # an object the undone action created under an old name is gone
-        # again, so the old object's links are kept again
-        restoreForgottenLinks(
-            series, section, getattr(self.current_state, "forgotten_links", {})
+        # a new object with an old name that this undo deletes is gone, so
+        # the old object's links can come back again
+        releaseHostLinks(
+            series, section, self.current_state.getModifiedContours()
         )
         snapshot = getattr(self.current_state, "obj_snapshot", {})
         restoreObjectSnapshot(
@@ -798,11 +829,13 @@ class SectionStates():
             n for n in state_contours
             if n not in existed and len(state_contours[n])
         ]
-        # the redone action creates its objects again, and they again do
-        # not take the old objects' links. Every name the action created is
-        # here, even if it forgot nothing then, and on every section of the
-        # action, so a redo on one section alone forgets them too.
-        forgetHostLinks(series, getattr(redo_state, "forgotten_links", {}))
+        # the redone action creates its new objects again, and they again do
+        # not take the old objects' links. A redo that adds to an object that
+        # is already there creates nothing, so it hides nothing.
+        _, new_names = _hiddenRecords(series)
+        new_names.update(
+            n for n in getattr(redo_state, "new_names", ()) if n in recreated
+        )
         snapshot = getattr(redo_state, "obj_snapshot", {})
         restoreObjectSnapshot(
             series, snapshot, recreated,
@@ -1152,6 +1185,8 @@ class SeriesStates():
         # and so does the record of dropped host links
         self.series.emptied_group_viz = {}
         self.series.dropped_host_links = set()
+        self.series.hidden_host_links = {}
+        self.series.new_host_names = set()
     
     def __iter__(self):
         """Return the iterator object for the series states"""
@@ -1188,9 +1223,6 @@ class SeriesStates():
         new_state = SeriesState(breakable)
         new_state.resetSeriesAttributes(self.series)
         new_state.objects_before = set(self.series.data["objects"])
-        # each object the action creates -> the links it forgot, from all of
-        # its sections (addSectionUndo)
-        new_state.forgotten_links = {}
         self.undos.append(new_state)
     
     def recordBCProfiles(self, snum : int, bc_profiles : dict):
@@ -1267,23 +1299,15 @@ class SeriesStates():
             ))
 
         # an object the action created (a rename to a deleted object's name)
-        # does not take the links that deleted object had. The first section
-        # that creates it forgets them, so each section's state keeps what
-        # the whole action forgot: whichever section's undo deletes the object
-        # again puts the links back, and a redo on any one section forgets them.
-        series_state = self.undos[-1]
-        before = getattr(series_state, "objects_before", None)
+        # does not take the links that deleted object had. Each section's
+        # state keeps the name, so a redo on any one section hides them again.
+        before = getattr(self.undos[-1], "objects_before", None)
         if before is not None:
-            created = {
-                n for n in state.getModifiedContours()
+            modified = state.getModifiedContours()
+            state.new_names = forgetHostLinks(self.series, {
+                n for n in modified
                 if n not in before and n in self.series.data["objects"]
-            }
-            action_forgot = getattr(series_state, "forgotten_links", None)
-            if action_forgot is None:
-                action_forgot = series_state.forgotten_links = {}
-            for name, links in forgetHostLinks(self.series, created).items():
-                action_forgot.setdefault(name, set()).update(links)
-            state.forgotten_links = {n: set(action_forgot[n]) for n in created}
+            }, modified)
 
     def clear(self):
         """Clear all state tracking."""
@@ -1293,6 +1317,8 @@ class SeriesStates():
         self.redos = []
         self.series.emptied_group_viz = {}
         self.series.dropped_host_links = set()
+        self.series.hidden_host_links = {}
+        self.series.new_host_names = set()
     
     def canUndo(self, current_section : int = None, redo=False):
         """Checks if an undo is possible.
