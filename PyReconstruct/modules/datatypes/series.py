@@ -3,7 +3,7 @@ import uuid
 import re
 import json
 import shutil
-import itertools
+import secrets
 from datetime import datetime, timezone
 from copy import copy, deepcopy
 from pathlib import Path
@@ -346,10 +346,6 @@ def _default_notifier():
     return _NOTIFIER
 
 
-#: Numbers each temp file this process makes, so two writes never share one.
-_TMP_COUNTER = itertools.count()
-
-
 def _atomicWrite(fp : str, data):
     """Write bytes to a file atomically.
 
@@ -357,11 +353,14 @@ def _atomicWrite(fp : str, data):
     os.replace()s it over the destination so a crash, power loss, or full disk
     mid-write can never leave a truncated file behind.
 
-    Every call gets its own temp file, ``<fp>.tmp-<pid>-<n>``, created
-    exclusively. With one shared ``<fp>.tmp``, a second write that started
-    while the first was still streaming (a save delivered by the progress
-    dialog's event processing) replaced the destination with that shared file,
-    and the first write went on writing into what was now the user's file.
+    Every call gets its own temp file, ``.save-<6 hex>.tmp`` in the same
+    folder, created exclusively. With one shared ``<fp>.tmp``, a second write
+    that started while the first was still streaming (a save delivered by the
+    progress dialog's event processing) replaced the destination with that
+    shared file, and the first write went on writing into what was now the
+    user's file. The name leaves out the destination's own name on purpose:
+    ``<fp>.tmp`` plus any unique tail is longer than ``<fp>.tmp``, and a series
+    name that fit the old name would no longer fit the 255 character limit.
 
     `data` may also be a callable that writes into the open temp file, so a
     caller can stream a file too large to build in memory first. Anything it
@@ -372,13 +371,16 @@ def _atomicWrite(fp : str, data):
             data (bytes or callable): the bytes to write, or a function taking
                 the open binary file and writing the contents into it
     """
+    folder = os.path.dirname(fp)
     while True:
-        tmp_fp = f"{fp}.tmp-{os.getpid()}-{next(_TMP_COUNTER)}"
+        tmp_fp = os.path.join(folder, f".save-{secrets.token_hex(3)}.tmp")
         try:
+            # "x" is O_EXCL, and the mode is the same 0o666-less-umask a plain
+            # open gives, so the saved file keeps the permissions it had
             f = open(tmp_fp, "xb")
             break
         except FileExistsError:
-            continue  # left by a crashed run with the same pid; not ours
+            continue  # another write's temp file, or a crashed one; not ours
     try:
         with f:
             if callable(data):
@@ -862,24 +864,41 @@ class Series():
                     if the series cannot be written without losing a section.
                     The existing .jser is not replaced in either case.
         """
-        if getattr(self, "_jser_save_running", False):
-            target = self.jser_fp if not save_fp else save_fp
-            err = SeriesSaveError(
-                "this series is already being saved, so this save was skipped."
-            )
-            self._surfaceSaveError(
-                target, err,
-                message=(
-                    "Save skipped: this series is already being saved.\n\n"
-                    f"This save wrote nothing to:\n{target}"
-                ),
-            )
-            raise err
+        if self.jserSaveRunning():
+            raise self.refuseNestedSave(self.jser_fp if not save_fp else save_fp)
         self._jser_save_running = True
         try:
             self._saveJser(save_fp, close)
         finally:
             self._jser_save_running = False
+
+    def jserSaveRunning(self) -> bool:
+        """True while `saveJser` is writing this series."""
+        return getattr(self, "_jser_save_running", False)
+
+    def refuseNestedSave(self, target : str) -> SeriesSaveError:
+        """Tell the user a save was skipped because one is running.
+
+        Shows the message and returns the error for the caller to raise. Save
+        As calls it before moving the series, since a move followed by a
+        refused save would leave the series pointing at a path with no file.
+
+            Params:
+                target (str): the path the skipped save would have written
+            Returns:
+                (SeriesSaveError) the error, not raised
+        """
+        err = SeriesSaveError(
+            "this series is already being saved, so this save was skipped."
+        )
+        self._surfaceSaveError(
+            target, err,
+            message=(
+                "Save skipped: this series is already being saved.\n\n"
+                f"This save wrote nothing to:\n{target}"
+            ),
+        )
+        return err
 
     def _saveJser(self, save_fp : str = None, close : bool = False):
         """Save the jser file. Only `saveJser` calls this.

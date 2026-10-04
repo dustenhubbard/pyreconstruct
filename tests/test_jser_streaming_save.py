@@ -55,8 +55,16 @@ FIXTURES = [
 
 
 def temp_files(jser_fp):
-    """Every temp file a write of `jser_fp` could have left: ``<jser>.tmp*``."""
-    return glob.glob(glob.escape(jser_fp) + ".tmp*")
+    """Every temp file a write of `jser_fp` could have left in its folder.
+
+    ``.save-<hex>.tmp`` is what ``_atomicWrite`` makes now; ``<jser>.tmp*`` is
+    checked too, so a return to a name built from the series name shows up.
+    """
+    folder = glob.escape(os.path.dirname(jser_fp))
+    return (
+        glob.glob(os.path.join(folder, ".save-*.tmp"))
+        + glob.glob(glob.escape(jser_fp) + ".tmp*")
+    )
 
 
 def reopen_at(fp):
@@ -498,7 +506,7 @@ def test_a_replace_failure_keeps_the_old_file(saved, monkeypatch):
     real_replace = os.replace
 
     def failing_replace(src, dst):
-        if src.startswith(series.jser_fp + ".tmp"):
+        if dst == series.jser_fp:
             raise OSError(errno.EROFS, "Read-only file system")
         return real_replace(src, dst)
 
@@ -641,3 +649,23 @@ def test_two_overlapping_atomic_writes_do_not_share_a_temp_file(tmp_path):
 
     assert open(fp, "rb").read() == b'{"outer": [1]}'
     assert temp_files(fp) == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="a 246 character name passes MAX_PATH")
+def test_a_series_name_as_long_as_main_allows_still_saves(tmp_path):
+    """246 characters is the longest name whose ``<name>.jser.tmp`` fit in 255.
+
+    A temp name built from the series name plus a unique tail pushed that
+    over the limit and the save failed with "File name too long".
+    """
+    name = "n" * 246
+    fp = str(tmp_path / f"{name}.jser")
+    shutil.copyfile(FIXTURES[1], fp)
+    series = reopen_at(fp)
+    try:
+        series.saveJser()
+        json.loads(open(fp, "rb").read())
+        assert temp_files(fp) == []
+        assert temp_files(series.filepath) == []
+    finally:
+        series.close()
