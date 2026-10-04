@@ -238,3 +238,84 @@ def test_save_as_over_itself_with_a_scene_still_saves(
     assert window.series.jser_fp == own_fp
     assert main_window_dialogs.message_boxes == []
     assert mine.series_fp == own_fp and theirs.series_fp == other_fp
+
+
+def test_save_as_refuses_a_series_only_in_the_redo_history(
+    main_window, main_window_dialogs, tmp_path, series_jser, monkeypatch
+):
+    """A redo would bring the other series' objects back under this one."""
+    window = main_window
+    viewer, _mine, theirs, other_fp = _scene_with_other_series(
+        window, tmp_path, series_jser, monkeypatch
+    )
+    viewer.redo_states.append({"scene_objects": viewer.plt.objs.getExportDict()})
+    viewer.plt.objs.remove(theirs)
+    own_fp = window.series.jser_fp
+
+    main_window_dialogs.file_responses.append(other_fp)
+    result = window.saveAsToJser()
+
+    assert result == "cancel"
+    assert window.series.jser_fp == own_fp
+    assert other_fp in viewer.redo_states[0]["scene_objects"]["series_fps"]
+
+
+@pytest.mark.parametrize("link", ["symlink", "hardlink"])
+def test_save_as_refuses_a_scene_series_linked_to_this_one(
+    link, main_window, main_window_dialogs, tmp_path, series_jser, monkeypatch
+):
+    """The scene keeps a series opened through a link apart from this one.
+
+    Saving onto the link would move this series to that path and merge the
+    two in the scene, though both paths reach the same file.
+    """
+    import os
+    from PyReconstruct.modules.datatypes import Series
+
+    window = main_window
+    own_fp = window.series.jser_fp
+    link_fp = tmp_path / "linked" / "other.jser"
+    link_fp.parent.mkdir()
+    try:
+        if link == "symlink":
+            os.symlink(own_fp, link_fp)
+        else:
+            os.link(own_fp, link_fp)
+    except (OSError, NotImplementedError) as e:
+        pytest.skip(f"cannot make a {link} here: {e}")
+    other = Series.openJser(str(link_fp))
+    other.close()
+
+    viewer = _viewer(window.series)
+    monkeypatch.setattr(window, "viewer", viewer)
+    mine = viewer.plt.objs.add(_mesh(), window.series, "d01", "object", (1, 1, 1), 1)
+    theirs = viewer.plt.objs.add(_mesh(), other, "d01", "object", (2, 2, 2), 1)
+
+    main_window_dialogs.file_responses.append(str(link_fp))
+    result = window.saveAsToJser()
+
+    assert result == "cancel"
+    assert window.series.jser_fp == own_fp
+    assert mine.series_fp == own_fp
+    assert theirs.series_fp == str(link_fp)
+    assert any(
+        "other.jser" in text and "3D scene" in text
+        for _title, text in main_window_dialogs.message_boxes
+    )
+
+
+def test_same_path_matches_a_missing_file_through_a_folder_link(tmp_path):
+    """With the file gone, a symlinked folder still names the same path."""
+    import os
+    from PyReconstruct.modules.gui.main.main_window import _samePath
+
+    real = tmp_path / "real"
+    real.mkdir()
+    alias = tmp_path / "alias"
+    try:
+        os.symlink(real, alias, target_is_directory=True)
+    except (OSError, NotImplementedError) as e:
+        pytest.skip(f"cannot make a symlink here: {e}")
+
+    assert _samePath(str(alias / "B.jser"), str(real / "B.jser"))
+    assert not _samePath(str(alias / "B.jser"), str(real / "C.jser"))

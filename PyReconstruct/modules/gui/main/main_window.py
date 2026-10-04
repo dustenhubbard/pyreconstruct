@@ -103,14 +103,16 @@ def _sameDir(a, b):
 def _samePath(a, b):
     """True if two paths name the same file, or would if it existed.
 
-    Asks the filesystem when both exist, like _sameDir; otherwise compares
-    the normalized paths, so a path whose file is gone still matches itself.
+    Asks the filesystem when both exist, like _sameDir, so a symlink or hard
+    link matches its target. Otherwise compares the resolved paths, so a path
+    whose file is gone still matches itself under another spelling of its
+    folder (/tmp and /private/tmp on macOS).
     """
     if not a or not b:
         return False
     if _sameDir(a, b):
         return True
-    norm = lambda p: os.path.normcase(os.path.abspath(p))
+    norm = lambda p: os.path.normcase(os.path.realpath(p))
     return norm(a) == norm(b)
 
 
@@ -1414,13 +1416,15 @@ class MainWindow(QMainWindow):
         sname = os.path.basename(new_jser_fp)
         sname = sname[:sname.rfind(".")]
 
-        # the 3D scene tells series apart by path; saving over another
+        # the 3D scene tells series apart by path string; saving over another
         # series in it would put both under one path, with one host tree
-        # and one undo history
-        if self.viewer and not self.viewer.is_closed:
-            own_fp = self.series.jser_fp
+        # and one undo history. A scene path that is a link to this series'
+        # own .jser is still another series to the scene, so only the exact
+        # path counts as this one.
+        own_fp = self.series.jser_fp
+        if self.viewer and not self.viewer.is_closed and new_jser_fp != own_fp:
             for fp in self.viewer.seriesPaths():
-                if _samePath(fp, own_fp) or not _samePath(fp, new_jser_fp):
+                if fp == own_fp or not _samePath(fp, new_jser_fp):
                     continue
                 QMessageBox.information(
                     self,
