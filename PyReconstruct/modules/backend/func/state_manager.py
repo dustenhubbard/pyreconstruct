@@ -150,17 +150,18 @@ class FieldState():
         # the same, for each group this state's action or its redo emptied
         # (deleting an object's last trace); the undo of this state reads it
         self.undo_group_viz = {}
-        # the objects this state's action created under an old name, or
-        # added to while they were such a new object (forgetHostLinks). A redo
-        # that creates one again hides the old object's links again.
-        self.new_names = set()
+        # name -> key, for each name whose traces on this section, as of this
+        # state, belong to a new object that took an old object's name and
+        # hides its links (markNewObjects). While any section is at a state
+        # that lists a key, its links stay hidden (hiddenHostLinks).
+        self.new_names = {}
 
     def copy(self):
         c = FieldState(self.contours, self.ztraces, self.tforms, self.flags, self.contours_fp)
         c.obj_snapshot = deepcopy(self.obj_snapshot)
         c.group_viz = dict(self.group_viz)
         c.undo_group_viz = dict(self.undo_group_viz)
-        c.new_names = set(self.new_names)
+        c.new_names = dict(self.new_names)
         return c
     
     def getContours(self):
@@ -382,73 +383,51 @@ def recordDroppedHostLinks(series : Series, links_before) -> None:
         record |= dropped
 
 
-def forgetHostLinks(series : Series, created, touched=()) -> set:
-    """Hide the recorded links of objects an action just created: a new
-    object with an old name does not take the old object's links.
+def forgetHostLinks(series : Series, name : str):
+    """Keep the recorded links of the old object whose name an action just
+    gave to a new object: a new object with an old name does not take the old
+    object's links.
 
-    The links stay in the record, so the old object can still get them back
-    once the new one is gone. Each reused name keeps the links it hides
-    (``series.hidden_host_links``) and is in ``series.new_host_names`` while
-    its new object is in place. A link is hidden while either of its names
-    is, so a new traveler with an old name does not take the old host's link.
+    The links stay in the record, so the old object can still get them back.
+    The new object hides them while a section holds it (hiddenHostLinks).
 
-        Params:
-            series (Series): the series
-            created (iterable): the objects the action created
-            touched (iterable): the other objects the action changed
         Returns:
-            (set): the names for the action's state to keep
-                (FieldState.new_names): the created objects and each touched
-                one that is still such a new object
+            (int): the key of the hidden links, or None if there are none
     """
     record = getattr(series, "dropped_host_links", None) or set()
-    hidden, new_names = _hiddenRecords(series)
-    created = set(created)
-    for name in created:
-        hidden.setdefault(name, set()).update(
-            (t, h) for t, h in record if name in (t, h)
-        )
-        new_names.add(name)
-    objects = series.data["objects"]
-    return created | {n for n in touched if n in new_names and n in objects}
-
-
-def _hiddenRecords(series : Series):
-    """The record of hidden links and the names that hide them now."""
+    links = {(t, h) for t, h in record if name in (t, h)}
+    if not links:
+        return None
     hidden = getattr(series, "hidden_host_links", None)
     if hidden is None:
         hidden = series.hidden_host_links = {}
-    new_names = getattr(series, "new_host_names", None)
-    if new_names is None:
-        new_names = series.new_host_names = set()
-    return hidden, new_names
+    key = nextStamp()
+    hidden[key] = links
+    return key
+
+
+def setNewObjects(series : Series, snum : int, new_names : dict) -> None:
+    """Note the new objects (FieldState.new_names) of the state a section is
+    now at, for hiddenHostLinks."""
+    sections = getattr(series, "new_object_sections", None)
+    if sections is None:
+        sections = series.new_object_sections = {}
+    sections[snum] = dict(new_names)
 
 
 def hiddenHostLinks(series : Series) -> set:
-    """The recorded links a new object with an old name hides now."""
-    hidden, new_names = _hiddenRecords(series)
+    """The recorded links that stay hidden now: those of each old object
+    whose name a new object on some section has. A link is hidden while
+    either of its names is, so a new traveler with an old name does not take
+    the old host's link either. This reads the state each section is at, so
+    it holds however the actions and their undos were ordered."""
+    hidden = getattr(series, "hidden_host_links", None) or {}
+    sections = getattr(series, "new_object_sections", None) or {}
     out = set()
-    for name in new_names:
-        out |= hidden.get(name, set())
+    for new_names in sections.values():
+        for key in new_names.values():
+            out |= hidden.get(key, set())
     return out
-
-
-def releaseHostLinks(series : Series, section : Section, names) -> None:
-    """Show again the links each new object hid (forgetHostLinks) once an
-    undo deletes it again, whichever of its sections that undo is on.
-
-    An object is deleted again if it has no trace on this section after the
-    undo and none on any other section. The series data is not updated yet,
-    so it still lists this section for the object.
-    """
-    hidden, new_names = _hiddenRecords(series)
-    objects = series.data["objects"]
-    for name in set(names) & new_names:
-        if len(section.contours.get(name, [])):
-            continue
-        if name in objects and set(objects[name].traces) - {section.n}:
-            continue
-        new_names.discard(name)
 
 
 def recreatedAlignments(snapshot : dict, recreated) -> dict:
@@ -598,6 +577,47 @@ class SectionStates():
             updated_ztraces
         )
         self.current_state.obj_snapshot = objectSnapshot(series, updated_contours)
+        # a new object with an old name stays new on this section while it
+        # has traces here (markNewObjects)
+        previous = getattr(self.undo_states[-1], "new_names", {})
+        self.current_state.new_names = {
+            n: key for n, key in previous.items()
+            if len(section.contours.get(n, []))
+        }
+        setNewObjects(series, section.n, self.current_state.new_names)
+
+    def markNewObjects(self, snum : int, series : Series, created, touched):
+        """Note the new objects of the action just added (addState).
+
+        An object the action created under an old name is new, and so is one
+        it added traces to while that object is new on another section.
+        Its traces on this section stay new until an action takes them off,
+        and an undo or redo brings back whatever the state it lands on noted.
+
+            Params:
+                snum (int): the section number
+                series (Series): the series, with its data updated
+                created (iterable): the objects the action created
+                touched (iterable): the objects the action changed
+        """
+        objects = series.data["objects"]
+        here = {
+            n for n in set(created) | set(touched)
+            if n in objects and snum in objects[n].traces
+        }
+        elsewhere = {}
+        sections = getattr(series, "new_object_sections", None) or {}
+        for other, new_names in sections.items():
+            if other != snum:
+                elsewhere.update(new_names)
+        state = self.current_state
+        for name in here:
+            key = forgetHostLinks(series, name) if name in created else None
+            if key is None:
+                key = elsewhere.get(name)
+            if key is not None:
+                state.new_names[name] = key
+        setNewObjects(series, snum, state.new_names)
         
     def dropStatesAfter(self, count : int):
         """Drop the undo states pushed after the first `count`.
@@ -790,10 +810,9 @@ class SectionStates():
             n for n in modified_contours
             if n not in existed and len(section.contours.get(n, []))
         ]
-        # a new object with an old name that this undo deletes is gone, so
-        # the old object's links can come back again
-        releaseHostLinks(
-            series, section, self.current_state.getModifiedContours()
+        # the section goes back to the new objects of the state it lands on
+        setNewObjects(
+            series, section.n, getattr(self.undo_states[-1], "new_names", {})
         )
         snapshot = getattr(self.current_state, "obj_snapshot", {})
         restoreObjectSnapshot(
@@ -826,13 +845,8 @@ class SectionStates():
             n for n in state_contours
             if n not in existed and len(state_contours[n])
         ]
-        # the redone action creates its new objects again, and they again do
-        # not take the old objects' links. A redo that adds to an object that
-        # is already there creates nothing, so it hides nothing.
-        _, new_names = _hiddenRecords(series)
-        new_names.update(
-            n for n in getattr(redo_state, "new_names", ()) if n in recreated
-        )
+        # the section goes on to the new objects of the state it redoes
+        setNewObjects(series, section.n, getattr(redo_state, "new_names", {}))
         snapshot = getattr(redo_state, "obj_snapshot", {})
         restoreObjectSnapshot(
             series, snapshot, recreated,
@@ -1183,7 +1197,7 @@ class SeriesStates():
         self.series.emptied_group_viz = {}
         self.series.dropped_host_links = set()
         self.series.hidden_host_links = {}
-        self.series.new_host_names = set()
+        self.series.new_object_sections = {}
     
     def __iter__(self):
         """Return the iterator object for the series states"""
@@ -1283,12 +1297,11 @@ class SeriesStates():
             ))
 
         # an object the action created (a rename to a deleted object's name)
-        # does not take the links that deleted object had. Each section's
-        # state keeps the name, so a redo on any one section hides them again.
+        # does not take the links that deleted object had
         before = getattr(self.undos[-1], "objects_before", None)
         if before is not None:
             modified = state.getModifiedContours()
-            state.new_names = forgetHostLinks(self.series, {
+            self[snum].markNewObjects(snum, self.series, {
                 n for n in modified
                 if n not in before and n in self.series.data["objects"]
             }, modified)
@@ -1302,7 +1315,7 @@ class SeriesStates():
         self.series.emptied_group_viz = {}
         self.series.dropped_host_links = set()
         self.series.hidden_host_links = {}
-        self.series.new_host_names = set()
+        self.series.new_object_sections = {}
     
     def canUndo(self, current_section : int = None, redo=False):
         """Checks if an undo is possible.
