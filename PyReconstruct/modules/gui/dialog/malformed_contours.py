@@ -199,7 +199,7 @@ class MalformedContoursDialog(QDialog):
         return (
             f"{num_traces} {trace_word} across {num_objs} {obj_word} "
             f"{was_were} skipped during smoothing.\n\n"
-            "A trace is skipped when it cannot be smoothed — usually "
+            "A trace is skipped when it cannot be smoothed, usually "
             "because it has too few points to interpolate a curve (fewer "
             "than 3). These traces were left unchanged; the Reason column "
             "explains why each one was skipped.\n\n"
@@ -585,13 +585,13 @@ class PixelDustDialog(MalformedContoursDialog):
         return (
             f"{num_traces} small (pixel-dust) {trace_word} across "
             f"{num_objs} {obj_word} at or below the pixel-area threshold.\n\n"
-            "The Area is shown in pixels (px^2) — the same units as the "
-            "threshold — with the physical area (um^2) alongside; because each "
-            "section's magnification can differ, the same pixel size is a "
+            "The Area is shown in pixels (px^2), the same units as the "
+            "threshold, with the physical area (um^2) next to it. Each "
+            "section's magnification can differ, so the same pixel size is a "
             "different physical size on different sections.\n\n"
             "These are typically stray specks left by segmentation. Review the "
-            "candidates below — select a row and click “Go to trace” to inspect "
-            "one — and deselect any legitimate trace you want to keep. Then use "
+            "candidates below. Select a row and click “Go to trace” to inspect "
+            "one, and deselect any legitimate trace you want to keep. Then use "
             "“Delete selected” or “Delete all” to remove them (can be undone).\n\n"
             "Nothing is removed until you choose to delete."
         )
@@ -894,8 +894,8 @@ class DifferentlyNamedDuplicatesDialog(MalformedContoursDialog):
         return text + (
             "So the choice in each row is yours. Select a row and use "
             "“Go to trace” and “Go to other trace” to see both traces of a "
-            "pair in the field, then tick the name you want to KEEP — either "
-            "one, not both. “Delete unselected” then deletes the trace under "
+            "pair in the field, then tick the name you want to KEEP, one name "
+            "per row. “Delete unselected” then deletes the trace under "
             "the other name, in every row you ticked. " + overlap_text + "\n\n"
             "Rows you leave unticked are left completely alone: nothing is "
             "chosen for you, and no rule decides which name wins. Nothing is "
