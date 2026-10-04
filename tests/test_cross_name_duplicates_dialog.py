@@ -39,6 +39,8 @@ The extra-button hook the subclass uses is shared, so the base class and the
 pixel-dust list are checked here too: neither grows a button, and the pixel-dust
 list still shows its Delete buttons.
 """
+import re
+
 import pytest
 
 pytestmark = pytest.mark.gui
@@ -107,9 +109,16 @@ def _record(name="OBJ_A", other="OBJ_B", section=3, ratio=0.97):
     }
 
 
+def _without_mnemonic(text):
+    """Drop Qt's mnemonic markers: "&Close" reads "Close", "&&" reads "&"."""
+    return re.sub(r"&(.)", r"\1", text)
+
+
 def _button_texts(dialog):
+    # Some Linux desktop themes give the standard Close button a mnemonic
+    # ("&Close"); the offscreen platform does not. The label is the same.
     box = dialog.findChild(QDialogButtonBox)
-    return [b.text() for b in box.buttons()]
+    return [_without_mnemonic(b.text()) for b in box.buttons()]
 
 
 def _dialog(qtbot, records=None, navigate=None, delete_unselected=None):
@@ -396,6 +405,8 @@ def test_base_dialog_grows_no_extra_button(qtbot):
     dialog.show()
     qtbot.wait(30)
     assert dialog.extra_buttons == []
+    box = dialog.findChild(QDialogButtonBox)
+    assert box.standardButtons() == QDialogButtonBox.Close
     assert _button_texts(dialog) == ["Close", "Go to trace", "Copy table list",
                                      "Save table as CSV…"]
 
