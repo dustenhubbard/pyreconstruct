@@ -106,7 +106,7 @@ class MainWindow(QMainWindow):
             self.eta.setText(self._eta_text(done, total))
 
     def _eta_text(self, done, total):
-        if not self._progress_start or done <= 0:
+        if self._progress_start is None or done <= 0:
             return f"{done} / {total}"
         elapsed = time.monotonic() - self._progress_start
         remaining = (elapsed / done) * (total - done)
