@@ -93,13 +93,16 @@ def runPyReconstruct(filename=None):
     # the first launch after settings moved from the KHLab organization to
     # PyReconstruct copies the old stores across (once, leaving them in
     # place); then a flavored build's first launch on the shared settings
-    # store folds its old private domain in (once; the stable app is a no-op)
+    # store folds its old private domain in (once; the stable app is a no-op).
+    # The fold waits while a copy still needs a retry: folding first could
+    # put a Dev value where the stable one belongs, or mark an empty Dev
+    # store as folded, and the retry could not undo either.
     from PyReconstruct.modules.constants.settings_domain import (
         copy_legacy_settings_once,
         fold_flavor_settings_once,
     )
-    copy_legacy_settings_once()
-    fold_flavor_settings_once()
+    if copy_legacy_settings_once().complete:
+        fold_flavor_settings_once()
 
     # create the Qt Application
     app = QApplication(sys.argv)

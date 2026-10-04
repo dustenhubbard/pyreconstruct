@@ -1627,13 +1627,15 @@ class MainWindow(QMainWindow):
         ``backup_dir`` and ``list_layout``; both apps now read
         ``PyReconstruct-<code>``. Runs after the code is settled and before the
         first per-series read (``_restoreListLayout``), so what was stored is
-        what the app sees. Never raises: a settings carry-over must not stop a
-        series opening.
+        what the app sees. The fold waits while a copy still needs a retry,
+        the same rule as at startup. Never raises: a settings carry-over must
+        not stop a series opening.
         """
         try:
             if not self.series.isWelcomeSeries():
-                copy_legacy_series_settings_once(self.series.code)
-                fold_series_settings_once(self.series.code)
+                copy = copy_legacy_series_settings_once(self.series.code)
+                if copy.complete:
+                    fold_series_settings_once(self.series.code)
         except Exception:
             pass
 
