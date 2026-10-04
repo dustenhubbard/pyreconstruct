@@ -299,3 +299,26 @@ def test_undoing_the_old_delete_before_the_new_draw_keeps_the_link(window):
     window.undo()
     assert TRAVELER in series.data["objects"]
     assert series.host_tree.getHosts(TRAVELER) == [HOST]
+
+
+def test_redoing_the_old_delete_leaves_the_new_object_unlinked(window):
+    """The new H's draw and both deletes are undone, so the old pair is
+    linked again. Redoing the draw and then the old H's delete leaves only
+    the new H, and it does not keep the old H's link."""
+    series = window.series
+    first, second, third = _setup(window, host_first=True)
+    window.changeSection(third)
+    _draw(window, HOST, offset=0.5)
+    window.undo()
+    window.changeSection(first)
+    window.undo()
+    window.changeSection(second)
+    window.undo()
+    assert series.host_tree.getHosts(TRAVELER) == [HOST]
+
+    window.changeSection(third)
+    window.undo(redo=True)
+    window.changeSection(first)
+    window.undo(redo=True)
+    assert HOST in series.data["objects"]
+    assert series.host_tree.getHosts(TRAVELER) == []
