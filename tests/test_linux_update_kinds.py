@@ -354,8 +354,8 @@ def test_the_startup_check_shows_a_notice_that_opens_the_command(
     from PySide6.QtCore import QSettings
     routes.use(kind, flavor, "1.23.0" if not flavor else "1.24.0.dev20260901")
     for app in ("PyReconstruct", "PyReconstruct Dev"):
-        QSettings("KHLab", app).remove("last_update_check_epoch")
-        QSettings("KHLab", app).remove("update_notice_version")
+        QSettings("PyReconstruct", app).remove("last_update_check_epoch")
+        QSettings("PyReconstruct", app).remove("update_notice_version")
     routes.window.series.setOption("update_check_on_startup", True)
 
     try:
@@ -373,14 +373,14 @@ def test_the_startup_check_shows_a_notice_that_opens_the_command(
         assert [s["command"] for s in routes.shown] == [command]
     finally:
         for app in ("PyReconstruct", "PyReconstruct Dev"):
-            QSettings("KHLab", app).remove("update_notice_version")
+            QSettings("PyReconstruct", app).remove("update_notice_version")
 
 
 @pytest.mark.gui
 def test_the_startup_check_is_silent_when_up_to_date(routes):
     from PySide6.QtCore import QSettings
     routes.use("appimage", version="1.24.0")
-    QSettings("KHLab", "PyReconstruct").remove("last_update_check_epoch")
+    QSettings("PyReconstruct", "PyReconstruct").remove("last_update_check_epoch")
     routes.window.series.setOption("update_check_on_startup", True)
 
     routes.window.checkForUpdatesStartup()

@@ -90,11 +90,15 @@ def runPyReconstruct(filename=None):
         qt_plugins = ps6_dir / "Qt/plugins"
         os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = str(qt_plugins)
 
-    # a flavored build's first launch on the shared settings store folds its
-    # old private domain in (once; the stable app is a no-op)
+    # the first launch after settings moved from the KHLab organization to
+    # PyReconstruct copies the old stores across (once, leaving them in
+    # place); then a flavored build's first launch on the shared settings
+    # store folds its old private domain in (once; the stable app is a no-op)
     from PyReconstruct.modules.constants.settings_domain import (
+        copy_legacy_settings_once,
         fold_flavor_settings_once,
     )
+    copy_legacy_settings_once()
     fold_flavor_settings_once()
 
     # create the Qt Application

@@ -89,19 +89,19 @@ def test_every_scope_resolves_inside_the_isolation_root(application):
     """
     import PySide6.QtCore as qtcore
 
-    settings = qtcore.QSettings("KHLab", application)
+    settings = qtcore.QSettings("PyReconstruct", application)
     assert settings.format() == qi._real_qsettings.Format.IniFormat
     assert _under_root(settings.fileName()), settings.fileName()
 
 
 def test_direct_two_argument_construction_writes_into_the_root():
-    """The plain `QSettings("KHLab", "PyReconstruct")` form, as written in
+    """The plain `QSettings("PyReconstruct", "PyReconstruct")` form, as written in
     `file_dialog.py`, `whats_new.py`, `main_window.py` and `mouse_palette.py`.
     """
     _require_isolated()
     import PySide6.QtCore as qtcore
 
-    settings = qtcore.QSettings("KHLab", "PyReconstruct")
+    settings = qtcore.QSettings("PyReconstruct", "PyReconstruct")
     settings.setValue("isolation_probe_direct", "landed")
     settings.sync()
     with open(settings.fileName()) as f:
@@ -316,7 +316,7 @@ def test_the_production_call_sites_resolve_to_the_isolated_class():
         bound = getattr(module, "QSettings", None)
         assert bound is not None, f"{name} no longer binds QSettings"
         assert bound is not qi._real_qsettings, name
-        assert _under_root(bound("KHLab", "PyReconstruct").fileName()), name
+        assert _under_root(bound("PyReconstruct", "PyReconstruct").fileName()), name
 
 
 def test_whats_new_module_constants_still_name_the_real_domain():
@@ -328,7 +328,7 @@ def test_whats_new_module_constants_still_name_the_real_domain():
     """
     from PyReconstruct.modules.gui.dialog import whats_new
 
-    assert (whats_new.ORG, whats_new.APP) == ("KHLab", "PyReconstruct")
+    assert (whats_new.ORG, whats_new.APP) == ("PyReconstruct", "PyReconstruct")
 
 
 # --- the guard ----------------------------------------------------------------
@@ -657,7 +657,7 @@ def test_production_still_resolves_to_the_real_settings_location():
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         from PySide6.QtCore import QSettings
 
-        s = QSettings("KHLab", "PyReconstruct")
+        s = QSettings("PyReconstruct", "PyReconstruct")
         # read-only: fileName() and format() do not write
         print("FORMAT", s.format().name)
         print("PATH", s.fileName())

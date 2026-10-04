@@ -64,13 +64,13 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"          # must precede PySide6 impo
 #: to. The scratch name is fixed rather than per-process on purpose: the exit
 #: sweep below empties these domains but cannot reliably delete the files, so a
 #: per-run name would leave a new empty plist behind on every profile.
-REAL_ORG, REAL_APP = "KHLab", "PyReconstruct"
+REAL_ORG, REAL_APP = "PyReconstruct", "PyReconstruct"
 SCRATCH_ORG = "PyReconProfilingScratch"
 SCRATCH_APP = "profile"
 
 
 def _redirect_qsettings():
-    """Point every QSettings("KHLab", "PyReconstruct") at a throwaway domain.
+    """Point every QSettings("PyReconstruct", "PyReconstruct") at a throwaway domain.
 
     Rebinding the name in PySide6.QtCore covers the deferred imports the product
     uses (QSettingsStore._settings imports QSettings inside the method) and every
