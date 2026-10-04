@@ -122,14 +122,41 @@ def _existingAncestor(p):
 
 
 def _caseInsensitive(folder):
-    """True if a folder's volume ignores case in names.
+    """True if names inside a folder ignore case.
 
-    Asks the filesystem whether the case-swapped spelling of the folder is
-    the same folder. A folder with no letters in its path says nothing, so
-    it counts as case-sensitive.
+    Probes inside the folder only, since folders above it can sit on another
+    volume: an entry whose case-swapped name reaches the same entry means
+    the folder's volume ignores case. Nothing is written to the folder.
     """
-    swapped = folder.swapcase()
-    return swapped != folder and _sameDir(folder, swapped)
+    try:
+        entries = os.listdir(folder)
+    except OSError:
+        entries = []
+    for name in entries:
+        swapped = name.swapcase()
+        if swapped == name:
+            continue  # no letters to swap
+        try:
+            st = os.lstat(os.path.join(folder, name))
+        except OSError:
+            continue  # gone since the listing
+        if swapped in entries:
+            return False  # both spellings listed as separate entries
+        try:
+            alt = os.lstat(os.path.join(folder, swapped))
+        except OSError:
+            return False
+        return (alt.st_dev, alt.st_ino) == (st.st_dev, st.st_ino)
+
+    # An empty folder has nothing to probe inside. Look its own name up in
+    # its parent in the other case instead. That tests the parent's volume,
+    # which is the best available guess, and is wrong only when this folder
+    # is itself a mount point.
+    parent, name = os.path.split(os.path.normpath(folder))
+    swapped = name.swapcase()
+    if not name or swapped == name:
+        return False
+    return _sameDir(folder, os.path.join(parent, swapped))
 
 
 def _samePath(a, b):

@@ -322,10 +322,18 @@ def test_same_path_matches_a_missing_file_through_a_folder_link(tmp_path):
 
 
 def _volume_ignores_case(folder):
-    """Probe the volume rather than the platform: is the swapped spelling the same folder?"""
+    """Probe inside the folder, not the platform or the folders above it.
+
+    A test folder is ours to write in, so a probe file there answers for
+    the folder's own volume.
+    """
     import os
-    swapped = str(folder).swapcase()
-    return os.path.exists(swapped) and os.path.samefile(str(folder), swapped)
+    probe = os.path.join(str(folder), "CaseProbe")
+    open(probe, "w").close()
+    try:
+        return os.path.exists(os.path.join(str(folder), "cASEpROBE"))
+    finally:
+        os.remove(probe)
 
 
 def test_same_path_ignores_case_for_missing_files_where_the_volume_does(tmp_path):
@@ -369,3 +377,65 @@ def test_save_as_refuses_a_missing_scene_series_spelled_in_other_case(
     assert window.series.jser_fp == own_fp
     assert theirs.series_fp == other_fp
     assert not os.path.exists(other_fp)
+
+
+def _fake_case_rules(monkeypatch, reject):
+    """Make os.stat and os.lstat fail for paths `reject` says do not exist.
+
+    Lets one folder behave as case-sensitive on a volume that is not, the
+    way a volume mounted inside another one would.
+    """
+    import os
+    real_stat, real_lstat = os.stat, os.lstat
+
+    def wrap(real):
+        def fake(p, *a, **k):
+            if isinstance(p, (str, os.PathLike)) and reject(os.fspath(p)):
+                raise FileNotFoundError(p)
+            return real(p, *a, **k)
+        return fake
+
+    monkeypatch.setattr(os, "stat", wrap(real_stat))
+    monkeypatch.setattr(os, "lstat", wrap(real_lstat))
+
+
+def test_case_probe_ignores_a_case_sensitive_folder_above(tmp_path, monkeypatch):
+    """A case-insensitive folder below case-sensitive ones still ignores case."""
+    from PyReconstruct.modules.gui.main.main_window import _samePath
+
+    data = tmp_path / "Data"
+    data.mkdir()
+    (data / "Notes.txt").write_text("")
+    if not _volume_ignores_case(data):
+        pytest.skip("this volume is case-sensitive")
+    above = str(tmp_path)
+
+    def reject(p):  # every folder down to tmp_path minds case
+        head = p[:len(above)]
+        return head != above and head.casefold() == above.casefold()
+
+    with monkeypatch.context() as m:
+        _fake_case_rules(m, reject)
+        assert _samePath(str(data / "B.jser"), str(data / "b.jser"))
+        assert not _samePath(str(data / "B.jser"), str(data / "C.jser"))
+
+
+def test_case_probe_trusts_a_case_sensitive_folder_below(tmp_path, monkeypatch):
+    """A case-sensitive folder inside a case-insensitive one keeps case."""
+    import os
+    from PyReconstruct.modules.gui.main.main_window import _samePath
+
+    data = tmp_path / "Data"
+    data.mkdir()
+    (data / "Notes.txt").write_text("")
+    inside = str(data) + os.sep
+    names = set(os.listdir(data))
+
+    def reject(p):  # names inside Data must match their exact spelling
+        if not p.startswith(inside):
+            return False
+        return p[len(inside):].split(os.sep)[0] not in names
+
+    with monkeypatch.context() as m:
+        _fake_case_rules(m, reject)
+        assert not _samePath(str(data / "B.jser"), str(data / "b.jser"))
