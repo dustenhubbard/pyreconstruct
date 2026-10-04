@@ -376,7 +376,7 @@ def _atomicWrite(fp : str, data):
         tmp_fp = os.path.join(folder, f".save-{secrets.token_hex(3)}.tmp")
         try:
             # "x" is O_EXCL, and the mode is the same 0o666-less-umask a plain
-            # open gives, so the saved file keeps the permissions it had
+            # open gives, so the saved file gets the usual new-file permissions
             f = open(tmp_fp, "xb")
             break
         except FileExistsError:
