@@ -5,15 +5,15 @@ Dev packaging stamps PYRECON_APP_NAME (packaging/rthook_flavor.py), and that
 variable still decides everything that has to differ between the two apps:
 the window title, the update channel, the series ownership marker. Stored
 settings are the exception. Since 2026-09-27 both apps read and write ONE
-shared domain, ``KHLab / PyReconstruct``, for global preferences and
-``KHLab / PyReconstruct-<code>`` for per-series ones, so a preference changed
+shared domain, ``PyReconstruct / PyReconstruct``, for global preferences and
+``PyReconstruct / PyReconstruct-<code>`` for per-series ones, so a preference changed
 in either app is what the other app sees at its next read. A user who runs
 both no longer sets everything twice.
 
 A short list of keys must stay per app (PER_APP_KEYS, PER_APP_PREFIXES):
 the What's new popup state, the update-check throttle, the window position,
 and the store's own bookkeeping under ``meta/``. Those route to the flavored
-domain ``KHLab / <settings_app()>``. For the stable app the two domains are
+domain ``PyReconstruct / <settings_app()>``. For the stable app the two domains are
 the same name, so its behavior is unchanged: same file, same keys, same
 values as before the Dev app started sharing.
 
@@ -29,6 +29,11 @@ a shape change is a new key name, the old key is left in place, and stable
 keeps reading it. tests/settings_manifest.json pins the type of every
 default and the test on it fails when one moves.
 
+Until 2026-10-03 every domain above sat under the organization ``KHLab``
+instead of ``PyReconstruct``. ``copy_legacy_settings_once`` and
+``copy_legacy_series_settings_once`` copy those stores across once and leave
+them in place, so an older build still finds its settings.
+
 Read at call time, not import time, so tests can flip the environment
 without reimporting, and so import order against the runtime hook cannot
 matter.
@@ -36,7 +41,11 @@ matter.
 import json
 import os
 
-SETTINGS_ORG = "KHLab"
+SETTINGS_ORG = "PyReconstruct"
+
+# The organization every store sat under before 2026-10-03. Read once per
+# store by the copy below and never written.
+LEGACY_SETTINGS_ORG = "KHLab"
 
 # The application name of the shared store. Also the stable app's own name,
 # which is what makes sharing free for the stable app: it reads and writes
@@ -216,7 +225,7 @@ def fold_series_settings_once(code, flavored=None, shared=None):
     """Fold one series' old Dev per-series domain into the shared one, once.
 
     Per-series settings (``autobackup``, ``backup_dir``, ``list_layout``)
-    live in ``KHLab / <app>-<code>``. The old split gave the Dev app its own
+    live in ``PyReconstruct / <app>-<code>``. The old split gave the Dev app its own
     ``PyReconstruct Dev-<code>`` domain, which the seed never touched, so it
     holds whatever the Dev app wrote there. Runs lazily when a series opens,
     because the per-series domains cannot be enumerated portably. Same rule
@@ -242,3 +251,109 @@ def fold_series_settings_once(code, flavored=None, shared=None):
     return bool(_fold(
         flavored, shared, mark_always=False, validate_list_layout=True
     ))
+
+
+# Marker the legacy copy writes into a store once that store has been filled
+# from its ``KHLab`` counterpart. Per-app by prefix, so the fold never carries
+# it into the shared store, and one app's copy never marks another app's.
+LEGACY_COPY_MARKER = "meta/copied_from_khlab"
+
+
+def _copy_legacy_domain(app, mark_always):
+    """Copy ``KHLab / <app>`` into ``PyReconstruct / <app>``, once.
+
+    Every key the old store holds and the new one lacks is copied, ``meta/``
+    bookkeeping included, so a Dev store that was already folded stays marked
+    as folded. A key the new store already holds is left alone. The old store
+    is only read: an older build that still addresses it finds everything it
+    left there.
+
+    Once the copy has been written, LEGACY_COPY_MARKER goes into the new store
+    and later calls return at once. That is what makes it happen once: a value
+    changed or removed in the new store afterwards is never brought back from
+    the old one. When the old store cannot be read or the new one cannot be
+    written, nothing is marked and the next call tries again.
+
+    ``mark_always`` writes the marker even when the old store is empty. The
+    global stores want that; a per-series store does not, so opening a
+    series with no old settings never creates a store holding only a marker.
+    Returns the keys that were copied.
+
+    Both stores are read with fallbacks off, so only what was stored for
+    this application counts. With fallbacks on, ``allKeys()`` on macOS also
+    lists the whole global NSUserDefaults domain, and on every platform it
+    would pull in organization-wide and system-wide files.
+    """
+    from PySide6.QtCore import QSettings
+
+    new = QSettings(SETTINGS_ORG, app)
+    new.setFallbacksEnabled(False)
+    if new.contains(LEGACY_COPY_MARKER):
+        return []
+    old = QSettings(LEGACY_SETTINGS_ORG, app)
+    old.setFallbacksEnabled(False)
+    keys = [key for key in old.allKeys() if key != LEGACY_COPY_MARKER]
+    if old.status() != QSettings.NoError:
+        return []
+    if not keys and not mark_always:
+        return []
+    copied = []
+    for key in keys:
+        if new.contains(key):
+            continue
+        new.setValue(key, old.value(key))
+        copied.append(key)
+    if copied:
+        # the values are on disk before the marker that says they are
+        new.sync()
+        if new.status() != QSettings.NoError:
+            return []
+    new.setValue(LEGACY_COPY_MARKER, True)
+    new.sync()
+    return copied
+
+
+def _this_app_and_shared(suffix=""):
+    """Application names of the stores this app reads, each once."""
+    names = [f"{SHARED_APP}{suffix}", f"{settings_app()}{suffix}"]
+    return list(dict.fromkeys(names))
+
+
+def copy_legacy_settings_once():
+    """First launch after the move from ``KHLab``: copy the global stores.
+
+    Covers the shared store and, in a flavored build, that flavor's own
+    store. Runs before the Dev fold, which then works on the copied stores.
+    Never raises: a settings carry-over must not stop the app from opening.
+    Returns the keys copied, by application name.
+    """
+    copied = {}
+    for app in _this_app_and_shared():
+        try:
+            keys = _copy_legacy_domain(app, mark_always=True)
+        except Exception:
+            continue
+        if keys:
+            copied[app] = keys
+    return copied
+
+
+def copy_legacy_series_settings_once(code):
+    """Copy one series' ``KHLab`` per-series stores the first time it opens.
+
+    Per-series stores cannot be listed portably, so this runs when a series
+    opens, before its first per-series read. Same rule as the global copy.
+    A series without a code has no per-series store. Never raises. Returns
+    the keys copied, by application name.
+    """
+    if not code:
+        return {}
+    copied = {}
+    for app in _this_app_and_shared(f"-{code}"):
+        try:
+            keys = _copy_legacy_domain(app, mark_always=False)
+        except Exception:
+            continue
+        if keys:
+            copied[app] = keys
+    return copied

@@ -274,7 +274,7 @@ def test_a_startup_check_from_an_earlier_window_is_not_counted(launch, main_wind
 def test_the_notice_is_kept_per_app(monkeypatch):
     """The stable and Dev apps follow different feeds, so each keeps its own."""
     monkeypatch.setenv("PYRECON_APP_NAME", "PyReconstruct Dev")
-    assert domain_for(KEY) == ("KHLab", "PyReconstruct Dev")
+    assert domain_for(KEY) == ("PyReconstruct", "PyReconstruct Dev")
 
 
 @pytest.mark.parametrize("text,newer", [
