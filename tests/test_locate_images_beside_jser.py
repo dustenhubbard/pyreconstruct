@@ -24,7 +24,6 @@ event loop is required.
 import os
 import types
 
-import pytest
 
 from PyReconstruct.modules.gui.main import main_window as mw
 
@@ -197,24 +196,16 @@ def test_openSeries_prompts_when_auto_recovery_fails(monkeypatch):
 # --------------------------------------------------------------------------
 # End-to-end against the shipped fixture: Section.src_fp is the real thing.
 # --------------------------------------------------------------------------
-FIXTURE = os.path.join(
-    os.path.dirname(__file__), "..", "dev", "assets",
-    "checker", "files", "shapes1.jser",
-)
-
-
-def test_real_section_src_fp_resolves_after_recovery():
+def test_real_section_src_fp_resolves_after_recovery(shapes1_jser):
     """Uses the real Section.src_fp, which is what the buggy value fed."""
-    if not os.path.exists(FIXTURE):
-        pytest.skip("fixture shapes1.jser not found")
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication(["test"])
     from PyReconstruct.modules.datatypes.series import Series
 
-    series = Series.openJser(FIXTURE)
+    series = Series.openJser(str(shapes1_jser))
     try:
         section = series.loadSection(list(series.sections.keys())[0])
-        jser_dir = os.path.dirname(os.path.abspath(FIXTURE))
+        jser_dir = os.path.dirname(os.path.abspath(shapes1_jser))
         candidate = os.path.join(jser_dir, os.path.basename(section.src))
         assert os.path.isfile(candidate), "fixture should ship images by the jser"
 

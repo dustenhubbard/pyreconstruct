@@ -358,6 +358,30 @@ def series_jser(tmp_path):
     return destination
 
 
+SHAPES1_DIR = (
+    Path(__file__).resolve().parents[1] / "dev" / "assets" / "checker" / "files"
+)
+
+
+@pytest.fixture
+def shapes1_jser(tmp_path):
+    """Path to a copy of ``shapes1.jser`` and its TIFFs, inside ``tmp_path``.
+
+    Opening a .jser creates a hidden ``.<name>`` folder beside it. Opened in
+    place, that folder lands in dev/assets and stays there if the run dies
+    before ``close()``. The images are copied too, because the fixture records
+    ``src_dir = ""`` and finds them beside itself.
+    """
+    source = SHAPES1_DIR / "shapes1.jser"
+    if not source.exists():  # pragma: no cover - repo layout guard
+        pytest.skip("fixture shapes1.jser not found")
+    destination = tmp_path / "shapes1.jser"
+    shutil.copy(source, destination)
+    for image in SHAPES1_DIR.glob("shapes_*.tif"):
+        shutil.copy(image, tmp_path / image.name)
+    return destination
+
+
 @pytest.fixture
 def real_series(series_jser):
     """A real Series, opened from the copied fixture."""
