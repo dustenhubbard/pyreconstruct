@@ -1457,7 +1457,24 @@ class CustomPlotter(QVTKRenderWindowInteractor):
         # chosen folder is touched except the two scene files
         with tempfile.TemporaryDirectory() as scratch:
             scratch = Path(scratch)
-            obj_files = self.plt.objs.exportAsObjs(scratch)
+            obj_files, failed = self.plt.objs.exportAsObjs(scratch)
+
+            # an object that fails is left out of the scene and named in the
+            # notice
+            error_note = ""
+            if failed:
+                names = ", ".join(sorted(failed))
+                error_note = f"\nCould not be exported (see console): {names}."
+
+            # with none written (all failed, or the scene is empty) there is
+            # no scene to save
+            if not obj_files:
+                notify(
+                    "No scene exported.\n"
+                    + (error_note or "\nThe scene has no objects.")
+                )
+                return
+
             mtl_files = [f.with_suffix(".mtl") for f in obj_files]
 
             # the combined files take a name no object file can have
@@ -1474,7 +1491,7 @@ class CustomPlotter(QVTKRenderWindowInteractor):
             shutil.move(str(scene_mtl), str(combo_mtl))
             shutil.move(str(scene_obj), str(combo_obj_fp))
 
-        notify(f"Scene exported to:\n\n{combo_obj_fp.absolute()}")
+        notify(f"Scene exported to:\n\n{combo_obj_fp.absolute()}\n" + error_note)
 
     def screenshot(self):
         """Save a screenshot of the scene."""
@@ -1927,9 +1944,15 @@ class SceneObjectList():
         return host_group
 
     def exportAsObjs(self, export_dir):
-        """Export scene objects as obj and mtl files."""
+        """Export scene objects as obj and mtl files.
+
+            Returns:
+                (list): the obj files written, each with its mtl beside it
+                (list): the names of the objects that could not be written
+        """
 
         obj_files = []
+        failed = []
         used = set()  # lowercase, for case-insensitive file systems
 
         for _, obj in self.scene_objects.items():
@@ -1966,8 +1989,6 @@ class SceneObjectList():
                     for line in obj_lines:
                         f.write(line + "\n")
 
-                obj_files.append(obj_fp)  # track generated obj files
-
                 ## Write mtl file
 
                 mtl_txt = return_mesh_mtl(obj, obj_name)
@@ -1975,14 +1996,20 @@ class SceneObjectList():
                 with mtl_fp.open("w") as mtl:
                     mtl.write(mtl_txt)
 
+                # only once both files exist, so the scene never lists an
+                # obj whose mtl is missing
+                obj_files.append(obj_fp)
+
             except Exception as e:
 
                 print(f"An exception occurred while exporting {obj.name} from the 3D scene:")
                 print(e)
+
+                failed.append(obj.name)
                 
                 continue
                 
-        return obj_files
+        return obj_files, failed
     
 
 class State3D():

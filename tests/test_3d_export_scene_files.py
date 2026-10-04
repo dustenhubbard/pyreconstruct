@@ -140,3 +140,86 @@ def test_existing_scene_mtl_is_replaced_only_after_asking(cp, open_series, tmp_p
     assert listing(out) == ["scene.mtl", "scene.obj"]
     assert "newmtl d01\n" in (out / "scene.mtl").read_text()
     assert notes
+
+
+def fail_for(cp, monkeypatch, attr, bad_names):
+    """Make one step of the per-object export raise for the named objects."""
+    real = getattr(cp, attr)
+
+    def flaky(obj, *a, **k):
+        if obj.name in bad_names:
+            raise ValueError(f"cannot write {obj.name}")
+        return real(obj, *a, **k)
+
+    monkeypatch.setattr(cp, attr, flaky)
+
+
+def test_every_object_failing_writes_nothing_and_says_so(cp, open_series, tmp_path, monkeypatch):
+    import vedo
+    s = open_series("a")
+    out = tmp_path / "out"
+    out.mkdir()
+    objs = cp.SceneObjectList()
+    objs.add(vedo.Sphere(), s, "d01", "object", (255, 0, 0), 1)
+    objs.add(vedo.Sphere(pos=(3, 0, 0)), s, "d02", "object", (0, 255, 0), 1)
+    fail_for(cp, monkeypatch, "convert_vedo_to_tm", {"d01", "d02"})
+
+    notes, _ = run_export(cp, objs, out / "scene.obj", monkeypatch)
+
+    assert listing(out) == []
+    assert len(notes) == 1
+    assert "Scene exported" not in notes[0]
+    assert "No scene exported" in notes[0]
+    assert "d01, d02" in notes[0]
+
+
+def test_objects_that_fail_are_named_and_the_rest_exported(cp, open_series, tmp_path, monkeypatch):
+    import vedo
+    s = open_series("a")
+    out = tmp_path / "out"
+    out.mkdir()
+    objs = cp.SceneObjectList()
+    objs.add(vedo.Sphere(), s, "d01", "object", (255, 0, 0), 1)
+    objs.add(vedo.Sphere(pos=(3, 0, 0)), s, "d02", "object", (0, 255, 0), 1)
+    fail_for(cp, monkeypatch, "convert_vedo_to_tm", {"d02"})
+
+    notes, _ = run_export(cp, objs, out / "scene.obj", monkeypatch)
+
+    assert listing(out) == ["scene.mtl", "scene.obj"]
+    assert "o d01\n" in (out / "scene.obj").read_text()
+    assert "o d02\n" not in (out / "scene.obj").read_text()
+    assert len(notes) == 1
+    assert "Scene exported" in notes[0]
+    assert "Could not be exported" in notes[0] and "d02" in notes[0]
+
+
+def test_an_object_whose_material_fails_is_left_out(cp, open_series, tmp_path, monkeypatch):
+    import vedo
+    s = open_series("a")
+    out = tmp_path / "out"
+    out.mkdir()
+    objs = cp.SceneObjectList()
+    objs.add(vedo.Sphere(), s, "d01", "object", (255, 0, 0), 1)
+    objs.add(vedo.Sphere(pos=(3, 0, 0)), s, "d02", "object", (0, 255, 0), 1)
+    fail_for(cp, monkeypatch, "return_mesh_mtl", {"d02"})
+
+    notes, _ = run_export(cp, objs, out / "scene.obj", monkeypatch)
+
+    assert listing(out) == ["scene.mtl", "scene.obj"]
+    obj_text = (out / "scene.obj").read_text()
+    assert "o d01\n" in obj_text and "o d02\n" not in obj_text
+    assert "newmtl d02" not in (out / "scene.mtl").read_text()
+    assert len(notes) == 1 and "d02" in notes[0]
+
+
+def test_an_empty_scene_writes_nothing_and_says_so(cp, tmp_path, monkeypatch):
+    out = tmp_path / "out"
+    out.mkdir()
+    objs = cp.SceneObjectList()
+
+    notes, _ = run_export(cp, objs, out / "scene.obj", monkeypatch)
+
+    assert listing(out) == []
+    assert len(notes) == 1
+    assert "Scene exported" not in notes[0]
+    assert "No scene exported" in notes[0]
