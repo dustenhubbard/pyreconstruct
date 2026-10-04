@@ -19,6 +19,7 @@ stream fails the save, removes the temp file, and leaves the old .jser as it was
 
 import errno
 import filecmp
+import glob
 import io
 import json
 import os
@@ -51,6 +52,11 @@ FIXTURES = [
     os.path.join(CHECKER, "shapes2.jser"),
     os.path.join(ROOT, "tests", "fixtures", "parity_series.jser"),
 ]
+
+
+def temp_files(jser_fp):
+    """Every temp file a write of `jser_fp` could have left: ``<jser>.tmp*``."""
+    return glob.glob(glob.escape(jser_fp) + ".tmp*")
 
 
 def reopen_at(fp):
@@ -131,7 +137,7 @@ def test_the_streamed_save_matches_the_old_path(tmp_path, monkeypatch, source, p
         series.saveJser()
 
         assert filecmp.cmp(series.jser_fp, reference, shallow=False)
-        assert not os.path.exists(series.jser_fp + ".tmp")
+        assert temp_files(series.jser_fp) == []
     finally:
         series.close()
 
@@ -220,7 +226,7 @@ def test_an_unreadable_last_section_fails_the_save_and_keeps_the_old_file(tmp_pa
             series.saveJser()
 
         assert open(series.jser_fp, "rb").read() == good
-        assert not os.path.exists(series.jser_fp + ".tmp")
+        assert temp_files(series.jser_fp) == []
     finally:
         series.close()
 
@@ -249,7 +255,7 @@ def test_a_section_file_gone_mid_save_fails_the_save_and_keeps_the_old_file(
         monkeypatch.undo()
 
         assert open(series.jser_fp, "rb").read() == good
-        assert not os.path.exists(series.jser_fp + ".tmp")
+        assert temp_files(series.jser_fp) == []
     finally:
         series.leave_open = False
         series.close()
@@ -378,7 +384,7 @@ def saved(tmp_path):
 
 def assert_untouched(series, good):
     assert open(series.jser_fp, "rb").read() == good
-    assert not os.path.exists(series.jser_fp + ".tmp")
+    assert temp_files(series.jser_fp) == []
 
 
 def assert_save_failed_shown(notifier):
@@ -474,7 +480,7 @@ def test_an_fsync_failure_keeps_the_old_file(saved, monkeypatch):
     real_fsync = os.fsync
 
     def failing_fsync(fd):
-        if os.path.exists(series.jser_fp + ".tmp"):
+        if temp_files(series.jser_fp):
             raise OSError(errno.EIO, "Input/output error")
         return real_fsync(fd)
 
@@ -492,7 +498,7 @@ def test_a_replace_failure_keeps_the_old_file(saved, monkeypatch):
     real_replace = os.replace
 
     def failing_replace(src, dst):
-        if src == series.jser_fp + ".tmp":
+        if src.startswith(series.jser_fp + ".tmp"):
             raise OSError(errno.EROFS, "Read-only file system")
         return real_replace(src, dst)
 
@@ -522,3 +528,116 @@ def test_an_unreadable_series_file_shows_save_failed_and_keeps_the_old_file(
 
     assert_untouched(series, good)
     assert_save_failed_shown(notifier)
+
+
+# --------------------------------------------------------------------------
+# a save started inside another save
+# --------------------------------------------------------------------------
+
+def test_a_save_started_during_a_save_is_refused_and_the_file_stays_whole(tmp_path):
+    """The progress dialog lets queued events run, so a Save can arrive mid-save.
+
+    Both saves used one ``<jser>.tmp``: the inner save replaced the .jser with
+    it, the outer save went on writing into what was now the user's file, and
+    the result was invalid JSON under a message saying the file was unchanged.
+    """
+    series = open_copy(tmp_path, FIXTURES[0])
+    notifier = RecordingNotifier()
+    series.setNotifier(notifier)
+    try:
+        series.save()
+        outer_bytes = old_path_bytes(series)
+        inner = {}
+
+        class SaveFromProgress(NullProgressReporter):
+            calls = 0
+
+            def set_progress(self, percent):
+                SaveFromProgress.calls += 1
+                if SaveFromProgress.calls != 50:
+                    return
+                # change a section's length, so a mix of the two saves cannot
+                # line up, then save again as a queued Save event would
+                fp = os.path.join(series.hidden_dir, series.sections[min(series.sections)])
+                data = json.loads(open(fp, "rb").read())
+                data["pad"] = "x" * 5000
+                with open(fp, "w") as f:
+                    f.write(json.dumps(data))
+                inner["bytes"] = old_path_bytes(series)
+                try:
+                    series.saveJser()
+                    inner["result"] = "saved"
+                except SeriesSaveError as e:
+                    inner["result"] = e
+
+        series.setProgressReporter(SaveFromProgress)
+        series.saveJser()
+        series.setProgressReporter(NullProgressReporter)
+
+        written = open(series.jser_fp, "rb").read()
+        json.loads(written)
+        assert written in (outer_bytes, inner["bytes"])
+        assert written == outer_bytes, "the inner save was refused, so the outer one wrote"
+        assert isinstance(inner["result"], SeriesSaveError)
+        assert len(notifier.errors) == 1
+        assert "already being saved" in notifier.errors[0]
+        assert "left unchanged" not in notifier.errors[0]
+        assert "wrote nothing" in notifier.errors[0]
+        assert temp_files(series.jser_fp) == []
+
+        # the guard is released: the next save goes through and picks up the edit
+        series.saveJser()
+        assert open(series.jser_fp, "rb").read() == old_path_bytes(series)
+    finally:
+        series.close()
+
+
+def test_a_refusal_that_reaches_the_outer_save_stops_it_cleanly(tmp_path):
+    """If the nested refusal is not caught, the outer save fails like any other.
+
+    The old file is kept, no temp file is left, and the only message shown is
+    the refusal, which says nothing about the outer save that could turn false.
+    """
+    series = open_copy(tmp_path, FIXTURES[0])
+    notifier = RecordingNotifier()
+    series.setNotifier(notifier)
+    try:
+        series.saveJser()
+        good = open(series.jser_fp, "rb").read()
+
+        class SaveFromProgress(NullProgressReporter):
+            calls = 0
+
+            def set_progress(self, percent):
+                SaveFromProgress.calls += 1
+                if SaveFromProgress.calls == 50:
+                    series.saveJser()
+
+        series.setProgressReporter(SaveFromProgress)
+        with pytest.raises(SeriesSaveError):
+            series.saveJser()
+        series.setProgressReporter(NullProgressReporter)
+
+        assert open(series.jser_fp, "rb").read() == good
+        assert temp_files(series.jser_fp) == []
+        assert len(notifier.errors) == 1
+        assert notifier.errors[0].startswith("Save skipped")
+    finally:
+        series.close()
+
+
+def test_two_overlapping_atomic_writes_do_not_share_a_temp_file(tmp_path):
+    """Even without the guard, the destination ends up as one write's bytes."""
+    fp = str(tmp_path / "target.jser")
+    with open(fp, "wb") as f:
+        f.write(b"old")
+
+    def outer(f):
+        f.write(b'{"outer": [')
+        series_mod._atomicWrite(fp, b'{"inner": true}')
+        f.write(b"1]}")
+
+    series_mod._atomicWrite(fp, outer)
+
+    assert open(fp, "rb").read() == b'{"outer": [1]}'
+    assert temp_files(fp) == []

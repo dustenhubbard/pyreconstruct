@@ -3,6 +3,7 @@ import uuid
 import re
 import json
 import shutil
+import itertools
 from datetime import datetime, timezone
 from copy import copy, deepcopy
 from pathlib import Path
@@ -345,12 +346,22 @@ def _default_notifier():
     return _NOTIFIER
 
 
+#: Numbers each temp file this process makes, so two writes never share one.
+_TMP_COUNTER = itertools.count()
+
+
 def _atomicWrite(fp : str, data):
     """Write bytes to a file atomically.
 
     Writes to a temp file in the same directory, flushes and fsyncs it, then
     os.replace()s it over the destination so a crash, power loss, or full disk
     mid-write can never leave a truncated file behind.
+
+    Every call gets its own temp file, ``<fp>.tmp-<pid>-<n>``, created
+    exclusively. With one shared ``<fp>.tmp``, a second write that started
+    while the first was still streaming (a save delivered by the progress
+    dialog's event processing) replaced the destination with that shared file,
+    and the first write went on writing into what was now the user's file.
 
     `data` may also be a callable that writes into the open temp file, so a
     caller can stream a file too large to build in memory first. Anything it
@@ -361,9 +372,15 @@ def _atomicWrite(fp : str, data):
             data (bytes or callable): the bytes to write, or a function taking
                 the open binary file and writing the contents into it
     """
-    tmp_fp = fp + ".tmp"
+    while True:
+        tmp_fp = f"{fp}.tmp-{os.getpid()}-{next(_TMP_COUNTER)}"
+        try:
+            f = open(tmp_fp, "xb")
+            break
+        except FileExistsError:
+            continue  # left by a crashed run with the same pid; not ours
     try:
-        with open(tmp_fp, "wb") as f:
+        with f:
             if callable(data):
                 data(f)
             else:
@@ -825,7 +842,47 @@ class Series():
         return series
 
     def saveJser(self, save_fp : str = None, close : bool = False):
-        """Save the jser file.
+        """Save the jser file, refusing a second save while one is running.
+
+        A save updates its progress dialog section by section, and showing that
+        progress lets Qt deliver queued events, so a second save (a shortcut, a
+        menu action, an autosave) can start inside the first. Two saves of one
+        series at once have nothing to gain and every way to collide, so the
+        second is refused with a message, writes nothing, and raises. The
+        message promises nothing about the first save: if the refusal's
+        exception reaches it, it stops like any failed save and keeps the old
+        file. Nothing in the app queues saves, so refusing is the whole fix.
+        See `_saveJser` for what a save does.
+
+            Params:
+                save_fp (str): the optional override filepath to save the jser file
+                close (bool): True if series should be closed after saving
+            Raises:
+                SeriesSaveError: if another save of this series is running, or
+                    if the series cannot be written without losing a section.
+                    The existing .jser is not replaced in either case.
+        """
+        if getattr(self, "_jser_save_running", False):
+            target = self.jser_fp if not save_fp else save_fp
+            err = SeriesSaveError(
+                "this series is already being saved, so this save was skipped."
+            )
+            self._surfaceSaveError(
+                target, err,
+                message=(
+                    "Save skipped: this series is already being saved.\n\n"
+                    f"This save wrote nothing to:\n{target}"
+                ),
+            )
+            raise err
+        self._jser_save_running = True
+        try:
+            self._saveJser(save_fp, close)
+        finally:
+            self._jser_save_running = False
+
+    def _saveJser(self, save_fp : str = None, close : bool = False):
+        """Save the jser file. Only `saveJser` calls this.
 
         The section set written is `self.sections`, the series' index, and not
         the hidden directory's listing. The two can disagree, and when they do
@@ -4881,17 +4938,19 @@ class Series():
         """
         self._notifier_impl = notifier
 
-    def _surfaceSaveError(self, fp : str, err : Exception):
+    def _surfaceSaveError(self, fp : str, err : Exception, message : str = None):
         """Show a 'Save failed' message to the user (best-effort, headless-safe).
 
             Params:
                 fp (str): the filepath that failed to save
                 err (Exception): the error that occurred
+                message (str): text to show instead of the usual 'Save failed'
         """
-        message = (
-            f"Save failed: {err}\n\n"
-            f"The existing file was left unchanged:\n{fp}"
-        )
+        if message is None:
+            message = (
+                f"Save failed: {err}\n\n"
+                f"The existing file was left unchanged:\n{fp}"
+            )
         try:
             from PyReconstruct.modules.backend.func.error_report import (
                 build_error_report_from_exception,
