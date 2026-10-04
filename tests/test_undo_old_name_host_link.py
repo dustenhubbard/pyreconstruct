@@ -252,3 +252,50 @@ def test_the_old_link_does_not_reach_a_new_traveler(
     window.undo()
     assert HOST in series.data["objects"]
     assert series.host_tree.getHosts(TRAVELER) == []
+
+
+def test_a_new_object_brought_back_by_undo_hides_the_link_again(window):
+    """The new H is drawn on two sections and deleted on both. Undoing the
+    delete and the draw on one section leaves it gone; undoing the delete on
+    the other brings it back, and it still does not take the link."""
+    series = window.series
+    first, second, third = _setup(window, host_first=True)
+    fourth = sorted(series.sections)[3]
+    for snum in (third, fourth):
+        window.changeSection(snum)
+        _draw(window, HOST, offset=0.5)
+    for snum in (third, fourth):
+        window.changeSection(snum)
+        _delete(window, _traces(window, HOST))
+    assert HOST not in series.data["objects"]
+
+    window.changeSection(third)
+    window.undo()
+    window.undo()
+    assert HOST not in series.data["objects"]
+    window.changeSection(fourth)
+    window.undo()
+    assert HOST in series.data["objects"]
+    window.changeSection(second)
+    window.undo()
+    assert TRAVELER in series.data["objects"]
+    assert series.host_tree.getHosts(TRAVELER) == []
+
+
+def test_undoing_the_old_delete_before_the_new_draw_keeps_the_link(window):
+    """The old H comes back while the new H is still drawn; undoing the new
+    H afterward lets the old pair link again."""
+    series = window.series
+    first, second, third = _setup(window, host_first=True)
+    window.changeSection(third)
+    _draw(window, HOST, offset=0.5)
+
+    window.changeSection(first)
+    window.undo()
+    window.changeSection(third)
+    window.undo()
+    assert HOST in series.data["objects"]
+    window.changeSection(second)
+    window.undo()
+    assert TRAVELER in series.data["objects"]
+    assert series.host_tree.getHosts(TRAVELER) == [HOST]
