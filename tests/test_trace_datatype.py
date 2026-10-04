@@ -352,21 +352,42 @@ def test_copy_does_not_carry_foreign_attributes():
     assert orig.some_caller_attribute == "should not survive the copy"
 
 
-def test_copy_shares_color_and_fill_mode_by_reference():
-    """color and fill_mode are shared, not copied -- as they always were.
+def test_copy_owns_its_color_and_fill_mode_lists():
+    """A file-loaded trace's color and fill_mode lists are not shared.
 
-    Both are tuples for a trace built in memory but lists for one read off disk
-    (JSON has no tuple), so both can be mutable. The dict copy shared them and
-    the explicit copy shares them too; deepening either one here would be a
-    behavior change wearing a refactor's clothes.
+    Both are lists for a trace read off disk (JSON has no tuple), so a shared
+    list let an in-place edit of the copy change the source. Palette import and
+    palette paste both hand out copies.
     """
     orig = make_square_trace(color=[1, 2, 3])
     orig.fill_mode = ["solid", "selected"]
 
     c = orig.copy()
 
-    assert c.color is orig.color
-    assert c.fill_mode is orig.fill_mode
+    assert c.color is not orig.color
+    assert c.fill_mode is not orig.fill_mode
+    assert c.color == [1, 2, 3] and type(c.color) is list
+    assert c.fill_mode == ["solid", "selected"] and type(c.fill_mode) is list
+
+    c.color[0] = 255
+    c.fill_mode[0] = "none"
+
+    assert orig.color == [1, 2, 3]
+    assert orig.fill_mode == ["solid", "selected"]
+
+
+def test_copy_keeps_tuple_and_none_values():
+    """Immutable values keep their type; only lists get a new container."""
+    orig = make_square_trace(color=(1, 2, 3))
+    orig.fill_mode = ("none", "none")
+
+    c = orig.copy()
+
+    assert c.color == (1, 2, 3) and type(c.color) is tuple
+    assert c.fill_mode == ("none", "none") and type(c.fill_mode) is tuple
+
+    orig.color = None
+    assert orig.copy().color is None
 
 
 def test_copy_shares_point_tuples_inside_its_own_list():
