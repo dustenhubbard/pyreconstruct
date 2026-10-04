@@ -48,7 +48,7 @@ class ZarrLayer():
         # array with no size gets the grid label import gives it: raw the
         # series grid, labels raw's grid
         self.resolution, self.raw_resolution = get_label_resolutions(
-            self.zarr, raw
+            self.zarr, raw, self.series
         )
 
         # check if labels or otherwise

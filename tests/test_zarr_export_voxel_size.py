@@ -9,6 +9,7 @@ import pytest
 import zarr
 
 from PyReconstruct.modules.backend.autoseg import conversions
+from PyReconstruct.modules.datatypes import Transform
 
 
 class _InlinePool:
@@ -78,3 +79,113 @@ def test_labels_import_back_from_a_sub_nanometer_zarr(export):
     conversions.importSection(zg, "labels_x", sections[1], series)
 
     assert "autoseg_7" in series.loadSection(sections[1]).contours
+
+
+@pytest.mark.parametrize("raw_size", ["zero_xy", "zero_all", "missing"])
+@pytest.mark.parametrize("label_size", ["zero_xy", "zero_all", "missing"])
+def test_legacy_voxel_sizes_resolve_to_the_exported_grid(export, raw_size, label_size):
+    series, sections, run = export
+    section = series.loadSection(sections[0])
+    section.thickness = 0.0254
+    section.save()
+    zg = run(0.0005)
+    raw = zg["raw"]
+    expected = list(raw.attrs["voxel_size"])
+    labels = zg.create_dataset("labels_legacy", shape=raw.shape, dtype=np.uint64)
+    labels[1, 20:40, 20:40] = 7
+    labels.attrs["offset"] = [0, 0, 0]
+
+    for arr, size in ((raw, raw_size), (labels, label_size)):
+        if size == "missing":
+            if "voxel_size" in arr.attrs:
+                del arr.attrs["voxel_size"]
+        else:
+            arr.attrs["voxel_size"] = [expected[0], 0, 0] if size == "zero_xy" else [0, 0, 0]
+
+    resolutions = conversions.get_label_resolutions(labels, raw, series=series)
+    assert resolutions == (expected, expected)
+    assert all(v > 0 for res in resolutions for v in res)
+    assert conversions.labelsToObjects(series, raw.store.path, "labels_legacy")
+    points = [
+        p for trace in series.loadSection(sections[1]).contours["autoseg_7"]
+        for p in trace.points
+    ]
+    tform = Transform(raw.attrs["alignment"][str(sections[1])])
+    points = np.array(tform.map(points))
+    # Saved trace coordinates round to seven decimals before reapplying alignment.
+    assert points.min(axis=0) == pytest.approx([0.010, 0.0305], abs=1e-7)
+    assert points.max(axis=0) == pytest.approx([0.0195, 0.040], abs=1e-7)
+
+
+@pytest.mark.parametrize("raw_size", ["missing", "zero"])
+def test_recovery_without_true_mag_uses_raw_metadata_not_section_mag(export, monkeypatch, raw_size):
+    series, sections, run = export
+    section = series.loadSection(sections[0])
+    section.thickness = 0.0254
+    section.save()
+    zg = run(0.0005)
+    raw = zg["raw"]
+    if raw_size == "missing":
+        del raw.attrs["voxel_size"]
+    else:
+        raw.attrs["voxel_size"] = [0, 0, 0]
+    del raw.attrs["true_mag"]
+    labels = zg.create_dataset("labels_legacy", shape=raw.shape, dtype=np.uint64)
+    monkeypatch.setattr(series, "loadSection", lambda *a: pytest.fail("Recovery must use cached thickness"))
+
+    if raw_size == "missing":
+        assert conversions.get_label_resolutions(labels, raw, series=series) == (
+            [25.4, 4, 4], [25.4, 4, 4]
+        )
+    else:
+        with pytest.raises(ValueError, match="series.*resolution"):
+            conversions.get_label_resolutions(labels, raw, series=series)
+
+
+def test_zero_raw_size_without_recoverable_values_reports_the_problem():
+    raw = zarr.zeros((1, 8, 8), dtype=np.uint8)
+    raw.attrs["voxel_size"] = [0, 0, 0]
+    labels = zarr.zeros((1, 8, 8), dtype=np.uint64)
+
+    with pytest.raises(ValueError, match="series.*resolution"):
+        conversions.get_label_resolutions(labels, raw)
+
+
+@pytest.mark.parametrize("attrs", [{}, {"voxel_size": [0, 0, 0]}])
+@pytest.mark.parametrize("unreachable", ["no_series", "no_sections", "deleted_section"])
+def test_unreachable_series_section_keeps_metadata_fallback(real_series, attrs, unreachable):
+    raw = zarr.zeros((1, 8, 8), dtype=np.uint8)
+    raw.attrs.update(attrs)
+    labels = zarr.zeros((1, 8, 8), dtype=np.uint64)
+    series = real_series
+    if unreachable == "no_series":
+        series = None
+        raw.attrs["sections"] = [min(real_series.sections)]
+    elif unreachable == "deleted_section":
+        raw.attrs["sections"] = [max(real_series.sections) + 1]
+
+    if "voxel_size" in attrs:
+        with pytest.raises(ValueError, match="series.*resolution"):
+            conversions.get_label_resolutions(labels, raw, series=series)
+    else:
+        assert conversions.get_label_resolutions(labels, raw, series=series) == (
+            [50, 4, 4], [50, 4, 4]
+        )
+
+
+def test_recovery_uses_import_metadata_and_preserves_valid_label_axes(export):
+    series, _, run = export
+    zg = run(0.0005)
+    raw = zg["raw"]
+    expected = list(raw.attrs["voxel_size"])
+    attrs = dict(raw.attrs)
+    raw.attrs["true_mag"] = 1.0
+    raw.attrs["voxel_size"] = [0, 0, 0]
+    labels = zg.create_dataset("labels_legacy", shape=raw.shape, dtype=np.uint64)
+    labels.attrs.update({"voxel_size": [0, 0.001, 0], "units": "um"})
+
+    labels_res, raw_res = conversions.get_label_resolutions(
+        labels, raw, series=series, raw_attrs=attrs
+    )
+    assert raw_res == expected
+    assert labels_res == [expected[0], 1, expected[2]]
