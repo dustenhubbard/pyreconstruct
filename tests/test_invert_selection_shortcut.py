@@ -178,9 +178,9 @@ def test_the_chosen_key_was_free_among_the_hardcoded_shortcuts():
     """The collision sweep only sees the settings dict.
 
     Some shortcuts are written straight into the source and are therefore
-    invisible to it: the arrow and function keys in ``main_window.py``, the
-    palette digits it generates, and ``Ctrl+\\`` in ``menubar.py``. A new default
-    has to clear those too, and nothing else checks that.
+    invisible to it: the arrow and function keys in ``main_window.py`` and the
+    palette digits it generates. A new default has to clear those too, and
+    nothing else checks that.
     """
     from pathlib import Path
     import re

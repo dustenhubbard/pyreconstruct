@@ -1,11 +1,4 @@
-"""`quickAlign` records its shift like every other alignment, and
-`propagateTo` writes the flickered-away section before it works.
-
-`quickAlign` used to assign `section.tform` directly. The shift was in the
-section's undo state, but it skipped what `changeTform` does on top: the
-propagation recording, the record of where the section stood before the
-latest change, and the "Modify transform" log entry. It has no menu entry
-(`menubar.py` keeps it commented out), so the tests call it directly.
+"""`propagateTo` writes the flickered-away section before it works.
 
 `propagateTo` saved only the current section, then reloaded both sections
 from their files at the end. A trace drawn on the B section (the one the user
@@ -50,71 +43,6 @@ def _flicker_setup(field):
     field.changeSection(start)
     assert field.b_section is not None and field.b_section.n == other
     return start, other
-
-
-@pytest.fixture
-def fake_registration(monkeypatch):
-    from skimage import registration
-
-    # (row shift, column shift), error, phase difference
-    monkeypatch.setattr(
-        registration, "phase_cross_correlation",
-        lambda a, b: ((-8.0, 12.0), 0.0, 0.0),
-    )
-
-
-# --- item: quickAlign goes through changeTform -----------------------------
-
-def test_quick_align_is_undone_and_redone(field, fake_registration):
-    _flicker_setup(field)
-    before = field.section.tform.copy()
-
-    field.quickAlign()
-    aligned = field.section.tform.copy()
-    assert not aligned.equals(before), "the alignment should move the section"
-
-    field.undoState()
-    assert field.section.tform.equals(before)
-    field.undoState(redo=True)
-    assert field.section.tform.equals(aligned)
-
-
-def test_quick_align_is_recorded_for_propagation(field, fake_registration):
-    start, other = _flicker_setup(field)
-    later = [n for n in sorted(field.series.sections) if n > start]
-    before_later = {n: field.series.loadSection(n).tform.copy() for n in later}
-    before = field.section.tform.copy()
-
-    field.setPropagationMode(True)
-    field.quickAlign()
-    delta = field.section.tform * before.inverted()
-    assert field.stored_tform.equals(delta)
-
-    field.propagateTo(to_end=True)
-    for n in later:
-        got = field.series.loadSection(n).tform
-        assert got.equals(delta * before_later[n]), f"section {n} was not propagated"
-
-
-def test_quick_align_made_first_is_picked_up(field, fake_registration):
-    _flicker_setup(field)
-    before = field.section.tform.copy()
-
-    field.quickAlign()
-    field.setPropagationMode(True)
-
-    assert field.stored_tform.equals(field.section.tform * before.inverted())
-
-
-def test_quick_align_is_logged(field, fake_registration):
-    calls = []
-    original = field.series.addLog
-    field.series.addLog = lambda *a, **k: (calls.append(a), original(*a, **k))
-    _flicker_setup(field)
-
-    field.quickAlign()
-
-    assert (None, field.section.n, "Modify transform") in calls
 
 
 # --- item: propagateTo writes the B section first --------------------------
