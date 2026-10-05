@@ -108,24 +108,49 @@ def test_opening_series_clears_pointer_selection_state(monkeypatch):
     assert field.pointer_press_recorded is False
 
 
-@pytest.mark.parametrize("finger", [False, True], ids=["gesturing", "windows_finger"])
-def test_dropped_press_clears_all_buttons(monkeypatch, finger):
-    from PySide6.QtGui import QPointingDevice
-    from PyReconstruct.modules.gui.main import field_widget as widget
+def test_dropped_press_then_real_press_starts_lasso(monkeypatch):
+    from PyReconstruct.modules.gui.main import field_widget_5_mouse as mouse
 
     field = _Field()
-    field.is_gesturing = not finger
-    field.setFocus = lambda: None
-    event = _Event()
-    event.pointerType = lambda: QPointingDevice.PointerType.Finger
-    monkeypatch.setattr(widget, "os", SimpleNamespace(name="nt" if finger else "posix"))
-    monkeypatch.setattr(widget, "get_clicked", lambda _: (True, False, False))
+    field.lclick = True
+    field.pointer_press_recorded = False
+    field.single_click = True
+    now = [100.0]
+    field.click_time = now[0]
+    monkeypatch.setattr(mouse.time, "time", lambda: now[0])
+    lookups = []
 
-    widget.FieldWidget.mousePressEvent(field, event)
+    def get_trace(x, y):
+        lookups.append((x, y))
+        return None, None
 
-    assert (field.lclick, field.rclick, field.mclick) == (False, False, False)
-    assert field.selected_trace is None
+    field.section_layer.getTrace = get_trace
+    before = vars(field).copy()
+    before["current_trace"] = field.current_trace.copy()
+    before["calls"] = field.calls.copy()
+
+    field.pointerMove(_Event())
+
+    assert vars(field) == before
     assert field.current_trace == []
+    assert not field.is_selecting_traces
+    assert not field.is_moving_trace
+    assert field.calls == []
+    assert lookups == []
+
+    field.pointerPress(_Event())
+    assert field.pointer_press_recorded is True
+    assert field.selected_trace is None
+    assert lookups == [(30, 40)]
+    field.single_click = False
+    now[0] += field.max_click_time + 1
+
+    field.pointerMove(_Event())
+
+    assert field.is_selecting_traces
+    assert not field.is_moving_trace
+    assert field.current_trace == [(30, 40)]
+    assert field.calls == ["boundary", "update"]
 
 
 def test_press_on_selected_trace_then_move_starts_drag():
