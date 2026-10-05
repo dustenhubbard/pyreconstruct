@@ -2415,9 +2415,11 @@ CONTOUR_IDENTITY_OR_MUTATION = frozenset(
 CONTOUR_DEFERRED_ELSEWHERE = frozenset({"copy", "getBounds", "getMidpoint"})
 
 ## What Python puts on every class, plus the constructor, which both classes
-## have and which is not part of the split.
+## have and which is not part of the split. 3.13 added `__firstlineno__` and
+## `__static_attributes__` to every class defined in source.
 CONTOUR_NOISE = frozenset(
-    {"__dict__", "__doc__", "__module__", "__weakref__", "__init__"}
+    {"__dict__", "__doc__", "__module__", "__weakref__", "__init__",
+     "__firstlineno__", "__static_attributes__"}
 )
 
 

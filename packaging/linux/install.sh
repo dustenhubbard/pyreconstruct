@@ -51,7 +51,7 @@ Usage:
   install.sh --help           show this help
 
 Options:
-  --python PATH    Python 3.11 or 3.12 interpreter to build the venv with
+  --python PATH    Python 3.11, 3.12 or 3.13 interpreter to build the venv with
   --source SPEC    pip source: a git URL, PyPI requirement, local path, or wheel
   --ref REF        git ref (tag/branch/commit) to append to a git source
   --prefix DIR     install root (default: \${XDG_DATA_HOME:-~/.local/share}/PyReconstruct)
@@ -147,25 +147,25 @@ fi
 PY=""
 
 py_is_supported() {
-  # True only for a real CPython 3.11.x or 3.12.x with venv+ensurepip, the lines
+  # True only for a real CPython 3.11.x, 3.12.x or 3.13.x with venv+ensurepip, the lines
   # requires-python in pyproject.toml admits (tests/test_python_support.py checks
   # the two match). Verify a printed token rather than just the exit status, so a
   # non-Python that ignores -c and exits 0 (e.g. /bin/true) can't be mistaken for
   # an interpreter.
   [ "$("$1" -c 'import sys, platform, venv, ensurepip
-print("PYOK" if (sys.version_info[:2] in ((3, 11), (3, 12)) and platform.python_implementation() == "CPython") else "no")' 2>/dev/null)" = "PYOK" ]
+print("PYOK" if (sys.version_info[:2] in ((3, 11), (3, 12), (3, 13)) and platform.python_implementation() == "CPython") else "no")' 2>/dev/null)" = "PYOK" ]
 }
 
 no_python_help() {
   cat >&2 <<EOF
-error: no usable Python 3.11 or 3.12 found.
+error: no usable Python 3.11, 3.12 or 3.13 found.
 
-PyReconstruct requires CPython 3.11 or 3.12 with the venv module. Install one and retry:
+PyReconstruct requires CPython 3.11, 3.12 or 3.13 with the venv module. Install one and retry:
   Debian/Ubuntu:  sudo apt install python3.11 python3.11-venv
   Fedora:         sudo dnf install python3.11
   Other:          https://www.python.org/downloads/  (or pyenv / conda / miniforge)
 
-Or point the installer at an existing 3.11 or 3.12 interpreter:
+Or point the installer at an existing 3.11, 3.12 or 3.13 interpreter:
   bash install.sh --python /path/to/python3.11
   (a conda/miniforge env works too, e.g. ~/miniforge3/envs/<env>/bin/python)
 EOF
@@ -174,14 +174,15 @@ EOF
 
 resolve_python() {
   if [ -n "$PY_OVERRIDE" ]; then
-    py_is_supported "$PY_OVERRIDE" || die "the chosen Python ($PY_OVERRIDE) is not a usable CPython 3.11 or 3.12 with venv support"
+    py_is_supported "$PY_OVERRIDE" || die "the chosen Python ($PY_OVERRIDE) is not a usable CPython 3.11, 3.12 or 3.13 with venv support"
     PY="$PY_OVERRIDE"
   else
     local cand
     # 3.11 first: it is the version the frozen installers are built on.
     for cand in python3.11 /usr/bin/python3.11 /usr/local/bin/python3.11 \
-                python3.12 python3 python \
-                /usr/bin/python3.12 /usr/local/bin/python3.12; do
+                python3.12 python3.13 python3 python \
+                /usr/bin/python3.12 /usr/local/bin/python3.12 \
+                /usr/bin/python3.13 /usr/local/bin/python3.13; do
       if have "$cand" && py_is_supported "$cand"; then PY="$cand"; break; fi
     done
     [ -n "$PY" ] || no_python_help
