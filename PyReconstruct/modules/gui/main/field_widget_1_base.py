@@ -97,6 +97,9 @@ class FieldWidgetBase:
         self.clicked_x : int                = 0
         self.clicked_y : int                = 0
         self.clicked_trace                  = None
+        self.selected_trace                 = None
+        self.selected_type                  = None
+        self.pointer_press_recorded : bool  = False
 
         self.lclick : bool                  = False
         self.rclick : bool                  = False
@@ -196,6 +199,9 @@ class FieldWidgetBase:
         self.blend_sections       = False
         
         ## Click defaults
+        self.selected_trace       = None
+        self.selected_type        = None
+        self.pointer_press_recorded = False
         self.lclick               = False
         self.rclick               = False
         self.mclick               = False
