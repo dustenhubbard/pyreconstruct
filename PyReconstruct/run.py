@@ -120,10 +120,19 @@ def runPyReconstruct(filename=None):
     # platforms quit on closing the window; the in-app Restart reloads modules
     # and recreates the window)
     run = True
+    first_window = True
     while run:
 
         main_window = main.MainWindow(filename)
         file_open_watcher.main_window = main_window
+        if first_window:
+            # An in-place update helper that started this version waits for
+            # word that it came up; the first event-loop pass after the window
+            # is built is that word (backend/updater/apply.py, health.json).
+            from PySide6.QtCore import QTimer
+            from PyReconstruct.modules.backend.updater.updater import report_update_started
+            QTimer.singleShot(0, report_update_started)
+            first_window = False
         app.exec()
         file_open_watcher.main_window = None
 

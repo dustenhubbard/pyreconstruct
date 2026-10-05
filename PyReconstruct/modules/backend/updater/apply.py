@@ -265,6 +265,36 @@ def write_health(staging, version, pid=None):
     })
 
 
+def report_started(install, app_name, version):
+    """Write health.json if a helper launched this version into ``install`` and waits on it.
+
+    The app calls this once, from its first event-loop pass. ``install`` is
+    what the running app was started from (the folder, the .app, or the one
+    file), ``app_name`` names its staging folder, and ``version`` is its public
+    version, with no ``+local`` part, as the release and plan.json spell it.
+    The helper's journal decides: it must be running, at the launch or health
+    step, with a plan for this install and this version. Anything else writes
+    nothing, so an ordinary launch, a copy the user started, or the old version
+    started again by a rollback never reports in. True if it wrote the report.
+    """
+    install = os.path.realpath(install)
+    staging = os.path.join(os.path.dirname(install), f".{app_name}-update")
+    state = read_json(os.path.join(staging, STATE))
+    if not isinstance(state, dict) or state.get("status") != "running":
+        return False
+    if state.get("step") not in ("launch", "health"):
+        return False
+    plan = state.get("plan")
+    if not isinstance(plan, dict) or plan.get("to_version") != version:
+        return False
+    target = plan.get("install")
+    if (not isinstance(target, str)
+            or os.path.normcase(os.path.realpath(target)) != os.path.normcase(install)):
+        return False
+    write_health(staging, version)
+    return True
+
+
 # --- Path safety ---------------------------------------------------------------
 
 def safe_parts(rel, windows=False):
