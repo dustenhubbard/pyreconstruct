@@ -163,14 +163,21 @@ def get_thickness(zarr_array):
         return 0.05  # the default section thickness, as get_true_mag defaults
 
 
+def _spatial_resolution(resolution):
+    """Drop a leading channel axis from four-entry label resolution metadata."""
+
+    return resolution[-3:] if len(resolution) == 4 else resolution
+
+
 def get_label_resolutions(labels_array, raw, series=None, raw_attrs=None):
     """Get the (labels, raw) resolutions for a label import.
 
     Both come back in nm, whatever ``units`` each array declares. Missing or
     zero raw axes use the exporter's grid: the first exported section's
     thickness and the saved export mag (or raw's metadata/default mag). Missing or
-    zero label axes share raw's grid. The existing metadata/default fallback
-    applies when the series section is unavailable.
+    zero label axes share raw's grid. Four-entry label metadata is channel-first;
+    only its last three spatial axes are used. The existing metadata/default
+    fallback applies when the series section is unavailable.
     """
 
     try:
@@ -192,7 +199,7 @@ def get_label_resolutions(labels_array, raw, series=None, raw_attrs=None):
             raise ValueError("Cannot recover a nonzero series resolution for this Zarr.")
 
     try:
-        labels_res = as_nm(get_resolution(labels_array), labels_array)
+        labels_res = _spatial_resolution(as_nm(get_resolution(labels_array), labels_array))
     except KeyError:
         labels_res = [0, 0, 0]
 
