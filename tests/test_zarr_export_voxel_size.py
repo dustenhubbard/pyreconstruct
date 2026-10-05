@@ -189,3 +189,64 @@ def test_recovery_uses_import_metadata_and_preserves_valid_label_axes(export):
     )
     assert raw_res == expected
     assert labels_res == [expected[0], 1, expected[2]]
+
+
+@pytest.mark.parametrize("attribute", ["voxel_size", "resolution"])
+@pytest.mark.parametrize(
+    "label_size, expected",
+    [
+        ([1, 0, 0, 0], [50, 8, 8]),
+        ([1, 40, 4, 4], [40, 4, 4]),
+        ([1, 40, 0, 4], [40, 8, 4]),
+        ([0, 50, 8, 8], [50, 8, 8]),
+        ([0, 4, 0], [50, 4, 8]),
+        ([40, 4, 4], [40, 4, 4]),
+        ([40, 4], [40, 4]),
+        ([40, 4, 4, 2, 3], [40, 4, 4, 2, 3]),
+        ([0, 0], [50, 8]),
+        ([0, 0, 0, 0, 0], [50, 8, 8, 0, 0]),
+    ],
+)
+def test_label_resolution_uses_spatial_axes(attribute, label_size, expected):
+    raw = zarr.zeros((1, 8, 8), dtype=np.uint8)
+    raw.attrs[attribute] = [50, 8, 8]
+    labels = zarr.zeros((1, 1, 8, 8), dtype=np.uint64)
+    labels.attrs[attribute] = label_size
+
+    assert conversions.get_label_resolutions(labels, raw) == (expected, [50, 8, 8])
+    assert labels.attrs[attribute] == label_size
+
+
+@pytest.mark.parametrize("units", ["um", ["nm", "um", "nm", "um"]])
+def test_channel_first_label_resolution_keeps_declared_units(units):
+    raw = zarr.zeros((1, 8, 8), dtype=np.uint8)
+    raw.attrs["voxel_size"] = [50, 8, 8]
+    labels = zarr.zeros((1, 1, 8, 8), dtype=np.uint64)
+    labels.attrs.update({
+        "voxel_size": [1, 0.04, 0, 0.004], "units": units,
+    })
+
+    assert conversions.get_label_resolutions(labels, raw) == ([40, 8, 4], [50, 8, 8])
+
+
+def test_label_resolution_normalization_leaves_raw_readers_unchanged():
+    raw = zarr.zeros((1, 1, 8, 8), dtype=np.uint8)
+    raw.attrs["voxel_size"] = [1, 50, 8, 8]
+    labels = zarr.zeros((1, 1, 8, 8), dtype=np.uint64)
+    labels.attrs["voxel_size"] = [1, 40, 4, 4]
+
+    assert conversions.get_label_resolutions(labels, raw) == ([40, 4, 4], [1, 50, 8, 8])
+    assert conversions.get_thickness(raw) == pytest.approx(0.001)
+    assert conversions.get_true_mag(raw) == pytest.approx(0.008)
+
+
+def test_channel_first_label_metadata_imports_on_raw_grid(export):
+    series, sections, run = export
+    zg = run(0.008)
+    raw = zg["raw"]
+    labels = zg.create_dataset("labels_channel_metadata", shape=raw.shape, dtype=np.uint64)
+    labels[1, 1:4, 1:4] = 7
+    labels.attrs.update({"voxel_size": [1, 0, 0, 0], "offset": [0, 0, 0]})
+
+    assert conversions.labelsToObjects(series, raw.store.path, "labels_channel_metadata")
+    assert "autoseg_7" in series.loadSection(sections[1]).contours
