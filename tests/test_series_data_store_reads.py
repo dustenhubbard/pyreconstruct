@@ -1,4 +1,4 @@
-"""The series-open pass reads traces from the columnar store (fork #429).
+"""The series-open pass reads traces from the columnar store (#429).
 
 `SeriesData.refresh` and the cold `openJser` loop build every trace's table data
 from `section._columns` instead of `section.contours`. These tests build the
