@@ -305,6 +305,16 @@ def test_overlay_puts_labels_with_no_size_on_raws_grid(tmp_path, raw_attrs, labe
     assert _overlay(tmp_path, raw_attrs, label_attrs) == pytest.approx(RAW_GRID_OVERLAY)
 
 
+@pytest.mark.parametrize("attribute", ["voxel_size", "resolution"])
+@pytest.mark.parametrize("label_size", [[1, 0, 0, 0], [1, 50, 4, 4]])
+def test_overlay_uses_channel_first_label_resolution(tmp_path, attribute, label_size):
+    assert _overlay(
+        tmp_path,
+        {"voxel_size": [50, 4, 4]},
+        {attribute: label_size, "offset": [50, 4, 8]},
+    ) == pytest.approx(RAW_GRID_OVERLAY)
+
+
 def test_overlay_with_no_size_on_either_array_starts_at_raws_corner(tmp_path):
     assert _overlay(tmp_path, {}, {}) == pytest.approx((0.004, 1, 2, 3))
 
