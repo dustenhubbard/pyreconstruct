@@ -5,6 +5,7 @@ from typing import Union
 
 from PyReconstruct.modules.calc import traceGeometry
 
+from .columnar_store import TraceView
 from .section import Section
 from .transform import Transform
 from .trace import Trace
@@ -12,12 +13,16 @@ from .trace import Trace
 
 class TraceData():
 
-    def __init__(self, trace : Trace, index : int, tform : Transform):
+    def __init__(self, trace : Trace, index : int, tform : Transform, points=None):
         """Create a trace table item.
         
             Params:
-                trace (Trace): the trace object for the trace
+                trace (Trace): the trace object for the trace, or a `TraceView`
+                    of its row in the section's columnar store
                 tform (Transform): the transform applied to the trace
+                points: the trace's points, if not `trace.points`. The store
+                    passes its own (n, 2) float64 array, so no list of tuples
+                    is built and then converted back to an array.
         """
         self.index = index
         self.closed = trace.closed
@@ -38,7 +43,7 @@ class TraceData():
         # functions: length/area/centroid identical, radius within machine
         # epsilon. For affine tforms the centroid of the mapped points equals the
         # mapped centroid of the raw points (up to rounding).
-        pts = tform.mapPointsArray(trace.points)
+        pts = tform.mapPointsArray(trace.points if points is None else points)
         if len(pts):
             length, trace_area, (cx, cy), radius = traceGeometry(pts, self.closed)
         else:
@@ -136,13 +141,14 @@ class ObjectData():
         """Return True of object data is empty."""
         return not bool(self.traces)
     
-    def addTrace(self, trace : Trace, section : Section, series):
+    def addTrace(self, trace : Trace, section : Section, series, points=None):
         """Add a trace to the object data.
         
             Params:
                 trace (Trace): the trace to add
                 section (Section): the section containing the trace
                 series (Series): the series containing the trace
+                points: passed on to `TraceData`
         """
         if section.n not in self.traces:
             self.traces[section.n] = []
@@ -163,7 +169,7 @@ class ObjectData():
         i = len(self.traces[section.n])
         
         self.traces[section.n].append(
-            TraceData(trace, i, tform)
+            TraceData(trace, i, tform, points)
         )
     
     def clearSection(self, snum : int):
@@ -226,9 +232,9 @@ class SeriesData():
         # one (his call, 2026-09-14). Every other operation bar does.
         for snum, section in self.series.enumerateSections(eta=False):
 
-            self.updateSection(section, update_traces=True, log_events=False)
+            self.updateSection(section, update_traces=True, log_events=False, read_store=True)
     
-    def updateSection(self, section : Section, update_traces=False, all_traces=True, log_events=True):
+    def updateSection(self, section : Section, update_traces=False, all_traces=True, log_events=True, read_store=False):
         """Update the existing section data.
         
             Params:
@@ -236,6 +242,13 @@ class SeriesData():
                 update_traces (bool): True if all traces should also be updated
                 all_traces (bool): True if all traces on the section should be updated IF NO TRACES HAVE BEEN MARKED AS MODIFIED
                 log_events (bool): True if events (creating and deleting objects) should be logged
+                read_store (bool): True to read the traces from the section's
+                    columnar store instead of `section.contours`. Only for a
+                    section just loaded from its file, as the series-open pass
+                    does, where the store was built from the contours a moment
+                    earlier. `Section.save` reads the contours: an edit made
+                    outside `Section` can make the store stale until the save
+                    rebuilds it, and the save updates the series data first.
         """
         # create/update the data for a section
         if section.n not in self.data["sections"]:
@@ -276,6 +289,9 @@ class SeriesData():
             added_objects = set()
             removed_objects = set()
 
+            ## Only a Section built through `Section.__new__` has no store
+            store = section._columns if read_store else None
+
             ## Clear existing trace data on this section
             for name in trace_names:
                 
@@ -285,8 +301,15 @@ class SeriesData():
                     
                 ## Add new trace data
                 if name in section.contours:
-                    for trace in section.contours[name]:
-                        is_new_object = self.addTrace(trace, section)
+                    if store is not None:
+                        traces = (
+                            (TraceView(store, row), store.getCoordinates(row))
+                            for row in store.rowsForContour(name)
+                        )
+                    else:
+                        traces = ((trace, None) for trace in section.contours[name])
+                    for trace, points in traces:
+                        is_new_object = self.addTrace(trace, section, points)
                         if is_new_object:
                             added_objects.add(name)
             
@@ -313,12 +336,13 @@ class SeriesData():
                     ## Remove object from object attributes dicts
                     self.series.removeObjAttrs(obj_name)
     
-    def addTrace(self, trace : Trace, section : Section):
+    def addTrace(self, trace : Trace, section : Section, points=None):
         """Add trace data to the existing object.
         
             Params:
                 trace (Trace): the trace to add
                 section (Section): the section containing the trace
+                points: passed on to `TraceData`
             Returns:
                 (bool): True if a new object was just created
         """
@@ -340,7 +364,7 @@ class SeriesData():
 
             new_object = False
         
-        object_data[trace.name].addTrace(trace, section, self.series)
+        object_data[trace.name].addTrace(trace, section, self.series, points)
 
         return new_object
     

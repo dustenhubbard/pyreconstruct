@@ -848,7 +848,7 @@ class Series():
 
             # gather the series data
             for snum, section in series.enumerateSections(show_progress=False):
-                series.data.updateSection(section, update_traces=True, log_events=False)
+                series.data.updateSection(section, update_traces=True, log_events=False, read_store=True)
                 if reporter.was_canceled():
                     shutil.rmtree(hidden_dir, ignore_errors=True)
                     return None

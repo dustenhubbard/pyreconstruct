@@ -313,8 +313,8 @@ It lives here, beside the store, rather than in a module of its own so that it
 carries no import of anything and stays inside the graph
 `test_datatypes_import_graph_is_qt_free` proves Qt-free -- which a module
 nothing imports would sit outside of, the gap `trace_id.py`'s export note
-records. Nothing in the application references it; the parity suite is its
-only caller.
+records. Two readers use it: SVG export, through `ContourView`, and the
+series-open pass in `series_data.py`, which reads one row at a time.
 
 **Two rows of the carry table are not implemented, on purpose.** Split-object
 traces, where one drawn geometry is redistributed under new `_{n}` names, and
