@@ -718,6 +718,130 @@ def test_failed_version_is_not_tried_again(win):
     assert "failed before" in result["reason"]
 
 
+# --- The new version reports its own start --------------------------------------------
+
+class ReportingPlatform(FakePlatform):
+    """Each launched copy reports in the way the app does, through report_started, if it lives."""
+
+    def __init__(self, world):
+        super().__init__(world)
+        world.healthy = {OLD_V: False, NEW_V: False}  # no shortcut: only report_started writes
+        self.reports = []
+
+    def launch(self, argv, cwd):
+        pid = super().launch(argv, cwd)
+        if pid in self.w.alive:
+            version = self.w.versions[pid]
+            self.reports.append((version, A.report_started(self.w.install, "PyReconstruct", version)))
+        return pid
+
+
+def _waiting_journal(s, edit=None):
+    """A journal like the helper's while it waits for the new version to report in."""
+    state = {"format": A.FORMAT, "status": "running", "step": "health", "phase": "begin",
+             "plan": dict(s.plan)}
+    if edit:
+        edit(state, s)
+    A.atomic_write_json(os.path.join(s.staging, "state.json"), state)
+
+
+def test_the_new_version_reports_its_own_start(win):
+    platform = ReportingPlatform(win.world)
+    result = A.Applier(win.staging, platform, FAST, host="windows").run()
+
+    assert platform.reports == [(NEW_V, True)]
+    assert result["status"] == "updated"
+    assert win.settled() == "new"
+
+
+def test_a_new_version_that_dies_before_reporting_is_rolled_back(win):
+    win.world.quits_on_start.add(NEW_V)
+    platform = ReportingPlatform(win.world)
+    result = A.Applier(win.staging, platform, replace(FAST, health=30), host="windows").run()
+
+    assert result["status"] == "rolled_back"
+    assert win.settled() == "old"
+    # the old version, started again, checked in and was told nobody waits on it
+    assert platform.reports == [(OLD_V, False)]
+    assert win.read("health.json") is None
+    assert win.read("failed-versions.json")["versions"] == [NEW_V]
+
+
+@pytest.mark.parametrize("step", ["launch", "health"])
+def test_report_started_writes_while_the_helper_waits(win, step):
+    _waiting_journal(win, lambda state, s: state.update(step=step))
+    assert A.report_started(win.install, "PyReconstruct", NEW_V) is True
+    report = win.read("health.json")
+    assert report["version"] == NEW_V and report["pid"] == os.getpid()
+
+
+_NOT_AWAITED = {
+    "finished": lambda state, s: state.update(status="done"),
+    "before-swap": lambda state, s: state.update(step="selftest"),
+    "rollback": lambda state, s: state.update(step="rb_launch"),
+    "after-health": lambda state, s: state.update(step="cleanup"),
+    "other-version": lambda state, s: state["plan"].update(to_version="1.24.1"),
+    "other-install": lambda state, s: state["plan"].update(install=os.path.join(s.parent, "Other")),
+    "no-plan": lambda state, s: state.update(plan=None),
+}
+
+
+@pytest.mark.parametrize("case", list(_NOT_AWAITED))
+def test_report_started_writes_nothing_unless_this_launch_is_awaited(win, case):
+    _waiting_journal(win, _NOT_AWAITED[case])
+    assert A.report_started(win.install, "PyReconstruct", NEW_V) is False
+    assert win.read("health.json") is None
+
+
+def test_report_started_without_a_staging_folder_writes_nothing(tmp_path):
+    install = tmp_path / "PyReconstruct"
+    install.mkdir()
+    assert A.report_started(str(install), "PyReconstruct", NEW_V) is False
+    assert os.listdir(tmp_path) == ["PyReconstruct"]
+
+
+@pytest.fixture
+def frozen_windows_app(win, monkeypatch):
+    """report_update_started's view of the world: a frozen Windows build running from ``win.install``."""
+    from PyReconstruct.modules.backend.updater import install_info
+    monkeypatch.setattr(install_info, "is_frozen", lambda: True)
+    monkeypatch.setattr(install_info, "os_key", lambda: "windows")
+    monkeypatch.setattr(install_info, "current_version_str", lambda: NEW_V + "+g1a2b3c4")
+    monkeypatch.setattr(sys, "executable", os.path.join(win.install, "PyReconstruct.exe"))
+    monkeypatch.delenv("PYRECON_APP_NAME", raising=False)
+    return install_info
+
+
+def test_app_reports_its_public_version_from_the_install_folder(win, frozen_windows_app):
+    from PyReconstruct.modules.backend.updater.updater import report_update_started
+    _waiting_journal(win)
+    assert report_update_started() is True
+    assert win.read("health.json")["version"] == NEW_V
+
+
+@pytest.mark.parametrize("build", ["source", "macos"])
+def test_app_reports_only_from_a_frozen_windows_build(win, frozen_windows_app, monkeypatch, build):
+    from PyReconstruct.modules.backend.updater.updater import report_update_started
+    if build == "source":
+        monkeypatch.setattr(frozen_windows_app, "is_frozen", lambda: False)
+    else:
+        monkeypatch.setattr(frozen_windows_app, "os_key", lambda: "macos")
+    _waiting_journal(win)
+    assert report_update_started() is False
+    assert win.read("health.json") is None
+
+
+def test_app_report_never_raises(win, frozen_windows_app, monkeypatch):
+    from PyReconstruct.modules.backend.updater.updater import report_update_started
+
+    def broken(*args):
+        raise OSError("disk gone")
+
+    monkeypatch.setattr(A, "report_started", broken)
+    _waiting_journal(win)
+    assert report_update_started() is False
+
+
 def _locked(path):
     def hook(src, dst):
         if os.path.normcase(src) == os.path.normcase(path):
