@@ -1,11 +1,14 @@
 """Opening a real .jser cleans only abandoned atomic-save temp files."""
 
+import json
 import os
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
+from PyReconstruct.modules.backend.notifier import NullNotifier
 from PyReconstruct.modules.backend.progress import NullProgressReporter
 from PyReconstruct.modules.datatypes import Series
 from PyReconstruct.modules.datatypes import series as series_mod
@@ -73,6 +76,69 @@ def test_jser_open_ignores_save_temp_removal_error(series_jser, monkeypatch):
         series.close()
 
 
+def test_jser_open_ignores_save_temp_scan_error(series_jser, monkeypatch):
+    scans = []
+
+    def inaccessible_folder(folder):
+        scans.append(folder)
+        raise OSError("folder is inaccessible")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(series_mod.os, "scandir", inaccessible_folder)
+        series = Series.openJser(str(series_jser), progress=NullProgressReporter)
+    try:
+        assert series.sections
+        assert str(series_jser.parent) in scans
+    finally:
+        series.close()
+
+
+@pytest.mark.parametrize("locked_first", [True, False], ids=["locked-first", "locked-last"])
+def test_jser_open_removes_other_save_temp_after_removal_error(
+    series_jser, monkeypatch, locked_first
+):
+    locked = make_temp(series_jser.parent, ".save-aaaaaa.tmp")
+    removable = make_temp(series_jser.parent, ".save-bbbbbb.tmp")
+    real_remove = series_mod.os.remove
+    real_scandir = series_mod.os.scandir
+
+    def remove_unlocked(fp):
+        if Path(fp).name == locked.name:
+            raise OSError("file is locked")
+        real_remove(fp)
+
+    @contextmanager
+    def ordered_scandir(folder):
+        # Exercise both orders explicitly: the outer scan handler alone would
+        # abort this folder when the locked file comes first.
+        with real_scandir(folder) as entries:
+            yield iter(sorted(
+                entries, key=lambda entry: entry.name == locked.name,
+                reverse=locked_first,
+            ))
+
+    with monkeypatch.context() as patch:
+        patch.setattr(series_mod.os, "remove", remove_unlocked)
+        patch.setattr(series_mod.os, "scandir", ordered_scandir)
+        series = Series.openJser(str(series_jser), progress=NullProgressReporter)
+    try:
+        assert series.sections
+        assert locked.exists()
+        assert not removable.exists()
+    finally:
+        series.close()
+
+
+def test_jser_open_removes_eleven_minute_old_save_temp(series_jser):
+    stale = make_temp(series_jser.parent, age=11 * 60)
+    series = Series.openJser(str(series_jser), progress=NullProgressReporter)
+    try:
+        assert series.sections
+        assert not stale.exists()
+    finally:
+        series.close()
+
+
 def test_jser_open_sweeps_hidden_working_folder(series_jser, monkeypatch):
     # The completion reporter can process events, including a save into the
     # freshly loaded working folder. Both folders are swept after it finishes.
@@ -136,6 +202,42 @@ def test_jser_open_cancellation_keeps_stale_save_temp(series_jser):
 
     assert Series.openJser(str(series_jser), progress=CancelingReporter) is None
     assert stale.exists()
+
+
+def test_jser_open_declined_merge_keeps_stale_save_temp(shapes1_jser):
+    data = json.loads(shapes1_jser.read_text())
+    for section in data["sections"]:
+        if section is None:
+            continue
+        contours = section["contours"]
+        for old, new in (("star", "my trace"), ("square", "my,trace")):
+            if old in contours:
+                contours[new] = contours.pop(old)
+    assert series_mod.contourNameCollisions(data) == {
+        "my_trace": ["my trace", "my,trace"],
+    }
+    shapes1_jser.write_text(json.dumps(data))
+    before = shapes1_jser.read_bytes()
+    stale = make_temp(shapes1_jser.parent)
+
+    class DecliningNotifier(NullNotifier):
+        def __init__(self):
+            self.questions = []
+
+        def confirm(self, message, title="Confirm"):
+            self.questions.append(message)
+            return False
+
+    notifier = DecliningNotifier()
+    result = Series.openJser(
+        str(shapes1_jser), progress=NullProgressReporter, notifier=notifier
+    )
+    assert result is None
+    assert len(notifier.questions) == 1
+    assert "my_trace" in notifier.questions[0]
+    assert stale.exists()
+    assert shapes1_jser.read_bytes() == before
+    assert not (shapes1_jser.parent / f".{shapes1_jser.stem}").exists()
 
 
 def test_jser_recovery_without_reading_jser_keeps_save_temps(series_jser):
