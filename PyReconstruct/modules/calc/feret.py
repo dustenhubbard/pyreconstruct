@@ -155,6 +155,3 @@ def feret(Points):
         # so its feret diameters are 0.
         return 0.0, 0.0
     return minWidth(hullRing(U, L)), sqrt(max(sq_dists))
-
-
-_type_check_probe: int = "not an int"
