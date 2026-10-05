@@ -261,10 +261,12 @@ class FieldWidget(QWidget, FieldWidgetView):
         # ignore ALL finger touch for windows
         if os.name == "nt":
             if event.pointerType() == QPointingDevice.PointerType.Finger:
+                self.lclick = self.rclick = self.mclick = False
                 return
 
         # if any finger touch
         if self.is_gesturing:
+            self.lclick = self.rclick = self.mclick = False
             return
 
         # pan if middle button clicked

@@ -38,6 +38,7 @@ class FieldWidgetMouse(FieldWidgetData):
                 mode (int): number corresponding to mouse mode
         """
         self.endPendingEvents()  # end pending mouse events
+        self.pointer_press_recorded = False
         self.mouse_mode = mode
 
         ## Set cursor icon
@@ -190,11 +191,16 @@ class FieldWidgetMouse(FieldWidgetData):
                 self.clicked_x,
                 self.clicked_y
             )
+            self.pointer_press_recorded = True
 
     def pointerMove(self, event):
         """Called when mouse is moved in pointer mode."""
         # ignore if not clicking
         if not self.lclick:
+            return
+
+        # A dropped press or a tool switch cannot start a pointer gesture.
+        if not self.pointer_press_recorded:
             return
         
         # keep track of possible lasso if insufficient time has passed
@@ -333,6 +339,7 @@ class FieldWidgetMouse(FieldWidgetData):
 
     def pointerRelease(self, event):
         """Called when mouse is released in pointer mode."""
+        self.pointer_press_recorded = False
 
         ## User single-clicked
         if self.lclick and self.isSingleClicking():
