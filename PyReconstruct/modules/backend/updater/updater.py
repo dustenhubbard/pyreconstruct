@@ -724,6 +724,36 @@ def verified_checksum(release, asset_name):
     return (status, digest)
 
 
+def report_update_started():
+    """Tell an in-place update helper that waits on this version that it started cleanly.
+
+    Called once, from the first pass of the event loop after the main window
+    is built. Only a frozen Windows build is swapped in place so far, so any
+    other build returns False without looking. Never raises: a report that
+    is not written means the helper rolls the update back, which is the safe
+    side to fail on.
+    """
+    import sys
+    try:
+        from PyReconstruct.modules.backend.updater.install_info import (
+            current_version_str, is_frozen, os_key,
+        )
+        if not is_frozen() or os_key() != "windows":
+            return False
+        version = current_version_str()
+        if not version:
+            return False
+        from PyReconstruct.modules.backend.updater.apply import report_started
+        from PyReconstruct.modules.datatypes.series_owner import app_display_name
+        # plan.json names the release's public version; a build from an
+        # untagged commit carries a +local part the release name drops
+        return report_started(
+            os.path.dirname(sys.executable), app_display_name(), version.split("+", 1)[0],
+        )
+    except Exception:
+        return False
+
+
 def launch_installer(path):
     """Open the downloaded installer with the OS so the user can complete it."""
     from PyReconstruct.modules.backend.updater.install_info import os_key
