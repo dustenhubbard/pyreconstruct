@@ -406,6 +406,32 @@ def _atomicWrite(fp : str, data):
         raise
 
 
+def _sweepStaleSaveTemps(*folders):
+    """Remove abandoned atomic-save files after a successful open.
+
+    The 10 minute modification-time margin leaves recent files alone because
+    another save may still be writing them. Age is a conservative heuristic,
+    not a guarantee that a writer paused longer than the margin is inactive.
+    """
+    cutoff = datetime.now(timezone.utc).timestamp() - 10 * 60
+    for folder in folders:
+        try:
+            with os.scandir(folder or os.curdir) as entries:
+                for entry in entries:
+                    if not re.fullmatch(r"\.save-[0-9a-f]{6}\.tmp", entry.name):
+                        continue
+                    try:
+                        if (
+                            entry.is_file(follow_symlinks=False)
+                            and entry.stat(follow_symlinks=False).st_mtime < cutoff
+                        ):
+                            os.remove(entry.path)
+                    except OSError:
+                        pass  # locked, vanished, or otherwise inaccessible
+        except OSError:
+            pass  # best-effort cleanup must never prevent opening a series
+
+
 def renamedSeriesFile(filename : str, old_name : str, new_name : str) -> str:
     """The filename with its series-name PREFIX swapped, else unchanged.
 
@@ -841,6 +867,7 @@ class Series():
             # reporter twice is harmless.
             reporter.finish()
 
+        _sweepStaleSaveTemps(sdir, hidden_dir)
         return series
 
     def saveJser(self, save_fp : str = None, close : bool = False):
