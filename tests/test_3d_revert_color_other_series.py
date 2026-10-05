@@ -45,8 +45,10 @@ def other_series(series_jser, tmp_path):
         if name is None and section.contours:
             name = sorted(section.contours.keys())[0]
         if name in section.contours:
-            for trace in section.contours[name]:
-                trace.color = (1, 2, 3)
+            section.editTraceAttributes(
+                list(section.contours[name]), name=None, color=(1, 2, 3),
+                tags=None, mode=None, log_event=False,
+            )
             section.save()
     other.saveJser()
     yield other, name
