@@ -19,7 +19,7 @@ from PyReconstruct.modules.datatypes import Series, Section, Trace, Transform
 from PyReconstruct.modules.backend.view import SectionLayer, ZarrLayer
 from PyReconstruct.modules.backend.func import SeriesStates
 from PyReconstruct.modules.backend.func.state_manager import (
-    dropEmptiedGroups, forgetHostLinks, hostLinks, recordDroppedHostLinks,
+    dropEmptiedGroups, hostLinks, recordDroppedHostLinks,
 )
 from PyReconstruct.modules.backend.table import TableManager
 
@@ -383,10 +383,11 @@ class FieldWidgetBase:
         links_before = hostLinks(self.series, names)
         self.updateData()
         recordDroppedHostLinks(self.series, links_before)
-        forgetHostLinks(self.series, {
+        # a new object with an old name does not take the old object's links
+        section_states.markNewObjects(self.section.n, self.series, {
             n for n in names
             if n not in objects_before and n in self.series.data["objects"]
-        })
+        }, names)
 
         # updateData deletes an object whose last trace the action took, and
         # its groups with it; their visibility entries go too, so the Groups
