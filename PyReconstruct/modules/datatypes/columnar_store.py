@@ -1,11 +1,20 @@
 r"""A columnar store for one section's traces, behind the Qt-free core seam.
 
 Phase 1 of the columnar-sections work. This module is a **parallel
-representation with no consumers**: nothing in the application reads it, no call
-site is rewired, `Trace`/`Contour`/`Section` are untouched, and no byte of any
-`.jser` changes. What it buys today is a thing the parity tests can point at, so
-the layout, the tracking and the identity plumbing can be argued about against
-running code instead of against prose.
+representation of the traces, and it has readers but is not what gets saved**.
+Every loaded `Section` carries a `SectionColumns` as `section._columns`, and
+`Trace`/`Contour`/`Section` are unchanged. `self.contours` is still what gets
+saved, so no byte of any `.jser` changes. The store is read by:
+
+  * SVG export, `svg_conversion.py`, through `ContourView`;
+  * `SeriesData.refresh`, which passes `read_store=True` to
+    `SeriesData.updateSection`, so the series pass reads each section's traces
+    through `TraceView` and `SectionColumns.getCoordinates`;
+  * `Series.openJser`, which does the same on the first `.jser` unpack.
+
+The other `SeriesData.updateSection` calls still read `self.contours`. The
+parity tests keep the layout, the tracking and the identity plumbing argued
+against running code.
 
 WHAT PARITY MEANS HERE, AND WHICH SIDE OF THE ROUNDING THIS SITS ON
 -------------------------------------------------------------------
@@ -1413,11 +1422,12 @@ class TraceView():
     """One row of a `SectionColumns`, read and written through a `Trace`-shaped
     surface.
 
-    Uncached, and with no consumers. Each of the eight properties below is a
-    direct call into the store's existing row readers on the way out and into
-    one of its existing mutation entry points on the way in; nothing is
-    remembered between calls. A `TraceView` is therefore free to construct,
-    free to discard, and free to construct again for the same row.
+    Uncached. `SeriesData.updateSection` reads it when `read_store` is set. Each
+    of the eight properties below is a direct call into the store's existing
+    row readers on the way out and into one of its existing mutation entry
+    points on the way in; nothing is remembered between calls. A `TraceView`
+    is therefore free to construct, free to discard, and free to construct
+    again for the same row.
 
     THE EIGHT FIELDS, AND WHY EXACTLY EIGHT
     ---------------------------------------
@@ -1654,9 +1664,9 @@ class ContourView():
     corresponding row, so a walk over a contour is a walk over rows and no
     `Trace` is built anywhere on the path.
 
-    Uncached and with no consumers, for the same reasons `TraceView` is: every
-    method below is a fresh `rowsForContour` call, nothing is remembered
-    between calls, and nothing in the application references this class.
+    Uncached, for the same reasons `TraceView` is: every method below is a fresh
+    `rowsForContour` call and nothing is remembered between calls. SVG export
+    reads it.
 
     WHAT IS HERE, AND THE ONE PROPERTY THAT IS LOAD-BEARING FOR A LATER SLICE
     ------------------------------------------------------------------------
