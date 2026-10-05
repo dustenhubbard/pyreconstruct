@@ -255,24 +255,28 @@ def test_pointer_release_without_left_button_clears_recorded_press():
     assert field.calls == ["update"]
 
 
-def test_tool_switch_clears_recorded_press(monkeypatch):
+def test_pointer_shortcut_mid_lasso_keeps_recorded_press(monkeypatch):
     from PyReconstruct.modules.gui.main import field_widget_5_mouse as mouse
 
     field = _Field()
     field.pointerPress(_Event())
-    pending = []
-    field.endPendingEvents = lambda: pending.append(field.pointer_press_recorded)
+    field.single_click = False
+    field.pointerMove(_Event())
+    assert field.is_selecting_traces
+    assert field.current_trace == [(30, 40)]
+    field.endPendingEvents = lambda: None
     field.setCursor = lambda _: None
     monkeypatch.setattr(mouse, "QCursor", lambda *args: None)
 
+    # The pointer shortcut calls setMouseMode(POINTER) even when the pointer
+    # is already the tool, and a lasso under way has to keep going.
     FieldWidgetMouse.setMouseMode(field, mouse.POINTER)
     field.pointerMove(_Event())
 
-    assert pending == [True]
-    assert field.pointer_press_recorded is False
+    assert field.pointer_press_recorded is True
     assert field.mouse_mode == mouse.POINTER
-    assert field.current_trace == []
-    assert field.calls == []
+    assert field.is_selecting_traces
+    assert field.current_trace == [(30, 40), (30, 40)]
 
 
 def test_ending_pending_events_preserves_recorded_lasso_press():

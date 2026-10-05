@@ -38,7 +38,6 @@ class FieldWidgetMouse(FieldWidgetData):
                 mode (int): number corresponding to mouse mode
         """
         self.endPendingEvents()  # end pending mouse events
-        self.pointer_press_recorded = False
         self.mouse_mode = mode
 
         ## Set cursor icon
