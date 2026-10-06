@@ -216,7 +216,7 @@ def parseArgs(argv : list):
     parser.add_argument("--zarr", default="",
                         help="the source zarr (default: the location stored in the series)")
     parser.add_argument("--out", default="",
-                        help="the output zarr (default: <stem>_<object>_crop.zarr beside the source)")
+                        help="the output zarr (default: <stem>_<object>_crop.zarr, -zarr or _zarr beside the source, matching it)")
     args = parser.parse_args(argv)
 
     missing = [
