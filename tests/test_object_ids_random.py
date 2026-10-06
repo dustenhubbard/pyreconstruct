@@ -74,6 +74,7 @@ class Run:
         name = self.rng.choice(NAMES)
         had = self.ids.live(name)
         reserved = self.ids.unplaced.get(name)
+        parked = set(self.ids.parked.get(name, ()))
         issued = set(self.ids.name_of)
         placed = self.ids.peek(snum, name)
 
@@ -90,6 +91,8 @@ class Run:
             assert oid == max(had)
         elif reserved is not None:
             assert oid == reserved
+        elif parked:
+            assert oid == max(parked)
         else:
             assert oid not in issued, "a name with no live id reused an old one"
 
@@ -198,6 +201,8 @@ class Run:
             per_name = counts.setdefault(name, {})
             per_name[oid] = per_name.get(oid, 0) + 1
         assert ids._live == counts, f"{label}: an id outlived its traces"
+        for name, held in ids.parked.items():
+            assert held and not held & set(counts.get(name, ())), label
 
         tree = series.host_tree
         expected = {

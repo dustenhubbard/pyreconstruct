@@ -35,7 +35,12 @@ class HostTree():
         for obj_name, hosts in host_dict.items():
             self.add(obj_name, hosts)
 
-    def _reset(self, edges : set, members : set):
+    def _reset(self, edges : set, members : set, order : dict = None):
+        # names in the order the tree has always listed them: added by
+        # add() (the object, then its hosts), dropped by removeObject, and
+        # moved to the end by a rename. Reads that walk the tree by name
+        # (merge) depend on it.
+        self._order : dict = dict(order or {})
         # (traveler id, host id)
         self._edges : set[tuple[int, int]] = edges
         # ids registered by add() whether or not they have links, so a name
@@ -92,9 +97,20 @@ class HostTree():
         return None if t_name == h_name else (t_name, h_name)
 
     def _entry(self, name):
+        """The projection's entry for a name, created in place. A new entry
+        lands last, so a name the order has before another listed name
+        marks the projection for a rebuild instead."""
         if name not in self._objects:
+            if self._order and next(reversed(self._order)) != name:
+                self._stale = True
             self._objects[name] = {"hosts": set(), "travelers": set()}
         return self._objects[name]
+
+    def _register(self, names):
+        """Put names the tree does not list yet at the end of its order."""
+        for name in names:
+            if name not in self._order:
+                self._order[name] = None
 
     def _build(self):
         """Rebuild the name projection if the ids changed since it was built,
@@ -102,19 +118,24 @@ class HostTree():
         key = (self._ids.version, self._hidden)
         if self._built == key and not self._stale:
             return
-        self._objects = {}
         self._pair_edges = {}
-        for oid in self._members:
-            if self._visible(oid):
-                self._entry(self._ids.name_of[oid])
+        names = {
+            self._ids.name_of[oid] for oid in self._members if self._visible(oid)
+        }
         for t, h in self._edges:
             pair = self._pairOf(t, h)
             if pair is not None:
                 self._pair_edges.setdefault(pair, set()).add((t, h))
+                names.update(pair)
+        # a name back on screen that the order dropped (an undone delete)
+        # goes last, as add() would put it
+        self._register(sorted(names - self._order.keys(), key=str))
+        self._objects = {
+            name: {"hosts": set(), "travelers": set()}
+            for name in self._order if name in names
+        }
         exact = True
         for t_name, h_name in sorted(self._pair_edges, key=lambda p: (str(p[0]), str(p[1]))):
-            self._entry(t_name)
-            self._entry(h_name)
             # two objects under one name can link two names both ways; the
             # projection refuses the second as add() would
             if t_name in self._reachable([h_name], "hosts", False):
@@ -231,6 +252,7 @@ class HostTree():
         if isinstance(hosts, str):
             hosts = [hosts]
 
+        self._register([obj_name] + list(hosts))
         for name in [obj_name] + list(hosts):
             self._addMembers(self._writeIds(name))
         
@@ -275,6 +297,8 @@ class HostTree():
         that removes an object outright.
         """
         self._ids.release(obj_name)
+        if self._order.pop(obj_name, False) is None:
+            self._stale = True
         live = self._ids.live(obj_name) - self._hidden
         if not live:
             return
@@ -320,8 +344,14 @@ class HostTree():
             # trace is renamed, back if an undo brings it back
             ids.release(old_name)
             self._hidden = frozenset(old_ids)
+            if self._order.pop(old_name, False) is None:
+                self._stale = True
         try:
             new_id = ids.reserve(new_name)
+            self._register(
+                [new_name] + sorted({h for h, _ in host_copies}, key=str)
+                + sorted({t for t, _ in traveler_copies}, key=str)
+            )
             self._addMembers({new_id})
             copies = [
                 (new_name, new_id, h_name, h) for h_name, h in sorted(host_copies)
@@ -447,7 +477,7 @@ class HostTree():
         c = HostTree.__new__(HostTree)
         c.series = self.series
         c._ids = self._ids
-        c._reset(set(self._edges), set(self._members))
+        c._reset(set(self._edges), set(self._members), self._order)
         return c
 
     def getHostGroup(self, obj_name : str, obj_pool=None):

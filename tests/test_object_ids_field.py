@@ -151,7 +151,9 @@ def test_section_list_delete_and_reorder_keep_both_ids(window, gui_dialogs):
 
 def test_section_list_delete_then_insert_on_the_same_number(window, gui_dialogs):
     """Delete the last section, insert a new one past the end (it takes the
-    deleted number's file), and draw the same name there: a new object."""
+    deleted number's file), and draw the same name there: it takes back the
+    id the section delete parked, and nothing was left placed on the new
+    section."""
     series = window.series
     last = max(series.sections)
     window.changeSection(last)
@@ -170,7 +172,9 @@ def test_section_list_delete_then_insert_on_the_same_number(window, gui_dialogs)
     gui_dialogs.responses.append((["", last, 0.00254, 0.05], True))
     widget.insertSection(before=True)
     assert last in series.sections
+    assert _ids(window).peek(last, NAME) is None
 
     window.changeSection(last)
     _draw(window, NAME)
-    assert _ids(window).peek(last, NAME) not in (None, old)
+    assert _ids(window).peek(last, NAME) == old
+    assert _ids(window).live(NAME) == {old}

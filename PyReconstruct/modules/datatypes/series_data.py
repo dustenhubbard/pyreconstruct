@@ -332,14 +332,18 @@ class SeriesData():
                         del(self.data["objects"][name])
                         removed_objects.add(name)
 
-            ## Keep the object ids in step (object_ids.py)
+            ## Keep the object ids in step (object_ids.py). An object emptied
+            ## here is deleted (removeObjAttrs below) only when events are
+            ## logged; otherwise (an import) its id is parked and keeps its
+            ## links, as the object keeps its attributes.
             ids = self.object_ids
+            park = not (log_events and not self.supress_logging)
             for name in trace_names:
                 obj_data = self.data["objects"].get(name)
                 if obj_data is not None and section.n in obj_data.traces:
                     ids.ensure(section.n, name)
                 else:
-                    ids.drop(section.n, name)
+                    ids.drop(section.n, name, park=park)
             
             ## Log newly created/destroyed objects
             if log_events and not self.supress_logging:
