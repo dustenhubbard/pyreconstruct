@@ -9,11 +9,11 @@ from PyReconstruct.modules.calc import centroid
 from PyReconstruct.modules.datatypes import Trace, Transform, Series
 from PyReconstruct.modules.datatypes.transform import alignment_tform
 from PyReconstruct.modules.calc.nesting import (  # noqa: F401 (tests import them from here)
-    _clearsAgain,
     _covers,
+    _cutsIsland,
     _traceLine,
     _tracePolygon,
-    nestedFillOrder,
+    islandCuts,
 )
 
 
@@ -162,25 +162,34 @@ class Surface(Object3D):
         # create empty numpy volume
         volume = np.zeros(vshape, dtype=bool)
 
-        # add the traces to the volume: positives fill, negatives clear, and
-        # a positive inside a negative (an island in a hole) fills again after
-        # it; a negative within a voxel's diagonal of the island can round
-        # onto its edge voxels, so it clears again after the island
+        def grid(trace):
+            xs = np.array([round((x-xmin) / vres) for x, _ in trace])
+            ys = np.array([round((y-ymin) / vres) for _, y in trace])
+            return xs, ys
+
+        # add the traces to the volume: positives fill and then negatives
+        # clear; a positive inside a negative (an island in a hole) is then
+        # filled back in, less the voxels of every negative that cuts it. A
+        # negative within a voxel's diagonal of the island can round onto
+        # its edge voxels, so it counts as cutting it.
         reach = math.hypot(vres, vres)
         for snum, trace_lists in self.traces.items():
-            for trace, fill in nestedFillOrder(
+            z = snum - smin
+            for fill, key in ((True, "pos"), (False, "neg")):
+                for trace in trace_lists[key]:
+                    x_pos, y_pos = polygon(*grid(trace))
+                    volume[x_pos, y_pos, z] = fill
+            for island, cuts in islandCuts(
                 trace_lists["pos"], trace_lists["neg"], reach
             ):
-                x_values = []
-                y_values = []
-                for x, y in trace:
-                    x_values.append(round((x-xmin) / vres))
-                    y_values.append(round((y-ymin) / vres))
-                x_pos, y_pos = polygon(
-                    np.array(x_values),
-                    np.array(y_values)
-                )
-                volume[x_pos, y_pos, snum - smin] = fill
+                xs, ys = grid(island)
+                x0, y0 = xs.min(), ys.min()
+                keep = np.zeros((xs.max() - x0 + 1, ys.max() - y0 + 1), dtype=bool)
+                keep[polygon(xs - x0, ys - y0, keep.shape)] = True
+                for trace in cuts:
+                    cx, cy = grid(trace)
+                    keep[polygon(cx - x0, cy - y0, keep.shape)] = False
+                volume[x0:x0 + keep.shape[0], y0:y0 + keep.shape[1], z] |= keep
 
         return volume, vres
 

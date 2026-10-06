@@ -5,10 +5,10 @@ cleared every negative trace, so a positive trace drawn inside a negative one
 (an island in a hole) was cleared along with the hole. The mesh, and the volume
 ``3D ▸ Export quantitative data`` measures from it, lost the island.
 
-``nestedFillOrder`` now fills positives, clears negatives, fills the positives
-a negative covers, clears the negatives those islands cover, and so on. A
-section with no island keeps exactly the order it had, which the reference
-loop below (the shipped fill, frozen) pins voxel for voxel.
+The fill now draws the same way and then fills each island back in, less the
+voxels of the negatives ``islandCuts`` lists for it. A section with no island
+draws exactly as it did, which the reference loop below (the shipped fill,
+frozen) pins voxel for voxel.
 """
 import math
 import os
@@ -23,13 +23,12 @@ QApplication.instance() or QApplication(["test"])
 
 from PyReconstruct.modules.backend.volume.objects_3D import (  # noqa: E402
     Surface,
-    _clearsAgain,
     _covers,
+    _cutsIsland,
     _traceLine,
     _tracePolygon,
-    nestedFillOrder,
+    islandCuts,
 )
-from PyReconstruct.modules.calc.nesting import _cutsInto  # noqa: E402
 
 FIXTURE_DIR = os.path.join(
     os.path.dirname(__file__), "..", "dev", "assets", "checker", "files"
@@ -95,37 +94,49 @@ def _surface(sections, nsec=3):
     return surf
 
 
-def _reference_volume(surf):
-    """The fill as it shipped: every positive, then every negative."""
+def _vres(surf):
     series = surf.series
     vres_min = min(series.avg_mag, series.avg_thickness)
     vres_max = max(series.avg_mag, series.avg_thickness)
-    vres = vres_min + (1 - series.getOption("3D_xy_res") / 100) * (vres_max - vres_min)
+    return vres_min + (1 - series.getOption("3D_xy_res") / 100) * (vres_max - vres_min)
+
+
+def _grid(points, surf):
+    """A trace's points rounded to the volume's grid, as x and y arrays."""
+    vres = _vres(surf)
+    xmin, _, ymin, _, _, _ = tuple(surf.extremes)
+    xs = np.array([round((x - xmin) / vres) for x, _ in points])
+    ys = np.array([round((y - ymin) / vres) for _, y in points])
+    return xs, ys
+
+
+def _order_volume(surf, order):
+    """The volume drawn in the order ``order(pos, neg)`` gives."""
+    vres = _vres(surf)
     xmin, xmax, ymin, ymax, smin, smax = tuple(surf.extremes)
     volume = np.zeros(
         (round((xmax - xmin) / vres) + 1, round((ymax - ymin) / vres) + 1, smax - smin + 1),
         dtype=bool,
     )
     for snum, trace_lists in surf.traces.items():
-        for fill, key in ((True, "pos"), (False, "neg")):
-            for trace in trace_lists[key]:
-                xs = np.array([round((x - xmin) / vres) for x, _ in trace])
-                ys = np.array([round((y - ymin) / vres) for _, y in trace])
-                xx, yy = polygon(xs, ys)
-                volume[xx, yy, snum - smin] = fill
+        for trace, fill in order(trace_lists["pos"], trace_lists["neg"]):
+            xx, yy = polygon(*_grid(trace, surf))
+            volume[xx, yy, snum - smin] = fill
     return volume
+
+
+def _two_pass_order(pos, neg):
+    return [(p, True) for p in pos] + [(n, False) for n in neg]
+
+
+def _reference_volume(surf):
+    """The fill as it shipped: every positive, then every negative."""
+    return _order_volume(surf, _two_pass_order)
 
 
 def _count(volume, points, surf):
     """Voxels of ``volume`` inside the trace ``points``, on every section."""
-    series = surf.series
-    vres_min = min(series.avg_mag, series.avg_thickness)
-    vres_max = max(series.avg_mag, series.avg_thickness)
-    vres = vres_min + (1 - series.getOption("3D_xy_res") / 100) * (vres_max - vres_min)
-    xmin, _, ymin, _, _, _ = tuple(surf.extremes)
-    xs = np.array([round((x - xmin) / vres) for x, _ in points])
-    ys = np.array([round((y - ymin) / vres) for _, y in points])
-    xx, yy = polygon(xs, ys)
+    xx, yy = polygon(*_grid(points, surf))
     return int(volume[xx, yy, :].sum())
 
 
@@ -182,23 +193,16 @@ def test_island_three_levels_deep_fills():
     )
 
 
-def test_nested_fill_order_three_levels():
-    order = nestedFillOrder(
-        [OUTER, ISLAND, INNER_ISLAND], [HOLE, INNER_HOLE]
-    )
-    # the inner island is covered by the outer hole too, so it is drawn with
-    # the first islands; the inner hole clears it; the next level fills it
-    assert order == [
-        (OUTER, True), (ISLAND, True), (INNER_ISLAND, True),
-        (HOLE, False), (INNER_HOLE, False),
-        (ISLAND, True), (INNER_ISLAND, True),
-        (INNER_HOLE, False),
-        (INNER_ISLAND, True),
+def test_island_cuts_three_levels():
+    # the inner island is in the outer hole and in the inner hole, so both
+    # are around it and neither cuts it; the inner hole cuts the island
+    assert islandCuts([OUTER, ISLAND, INNER_ISLAND], [HOLE, INNER_HOLE]) == [
+        (ISLAND, [INNER_HOLE]), (INNER_ISLAND, []),
     ]
 
 
 def test_island_only_on_some_sections():
-    """The order is decided per section, so an island on one section does
+    """The islands are found per section, so an island on one section does
     not change the sections without one."""
     surf = Surface("obj", _StubSeries(), None, None, None)
     for snum in range(3):
@@ -212,43 +216,31 @@ def test_island_only_on_some_sections():
     assert volume[:, :, 1].sum() > reference[:, :, 1].sum()
 
 
-def test_nested_fill_order_shape():
-    order = nestedFillOrder([OUTER, ISLAND], [HOLE, INNER_HOLE])
-    assert order == [
-        (OUTER, True), (ISLAND, True),
-        (HOLE, False), (INNER_HOLE, False),
-        (ISLAND, True),
-        (INNER_HOLE, False),
+def test_island_cuts_hole_inside_the_island():
+    assert islandCuts([OUTER, ISLAND], [HOLE, INNER_HOLE]) == [
+        (ISLAND, [INNER_HOLE]),
     ]
 
 
-def test_nested_fill_order_ends_on_identical_outlines():
-    """A positive and a negative with the same outline are not nested, so the
-    order is the plain one and the walk does not alternate forever."""
-    order = nestedFillOrder([HOLE], [HOLE])
-    assert order == [(HOLE, True), (HOLE, False)]
+def test_identical_outlines_are_not_an_island():
+    assert islandCuts([HOLE], [HOLE]) == []
 
 
 def test_coincident_negative_cancels_the_island():
-    """A negative with the island's own outline is applied again after the
-    island refills, so the pair cancels as it did in the old fill."""
+    """A negative with the island's own outline cuts all of it, so the pair
+    cancels as it did in the old fill."""
     traces = [(OUTER, False), (HOLE, True), (ISLAND, False), (ISLAND, True)]
     surf = _surface(traces)
     volume, _ = surf.generateVolume()
     assert (volume == _reference_volume(surf)).all()
-    order = nestedFillOrder([OUTER, ISLAND], [HOLE, ISLAND])
-    assert order[-1] == (ISLAND, False)
-    assert order == [
-        (OUTER, True), (ISLAND, True), (HOLE, False), (ISLAND, False),
-        (ISLAND, True), (ISLAND, False),
-    ]
+    assert islandCuts([OUTER, ISLAND], [HOLE, ISLAND]) == [(ISLAND, [ISLAND])]
 
 
 @pytest.mark.parametrize("hole", [True, False])
 def test_negative_across_the_island_edge_still_cuts_it(hole):
-    """A negative that crosses the island's edge is applied again after the
-    refill. With no hole around the island the old fill already cut it, and
-    the island inside a hole must end up cut the same way."""
+    """A negative that crosses the island's edge cuts it. With no hole around
+    the island the old fill already cut it, and the island inside a hole
+    must end up cut the same way."""
     cut = _surface([(OUTER, False), (ISLAND, False), (CROSS, True)])
     cut_ref = _reference_volume(cut)
     full = np.ones_like(cut_ref)
@@ -276,12 +268,9 @@ def test_zero_area_negative_over_the_island_still_cuts_it():
     assert _count(volume, ISLAND, cut) == _count(cut_ref, ISLAND, cut)
 
 
-def test_nested_fill_order_reapplies_cutting_negatives():
-    assert nestedFillOrder([OUTER, ISLAND], [HOLE, CROSS, LINE]) == [
-        (OUTER, True), (ISLAND, True),
-        (HOLE, False), (CROSS, False), (LINE, False),
-        (ISLAND, True),
-        (CROSS, False), (LINE, False),
+def test_island_cuts_lists_negatives_across_it():
+    assert islandCuts([OUTER, ISLAND], [HOLE, CROSS, LINE]) == [
+        (ISLAND, [CROSS, LINE]),
     ]
 
 
@@ -293,9 +282,9 @@ def test_nested_fill_order_reapplies_cutting_negatives():
 ])
 def test_negative_beside_the_island_still_cuts_it(name, near):
     """A negative that touches the island, or sits close enough that both
-    round onto the same voxels, clears those voxels again after the island
-    refills: the island ends up with the voxels it has with no hole around
-    it, and the negative's own voxels stay clear as they did before."""
+    round onto the same voxels, cuts it: the island ends up with the voxels
+    it has with no hole around it, and the negative's own voxels stay clear
+    as they did before."""
     cut = _surface([(OUTER, False), (ISLAND, False), (near, True)])
     cut_ref = _reference_volume(cut)
     full = np.ones_like(cut_ref)
@@ -308,29 +297,35 @@ def test_negative_beside_the_island_still_cuts_it(name, near):
     assert _count(volume, near, cut) == 0, name
 
 
-def test_nested_fill_order_reapplies_negatives_beside_the_island():
+def test_island_cuts_lists_negatives_beside_the_island():
     pos, neg = [OUTER, ISLAND], [HOLE, TOUCH, CORNER, NEAR, NEAR_CORNER, FAR]
     # touching counts with no reach; the ones a voxel away need it, and a
-    # negative too far to round onto the island is left alone
-    assert nestedFillOrder(pos, neg)[len(pos) + len(neg):] == [
-        (ISLAND, True), (TOUCH, False), (CORNER, False),
-    ]
-    assert nestedFillOrder(pos, neg, REACH)[len(pos) + len(neg):] == [
-        (ISLAND, True),
-        (TOUCH, False), (CORNER, False), (NEAR, False), (NEAR_CORNER, False),
+    # negative too far to round onto the island is left out
+    assert islandCuts(pos, neg) == [(ISLAND, [TOUCH, CORNER])]
+    assert islandCuts(pos, neg, REACH) == [
+        (ISLAND, [TOUCH, CORNER, NEAR, NEAR_CORNER]),
     ]
 
 
-def test_hole_the_island_touches_is_not_reapplied():
+def test_hole_the_island_touches_does_not_cut_it():
     """An island against the inside of its hole's edge touches the hole, but
-    the hole is around it, so clearing it again would erase the island."""
+    the hole is around it, so it does not cut the island."""
     against = _square(1, 1.3, 1.4, 1.7)
-    assert nestedFillOrder([OUTER, against], [HOLE], REACH) == [
-        (OUTER, True), (against, True), (HOLE, False), (against, True),
-    ]
+    assert islandCuts([OUTER, against], [HOLE], REACH) == [(against, [])]
     surf = _surface([(OUTER, False), (HOLE, True), (against, False)])
     volume, _ = surf.generateVolume()
     assert _count(volume, against, surf) == _count(np.ones_like(volume), against, surf)
+
+
+def _outside(surf, island, negatives):
+    """Voxels of ``island`` outside every one of ``negatives``, all sections."""
+    full = np.ones_like(surf.generateVolume()[0])
+    cleared = full.copy()
+    for negative in negatives:
+        xs, ys = _grid(negative, surf)
+        xx, yy = polygon(xs, ys, cleared.shape[:2])
+        cleared[xx, yy, :] = False
+    return _count(cleared, island, surf)
 
 
 # two holes side by side with a thin wall between them, each with an island
@@ -340,40 +335,76 @@ I_LEFT, I_RIGHT = _square(0.6, 0.9, 1.47, 2.1), _square(1.53, 0.9, 2.4, 2.1)
 
 
 def test_islands_in_holes_side_by_side_both_fill():
-    """Each hole comes within a voxel of the other hole's island. Clearing
-    it again would erase its own island, so neither does, and both islands
-    keep every voxel."""
+    """Each hole comes within a voxel of the other hole's island, so it cuts
+    that island's edge, but neither hole clears its own island."""
     surf = _surface([
         (OUTER, False), (H_LEFT, True), (H_RIGHT, True),
         (I_LEFT, False), (I_RIGHT, False),
     ])
     volume, _ = surf.generateVolume()
-    full = np.ones_like(volume)
-    for island in (I_LEFT, I_RIGHT):
-        assert _count(volume, island, surf) == _count(full, island, surf) > 0
-    assert nestedFillOrder(
-        [OUTER, I_LEFT, I_RIGHT], [H_LEFT, H_RIGHT], REACH
-    )[5:] == [(I_LEFT, True), (I_RIGHT, True)]
+    for island, other in ((I_LEFT, H_RIGHT), (I_RIGHT, H_LEFT)):
+        kept = _count(volume, island, surf)
+        assert kept == _outside(surf, island, [other]) > 0
+    assert islandCuts([OUTER, I_LEFT, I_RIGHT], [H_LEFT, H_RIGHT], REACH) == [
+        (I_LEFT, [H_RIGHT]), (I_RIGHT, [H_LEFT]),
+    ]
 
 
-def test_hole_around_another_island_that_cuts_this_one_clears_again():
-    """The inner hole is a hole around the inner island, but it cuts into the
-    island around it, so it still clears again after the refill."""
-    order = nestedFillOrder([OUTER, ISLAND, INNER_ISLAND], [HOLE, INNER_HOLE], REACH)
-    assert order[5:7] == [(ISLAND, True), (INNER_ISLAND, True)]
-    assert order[7] == (INNER_HOLE, False)
+# island A in hole HA and island B in hole HB, where HA cuts into B and HB
+# touches A, comes within a voxel of A, or cuts into A as well
+A_NEAR = _square(1.4, 1.5, 1.776, 1.9)
+A_TOUCH = _square(1.4, 1.5, 1.8, 1.9)
+B = _square(2.3, 1.8, 2.6, 2.1)
+HA = _square(1.3, 1.4, 2.4, 2.1)
+HB_BESIDE = _square(1.8, 1.3, 3, 3)
+HB_ACROSS = _square(1.7, 1.3, 3, 3)
 
 
-def _pairwise_order(pos, neg, reach=0.0):
-    """The walk with every pair compared, no index; the shipped walk must
-    give the same answer."""
+@pytest.mark.parametrize("name, a, hb", [
+    ("HB near A", A_NEAR, HB_BESIDE),
+    ("HB touching A", A_TOUCH, HB_BESIDE),
+    ("each hole cutting the other's island", A_TOUCH, HB_ACROSS),
+])
+def test_islands_whose_holes_cut_each_other_both_fill(name, a, hb):
+    """Each island keeps every voxel outside the other island's hole."""
+    traces = [(OUTER, False), (a, False), (B, False), (HA, True), (hb, True)]
+    surf = _surface(traces, nsec=1)
+    volume, _ = surf.generateVolume()
+    assert _count(volume, a, surf) == _outside(surf, a, [hb]) > 0, name
+    assert _count(volume, B, surf) == _outside(surf, B, [HA]) > 0, name
+    main = _order_volume(surf, _main_order)
+    assert _count(volume, B, surf) >= _count(main, B, surf), name
+
+
+def _main_order(pos, neg):
+    """The fill order as it shipped before islands were filled back in one
+    by one: fill the islands again after the holes, clear again the
+    negatives inside them, across their edge or with no area over them, and
+    so on down, stopping when a set of islands comes back."""
     order = [(pts, True) for pts in pos] + [(pts, False) for pts in neg]
     if not pos or not neg:
         return order
     pos_polys = [_tracePolygon(pts) for pts in pos]
     neg_polys = [_tracePolygon(pts) for pts in neg]
-    neg_shapes = [poly if poly is not None else _traceLine(pts)
-                  for poly, pts in zip(neg_polys, neg)]
+    neg_lines = [None if poly is not None else _traceLine(pts)
+                 for poly, pts in zip(neg_polys, neg)]
+
+    def inside_or_across(island, n):
+        if island is None or n is None:
+            return False
+        try:
+            return island.covers(n) or island.overlaps(n)
+        except Exception:
+            return False
+
+    def along(island, line):
+        if island is None or line is None:
+            return False
+        try:
+            return island.intersects(line)
+        except Exception:
+            return False
+
     holes = range(len(neg))
     seen = set()
     for _ in range(len(pos) + len(neg)):
@@ -385,27 +416,76 @@ def _pairwise_order(pos, neg, reach=0.0):
             break
         seen.add(tuple(islands))
         order.extend((pos[i], True) for i in islands)
-        around = {
+        holes = [
             j for j in range(len(neg))
-            if any(_covers(neg_polys[j], pos_polys[i]) for i in islands)
-        }
-        holes = sorted(
-            j for j in range(len(neg))
-            if any(
-                _cutsInto(pos_polys[i], neg_polys[j]) if j in around
-                else _clearsAgain(pos_polys[i], neg_shapes[j], reach)
-                for i in islands
-            )
-        )
+            if any(inside_or_across(pos_polys[i], neg_polys[j])
+                   or along(pos_polys[i], neg_lines[j]) for i in islands)
+        ]
         if not holes:
             break
         order.extend((neg[j], False) for j in holes)
     return order
 
 
+@pytest.mark.parametrize("seed", range(40))
+def test_no_island_loses_more_than_its_cuts_against_the_old_order(seed):
+    """Random holes, islands and negatives, snapped to a grid so traces
+    touch and share edges. Against the order as it shipped before, an
+    island may lose only voxels of the negatives that cut it, and it keeps
+    every voxel outside them."""
+    rng = np.random.default_rng(seed)
+
+    def rect(lo, hi, size_lo, size_hi):
+        x, y = rng.uniform(lo, hi, 2)
+        w, h = rng.uniform(size_lo, size_hi, 2)
+        return _square(*(round(v / 0.05) * 0.05 for v in (x, y, x + w, y + h)))
+
+    holes = [rect(0.2, 2.0, 0.4, 1.0) for _ in range(rng.integers(2, 5))]
+    islands = []
+    for _ in range(rng.integers(2, 6)):
+        x0, y0 = holes[rng.integers(len(holes))][0]
+        x, y = x0 + rng.uniform(0, 0.4), y0 + rng.uniform(0, 0.4)
+        side = rng.uniform(0.1, 0.4)
+        islands.append(_square(*(round(v / 0.05) * 0.05 for v in (x, y, x + side, y + side))))
+    extra = [rect(0.2, 2.6, 0.05, 0.4) for _ in range(rng.integers(0, 4))]
+    pos, neg = [OUTER] + islands, holes + extra
+
+    surf = _surface([(p, False) for p in pos] + [(n, True) for n in neg], nsec=1)
+    volume, _ = surf.generateVolume()
+    main = _order_volume(surf, _main_order)
+    shape = volume.shape[:2]
+
+    for island, cuts in islandCuts(pos, neg, REACH):
+        xx, yy = polygon(*_grid(island, surf), shape)
+        cut = np.zeros(shape, dtype=bool)
+        for n in cuts:
+            cut[polygon(*_grid(n, surf), shape)] = True
+        here, before = volume[xx, yy, 0], main[xx, yy, 0]
+        lost = before & ~here
+        assert not (lost & ~cut[xx, yy]).any(), seed
+        assert here[~cut[xx, yy]].all(), seed
+
+
+def _pairwise_cuts(pos, neg, reach=0.0):
+    """The islands and their cuts with every pair compared, no index; the
+    shipped search must give the same answer."""
+    pos_polys = [_tracePolygon(pts) for pts in pos]
+    neg_polys = [_tracePolygon(pts) for pts in neg]
+    neg_shapes = [poly if poly is not None else _traceLine(pts)
+                  for poly, pts in zip(neg_polys, neg)]
+    if not pos or not neg:
+        return []
+    return [
+        (pos[i], [neg[j] for j in range(len(neg))
+                  if _cutsIsland(pos_polys[i], neg_shapes[j], reach)])
+        for i in range(len(pos))
+        if any(_covers(n, pos_polys[i]) for n in neg_polys)
+    ]
+
+
 @pytest.mark.parametrize("reach", [0.0, 0.05])
 @pytest.mark.parametrize("seed", [0, 1, 2, 3])
-def test_indexed_walk_matches_the_pairwise_walk(seed, reach):
+def test_indexed_search_matches_the_pairwise_search(seed, reach):
     """Random squares, many of them nested, a few duplicated, some with no
     area: the tree only narrows the pairs, it must not change the answer."""
     rng = np.random.default_rng(seed)
@@ -434,22 +514,20 @@ def test_indexed_walk_matches_the_pairwise_walk(seed, reach):
         neg.append([(k * 2.0 + 0.8, k * 2.0 + 0.1), (k * 2.0 + 0.8, k * 2.0 + 1.5)])
         neg.append([(k * 2.0 + 0.8, k * 2.0 + 0.8)] * 3)
 
-    got = nestedFillOrder(pos, neg, reach)
-    assert got == _pairwise_order(pos, neg, reach)
-    assert len(got) > len(pos) + len(neg), "the case has islands"
+    got = islandCuts(pos, neg, reach)
+    assert got == _pairwise_cuts(pos, neg, reach)
+    assert got, "the case has islands"
 
 
 @pytest.mark.parametrize("points", [COLLINEAR, ONE_POINT])
 def test_zero_area_positive_in_a_hole_is_not_an_island(points):
-    """A positive with no area is not refilled: it would put voxels back along
-    a line where the old fill had cleared them."""
+    """A positive with no area is not filled back in: it would put voxels
+    back along a line where the old fill had cleared them."""
     traces = [(OUTER, False), (HOLE, True), (points, False)]
     surf = _surface(traces)
     volume, _ = surf.generateVolume()
     assert (volume == _reference_volume(surf)).all()
-    assert nestedFillOrder([OUTER, points], [HOLE]) == [
-        (OUTER, True), (points, True), (HOLE, False),
-    ]
+    assert islandCuts([OUTER, points], [HOLE]) == []
 
 
 # ---------------------------------------------------- unchanged without one
@@ -479,12 +557,10 @@ def test_without_an_island_the_fill_is_unchanged(name, traces):
         (OUTER, False), (HOLE, True), (_square(1.5, 1.5, 2.5, 2.5), False),
     ]),
 ])
-def test_without_an_island_the_order_is_unchanged(name, traces):
+def test_without_an_island_there_is_nothing_to_fill_back(name, traces):
     pos = [p for p, negative in traces if not negative]
     neg = [p for p, negative in traces if negative]
-    assert nestedFillOrder(pos, neg) == (
-        [(p, True) for p in pos] + [(n, False) for n in neg]
-    ), name
+    assert islandCuts(pos, neg) == [], name
 
 
 @pytest.mark.parametrize("fixture", ["shapes1.jser", "shapes2.jser"])
