@@ -2,8 +2,7 @@ r"""A columnar store for one section's traces, behind the Qt-free core seam.
 
 Phase 1 of the columnar-sections work. This module is a **parallel
 representation of the traces, and it has readers but does not supply the saved
-geometry**.
-Every loaded `Section` carries a `SectionColumns` as `section._columns`, and
+geometry**. Every loaded `Section` carries a `SectionColumns` as `section._columns`, and
 `Trace`/`Contour`/`Section` are unchanged. `self.contours` is still what gets
 saved: the contours give the saved geometry, so no byte of any `.jser`
 changes, and with keyed rows on `Section.getDict` takes the persisted trace ids
@@ -1672,7 +1671,8 @@ class ContourView():
 
     Uncached, for the same reasons `TraceView` is: the row-reading methods
     below each make a fresh `rowsForContour` call, and nothing is remembered
-    between calls. `__init__` and `name` only hold the store and the normalized name.
+    between calls. `__init__` and `name` only hold the store and the
+    normalized name.
     SVG export reads it.
 
     WHAT IS HERE, AND THE ONE PROPERTY THAT IS LOAD-BEARING FOR A LATER SLICE
