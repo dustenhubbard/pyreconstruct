@@ -85,6 +85,17 @@ def _clearsAgain(island, negative, reach=0.0) -> bool:
     return near and not _covers(negative, island)
 
 
+def _cutsInto(island, negative) -> bool:
+    """Return whether a negative clears part of an island's inside, not just
+    its edge, without being a hole around it."""
+    if not _clearsAgain(island, negative):
+        return False
+    try:
+        return not island.touches(negative)
+    except Exception:
+        return False
+
+
 def _traceLine(points : list):
     """Return a trace with no area as a line or a point, or None.
 
@@ -156,9 +167,11 @@ def nestedFillOrder(pos : list, neg : list, reach : float = 0.0) -> list:
     fills again after the holes. Every negative that touches the refilled
     island, or comes within ``reach`` of it, clears again after that unless
     it is a hole around the island, so the island loses the same voxels to it
-    that it would without the hole. Islands inside those negatives fill next,
-    and so on down the nesting. A section with no island comes back in the
-    same order as before.
+    that it would without the hole. A hole around another island clears again
+    only if it cuts into this one: two holes side by side, each with an island
+    against the wall between them, would otherwise erase both islands. Islands
+    inside the negatives that clear again fill next, and so on down the
+    nesting. A section with no island comes back in the same order as before.
 
         Params:
             pos (list): the point lists of the positive traces
@@ -183,6 +196,9 @@ def nestedFillOrder(pos : list, neg : list, reach : float = 0.0) -> list:
     def clears_again(island, negative):
         return _clearsAgain(island, negative, reach)
 
+    def is_hole_around(island, negative):
+        return _covers(negative, island)
+
     holes : list[int] | range = range(len(neg))
     seen = set()
     # each level follows from the islands of the one before, so a set of
@@ -194,7 +210,13 @@ def nestedFillOrder(pos : list, neg : list, reach : float = 0.0) -> list:
             break
         seen.add(tuple(islands))
         order.extend((pos[i], True) for i in islands)
-        holes = _matching(neg_shapes, pos_polys, islands, clears_again, reach)
+        around = set(_matching(neg_polys, pos_polys, islands, is_hole_around))
+        beside = _matching(neg_shapes, pos_polys, islands, clears_again, reach)
+        cutting = _matching(
+            [p if j in around else None for j, p in enumerate(neg_polys)],
+            pos_polys, islands, _cutsInto,
+        )
+        holes = sorted({j for j in beside if j not in around} | set(cutting))
         if not holes:
             break
         order.extend((neg[j], False) for j in holes)

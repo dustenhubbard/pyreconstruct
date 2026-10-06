@@ -29,6 +29,7 @@ from PyReconstruct.modules.backend.volume.objects_3D import (  # noqa: E402
     _tracePolygon,
     nestedFillOrder,
 )
+from PyReconstruct.modules.calc.nesting import _cutsInto  # noqa: E402
 
 FIXTURE_DIR = os.path.join(
     os.path.dirname(__file__), "..", "dev", "assets", "checker", "files"
@@ -332,6 +333,37 @@ def test_hole_the_island_touches_is_not_reapplied():
     assert _count(volume, against, surf) == _count(np.ones_like(volume), against, surf)
 
 
+# two holes side by side with a thin wall between them, each with an island
+# against that wall, closer to the other hole than a voxel
+H_LEFT, H_RIGHT = _square(0.3, 0.3, 1.49, 2.7), _square(1.51, 0.3, 2.7, 2.7)
+I_LEFT, I_RIGHT = _square(0.6, 0.9, 1.47, 2.1), _square(1.53, 0.9, 2.4, 2.1)
+
+
+def test_islands_in_holes_side_by_side_both_fill():
+    """Each hole comes within a voxel of the other hole's island. Clearing
+    it again would erase its own island, so neither does, and both islands
+    keep every voxel."""
+    surf = _surface([
+        (OUTER, False), (H_LEFT, True), (H_RIGHT, True),
+        (I_LEFT, False), (I_RIGHT, False),
+    ])
+    volume, _ = surf.generateVolume()
+    full = np.ones_like(volume)
+    for island in (I_LEFT, I_RIGHT):
+        assert _count(volume, island, surf) == _count(full, island, surf) > 0
+    assert nestedFillOrder(
+        [OUTER, I_LEFT, I_RIGHT], [H_LEFT, H_RIGHT], REACH
+    )[5:] == [(I_LEFT, True), (I_RIGHT, True)]
+
+
+def test_hole_around_another_island_that_cuts_this_one_clears_again():
+    """The inner hole is a hole around the inner island, but it cuts into the
+    island around it, so it still clears again after the refill."""
+    order = nestedFillOrder([OUTER, ISLAND, INNER_ISLAND], [HOLE, INNER_HOLE], REACH)
+    assert order[5:7] == [(ISLAND, True), (INNER_ISLAND, True)]
+    assert order[7] == (INNER_HOLE, False)
+
+
 def _pairwise_order(pos, neg, reach=0.0):
     """The walk with every pair compared, no index; the shipped walk must
     give the same answer."""
@@ -353,10 +385,15 @@ def _pairwise_order(pos, neg, reach=0.0):
             break
         seen.add(tuple(islands))
         order.extend((pos[i], True) for i in islands)
+        around = {
+            j for j in range(len(neg))
+            if any(_covers(neg_polys[j], pos_polys[i]) for i in islands)
+        }
         holes = sorted(
             j for j in range(len(neg))
             if any(
-                _clearsAgain(pos_polys[i], neg_shapes[j], reach)
+                _cutsInto(pos_polys[i], neg_polys[j]) if j in around
+                else _clearsAgain(pos_polys[i], neg_shapes[j], reach)
                 for i in islands
             )
         )

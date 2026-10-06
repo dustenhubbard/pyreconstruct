@@ -219,3 +219,20 @@ def test_negative_touching_the_island_clears_its_edge(name, touch):
     assert (no_hole[rows, cols] == 0).any(), name
     np.testing.assert_array_equal(arr[rows, cols], no_hole[rows, cols])
     assert arr[SIZE - touch[1], touch[0]] == 0  # a shared edge pixel
+
+
+def test_islands_in_holes_side_by_side_keep_the_label():
+    ## two holes share a wall and each has an island touching it: each hole
+    ## touches the other's island, but clearing it again would erase its own
+    outer = _square("a", 5, 95)
+    left = _rect("a", 10, 20, 50, 80, negative=True)
+    right = _rect("a", 50, 20, 90, 80, negative=True)
+    i_left = _rect("a", 30, 40, 50, 60)
+    i_right = _rect("a", 50, 40, 70, 60)
+
+    arr, ids = _labels([outer, left, right, i_left, i_right])
+
+    ## the islands' pixels: series x 30 to 70, y 40 to 60
+    islands = arr[SIZE - 60:SIZE - 40 + 1, 30:71]
+    assert (islands == ids["a"]).all()
+    assert arr[SIZE - 30, 20] == 0  # the holes stay clear
