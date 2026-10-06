@@ -44,8 +44,8 @@ os.environ["OPENCV_IO_MAX_IMAGE_PIXELS"] = "18500000000"  # Go big or go home?
 def _limit_worker_threads():
     """Pin this process's runtime thread pools to a single thread.
 
-    Each conversion worker runs OpenCV (``cv2.imread``/``cv2.resize``) and the
-    main process compresses with blosc when it writes each array to the zarr.
+    Each conversion worker runs OpenCV (``cv2.imread``/``cv2.resize``) and
+    compresses with blosc when it writes its arrays to the zarr.
     By default BOTH libraries spawn one thread per CPU core, so a Pool of N
     workers would fan out to roughly N x (all cores) threads and peg every CPU
     no matter how few workers the user selected in Settings -- the historical
@@ -81,7 +81,7 @@ def _limit_worker_threads():
         pass
 
 
-# apply to this (main / writer) process, and -- under fork -- to inherited workers
+# apply to this (main) process, and -- under fork -- to inherited workers
 _limit_worker_threads()
 
 IMAGE_EXTENSIONS = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
@@ -291,19 +291,41 @@ def validate_zarr(zg, images):
         raise Exception(f"Zarr conversion incomplete:\n{preview}")
 
 
-def create2D(args):
-    """Worker: read one image and return its resized levels.
+def require_scale_group(zg, scale_group):
+    """Return the scale group, creating it if it does not exist yet.
 
-    Workers never write to the zarr store -- they only read/compute and hand
-    the arrays back to the main process, which is the sole writer. This keeps
-    the conversion free of cross-process write races and makes a failure
-    (e.g. a full disk) surface once, in the main process.
+    The main process makes the groups the first image needs before the Pool
+    starts. A larger image can need one more, and two workers can try to make
+    it at the same time; the one that loses gets ContainsGroupError and opens
+    the group the other one made.
+    """
+    try:
+        return zg.require_group(scale_group)
+    except zarr.errors.ContainsGroupError:
+        return zg[scale_group]
+
+
+def create2D(args):
+    """Worker: read one image, resize it and write its levels to the zarr.
+
+    Each worker opens the store and writes its own arrays, so the compression
+    and the disk writes run in parallel across the Pool. No two workers write
+    the same file: every array is its own directory in the DirectoryStore, each
+    image goes to exactly one worker, and zarr writes every key to a temporary
+    file and renames it into place. The only shared writes are the scale
+    groups, handled by require_scale_group.
+
+    Only the filename and the time taken go back to the main process. An
+    exception here (e.g. a full disk) is raised again in the main process by
+    Pool.imap and fails the run.
     """
     filename, create_new, img_dir, zarr_fp = args
 
     print(f"Working on {filename}...", flush=True)
 
     t_start = time.perf_counter()
+
+    zg = open_zarr_with_retry(zarr_fp, mode="a")
 
     scales = {}
 
@@ -312,12 +334,9 @@ def create2D(args):
         cvim = cv2.imread(img_fp, cv2.IMREAD_GRAYSCALE)
         if cvim is None:
             raise Exception(f"{filename} is not an image file.")
-        # full-resolution level is written by the main process too
         scales["scale_1"] = cvim
     else:
-        # read-only handle: concurrent reads are safe and need no disk space
-        src = open_zarr_with_retry(zarr_fp, mode="r")
-        cvim = src["scale_1"][filename][:]
+        cvim = zg["scale_1"][filename][:]
 
     # keep downsampling by 2 until below MIN_DOWNSAMPLED_PIXELS
     h, w = cvim.shape
@@ -328,7 +347,14 @@ def create2D(args):
         exp += 1
         scales[f"scale_{2**exp}"] = cv2.resize(cvim, (w, h))
 
-    return filename, scales, time.perf_counter() - t_start
+    for scale_group, arr in scales.items():
+        group = require_scale_group(zg, scale_group)
+        # an array already there is left alone: when updating scales,
+        # scale_1 is the source and any existing level is kept
+        if filename not in group:
+            group.create_dataset(filename, data=arr)
+
+    return filename, time.perf_counter() - t_start
 
 
 if __name__ == "__main__":
@@ -358,25 +384,12 @@ if __name__ == "__main__":
     # fail fast if the target volume cannot hold the new scales
     check_disk_space(images)
 
-    # make the scale groups the first image needs; the write loop below adds
-    # any group a larger image needs
+    # make the scale groups the first image needs; a worker adds any group a
+    # larger image needs (see require_scale_group)
     ensure_scale_groups(zg, images)
 
     processes = max(1, min(cores, MAX_WORKERS))
     print(f"Converting with {processes} worker process(es)...", flush=True)
-
-    # This process is the sole zarr writer: it blosc-compresses every array as
-    # the workers hand it back. That compression is serial with respect to the
-    # imap loop, so pinning it to one thread (the import-time default) would make
-    # it the bottleneck on capable hardware. Give the writer up to `processes`
-    # blosc threads so it keeps pace with the workers. Workers stay single
-    # threaded -- the Pool initializer re-pins them -- so total CPU still tracks
-    # the chosen worker count rather than exploding to (workers x all cores).
-    try:
-        from numcodecs import blosc
-        blosc.set_nthreads(processes)
-    except Exception:
-        pass
 
     total = len(images)
     # machine-readable progress markers consumed by the converter window
@@ -396,17 +409,9 @@ if __name__ == "__main__":
     # spawn start method (Windows/macOS) is covered as well as fork.
     with Pool(processes, initializer=_limit_worker_threads) as p:
 
-        # imap (ordered) + main-as-sole-writer => deterministic, race-free writes
-        for filename, scales, duration in p.imap(create2D, args):
-
-            for scale_group, arr in scales.items():
-                # the up-front groups come from the first image only, so a
-                # larger image can need a scale none of the others had
-                if scale_group not in zg:
-                    zg.create_group(scale_group)
-                if filename not in zg[scale_group]:
-                    zg[scale_group].create_dataset(filename, data=arr)
-
+        # workers write their own arrays; imap (ordered) reports them here in
+        # input order and re-raises a worker's exception
+        for filename, duration in p.imap(create2D, args):
             done += 1
             print(f"Time for conversion {filename}: {round(duration, 2)} s", flush=True)
             print(f"@@PROGRESS@@ STEP {done} {total}", flush=True)
