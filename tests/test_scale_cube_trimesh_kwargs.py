@@ -2,6 +2,7 @@
 
 `convert_vedo_to_tm` built the cube with `prcess=False`. Trimesh swallows
 unknown keywords, so the typo did nothing and the mesh was processed anyway.
+The keyword is dropped, not corrected, so the mesh is still processed.
 """
 import inspect
 from types import SimpleNamespace
@@ -59,4 +60,13 @@ def test_scale_cube_passes_only_trimesh_keywords(monkeypatch):
     params = inspect.signature(real.__init__).parameters
     unknown = set(seen) - set(params)
     assert not unknown
-    assert seen["process"] is False
+    assert "process" not in seen
+
+
+def test_scale_cube_hull_matches_processed_hull_with_near_duplicate_corner():
+    near = np.vstack([POINTS, CUBE[7] + 1e-9])
+    expected = trimesh.Trimesh(vertices=near).convex_hull
+    hull = convert_vedo_to_tm(_scale_cube(near))
+    assert np.array_equal(hull.vertices, expected.vertices)
+    assert np.array_equal(hull.faces, expected.faces)
+    assert len(hull.vertices) == 8
