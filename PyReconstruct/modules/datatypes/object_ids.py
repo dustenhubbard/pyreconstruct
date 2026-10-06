@@ -25,6 +25,7 @@ the only thing that can bring a dead id back, does not outlive the session.
 """
 
 import itertools
+from typing import Optional
 
 
 class ObjectIds():
@@ -41,9 +42,21 @@ class ObjectIds():
         # name -> ids that lost their last trace without the object being
         # deleted (see drop); still visible, and taken back by the name
         self.parked : dict[str, set[int]] = {}
-        # name -> ids an undo just parked again; the object delete the same
-        # step saves leaves them parked (see restoreParked, endStep)
-        self._kept : dict[str, set[int]] = {}
+        # Undo of parking. Each undoable step keeps a list of the parking
+        # changes it made, (kind, name, id, section) with kind "park",
+        # "release" or "take"; undo applies the inverse of that list and
+        # redo applies it again, so no other step's parking is touched.
+        # journal: the list of the step being recorded, or None
+        self.journal : Optional[list] = None
+        # the section being saved, for the changes it makes
+        self.context_snum = None
+        # > 0 while a change belongs to no step (a refresh, an unlogged
+        # update, a section delete): nothing undoes it, as nothing undoes
+        # those in the app
+        self._outside = 0
+        # the undo or redo being applied: its list, its direction, and the
+        # changes its own restore made, which it replaces (see beginUndo)
+        self._undoing : Optional[dict] = None
         # name -> {live id: how many sections it is placed on}
         self._live : dict[str, dict[int, int]] = {}
         # ids a reader (HostTree) built something from, and a counter that
@@ -114,12 +127,20 @@ class ObjectIds():
         oids |= self.parked.get(name, set())
         return oids
 
-    def _unpark(self, name : str, oid : int):
+    def _record(self, kind : str, name : str, oid : int, snum=None):
+        change = (kind, name, oid, self.context_snum if snum is None else snum)
+        if self._undoing is not None:
+            self._undoing["natural"].append(change)
+        elif not self._outside and self.journal is not None:
+            self.journal.append(change)
+
+    def _unpark(self, name : str, oid : int, snum=None):
         held = self.parked.get(name)
         if held and oid in held:
             held.discard(oid)
             if not held:
                 del self.parked[name]
+            self._record("take", name, oid, snum)
 
     def ensure(self, snum : int, name : str) -> int:
         """The id of the name's traces on the section, giving it one if it
@@ -138,7 +159,7 @@ class ObjectIds():
         elif name in self.parked:
             # parked to live: it stays visible
             oid = max(self.parked[name])
-            self._unpark(name, oid)
+            self._unpark(name, oid, snum)
         else:
             oid = self._new(name)
         self._attach(snum, name, oid)
@@ -159,7 +180,7 @@ class ObjectIds():
         self._detach(snum, name)
         if self.unplaced.get(name) == oid:
             del self.unplaced[name]
-        self._unpark(name, oid)
+        self._unpark(name, oid, snum)
         self._attach(snum, name, oid)
         self._settle(before)
 
@@ -182,6 +203,7 @@ class ObjectIds():
         self._detach(snum, name)
         if park and oid not in self._live.get(name, ()):
             self.parked.setdefault(name, set()).add(oid)
+            self._record("park", name, oid, snum)
         self._settle(before)
 
     def reserve(self, name : str) -> int:
@@ -199,72 +221,99 @@ class ObjectIds():
 
     def release(self, name : str):
         """The object under the name was deleted: its reserved and parked ids
-        go out of sight, except those the undo now being saved just parked
-        again (restoreParked). Its live ids, if any, are untouched."""
+        go out of sight. Its live ids, if any, are untouched."""
         parked = self.parked.pop(name, set())
-        kept = parked & self._kept.get(name, set())
-        if kept:
-            self.parked[name] = kept
-        before = {oid: True for oid in parked - kept}
+        for oid in sorted(parked):
+            self._record("release", name, oid)
+        before = {oid: True for oid in parked}
         oid = self.unplaced.pop(name, None)
         if oid is not None:
             before[oid] = True
         self._settle(before)
 
-    def heldParked(self, names=None) -> dict:
-        """A copy of the parked ids, for undo: name -> frozenset of ids.
+    # -- undo of parking ------------------------------------------------------ #
+    def beginStep(self, journal : list):
+        """Record the parking changes from here on in this step's list."""
+        self.finishUndo()
+        self.journal = journal
+
+    def outside(self):
+        """A context in which parking changes belong to no step."""
+        ids = self
+
+        class _Outside:
+            def __enter__(self):
+                ids._outside += 1
+
+            def __exit__(self, *exc):
+                ids._outside -= 1
+                return False
+
+        return _Outside()
+
+    def beginUndo(self, journal : list, undo : bool, on_save : bool):
+        """An undo (or redo) of the step whose list this is starts. The
+        parking changes its restore makes on the way are set aside, and
+        finishUndo applies the step's own list in their place.
 
             Params:
-                names: the names to copy, or None for every name
+                journal (list): the step's parking changes
+                undo (bool): True to undo them, False to redo them
+                on_save (bool): True if the next save of a section ends it
+                    (a section undo: the series data catches up then)
         """
-        if names is None:
-            return {name: frozenset(held) for name, held in self.parked.items()}
-        return {
-            name: frozenset(self.parked[name]) for name in names
-            if name in self.parked
+        self.finishUndo()
+        self.journal = None
+        self._undoing = {
+            "journal": list(journal), "undo": undo, "on_save": on_save,
+            "natural": [],
         }
 
-    def restoreParked(self, held : dict, names=None, keep=False):
-        """Put the parked ids back as heldParked copied them. An id that has
-        traces now stays live; an id parked now that the copy does not hold
-        goes out of sight.
+    def finishUndo(self, on_save : bool = False):
+        """End the undo or redo begun by beginUndo, if any.
 
             Params:
-                held (dict): what heldParked returned
-                names: the names to restore, or None for every name
-                keep (bool): True for a section undo: the save that follows
-                    it deletes an object the undo emptied, and that delete
-                    must not release what the undo just parked again
+                on_save (bool): True when called from a section save; only
+                    an undo begun with on_save ends there
         """
-        if names is None:
-            names = set(held) | set(self.parked)
-        before = {}
-        for name in names:
-            live = self._live.get(name, {})
-            current = self.parked.get(name, set())
-            target = {oid for oid in held.get(name, ()) if oid not in live}
-            if target == current:
-                continue
-            for oid in current | target:
-                before[oid] = self.visible(oid)
-            if target:
-                self.parked[name] = set(target)
-            else:
-                self.parked.pop(name, None)
-        if keep:
-            for name in names:
-                if name in self.parked:
-                    self._kept[name] = set(self.parked[name])
+        undoing = self._undoing
+        if undoing is None or (on_save and not undoing["on_save"]):
+            return
+        self._undoing = None
+        before : dict = {}
+        for change in reversed(undoing["natural"]):
+            self._apply(change, True, before)
+        changes = undoing["journal"]
+        if undoing["undo"]:
+            for change in reversed(changes):
+                self._apply(change, True, before)
+        else:
+            for change in changes:
+                self._apply(change, False, before)
         self._settle(before)
 
-    def endStep(self):
-        """The series data has caught up with the step (SeriesData)."""
-        self._kept.clear()
+    def _apply(self, change, inverse : bool, before : dict):
+        """Make one parking change again, or its inverse. "park" parks an
+        id, "release" and "take" take it out of parking; an id with traces
+        is never parked."""
+        kind, name, oid = change[:3]
+        if oid not in before:
+            before[oid] = self.visible(oid)
+        if (kind == "park") != inverse:
+            if oid not in self._live.get(name, ()):
+                self.parked.setdefault(name, set()).add(oid)
+        else:
+            held = self.parked.get(name)
+            if held and oid in held:
+                held.discard(oid)
+                if not held:
+                    del self.parked[name]
 
     def dropSection(self, snum : int):
         """The section was deleted: its traces' ids lose that placement."""
-        for key in [k for k in self.placed if k[0] == snum]:
-            self.drop(*key, park=True)
+        with self.outside():
+            for key in [k for k in self.placed if k[0] == snum]:
+                self.drop(*key, park=True)
 
     def renumber(self, mapping : dict):
         """Move each placement to its section's new number.
@@ -306,7 +355,8 @@ class ObjectIds():
                 present: the (section number, name) pairs that have traces
         """
         present = set(present)
-        for snum, name in sorted(present - self.placed.keys()):
-            self.ensure(snum, name)
-        for key in [k for k in self.placed if k not in present]:
-            self.drop(*key, park=True)
+        with self.outside():
+            for snum, name in sorted(present - self.placed.keys()):
+                self.ensure(snum, name)
+            for key in [k for k in self.placed if k not in present]:
+                self.drop(*key, park=True)

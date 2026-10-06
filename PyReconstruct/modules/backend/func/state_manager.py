@@ -61,9 +61,9 @@ class FieldState():
         # name -> object id, for each contour held here that has traces
         # (captureObjectIds); undo and redo put these back
         self.oids = {}
-        # name -> the ids parked under it before this state's action
-        # (ObjectIds.heldParked); its undo puts them back
-        self.parked = {}
+        # the parking changes this state's action made (ObjectIds.journal);
+        # its undo applies their inverse, its redo applies them again
+        self.parked_journal = []
         if updated_contours is None:
             if contours is None:
                 updated_contours = []
@@ -161,7 +161,7 @@ class FieldState():
         c = FieldState(self.contours, self.ztraces, self.tforms, self.flags, self.contours_fp)
         c.obj_snapshot = deepcopy(self.obj_snapshot)
         c.oids = dict(self.oids)
-        c.parked = dict(getattr(self, "parked", {}))
+        c.parked_journal = list(getattr(self, "parked_journal", []))
         c.group_viz = dict(self.group_viz)
         c.undo_group_viz = dict(self.undo_group_viz)
         return c
@@ -529,12 +529,12 @@ class SectionStates():
             updated_ztraces
         )
         self.current_state.obj_snapshot = objectSnapshot(series, updated_contours)
-        # taken before anything below or the series data sees the action:
-        # a draw takes back a parked id (ObjectIds.ensure), and an object
-        # delete releases the ids parked under its name (removeObject)
+        # this action's parking changes go on its own list from here: a draw
+        # takes back a parked id (ObjectIds.ensure) below, and the series
+        # data, which sees the action next, may park or release ids
         ids = _objectIds(series)
-        if ids is not None and hasattr(ids, "heldParked"):
-            self.current_state.parked = ids.heldParked(updated_contours)
+        if ids is not None and hasattr(ids, "beginStep"):
+            ids.beginStep(self.current_state.parked_journal)
         self.current_state.oids = captureObjectIds(
             series, section, updated_contours, assign=True
         )
@@ -733,12 +733,6 @@ class SectionStates():
                     section.contours[contour] = Contour(contour)
 
         restoreObjectIds(series, section, modified_contours, restored_oids)
-        ids = _objectIds(series)
-        if ids is not None and hasattr(ids, "restoreParked"):
-            ids.restoreParked(
-                getattr(self.current_state, "parked", {}), modified_contours,
-                keep=True,
-            )
 
         recreated = [
             n for n in modified_contours
@@ -866,6 +860,8 @@ class SeriesState():
         # section number : the section's mag before this state's action.
         # Populated only by a magnification change (FieldWidget.setMag).
         self.mags = {}
+        # the parking changes the action made (ObjectIds.journal)
+        self.parked_journal = []
 
     def recordMag(self, snum : int, mag : float):
         """Store a section's mag as it was before the action.
@@ -1009,14 +1005,6 @@ class SeriesState():
 
         host_tree = series.host_tree.copy()
 
-        # which ids are parked goes with the host links: a parked object
-        # keeps its links on screen (ObjectIds.drop)
-        ids = _objectIds(series)
-        parked_ids = (
-            ids.heldParked() if ids is not None and hasattr(ids, "heldParked")
-            else None
-        )
-
         # kept only to give a group the undo brings back the visibility it had:
         # removing the last object from a group deletes its entry, and the
         # Groups menu lists groups from these keys
@@ -1033,7 +1021,6 @@ class SeriesState():
             "user_columns": user_columns,
             "object_columns": object_columns,
             "host_tree": host_tree,
-            "parked_ids": parked_ids,
             "groups_visibility": groups_visibility,
         }
     
@@ -1060,11 +1047,6 @@ class SeriesState():
                 continue  # only replace obj columns under specific circumstances (below)
             if attr == "groups_visibility":
                 continue  # only fills in missing entries (below)
-            if attr == "parked_ids":
-                ids = _objectIds(series)
-                if value is not None and ids is not None:
-                    ids.restoreParked(value)
-                continue
             setattr(series, attr, value)
 
         # a group the step brings back gets the visibility it had when the
@@ -1174,6 +1156,9 @@ class SeriesStates():
         for states in self.section_states_dict.values():
             states.redo_states = []
         new_state = SeriesState(breakable)
+        ids = _objectIds(self.series)
+        if ids is not None and hasattr(ids, "beginStep"):
+            ids.beginStep(new_state.parked_journal)
         new_state.resetSeriesAttributes(self.series)
         self.undos.append(new_state)
     
@@ -1236,12 +1221,19 @@ class SeriesStates():
                 self.series, names, self.undos[-1].series_attrs
             ))
 
-        # the same for the parked ids: the save already released any the
-        # action's object delete took
-        before = self.undos[-1].series_attrs.get("parked_ids")
-        if before is not None:
-            modified = state.getModifiedContours()
-            state.parked = {n: v for n, v in before.items() if n in modified}
+        # the section's parking changes were made by the series action, on
+        # its list (its saves came before this state); this state keeps a
+        # copy of them for an undo of this section alone, and the series
+        # action goes on recording on its own list
+        series_state = self.undos[-1]
+        own = getattr(state, "parked_journal", [])
+        series_state.parked_journal.extend(own)
+        state.parked_journal = [
+            change for change in series_state.parked_journal if change[3] == snum
+        ]
+        ids = _objectIds(self.series)
+        if ids is not None and hasattr(ids, "beginStep"):
+            ids.journal = series_state.parked_journal
 
     def clear(self):
         """Clear all state tracking."""
@@ -1346,6 +1338,14 @@ class SeriesStates():
         
         state = self.redos[-1] if redo else self.undos[-1]
 
+        # the parking changes the sections' restores make on the way are set
+        # aside; the action's own changes are undone or redone at the end
+        ids = _objectIds(self.series)
+        if ids is not None and hasattr(ids, "beginUndo"):
+            ids.beginUndo(
+                getattr(state, "parked_journal", []), undo=not redo, on_save=False
+            )
+
         # what the opposite step puts back, captured before any section is
         # restored: restoring a section can delete an object (undoing a partial
         # rename deletes the new one), and that clears its attributes, groups
@@ -1377,6 +1377,8 @@ class SeriesStates():
         
         # undo/redo the series attributes
         state.applySeriesAttributes(self.series, pre_series_attrs)
+        if ids is not None and hasattr(ids, "finishUndo"):
+            ids.finishUndo()
 
         # move the state accordingly, stamped as it goes onto the other stack
         # the way SectionStates stamps its states: favor3D compares these
@@ -1416,6 +1418,19 @@ class SeriesStates():
                 else:
                     return # do not continue if state is unbreakable
                 
+        # the step's parking changes are undone or redone once the section's
+        # data has caught up (SeriesData.updateSection)
+        states = self.section_states_dict[section.n]
+        target = (
+            (states.redo_states[-1] if states.redo_states else None) if redo
+            else (states.current_state if states.undo_states else None)
+        )
+        ids = _objectIds(self.series)
+        if target is not None and ids is not None and hasattr(ids, "beginUndo"):
+            ids.beginUndo(
+                getattr(target, "parked_journal", []), undo=not redo, on_save=True
+            )
+
         if redo:
             self.section_states_dict[section.n].redoState(section, self.series)
         else:

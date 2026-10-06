@@ -154,6 +154,36 @@ def test_undo_and_redo_of_an_import_keep_the_links(series, tmp_path, emptied):
     assert saved_links(series, tmp_path / "undo-again.jser") == SAVED_BEFORE
 
 
+@pytest.mark.parametrize("how", ["unlogged update", "refresh"])
+def test_undo_of_an_earlier_action_keeps_links_kept_since(series, tmp_path, how):
+    """A group change from the object list, then H loses its traces with no
+    undoable step (an unlogged update or a refresh). Undoing the group
+    change leaves H's link alone."""
+    from PyReconstruct.modules.backend.func.state_manager import SeriesStates
+
+    where = setup(series)
+    states = SeriesStates(series)
+    states.addState()
+    series.object_groups.add(group="kl_group", obj=T)
+
+    section = series.loadSection(where[H])
+    for trace in list(section.contours[H]):
+        section.removeTrace(trace)
+    del section.contours[H]
+    section.save(update_series_data=False)
+    if how == "refresh":
+        series.data.refresh()
+    else:
+        series.data.updateSection(section, update_traces=True, log_events=False)
+    assert H not in series.data["objects"]
+    assert saved_links(series, tmp_path / "emptied.jser") == SAVED_BEFORE
+
+    series.current_section = where[T]
+    states.undoState()
+    assert series.object_groups.getObjectGroups(T) == set()
+    assert saved_links(series, tmp_path / "undone.jser") == SAVED_BEFORE
+
+
 def test_an_object_delete_still_takes_its_links_out_of_the_file(series, tmp_path):
     setup(series)
     series.deleteObjects([H])

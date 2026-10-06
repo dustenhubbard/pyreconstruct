@@ -306,6 +306,48 @@ def test_undo_brings_back_the_links_of_a_parked_object(
     assert _hosts(window) == [H]
 
 
+def test_undo_on_one_section_keeps_a_link_an_import_kept_on_another(window):
+    """Old H back beside a replacement H on s3; the replacement is moved;
+    an import empties old H on s1 and keeps its link; V is drawn on s1, so
+    the import cannot be undone whole. Undoing the move on s3 leaves old
+    H's link alone."""
+    from PyReconstruct.modules.datatypes.section import Section
+
+    series = window.series
+    s1, s2, s3, _ = _delete_both_and_replace(window, host_first=False)
+    _undo_on(window, s2)
+    _undo_on(window, s1)
+    assert _hosts(window) == [H]
+
+    window.changeSection(s3)
+    window.field.section.selected_traces = _traces(window, H)
+    window.field.translate(1.0, 1.0)
+
+    def empty_on_s1(section, other, *args, **kwargs):
+        if section.n == s1 and H in section.contours:
+            for trace in list(section.contours[H]):
+                section.removeTrace(trace)
+            del section.contours[H]
+        section.save()
+
+    window.saveAllData()
+    original = Section.importTraces
+    Section.importTraces = empty_on_s1
+    try:
+        series.importTraces(
+            series, import_obj_attrs=False, series_states=window.field.series_states
+        )
+    finally:
+        Section.importTraces = original
+    window.field.reload()
+    assert s1 not in series.data["objects"][H].traces
+    assert _hosts(window) == [H]
+
+    _draw_on(window, s1, SPARE)
+    _undo_on(window, s3)
+    assert _hosts(window) == [H]
+
+
 # --------------------------------------------------------------------------- #
 # save
 # --------------------------------------------------------------------------- #
