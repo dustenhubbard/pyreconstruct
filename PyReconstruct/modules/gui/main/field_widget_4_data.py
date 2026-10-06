@@ -22,7 +22,9 @@ from PyReconstruct.modules.gui.utils import (
     getProgbar,
 )
 
-from PyReconstruct.modules.backend.func.state_manager import FieldState, nextStamp
+from PyReconstruct.modules.backend.func.state_manager import (
+    FieldState, nextStamp, captureObjectIds
+)
 
 from .field_widget_3_object import FieldWidgetObject
 
@@ -543,6 +545,9 @@ class FieldWidgetData(FieldWidgetObject):
                 section.flags,
                 contours_fp,
                 src_fp=section.filepath if contours_fp else None,
+            )
+            section_states.current_state.oids = captureObjectIds(
+                self.series, section, section.contours
             )
             mag_states.append(section_states.current_state)
             self.series_states.addSectionUndo(snum)

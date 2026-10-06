@@ -58,6 +58,9 @@ class FieldState():
         self.contours_fp = contours_fp
         # object attributes and groups to restore on redo (objectSnapshot)
         self.obj_snapshot = {}
+        # name -> object id, for each contour held here that has traces
+        # (captureObjectIds); undo and redo put these back
+        self.oids = {}
         if updated_contours is None:
             if contours is None:
                 updated_contours = []
@@ -154,6 +157,7 @@ class FieldState():
     def copy(self):
         c = FieldState(self.contours, self.ztraces, self.tforms, self.flags, self.contours_fp)
         c.obj_snapshot = deepcopy(self.obj_snapshot)
+        c.oids = dict(self.oids)
         c.group_viz = dict(self.group_viz)
         c.undo_group_viz = dict(self.undo_group_viz)
         return c
@@ -235,6 +239,60 @@ class FieldState():
     
     def updateTime(self):
         self.time = nextStamp()  # keep track of when it was added to a state list
+
+def _objectIds(series : Series):
+    """The series' object id registry (datatypes/object_ids.py), or None
+    for a stand-in series that has none."""
+    return getattr(getattr(series, "data", None), "object_ids", None)
+
+def captureObjectIds(series : Series, section : Section, names, assign=False) -> dict:
+    """The object id of each named contour with traces on the section.
+
+        Params:
+            series (Series): the series
+            section (Section): the section
+            names: the contour names to capture
+            assign (bool): True to give an id to a contour that has none yet
+                (an action just drew it, and the series data has not caught
+                up); False to only read the ids
+        Returns:
+            (dict): name -> object id
+    """
+    ids = _objectIds(series)
+    if ids is None:
+        return {}
+    oids = {}
+    for name in names:
+        if not len(section.contours.get(name, ())):
+            continue
+        oid = ids.ensure(section.n, name) if assign else ids.peek(section.n, name)
+        if oid is not None:
+            oids[name] = oid
+    return oids
+
+def restoreObjectIds(series : Series, section : Section, names, oids : dict):
+    """Put back the object id each restored contour had in the state it
+    came from. A contour the state holds no id for takes one by the usual
+    rule (ObjectIds.ensure); a contour left empty has none.
+
+        Params:
+            series (Series): the series
+            section (Section): the section just restored
+            names: the names of the restored contours
+            oids (dict): name -> the id the state recorded
+    """
+    ids = _objectIds(series)
+    if ids is None:
+        return
+    for name in names:
+        if not len(section.contours.get(name, ())):
+            ids.drop(section.n, name)
+            continue
+        oid = oids.get(name)
+        if oid is not None and ids.name_of.get(oid) == name:
+            ids.place(section.n, name, oid)
+        else:
+            ids.ensure(section.n, name)
 
 def objectSnapshot(series : Series, names, before : dict = None) -> dict:
     """What an undo step must bring back with an object it recreates.
@@ -502,6 +560,9 @@ class SectionStates():
             contours_fp,
             src_fp=(section.filepath if section_clean else None)
         )
+        self.current_state.oids = captureObjectIds(
+            series, section, section.contours
+        )
         self.initialized = True
     
     def addState(self, section : Section, series : Series):
@@ -530,6 +591,9 @@ class SectionStates():
             updated_ztraces
         )
         self.current_state.obj_snapshot = objectSnapshot(series, updated_contours)
+        self.current_state.oids = captureObjectIds(
+            series, section, updated_contours, assign=True
+        )
         
     def dropStatesAfter(self, count : int):
         """Drop the undo states pushed after the first `count`.
@@ -672,6 +736,7 @@ class SectionStates():
             # restore contours
             modified_contours = self.current_state.getModifiedContours()
             section.contours = state.getContours()
+            restored_oids = getattr(state, "oids", {})
             # restore ztraces
             modified_ztraces = self.current_state.getModifiedZtraces()
             for zname in modified_ztraces:
@@ -696,12 +761,17 @@ class SectionStates():
             last_changed_ztraces = self.current_state.getModifiedZtraces().copy()
             modified_contours = last_changed_contours.copy()
             modified_ztraces = last_changed_ztraces.copy()
+            # each contour's id comes from the state its traces come from
+            restored_oids = {}
             for state in reversed(self.undo_states):
                 state_contours = state.getContours()
                 state_ztraces = state.getZtraces()
                 for contour in last_changed_contours.copy():
                     if contour in state_contours:
                         section.contours[contour] = state_contours[contour]
+                        state_oids = getattr(state, "oids", {})
+                        if contour in state_oids:
+                            restored_oids[contour] = state_oids[contour]
                         last_changed_contours.remove(contour)
                 for ztrace in last_changed_ztraces.copy():
                     if ztrace in state_ztraces:
@@ -717,6 +787,8 @@ class SectionStates():
             if last_changed_contours:
                 for contour in last_changed_contours:
                     section.contours[contour] = Contour(contour)
+
+        restoreObjectIds(series, section, modified_contours, restored_oids)
 
         recreated = [
             n for n in modified_contours
@@ -747,6 +819,9 @@ class SectionStates():
         existed = {n for n in state_contours if n in series.data["objects"]}
         for contour_name in state_contours:
             section.contours[contour_name] = state_contours[contour_name]
+        restoreObjectIds(
+            series, section, state_contours, getattr(redo_state, "oids", {})
+        )
         # objects this redo brings back from nothing get their attributes and
         # groups back too (see objectSnapshot)
         recreated = [

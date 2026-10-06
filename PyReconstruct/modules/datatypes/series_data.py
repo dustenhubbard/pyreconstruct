@@ -6,6 +6,7 @@ from typing import Union
 from PyReconstruct.modules.calc import traceGeometry
 
 from .columnar_store import TraceView
+from .object_ids import ObjectIds
 from .section import Section
 from .transform import Transform
 from .trace import Trace
@@ -196,6 +197,8 @@ class SeriesData():
             "objects": {},
         }
         self.supress_logging = False
+        # in-memory object ids, kept in step with the traces below
+        self.object_ids = ObjectIds()
     
     def __getitem__(self, index):
         """Allow direct indexing of data dictionary."""
@@ -233,6 +236,14 @@ class SeriesData():
         for snum, section in self.series.enumerateSections(eta=False):
 
             self.updateSection(section, update_traces=True, log_events=False, read_store=True)
+
+        # the ids carry over: a name keeps its id across a refresh, including
+        # on a section that was renumbered
+        self.object_ids.reconcile(
+            (snum, name)
+            for name, obj_data in self.data["objects"].items()
+            for snum in obj_data.traces
+        )
     
     def updateSection(self, section : Section, update_traces=False, all_traces=True, log_events=True, read_store=False):
         """Update the existing section data.
@@ -320,6 +331,15 @@ class SeriesData():
                     if obj_data.isEmpty():
                         del(self.data["objects"][name])
                         removed_objects.add(name)
+
+            ## Keep the object ids in step (object_ids.py)
+            ids = self.object_ids
+            for name in trace_names:
+                obj_data = self.data["objects"].get(name)
+                if obj_data is not None and section.n in obj_data.traces:
+                    ids.ensure(section.n, name)
+                else:
+                    ids.drop(section.n, name)
             
             ## Log newly created/destroyed objects
             if log_events and not self.supress_logging:
