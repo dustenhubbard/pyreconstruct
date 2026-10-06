@@ -130,6 +130,8 @@ _WINDOWS_RESERVED = {
     "CON", "PRN", "AUX", "NUL",
     *(f"COM{i}" for i in range(1, 10)),
     *(f"LPT{i}" for i in range(1, 10)),
+    # Windows also reserves COM and LPT with a superscript 1, 2, or 3
+    *(f"{name}{digit}" for name in ("COM", "LPT") for digit in "\u00b9\u00b2\u00b3"),
 }
 
 

@@ -526,4 +526,4 @@ jobs:
       - name: Swap engine tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: uv run --frozen --no-default-groups --extra test python -m pytest -ra tests/test_updater_apply.py tests/test_run_apply_dispatch.py
+        run: uv run --frozen --no-default-groups --extra test python -m pytest -ra tests/test_updater_apply.py tests/test_run_apply_dispatch.py tests/test_update_staging.py

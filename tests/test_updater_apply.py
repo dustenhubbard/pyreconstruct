@@ -1041,6 +1041,13 @@ def test_refuses_windows_device_names_in_a_windows_tree(win):
     _refused(win, "unsafe path")
 
 
+@pytest.mark.parametrize("name", ["COM\u00b9.txt", "com\u00b2", "LPT\u00b3.log", "lpt\u00b9"])
+def test_superscript_device_names_are_unsafe_on_windows(name):
+    with pytest.raises(A.Refused, match="unsafe path"):
+        A.safe_parts(f"_internal/{name}", windows=True)
+    assert A.safe_parts(f"_internal/{name}") == ["_internal", name]
+
+
 def test_refuses_names_that_are_one_file_on_windows_and_macos(win):
     entry = dict(next(e for e in win.tree["files"] if e["path"] == "version.txt"))
     entry["path"] = "VERSION.txt"
