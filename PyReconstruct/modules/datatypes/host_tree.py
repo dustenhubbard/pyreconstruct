@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 
 from .filters import passesFilters
 from .object_ids import ObjectIds
@@ -35,7 +36,7 @@ class HostTree():
         for obj_name, hosts in host_dict.items():
             self.add(obj_name, hosts)
 
-    def _reset(self, edges : set, members : set, order : dict = None):
+    def _reset(self, edges : set, members : set, order : Optional[dict] = None):
         # names in the order the tree has always listed them: added by
         # add() (the object, then its hosts), dropped by removeObject, and
         # moved to the end by a rename. Reads that walk the tree by name
