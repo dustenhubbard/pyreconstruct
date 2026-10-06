@@ -297,23 +297,86 @@ def mergeCellSize(field_traces : list, mag : float) -> float:
     return cell
 
 
+def _traceShape(trace : list):
+    """The shapely geometry a closed trace covers, for the overlap test."""
+    from shapely import make_valid
+    from shapely.geometry import LineString, Point, Polygon
+
+    points = [tuple(p) for p in trace]
+    if len(set(points)) >= 3:
+        return make_valid(Polygon(points))
+    if len(set(points)) == 2:
+        return LineString(points)
+    if points:
+        return Point(points[0])
+    return Point()
+
+
+def mergeGroups(field_traces : list) -> list:
+    """Split the traces into groups that touch, overlap or nest.
+
+        Params:
+            field_traces (list): the traces to merge, points in field units
+        Returns:
+            (list): lists of indices into field_traces, one per group, in the
+                order each group's first trace appears
+    """
+    from shapely import STRtree
+
+    shapes = [_traceShape(trace) for trace in field_traces]
+    parent = list(range(len(shapes)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    if shapes:
+        left, right = STRtree(shapes).query(shapes, predicate="intersects")
+        for i, j in zip(left.tolist(), right.tolist()):
+            ri, rj = find(i), find(j)
+            if ri != rj:
+                parent[max(ri, rj)] = min(ri, rj)
+
+    groups = {}
+    for i in range(len(shapes)):
+        groups.setdefault(find(i), []).append(i)
+    return list(groups.values())
+
+
 def mergeTracesInField(field_traces : list, mag : float) -> list:
     """Merge closed traces given in field units, at a resolution set by the
     image rather than the screen.
+
+    Traces that do not touch are merged apart, each group on a grid sized to
+    that group alone. One shared grid sized to the whole selection let a long
+    trace coarsen the cells until a small separate trace rounded onto a single
+    grid point and vanished from the result.
 
         Params:
             field_traces (list): the traces to merge, points in field units
             mag (float): the section magnification, field units per image pixel
         Returns:
-            (list): the merged trace(s), points in field units
+            (list): the merged trace(s), points in field units; empty if any
+                group of traces leaves no outline, so a caller that keeps its
+                traces on an empty result never loses one the result left out
     """
-    cell = mergeCellSize(field_traces, mag)
-    grid_traces = [
-        [(int(round(x / cell)), int(round(y / cell))) for x, y in trace]
-        for trace in field_traces
-    ]
-    merged = mergeTraces(grid_traces)
-    return [[(x * cell, y * cell) for x, y in trace] for trace in merged]
+    result = []
+    for group in mergeGroups(field_traces):
+        traces = [field_traces[i] for i in group]
+        cell = mergeCellSize(traces, mag)
+        grid_traces = [
+            [(int(round(x / cell)), int(round(y / cell))) for x, y in trace]
+            for trace in traces
+        ]
+        merged = mergeTraces(grid_traces)
+        # a speck straddling a cell edge comes back as a two-point line,
+        # which is no closed outline either
+        if not any(len(trace) >= 3 for trace in merged):
+            return []
+        result += [[(x * cell, y * cell) for x, y in trace] for trace in merged]
+    return result
 
 
 def cutTraces(trace_list, cut_trace, del_threshold=0.0, closed=True):
