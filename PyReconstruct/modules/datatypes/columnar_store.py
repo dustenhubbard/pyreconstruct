@@ -2,8 +2,8 @@ r"""A columnar store for one section's traces, behind the Qt-free core seam.
 
 Phase 1 of the columnar-sections work. This module is a **parallel
 representation of the traces, and it has readers but does not supply the saved
-geometry**. Every loaded `Section` carries a `SectionColumns` as `section._columns`, and
-`Trace`/`Contour`/`Section` are unchanged. `self.contours` is still what gets
+geometry**. Every loaded `Section` carries a `SectionColumns` as
+`section._columns`, and `Trace`/`Contour`/`Section` are unchanged. `self.contours` is still what gets
 saved: the contours give the saved geometry, so no byte of any `.jser`
 changes, and with keyed rows on `Section.getDict` takes the persisted trace ids
 from the store. `Section` also reads the store to carry ids across a rebuild,
