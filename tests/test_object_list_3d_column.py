@@ -134,7 +134,10 @@ def _plotter(objs):
     plt = VPlotter.__new__(VPlotter)
     plt.objs = objs
     plt.selected = []
-    plt.series = SimpleNamespace(jser_fp=SERIES_FP, host_tree=None)
+    # the plotter reads its series off the main window
+    plt.mainwindow = SimpleNamespace(
+        series=SimpleNamespace(jser_fp=SERIES_FP, host_tree=None)
+    )
     plt.qt_parent = mock.Mock()
     plt.remove = lambda msh: None
     plt.add = lambda msh: None
