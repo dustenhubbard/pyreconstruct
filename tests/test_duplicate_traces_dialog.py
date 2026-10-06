@@ -396,7 +396,7 @@ def test_the_copied_table_carries_the_picked_names(qtbot):
 
 def test_the_heading_explains_the_pick_and_the_undo(qtbot):
     dialog = _dialog(qtbot, [_group(("A", 0), ("B", 0))], combine=_Combine())
-    heading = dialog.heading.text()
+    heading = dialog.help_icon.toolTip()
     assert "Pick the name to keep in each row." in heading
     assert "adds the tags of the other traces to it" in heading
     assert "Nothing changes until you combine" in heading

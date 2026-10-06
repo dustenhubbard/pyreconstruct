@@ -1,4 +1,7 @@
-"""The wording of the clean-up list headings and the Zarr converter window."""
+"""The wording of the clean-up list explanations and the Zarr converter window.
+
+The explanation is the tooltip of the `?` beside each list's one-line heading.
+"""
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
@@ -39,7 +42,7 @@ def _group():
 
 def _heading(qtbot, dialog):
     qtbot.addWidget(dialog)
-    return dialog.heading.text()
+    return dialog.help_icon.toolTip()
 
 
 def test_the_smoothing_list_says_why_a_trace_is_skipped(qtbot):
