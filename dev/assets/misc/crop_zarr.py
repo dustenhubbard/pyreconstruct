@@ -7,10 +7,15 @@ Run with no arguments to be asked for each value. Run with flags to skip the
 questions, for example from another program:
 
     python crop_zarr.py --jser series.jser --object dendrite_1 --radius 2
-        [--zarr images.zarr] [--out cropped.zarr]
+        [--zarr images.zarr] [--out cropped.zarr] [--overwrite]
 
 With flags, progress goes to stdout as the same "@@PROGRESS@@" lines the zarr
 converter prints, and errors exit nonzero before anything is written.
+
+The output must not be the source zarr, inside it, or a folder that holds it.
+An existing output is left alone: with flags the run stops unless --overwrite
+is given, and with no arguments the script asks first. A replaced output is
+removed whole, so no arrays from an earlier run are left in it.
 """
 
 import argparse
@@ -34,6 +39,16 @@ from PyReconstruct.modules.backend.progress import NullProgressReporter
 
 class CropError(Exception):
     """A problem with the inputs, found before anything is written."""
+
+
+class OutputExists(CropError):
+    """The output path already exists and replacing it was not asked for."""
+
+    def __init__(self, out_fp : str):
+        super().__init__(
+            f"The output already exists: {out_fp!r}. Pass --overwrite to replace it."
+        )
+        self.out_fp = out_fp
 
 
 def defaultOutput(src_dir : str, obj_name : str):
@@ -77,20 +92,68 @@ def openSource(src_dir : str):
     return src_group, scales
 
 
-def samePath(a : str, b : str):
-    """True if two paths name the same location."""
-    return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
+def isWithin(path : str, folder : str):
+    """True if path is folder or anywhere under it.
+
+    Symlinks in path are resolved first, and each of its folders is compared
+    with os.path.samefile, so a link, a different letter case on a
+    case-insensitive disk or another alias for folder still counts.
+    """
+    if not os.path.exists(folder):
+        return False
+    current = os.path.realpath(path)
+    while True:
+        if os.path.exists(current) and os.path.samefile(current, folder):
+            return True
+        parent = os.path.dirname(current)
+        if parent == current:
+            return False
+        current = parent
 
 
-def resolvePaths(series : Series, obj_name : str, src_dir : str = "", out_fp : str = ""):
-    """Check the source and output and return (out_fp, src_group, scales)."""
+def isZarr(path : str):
+    """True if path is a zarr directory (not a link to one)."""
+    return (
+        os.path.isdir(path)
+        and not os.path.islink(path)
+        and any(os.path.isfile(os.path.join(path, name)) for name in (".zgroup", ".zarray", "zarr.json"))
+    )
+
+
+def resolvePaths(series : Series, obj_name : str, src_dir : str = "", out_fp : str = "", overwrite : bool = False):
+    """Check the source and output and return (out_fp, src_group, scales).
+
+    Nothing is written here. With overwrite, an existing output is allowed
+    only if it is a zarr; replaceOutput removes it once every check passes.
+    """
     # use the override if given, otherwise the location stored in the series
     src_dir = (src_dir or series.src_dir).rstrip("/\\")  # normalize trailing separators
     out_fp = out_fp.rstrip("/\\") if out_fp else defaultOutput(src_dir, obj_name)
-    if samePath(out_fp, src_dir):
-        raise CropError(f"The output path is the source zarr: {out_fp!r}")
     src_group, scales = openSource(src_dir)
+
+    # writing inside the source would change it, and replacing a folder
+    # that holds the source would delete it
+    if isWithin(out_fp, src_dir):
+        raise CropError(f"The output path is the source zarr or inside it: {out_fp!r}")
+    if isWithin(src_dir, out_fp):
+        raise CropError(f"The output path holds the source zarr: {out_fp!r}")
+
+    if os.path.lexists(out_fp):
+        if not overwrite:
+            raise OutputExists(out_fp)
+        if not isZarr(out_fp):
+            raise CropError(f"The output path exists and is not a zarr, so it is not replaced: {out_fp!r}")
     return out_fp, src_group, scales
+
+
+def replaceOutput(out_fp : str):
+    """Remove an existing output zarr so the crop starts from an empty store.
+
+    Only a zarr directory is removed; resolvePaths has already refused
+    anything else, and an output that overlaps the source.
+    """
+    if isZarr(out_fp):
+        shutil.rmtree(out_fp)
 
 
 def checkObject(series : Series, obj_name : str):
@@ -103,6 +166,33 @@ def checkObject(series : Series, obj_name : str):
     if matches:
         message += " Close matches: " + ", ".join(matches)
     raise CropError(message)
+
+
+def pixelWindow(bounds : tuple, radius : float, mag : float, shape : tuple):
+    """Return the (top, bottom, left, right) pixel rows and columns to keep.
+
+        Params:
+            bounds (tuple): (xmin, ymin, xmax, ymax) in microns, y up from the
+                bottom of the image
+            radius (float): microns to add on every side
+            mag (float): microns per pixel at this scale level
+            shape (tuple): the image (rows, columns)
+        Returns:
+            (tuple): top, bottom, left, right, each clamped to the image, so a
+                window wholly outside it is empty rather than wrapping around
+                from the far edge as a negative index would
+    """
+    xmin, ymin, xmax, ymax = bounds
+    height, width = shape[0], shape[1]
+
+    def clamp(value, limit):
+        return min(max(value, 0), limit)
+
+    left = clamp(round((xmin - radius) / mag), width)
+    right = clamp(round((xmax + radius) / mag), width)
+    top = clamp(round(height - (ymax + radius) / mag), height)
+    bottom = clamp(round(height - (ymin - radius) / mag), height)
+    return top, bottom, left, right
 
 
 def cropSections(
@@ -119,7 +209,9 @@ def cropSections(
         Params:
             report (bool): print progress lines to stdout for a wrapper program
     """
-    new_group = zarr.open(new_zarr_fp, mode="a")
+    # "w-" refuses a store that is already there: replaceOutput has removed
+    # any earlier output, so nothing from it can mix with this run
+    new_group = zarr.open_group(new_zarr_fp, mode="w-")
 
     total = len(series.sections)
     if report:
@@ -131,9 +223,9 @@ def cropSections(
     ), start=1):
         # the section bounds are in microns; section.mag is the scale_1 resolution
         if obj_name in section.contours:
-            xmin, ymin, xmax, ymax = section.contours[obj_name].getBounds()
+            bounds = section.contours[obj_name].getBounds()
         else:
-            xmin = ymin = xmax = ymax = None  # blank image on this section
+            bounds = None  # blank image on this section
 
         # crop the image at every scale level
         for scale in scales:
@@ -143,13 +235,10 @@ def cropSections(
             image = src_group[scale_grp][section.src]
             cropped = np.zeros(image.shape, dtype=image.dtype)
 
-            if xmin is not None:
+            if bounds is not None:
                 # resolution of this scale level (scale_1 mag scaled by factor)
                 mag = section.mag * scale
-                l = max(round((xmin - radius) / mag), 0)
-                r = min(round((xmax + radius) / mag), image.shape[1])
-                b = min(round(image.shape[0] - ((ymin - radius) / mag)), image.shape[0])
-                t = max(round(image.shape[0] - ((ymax + radius) / mag)), 0)
+                t, b, l, r = pixelWindow(bounds, radius, mag, image.shape)
                 cropped[t:b, l:r] = image[t:b, l:r]
 
             # Same shape as the source, so traces line up with the full zarr.
@@ -172,7 +261,7 @@ def cropSections(
             print(f"@@PROGRESS@@ STEP {done} {total}", flush=True)
 
 
-def cropZarr(series_fp : str, obj_name : str, radius : float, src_dir : str = "", out_fp : str = ""):
+def cropZarr(series_fp : str, obj_name : str, radius : float, src_dir : str = "", out_fp : str = "", overwrite : bool = False):
     """Crop the zarr file for a series.
 
         Params:
@@ -185,6 +274,8 @@ def cropZarr(series_fp : str, obj_name : str, radius : float, src_dir : str = ""
                 names), just at a different location.
             out_fp (str): optional output zarr path; if blank,
                 <stem>_<obj>_crop<sep>zarr next to the source
+            overwrite (bool): replace an existing output zarr; if False, an
+                existing output raises OutputExists
         Returns:
             (str): the output zarr path
     """
@@ -192,7 +283,8 @@ def cropZarr(series_fp : str, obj_name : str, radius : float, src_dir : str = ""
     if series is None:
         raise CropError(f"Could not open {series_fp!r}.")
     try:
-        out_fp, src_group, scales = resolvePaths(series, obj_name, src_dir, out_fp)
+        out_fp, src_group, scales = resolvePaths(series, obj_name, src_dir, out_fp, overwrite)
+        replaceOutput(out_fp)
         cropSections(series, obj_name, radius, src_group, scales, out_fp)
     finally:
         series.close()
@@ -223,6 +315,8 @@ def parseArgs(argv : list):
                         help="the source zarr (default: the location stored in the series)")
     parser.add_argument("--out", default="",
                         help="the output zarr (default: <stem>_<object>_crop.zarr, -zarr or _zarr beside the source, matching it)")
+    parser.add_argument("--overwrite", action="store_true",
+                        help="replace the output zarr if it exists (default: stop)")
     args = parser.parse_args(argv)
 
     missing = [
@@ -264,7 +358,10 @@ def runCli(args):
         series.setProgressReporter(NullProgressReporter)
 
         checkObject(series, args.object)
-        out_fp, src_group, scales = resolvePaths(series, args.object, args.zarr, args.out)
+        out_fp, src_group, scales = resolvePaths(
+            series, args.object, args.zarr, args.out, args.overwrite
+        )
+        replaceOutput(out_fp)
         cropSections(
             series, args.object, args.radius, src_group, scales, out_fp,
             show_progress=False, report=True,
@@ -283,7 +380,14 @@ def main(argv : list):
         radius = float(input("Radius around BOUNDARY of object to include: "))
         src_dir = input("Zarr location (leave blank to use the location stored in the series): ").strip()
 
-        cropZarr(jser_fp, obj_name, radius, src_dir)
+        try:
+            cropZarr(jser_fp, obj_name, radius, src_dir)
+        except OutputExists as e:
+            answer = input(f"{e.out_fp} already exists. Replace it? [y/N] ")
+            if answer.strip().lower() not in ("y", "yes"):
+                print("Not replaced.")
+                return 1
+            cropZarr(jser_fp, obj_name, radius, src_dir, overwrite=True)
         return 0
 
     args = parseArgs(argv)
