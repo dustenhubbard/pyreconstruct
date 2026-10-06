@@ -1,10 +1,14 @@
 import csv
+import html
 
 from PySide6.QtWidgets import (
     QWidget,
     QDialog,
     QLabel,
     QVBoxLayout,
+    QHBoxLayout,
+    QToolButton,
+    QToolTip,
     QTableWidget,
     QTableWidgetItem,
     QPushButton,
@@ -21,6 +25,9 @@ from PySide6.QtCore import Qt
 from PyReconstruct.modules.gui.utils import undo_chord
 from PyReconstruct.modules.gui.utils import notifyConfirm
 
+
+# the heading once Delete has emptied a list
+DELETED_LINE = "All listed traces have been deleted. You can close this window."
 
 # the Keep cell of the duplicates list stores the row's names here
 NAMES_ROLE = Qt.UserRole + 1
@@ -94,8 +101,23 @@ class MalformedContoursDialog(QDialog):
         self.setWindowTitle(self.WINDOW_TITLE)
         self.resize(660, 420)
 
-        self.heading = QLabel(self._headingText(), self)
-        self.heading.setWordWrap(True)
+        # one line above the list; the full explanation is the tooltip of
+        # the "?" beside it
+        self.heading = QLabel(self)
+        # a button, not a label, so the keyboard can reach it too: Tab to
+        # it and press Space to show the same tooltip a hover shows
+        self.help_icon = QToolButton(self)
+        self.help_icon.setText("?")
+        self.help_icon.setAccessibleName("Explanation")
+        self.help_icon.setFocusPolicy(Qt.StrongFocus)
+        self.help_icon.setFixedSize(18, 18)
+        self.help_icon.setCursor(Qt.WhatsThisCursor)
+        self.help_icon.setStyleSheet(
+            "QToolButton { border: 1px solid palette(mid); border-radius: 9px;"
+            " font-weight: bold; padding: 0; }"
+        )
+        self.help_icon.clicked.connect(self._showExplanation)
+        self._refreshHeading()
 
         self.table = QTableWidget(len(self.records), len(self.COLUMNS), self)
         self.table.setHorizontalHeaderLabels(self.COLUMNS)
@@ -174,14 +196,46 @@ class MalformedContoursDialog(QDialog):
                 self.delete_all_button, QDialogButtonBox.ActionRole
             )
 
+        heading_row = QHBoxLayout()
+        heading_row.addWidget(self.heading)
+        heading_row.addWidget(self.help_icon)
+        heading_row.addStretch(1)
+
         layout = QVBoxLayout()
-        layout.addWidget(self.heading)
+        layout.addLayout(heading_row)
         layout.addWidget(self.table)
         layout.addWidget(buttonbox)
         self.setLayout(layout)
 
-    def _headingText(self):
-        """Build the heading text from the current records."""
+    def _refreshHeading(self):
+        """Set the one-line heading and the "?" tooltip from the records."""
+        self.heading.setText(self._summaryText())
+        explanation = self._explanationText()
+        # rich text, so Qt wraps the tooltip instead of drawing one long line
+        self.help_icon.setToolTip("".join(
+            f"<p>{html.escape(paragraph, quote=False)}</p>"
+            for paragraph in explanation.split("\n\n")
+        ))
+        self.help_icon.setAccessibleDescription(explanation)
+
+    def _showExplanation(self):
+        """Show the "?" tooltip under the icon, for a click or a key."""
+        QToolTip.showText(
+            self.help_icon.mapToGlobal(self.help_icon.rect().bottomLeft()),
+            self.help_icon.toolTip(),
+            self.help_icon,
+        )
+
+    def _summaryText(self):
+        """One short line that says what the list holds."""
+        num_traces = len(self.records)
+        if not num_traces:
+            return DELETED_LINE
+        trace_word = "trace" if num_traces == 1 else "traces"
+        return f"{num_traces} {trace_word} could not be smoothed."
+
+    def _explanationText(self):
+        """Build the full explanation (the "?" tooltip) from the records."""
         num_traces = len(self.records)
         if not num_traces:
             return (
@@ -383,7 +437,7 @@ class MalformedContoursDialog(QDialog):
                 self.table.removeRow(row)
                 del self._records_by_key[key]
         self.records = list(self._records_by_key.values())
-        self.heading.setText(self._headingText())
+        self._refreshHeading()
         if self.delete_all_button is not None:
             self.delete_all_button.setEnabled(bool(self.records))
         self._updateRowActionButtons()
@@ -476,7 +530,12 @@ class SkippedCrossingsDialog(MalformedContoursDialog):
 
     WINDOW_TITLE = "Self-crossing traces to fix with the scissors"
 
-    def _headingText(self):
+    def _summaryText(self):
+        count = len(self.records)
+        noun = "trace" if count == 1 else "traces"
+        return f"{count} self-crossing {noun} to fix with the scissors."
+
+    def _explanationText(self):
         count = len(self.records)
         noun = "trace" if count == 1 else "traces"
         return (
@@ -500,7 +559,12 @@ class RepairedCrossingsDialog(MalformedContoursDialog):
 
     WINDOW_TITLE = "Repaired self-crossing traces"
 
-    def _headingText(self):
+    def _summaryText(self):
+        count = len(self.records)
+        noun = "trace" if count == 1 else "traces"
+        return f"Repaired {count} self-crossing {noun}."
+
+    def _explanationText(self):
         count = len(self.records)
         noun = "trace" if count == 1 else "traces"
         return (
@@ -520,7 +584,7 @@ class PixelDustDialog(MalformedContoursDialog):
     trace before "Delete selected" / "Delete all". Reuses all of the selection,
     navigation, deletion (undoable), and export behavior of
     MalformedContoursDialog; only the columns (a pixel-area column, plus its
-    physical-area equivalent) and the explanatory heading differ.
+    physical-area equivalent) and the heading and its explanation differ.
 
     The primary Area column is in pixels (px^2) so it reads in the same units as
     the threshold the user set; the "Area (um^2)" column shows the physical
@@ -544,7 +608,14 @@ class PixelDustDialog(MalformedContoursDialog):
             ("reason", "str"),
         ]
 
-    def _headingText(self):
+    def _summaryText(self):
+        num_traces = len(self.records)
+        if not num_traces:
+            return DELETED_LINE
+        trace_word = "trace" if num_traces == 1 else "traces"
+        return f"{num_traces} {trace_word} at or below the pixel-area threshold."
+
+    def _explanationText(self):
         """Explain the pixel-dust review and how to act on it."""
         num_traces = len(self.records)
         if not num_traces:
@@ -839,7 +910,7 @@ class DuplicateTracesDialog(MalformedContoursDialog):
                 self.table.removeRow(row)
                 del self._records_by_key[key]
         self.records = list(self._records_by_key.values())
-        self.heading.setText(self._headingText())
+        self._refreshHeading()
         self._updateRowActionButtons()
 
     def _memberToShow(self, row):
@@ -865,7 +936,14 @@ class DuplicateTracesDialog(MalformedContoursDialog):
             return
         self.navigate(member["section"], member["name"], member["index"])
 
-    def _headingText(self):
+    def _summaryText(self):
+        num_rows = len(self.records)
+        if not num_rows:
+            return "Every row has been combined. You can close this window."
+        structures = "structure" if num_rows == 1 else "structures"
+        return f"{num_rows} {structures} traced more than once."
+
+    def _explanationText(self):
         """Explain what a row is and what combining it does."""
         num_rows = len(self.records)
         if not num_rows:
