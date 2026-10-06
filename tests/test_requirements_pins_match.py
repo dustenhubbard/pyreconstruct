@@ -126,3 +126,32 @@ def test_dependabot_watches_every_manifest_we_install_from():
         "behind pyproject.toml for two days and kept a CVE alert open"
     )
     assert ("uv", "/") in watched
+
+
+def test_dependabot_ignores_major_bumps_of_the_pinned_stack():
+    """numpy and opencv-python-headless are pinned per Python line and zarr is
+    held at 2.18.2, so a major version means moving those pins together. Each
+    Python entry ignores major bumps of the four packages and still groups
+    patch and minor updates."""
+    text = (REPO_ROOT / ".github" / "dependabot.yml").read_text()
+    stack = {"numpy", "opencv-python", "opencv-python-headless", "zarr"}
+    entries = {}
+    for chunk in re.split(r"\n\s*- package-ecosystem:", text)[1:]:
+        eco = re.match(r'\s*"?([\w-]+)"?', chunk).group(1)
+        directory = re.search(r'directory:\s*"?([^"\n]+)"?', chunk).group(1).strip()
+        ignored = {
+            name
+            for name, types in re.findall(
+                r'dependency-name:\s*"([^"]+)"\s*\n\s*update-types:\s*\[([^\]]*)\]',
+                chunk,
+            )
+            if "version-update:semver-major" in types
+        }
+        entries[(eco, directory)] = (ignored, chunk)
+
+    for key in [("uv", "/"), ("pip", "/"), ("pip", "/benchmarks")]:
+        ignored, chunk = entries[key]
+        assert ignored == stack, f"{key} ignores major bumps of {sorted(ignored)}"
+        assert re.search(r'update-types:\s*\["patch", "minor"\]', chunk), (
+            f"{key} no longer groups patch and minor updates"
+        )
