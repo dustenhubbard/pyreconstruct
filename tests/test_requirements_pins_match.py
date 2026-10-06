@@ -143,15 +143,17 @@ def test_dependabot_ignores_major_bumps_of_the_pinned_stack():
         eco = re.match(r'\s*"?([\w-]+)"?', chunk).group(1)
         directory = re.search(r'directory:\s*"?([^"\n]+)"?', chunk).group(1).strip()
         ignore_block = re.search(r"\n    ignore:\n((?:      .*\n)+)", chunk)
-        ignored = {
-            name
-            for name, types in re.findall(
-                r'- dependency-name:\s*"([^"]+)"\s*\n\s*update-types:\s*\[([^\]]*)\]',
-                ignore_block.group(1) if ignore_block else "",
+        rules = re.findall(
+            r'- dependency-name:\s*"([^"]+)"\s*\n\s*update-types:\s*\[([^\]]*)\]',
+            ignore_block.group(1) if ignore_block else "",
+        )
+        # only majors: a minor or patch type here would stop those updates too
+        for name, types in rules:
+            listed = [t.strip().strip("\"'") for t in types.split(",")]
+            assert listed == ["version-update:semver-major"], (
+                f"{eco} {directory} ignores {listed} for {name}"
             )
-            if "version-update:semver-major" in types
-        }
-        entries[(eco, directory)] = (ignored, chunk)
+        entries[(eco, directory)] = ({name for name, _ in rules}, chunk)
 
     for key in [("uv", "/"), ("pip", "/"), ("pip", "/benchmarks")]:
         ignored, chunk = entries[key]
