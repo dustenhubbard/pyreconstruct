@@ -225,6 +225,20 @@ def expected_trace_items(widget, rows):
     ]
 
 
+def test_trace_list_menu_starts_with_refresh(trace_table):
+    actions = trace_table.listmenu.actions()
+    assert actions[0].text() == "Refresh"
+
+
+def test_trace_list_refresh_calls_manager_refresh(trace_table):
+    calls = []
+    trace_table.manager.refresh = lambda: calls.append(1)
+    refresh = [a for a in trace_table.listmenu.actions() if a.text() == "Refresh"]
+    assert len(refresh) == 1  # no Refresh row means nothing safe to trigger
+    refresh[0].trigger()
+    assert calls == [1]
+
+
 def test_trace_table_is_cell_selectable_and_populated(trace_table):
     assert_cellwise_multiselect(trace_table.table)
     assert trace_table.table.rowCount() == 5  # section 44's five traces
