@@ -39,9 +39,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Only the suite counts: `test` and its other-Python runs, `test-python (X.Y)`.
+          # Only the suite counts: its step in `test` and in the other-Python runs,
+          # `test-python (X.Y)`. A failed install or setup step is not the PR's doing.
           test_failed=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate \
-            --jq '.jobs[] | select((.name == "test" or (.name | startswith("test-python ("))) and .conclusion == "failure") | .id')
+            --jq '.jobs[] | select(.name == "test" or (.name | startswith("test-python ("))) | .steps[] | select(.name == "Run test suite (headless / offscreen)" and .conclusion == "failure") | .number')
           if [ -z "$test_failed" ]; then
             echo "The test job did not fail in run $RUN_ID."
             exit 0
