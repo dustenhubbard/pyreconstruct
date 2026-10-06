@@ -29,7 +29,7 @@ from PyReconstruct.modules.calc import (
     getDistanceFromTrace,
     getExterior
 )
-from PyReconstruct.modules.calc.nesting import nestedFillOrder
+from PyReconstruct.modules.calc.nesting import islandCuts
 from PyReconstruct.modules.gui.utils import drawOutlinedText
 
 # How a selected trace is drawn: (color, pen width in pixels), widest first.
@@ -699,13 +699,14 @@ class TraceLayer():
     def _drawHoledLabel(self, arr : np.ndarray, traces : list[Trace], label : int, tform : Transform = None):
         """Draw one object's traces as a label, with its negative traces as holes.
 
-        The positives fill and then the holes clear, in the order
-        nestedFillOrder gives, so a positive inside a hole (an island) fills
-        again after the hole. The order comes from the traces before they are
-        rounded to pixels, the same points the 3D volume uses, so rounding
-        cannot make a trace an island or stop it being one. The mask covers
-        only the box of the object's positive traces, not the whole array, so
-        a large export stays fast.
+        The positives fill and then the holes clear. A positive inside a hole
+        (an island) is then filled back in, less the pixels of every negative
+        that islandCuts says cuts it, the same way the 3D volume does. The
+        islands come from the traces before they are rounded to pixels, the
+        same points the 3D volume uses, so rounding cannot make a trace an
+        island or stop it being one. The mask covers only the box of the
+        object's positive traces, not the whole array, so a large export
+        stays fast.
 
             Params:
                 arr (np.ndarray): the array to draw the label on
@@ -735,10 +736,25 @@ class TraceLayer():
             return  # entirely outside the array
 
         mask = np.zeros((y1 - y0, x1 - x0), dtype=bool)
-        for field, fill in nestedFillOrder(positive, holes):
-            pts = pix[id(field)]
-            yy, xx = polygon(pts[:, 1] - y0, pts[:, 0] - x0, mask.shape)
-            mask[yy, xx] = fill
+        for fill, fields in ((True, positive), (False, holes)):
+            for field in fields:
+                pts = pix[id(field)]
+                yy, xx = polygon(pts[:, 1] - y0, pts[:, 0] - x0, mask.shape)
+                mask[yy, xx] = fill
+        for island, cuts in islandCuts(positive, holes):
+            # fill the island back in over its own box within the mask
+            pts = pix[id(island)]
+            ix0, iy0 = np.maximum(pts.min(axis=0), (x0, y0))
+            ix1 = min(int(pts[:, 0].max()) + 1, x1)
+            iy1 = min(int(pts[:, 1].max()) + 1, y1)
+            if ix0 >= ix1 or iy0 >= iy1:
+                continue
+            keep = np.zeros((iy1 - iy0, ix1 - ix0), dtype=bool)
+            for field, fill in [(island, True)] + [(c, False) for c in cuts]:
+                pts = pix[id(field)]
+                yy, xx = polygon(pts[:, 1] - iy0, pts[:, 0] - ix0, keep.shape)
+                keep[yy, xx] = fill
+            mask[iy0 - y0:iy1 - y0, ix0 - x0:ix1 - x0] |= keep
 
         arr[y0:y1, x0:x1][mask] = label
 

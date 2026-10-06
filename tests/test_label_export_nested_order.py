@@ -2,8 +2,8 @@
 
 ``_drawHoledLabel`` filled every positive trace and then cleared every
 negative one, so a positive inside one of the object's own holes (an island)
-was filled and then erased. It now draws in the order ``nestedFillOrder``
-gives. These check the island case and that every layout without an island
+was filled and then erased. It now fills each island back in, less the
+negatives ``islandCuts`` lists for it. These check the island case and that every layout without an island
 comes out pixel for pixel the way the old two passes drew it.
 """
 import types
@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from PyReconstruct.modules.backend.view.trace_layer import TraceLayer
-from PyReconstruct.modules.calc.nesting import nestedFillOrder
+from PyReconstruct.modules.calc.nesting import islandCuts
 from PyReconstruct.modules.datatypes import Trace, Transform
 
 SIZE = 100
@@ -182,7 +182,7 @@ def test_island_smaller_than_a_pixel_draws_one_pixel():
         _square("a", 49.9, 50.1),
     )
     pos, neg = [outer.points, island.points], [hole.points]
-    assert nestedFillOrder(pos, neg)[-1] == (island.points, True)
+    assert islandCuts(pos, neg) == [(island.points, [])]
 
     arr, ids = _labels([outer, hole, island])
 
@@ -191,3 +191,98 @@ def test_island_smaller_than_a_pixel_draws_one_pixel():
     hole_px = arr[35:66, 35:66]
     assert np.argwhere(hole_px == ids["a"]).tolist() == [[50 - 35, 50 - 35]]
     assert int(np.count_nonzero(hole_px)) == 1
+
+
+def _rect(name, x0, y0, x1, y1, negative=False):
+    trace = Trace(name, (255, 0, 0), closed=True)
+    trace.points = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    trace.negative = negative
+    return trace
+
+
+@pytest.mark.parametrize("name, touch", [
+    ("sharing an edge", (60, 45, 66, 55)),
+    ("touching a corner", (60, 60, 66, 66)),
+])
+def test_negative_touching_the_island_clears_its_edge(name, touch):
+    ## a negative that only touches the island clears the island's edge
+    ## pixels again after the island refills, as it does with no hole
+    outer, island = _square("a", 10, 90), _square("a", 40, 60)
+    hole = _square("a", 30, 70, negative=True)
+    cut = _rect("a", *touch, negative=True)
+
+    arr, ids = _labels([outer, hole, island, cut])
+    no_hole, _ = _labels([outer, island, cut], draw=_twoPassDraw)
+
+    ## the island's pixels: series y 40 to 60 rounds to rows 60 down to 40
+    rows, cols = slice(SIZE - 60, SIZE - 40 + 1), slice(40, 61)
+    assert (no_hole[rows, cols] == 0).any(), name
+    np.testing.assert_array_equal(arr[rows, cols], no_hole[rows, cols])
+    assert arr[SIZE - touch[1], touch[0]] == 0  # a shared edge pixel
+
+
+def _mainDraw(self, arr, traces, label, tform=None):
+    """The drawing in the order that shipped before islands were filled back
+    in one by one."""
+    from skimage.draw import polygon
+
+    from tests.test_3d_island_in_hole import _main_order
+
+    pix, positive, holes = {}, [], []
+    for trace in traces:
+        field = [tuple(p) for p in trace.points]
+        pix[id(field)] = self.traceToPixArray(trace, tform)
+        (holes if trace.negative else positive).append(field)
+    for field, fill in _main_order(positive, holes):
+        pts = pix[id(field)]
+        yy, xx = polygon(pts[:, 1], pts[:, 0], arr.shape)
+        arr[yy, xx] = label if fill else 0
+
+
+def _pixels(arr, x0, y0, x1, y1):
+    """The pixels series points x0 to x1, y0 to y1 round to."""
+    return arr[SIZE - y1:SIZE - y0 + 1, x0:x1 + 1]
+
+
+def test_islands_in_holes_side_by_side_keep_the_label():
+    ## two holes share a wall and each has an island touching it: each hole
+    ## cuts the other's island along the wall, but neither clears its own
+    outer = _square("a", 5, 95)
+    left = _rect("a", 10, 20, 50, 80, negative=True)
+    right = _rect("a", 50, 20, 90, 80, negative=True)
+    i_left = _rect("a", 30, 40, 50, 60)
+    i_right = _rect("a", 50, 40, 70, 60)
+
+    arr, ids = _labels([outer, left, right, i_left, i_right])
+
+    assert (_pixels(arr, 30, 40, 49, 60) == ids["a"]).all()
+    assert (_pixels(arr, 51, 40, 70, 60) == ids["a"]).all()
+    assert (_pixels(arr, 50, 40, 50, 60) == 0).all()  # the wall
+    assert arr[SIZE - 30, 20] == 0  # the holes stay clear
+
+
+## island A in hole HA and island B in hole HB, where HA cuts into B and HB
+## touches A, sits a fraction of a pixel from it, or cuts into A as well
+@pytest.mark.parametrize("name, a_right, hb_left", [
+    ("HB near A", 35.6, 36),
+    ("HB touching A", 36, 36),
+    ("each hole cutting the other's island", 36, 34),
+])
+def test_islands_whose_holes_cut_each_other_keep_the_label(name, a_right, hb_left):
+    outer = _square("a", 0, 80)
+    a = _rect("a", 28, 30, a_right, 38)
+    b = _rect("a", 46, 36, 52, 42)
+    ha = _rect("a", 26, 28, 48, 42, negative=True)
+    hb = _rect("a", hb_left, 26, 60, 60, negative=True)
+
+    arr, ids = _labels([outer, a, b, ha, hb])
+    main, _ = _labels([outer, a, b, ha, hb], draw=_mainDraw)
+
+    ## each island keeps every pixel outside the other island's hole, so
+    ## none it had before; A loses only the column HB touches or cuts
+    assert (_pixels(arr, 28, 30, hb_left - 1, 38) == ids["a"]).all(), name
+    assert (_pixels(arr, 49, 36, 52, 42) == ids["a"]).all(), name
+    for x0, y0, x1, y1 in ((28, 30, hb_left - 1, 38), (46, 36, 52, 42)):
+        assert (_pixels(arr, x0, y0, x1, y1) != 0).sum() >= (
+            _pixels(main, x0, y0, x1, y1) != 0
+        ).sum(), name
