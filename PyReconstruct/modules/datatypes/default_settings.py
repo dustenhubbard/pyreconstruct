@@ -52,6 +52,10 @@ default_settings = {
     "backup_prefix_str": "",
     "backup_suffix": False,
     "backup_suffix_str": "",
+    # what a series with no backup settings of its own uses (see
+    # Series.usesBackupDefaults); {series} in the folder becomes the code
+    "default_autobackup": False,
+    "default_backup_dir": "",
 
     # misc preferences
     "left_handed": False,  # MFO
@@ -313,6 +317,9 @@ default_series_settings = {
     # "manual_backup_dir": ""
     "autobackup": False,
     "backup_dir": "",
+    # "backup_use_defaults" (bool) is per series too, but stays out of this
+    # table on purpose: Series.usesBackupDefaults reads it and
+    # Series.setBackupUsesDefaults writes it
     # which lists were open, floating, and where; written by the main window
     # when a series closes and replayed when it opens (Patrick works with
     # undocked lists; his layout should survive a restart). Not in any

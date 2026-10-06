@@ -5307,6 +5307,75 @@ class Series():
                 editors.add(l.user)
         return editors
 
+    def usesBackupDefaults(self) -> bool:
+        """Return True if this series takes its backup folder and auto-backup
+        from the user's defaults (`default_backup_dir`, `default_autobackup`)
+        instead of settings of its own (`backup_dir`, `autobackup`).
+
+        The Backup Settings dialog records the choice per series under
+        `backup_use_defaults`. A series it has never saved has no such key,
+        and its own stored values cannot answer either: getOption stores the
+        default (off, no folder) the first time it reads one, so "never set
+        up" and "set to off with no folder" look the same. A series with a
+        folder or with auto-backup on was set up by someone and keeps its
+        own; any other series had no backups and takes the defaults.
+
+        The key is read here and written by setBackupUsesDefaults, never
+        through getOption: getOption would store a default for it, and one
+        default cannot be right for both kinds of series above.
+        """
+        if not self.isWelcomeSeries():
+            store = self._settingsStore()
+            if store.contains(self.code, "backup_use_defaults"):
+                return bool(store.value(self.code, "backup_use_defaults", bool))
+        return not (self.getOption("autobackup") or self.getOption("backup_dir"))
+
+    def setBackupUsesDefaults(self, value : bool):
+        """Record whether this series uses the user's backup defaults."""
+        if self.isWelcomeSeries():
+            return
+        self._settingsStore().set_value(self.code, "backup_use_defaults", bool(value))
+
+    def expandBackupFolder(self, folder : str) -> str:
+        """Replace {series} in a folder with this series' code.
+
+        The code is whatever was typed in the series code dialog, so path
+        separators become "_", and so does every dot in a code made only of
+        dots: "." or ".." would name the folder itself or its parent.
+        """
+        code = (self.code or self.name).replace("/", "_").replace("\\", "_")
+        if not code.strip("."):
+            code = "_" * max(len(code), 1)
+        return folder.replace("{series}", code)
+
+    def autobackupOn(self) -> bool:
+        """Return True if this series backs up on every save."""
+        if self.usesBackupDefaults():
+            return bool(self.getOption("default_autobackup"))
+        return bool(self.getOption("autobackup"))
+
+    def backupFolder(self, create : bool = False) -> str:
+        """Return the backup folder in effect for this series ("" if none).
+
+            Params:
+                create (bool): make the folder if it comes from the default
+                    folder, `{series}` names part of it, and the part before
+                    `{series}` exists. A folder the user picked whole is never
+                    created: a missing one is reported, as before.
+        """
+        if not self.usesBackupDefaults():
+            return self.getOption("backup_dir")
+        template = self.getOption("default_backup_dir")
+        folder = self.expandBackupFolder(template)
+        i = template.find("{series}")
+        if create and i != -1 and not os.path.isdir(folder):
+            if os.path.isdir(os.path.dirname(template[:i])):
+                try:
+                    os.makedirs(folder, exist_ok=True)
+                except OSError:
+                    pass  # reported by the caller as a missing folder
+        return folder
+
     def getBackupPath(self, comment : str = "", check_existing : bool = True):
         """Get the file path for a backup file for this series.
         
@@ -5354,7 +5423,7 @@ class Series():
         fname = dl.join(fname_list)
         fname = dl.join(fname.split())
 
-        folder = self.getOption("backup_dir")
+        folder = self.backupFolder()
         fp = os.path.join(folder, fname)
 
         if check_existing and os.path.isfile(f"{fp}.jser"):
