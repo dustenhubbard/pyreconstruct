@@ -2,5 +2,4 @@
   or its traveler brings their link back in any order, including after another
   object was drawn or renamed to the deleted name, after an object list delete,
   and after an undone rename. A new object that takes a deleted object's name
-  does not get the old object's links. A link to an object that is gone, such
-  as one whose only sections were deleted, is no longer written to the file.
+  does not get the old object's links.
