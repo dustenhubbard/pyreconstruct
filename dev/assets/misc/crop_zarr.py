@@ -242,9 +242,11 @@ def cropSections(
                 cropped[t:b, l:r] = image[t:b, l:r]
 
             # Same shape as the source, so traces line up with the full zarr.
-            # Chunks that are all zero are not stored. A missing chunk reads
-            # as fill_value 0, so the pixels are the same and a mostly black
-            # crop writes far fewer files.
+            # For integer and bool images, chunks that are all zero are not
+            # stored. A missing chunk reads as fill_value 0, so the pixels are
+            # the same and a mostly black crop writes far fewer files. Float
+            # images store every chunk: zarr counts a chunk of -0.0 as equal
+            # to the fill value, and skipping it would read back as +0.0.
             out = new_group.require_group(scale_grp)
             out.create_dataset(
                 section.src,
@@ -252,7 +254,7 @@ def cropSections(
                 chunks=image.chunks,
                 dtype=image.dtype,
                 fill_value=0,
-                write_empty_chunks=False,
+                write_empty_chunks=image.dtype.kind not in "biu",
                 overwrite=True,
             )
 
