@@ -403,8 +403,8 @@ def mergeTracesInField(field_traces : list, mag : float) -> list:
         Returns:
             (list): the merged trace(s), points in field units; empty if any
                 trace would be lost: one that shrinks to nothing on its
-                group's grid while covering area no other trace in the group
-                covers. A caller that keeps its traces on an empty result
+                group's grid while covering area that no trace surviving on
+                that grid covers. A caller that keeps its traces on an empty result
                 then never loses one the result left out.
     """
     shapes = [_filledShape(trace) for trace in field_traces]
@@ -417,12 +417,12 @@ def mergeTracesInField(field_traces : list, mag : float) -> list:
             for trace in traces
         ]
         # a trace that rounds onto a point or a line adds nothing to the
-        # outline; that is only safe where other traces cover its area
-        for k, grid_trace in enumerate(grid_traces):
-            if _filledShape(grid_trace).area > 0:
-                continue
-            others = [shapes[i] for i in group if i != group[k]]
-            if _losesArea(shapes[group[k]], others):
+        # outline; that is only safe where a trace that does survive covers
+        # its area. Two collapsing traces cannot vouch for each other.
+        collapsed = [_filledShape(t).area == 0 for t in grid_traces]
+        survivors = [shapes[i] for i, c in zip(group, collapsed) if not c]
+        for i, c in zip(group, collapsed):
+            if c and _losesArea(shapes[i], survivors):
                 return []
         merged = mergeTraces(grid_traces)
         # a speck straddling a cell edge comes back as a two-point line,

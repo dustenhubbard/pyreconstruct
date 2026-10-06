@@ -148,6 +148,15 @@ def test_a_small_trace_touching_a_long_one_empties_the_result():
     assert mergeTracesInField([TOUCH_LONG, below], TOUCH_MAG) == []
 
 
+@pytest.mark.parametrize("offset", [0.0, 1e-12], ids=["duplicate", "near_duplicate"])
+def test_two_vanishing_traces_cannot_cover_each_other(offset):
+    """Two copies of the small trace both round onto one point. Each covers
+    the other, but neither survives, so the result is still empty."""
+    below = _rect(0.0048, -0.0001, 0.00488, 0.0)
+    again = [(x + offset, y) for x, y in below]
+    assert mergeTracesInField([TOUCH_LONG, below, again], TOUCH_MAG) == []
+
+
 def test_a_small_trace_inside_a_long_one_still_merges():
     """Rounding a trace away is safe when another trace covers its area."""
     inside = _rect(0.0048, 0.001, 0.00488, 0.0011)
@@ -161,14 +170,16 @@ def test_a_small_trace_inside_a_long_one_still_merges():
 # ---------------------------------------------------------------------------
 
 
-def _draw(main_window, traces):
+def _draw(main_window, traces, negative=False):
     """Draw the traces as NAME, select them all, save an undo state, and
     return the field, the section and the stored points."""
     from PyReconstruct.modules.datatypes.trace import Trace
 
     field = main_window.field
     section = field.section
-    field.setTracingTrace(Trace(NAME, (0, 255, 0), True))
+    base = Trace(NAME, (0, 255, 0), True)
+    base.negative = negative
+    field.setTracingTrace(base)
     for pts in traces:
         field.newTrace(pts, field.tracing_trace, points_as_pix=False,
                        reduce_points=False, log_event=False)
@@ -273,4 +284,70 @@ def test_merge_refuses_when_a_touching_trace_would_vanish(main_window, monkeypat
     field, section, before = _draw(main_window, [long_trace, below])
     field.mergeTraces()
     assert _stored(section) == before
+    assert any("no outline" in m for m in notices), notices
+
+
+def _long_and_straddling_speck(main_window):
+    """A long trace on the field and a 3 by 4 pixel speck straddling its
+    bottom edge, placed so the speck rounds onto one point of the long
+    trace's grid. Field units."""
+    mag = main_window.field.section.mag
+    wx, wy, ww, wh = main_window.series.window
+    probe = _rect(wx, wy, wx + 40000 * mag, wy + 400 * mag)
+    cell = mergeCellSize([probe], mag)
+    x0 = round((wx + ww * 0.1) / cell) * cell
+    y0 = round((wy + wh * 0.5) / cell) * cell
+    long_trace = _rect(x0, y0, x0 + 40000 * mag, y0 + 400 * mag)
+    cx = x0 + 12 * cell
+    speck = _rect(cx - 1.6 * mag, y0 - 2 * mag, cx + 1.6 * mag, y0 + 2 * mag)
+    shared = mergeCellSize([long_trace, speck], mag)
+    assert len({(round(x / shared), round(y / shared)) for x, y in speck}) == 1
+    return long_trace, speck
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize(
+    "offset_px, negative",
+    [(0.0, False), (1e-7, False), (0.0, True)],
+    ids=["duplicate", "near_duplicate", "negative_duplicate"],
+)
+def test_merge_refuses_two_vanishing_copies(main_window, monkeypatch, offset_px, negative):
+    from PyReconstruct.modules.gui.main import field_widget_2_trace as fw2
+
+    notices = []
+    monkeypatch.setattr(fw2, "notify", lambda msg, *a, **k: notices.append(msg))
+
+    long_trace, speck = _long_and_straddling_speck(main_window)
+    offset = offset_px * main_window.field.section.mag
+    again = [(x + offset, y) for x, y in speck]
+
+    field, section, before = _draw(main_window, [long_trace, speck, again], negative)
+    field.mergeTraces()
+    assert _stored(section) == before
+    assert any("no outline" in m for m in notices), notices
+
+
+@pytest.mark.gui
+def test_auto_merge_refuses_a_drawn_copy_of_a_vanishing_trace(main_window, monkeypatch):
+    """Drawing a copy of the speck auto-merges it with the speck and the long
+    trace. Neither speck survives that grid, so the merge refuses and the
+    field keeps all three traces."""
+    from PyReconstruct.modules.gui.main import field_widget_2_trace as fw2
+
+    notices = []
+    monkeypatch.setattr(fw2, "notify", lambda msg, *a, **k: notices.append(msg))
+    main_window.series.setOption("auto_merge", True)
+    main_window.series.setOption("auto_merge_selected_only", False)
+
+    long_trace, speck = _long_and_straddling_speck(main_window)
+    field, section, _ = _draw(main_window, [long_trace, speck])
+    section.selected_traces = []
+
+    field.newTrace(speck, field.tracing_trace, points_as_pix=False,
+                   reduce_points=False, log_event=False)
+    drawn = _stored(section)
+    assert len(drawn) == 3
+    field.autoMerge()
+
+    assert _stored(section) == drawn
     assert any("no outline" in m for m in notices), notices
