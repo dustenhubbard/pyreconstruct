@@ -152,12 +152,18 @@ def cropSections(
                 t = max(round(image.shape[0] - ((ymax + radius) / mag)), 0)
                 cropped[t:b, l:r] = image[t:b, l:r]
 
+            # Same shape as the source, so traces line up with the full zarr.
+            # Chunks that are all zero are not stored. A missing chunk reads
+            # as fill_value 0, so the pixels are the same and a mostly black
+            # crop writes far fewer files.
             out = new_group.require_group(scale_grp)
             out.create_dataset(
                 section.src,
                 data=cropped,
                 chunks=image.chunks,
                 dtype=image.dtype,
+                fill_value=0,
+                write_empty_chunks=False,
                 overwrite=True,
             )
 

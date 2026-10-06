@@ -140,6 +140,38 @@ def test_flags_crop_without_prompts(case):
     assert not (src.parent / f"imgs_{OBJECT}_crop.zarr").exists()
 
 
+def _stored_chunks(out, scale, name):
+    """Chunk files on disk for one output array (metadata files excluded)."""
+    folder = Path(out) / f"scale_{scale}" / name
+    return [p.name for p in folder.iterdir() if not p.name.startswith(".")]
+
+
+def test_all_zero_chunks_are_not_written(case):
+    """Only chunks that hold part of the object are stored; the rest read as 0."""
+    jser, src = case
+    out = jser.parent.parent / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out,
+    ])
+    assert result.returncode == 0, result.stderr
+
+    group = zarr.open_group(str(out), mode="r")
+    want = _expected(jser, src)
+    blank = f"shapes_{BLANK_SECTION}.tif"
+    for (scale, name), expected in want.items():
+        array = group[f"scale_{scale}"][name]
+        assert array.fill_value == 0
+        assert array.shape == SCALES[scale]
+        np.testing.assert_array_equal(array[:], expected, err_msg=str((scale, name)))
+
+        stored = _stored_chunks(out, scale, name)
+        if name == blank:
+            assert stored == [], (scale, name)
+            assert not array[:].any()
+        else:
+            assert 0 < len(stored) < array.nchunks, (scale, name, len(stored))
+
+
 def test_default_output_and_zarr_override(case, tmp_path):
     jser, src = case
     moved = tmp_path / "moved" / "imgs-zarr"
