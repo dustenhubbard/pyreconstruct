@@ -339,7 +339,7 @@ def mergeGroups(field_traces : list) -> list:
             if ri != rj:
                 parent[max(ri, rj)] = min(ri, rj)
 
-    groups = {}
+    groups : dict[int, list[int]] = {}
     for i in range(len(shapes)):
         groups.setdefault(find(i), []).append(i)
     return list(groups.values())
