@@ -88,6 +88,8 @@ class ObjectIds():
         traces (live), or it is held for a name with none (reserve). An id
         that lost its last trace is neither until an undo brings it back."""
         name = self.name_of.get(oid)
+        if name is None:
+            return False
         return oid in self._live.get(name, ()) or self.unplaced.get(name) == oid
 
     def visibleIds(self, name : str) -> set:
