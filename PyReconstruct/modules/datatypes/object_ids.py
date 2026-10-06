@@ -37,8 +37,10 @@ class ObjectIds():
         self.unplaced : dict[str, int] = {}
         # name -> {live id: how many sections it is placed on}
         self._live : dict[str, dict[int, int]] = {}
-        # changes whenever an id becomes visible or stops being visible
-        # (see visible), so a reader can tell when what it built is stale
+        # ids a reader (HostTree) built something from, and a counter that
+        # changes whenever one of them becomes visible or stops being
+        # visible (see visible), so the reader can tell when it is stale
+        self.watched : set[int] = set()
         self.version = 0
 
     def _new(self, name : str) -> int:
@@ -49,8 +51,6 @@ class ObjectIds():
     def _attach(self, snum : int, name : str, oid : int):
         self.placed[(snum, name)] = oid
         counts = self._live.setdefault(name, {})
-        if oid not in counts:
-            self.version += 1
         counts[oid] = counts.get(oid, 0) + 1
 
     def _detach(self, snum : int, name : str):
@@ -60,10 +60,20 @@ class ObjectIds():
         counts = self._live[name]
         counts[oid] -= 1
         if not counts[oid]:
-            self.version += 1
             del counts[oid]
             if not counts:
                 del self._live[name]
+
+    def _settle(self, before : dict):
+        """Count a change for each watched id whose visibility flipped.
+
+            Params:
+                before (dict): id -> whether it was visible before the change
+        """
+        for oid, was in before.items():
+            if oid in self.watched and self.visible(oid) != was:
+                self.version += 1
+                return
 
     def peek(self, snum : int, name : str):
         """The id of the name's traces on the section, or None."""
@@ -98,6 +108,7 @@ class ObjectIds():
         if counts:
             oid = max(counts)
         elif name in self.unplaced:
+            # reserved to live: it stays visible
             oid = self.unplaced.pop(name)
         else:
             oid = self._new(name)
@@ -110,16 +121,26 @@ class ObjectIds():
         the name."""
         if self.name_of.get(oid) != name:
             raise ValueError(f"object id {oid} does not belong to {name!r}")
-        if self.placed.get((snum, name)) == oid:
+        current = self.placed.get((snum, name))
+        if current == oid:
             return
+        before = {oid: self.visible(oid)}
+        if current is not None:
+            before[current] = self.visible(current)
         self._detach(snum, name)
         if self.unplaced.get(name) == oid:
             del self.unplaced[name]
         self._attach(snum, name, oid)
+        self._settle(before)
 
     def drop(self, snum : int, name : str):
         """The name has no traces left on the section."""
+        oid = self.placed.get((snum, name))
+        if oid is None:
+            return
+        before = {oid: self.visible(oid)}
         self._detach(snum, name)
+        self._settle(before)
 
     def reserve(self, name : str) -> int:
         """An id for the name without placing it: its live id, or one held
@@ -128,20 +149,24 @@ class ObjectIds():
         if counts:
             return max(counts)
         if name not in self.unplaced:
+            # a new id: nothing was built from it yet
             self.unplaced[name] = self._new(name)
-            self.version += 1
         return self.unplaced[name]
 
     def release(self, name : str):
         """The name's reserved id is no longer held: the object it stood for
         is gone. Its live ids, if any, are untouched."""
-        if self.unplaced.pop(name, None) is not None:
-            self.version += 1
+        oid = self.unplaced.get(name)
+        if oid is None:
+            return
+        before = {oid: True}
+        del self.unplaced[name]
+        self._settle(before)
 
     def dropSection(self, snum : int):
         """The section was deleted: its traces' ids lose that placement."""
         for key in [k for k in self.placed if k[0] == snum]:
-            self._detach(*key)
+            self.drop(*key)
 
     def renumber(self, mapping : dict):
         """Move each placement to its section's new number.
@@ -186,4 +211,4 @@ class ObjectIds():
         for snum, name in sorted(present - self.placed.keys()):
             self.ensure(snum, name)
         for key in [k for k in self.placed if k not in present]:
-            self._detach(*key)
+            self.drop(*key)

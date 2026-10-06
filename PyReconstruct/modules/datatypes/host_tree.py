@@ -30,20 +30,33 @@ class HostTree():
         # a tree with no series keeps its own ids; every name then holds a
         # reserved id, and the tree behaves as a plain name tree
         self._ids = ids if ids is not None else ObjectIds()
-        # (traveler id, host id)
-        self._edges : set[tuple[int, int]] = set()
-        # ids registered by add() whether or not they have links, so a name
-        # stays in the tree as it always has
-        self._members : set[int] = set()
-        # ids treated as gone while a rename runs (see renameObject)
-        self._hidden : frozenset = frozenset()
-        self._edges_version = 0
-        self._built = None
-        self._objects : dict = {}
-        self._trimmed : list = []
+        self._reset(set(), set())
 
         for obj_name, hosts in host_dict.items():
             self.add(obj_name, hosts)
+
+    def _reset(self, edges : set, members : set):
+        # (traveler id, host id)
+        self._edges : set[tuple[int, int]] = edges
+        # ids registered by add() whether or not they have links, so a name
+        # stays in the tree as it always has
+        self._members : set[int] = members
+        # ids treated as gone while a rename runs (see renameObject)
+        self._hidden : frozenset = frozenset()
+        # the name projection: name -> {"hosts", "travelers"}, and the
+        # visible links behind each name pair in it
+        self._objects : dict = {}
+        self._pair_edges : dict = {}
+        self._built = None
+        self._stale = True
+        # False when the projection had to refuse or trim a pair (two
+        # objects under one name), so it is not just the visible links
+        self._exact = False
+        self._trimmed : list = []
+        self._ids.watched |= members
+        for t, h in edges:
+            self._ids.watched.add(t)
+            self._ids.watched.add(h)
 
     # -- the name projection ------------------------------------------------ #
     @property
@@ -57,47 +70,71 @@ class HostTree():
     def objects(self, value : dict):
         self._objects = value
 
-    def _changed(self):
-        self._edges_version += 1
-
     def _visible(self, oid : int) -> bool:
         return oid not in self._hidden and self._ids.visible(oid)
 
     def _visibleIds(self, name : str) -> set:
         return self._ids.visibleIds(name) - self._hidden
 
+    def _fresh(self) -> bool:
+        """True if the projection matches the ids and links now, and is
+        exactly the visible links, so a write can update it in place."""
+        return (
+            not self._stale and self._exact
+            and self._built == (self._ids.version, self._hidden)
+        )
+
+    def _pairOf(self, t : int, h : int):
+        """The name pair of a visible link, or None."""
+        if not (self._visible(t) and self._visible(h)):
+            return None
+        t_name, h_name = self._ids.name_of[t], self._ids.name_of[h]
+        return None if t_name == h_name else (t_name, h_name)
+
+    def _entry(self, name):
+        if name not in self._objects:
+            self._objects[name] = {"hosts": set(), "travelers": set()}
+        return self._objects[name]
+
     def _build(self):
-        """Rebuild the name projection if the links or the ids changed."""
-        key = (self._edges_version, self._ids.version, self._hidden)
-        if self._built == key:
+        """Rebuild the name projection if the ids changed since it was built,
+        or a write could not update it in place."""
+        key = (self._ids.version, self._hidden)
+        if self._built == key and not self._stale:
             return
-        ids = self._ids
-        pairs = set()
-        for t, h in self._edges:
-            if self._visible(t) and self._visible(h):
-                t_name, h_name = ids.name_of[t], ids.name_of[h]
-                if t_name != h_name:
-                    pairs.add((t_name, h_name))
-        objects : dict = {}
-        self._objects = objects
+        self._objects = {}
+        self._pair_edges = {}
         for oid in self._members:
             if self._visible(oid):
-                objects.setdefault(
-                    ids.name_of[oid], {"hosts": set(), "travelers": set()}
-                )
-        for t_name, h_name in sorted(pairs, key=lambda p: (str(p[0]), str(p[1]))):
-            for name in (t_name, h_name):
-                if name not in objects:
-                    objects[name] = {"hosts": set(), "travelers": set()}
+                self._entry(self._ids.name_of[oid])
+        for t, h in self._edges:
+            pair = self._pairOf(t, h)
+            if pair is not None:
+                self._pair_edges.setdefault(pair, set()).add((t, h))
+        exact = True
+        for t_name, h_name in sorted(self._pair_edges, key=lambda p: (str(p[0]), str(p[1]))):
+            self._entry(t_name)
+            self._entry(h_name)
             # two objects under one name can link two names both ways; the
             # projection refuses the second as add() would
             if t_name in self._reachable([h_name], "hosts", False):
+                exact = False
                 continue
-            objects[t_name]["hosts"].add(h_name)
-            objects[h_name]["travelers"].add(t_name)
-        # the same trim checkRedundantHosts makes, so a read never shows a
-        # host that is also a host of another of the object's hosts
-        self._trimmed = []
+            self._objects[t_name]["hosts"].add(h_name)
+            self._objects[h_name]["travelers"].add(t_name)
+        # a read never shows a host that is also a host of another of the
+        # object's hosts (checkRedundantHosts)
+        self._trimmed = self._trim()
+        self._exact = exact and not self._trimmed
+        self._built = key
+        self._stale = False
+
+    def _trim(self) -> list:
+        """Take each redundant host off the projection, the way
+        checkRedundantHosts always has, and return the (traveler, host)
+        pairs taken."""
+        objects = self._objects
+        removed = []
         for obj_name in list(objects):
             superhosts = self._reachable(
                 list(objects[obj_name]["hosts"]), "hosts", True
@@ -106,8 +143,64 @@ class HostTree():
                 if superhost in objects[obj_name]["hosts"]:
                     objects[obj_name]["hosts"].remove(superhost)
                     objects[superhost]["travelers"].remove(obj_name)
-                    self._trimmed.append((obj_name, superhost))
-        self._built = key
+                    removed.append((obj_name, superhost))
+        return removed
+
+    def _addEdges(self, new : set):
+        new = new - self._edges
+        if not new:
+            return
+        in_place = self._fresh()
+        self._edges |= new
+        for t, h in new:
+            self._ids.watched.add(t)
+            self._ids.watched.add(h)
+        if not in_place:
+            self._stale = True
+            return
+        for t, h in new:
+            pair = self._pairOf(t, h)
+            if pair is None:
+                continue
+            links = self._pair_edges.setdefault(pair, set())
+            if not links:
+                self._entry(pair[0])["hosts"].add(pair[1])
+                self._entry(pair[1])["travelers"].add(pair[0])
+            links.add((t, h))
+
+    def _removeEdges(self, gone : set):
+        gone = gone & self._edges
+        if not gone:
+            return
+        in_place = self._fresh()
+        self._edges -= gone
+        if not in_place:
+            self._stale = True
+            return
+        for t, h in gone:
+            pair = self._pairOf(t, h)
+            links = self._pair_edges.get(pair) if pair else None
+            if not links:
+                continue
+            links.discard((t, h))
+            if not links:
+                del self._pair_edges[pair]
+                self._objects[pair[0]]["hosts"].discard(pair[1])
+                self._objects[pair[1]]["travelers"].discard(pair[0])
+
+    def _addMembers(self, oids : set):
+        new = oids - self._members
+        if not new:
+            return
+        in_place = self._fresh()
+        self._members |= new
+        self._ids.watched |= new
+        if not in_place:
+            self._stale = True
+            return
+        for oid in new:
+            if self._visible(oid):
+                self._entry(self._ids.name_of[oid])
 
     def _writeIds(self, name : str) -> set:
         """The ids a new link of this name joins: its visible ids, or one
@@ -118,10 +211,9 @@ class HostTree():
     def _dropVisible(self, t_name : str, h_name : str):
         """Remove the visible links from t_name's objects to h_name's."""
         t_ids, h_ids = self._visibleIds(t_name), self._visibleIds(h_name)
-        gone = {(t, h) for t, h in self._edges if t in t_ids and h in h_ids}
-        if gone:
-            self._edges -= gone
-            self._changed()
+        self._removeEdges(
+            {(t, h) for t, h in self._edges if t in t_ids and h in h_ids}
+        )
 
     # -- writes ------------------------------------------------------------- #
     def add(self, obj_name : str, hosts : list):
@@ -138,6 +230,9 @@ class HostTree():
 
         if isinstance(hosts, str):
             hosts = [hosts]
+
+        for name in [obj_name] + list(hosts):
+            self._addMembers(self._writeIds(name))
         
         # An object may not end up hosting itself: the app states this to the
         # user in setHosts and in the field's host-assignment drag ("An object
@@ -147,25 +242,16 @@ class HostTree():
         # here instead so no caller can bypass it, and it is checked one host at
         # a time because an earlier host in the list can be what makes a later
         # one cyclic.
-        for name in [obj_name] + list(hosts):
-            members = self._writeIds(name)
-            if not members <= self._members:
-                self._members |= members
-                self._changed()
-
         refused = []
         for host in hosts:
             if host == obj_name or obj_name in self.getHosts(host, True):
                 refused.append(host)
                 continue
-            new = {
+            self._addEdges({
                 (t, h)
                 for t in self._writeIds(obj_name)
                 for h in self._writeIds(host)
-            }
-            if not new <= self._edges:
-                self._edges |= new
-                self._changed()
+            })
         
         # special case: if one of the hosts if hosted by another of the hosts, trim to lowest-level host
         self.checkRedundantHosts()
@@ -175,7 +261,8 @@ class HostTree():
     def checkRedundantHosts(self):
         """Check if any objects are hosted by multiple objects that are already hosts of each other."""
         self._build()
-        for t_name, h_name in list(self._trimmed):
+        trimmed = self._trim() if self._exact else list(self._trimmed)
+        for t_name, h_name in trimmed:
             self._dropVisible(t_name, h_name)
     
     def removeObject(self, obj_name : str):
@@ -191,10 +278,11 @@ class HostTree():
         live = self._ids.live(obj_name) - self._hidden
         if not live:
             return
-        gone = {(t, h) for t, h in self._edges if t in live or h in live}
-        self._edges -= gone
+        self._removeEdges(
+            {(t, h) for t, h in self._edges if t in live or h in live}
+        )
         self._members -= live
-        self._changed()
+        self._stale = True
     
     def renameObject(self, old_name : str, new_name : str, keep_old=False):
         """Rename an object in the tree.
@@ -218,7 +306,6 @@ class HostTree():
         """
         ids = self._ids
         old_ids = self._visibleIds(old_name)
-        self._build()
         host_copies, traveler_copies = [], []
         for t, h in self._edges:
             if not (self._visible(t) and self._visible(h)):
@@ -235,9 +322,7 @@ class HostTree():
             self._hidden = frozenset(old_ids)
         try:
             new_id = ids.reserve(new_name)
-            if new_id not in self._members:
-                self._members.add(new_id)
-                self._changed()
+            self._addMembers({new_id})
             copies = [
                 (new_name, new_id, h_name, h) for h_name, h in sorted(host_copies)
             ] + [
@@ -246,9 +331,7 @@ class HostTree():
             for t_name, t, h_name, h in copies:
                 if t_name in self.getHosts(h_name, True):
                     continue
-                if (t, h) not in self._edges:
-                    self._edges.add((t, h))
-                    self._changed()
+                self._addEdges({(t, h)})
             self.checkRedundantHosts()
         finally:
             self._hidden = frozenset()
@@ -265,14 +348,12 @@ class HostTree():
     def dropDormant(self):
         """Forget the links with an end that cannot come back. Called when
         the undo history is cleared: only an undo can bring back an id that
-        lost its last trace."""
+        lost its last trace. Nothing visible changes."""
         ids = self._ids
-        kept = {(t, h) for t, h in self._edges if ids.visible(t) and ids.visible(h)}
-        members = {oid for oid in self._members if ids.visible(oid)}
-        if kept != self._edges or members != self._members:
-            self._edges = kept
-            self._members = members
-            self._changed()
+        self._edges = {
+            (t, h) for t, h in self._edges if ids.visible(t) and ids.visible(h)
+        }
+        self._members = {oid for oid in self._members if ids.visible(oid)}
     
     def _reachable(self, start : list, edge : str, only_secondary : bool):
         """Collect every name reachable from start by following one edge type.
@@ -366,13 +447,7 @@ class HostTree():
         c = HostTree.__new__(HostTree)
         c.series = self.series
         c._ids = self._ids
-        c._edges = set(self._edges)
-        c._members = set(self._members)
-        c._hidden = frozenset()
-        c._edges_version = 0
-        c._built = None
-        c._objects = {}
-        c._trimmed = []
+        c._reset(set(self._edges), set(self._members))
         return c
 
     def getHostGroup(self, obj_name : str, obj_pool=None):
