@@ -8,8 +8,11 @@ questions.
 Every run here is a subprocess, the way a wrapper program would call it.
 """
 
+import importlib.util
 import json
+import ntpath
 import os
+import posixpath
 import shutil
 import subprocess
 import sys
@@ -310,6 +313,14 @@ def test_bad_inputs_stop_before_writing(case, tmp_path, problem):
     assert _hidden_dirs(jser.parent) == []
 
 
+def _load_script():
+    """Import crop_zarr.py in this process, to call its functions directly."""
+    spec = importlib.util.spec_from_file_location("crop_zarr", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _overlap_out(src, kind):
     if kind == "inside source":
         return src / "crop"
@@ -326,26 +337,22 @@ def _overlap_out(src, kind):
     raise AssertionError(kind)
 
 
-@pytest.mark.parametrize("overwrite", [False, True], ids=["plain", "overwrite"])
 @pytest.mark.parametrize("kind", [
     "inside source", "inside a scale group", "holds the source",
     "inside source through a link", "source with other letter case",
 ])
-def test_output_overlapping_the_source_is_refused(case, kind, overwrite):
+def test_output_overlapping_the_source_is_refused(case, kind):
     """No output path that is, holds or sits inside the source is written."""
+    if kind == "inside source through a link" and sys.platform == "win32":
+        pytest.skip("symlinks need extra rights on Windows")
     jser, src = case
     out = _overlap_out(src, kind)
     if kind == "source with other letter case" and not out.exists():
         pytest.skip("case-sensitive file system")
-    if kind == "inside source through a link" and sys.platform == "win32":
-        pytest.skip("symlinks need extra rights on Windows")
     source_before = _tree(src)
     holder_before = sorted(p.name for p in src.parent.iterdir())
 
-    result = _run(
-        ["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out]
-        + (["--overwrite"] if overwrite else [])
-    )
+    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
     assert result.returncode == 1, result.stderr
     assert "source zarr" in result.stderr
     assert "@@PROGRESS@@" not in result.stdout
@@ -353,74 +360,111 @@ def test_output_overlapping_the_source_is_refused(case, kind, overwrite):
     assert sorted(p.name for p in src.parent.iterdir()) == holder_before
 
 
-def _old_output(out):
-    """An earlier output zarr holding an array this run would not write."""
-    group = zarr.open_group(str(out), mode="w")
-    group.create_group("scale_1").create_dataset("old.tif", data=np.full((4, 4), 7, np.uint8))
-    group.create_group("scale_9").create_dataset("shapes_0.tif", data=np.ones((4, 4), np.uint8))
+def _make_existing(out, what):
+    """Put something at out; return the folder whose files must not change."""
+    if what == "zarr":
+        group = zarr.open_group(str(out), mode="w")
+        group.create_group("scale_1").create_dataset("old.tif", data=np.full((4, 4), 7, np.uint8))
+        return out
+    if what == "folder named like a zarr":
+        out.mkdir()
+        (out / ".zgroup").write_text("not really")
+        (out / "notes.txt").write_text("keep me")
+        return out
+    if what == "empty folder":
+        out.mkdir()
+        return out
+    if what == "file":
+        out.write_text("keep me")
+        return out.parent
+    if what in ("link to a folder", "link to a folder, given as link/."):
+        target = out.parent / "elsewhere"
+        target.mkdir()
+        (target / "keep.txt").write_text("keep me")
+        out.symlink_to(target, target_is_directory=True)
+        return target
+    raise AssertionError(what)
 
 
-def test_existing_output_is_left_alone_without_overwrite(case):
+@pytest.mark.parametrize("what", [
+    "zarr", "folder named like a zarr", "empty folder", "file",
+    "link to a folder", "link to a folder, given as link/.",
+])
+def test_existing_output_is_refused_and_left_alone(case, what):
+    """Nothing that already exists at the output path is changed or deleted."""
+    if what.startswith("link") and sys.platform == "win32":
+        pytest.skip("symlinks need extra rights on Windows")
     jser, src = case
     out = jser.parent.parent / "out.zarr"
-    _old_output(out)
-    before = _tree(out)
-    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
-    assert result.returncode == 1
-    assert "already exists" in result.stderr and "--overwrite" in result.stderr
+    kept = _make_existing(out, what)
+    before = _tree(kept)
+    arg = f"{out}{os.sep}." if what.endswith("link/.") else out
+
+    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", arg])
+    assert result.returncode == 1, result.stderr
+    assert "already exists" in result.stderr
     assert "@@PROGRESS@@" not in result.stdout
+    assert _tree(kept) == before
+    assert os.path.lexists(out)
+
+
+def test_root_output_is_refused(case, tmp_path):
+    """A root keeps its meaning: "/" is not trimmed to "" (the current folder)."""
+    jser, src = case
+    work = tmp_path / "work"
+    work.mkdir()
+    root = Path(tmp_path.anchor)
+    result = _run(
+        ["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", root], cwd=work,
+    )
+    assert result.returncode == 1, result.stderr
+    assert "root" in result.stderr
+    assert list(work.iterdir()) == []
+
+
+@pytest.mark.parametrize("pathmod, given, kept", [
+    (posixpath, "/", "/"),
+    (posixpath, "//", "//"),
+    (posixpath, "/data/out.zarr/", "/data/out.zarr"),
+    (posixpath, "out.zarr//", "out.zarr"),
+    (ntpath, "C:\\", "C:\\"),
+    (ntpath, "C:/", "C:/"),
+    (ntpath, "C:\\work\\out.zarr\\", "C:\\work\\out.zarr"),
+    (ntpath, "\\\\server\\share\\", "\\\\server\\share\\"),
+])
+def test_trailing_separators_are_trimmed_but_roots_kept(pathmod, given, kept):
+    assert _load_script().trimSeparators(given, pathmod) == kept
+
+
+def test_output_made_after_the_checks_is_not_written_into(tmp_path):
+    """If another program makes the output between the checks and the crop,
+    the crop stops and leaves it alone."""
+    module = _load_script()
+    out = tmp_path / "out.zarr"
+    out.mkdir()
+    (out / "theirs.txt").write_text("keep me")
+    with pytest.raises(module.CropError, match="already exists"):
+        module.cropSections(None, OBJECT, 0, None, [1], str(out), show_progress=False)
+    assert _tree(out) == {"theirs.txt": b"keep me"}
+
+
+def test_prompts_refuse_an_existing_output(case):
+    jser, src = case
+    out = src.parent / f"imgs_{OBJECT}_crop.zarr"
+    _make_existing(out, "zarr")
+    before = _tree(out)
+    result = _run([], stdin=f"{jser}\n{OBJECT}\n{RADIUS}\n\n")
+    assert result.returncode == 1
+    assert "already exists" in result.stderr
     assert _tree(out) == before
 
 
-def test_overwrite_replaces_the_whole_output(case):
-    """Arrays from an earlier run do not survive into the new output."""
+def test_prompts_check_the_object_name(case):
     jser, src = case
-    out = jser.parent.parent / "out.zarr"
-    _old_output(out)
-    result = _run([
-        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out, "--overwrite",
-    ])
-    assert result.returncode == 0, result.stderr
-    got = _arrays(out)
-    want = _expected(src)
-    assert got.keys() == want.keys()
-    for key in want:
-        np.testing.assert_array_equal(got[key], want[key], err_msg=str(key))
-
-
-@pytest.mark.parametrize("what", ["folder", "file"])
-def test_overwrite_does_not_remove_something_that_is_not_a_zarr(case, what):
-    jser, src = case
-    out = jser.parent.parent / "out.zarr"
-    if what == "folder":
-        out.mkdir()
-        (out / "notes.txt").write_text("keep me")
-    else:
-        out.write_text("keep me")
-    before = _tree(out) if what == "folder" else out.read_bytes()
-    result = _run([
-        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out, "--overwrite",
-    ])
+    result = _run([], stdin=f"{jser}\nsqare\n{RADIUS}\n\n")
     assert result.returncode == 1
-    assert "not a zarr" in result.stderr
-    assert (_tree(out) if what == "folder" else out.read_bytes()) == before
-
-
-@pytest.mark.parametrize("answer", ["n", "y"])
-def test_prompts_ask_before_replacing_an_output(case, answer):
-    """With no arguments, an existing output is replaced only on a yes."""
-    jser, src = case
-    out = src.parent / f"imgs_{OBJECT}_crop.zarr"
-    _old_output(out)
-    before = _tree(out)
-    result = _run([], stdin=f"{jser}\n{OBJECT}\n{RADIUS}\n\n{answer}\n")
-    assert "already exists. Replace it?" in result.stdout
-    if answer == "n":
-        assert result.returncode == 1
-        assert _tree(out) == before
-    else:
-        assert result.returncode == 0, result.stderr
-        assert _arrays(out).keys() == _expected(src).keys()
+    assert "'sqare' is not in this series" in result.stderr
+    assert not (src.parent / "imgs_sqare_crop.zarr").exists()
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="SIGTERM cannot be caught on Windows")
@@ -461,6 +505,7 @@ def test_sigterm_removes_the_temp_copy(case, tmp_path):
     ["--out", "x.zarr"],
     ["--jser", "x.jser", "--object", "a", "--radius", "-1"],
     ["--jser", "x.jser", "--object", "a", "--radius", "inf"],
+    ["--jser", "x.jser", "--object", "a", "--radius", "1", "--overwrite"],
 ])
 def test_incomplete_or_bad_flags_are_refused(args):
     result = _run(args)
