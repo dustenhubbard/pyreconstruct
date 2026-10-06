@@ -66,7 +66,7 @@ def saved_links(series, path):
     return {name: hosts for name, hosts in tree.items() if name in (H, T, K)}
 
 
-def empty_by_import(series, other_path, name, attrs):
+def empty_by_import(series, other_path, name, attrs, states=None):
     """Run the series import with the section step replaced by one that
     removes the object, the way the import's history check removes an
     object the other series deleted. With attrs, the import also merges the
@@ -83,7 +83,7 @@ def empty_by_import(series, other_path, name, attrs):
     original = Section.importTraces
     Section.importTraces = remove
     try:
-        series.importTraces(other, import_obj_attrs=attrs)
+        series.importTraces(other, import_obj_attrs=attrs, series_states=states)
     finally:
         Section.importTraces = original
         other.close()
@@ -126,6 +126,32 @@ def test_a_host_drawn_again_picks_up_its_travelers(series, tmp_path, case):
     _draw(series, _free_sections(series)[0], H, offset=0.5)
     assert series.host_tree.getHosts(T) == [H]
     assert saved_links(series, tmp_path / "again.jser") == SAVED_BEFORE
+
+
+@pytest.mark.parametrize("emptied", ["host", "traveler"])
+def test_undo_and_redo_of_an_import_keep_the_links(series, tmp_path, emptied):
+    """The import empties H (or T) and keeps the link; undoing and redoing
+    the whole import keeps it at every step."""
+    from PyReconstruct.modules.backend.func.state_manager import SeriesStates
+
+    where = setup(series)
+    states = SeriesStates(series)
+    series.current_section = where[H]
+    name = H if emptied == "host" else T
+    empty_by_import(series, tmp_path / "other.jser", name, attrs=False, states=states)
+    assert name not in series.data["objects"]
+    assert saved_links(series, tmp_path / "import.jser") == SAVED_BEFORE
+
+    states.undoState()
+    assert name in series.data["objects"]
+    assert saved_links(series, tmp_path / "undo.jser") == SAVED_BEFORE
+
+    states.undoState(redo=True)
+    assert name not in series.data["objects"]
+    assert saved_links(series, tmp_path / "redo.jser") == SAVED_BEFORE
+
+    states.undoState()
+    assert saved_links(series, tmp_path / "undo-again.jser") == SAVED_BEFORE
 
 
 def test_an_object_delete_still_takes_its_links_out_of_the_file(series, tmp_path):
@@ -183,6 +209,19 @@ IMPORTED_BEFORE = {
     "trimmed": {"A": ["B"], "B": ["C"], "X": ["C"]},
     "refused": {"A": ["B"], "B": ["C"]},
 }
+
+
+@pytest.mark.parametrize("copy", [False, True])
+def test_an_import_from_a_copy_walks_the_saved_order(copy):
+    """A copy lists its names as its saved form does, so the import refuses
+    the same link of the two that close a cycle."""
+    source = HostTree({"C": ["A"], "B": ["C"]}, _Series(["A", "B", "C"]))
+    if copy:
+        source = source.copy()
+    dest = HostTree({"A": ["B"]}, _Series(["A", "B", "C"]))
+    dest.merge(source)
+    expected = {"A": ["B"], "B": ["C"]} if copy else {"A": ["B"], "C": ["A"]}
+    assert dest.getDict() == expected
 
 
 @pytest.mark.parametrize("copy", [False, True])

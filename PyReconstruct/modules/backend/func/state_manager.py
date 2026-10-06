@@ -61,6 +61,9 @@ class FieldState():
         # name -> object id, for each contour held here that has traces
         # (captureObjectIds); undo and redo put these back
         self.oids = {}
+        # name -> the ids parked under it before this state's action
+        # (ObjectIds.heldParked); its undo puts them back
+        self.parked = {}
         if updated_contours is None:
             if contours is None:
                 updated_contours = []
@@ -158,6 +161,7 @@ class FieldState():
         c = FieldState(self.contours, self.ztraces, self.tforms, self.flags, self.contours_fp)
         c.obj_snapshot = deepcopy(self.obj_snapshot)
         c.oids = dict(self.oids)
+        c.parked = dict(getattr(self, "parked", {}))
         c.group_viz = dict(self.group_viz)
         c.undo_group_viz = dict(self.undo_group_viz)
         return c
@@ -525,6 +529,12 @@ class SectionStates():
             updated_ztraces
         )
         self.current_state.obj_snapshot = objectSnapshot(series, updated_contours)
+        # taken before anything below or the series data sees the action:
+        # a draw takes back a parked id (ObjectIds.ensure), and an object
+        # delete releases the ids parked under its name (removeObject)
+        ids = _objectIds(series)
+        if ids is not None and hasattr(ids, "heldParked"):
+            self.current_state.parked = ids.heldParked(updated_contours)
         self.current_state.oids = captureObjectIds(
             series, section, updated_contours, assign=True
         )
@@ -723,6 +733,12 @@ class SectionStates():
                     section.contours[contour] = Contour(contour)
 
         restoreObjectIds(series, section, modified_contours, restored_oids)
+        ids = _objectIds(series)
+        if ids is not None and hasattr(ids, "restoreParked"):
+            ids.restoreParked(
+                getattr(self.current_state, "parked", {}), modified_contours,
+                keep=True,
+            )
 
         recreated = [
             n for n in modified_contours
@@ -993,6 +1009,14 @@ class SeriesState():
 
         host_tree = series.host_tree.copy()
 
+        # which ids are parked goes with the host links: a parked object
+        # keeps its links on screen (ObjectIds.drop)
+        ids = _objectIds(series)
+        parked_ids = (
+            ids.heldParked() if ids is not None and hasattr(ids, "heldParked")
+            else None
+        )
+
         # kept only to give a group the undo brings back the visibility it had:
         # removing the last object from a group deletes its entry, and the
         # Groups menu lists groups from these keys
@@ -1009,6 +1033,7 @@ class SeriesState():
             "user_columns": user_columns,
             "object_columns": object_columns,
             "host_tree": host_tree,
+            "parked_ids": parked_ids,
             "groups_visibility": groups_visibility,
         }
     
@@ -1035,6 +1060,11 @@ class SeriesState():
                 continue  # only replace obj columns under specific circumstances (below)
             if attr == "groups_visibility":
                 continue  # only fills in missing entries (below)
+            if attr == "parked_ids":
+                ids = _objectIds(series)
+                if value is not None and ids is not None:
+                    ids.restoreParked(value)
+                continue
             setattr(series, attr, value)
 
         # a group the step brings back gets the visibility it had when the
@@ -1205,6 +1235,13 @@ class SeriesStates():
             state.obj_snapshot.update(objectSnapshot(
                 self.series, names, self.undos[-1].series_attrs
             ))
+
+        # the same for the parked ids: the save already released any the
+        # action's object delete took
+        before = self.undos[-1].series_attrs.get("parked_ids")
+        if before is not None:
+            modified = state.getModifiedContours()
+            state.parked = {n: v for n, v in before.items() if n in modified}
 
     def clear(self):
         """Clear all state tracking."""

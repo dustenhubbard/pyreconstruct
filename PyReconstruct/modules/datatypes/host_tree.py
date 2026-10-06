@@ -41,7 +41,10 @@ class HostTree():
         # add() (the object, then its hosts), dropped by removeObject, and
         # moved to the end by a rename. Reads that walk the tree by name
         # (merge) depend on it.
-        self._order : dict = dict(order or {})
+        # name -> its place; places only grow, so the dict's order is theirs
+        self._order : dict = {}
+        self._next_place = 0
+        self._register(order or ())
         # (traveler id, host id)
         self._edges : set[tuple[int, int]] = edges
         # ids registered by add() whether or not they have links, so a name
@@ -52,6 +55,9 @@ class HostTree():
         # the name projection: name -> {"hosts", "travelers"}, and the
         # visible links behind each name pair in it
         self._objects : dict = {}
+        # the last place of a name in the projection: a new entry with a
+        # later place can go in at the end without a rebuild (see _entry)
+        self._last_place = -1
         self._pair_edges : dict = {}
         self._built = None
         self._stale = True
@@ -99,11 +105,14 @@ class HostTree():
 
     def _entry(self, name):
         """The projection's entry for a name, created in place. A new entry
-        lands last, so a name the order has before another listed name
-        marks the projection for a rebuild instead."""
+        lands last, which is its place unless a name placed after it is
+        already listed; then the projection is marked for a rebuild."""
         if name not in self._objects:
-            if self._order and next(reversed(self._order)) != name:
+            place = self._order.get(name)
+            if place is None or place < self._last_place:
                 self._stale = True
+            else:
+                self._last_place = place
             self._objects[name] = {"hosts": set(), "travelers": set()}
         return self._objects[name]
 
@@ -111,7 +120,8 @@ class HostTree():
         """Put names the tree does not list yet at the end of its order."""
         for name in names:
             if name not in self._order:
-                self._order[name] = None
+                self._order[name] = self._next_place
+                self._next_place += 1
 
     def _build(self):
         """Rebuild the name projection if the ids changed since it was built,
@@ -135,6 +145,9 @@ class HostTree():
             name: {"hosts": set(), "travelers": set()}
             for name in self._order if name in names
         }
+        self._last_place = max(
+            (self._order[name] for name in self._objects), default=-1
+        )
         exact = True
         for t_name, h_name in sorted(self._pair_edges, key=lambda p: (str(p[0]), str(p[1]))):
             # two objects under one name can link two names both ways; the
@@ -298,7 +311,7 @@ class HostTree():
         that removes an object outright.
         """
         self._ids.release(obj_name)
-        if self._order.pop(obj_name, False) is None:
+        if self._order.pop(obj_name, None) is not None:
             self._stale = True
         live = self._ids.live(obj_name) - self._hidden
         if not live:
@@ -345,7 +358,7 @@ class HostTree():
             # trace is renamed, back if an undo brings it back
             ids.release(old_name)
             self._hidden = frozenset(old_ids)
-            if self._order.pop(old_name, False) is None:
+            if self._order.pop(old_name, None) is not None:
                 self._stale = True
         try:
             new_id = ids.reserve(new_name)
@@ -478,7 +491,15 @@ class HostTree():
         c = HostTree.__new__(HostTree)
         c.series = self.series
         c._ids = self._ids
-        c._reset(set(self._edges), set(self._members), self._order)
+        # in the order the saved tree lists its names, as a tree read back
+        # from its saved form would have them (merge walks this order)
+        order = []
+        for name, hosts in self.getDict().items():
+            order.append(name)
+            order.extend(hosts)
+        # the names a copy keeps are the linked ones, dormant links included
+        linked = {oid for edge in self._edges for oid in edge}
+        c._reset(set(self._edges), self._members & linked, order)
         return c
 
     def getHostGroup(self, obj_name : str, obj_pool=None):

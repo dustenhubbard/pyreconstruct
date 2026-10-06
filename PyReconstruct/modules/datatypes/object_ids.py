@@ -41,6 +41,9 @@ class ObjectIds():
         # name -> ids that lost their last trace without the object being
         # deleted (see drop); still visible, and taken back by the name
         self.parked : dict[str, set[int]] = {}
+        # name -> ids an undo just parked again; the object delete the same
+        # step saves leaves them parked (see restoreParked, endStep)
+        self._kept : dict[str, set[int]] = {}
         # name -> {live id: how many sections it is placed on}
         self._live : dict[str, dict[int, int]] = {}
         # ids a reader (HostTree) built something from, and a counter that
@@ -196,12 +199,67 @@ class ObjectIds():
 
     def release(self, name : str):
         """The object under the name was deleted: its reserved and parked ids
-        go out of sight. Its live ids, if any, are untouched."""
-        before = {oid: True for oid in self.parked.pop(name, ())}
+        go out of sight, except those the undo now being saved just parked
+        again (restoreParked). Its live ids, if any, are untouched."""
+        parked = self.parked.pop(name, set())
+        kept = parked & self._kept.get(name, set())
+        if kept:
+            self.parked[name] = kept
+        before = {oid: True for oid in parked - kept}
         oid = self.unplaced.pop(name, None)
         if oid is not None:
             before[oid] = True
         self._settle(before)
+
+    def heldParked(self, names=None) -> dict:
+        """A copy of the parked ids, for undo: name -> frozenset of ids.
+
+            Params:
+                names: the names to copy, or None for every name
+        """
+        if names is None:
+            return {name: frozenset(held) for name, held in self.parked.items()}
+        return {
+            name: frozenset(self.parked[name]) for name in names
+            if name in self.parked
+        }
+
+    def restoreParked(self, held : dict, names=None, keep=False):
+        """Put the parked ids back as heldParked copied them. An id that has
+        traces now stays live; an id parked now that the copy does not hold
+        goes out of sight.
+
+            Params:
+                held (dict): what heldParked returned
+                names: the names to restore, or None for every name
+                keep (bool): True for a section undo: the save that follows
+                    it deletes an object the undo emptied, and that delete
+                    must not release what the undo just parked again
+        """
+        if names is None:
+            names = set(held) | set(self.parked)
+        before = {}
+        for name in names:
+            live = self._live.get(name, {})
+            current = self.parked.get(name, set())
+            target = {oid for oid in held.get(name, ()) if oid not in live}
+            if target == current:
+                continue
+            for oid in current | target:
+                before[oid] = self.visible(oid)
+            if target:
+                self.parked[name] = set(target)
+            else:
+                self.parked.pop(name, None)
+        if keep:
+            for name in names:
+                if name in self.parked:
+                    self._kept[name] = set(self.parked[name])
+        self._settle(before)
+
+    def endStep(self):
+        """The series data has caught up with the step (SeriesData)."""
+        self._kept.clear()
 
     def dropSection(self, snum : int):
         """The section was deleted: its traces' ids lose that placement."""

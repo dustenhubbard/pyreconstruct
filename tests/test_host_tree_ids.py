@@ -174,8 +174,11 @@ def test_the_projection_kept_in_place_matches_a_rebuild(seed):
             tree.renameObject(old, new, keep_old=rng.random() < 0.5)
         else:
             tree.getHosts(rng.choice(names))
-        kept = {n: {k: set(v) for k, v in d.items()} for n, d in tree.objects.items()}
-        rebuilt = tree.copy()
-        assert {
-            n: {k: set(v) for k, v in d.items()} for n, d in rebuilt.objects.items()
-        } == kept, f"seed {seed} step {step}"
+        kept = [
+            (n, {k: set(v) for k, v in d.items()}) for n, d in tree.objects.items()
+        ]
+        tree._stale = True
+        rebuilt = [
+            (n, {k: set(v) for k, v in d.items()}) for n, d in tree.objects.items()
+        ]
+        assert rebuilt == kept, f"seed {seed} step {step}"

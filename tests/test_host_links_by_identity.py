@@ -267,6 +267,46 @@ def test_replacement_on_two_sections_then_undo_all(window):
 
 
 # --------------------------------------------------------------------------- #
+# an object whose section was deleted keeps its links through undo
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize("step", ["delete", "rename"])
+def test_undo_brings_back_the_links_of_a_parked_object(
+        window, main_window_dialogs, gui_dialogs, step):
+    """Old H back beside a replacement H; old H's only section is deleted,
+    so it keeps its link to T without traces. Deleting the replacement, or
+    renaming H, and undoing that brings the link back."""
+    from tests.test_object_ids_field import _section_list, _select, _unlock_sections
+
+    s1, s2, s3, _ = _delete_both_and_replace(window, host_first=False)
+    _undo_on(window, s2)
+    _undo_on(window, s1)
+    assert _hosts(window) == [H]
+
+    _unlock_sections(window)
+    window.changeSection(s3)
+    widget = _section_list(window)
+    _select(widget, s1)
+    widget.deleteSections()
+    assert s1 not in window.series.sections
+    assert _hosts(window) == [H]
+    # the delete cleared the undo history; leave s3 so it starts again there
+    window.changeSection(s2)
+
+    if step == "delete":
+        _delete_on(window, s3, H)
+        assert _hosts(window) == []
+        _undo_on(window, s3)
+    else:
+        _rename_everywhere(window, H, X)
+        assert _hosts(window) == [X]
+        main_window_dialogs.linked_undo_responses = ["all"]
+        _undo_on(window, s3)
+    assert H in window.series.data["objects"]
+    assert _hosts(window) == [H]
+
+
+# --------------------------------------------------------------------------- #
 # save
 # --------------------------------------------------------------------------- #
 

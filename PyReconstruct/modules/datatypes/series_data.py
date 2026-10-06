@@ -359,6 +359,9 @@ class SeriesData():
                     self.series.addLog(obj_name, None, "Delete object")
                     ## Remove object from object attributes dicts
                     self.series.removeObjAttrs(obj_name)
+
+            ## the step is saved: an undo's parked ids are no longer guarded
+            self.object_ids.endStep()
     
     def addTrace(self, trace : Trace, section : Section, points=None):
         """Add trace data to the existing object.
