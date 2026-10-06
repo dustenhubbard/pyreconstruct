@@ -21,7 +21,7 @@ permissions:
   actions: read
   contents: read
   issues: write
-  pull-requests: write
+  pull-requests: read
 
 jobs:
   flag:
@@ -54,15 +54,16 @@ jobs:
             exit 0
           fi
 
-          # A rerun that fails again should not comment twice.
+          # A rerun that fails again should not comment twice. The label goes on
+          # only after the comment posts, so a failed comment is retried.
           if gh api "repos/$REPO/issues/$pr/labels" --jq '.[].name' | grep -qx broke-main; then
             echo "#$pr is already flagged."
             exit 0
           fi
 
+          gh api "repos/$REPO/issues/$pr/comments" > /dev/null \
+            -f body="The tests on main failed after this was merged: $RUN_URL"
           gh label create broke-main -R "$REPO" --force \
             --color B60205 --description "Tests on main failed after this merged"
           gh api "repos/$REPO/issues/$pr/labels" -f 'labels[]=broke-main' > /dev/null
-          gh api "repos/$REPO/issues/$pr/comments" > /dev/null \
-            -f body="The tests on main failed after this was merged: $RUN_URL"
           echo "Flagged #$pr."
