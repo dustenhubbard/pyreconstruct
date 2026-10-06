@@ -502,16 +502,18 @@ class ObjectTableWidget(DataTable):
             
         elif item_type == "3D":
 
-            # A read-only mark: the box is drawn but not user-checkable, so a
-            # click cannot desync it from the scene. Add and remove stay in
-            # the 3D menu; the viewer refreshes these rows when its scene
-            # changes (CustomPlotter.updateObjectList).
+            # The box is read from the scene, never stored. A click asks the
+            # scene to add or remove the object (onCheckStateChanged), and
+            # the viewer refreshes these rows when its scene changes
+            # (CustomPlotter.updateObjectList), so the box cannot desync.
             viewer = getattr(self.mainwindow, "viewer", None)
             in_scene = viewer is not None and viewer.inScene(
                 name, self.series.jser_fp
             )
             item = QTableWidgetItem("")
-            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            item.setFlags(
+                Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled
+            )
             item.setCheckState(
                 Qt.CheckState.Checked if in_scene else Qt.CheckState.Unchecked
             )
@@ -820,7 +822,8 @@ class ObjectTableWidget(DataTable):
 
         Routed here by ObjectTableModel.setData. Preserves the behavior of the
         old QTableWidget itemChanged handler for the Locked and CR (curation)
-        columns.
+        columns, and adds or removes the object from the 3D scene for the 3D
+        column.
 
             Params:
                 row (int): the model row of the toggled cell
@@ -877,6 +880,18 @@ class ObjectTableWidget(DataTable):
             self.model.refreshRow(row)
             self.manager.updateObjects([name])
             self.mainwindow.seriesModified(True)
+            return True
+
+        # 3D box clicked: the same calls as the 3D menu's Add to scene and
+        # Remove from scene, for this row's object only. The box is not set
+        # here; the scene refreshes the row once the object is in or out
+        # (meshes are built on a thread, so an add lands a moment later).
+        elif header == "3D":
+            if state == Qt.CheckState.Checked:
+                self.mainwindow.addTo3D([name])
+            else:
+                self.mainwindow.removeFrom3D([name])
+            self.model.refreshRow(row)
             return True
 
         return False

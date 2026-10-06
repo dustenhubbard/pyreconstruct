@@ -6,8 +6,8 @@ Pinned here, without opening a VTK window:
    up through DataTable's missing-default merge.
 2. ``ObjectTableWidget.getItems("3D")`` reads membership from the live viewer:
    checked when the object is in the scene, unchecked with no viewer, a
-   closed viewer, or an object from another series. The box is never
-   user-checkable.
+   closed viewer, or an object from another series. Clicking the box is
+   pinned in ``test_object_list_3d_click.py``.
 3. Every scene change reaches the list: ``VPlotter.placeInScene`` (the end of
    every add), ``VPlotter.removeSceneObj`` (every remove, clear, undo, and
    stale refresh), and ``CustomPlotter.closeEvent``.
@@ -124,13 +124,6 @@ def test_same_name_from_another_series_or_a_ztrace_is_unchecked(qapp):
     source = _items_source(viewer)
     assert _mark(source, "d001").checkState() == Qt.CheckState.Unchecked
     assert _mark(source, "d002").checkState() == Qt.CheckState.Unchecked
-
-
-def test_mark_is_not_user_checkable(qapp):
-    source = _items_source(_viewer(_scene(("d001", "object", SERIES_FP))))
-    flags = _mark(source, "d001").flags()
-    assert not (flags & Qt.ItemFlag.ItemIsUserCheckable)
-    assert flags & Qt.ItemFlag.ItemIsEnabled
 
 
 # --------------------------------------------------------------------------- #
