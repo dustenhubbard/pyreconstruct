@@ -102,3 +102,18 @@ def test_label_sits_inside_the_field_and_passes_clicks_through(window):
     assert field.rect().contains(hint.geometry())
     # centered horizontally, within a pixel
     assert abs(hint.geometry().center().x() - field.rect().center().x()) <= 1
+
+
+def test_label_wraps_to_stay_inside_a_narrow_field(window):
+    """A field narrower than the text wraps it rather than cutting it off."""
+    field = window.field
+    window.resetShortcuts({"focus_act": ""})  # the longest text
+    field.toggleFocusMode()
+    hint = _hint(window)
+    one_line = hint.geometry().height()
+
+    field.resize(220, field.height())
+    assert field.width() == 220
+    assert field.rect().contains(hint.geometry())
+    assert hint.geometry().height() > one_line
+    assert hint.text().endswith("to exit.")

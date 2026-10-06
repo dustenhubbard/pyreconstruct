@@ -391,8 +391,17 @@ class FieldWidgetBase:
         text = self.focusHintText()
         if hint.text() != text:
             hint.setText(text)
-            hint.adjustSize()
-        hint.move((self.width() - hint.width()) // 2, 10)
+        # one line when it fits, wrapped to the field's width when it does not
+        hint.setWordWrap(False)
+        w = hint.sizeHint().width()
+        max_w = max(self.width() - 20, 1)
+        if w > max_w:
+            hint.setWordWrap(True)
+            w = max_w
+            hint.resize(w, hint.heightForWidth(w))
+        else:
+            hint.resize(w, hint.sizeHint().height())
+        hint.move((self.width() - w) // 2, 10)
         hint.show()
         hint.raise_()
     
