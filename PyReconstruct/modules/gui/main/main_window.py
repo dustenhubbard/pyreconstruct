@@ -4824,7 +4824,12 @@ class MainWindow(QMainWindow):
         for act_name in LEGACY_SHORTCUT_ALIASES:
             if act_name not in shortcuts_dict and getattr(self, act_name, None):
                 applySeriesShortcut(getattr(self, act_name), act_name, self.series)
-    
+
+        # the focus mode label names the focus_act shortcut
+        field = getattr(self, "field", None)
+        if field is not None:
+            field.updateFocusHint()
+
     def displayAbout(self):
         """Display the widget display information about the series."""
         # update the editors
