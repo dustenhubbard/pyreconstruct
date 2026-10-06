@@ -276,10 +276,7 @@ def convert_vedo_to_tm(obj) -> trimesh.Trimesh:
         for i in range(n_points):
             point_array[i] = points.GetPoint(i)
 
-        mesh = trimesh.Trimesh(
-            vertices=point_array,
-            prcess=False
-        )
+        mesh = trimesh.Trimesh(vertices=point_array)
 
         return mesh.convex_hull
 
