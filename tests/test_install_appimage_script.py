@@ -350,7 +350,7 @@ def test_every_curl_call_keeps_redirects_on_https():
         assert line.count("curl -f") == line.count("--proto-redir =https"), line
 
 
-@pytest.mark.skipif(sys.version_info[:2] not in ((3, 11), (3, 12)), reason="install.sh needs a Python 3.11 or 3.12")
+@pytest.mark.skipif(sys.version_info[:2] not in ((3, 11), (3, 12), (3, 13)), reason="install.sh needs a Python 3.11, 3.12 or 3.13")
 def test_source_installer_refuses_to_install_over_the_appimage(env):
     root = paths(env, "stable")["root"]
     root.mkdir(parents=True)
@@ -362,7 +362,7 @@ def test_source_installer_refuses_to_install_over_the_appimage(env):
     assert sorted(x.name for x in root.iterdir()) == [".appimage-install"]
 
 
-@pytest.mark.skipif(sys.version_info[:2] not in ((3, 11), (3, 12)), reason="install.sh needs a Python 3.11 or 3.12")
+@pytest.mark.skipif(sys.version_info[:2] not in ((3, 11), (3, 12), (3, 13)), reason="install.sh needs a Python 3.11, 3.12 or 3.13")
 def test_source_installer_with_a_prefix_keeps_the_appimage_launcher(env, tmp_path):
     with FakeGitHub([stable_release("v1.24.0")]) as gh:
         run(env, gh)

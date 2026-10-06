@@ -452,7 +452,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.12"]
+        python: ["3.12", "3.13"]
     runs-on: ubuntu-latest
     timeout-minutes: 25   # the cold wheel install, as in `test`
     env:
