@@ -203,8 +203,7 @@ MENUBAR_BASELINE = [
     (1, "sep", None),
     (1, "act", "findobjectfirst_act"),
     (1, "menu", "cleanupmenu"),
-    (2, "act", "removeduplicates_act"),
-    (2, "act", "finddiffnamedduplicates_act"),
+    (2, "act", "duplicates_act"),
     (2, "act", "removepixeldust_act"),
     (2, "act", "removeempty_act"),
     (1, "sep", None),
@@ -543,10 +542,11 @@ def test_menubar_action_and_submenu_counts():
     mean a move had dropped or duplicated one. Additions 4 and 5 (the what's-new toggle
     and the series-wide recolor, both 2026-08-12, built on separate branches)
     each took the count up one, 117 to 119 together. Lists > Object list of
-    selected traces (fork #438) took it from 125 to 126.
+    selected traces (fork #438) took it from 125 to 126. Clean up >
+    Duplicates... replaced its two duplicate finders, 126 to 125.
     """
     rows = _rows()
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 126
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 125
     assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 30
 
 
@@ -716,8 +716,7 @@ SERIES_MENU_LABELS = [
     "-----",
     "Find first object contour...",
     "Clean up >",
-    "    Remove duplicate traces...",
-    "    Find duplicates named differently...",
+    "    Duplicates...",
     "    Remove pixel-dust traces...",
     "    Remove empty traces...",
     "    Repair self-crossing traces...",

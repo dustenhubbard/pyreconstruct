@@ -3931,86 +3931,38 @@ class MainWindow(QMainWindow):
 
         self.series.setOption("find_zoom", z)
     
-    def deleteDuplicateTraces(self):
-        """Remove all duplicate traces from the series."""
-        self.saveAllData()
+    def reviewDuplicateTraces(self):
+        """Find duplicate traces and open them for review.
 
-        structure = [
-            ["Overlap threshold:", ("float", 0.95, (0, 1))],
-            [("check", ("check locked traces", True))]
-        ]
-        response, confirmed = QuickDialog.get(self, structure, "Remove duplicate traces")
-        if not confirmed:
-            return
-        threshold = response[0]
-        include_locked = response[1][0][1]
-        
-        removed = self.series.deleteDuplicateTraces(threshold, include_locked, self.field.series_states)
-
-        if removed:
-            message = "The following duplicate traces were removed:"
-            for snum in removed:
-                message += f"\nSection {snum}: " + ", ".join(removed[snum])
-            TextWidget(self, message, title="Removed Traces")
-        else:
-            notify("No duplicate traces found.")
-
-        self.field.reload()
-        self.seriesModified(True)
-
-    def findDifferentlyNamedDuplicates(self):
-        """Review traces that duplicate each other under two different names.
-
-        The sibling of "Remove duplicate traces...", for the case that one
-        cannot see: two people tracing the same structure give it two names, so
-        the two traces never end up in the same contour and the same-name
-        comparison never puts them side by side.
-
-        Which of the two names survives is a question about the data rather than
-        about geometry, so this operation never chooses one. The scan reports
-        every pair and the review list asks per row which name to keep; only the
-        rows answered there are acted on, and the trace under the other name is
-        what gets deleted. A row left unanswered is skipped, not defaulted.
+        One scan finds overlapping traces whether their names match or not,
+        one row per structure however many times it was traced. The list
+        asks which name to keep in each row and changes nothing until the
+        user combines; combining is one undoable step per press.
         """
         self.saveAllData()
 
-        # the same two controls as "Remove duplicate traces...", so the pair of
-        # operations reads the same way
         structure = [
             ["Overlap threshold:", ("float", 0.95, (0, 1))],
             [("check", ("check locked traces", False))]
         ]
-        response, confirmed = QuickDialog.get(
-            self, structure, "Find duplicates named differently"
-        )
+        response, confirmed = QuickDialog.get(self, structure, "Duplicates")
         if not confirmed:
             return
         threshold = response[0]
         include_locked = response[1][0][1]
 
-        pairs = self.series.findDifferentlyNamedDuplicates(
-            threshold, include_locked
-        )
-        if not pairs:
-            notify(
-                "No differently-named duplicate traces found at that overlap "
-                "threshold."
-            )
+        groups = self.series.findDuplicateTraces(threshold, include_locked)
+        if not groups:
+            notify("No duplicate traces found at that overlap threshold.")
             return
 
-        # a review list that can act on the rows the user answers, and only
-        # those: the callback takes (record, keep) choices, never the whole list
-        self.differently_named_duplicates_dialog = (
-            DifferentlyNamedDuplicatesDialog(
-                self,
-                pairs,
-                navigate=self.field.focusMalformedContour,
-                delete_unselected=(
-                    self.field.deleteDifferentlyNamedDuplicates
-                ),
-            )
+        self.duplicate_traces_dialog = DuplicateTracesDialog(
+            self,
+            groups,
+            navigate=self.field.focusMalformedContour,
+            combine=self.field.combineDuplicateTraces,
         )
-        self.differently_named_duplicates_dialog.show()
+        self.duplicate_traces_dialog.show()
 
     def removePixelDustTraces(self):
         """Find tiny "pixel-dust" traces and remove them through a review list.

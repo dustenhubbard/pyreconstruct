@@ -3182,7 +3182,7 @@ def test_remove_would_not_be_the_operation_contour_remove_is():
     `Series.splitObject`, is remove / `.copy()` / add-the-copy. The other five
     mean the removal: `Section.deleteTraces` and, in `series.py`,
     `deleteObjects`, `deleteTracesFromSections`, `deleteAllTraces`,
-    `deleteMalformedTraces` and `deleteDuplicateTraces`. `SectionColumns.removeRow` TOMBSTONES: the row
+    `deleteMalformedTraces` and `combineDuplicateTraces`. `SectionColumns.removeRow` TOMBSTONES: the row
     number retires and every view over it raises from then on, so the *mutate*
     step has nothing left to write through, as this test measures.
 
@@ -3216,7 +3216,7 @@ def test_remove_would_not_be_the_operation_contour_remove_is():
         "modules/datatypes/series.py:deleteTracesFromSections",
         "modules/datatypes/series.py:deleteAllTraces",
         "modules/datatypes/series.py:deleteMalformedTraces",
-        "modules/datatypes/series.py:deleteDuplicateTraces",
+        "modules/datatypes/series.py:combineDuplicateTraces",
         "modules/datatypes/series.py:repairSelfCrossingTraces",
         "modules/datatypes/series.py:splitObject",
     }, readds
@@ -3233,8 +3233,8 @@ def test_remove_would_not_be_the_operation_contour_remove_is():
     ## of sections, and deletes the same way.
     assert [key for key, readd in sorted(readds.items()) if not readd] == [
         "modules/datatypes/section.py:deleteTraces",
+        "modules/datatypes/series.py:combineDuplicateTraces",
         "modules/datatypes/series.py:deleteAllTraces",
-        "modules/datatypes/series.py:deleteDuplicateTraces",
         "modules/datatypes/series.py:deleteMalformedTraces",
         "modules/datatypes/series.py:deleteObjects",
         "modules/datatypes/series.py:deleteTracesFromSections",

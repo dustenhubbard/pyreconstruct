@@ -8,7 +8,7 @@ import pytest
 pytestmark = pytest.mark.gui
 
 from PyReconstruct.modules.gui.dialog import (
-    DifferentlyNamedDuplicatesDialog,
+    DuplicateTracesDialog,
     MalformedContoursDialog,
     PixelDustDialog,
 )
@@ -29,13 +29,12 @@ def _record(**extra):
     return record
 
 
-def _pair():
-    return _record(
-        name="A", other_name="B", other_index=1, other_points=14,
-        other_location=(0.1, 0.0), area=0.5, other_area=0.52, ratio=0.97,
-        reason="Overlap 0.97 with 'B' (above 0.95)",
-        other_match={"color": [1, 2, 3], "points": [(0.1, 0.0)]},
-    )
+def _group():
+    members = [_record(name="A"), _record(name="B", index=1)]
+    return {
+        "section": 1, "members": members, "names": ["A", "B"], "count": 2,
+        "ratio": 0.97, "location": (0.0, 0.0),
+    }
 
 
 def _heading(qtbot, dialog):
@@ -68,13 +67,14 @@ def test_the_pixel_dust_list_explains_the_area_column(qtbot):
     ) in heading
 
 
-def test_the_pairs_heading_asks_for_one_name_per_row(qtbot):
+def test_the_duplicates_heading_asks_for_one_name_per_row(qtbot):
     heading = _heading(
-        qtbot,
-        DifferentlyNamedDuplicatesDialog(None, [_pair()],
-                                         delete_unselected=lambda c: []),
+        qtbot, DuplicateTracesDialog(None, [_group()], combine=lambda c: [])
     )
-    assert "then tick the name you want to KEEP, one name per row." in heading
+    assert "Pick the name to keep in each row." in heading
+    assert "A row with more than one is left alone until you pick one." in (
+        heading
+    )
 
 
 @pytest.fixture

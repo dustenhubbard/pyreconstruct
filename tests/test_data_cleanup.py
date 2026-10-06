@@ -1,11 +1,9 @@
 """Tests for the data clean-up operations (Series menu "Clean up", issue #67).
 
-Three operations, all built on the proven series-states bulk-edit path so each
-is a single undoable action with a progress bar:
+Two operations, both built on the proven series-states bulk-edit path so each
+is a single undoable action with a progress bar (duplicates have their own
+file, tests/test_duplicate_traces.py):
 
-  * Remove duplicate traces  -> Series.deleteDuplicateTraces (pre-existing;
-    same-name + geometrically-coincident only). Guarded here against the
-    false positive of merging two *distinct* objects that happen to coincide.
   * Remove pixel-dust traces -> Series.findPixelDustTraces (scan) + a review
     list that deletes via Series.deleteMalformedTraces. Small closed traces at
     or below a pixel-area threshold (px^2); the physical (um^2) cutoff is
@@ -334,115 +332,3 @@ def test_empty_skips_locked(tmp_path):
     section.save()
     series.setAttr("COLLINEAR", "locked", True)
     assert "COLLINEAR" not in {r["name"] for r in series.findEmptyTraces()}
-
-
-# ---------------------------------------------------------------------------
-# duplicates (pre-existing op) + false-positive guard
-# ---------------------------------------------------------------------------
-
-def test_duplicate_removal_and_undo(tmp_path):
-    """Two identical traces of the SAME object collapse to one, undoably."""
-    series = _load_series(tmp_path)
-    snum = _snum_with_closed(series)
-    section = series.loadSection(snum)
-    pts = [(0, 0), (10, 0), (10, 10), (0, 10)]
-    _make(section, "DUPE", pts)
-    _make(section, "DUPE", list(pts))  # exact duplicate, same name
-    section.save()
-    assert _count(series, snum, "DUPE") == 2
-
-    states = _new_states(series)
-    removed = series.deleteDuplicateTraces(0.95, series_states=states)
-    assert snum in removed and "DUPE" in removed[snum]
-    assert _count(series, snum, "DUPE") == 1
-
-    states.undoState()
-    assert _count(series, snum, "DUPE") == 2, "undo restores the duplicate"
-
-
-def test_duplicate_removal_does_not_merge_distinct_objects(tmp_path):
-    """Two coincident traces with DIFFERENT names are not duplicates.
-
-    This is the key false-positive guard: legitimately-overlapping distinct
-    objects must survive, because duplicate detection is scoped per object
-    name (per contour), never geometry-only across objects.
-    """
-    series = _load_series(tmp_path)
-    snum = _snum_with_closed(series)
-    section = series.loadSection(snum)
-    pts = [(0, 0), (10, 0), (10, 10), (0, 10)]
-    _make(section, "OBJ_A", pts)
-    _make(section, "OBJ_B", list(pts))  # identical geometry, different object
-    section.save()
-
-    states = _new_states(series)
-    series.deleteDuplicateTraces(0.95, series_states=states)
-    assert _count(series, snum, "OBJ_A") == 1
-    assert _count(series, snum, "OBJ_B") == 1
-
-
-def test_duplicate_removal_survives_collinear_traces(tmp_path):
-    """Degenerate traces on one line no longer abort the whole run.
-
-    Two traces of the same object confined to the same vertical line have a
-    combined bounding box with no width, which used to raise ZeroDivisionError
-    out of the overlap comparison and end the operation. They are not
-    duplicates of each other, so both survive, and the run completes.
-    """
-    series = _load_series(tmp_path)
-    snum = _snum_with_closed(series)
-    section = series.loadSection(snum)
-    _make(section, "DUST", [(0, 0), (0, 10)])
-    _make(section, "DUST", [(0, 2), (0, 8)])
-    section.save()
-    assert _count(series, snum, "DUST") == 2
-
-    states = _new_states(series)
-    series.deleteDuplicateTraces(0.95, series_states=states)
-    assert _count(series, snum, "DUST") == 2
-
-
-def test_duplicate_removal_still_removes_identical_collinear_traces(tmp_path):
-    """Identical pixel dust is still recognized and cleaned up.
-
-    This is what the user was doing when the crash hit, so it is the case that
-    matters: two copies of the same degenerate trace must still collapse to
-    one. They match point for point, which is settled before any area is
-    measured.
-    """
-    series = _load_series(tmp_path)
-    snum = _snum_with_closed(series)
-    section = series.loadSection(snum)
-    pts = [(0, 0), (0, 5), (0, 10)]
-    _make(section, "DUST", pts)
-    _make(section, "DUST", list(pts))
-    section.save()
-    assert _count(series, snum, "DUST") == 2
-
-    states = _new_states(series)
-    removed = series.deleteDuplicateTraces(0.95, series_states=states)
-    assert snum in removed and "DUST" in removed[snum]
-    assert _count(series, snum, "DUST") == 1
-
-    states.undoState()
-    assert _count(series, snum, "DUST") == 2, "undo restores the duplicate"
-
-
-def test_duplicate_removal_survives_closed_collinear_traces(tmp_path):
-    """The same crash with closed traces of three or more collinear points.
-
-    Section.addTrace drops traces of fewer than two points and forces two-point
-    traces open, so three collinear points is the shortest degenerate shape
-    that can reach this operation as a closed trace.
-    """
-    series = _load_series(tmp_path)
-    snum = _snum_with_closed(series)
-    section = series.loadSection(snum)
-    _make(section, "SPECK", [(4, 0), (4, 4), (4, 8)])
-    _make(section, "SPECK", [(4, 1), (4, 3), (4, 9)])
-    section.save()
-    assert _count(series, snum, "SPECK") == 2
-
-    states = _new_states(series)
-    series.deleteDuplicateTraces(0.95, series_states=states)
-    assert _count(series, snum, "SPECK") == 2
