@@ -998,10 +998,9 @@ class Trace():
         look at it. Every production caller has a section in scope:
         Section.importTraces passes ``self.mag`` down through
         Contour.importTraces and tracesWithoutCounterpart (and reconciles the two
-        series' magnifications with Trace.magScale before it does), and both
-        series-level scans (Series.deleteDuplicateTraces and
-        Series.findDifferentlyNamedDuplicates) pass ``section.mag`` from the
-        section they are walking.
+        series' magnifications with Trace.magScale before it does), and the
+        series-level duplicate scan (Series.findDuplicateTraces) passes
+        ``section.mag`` from the section it is walking.
 
         ``open_curve=False`` sends an open pair down the area path instead, byte
         for byte as it was before the curve metric existed, and needs no ``mag``.

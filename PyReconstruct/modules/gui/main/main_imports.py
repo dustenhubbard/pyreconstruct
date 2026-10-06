@@ -61,7 +61,7 @@ from PyReconstruct.modules.gui.dialog import (
     ImportSeriesDialog,
     ImportAlignmentsDialog,
     PixelDustDialog,
-    DifferentlyNamedDuplicatesDialog,
+    DuplicateTracesDialog,
 )
 
 from PyReconstruct.modules.gui.popup import (

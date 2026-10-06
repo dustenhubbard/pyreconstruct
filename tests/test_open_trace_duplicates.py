@@ -32,9 +32,9 @@ What is pinned here:
     yes to everything would satisfy every assertion above
   * a trace covering only half of another is not called a duplicate of it
   * closed traces still go through the area comparison, unchanged
-  * `Series.findDifferentlyNamedDuplicates` finds an open pair end to end, which
-    the ratio fix alone does not achieve: that scan's area-based ratio ceiling
-    dropped the near-straight pair at 0.63 before any ratio was measured
+  * `Series.findDuplicateTraces` finds an open pair end to end, which the ratio
+    fix alone does not achieve: that scan's area-based ratio ceiling dropped
+    the near-straight pair at 0.63 before any ratio was measured
 """
 import os
 import shutil
@@ -621,8 +621,8 @@ def _make(section, name, points, closed=False):
     return t
 
 
-def _pairs(records):
-    return {frozenset((r["name"], r["other_name"])) for r in records}
+def _groups(groups):
+    return {tuple(sorted(m["name"] for m in g["members"])) for g in groups}
 
 
 def test_cross_name_scan_finds_open_duplicate(tmp_path):
@@ -635,8 +635,8 @@ def test_cross_name_scan_finds_open_duplicate(tmp_path):
     _make(section, "CFA_B", b)
     section.save()
 
-    records = series.findDifferentlyNamedDuplicates(THRESHOLD)
-    assert frozenset(("CFA_A", "CFA_B")) in _pairs(records)
+    groups = series.findDuplicateTraces(THRESHOLD)
+    assert ("CFA_A", "CFA_B") in _groups(groups)
 
 
 def test_cross_name_scan_still_ignores_different_open_traces(tmp_path):
@@ -651,12 +651,12 @@ def test_cross_name_scan_still_ignores_different_open_traces(tmp_path):
     )))
     section.save()
 
-    records = series.findDifferentlyNamedDuplicates(THRESHOLD)
-    assert frozenset(("CFA_A", "CFA_B")) not in _pairs(records)
+    groups = series.findDuplicateTraces(THRESHOLD)
+    assert ("CFA_A", "CFA_B") not in _groups(groups)
 
 
-def test_delete_duplicates_removes_open_duplicate(tmp_path):
-    """Same-name open duplicates are deleted, where before they were kept."""
+def test_combine_removes_open_duplicate(tmp_path):
+    """Same-name open duplicates are combined, where before they were kept."""
     series = _load_series(tmp_path)
     snum = _first_snum(series)
     section = series.loadSection(snum)
@@ -666,11 +666,15 @@ def test_delete_duplicates_removes_open_duplicate(tmp_path):
     section.save()
     assert len(series.loadSection(snum).contours["CFA_DUP"]) == 2
 
-    series.deleteDuplicateTraces(THRESHOLD, log_event=False)
+    group = next(
+        g for g in series.findDuplicateTraces(THRESHOLD)
+        if g["names"] == ["CFA_DUP"]
+    )
+    series.combineDuplicateTraces([(group, "CFA_DUP")], log_event=False)
     assert len(series.loadSection(snum).contours["CFA_DUP"]) == 1
 
 
-def test_delete_duplicates_keeps_different_open_traces(tmp_path):
+def test_scan_keeps_different_open_traces_apart(tmp_path):
     """Two genuinely different open traces under one name both survive."""
     series = _load_series(tmp_path)
     snum = _first_snum(series)
@@ -682,8 +686,9 @@ def test_delete_duplicates_keeps_different_open_traces(tmp_path):
     )))
     section.save()
 
-    series.deleteDuplicateTraces(THRESHOLD, log_event=False)
-    assert len(series.loadSection(snum).contours["CFA_KEEP"]) == 2
+    assert ("CFA_KEEP", "CFA_KEEP") not in _groups(
+        series.findDuplicateTraces(THRESHOLD)
+    )
 
 
 def test_area_ceiling_would_have_dropped_the_open_pair():

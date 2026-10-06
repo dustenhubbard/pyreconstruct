@@ -23,5 +23,5 @@ from .import_series import ImportSeriesDialog, ImportAlignmentsDialog
 from .malformed_contours import (
     MalformedContoursDialog,
     PixelDustDialog,
-    DifferentlyNamedDuplicatesDialog,
+    DuplicateTracesDialog,
 )

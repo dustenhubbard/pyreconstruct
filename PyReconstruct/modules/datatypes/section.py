@@ -122,7 +122,7 @@ StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 ##     datatypes/series.py              hideAllTraces         (in-place write)
 ##     datatypes/series.py              restoreObjectVisibility(in-place write)
 ##     datatypes/series.py              smoothObject          (in-place write)
-##     datatypes/series.py              deleteDuplicateTraces (in-place write)
+##     datatypes/series.py              combineDuplicateTraces (in-place write)
 ##     gui/main/field_widget_2_trace.py findFlag              (in-place write)
 ##     gui/main/field_widget_2_trace.py smoothTraces          (in-place write)
 ##     gui/main/field_widget_2_trace.py cutTrace's tag merge  (in-place write)
@@ -179,7 +179,7 @@ StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 ##
 ## **What that removes, precisely:** an out-of-class edit can no longer leave a
 ## section unsaveable, and can no longer abort a multi-section operation partway
-## through (`smoothObject` and `deleteDuplicateTraces` both call `save()` inside
+## through (`smoothObject` and `combineDuplicateTraces` both call `save()` inside
 ## their own loop). The thirteenth site, whenever it is found, is not a crash in
 ## a user's session and not a data-loss risk. It is also cheaper: rebuilding the
 ## busiest section of `autoseg745` costs about half what comparing it did.
@@ -1487,7 +1487,7 @@ class Section():
     #   datatypes/series.py              Series.hideAllTraces
     #   datatypes/series.py              Series.restoreObjectVisibility
     #   datatypes/series.py              Series.smoothObject
-    #   datatypes/series.py              Series.deleteDuplicateTraces
+    #   datatypes/series.py              Series.combineDuplicateTraces
     #   gui/main/field_widget_2_trace.py FieldWidgetTrace.findFlag
     #   gui/main/field_widget_2_trace.py FieldWidgetTrace.smoothTraces
     #   gui/main/field_widget_2_trace.py FieldWidgetTrace.cutTrace

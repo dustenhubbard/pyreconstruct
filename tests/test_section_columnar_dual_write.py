@@ -454,7 +454,7 @@ def test_section_py_neither_reads_nor_writes_the_environment():
 ##   series.py                hideAllTraces               trace.setHidden in place
 ##   series.py                restoreObjectVisibility     trace.setHidden in place
 ##   series.py                smoothObject                trace.smooth in place
-##   series.py                deleteDuplicateTraces       trace.mergeTags in place
+##   series.py                combineDuplicateTraces      trace.mergeTags in place
 ##   conversions.py           seriesToLabels group delete contour keys deleted
 ##   field_widget_2_trace.py  findFlag import-conflict    trace.hidden in place
 ##   field_widget_2_trace.py  smoothTraces                trace.smooth in place
@@ -490,7 +490,7 @@ REPAIR_SITES = {
     "modules/backend/func/state_manager.py": "undoState / redoState",
     "modules/datatypes/series.py": (
         "hideObjects / hideAllTraces / "
-        "restoreObjectVisibility / smoothObject / deleteDuplicateTraces"
+        "restoreObjectVisibility / smoothObject / combineDuplicateTraces"
         # deleteObjects left this list 2026-08-28: it now routes every trace
         # through removeTrace and deletes only the emptied key
     ),
@@ -849,11 +849,6 @@ OUT_OF_CLASS_TRACE_EDITS = {
         "copy inserted (addTrace), both store-aware",
     "modules/datatypes/series.py::Series.copyTracesToSections":
         "DETACHED: `new_trace = trace.copy()`, re-projected, then addTrace",
-    "modules/datatypes/series.py::Series.deleteDuplicateTraces":
-        "REPAIRED: `trace1.mergeTags(trace2)` rewrites tags in place on a "
-        "trace the section keeps, then resyncColumnarStore(). The TENTH site, "
-        "found by a reviewer, and invisible to this scan while mergeTags was "
-        "missing from TRACE_COLUMN_SETTERS",
     "modules/datatypes/series.py::Series.hideAllTraces":
         "REPAIRED: setHidden in place, then resyncColumnarStore()",
     "modules/datatypes/series.py::Series.hideObjects.edit":
@@ -2512,7 +2507,7 @@ def test_smoothObject_without_the_repair_really_would_have_drifted(
 
 
 def test_deleting_duplicate_traces_leaves_the_section_saveable(real_section):
-    """`Series.deleteDuplicateTraces` -- the TENTH site, via `mergeTags`.
+    """`Series.combineDuplicateTraces` -- the TENTH site, via `mergeTags`.
 
     `trace1.mergeTags(trace2)` rewrites `tags` in place on a trace the section
     keeps; `section.removeTrace(trace2)` is hooked and repairs `trace2`'s row,
@@ -2524,7 +2519,7 @@ def test_deleting_duplicate_traces_leaves_the_section_saveable(real_section):
     operation's own, and this is the test that attributes the drift to `tags`.
     It does NOT pin the production repair -- deleting
     `series.py`'s `resyncColumnarStore()` call leaves it green, because it never
-    calls `deleteDuplicateTraces`. `test_a_planted_duplicate_pair_is_merged_and_
+    calls `combineDuplicateTraces`. `test_a_planted_duplicate_pair_is_merged_and_
     persisted_by_the_real_operation` below is the one that goes red for that,
     and it is what the "pinned by a test that reverts the repair" claim rests
     on.
@@ -2539,7 +2534,7 @@ def test_deleting_duplicate_traces_leaves_the_section_saveable(real_section):
     second.tags = {"a_regression_tag"}
     real_section.resyncColumnarStore()   # start from a store that agrees
 
-    first.mergeTags(second)              # deleteDuplicateTraces' exact call
+    first.mergeTags(second)              # combineDuplicateTraces' exact call
     real_section.resyncColumnarStore()   # ...and its repair
     real_section.save()
 
@@ -2579,7 +2574,7 @@ def test_mergeTags_on_a_held_trace_without_the_repair_really_drifts(
 def _plantADuplicatePair(section, name="a_planted_duplicate", tags=("one", "two")):
     """Two identical closed traces under one name, carrying different tags.
 
-    `deleteDuplicateTraces` only reaches `mergeTags` when it finds a pair that
+    `combineDuplicateTraces` only reaches `mergeTags` for a group that
     `Trace.overlaps` accepts, and it only *drifts* when the two carry different
     tags. The fixture series offers no such pair, and the earlier version of
     this file took that as a reason to drop down to the mechanism -- which is
@@ -2606,11 +2601,11 @@ def _plantADuplicatePair(section, name="a_planted_duplicate", tags=("one", "two"
 
 
 def test_a_planted_duplicate_pair_is_merged_and_persisted_by_the_real_operation(
-    real_series
+    real_series, capsys
 ):
-    """`Series.deleteDuplicateTraces`, driven -- the pin for the TENTH site.
+    """`Series.combineDuplicateTraces`, driven -- the pin for the TENTH site.
 
-    "Delete duplicate traces" is a shipped series-wide clean-up. The real
+    "Duplicates..." is a shipped series-wide clean-up. The real
     function loads its own sections through `enumerateSections` and calls
     `section.save()` itself, so with the repair gone the mismatch raises *inside
     the operation*: the clean-up dies partway through and every later section
@@ -2618,26 +2613,36 @@ def test_a_planted_duplicate_pair_is_merged_and_persisted_by_the_real_operation(
     fail an assertion at the end.
 
     Written this way on purpose. The two tests above reproduce
-    `mergeTags`-then-`save` inline and pass whatever `deleteDuplicateTraces`
+    `mergeTags`-then-`save` inline and pass whatever `combineDuplicateTraces`
     does, so no revert of the production repair can make them red -- which a
     reviewer established by deleting the call and running the whole suite green.
     This one calls the shipped function with nothing patched.
 
     The survivors are read back **off disk after a reload**, so the merged tags
     asserted here are the persisted bytes and not the in-memory objects the
-    operation happened to be holding.
+    operation happened to be holding. Since D11 the save rebuilds the store
+    rather than raising, so with the repair gone the save reports the drift
+    instead, and the report is what this asserts is empty.
     """
     number = sorted(real_series.sections)[0]
     name = _plantADuplicatePair(real_series.loadSection(number))
+    capsys.readouterr()
 
-    ## The real, shipped entry point. Its own `section.save()` is what raises
-    ## when the repair is missing.
-    removed = real_series.deleteDuplicateTraces(0.95, log_event=False)
-
-    assert removed.get(number) and name in removed[number], (
-        f"the operation did not report removing a duplicate of {name!r}: "
-        f"{removed}"
+    ## The real, shipped entry point: the scan, then the combine. Its own
+    ## `section.save()` is what raises when the repair is missing.
+    group = next(
+        g for g in real_series.findDuplicateTraces(0.95)
+        if g["section"] == number and g["names"] == [name]
     )
+    combined = real_series.combineDuplicateTraces(
+        [(group, name)], log_event=False
+    )
+
+    assert combined == [(group, name)], (
+        f"the operation did not combine the planted pair of {name!r}"
+    )
+    drift = _driftReports(capsys)
+    assert not drift, f"the combine left the store drifted: {drift}"
 
     survivors = real_series.loadSection(number).contours[name]
     assert len(survivors) == 1, (
