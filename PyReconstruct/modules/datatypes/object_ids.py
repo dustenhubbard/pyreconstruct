@@ -37,6 +37,9 @@ class ObjectIds():
         self.unplaced : dict[str, int] = {}
         # name -> {live id: how many sections it is placed on}
         self._live : dict[str, dict[int, int]] = {}
+        # changes whenever an id becomes visible or stops being visible
+        # (see visible), so a reader can tell when what it built is stale
+        self.version = 0
 
     def _new(self, name : str) -> int:
         oid = next(self._counter)
@@ -46,6 +49,8 @@ class ObjectIds():
     def _attach(self, snum : int, name : str, oid : int):
         self.placed[(snum, name)] = oid
         counts = self._live.setdefault(name, {})
+        if oid not in counts:
+            self.version += 1
         counts[oid] = counts.get(oid, 0) + 1
 
     def _detach(self, snum : int, name : str):
@@ -55,6 +60,7 @@ class ObjectIds():
         counts = self._live[name]
         counts[oid] -= 1
         if not counts[oid]:
+            self.version += 1
             del counts[oid]
             if not counts:
                 del self._live[name]
@@ -66,6 +72,20 @@ class ObjectIds():
     def live(self, name : str) -> set:
         """The ids with traces under the name, on any section."""
         return set(self._live.get(name, ()))
+
+    def visible(self, oid : int) -> bool:
+        """True while the id stands for an object the user can see: it has
+        traces (live), or it is held for a name with none (reserve). An id
+        that lost its last trace is neither until an undo brings it back."""
+        name = self.name_of.get(oid)
+        return oid in self._live.get(name, ()) or self.unplaced.get(name) == oid
+
+    def visibleIds(self, name : str) -> set:
+        """The visible ids under the name."""
+        oids = set(self._live.get(name, ()))
+        if name in self.unplaced:
+            oids.add(self.unplaced[name])
+        return oids
 
     def ensure(self, snum : int, name : str) -> int:
         """The id of the name's traces on the section, giving it one if it
@@ -109,7 +129,14 @@ class ObjectIds():
             return max(counts)
         if name not in self.unplaced:
             self.unplaced[name] = self._new(name)
+            self.version += 1
         return self.unplaced[name]
+
+    def release(self, name : str):
+        """The name's reserved id is no longer held: the object it stood for
+        is gone. Its live ids, if any, are untouched."""
+        if self.unplaced.pop(name, None) is not None:
+            self.version += 1
 
     def dropSection(self, snum : int):
         """The section was deleted: its traces' ids lose that placement."""
