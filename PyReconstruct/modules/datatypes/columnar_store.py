@@ -1,10 +1,15 @@
 r"""A columnar store for one section's traces, behind the Qt-free core seam.
 
 Phase 1 of the columnar-sections work. This module is a **parallel
-representation of the traces, and it has readers but is not what gets saved**.
+representation of the traces, and it has readers but does not supply the saved
+geometry**.
 Every loaded `Section` carries a `SectionColumns` as `section._columns`, and
 `Trace`/`Contour`/`Section` are unchanged. `self.contours` is still what gets
-saved, so no byte of any `.jser` changes. The store is read by:
+saved: the contours give the saved geometry, so no byte of any `.jser`
+changes, and with keyed rows on `Section.getDict` takes the persisted trace ids
+from the store. `Section` also reads the store to carry ids across a rebuild,
+to keep its trace-to-row map, and for its drift and mutation checks. The
+readers that build user-facing data are:
 
   * SVG export, `svg_conversion.py`, through `ContourView`;
   * `SeriesData.refresh`, which passes `read_store=True` to
@@ -12,9 +17,10 @@ saved, so no byte of any `.jser` changes. The store is read by:
     through `TraceView` and `SectionColumns.getCoordinates`;
   * `Series.openJser`, which does the same on the first `.jser` unpack.
 
-The other `SeriesData.updateSection` calls still read `self.contours`. The
-parity tests keep the layout, the tracking and the identity plumbing argued
-against running code.
+The `SeriesData.updateSection` calls that leave `read_store` at its default of
+False read `self.contours` when they read traces at all; the ones in
+`field_widget_4_data.py` pass no traces. The parity tests keep the layout, the
+tracking and the identity plumbing argued against running code.
 
 WHAT PARITY MEANS HERE, AND WHICH SIDE OF THE ROUNDING THIS SITS ON
 -------------------------------------------------------------------
@@ -1664,9 +1670,10 @@ class ContourView():
     corresponding row, so a walk over a contour is a walk over rows and no
     `Trace` is built anywhere on the path.
 
-    Uncached, for the same reasons `TraceView` is: every method below is a fresh
-    `rowsForContour` call and nothing is remembered between calls. SVG export
-    reads it.
+    Uncached, for the same reasons `TraceView` is: the row-reading methods
+    below each make a fresh `rowsForContour` call, and nothing is remembered
+    between calls. `__init__` and `name` only hold the store and the normalized name.
+    SVG export reads it.
 
     WHAT IS HERE, AND THE ONE PROPERTY THAT IS LOAD-BEARING FOR A LATER SLICE
     ------------------------------------------------------------------------
