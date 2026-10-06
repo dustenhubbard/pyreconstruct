@@ -12,11 +12,7 @@ anything.
 """
 import pytest
 
-from PyReconstruct.modules.calc.grid import (
-    mergeCellSize,
-    mergeGroups,
-    mergeTracesInField,
-)
+from PyReconstruct.modules.calc.grid import mergeCellSize, mergeTracesInField
 
 NAME = "merge_small_part"
 
@@ -49,6 +45,8 @@ def test_one_shared_grid_is_too_coarse_for_the_small_trace():
 
 
 def test_separate_traces_are_merged_as_separate_groups():
+    from PyReconstruct.modules.calc.grid import mergeGroups
+
     assert mergeGroups([LONG, SMALL]) == [[0], [1]]
     overlapping = _rect(0.5, 0.005, 1.5, 0.02)
     assert mergeGroups([LONG, SMALL, overlapping]) == [[0, 2], [1]]
