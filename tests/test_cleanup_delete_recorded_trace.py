@@ -1,7 +1,8 @@
 """The clean-up lists delete the trace a record names, not its first lookalike.
 
 `Series.deleteMalformedTraces` is the delete path behind the malformed,
-pixel-dust, empty and duplicates-named-differently lists. Each record carries
+pixel-dust and empty-trace lists, and the duplicates list re-finds its traces
+the same way (`Series._resolveRecordedTraces`). Each record carries
 the trace's position in its contour ("index") and a color-and-points
 signature. Matching on the signature alone deleted the FIRST trace that fit it,
 so two identical traces under one name on one section lost the wrong one. The
@@ -123,68 +124,6 @@ def test_a_batch_deletes_each_recorded_trace_once(tmp_path):
     assert _tags(series, snum, "DUST") == [["first"], ["second"], ["third"]]
 
 
-def _row(records, name, index, other_name):
-    for r in records:
-        if (r["name"], r["index"], r["other_name"]) == (name, index, other_name):
-            return r, "other"
-        if (r["other_name"], r["other_index"], r["name"]) == (
-                name, index, other_name):
-            return r, "first"
-    raise AssertionError(f"no pair deletes {name}[{index}] against {other_name}")
-
-
-def test_a_duplicate_pair_deletes_the_trace_its_row_names(tmp_path):
-    """Two identical `A` traces both pair with `B`; deleting the second `A`
-    from its row leaves the first."""
-    series = _load_series(tmp_path)
-    snum = _seed(series, [
-        ("A", SQUARE, "first"),
-        ("A", SQUARE, "second"),
-        ("B", SQUARE, "b"),
-    ])
-    records = series.findDifferentlyNamedDuplicates(0.95)
-    choice = _row(records, "A", 1, "B")
-
-    states = _states(series)
-    applied = series.deleteDifferentlyNamedDuplicates(
-        [choice], series_states=states
-    )
-
-    assert applied == [choice]
-    assert _tags(series, snum, "A") == [["first"]]
-    assert _tags(series, snum, "B") == [["b"]]
-
-    states.undoState()
-    assert _tags(series, snum, "A") == [["first"], ["second"]]
-
-
-def test_two_rows_that_delete_one_trace_delete_only_that_trace(tmp_path):
-    """`B` has two identical traces. Two rows both name the first `B` as the
-    one to delete, so the second `B` must survive."""
-    series = _load_series(tmp_path)
-    snum = _seed(series, [
-        ("A", SQUARE, "a"),
-        ("C", SQUARE, "c"),
-        ("B", SQUARE, "first"),
-        ("B", SQUARE, "second"),
-    ])
-    records = series.findDifferentlyNamedDuplicates(0.95)
-    choices = [_row(records, "B", 0, "A"), _row(records, "B", 0, "C")]
-
-    states = _states(series)
-    applied = series.deleteDifferentlyNamedDuplicates(
-        choices, series_states=states
-    )
-
-    assert applied == choices
-    assert _tags(series, snum, "B") == [["second"]]
-    assert _tags(series, snum, "A") == [["a"]]
-    assert _tags(series, snum, "C") == [["c"]]
-
-    states.undoState()
-    assert _tags(series, snum, "B") == [["first"], ["second"]]
-
-
 def test_a_stale_index_still_finds_the_trace_by_its_signature(tmp_path):
     """A trace that moved since the scan is still found by color and points."""
     series = _load_series(tmp_path)
@@ -211,59 +150,6 @@ def _remove_first(series, snum, name):
     section = series.loadSection(snum)
     section.removeTrace(section.contours[name][0], log_event=False)
     section.save()
-
-
-def test_two_rows_naming_a_moved_trace_delete_it_once(tmp_path):
-    """Both rows name the third `B`. The first `B` is deleted after the scan,
-    so the index no longer fits, but the third differs from it in its tags,
-    so it is still the only trace with its saved data. It goes, once."""
-    series = _load_series(tmp_path)
-    snum = _seed(series, [
-        ("A", SQUARE, "a"),
-        ("C", SQUARE, "c"),
-        ("B", SQUARE, "b0"),
-        ("B", FAR, "b1"),
-        ("B", SQUARE, "b2"),
-    ])
-    records = series.findDifferentlyNamedDuplicates(0.95)
-    choices = [_row(records, "B", 2, "A"), _row(records, "B", 2, "C")]
-    _remove_first(series, snum, "B")
-
-    ambiguous = []
-    applied = series.deleteDifferentlyNamedDuplicates(
-        choices, series_states=_states(series), ambiguous=ambiguous
-    )
-
-    assert applied == choices
-    assert ambiguous == []
-    assert _tags(series, snum, "B") == [["b1"]]
-
-
-def test_two_rows_naming_a_moved_trace_with_two_lookalikes_delete_none(
-        tmp_path):
-    """The same two rows, but the three `B` traces are identical in every
-    saved field, and one fewer is left. Nothing is deleted for either row,
-    and both are reported."""
-    series = _load_series(tmp_path)
-    snum = _seed(series, [
-        ("A", SQUARE, "a"),
-        ("C", SQUARE, "c"),
-        ("B", SQUARE, "same"),
-        ("B", SQUARE, "same"),
-        ("B", SQUARE, "same"),
-    ])
-    records = series.findDifferentlyNamedDuplicates(0.95)
-    choices = [_row(records, "B", 2, "A"), _row(records, "B", 2, "C")]
-    _remove_first(series, snum, "B")
-
-    ambiguous = []
-    applied = series.deleteDifferentlyNamedDuplicates(
-        choices, series_states=_states(series), ambiguous=ambiguous
-    )
-
-    assert applied == []
-    assert ambiguous == choices
-    assert _tags(series, snum, "B") == [["same"], ["same"]]
 
 
 def test_a_moved_index_with_two_lookalikes_deletes_nothing(tmp_path):
@@ -371,35 +257,6 @@ def _notices(monkeypatch):
     return mod, notices
 
 
-def test_the_pairs_list_is_told_which_rows_were_left(tmp_path, monkeypatch):
-    series = _load_series(tmp_path)
-    snum = _seed(series, [
-        ("A", SQUARE, "a"),
-        ("C", SQUARE, "c"),
-        ("B", SQUARE, "same"),
-        ("B", SQUARE, "same"),
-        ("B", SQUARE, "same"),
-    ])
-    records = series.findDifferentlyNamedDuplicates(0.95)
-    choices = [_row(records, "B", 2, "A"), _row(records, "B", 2, "C")]
-    _remove_first(series, snum, "B")
-    mod, notices = _notices(monkeypatch)
-
-    applied = mod.FieldWidgetObject.deleteDifferentlyNamedDuplicates(
-        _StubField(series), choices
-    )
-
-    assert applied == []
-    assert notices == [
-        # two rows, one trace: the notice counts traces
-        "PyReconstruct did not delete 1 trace. The section changed after the "
-        "scan, and PyReconstruct cannot tell which of the identical traces "
-        "you chose:\n\n"
-        f"  B on section {snum}\n\n"
-        "Run the scan again to list it where it is now."
-    ]
-
-
 def test_a_cleanup_list_is_told_which_row_was_left(tmp_path, monkeypatch):
     series = _load_series(tmp_path)
     snum = _seed(series, [
@@ -451,13 +308,18 @@ def test_scans_record_how_many_lookalikes_each_trace_has(tmp_path):
     dust = _dust_records(series, snum)
     assert [r["lookalikes"] for r in dust] == [3, 3, 3]
     assert [r["lookalike_ordinal"] for r in dust] == [0, 1, 2]
-    record = _row(series.findDifferentlyNamedDuplicates(0.95), "A", 1, "B")[0]
-    a_side = "" if record["name"] == "A" else "other_"
-    b_side = "other_" if a_side == "" else ""
-    assert record[f"{a_side}lookalikes"] == 2
-    assert record[f"{a_side}lookalike_ordinal"] == 1
-    assert record[f"{b_side}lookalikes"] == 1
-    assert record[f"{b_side}lookalike_ordinal"] == 0
+    group = next(
+        g for g in series.findDuplicateTraces(0.95)
+        if g["section"] == snum and "B" in g["names"]
+    )
+    by_place = {(m["name"], m["index"]): m for m in group["members"]}
+    a_traces = sorted(i for n, i in by_place if n == "A")
+    assert by_place[("A", a_traces[1])]["lookalikes"] == 2
+    assert by_place[("A", a_traces[1])]["lookalike_ordinal"] == 1
+    assert by_place[("A", a_traces[2])]["lookalikes"] == 1
+    b_index = next(i for n, i in by_place if n == "B")
+    assert by_place[("B", b_index)]["lookalikes"] == 1
+    assert by_place[("B", b_index)]["lookalike_ordinal"] == 0
 
 
 def test_a_trace_that_differs_in_its_tags_is_found_where_it_moved(tmp_path):
@@ -475,26 +337,6 @@ def test_a_trace_that_differs_in_its_tags_is_found_where_it_moved(tmp_path):
 
     assert series.deleteMalformedTraces([record]) == [record]
     assert _tags(series, snum, "DUST") == [["b2"]]
-
-
-def test_a_pair_row_whose_index_lands_on_a_lookalike_deletes_nothing(
-        tmp_path):
-    series = _load_series(tmp_path)
-    snum = _seed(series, [
-        ("A", SQUARE, "a"),
-        ("B", SQUARE, "same"),
-        ("B", SQUARE, "same"),
-        ("B", SQUARE, "same"),
-    ])
-    choice = _row(series.findDifferentlyNamedDuplicates(0.95), "B", 1, "A")
-    _remove_first(series, snum, "B")
-
-    ambiguous = []
-    assert series.deleteDifferentlyNamedDuplicates(
-        [choice], ambiguous=ambiguous
-    ) == []
-    assert ambiguous == [choice]
-    assert _tags(series, snum, "B") == [["same"], ["same"]]
 
 
 def test_an_unchanged_count_keeps_the_index(tmp_path):
@@ -662,19 +504,3 @@ def test_a_cleanup_list_is_told_a_trace_is_gone(tmp_path, monkeypatch):
         "may have changed or been deleted after the list was made."
     ]
 
-
-def test_the_pairs_list_is_told_a_trace_is_gone(tmp_path, monkeypatch):
-    series = _load_series(tmp_path)
-    snum = _seed(series, [("A", SQUARE, "a"), ("B", SQUARE, "b")])
-    records = series.findDifferentlyNamedDuplicates(0.95)
-    choice = _row(records, "B", 0, "A")
-    _remove_first(series, snum, "B")
-    mod, notices = _notices(monkeypatch)
-
-    assert mod.FieldWidgetObject.deleteDifferentlyNamedDuplicates(
-        _StubField(series), [choice]
-    ) == []
-    assert notices == [
-        "1 of the traces you chose to delete was not found and could not be "
-        "deleted. It may have changed or been deleted after the scan."
-    ]
