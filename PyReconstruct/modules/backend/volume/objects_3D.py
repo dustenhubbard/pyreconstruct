@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 
 from skimage.draw import polygon
@@ -7,9 +9,8 @@ from PyReconstruct.modules.calc import centroid
 from PyReconstruct.modules.datatypes import Trace, Transform, Series
 from PyReconstruct.modules.datatypes.transform import alignment_tform
 from PyReconstruct.modules.calc.nesting import (  # noqa: F401 (tests import them from here)
+    _clearsAgain,
     _covers,
-    _intersects,
-    _overlaps,
     _traceLine,
     _tracePolygon,
     nestedFillOrder,
@@ -162,9 +163,14 @@ class Surface(Object3D):
         volume = np.zeros(vshape, dtype=bool)
 
         # add the traces to the volume: positives fill, negatives clear, and
-        # a positive inside a negative (an island in a hole) fills again after it
+        # a positive inside a negative (an island in a hole) fills again after
+        # it; a negative within a voxel's diagonal of the island can round
+        # onto its edge voxels, so it clears again after the island
+        reach = math.hypot(vres, vres)
         for snum, trace_lists in self.traces.items():
-            for trace, fill in nestedFillOrder(trace_lists["pos"], trace_lists["neg"]):
+            for trace, fill in nestedFillOrder(
+                trace_lists["pos"], trace_lists["neg"], reach
+            ):
                 x_values = []
                 y_values = []
                 for x, y in trace:

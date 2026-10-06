@@ -191,3 +191,31 @@ def test_island_smaller_than_a_pixel_draws_one_pixel():
     hole_px = arr[35:66, 35:66]
     assert np.argwhere(hole_px == ids["a"]).tolist() == [[50 - 35, 50 - 35]]
     assert int(np.count_nonzero(hole_px)) == 1
+
+
+def _rect(name, x0, y0, x1, y1, negative=False):
+    trace = Trace(name, (255, 0, 0), closed=True)
+    trace.points = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    trace.negative = negative
+    return trace
+
+
+@pytest.mark.parametrize("name, touch", [
+    ("sharing an edge", (60, 45, 66, 55)),
+    ("touching a corner", (60, 60, 66, 66)),
+])
+def test_negative_touching_the_island_clears_its_edge(name, touch):
+    ## a negative that only touches the island clears the island's edge
+    ## pixels again after the island refills, as it does with no hole
+    outer, island = _square("a", 10, 90), _square("a", 40, 60)
+    hole = _square("a", 30, 70, negative=True)
+    cut = _rect("a", *touch, negative=True)
+
+    arr, ids = _labels([outer, hole, island, cut])
+    no_hole, _ = _labels([outer, island, cut], draw=_twoPassDraw)
+
+    ## the island's pixels: series y 40 to 60 rounds to rows 60 down to 40
+    rows, cols = slice(SIZE - 60, SIZE - 40 + 1), slice(40, 61)
+    assert (no_hole[rows, cols] == 0).any(), name
+    np.testing.assert_array_equal(arr[rows, cols], no_hole[rows, cols])
+    assert arr[SIZE - touch[1], touch[0]] == 0  # a shared edge pixel

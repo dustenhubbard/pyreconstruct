@@ -10,6 +10,7 @@ a negative covers, clears the negatives those islands cover, and so on. A
 section with no island keeps exactly the order it had, which the reference
 loop below (the shipped fill, frozen) pins voxel for voxel.
 """
+import math
 import os
 import shutil
 
@@ -22,9 +23,8 @@ QApplication.instance() or QApplication(["test"])
 
 from PyReconstruct.modules.backend.volume.objects_3D import (  # noqa: E402
     Surface,
+    _clearsAgain,
     _covers,
-    _intersects,
-    _overlaps,
     _traceLine,
     _tracePolygon,
     nestedFillOrder,
@@ -72,6 +72,17 @@ ONE_POINT = [(1.5, 1.5), (1.5, 1.5), (1.5, 1.5)]
 # runs over the island
 CROSS = _square(1.5, 1.5, 1.9, 1.9)
 LINE = [(1.5, 1.35), (1.5, 1.65)]
+# negatives beside the island: one sharing part of its right edge, one
+# touching its corner, and two that miss it by less than a voxel's diagonal
+# (the voxels here are 0.03 wide), so both round onto its edge voxels
+TOUCH = _square(1.7, 1.4, 1.9, 1.6)
+CORNER = _square(1.7, 1.7, 1.9, 1.9)
+NEAR = _square(1.724, 1.4, 1.9, 1.6)
+NEAR_CORNER = _square(1.724, 1.724, 1.9, 1.9)
+# one too far to round onto the island at all
+FAR = _square(1.76, 1.4, 1.9, 1.6)
+VOXEL = 0.03
+REACH = math.hypot(VOXEL, VOXEL)
 
 
 def _surface(sections, nsec=3):
@@ -273,7 +284,55 @@ def test_nested_fill_order_reapplies_cutting_negatives():
     ]
 
 
-def _pairwise_order(pos, neg):
+@pytest.mark.parametrize("name, near", [
+    ("sharing an edge", TOUCH),
+    ("touching a corner", CORNER),
+    ("less than a voxel away", NEAR),
+    ("less than a voxel's diagonal from a corner", NEAR_CORNER),
+])
+def test_negative_beside_the_island_still_cuts_it(name, near):
+    """A negative that touches the island, or sits close enough that both
+    round onto the same voxels, clears those voxels again after the island
+    refills: the island ends up with the voxels it has with no hole around
+    it, and the negative's own voxels stay clear as they did before."""
+    cut = _surface([(OUTER, False), (ISLAND, False), (near, True)])
+    cut_ref = _reference_volume(cut)
+    full = np.ones_like(cut_ref)
+    assert 0 < _count(cut_ref, ISLAND, cut) < _count(full, ISLAND, cut), name
+
+    surf = _surface([(OUTER, False), (HOLE, True), (ISLAND, False), (near, True)])
+    volume, vres = surf.generateVolume()
+    assert vres == pytest.approx(VOXEL)
+    assert _count(volume, ISLAND, cut) == _count(cut_ref, ISLAND, cut), name
+    assert _count(volume, near, cut) == 0, name
+
+
+def test_nested_fill_order_reapplies_negatives_beside_the_island():
+    pos, neg = [OUTER, ISLAND], [HOLE, TOUCH, CORNER, NEAR, NEAR_CORNER, FAR]
+    # touching counts with no reach; the ones a voxel away need it, and a
+    # negative too far to round onto the island is left alone
+    assert nestedFillOrder(pos, neg)[len(pos) + len(neg):] == [
+        (ISLAND, True), (TOUCH, False), (CORNER, False),
+    ]
+    assert nestedFillOrder(pos, neg, REACH)[len(pos) + len(neg):] == [
+        (ISLAND, True),
+        (TOUCH, False), (CORNER, False), (NEAR, False), (NEAR_CORNER, False),
+    ]
+
+
+def test_hole_the_island_touches_is_not_reapplied():
+    """An island against the inside of its hole's edge touches the hole, but
+    the hole is around it, so clearing it again would erase the island."""
+    against = _square(1, 1.3, 1.4, 1.7)
+    assert nestedFillOrder([OUTER, against], [HOLE], REACH) == [
+        (OUTER, True), (against, True), (HOLE, False), (against, True),
+    ]
+    surf = _surface([(OUTER, False), (HOLE, True), (against, False)])
+    volume, _ = surf.generateVolume()
+    assert _count(volume, against, surf) == _count(np.ones_like(volume), against, surf)
+
+
+def _pairwise_order(pos, neg, reach=0.0):
     """The walk with every pair compared, no index; the shipped walk must
     give the same answer."""
     order = [(pts, True) for pts in pos] + [(pts, False) for pts in neg]
@@ -281,8 +340,8 @@ def _pairwise_order(pos, neg):
         return order
     pos_polys = [_tracePolygon(pts) for pts in pos]
     neg_polys = [_tracePolygon(pts) for pts in neg]
-    neg_lines = [None if poly is not None else _traceLine(pts)
-                 for poly, pts in zip(neg_polys, neg)]
+    neg_shapes = [poly if poly is not None else _traceLine(pts)
+                  for poly, pts in zip(neg_polys, neg)]
     holes = range(len(neg))
     seen = set()
     for _ in range(len(pos) + len(neg)):
@@ -297,9 +356,7 @@ def _pairwise_order(pos, neg):
         holes = sorted(
             j for j in range(len(neg))
             if any(
-                _covers(pos_polys[i], neg_polys[j], allow_equal=True)
-                or _overlaps(pos_polys[i], neg_polys[j])
-                or _intersects(pos_polys[i], neg_lines[j])
+                _clearsAgain(pos_polys[i], neg_shapes[j], reach)
                 for i in islands
             )
         )
@@ -309,8 +366,9 @@ def _pairwise_order(pos, neg):
     return order
 
 
+@pytest.mark.parametrize("reach", [0.0, 0.05])
 @pytest.mark.parametrize("seed", [0, 1, 2, 3])
-def test_indexed_walk_matches_the_pairwise_walk(seed):
+def test_indexed_walk_matches_the_pairwise_walk(seed, reach):
     """Random squares, many of them nested, a few duplicated, some with no
     area: the tree only narrows the pairs, it must not change the answer."""
     rng = np.random.default_rng(seed)
@@ -339,8 +397,8 @@ def test_indexed_walk_matches_the_pairwise_walk(seed):
         neg.append([(k * 2.0 + 0.8, k * 2.0 + 0.1), (k * 2.0 + 0.8, k * 2.0 + 1.5)])
         neg.append([(k * 2.0 + 0.8, k * 2.0 + 0.8)] * 3)
 
-    got = nestedFillOrder(pos, neg)
-    assert got == _pairwise_order(pos, neg)
+    got = nestedFillOrder(pos, neg, reach)
+    assert got == _pairwise_order(pos, neg, reach)
     assert len(got) > len(pos) + len(neg), "the case has islands"
 
 
