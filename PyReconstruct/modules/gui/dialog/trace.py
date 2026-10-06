@@ -20,6 +20,7 @@ from .quick_dialog import MultiInput
 from PyReconstruct.modules.datatypes import Trace
 from PyReconstruct.modules.datatypes.trace import copyObjDefaults
 from PyReconstruct.modules.gui.utils import notify
+from PyReconstruct.modules.gui.utils.str_helper import sortList
 
 def objectListColumns(series) -> dict:
     """The series' custom columns (name -> options) in the order the object
@@ -50,7 +51,8 @@ class TraceDialog(QDialog):
             series=None,
             smooth_default=None,
             smooth_window=None,
-            smooth_mixed=False):
+            smooth_mixed=False,
+            used_tags=None):
         """Create an attribute dialog.
 
             Params:
@@ -71,6 +73,9 @@ class TraceDialog(QDialog):
                 smooth_mixed (bool): True when the selected objects disagree,
                     so the row starts blank and an untouched OK leaves each
                     object's value alone
+                used_tags (iterable): every tag already on a trace in the
+                    series (SeriesData.usedTags). The Tags rows offer them
+                    after the tag set tags. None offers only the sets.
 
         After exec(), ``tag_choices`` holds the pick-one rows' answer as
         ``TagSets.apply`` reads it: set name -> value, "" for cleared, None
@@ -264,19 +269,27 @@ class TraceDialog(QDialog):
         # sorted because trace.tags is a set: unsorted, a tag lands on a
         # different row each time the dialog opens, so the row a user is part
         # way through editing is not the row they left off on
-        known_tags = tag_sets.allTags() if tag_sets is not None else []
-        known_tags = [t for t in known_tags if t not in pick_one_values]
+        set_tags = tag_sets.allTags() if tag_sets is not None else []
+        set_tags = sortList([t for t in set_tags if t not in pick_one_values])
+        # then every other tag already on a trace in the series, so a tag in
+        # no set is still offered (fork #774)
+        listed = set(set_tags) | pick_one_values
+        other_tags = sortList(
+            {t for t in (used_tags or ()) if t and t not in listed}
+        )
+        known_tags = set_tags + other_tags
         if known_tags:
-            # dropdown rows: every pick-many tag with completion and its
-            # description as a tooltip. Typed text outside the sets is still
-            # accepted (pick many allows user values).
+            # dropdown rows: every pick-many and used tag with completion, a
+            # set tag's description as its tooltip. Typed text outside the
+            # list is still accepted (pick many allows user values).
             self.tags_input = MultiInput(
                 self,
                 sorted(tags),
                 combo=True,
                 combo_items=known_tags,
                 restrict_to_opts=False,
-                combo_tooltips={t: tag_sets.describe(t) for t in known_tags},
+                combo_tooltips={t: tag_sets.describe(t) for t in set_tags},
+                sort_items=False,
             )
         else:
             self.tags_input = MultiInput(self, sorted(tags))
