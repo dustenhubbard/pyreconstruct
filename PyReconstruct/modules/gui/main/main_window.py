@@ -2641,6 +2641,10 @@ class MainWindow(QMainWindow):
                 "Please set the backup folder in following dialog."
             )
             if not self.series.usesBackupDefaults():
+                # record the choice first: with auto-backup off and the folder
+                # cleared, the series would otherwise read as having nothing
+                # of its own and take the defaults
+                self.series.setBackupUsesDefaults(False)
                 self.series.setOption("backup_dir", "")
             self.setBackup()
 

@@ -5352,8 +5352,15 @@ class Series():
         self._settingsStore().set_value(self.code, "backup_use_defaults", bool(value))
 
     def expandBackupFolder(self, folder : str) -> str:
-        """Replace {series} in a folder with this series' code."""
+        """Replace {series} in a folder with this series' code.
+
+        The code is whatever was typed in the series code dialog, so path
+        separators become "_", and so does every dot in a code made only of
+        dots: "." or ".." would name the folder itself or its parent.
+        """
         code = (self.code or self.name).replace("/", "_").replace("\\", "_")
+        if not code.strip("."):
+            code = "_" * max(len(code), 1)
         return folder.replace("{series}", code)
 
     def autobackupOn(self) -> bool:

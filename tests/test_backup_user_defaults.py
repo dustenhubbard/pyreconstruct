@@ -120,6 +120,15 @@ def test_a_path_separator_in_the_code_cannot_leave_the_folder(tmp_path):
     assert series.expandBackupFolder(str(tmp_path / "{series}")) == str(tmp_path / "A_.._B")
 
 
+@pytest.mark.parametrize("code, safe", [(".", "_"), ("..", "__"), ("...", "___")])
+def test_a_dot_only_code_cannot_leave_the_folder(tmp_path, code, safe):
+    """The series code dialog accepts any text, so a code can be `..`."""
+    series = _series(code)
+    folder = series.expandBackupFolder(str(tmp_path / "backups" / "{series}"))
+    assert folder == str(tmp_path / "backups" / safe)
+    assert os.path.dirname(os.path.normpath(folder)) == str(tmp_path / "backups")
+
+
 ## Making the folder
 
 def test_the_series_folder_is_made_when_its_parent_exists(tmp_path):
@@ -269,6 +278,28 @@ def test_a_failed_manual_backup_leaves_a_series_on_the_defaults(tmp_path, notes)
     MainWindow.backup(_window(series), check_auto=False)
 
     assert series.usesBackupDefaults()
+
+
+def test_canceling_after_a_missing_folder_of_its_own_keeps_it_off_the_defaults(tmp_path, notes):
+    """Clearing the folder must not turn a series with auto-backup off into
+    one with nothing of its own, which the defaults would then claim."""
+    from PyReconstruct.modules.gui.main.main_window import MainWindow
+
+    store = DictSettingsStore()
+    series = _series(store=store)
+    series.setOption("autobackup", False)
+    series.setOption("backup_dir", str(tmp_path / "gone"))
+    (tmp_path / "backups").mkdir()
+    _set_defaults(series, str(tmp_path / "backups" / "{series}"))
+    series.saveJser = lambda *a, **k: pytest.fail("no backup expected")
+    window = _window(series)  # its setBackup is the dialog, canceled
+
+    MainWindow.backup(window, check_auto=False)
+
+    assert window.dialogs == 1
+    assert not series.usesBackupDefaults()
+    assert series.autobackupOn() is False
+    assert not os.path.exists(tmp_path / "backups" / "ABC")
 
 
 def test_a_missing_folder_of_its_own_is_cleared_as_before(tmp_path, notes):
