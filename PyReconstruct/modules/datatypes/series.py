@@ -4665,6 +4665,9 @@ class Series():
         for snum in sorted(d.values()):
             self.sections[snum] = f"{self.name}.{snum}"
 
+        # each object's traces keep their id under the new numbers
+        self.data.object_ids.renumber(d)
+
         self.current_section = d[self.current_section]
 
         if log_event:
@@ -5660,6 +5663,8 @@ class Series():
             os.remove(os.path.join(self.getwdir(), filename))
             # delete link to file
             del(self.sections[snum])
+            # and the object ids of its traces
+            self.data.object_ids.dropSection(snum)
             if log_event:
                 self.addLog(None, snum, "Delete section")
 
