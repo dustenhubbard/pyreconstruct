@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import tarfile
 
 from PyReconstruct.modules.backend.updater import apply as A
@@ -43,9 +44,31 @@ def staging_dir(install, app_name):
     return os.path.join(os.path.dirname(os.path.abspath(install)), f".{app_name}-update")
 
 
+def _is_link(path):
+    """A symlink, or on Windows any reparse point such as a junction, which os.path.islink misses."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    return (stat.S_ISLNK(st.st_mode)
+            or bool(getattr(st, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT))
+
+
 def _clear(staging):
-    for name in (A.PLAN, A.TREE, A.NEW, DOWNLOAD):  # plan.json first, so no plan outlives its files
-        A._remove(os.path.join(staging, name))
+    """Delete what a staging run writes, plan.json first. Raises StageError if any of it stays.
+
+    Every item is tried even when one fails (Windows refuses to delete a file
+    another process holds open), because a plan.json without its tree.json or
+    new/ beside it is one the helper refuses.
+    """
+    failed = []
+    for name in (A.PLAN, A.TREE, A.NEW, DOWNLOAD):
+        try:
+            A._remove(os.path.join(staging, name))
+        except OSError as e:
+            failed.append(f"{name} ({e})")
+    if failed:
+        raise StageError(f"could not clear the staging folder: {', '.join(failed)}")
 
 
 def stage_update(release, *, install, app_name, flavor, from_version, pid=None,
@@ -63,8 +86,9 @@ def stage_update(release, *, install, app_name, flavor, from_version, pid=None,
         raise StageError("the release has no version")
     staging = staging_dir(install, app_name)
     created = not os.path.lexists(staging)
-    if os.path.islink(staging):
-        raise StageError("the staging folder is a link")
+    if _is_link(staging):
+        # a junction to the install would put the lock and every staged file inside it
+        raise StageError("the staging folder is a link or a junction")
     os.makedirs(staging, exist_ok=True)
     lock = A.take_lock(staging)
     if lock is None:
@@ -76,12 +100,15 @@ def stage_update(release, *, install, app_name, flavor, from_version, pid=None,
                 or any(os.path.lexists(os.path.join(staging, n)) for n in (A.OLD, A.REJECTED))):
             # old/ may be the only copy of the install; the helper finishes or undoes that run
             raise StageError("an earlier update has not finished")
-        _clear(staging)
         try:
+            _clear(staging)
             plan = _stage(release, str(version), staging, install, app_name, flavor,
                           from_version, pid, registry_key, trusted_keys, progress_cb, cancel_cb)
         except BaseException as e:
-            _clear(staging)
+            try:
+                _clear(staging)
+            except StageError:
+                pass  # the first error is the one to report
             if isinstance(e, (StageError, U.UpdateCancelled)) or not isinstance(e, Exception):
                 raise
             raise StageError(f"could not stage the update: {e}") from e
@@ -161,6 +188,9 @@ def _stage(release, version, staging, install, app_name, flavor, from_version, p
     except A.Refused as e:
         raise StageError(f"the unpacked payload does not match tree.json: {e}")
 
+    # Kept unsigned, for the helper to check new/ against at quit. Anyone who can
+    # write here can also write the per-user install itself, so signing it again
+    # would not keep out anyone the install folder lets in.
     A.atomic_write_json(os.path.join(staging, A.TREE), tree)
     plan = {
         "format": A.FORMAT, "platform": "windows", "kind": "folder",

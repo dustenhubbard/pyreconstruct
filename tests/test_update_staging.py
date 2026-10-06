@@ -193,6 +193,50 @@ def test_a_disk_that_fills_while_unpacking_leaves_nothing(rel, monkeypatch):
     rel.nothing_left()
 
 
+@pytest.mark.parametrize("kind", ["junction", "symlink"])
+def test_a_staging_folder_that_leads_into_the_install_is_refused(rel, kind):
+    if kind == "junction":
+        if os.name != "nt":
+            pytest.skip("junctions are Windows only")
+        import _winapi
+        _winapi.CreateJunction(rel.install, rel.staging)
+    else:
+        try:
+            os.symlink(rel.install, rel.staging, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pytest.skip("this account cannot make links")
+    try:
+        with pytest.raises(S.StageError, match="link or a junction"):
+            rel.stage()
+        assert snapshot(rel.install) == rel.before  # no lock, plan, or staged file inside it
+        assert rel.fetched == []
+    finally:
+        if kind == "junction":
+            os.rmdir(rel.staging)  # the junction only, never what it leads to
+
+
+def test_a_plan_that_cannot_be_deleted_is_left_unusable(rel, monkeypatch):
+    rel.stage()
+    remove = A._remove
+
+    def held_open(path):
+        if os.path.basename(path) == A.PLAN:
+            raise PermissionError(13, "in use by another process", path)
+        remove(path)
+
+    monkeypatch.setattr(A, "_remove", held_open)
+    with pytest.raises(S.StageError, match="could not clear the staging folder"):
+        rel.stage()
+    assert os.path.isfile(os.path.join(rel.staging, A.PLAN))
+    for name in (A.TREE, A.NEW, S.DOWNLOAD):
+        assert not os.path.lexists(os.path.join(rel.staging, name)), name
+    world = World()
+    world.install, world.staging = rel.install, rel.staging
+    result = A.Applier(rel.staging, FakePlatform(world), FAST, host="windows").run()
+    assert result["status"] == "refused", result
+    assert snapshot(rel.install) == rel.before
+
+
 def test_an_unfinished_swap_is_left_for_the_helper(rel):
     old = os.path.join(rel.staging, A.OLD)
     _write(old, "PyReconstruct.exe", "the only copy of the install")
