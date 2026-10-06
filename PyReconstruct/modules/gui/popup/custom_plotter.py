@@ -76,12 +76,27 @@ class VPlotter(vedo.Plotter):
         """
         return self.mainwindow.series
 
-    def getSectionFromZ(self, z):
-        """Get the section number from a z coordinate."""
-        snum = round(z / self.mainwindow.field.section.thickness)  # probably change this
+    def getSectionFromZ(self, z, series_fp=None):
+        """Get the section number from a z coordinate.
 
-        # if the section is not in the seris, find closest section
-        all_sections = list(self.series.sections.keys())
+            Params:
+                z (float): the z coordinate in the scene
+                series_fp (str): the path of the series the mesh came from;
+                    None reads the open series
+        """
+        # a mesh's z is its section number times its series' average
+        # thickness (objects_3D), so the inverse uses that same series: a
+        # mesh from another series has its own thickness and section numbers,
+        # recorded when it was added, since that series may be closed by now
+        recorded = None if series_fp is None else self.objs.section_maps.get(series_fp)
+        if recorded is None or series_fp == self.series.jser_fp:
+            thickness = self.series.avg_thickness
+            all_sections = sorted(self.series.sections)
+        else:
+            thickness, all_sections = recorded
+        snum = round(z / thickness)
+
+        # if the section is not in the series, find closest section
         if snum not in all_sections:
             diffs = [abs(s - snum) for s in all_sections]
             snum = all_sections[diffs.index(min(diffs))]
@@ -821,8 +836,9 @@ class VPlotter(vedo.Plotter):
         # get the transform and apply its inverse to a point
         x, y, z = msh.transform.T.GetInverse().TransformFloatPoint(*pt)
 
-        # get the section
-        s = self.getSectionFromZ(z)
+        # get the section, in the numbering of the series the mesh came from
+        obj = self.objs[msh]
+        s = self.getSectionFromZ(z, obj.series_fp if obj else None)
 
         return round(x, 3), round(y, 3), s
 
@@ -1779,6 +1795,9 @@ class SceneObjectList():
         """Create the scene object list."""
         self.scene_objects = {}
         self.host_trees = {}
+        # per series path: (average thickness, sorted section numbers), for
+        # the hover's section lookup once that series is no longer open
+        self.section_maps = {}
         # IDs of scene objects whose 2D source data changed after their mesh
         # was generated (see markStale/popStale)
         self.stale_ids = set()
@@ -1821,6 +1840,13 @@ class SceneObjectList():
         # add to the host tree
         if series.jser_fp not in self.host_trees:
             self.host_trees[series.jser_fp] = series.host_tree
+        # refreshed on every add: the open series can gain or lose sections
+        # while the scene is up (a Series-like without sections records none)
+        sections = getattr(series, "sections", None)
+        if sections is not None:
+            self.section_maps[series.jser_fp] = (
+                series.avg_thickness, sorted(sections)
+            )
         
         return scene_object
     
@@ -1854,6 +1880,8 @@ class SceneObjectList():
                 scene_obj.series_fp = new_fp
         if old_fp in self.host_trees:
             self.host_trees[new_fp] = self.host_trees.pop(old_fp)
+        if old_fp in self.section_maps:
+            self.section_maps[new_fp] = self.section_maps.pop(old_fp)
 
     def markStale(self, obj_names=None, ztrace_names=None, series_fp=None):
         """Mark scene objects as stale: their 2D data changed after their mesh

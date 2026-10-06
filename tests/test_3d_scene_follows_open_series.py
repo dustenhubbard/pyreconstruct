@@ -194,3 +194,55 @@ def test_a_refresh_after_a_switch_leaves_the_first_series_mark_alone(
     assert launched == [], "a same-named object was built from the open series"
     assert objs.stale_ids == {theirs.id}
     assert objs.search(name, "object", first.jser_fp) is theirs
+
+
+def _hover(viewer, msh, z):
+    """Move the mouse over a mesh at scene point (0.5, 0.25, z); return the
+    text the scene shows."""
+    shown = []
+    viewer.plt.pos_text = types.SimpleNamespace(text=shown.append)
+    event = types.SimpleNamespace(actor=msh, picked3d=(0.5, 0.25, z))
+    viewer.plt.mouseMoveEvent(event)
+    return shown[-1]
+
+
+def test_hovering_a_first_series_mesh_reports_its_own_section(
+    main_window, series_jser, tmp_path, monkeypatch
+):
+    """A mesh's z is its section number times its series' thickness, and the
+    first series keeps its own section numbers after the switch, even
+    though its working folder is closed."""
+    window = main_window
+    first = window.series
+    name = sorted(first.data["objects"])[0]
+    viewer, _launched = _viewer(window, monkeypatch)
+    last = max(first.sections)
+    theirs = viewer.plt.objs.add(_mesh(), first, name, "object", (1, 1, 1), 1)
+
+    _open_other(window, series_jser, tmp_path)
+    window.series.sections.pop(last)  # the open series has no such section
+    text = _hover(viewer, theirs.msh, last * first.avg_thickness)
+
+    assert f"section {last}" in text, text
+    assert os.path.basename(first.jser_fp)[:-5] in text
+
+
+def test_hovering_an_open_series_mesh_reports_its_own_section(
+    main_window, series_jser, tmp_path, monkeypatch
+):
+    """The mirror: a mesh from the open series is not read against the first
+    series' section numbers."""
+    window = main_window
+    first = window.series
+    name = sorted(first.data["objects"])[0]
+    viewer, _launched = _viewer(window, monkeypatch)
+    lowest = min(first.sections)
+    first.sections.pop(lowest)  # the first series has no such section
+    viewer.plt.objs.add(_mesh(), first, name, "object", (1, 1, 1), 1)
+
+    _open_other(window, series_jser, tmp_path)
+    mine = viewer.plt.objs.add(_mesh(), window.series, name, "object", (2, 2, 2), 1)
+    text = _hover(viewer, mine.msh, lowest * window.series.avg_thickness)
+
+    assert f"section {lowest}" in text, text
+    assert "(" not in text
