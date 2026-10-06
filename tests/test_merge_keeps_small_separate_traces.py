@@ -70,9 +70,112 @@ def test_a_group_with_no_outline_empties_the_whole_result():
     assert mergeTracesInField([LONG, speck], MAG) == []
 
 
+def _area(points):
+    from shapely.geometry import Polygon
+    return Polygon(points).area
+
+
+def test_traces_touching_at_an_edge_or_corner_are_one_group():
+    from PyReconstruct.modules.calc.grid import mergeGroups
+
+    a = _rect(0.0, 0.0, 1.0, 1.0)
+    edge = _rect(1.0, 0.0, 2.0, 1.0)
+    corner = _rect(1.0, 1.0, 2.0, 2.0)
+    assert mergeGroups([a, edge]) == [[0, 1]]
+    assert mergeGroups([a, corner]) == [[0, 1]]
+    assert len(mergeTracesInField([a, edge], 0.01)) == 1
+
+
+def test_a_chain_of_overlaps_is_one_group():
+    """A overlaps B and B overlaps C, while A and C are apart."""
+    from PyReconstruct.modules.calc.grid import mergeGroups
+
+    a = _rect(0.0, 0.0, 1.0, 1.0)
+    b = _rect(0.9, 0.0, 2.1, 1.0)
+    c = _rect(2.0, 0.0, 3.0, 1.0)
+    assert mergeGroups([a, c, b]) == [[0, 1, 2]]
+    merged = mergeTracesInField([a, c, b], 0.01)
+    assert len(merged) == 1
+    assert _area(merged[0]) == pytest.approx(3.0, rel=0.01)
+
+
+def test_a_self_crossing_trace_groups_with_what_it_overlaps():
+    from PyReconstruct.modules.calc.grid import mergeGroups
+
+    bowtie = [(0.0, 0.0), (1.0, 1.0), (1.0, 0.0), (0.0, 1.0)]
+    beside = _rect(0.9, 0.4, 2.0, 0.6)
+    apart = _rect(5.0, 5.0, 6.0, 6.0)
+    assert mergeGroups([bowtie, beside, apart]) == [[0, 1], [2]]
+    assert mergeTracesInField([bowtie, beside, apart], 0.01)
+
+
+def test_a_trace_in_a_hole_merges_into_the_ring():
+    """The grid keeps only outer outlines, so the grouping fills holes too.
+    Grouped apart, the inner trace came back on top of the ring and the two
+    areas summed to 17 instead of 16."""
+    from PyReconstruct.modules.calc.grid import mergeGroups
+
+    ring = [(0, 0), (4, 0), (4, 4), (0, 4), (0, 0),
+            (1, 1), (1, 3), (3, 3), (3, 1), (1, 1), (0, 0)]
+    inner = _rect(1.5, 1.5, 2.5, 2.5)
+    assert mergeGroups([ring, inner]) == [[0, 1]]
+    merged = mergeTracesInField([ring, inner], 0.01)
+    assert len(merged) == 1
+    assert _area(merged[0]) == pytest.approx(16.0, rel=0.01)
+
+
+def test_traces_closer_than_a_cell_stay_apart():
+    """Two traces a hundredth of a pixel apart do not touch, so they are
+    merged apart and stay two traces. One shared grid used to join them."""
+    a = _rect(0.0, 0.0, 1.0, 1.0)
+    b = _rect(1.001, 0.0, 2.0, 1.0)
+    assert len(mergeTracesInField([a, b], 0.1)) == 2
+
+
+# the long trace is 40000 pixels wide; a cell on its grid is 16 pixels
+TOUCH_MAG = 0.000025
+TOUCH_LONG = _rect(0.0, 0.0, 1.0, 0.01)
+
+
+def test_a_small_trace_touching_a_long_one_empties_the_result():
+    """The small trace hangs below the long one and rounds onto one grid
+    point. Merging would drop its area, so the result is empty and the
+    caller keeps both."""
+    below = _rect(0.0048, -0.0001, 0.00488, 0.0)
+    from PyReconstruct.modules.calc.grid import mergeGroups
+
+    assert mergeGroups([TOUCH_LONG, below]) == [[0, 1]]
+    assert mergeTracesInField([TOUCH_LONG, below], TOUCH_MAG) == []
+
+
+def test_a_small_trace_inside_a_long_one_still_merges():
+    """Rounding a trace away is safe when another trace covers its area."""
+    inside = _rect(0.0048, 0.001, 0.00488, 0.0011)
+    merged = mergeTracesInField([TOUCH_LONG, inside], TOUCH_MAG)
+    assert len(merged) == 1
+    assert _bounds(merged[0]) == pytest.approx(_bounds(TOUCH_LONG), abs=0.0004)
+
+
 # ---------------------------------------------------------------------------
 # the real field
 # ---------------------------------------------------------------------------
+
+
+def _draw(main_window, traces):
+    """Draw the traces as NAME, select them all, save an undo state, and
+    return the field, the section and the stored points."""
+    from PyReconstruct.modules.datatypes.trace import Trace
+
+    field = main_window.field
+    section = field.section
+    field.setTracingTrace(Trace(NAME, (0, 255, 0), True))
+    for pts in traces:
+        field.newTrace(pts, field.tracing_trace, points_as_pix=False,
+                       reduce_points=False, log_event=False)
+    assert len(section.contours[NAME]) == len(traces)
+    field.saveState()  # the drawing is one undo step, the merge the next
+    section.selected_traces = list(section.contours[NAME])
+    return field, section, _stored(section)
 
 
 def _draw_pair(main_window, small_side_px):
@@ -82,11 +185,7 @@ def _draw_pair(main_window, small_side_px):
     used, so at that grid its corners all round to one point. Returns the
     section and the points of both traces as stored.
     """
-    from PyReconstruct.modules.datatypes.trace import Trace
-
-    field = main_window.field
-    section = field.section
-    mag = section.mag
+    mag = main_window.field.section.mag
     wx, wy, ww, wh = main_window.series.window
     x0, y0 = wx + ww * 0.1, wy + wh * 0.5
 
@@ -103,15 +202,7 @@ def _draw_pair(main_window, small_side_px):
     shared = mergeCellSize([long_trace, small_trace], mag)
     assert len({(round(x / shared), round(y / shared)) for x, y in small_trace}) == 1
 
-    field.setTracingTrace(Trace(NAME, (0, 255, 0), True))
-    for pts in (long_trace, small_trace):
-        field.newTrace(pts, field.tracing_trace, points_as_pix=False,
-                       reduce_points=False, log_event=False)
-    assert len(section.contours[NAME]) == 2
-    field.saveState()  # the drawing is one undo step, the merge the next
-    section.selected_traces = list(section.contours[NAME])
-    stored = sorted(tuple(map(tuple, t.points)) for t in section.contours[NAME])
-    return field, section, stored
+    return _draw(main_window, [long_trace, small_trace])
 
 
 def _stored(section):
@@ -152,6 +243,34 @@ def test_merge_refuses_when_a_trace_would_vanish(main_window, monkeypatch):
 
     field, section, before = _draw_pair(main_window, small_side_px=0.1)
 
+    field.mergeTraces()
+    assert _stored(section) == before
+    assert any("no outline" in m for m in notices), notices
+
+
+@pytest.mark.gui
+def test_merge_refuses_when_a_touching_trace_would_vanish(main_window, monkeypatch):
+    """A small trace hanging below a long one rounds onto one point of the
+    long one's grid. The merge keeps both traces and says why."""
+    from PyReconstruct.modules.gui.main import field_widget_2_trace as fw2
+
+    notices = []
+    monkeypatch.setattr(fw2, "notify", lambda msg, *a, **k: notices.append(msg))
+
+    mag = main_window.field.section.mag
+    wx, wy, ww, wh = main_window.series.window
+    probe = _rect(wx, wy, wx + 40000 * mag, wy + 400 * mag)
+    cell = mergeCellSize([probe], mag)
+    x0 = round((wx + ww * 0.1) / cell) * cell
+    y0 = round((wy + wh * 0.5) / cell) * cell
+    long_trace = _rect(x0, y0, x0 + 40000 * mag, y0 + 400 * mag)
+    cx = x0 + 12 * cell
+    below = _rect(cx - 1.6 * mag, y0 - 4 * mag, cx + 1.6 * mag, y0)
+    # the premise: on the long trace's grid the small one is a single point
+    shared = mergeCellSize([long_trace, below], mag)
+    assert len({(round(x / shared), round(y / shared)) for x, y in below}) == 1
+
+    field, section, before = _draw(main_window, [long_trace, below])
     field.mergeTraces()
     assert _stored(section) == before
     assert any("no outline" in m for m in notices), notices

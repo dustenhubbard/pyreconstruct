@@ -297,19 +297,71 @@ def mergeCellSize(field_traces : list, mag : float) -> float:
     return cell
 
 
-def _traceShape(trace : list):
-    """The shapely geometry a closed trace covers, for the overlap test."""
-    from shapely import make_valid
+def _flatParts(geom):
+    """Yield the single geometries inside a multi-part or collection."""
+    if hasattr(geom, "geoms"):
+        for part in geom.geoms:
+            yield from _flatParts(part)
+    else:
+        yield geom
+
+
+def _filledShape(trace : list):
+    """The region a closed trace covers as the merge grid sees it.
+
+    The grid keeps only outer outlines, so a hole is filled in here too:
+    grouping and the merge must agree on what a trace covers, or a trace in a
+    hole would be merged apart and come back on top of the ring.
+
+        Params:
+            trace (list): the trace's points
+        Returns:
+            the shapely geometry, empty for a trace with no points
+    """
+    import shapely
     from shapely.geometry import LineString, Point, Polygon
 
     points = [tuple(p) for p in trace]
-    if len(set(points)) >= 3:
-        return make_valid(Polygon(points))
-    if len(set(points)) == 2:
+    distinct = len(set(points))
+    if distinct >= 3:
+        parts = [
+            Polygon(part.exterior) if part.geom_type == "Polygon" else part
+            for part in _flatParts(shapely.make_valid(Polygon(points)))
+        ]
+        return shapely.union_all(parts)
+    if distinct == 2:
         return LineString(points)
     if points:
         return Point(points[0])
     return Point()
+
+
+def _groupShapes(shapes : list) -> list:
+    """Indices of the shapes, grouped by touch, overlap or nesting."""
+    from shapely import STRtree
+
+    parent = list(range(len(shapes)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    if shapes:
+        tree = STRtree(shapes)
+        # one shape at a time: a bulk query holds every intersecting pair at
+        # once, which grows with the square of a pile of stacked traces
+        for i, shape in enumerate(shapes):
+            for j in tree.query(shape, predicate="intersects").tolist():
+                ri, rj = find(i), find(j)
+                if ri != rj:
+                    parent[max(ri, rj)] = min(ri, rj)
+
+    groups : dict[int, list[int]] = {}
+    for i in range(len(shapes)):
+        groups.setdefault(find(i), []).append(i)
+    return list(groups.values())
 
 
 def mergeGroups(field_traces : list) -> list:
@@ -321,28 +373,19 @@ def mergeGroups(field_traces : list) -> list:
             (list): lists of indices into field_traces, one per group, in the
                 order each group's first trace appears
     """
-    from shapely import STRtree
+    return _groupShapes([_filledShape(trace) for trace in field_traces])
 
-    shapes = [_traceShape(trace) for trace in field_traces]
-    parent = list(range(len(shapes)))
 
-    def find(i):
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
+def _losesArea(shape, others : list) -> bool:
+    """True if part of shape lies outside every shape in others."""
+    import shapely
 
-    if shapes:
-        left, right = STRtree(shapes).query(shapes, predicate="intersects")
-        for i, j in zip(left.tolist(), right.tolist()):
-            ri, rj = find(i), find(j)
-            if ri != rj:
-                parent[max(ri, rj)] = min(ri, rj)
-
-    groups : dict[int, list[int]] = {}
-    for i in range(len(shapes)):
-        groups.setdefault(find(i), []).append(i)
-    return list(groups.values())
+    if shape.area == 0:
+        return False
+    if not others:
+        return True
+    lost = shape.difference(shapely.union_all(others)).area
+    return lost > shape.area * 1e-6
 
 
 def mergeTracesInField(field_traces : list, mag : float) -> list:
@@ -359,17 +402,28 @@ def mergeTracesInField(field_traces : list, mag : float) -> list:
             mag (float): the section magnification, field units per image pixel
         Returns:
             (list): the merged trace(s), points in field units; empty if any
-                group of traces leaves no outline, so a caller that keeps its
-                traces on an empty result never loses one the result left out
+                trace would be lost: one that shrinks to nothing on its
+                group's grid while covering area no other trace in the group
+                covers. A caller that keeps its traces on an empty result
+                then never loses one the result left out.
     """
+    shapes = [_filledShape(trace) for trace in field_traces]
     result = []
-    for group in mergeGroups(field_traces):
+    for group in _groupShapes(shapes):
         traces = [field_traces[i] for i in group]
         cell = mergeCellSize(traces, mag)
         grid_traces = [
             [(int(round(x / cell)), int(round(y / cell))) for x, y in trace]
             for trace in traces
         ]
+        # a trace that rounds onto a point or a line adds nothing to the
+        # outline; that is only safe where other traces cover its area
+        for k, grid_trace in enumerate(grid_traces):
+            if _filledShape(grid_trace).area > 0:
+                continue
+            others = [shapes[i] for i in group if i != group[k]]
+            if _losesArea(shapes[group[k]], others):
+                return []
         merged = mergeTraces(grid_traces)
         # a speck straddling a cell edge comes back as a two-point line,
         # which is no closed outline either
