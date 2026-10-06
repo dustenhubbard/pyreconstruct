@@ -90,12 +90,26 @@ def test_a_reserved_id_is_taken_by_the_first_traces():
     assert ids.reserve(H) == r
 
 
-def test_reconcile_keeps_the_id_of_a_renumbered_section():
+def test_reconcile_gives_a_new_pair_the_name_s_one_live_id():
     ids = ObjectIds()
     a = ids.ensure(1, H)
     b = ids.ensure(2, T)
     ids.reconcile([(5, H), (2, T)])
     assert ids.placed == {(5, H): a, (2, T): b}
+
+
+def test_renumbering_keeps_two_ids_under_one_name_apart():
+    """Delete H on section 1, draw a new H on section 3, undo the delete,
+    then insert a section at the top."""
+    ids = ObjectIds()
+    old = ids.ensure(1, H)
+    ids.drop(1, H)
+    new = ids.ensure(3, H)
+    ids.place(1, H, old)
+    ids.renumber({0: 1, 1: 2, 2: 3, 3: 4})
+    ids.reconcile([(2, H), (4, H)])
+    assert ids.placed == {(2, H): old, (4, H): new}
+    assert ids.live(H) == {old, new}
 
 
 # --------------------------------------------------------------------------- #
@@ -308,6 +322,63 @@ def test_undo_to_the_first_state_puts_back_the_loaded_id(series):
     _step(series, states_a, a)
     assert _ids(series).peek(s1, H) == old
     assert _ids(series).live(H) == {old, new}
+
+
+def _two_live_ids(series):
+    """H on two sections under two ids: draw H on the first, delete it, draw
+    a new H on the second, then undo the delete. Both sections are saved."""
+    s1, s2 = _empty_sections(series, 2)
+    ids = _ids(series)
+    a = series.loadSection(s1)
+    states = SectionStates(a, series)
+    _act(series, states, a, lambda s: _draw(series, s, H))
+    old = ids.peek(s1, H)
+    _act(series, states, a, lambda s: _erase(s, H))
+    b = series.loadSection(s2)
+    _draw(series, b, H)
+    b.save()
+    new = ids.peek(s2, H)
+    _step(series, states, a)
+    a.save()
+    assert ids.live(H) == {old, new} and old != new
+    return s1, s2, old, new
+
+
+def test_inserting_a_section_keeps_both_ids(series):
+    s1, s2, old, new = _two_live_ids(series)
+    renumbered = series.insertSection(min(series.sections), "no-image", 0.00254, 0.05)
+    series.data.refresh()
+    ids = _ids(series)
+    assert renumbered[s1] != s1
+    assert ids.peek(renumbered[s1], H) == old
+    assert ids.peek(renumbered[s2], H) == new
+    assert ids.live(H) == {old, new}
+
+
+def test_reordering_sections_keeps_both_ids(series):
+    s1, s2, old, new = _two_live_ids(series)
+    order = {snum: snum for snum in series.sections}
+    order[s1], order[s2] = s2, s1
+    series.reorderSections(order)
+    series.data.refresh()
+    ids = _ids(series)
+    assert ids.peek(s2, H) == old
+    assert ids.peek(s1, H) == new
+    assert ids.live(H) == {old, new}
+
+
+def test_deleting_sections_keeps_the_ids_that_are_left(series):
+    s1, s2, old, new = _two_live_ids(series)
+    other = next(n for n in sorted(series.sections) if n not in (s1, s2))
+    series.deleteSections([other])
+    series.data.refresh()
+    ids = _ids(series)
+    assert ids.peek(s1, H) == old and ids.peek(s2, H) == new
+
+    series.deleteSections([s1])
+    series.data.refresh()
+    assert ids.live(H) == {new}
+    assert ids.peek(s2, H) == new
 
 
 def test_ids_are_not_saved(series, tmp_path):

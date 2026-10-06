@@ -111,12 +111,37 @@ class ObjectIds():
             self.unplaced[name] = self._new(name)
         return self.unplaced[name]
 
+    def renumber(self, mapping : dict):
+        """Move each placement to its section's new number.
+
+        Called when sections are renumbered (Series.reorderSections), so
+        every set of traces keeps the id it had, including when one name has
+        two live ids on different sections.
+
+            Params:
+                mapping (dict): old section number -> new section number; a
+                    section not in it keeps its number
+        """
+        self.placed = {
+            (mapping.get(snum, snum), name): oid
+            for (snum, name), oid in self.placed.items()
+        }
+
     def reconcile(self, present):
         """Match the placements to the (section, name) pairs that have
-        traces: ensure each one first, then drop the rest, so a pair that
-        moved (a renumbered section) keeps its name's id."""
+        traces after a full refresh of the series data.
+
+        A pair that is already placed keeps its id. A pair that is not takes
+        one by `ensure`, before anything is dropped, so a name with one live
+        id keeps it. Then each placement with no traces left is dropped.
+        Section numbers must already be current: a renumbering is carried by
+        `renumber`, not guessed here.
+
+            Params:
+                present: the (section number, name) pairs that have traces
+        """
         present = set(present)
-        for snum, name in present:
+        for snum, name in sorted(present - self.placed.keys()):
             self.ensure(snum, name)
         for key in [k for k in self.placed if k not in present]:
             self._detach(*key)

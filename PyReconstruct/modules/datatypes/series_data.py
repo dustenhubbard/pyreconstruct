@@ -237,8 +237,8 @@ class SeriesData():
 
             self.updateSection(section, update_traces=True, log_events=False, read_store=True)
 
-        # the ids carry over: a name keeps its id across a refresh, including
-        # on a section that was renumbered
+        # the ids carry over: traces that are still there keep their ids
+        # (a renumbering moved them already, Series.reorderSections)
         self.object_ids.reconcile(
             (snum, name)
             for name, obj_data in self.data["objects"].items()

@@ -69,3 +69,81 @@ def test_object_list_delete_undone_on_one_section(
     window.undo()
     assert _ids(window).peek(s1, NAME) == old
     assert _ids(window).peek(s2, NAME) is None
+
+
+def _two_live_ids(window):
+    """NAME on two sections under two ids: draw it on the first, delete it,
+    draw a new one on the second, and undo the delete on the first."""
+    series = window.series
+    s1, s2 = sorted(series.sections)[1], sorted(series.sections)[3]
+    window.changeSection(s1)
+    _draw(window, NAME)
+    old = _ids(window).peek(s1, NAME)
+    _delete(window, _traces(window, NAME))
+    window.changeSection(s2)
+    _draw(window, NAME)
+    new = _ids(window).peek(s2, NAME)
+    window.changeSection(s1)
+    window.undo()
+    assert _ids(window).live(NAME) == {old, new} and old != new
+    return s1, s2, old, new
+
+
+def _unlock_sections(window):
+    """The section list refuses to delete or reorder locked sections."""
+    series = window.series
+    for snum in sorted(series.sections):
+        section = series.loadSection(snum)
+        section.align_locked = False
+        section.save()
+    for section in (window.field.section, window.field.b_section):
+        if section is not None:
+            section.align_locked = False
+
+
+def _section_list(window):
+    window.field.table_manager.newTable("section")
+    return window.field.table_manager.tables["section"][-1]
+
+
+def _select(widget, snum):
+    table = widget.table
+    table.clearSelection()
+    for r in range(table.rowCount()):
+        if int(table.item(r, 0).text().split()[0]) == snum:
+            table.selectRow(r)
+            return
+    raise AssertionError(f"row for section {snum} not found")
+
+
+def test_section_list_insert_keeps_both_ids(window, gui_dialogs):
+    s1, s2, old, new = _two_live_ids(window)
+    top = min(window.series.sections)
+    widget = _section_list(window)
+    _select(widget, top)
+    gui_dialogs.responses.append((["", top, 0.00254, 0.05], True))
+    widget.insertSection(before=True)
+
+    ids = _ids(window)
+    assert ids.peek(s1 + 1, NAME) == old
+    assert ids.peek(s2 + 1, NAME) == new
+    assert ids.live(NAME) == {old, new}
+
+
+def test_section_list_delete_and_reorder_keep_both_ids(window, gui_dialogs):
+    s1, s2, old, new = _two_live_ids(window)
+    _unlock_sections(window)
+    top = min(window.series.sections)
+    widget = _section_list(window)
+    _select(widget, top)
+    widget.deleteSections()
+    assert top not in window.series.sections
+    assert _ids(window).peek(s1, NAME) == old
+    assert _ids(window).peek(s2, NAME) == new
+
+    widget = _section_list(window)
+    widget.reorderSections()
+    ids = _ids(window)
+    assert ids.peek(s1 - 1, NAME) == old
+    assert ids.peek(s2 - 1, NAME) == new
+    assert ids.live(NAME) == {old, new}

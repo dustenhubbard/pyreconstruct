@@ -4665,6 +4665,9 @@ class Series():
         for snum in sorted(d.values()):
             self.sections[snum] = f"{self.name}.{snum}"
 
+        # each object's traces keep their id under the new numbers
+        self.data.object_ids.renumber(d)
+
         self.current_section = d[self.current_section]
 
         if log_event:
