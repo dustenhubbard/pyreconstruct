@@ -1,0 +1,68 @@
+# Flag the pull request that broke main.
+#
+# `strict` is off in branch protection, so a pull request can pass `test`
+# against an older main and still fail once merged. test.yml reruns the suite
+# on every push to main; when the suite fails there, this finds the pull
+# request the commit came from, labels it `broke-main` and comments with a
+# link to the failed run. Nothing is reverted or reopened.
+#
+# No checkout and no code from the run is executed: the only inputs are the
+# head SHA and run URL from the event payload, passed through env.
+
+name: main-break-watch
+
+on:
+  workflow_run:
+    workflows: [tests]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  flag:
+    if: github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      RUN_URL: ${{ github.event.workflow_run.html_url }}
+      SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Flag the merged pull request
+        run: |
+          set -euo pipefail
+
+          # Only the suite counts: `test` and its other-Python runs, `test-python (X.Y)`.
+          test_failed=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate \
+            --jq '.jobs[] | select((.name == "test" or (.name | startswith("test-python ("))) and .conclusion == "failure") | .id')
+          if [ -z "$test_failed" ]; then
+            echo "The test job did not fail in run $RUN_ID."
+            exit 0
+          fi
+
+          pr=$(gh api "repos/$REPO/commits/$SHA/pulls" \
+            --jq '[.[] | select(.merged_at != null and .base.ref == "main")][0].number // empty')
+          if [ -z "$pr" ]; then
+            echo "No merged pull request found for $SHA."
+            exit 0
+          fi
+
+          # A rerun that fails again should not comment twice.
+          if gh api "repos/$REPO/issues/$pr/labels" --jq '.[].name' | grep -qx broke-main; then
+            echo "#$pr is already flagged."
+            exit 0
+          fi
+
+          gh label create broke-main -R "$REPO" --force \
+            --color B60205 --description "Tests on main failed after this merged"
+          gh api "repos/$REPO/issues/$pr/labels" -f 'labels[]=broke-main' > /dev/null
+          gh api "repos/$REPO/issues/$pr/comments" > /dev/null \
+            -f body="The tests on main failed after this was merged: $RUN_URL"
+          echo "Flagged #$pr."
