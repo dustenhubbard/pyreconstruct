@@ -1,7 +1,6 @@
 import os
 import sys
 import time
-import uuid
 import shutil
 import multiprocessing.spawn
 from multiprocessing import Pool, freeze_support
@@ -104,10 +103,6 @@ MAX_WORKERS = 5
 
 # Require a little more free space than estimated before starting.
 DISK_SAFETY_FACTOR = 1.15
-
-# Folder inside the zarr where an array is built before it is renamed into
-# place (see write_array).
-UNFINISHED_DIR = ".unfinished"
 
 def clean_windows_path(path):
 
@@ -310,48 +305,25 @@ def require_scale_group(zg, scale_group):
         return zg[scale_group]
 
 
-def unfinished_dir(zarr_fp):
-    """Folder inside the zarr where workers build arrays before publishing.
-
-    It has no .zgroup, so zarr does not list it as a group, and its name
-    starts with a dot, so PyReconstruct skips it when listing scales.
-    """
-    return os.path.join(zarr_fp, UNFINISHED_DIR)
-
-
-def publish(src, dst, attempts=5, delay=0.2):
-    """Rename a finished array folder into place, retrying briefly.
-
-    On Windows a virus scanner or a sync client (e.g. OneDrive) can hold a
-    file it just saw for a moment, and the rename fails with PermissionError.
-    """
-    for attempt in range(attempts):
-        try:
-            os.rename(src, dst)
-            return
-        except PermissionError:
-            if attempt == attempts - 1:
-                raise
-            time.sleep(delay * (attempt + 1))
-
-
 def write_array(zarr_fp, scale_group, filename, arr):
     """Write one array so that it only appears in the zarr once complete.
 
-    zarr writes an array's .zarray before its chunks, so an array written in
-    place is listed as soon as it is started. If the run stops partway (a
-    worker fails and the Pool terminates the others, or the processes are
-    killed), that half-written array would look finished: an update skips
-    arrays that exist and validate_zarr only checks names. So the array is
-    written to its own folder under UNFINISHED_DIR and renamed into place
-    after its last chunk. A rename on the same volume is a single step, so
-    scale_N/filename is either absent or complete.
+    zarr normally writes an array's .zarray before its chunks, so an array
+    is listed as soon as it is started. If the run stops partway (a worker
+    fails and the Pool terminates the others, or the processes are killed),
+    that half-written array would look finished: an update skips arrays that
+    exist and validate_zarr only checks names. So the chunks go straight to
+    the array's folder while the metadata is held in memory, and .zarray is
+    written last. zarr writes each key to a temporary file and renames it
+    into place, so the array is listed only once every chunk is on disk. A
+    folder left without .zarray is not an array to zarr; the next update
+    writes into it again.
     """
-    staging = os.path.join(unfinished_dir(zarr_fp), uuid.uuid4().hex)
-    os.makedirs(staging)
-    # same call group.create_dataset makes, with the array at the store root
-    zarr.array(arr, store=zarr.DirectoryStore(staging))
-    publish(staging, os.path.join(zarr_fp, scale_group, filename))
+    meta = {}
+    folder = zarr.DirectoryStore(os.path.join(zarr_fp, scale_group, filename))
+    # same call group.create_dataset makes, with the chunks kept apart
+    zarr.array(arr, store=meta, chunk_store=folder)
+    folder[".zarray"] = meta[".zarray"]
 
 
 def create2D(args):
@@ -361,8 +333,8 @@ def create2D(args):
     and the disk writes run in parallel across the Pool. No two workers write
     the same file: every array is its own directory in the DirectoryStore and
     each image goes to exactly one worker. The only shared writes are the
-    scale groups, handled by require_scale_group. Arrays are published whole
-    by write_array.
+    scale groups, handled by require_scale_group. write_array lists each
+    array only once it is complete.
 
     Only the filename and the time taken go back to the main process. An
     exception here (e.g. a full disk) is raised again in the main process by
@@ -456,19 +428,14 @@ if __name__ == "__main__":
     done = 0
     # initializer re-applies the per-process thread cap in every worker so the
     # spawn start method (Windows/macOS) is covered as well as fork.
-    try:
-        with Pool(processes, initializer=_limit_worker_threads) as p:
+    with Pool(processes, initializer=_limit_worker_threads) as p:
 
-            # workers write their own arrays; imap (ordered) reports them here
-            # in input order and re-raises a worker's exception
-            for filename, duration in p.imap(create2D, args):
-                done += 1
-                print(f"Time for conversion {filename}: {round(duration, 2)} s", flush=True)
-                print(f"@@PROGRESS@@ STEP {done} {total}", flush=True)
-    finally:
-        # leaving the Pool stops every worker, so what is left here is
-        # unfinished arrays from a failed run (or an earlier closed one)
-        shutil.rmtree(unfinished_dir(zarr_fp), ignore_errors=True)
+        # workers write their own arrays; imap (ordered) reports them here in
+        # input order and re-raises a worker's exception
+        for filename, duration in p.imap(create2D, args):
+            done += 1
+            print(f"Time for conversion {filename}: {round(duration, 2)} s", flush=True)
+            print(f"@@PROGRESS@@ STEP {done} {total}", flush=True)
 
     print(f"All tasks completed: {round(time.perf_counter() - t_all_start, 2)} s", flush=True)
 
