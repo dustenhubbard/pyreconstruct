@@ -324,6 +324,27 @@ def test_undo_to_the_first_state_puts_back_the_loaded_id(series):
     assert _ids(series).live(H) == {old, new}
 
 
+def test_renumbering_drops_placements_on_deleted_sections():
+    """Section 0 was deleted and the series data not refreshed yet; section
+    1 becomes section 0. The id dies with its last trace."""
+    ids = ObjectIds()
+    a = ids.ensure(0, H)
+    ids.ensure(1, H)
+    ids.renumber({1: 0})
+    assert ids.placed == {(0, H): a}
+    ids.drop(0, H)
+    assert ids.live(H) == set()
+    assert ids.ensure(0, H) != a
+
+
+def test_renumbering_refuses_two_sections_on_one_number():
+    ids = ObjectIds()
+    a = ids.ensure(0, H)
+    with pytest.raises(ValueError):
+        ids.renumber({0: 5, 1: 5})
+    assert ids.placed == {(0, H): a}
+
+
 def _two_live_ids(series):
     """H on two sections under two ids: draw H on the first, delete it, draw
     a new H on the second, then undo the delete. Both sections are saved."""
@@ -379,6 +400,32 @@ def test_deleting_sections_keeps_the_ids_that_are_left(series):
     series.data.refresh()
     assert ids.live(H) == {new}
     assert ids.peek(s2, H) == new
+
+
+def test_reordering_right_after_a_delete_lets_the_id_die(series):
+    """Delete a section and reorder before the series data is refreshed: a
+    section moves onto the deleted one's number. Once the object's last
+    trace is gone, a new trace under its name gets a fresh id."""
+    s1, s2 = _empty_sections(series, 2)
+    assert s1 == min(series.sections)
+    for snum in (s1, s2):
+        section = series.loadSection(snum)
+        _draw(series, section, H)
+        section.save()
+    old = _ids(series).peek(s2, H)
+
+    series.deleteSections([s1])
+    order = series.reorderSections()
+    assert order[s2] == s1
+    assert _ids(series).placed.get((s1, H)) == old
+
+    section = series.loadSection(s1)
+    _erase(section, H)
+    section.save()
+    assert _ids(series).live(H) == set()
+    _draw(series, section, H)
+    section.save()
+    assert _ids(series).peek(s1, H) not in (None, old)
 
 
 def test_ids_are_not_saved(series, tmp_path):

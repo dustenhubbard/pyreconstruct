@@ -119,11 +119,19 @@ class ObjectIds():
         two live ids on different sections.
 
             Params:
-                mapping (dict): old section number -> new section number; a
-                    section not in it keeps its number
+                mapping (dict): old section number -> new section number, for
+                    every section the series still has. A placement on a
+                    section not in it is dropped: that section was deleted
+                    and the series data has not caught up yet.
+            Raises:
+                ValueError: if two sections would take the same number
         """
+        if len(set(mapping.values())) != len(mapping):
+            raise ValueError("two sections cannot take the same number")
+        for key in [k for k in self.placed if k[0] not in mapping]:
+            self._detach(*key)
         self.placed = {
-            (mapping.get(snum, snum), name): oid
+            (mapping[snum], name): oid
             for (snum, name), oid in self.placed.items()
         }
 
