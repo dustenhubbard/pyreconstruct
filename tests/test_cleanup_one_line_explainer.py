@@ -122,3 +122,21 @@ def test_the_line_and_tooltip_follow_a_delete(qtbot):
     assert "All listed traces have been deleted." in (
         dialog.help_icon.toolTip()
     )
+
+
+def test_the_keyboard_can_open_the_explanation(case, qtbot):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QToolTip
+
+    dialog, _, _ = case
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    assert dialog.help_icon.focusPolicy() & Qt.TabFocus
+    assert dialog.help_icon.accessibleName() == "Explanation"
+
+    dialog.help_icon.setFocus()
+    qtbot.keyClick(dialog.help_icon, Qt.Key_Space)
+
+    qtbot.waitUntil(QToolTip.isVisible)
+    assert QToolTip.text() == dialog.help_icon.toolTip()
+    QToolTip.hideText()

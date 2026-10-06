@@ -7,6 +7,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QVBoxLayout,
     QHBoxLayout,
+    QToolButton,
+    QToolTip,
     QTableWidget,
     QTableWidgetItem,
     QPushButton,
@@ -102,14 +104,19 @@ class MalformedContoursDialog(QDialog):
         # one line above the list; the full explanation is the tooltip of
         # the "?" beside it
         self.heading = QLabel(self)
-        self.help_icon = QLabel("?", self)
-        self.help_icon.setAlignment(Qt.AlignCenter)
+        # a button, not a label, so the keyboard can reach it too: Tab to
+        # it and press Space to show the same tooltip a hover shows
+        self.help_icon = QToolButton(self)
+        self.help_icon.setText("?")
+        self.help_icon.setAccessibleName("Explanation")
+        self.help_icon.setFocusPolicy(Qt.StrongFocus)
         self.help_icon.setFixedSize(18, 18)
         self.help_icon.setCursor(Qt.WhatsThisCursor)
         self.help_icon.setStyleSheet(
-            "QLabel { border: 1px solid palette(mid); border-radius: 9px;"
-            " font-weight: bold; }"
+            "QToolButton { border: 1px solid palette(mid); border-radius: 9px;"
+            " font-weight: bold; padding: 0; }"
         )
+        self.help_icon.clicked.connect(self._showExplanation)
         self._refreshHeading()
 
         self.table = QTableWidget(len(self.records), len(self.COLUMNS), self)
@@ -210,6 +217,14 @@ class MalformedContoursDialog(QDialog):
             for paragraph in explanation.split("\n\n")
         ))
         self.help_icon.setAccessibleDescription(explanation)
+
+    def _showExplanation(self):
+        """Show the "?" tooltip under the icon, for a click or a key."""
+        QToolTip.showText(
+            self.help_icon.mapToGlobal(self.help_icon.rect().bottomLeft()),
+            self.help_icon.toolTip(),
+            self.help_icon,
+        )
 
     def _summaryText(self):
         """One short line that says what the list holds."""
