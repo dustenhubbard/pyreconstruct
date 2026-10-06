@@ -111,6 +111,11 @@ class ObjectIds():
             self.unplaced[name] = self._new(name)
         return self.unplaced[name]
 
+    def dropSection(self, snum : int):
+        """The section was deleted: its traces' ids lose that placement."""
+        for key in [k for k in self.placed if k[0] == snum]:
+            self._detach(*key)
+
     def renumber(self, mapping : dict):
         """Move each placement to its section's new number.
 
@@ -120,16 +125,18 @@ class ObjectIds():
 
             Params:
                 mapping (dict): old section number -> new section number, for
-                    every section the series still has. A placement on a
-                    section not in it is dropped: that section was deleted
-                    and the series data has not caught up yet.
+                    every section the series has
             Raises:
-                ValueError: if two sections would take the same number
+                ValueError: before changing anything, if two sections would
+                    take the same number or a placement is on a section the
+                    mapping does not name (a deleted section must have gone
+                    through dropSection first)
         """
         if len(set(mapping.values())) != len(mapping):
             raise ValueError("two sections cannot take the same number")
-        for key in [k for k in self.placed if k[0] not in mapping]:
-            self._detach(*key)
+        missing = {snum for snum, _ in self.placed if snum not in mapping}
+        if missing:
+            raise ValueError(f"no new number for section(s) {sorted(missing)}")
         self.placed = {
             (mapping[snum], name): oid
             for (snum, name), oid in self.placed.items()

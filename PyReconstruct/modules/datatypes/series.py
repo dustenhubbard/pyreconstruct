@@ -5663,6 +5663,8 @@ class Series():
             os.remove(os.path.join(self.getwdir(), filename))
             # delete link to file
             del(self.sections[snum])
+            # and the object ids of its traces
+            self.data.object_ids.dropSection(snum)
             if log_event:
                 self.addLog(None, snum, "Delete section")
 

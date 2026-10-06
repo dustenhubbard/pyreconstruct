@@ -147,3 +147,30 @@ def test_section_list_delete_and_reorder_keep_both_ids(window, gui_dialogs):
     assert ids.peek(s1 - 1, NAME) == old
     assert ids.peek(s2 - 1, NAME) == new
     assert ids.live(NAME) == {old, new}
+
+
+def test_section_list_delete_then_insert_on_the_same_number(window, gui_dialogs):
+    """Delete the last section, insert a new one past the end (it takes the
+    deleted number's file), and draw the same name there: a new object."""
+    series = window.series
+    last = max(series.sections)
+    window.changeSection(last)
+    _draw(window, NAME)
+    old = _ids(window).peek(last, NAME)
+    _unlock_sections(window)
+
+    widget = _section_list(window)
+    _select(widget, last)
+    widget.deleteSections()
+    assert last not in series.sections
+    assert _ids(window).live(NAME) == set()
+
+    widget = _section_list(window)
+    _select(widget, min(series.sections))
+    gui_dialogs.responses.append((["", last, 0.00254, 0.05], True))
+    widget.insertSection(before=True)
+    assert last in series.sections
+
+    window.changeSection(last)
+    _draw(window, NAME)
+    assert _ids(window).peek(last, NAME) not in (None, old)

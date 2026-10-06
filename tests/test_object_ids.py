@@ -324,17 +324,27 @@ def test_undo_to_the_first_state_puts_back_the_loaded_id(series):
     assert _ids(series).live(H) == {old, new}
 
 
-def test_renumbering_drops_placements_on_deleted_sections():
-    """Section 0 was deleted and the series data not refreshed yet; section
-    1 becomes section 0. The id dies with its last trace."""
+def test_a_deleted_section_takes_its_placements_with_it():
+    """Section 0 is deleted, then section 1 becomes section 0. The id dies
+    with its last trace."""
     ids = ObjectIds()
     a = ids.ensure(0, H)
     ids.ensure(1, H)
+    ids.dropSection(0)
     ids.renumber({1: 0})
     assert ids.placed == {(0, H): a}
     ids.drop(0, H)
     assert ids.live(H) == set()
     assert ids.ensure(0, H) != a
+
+
+def test_renumbering_refuses_a_section_it_does_not_name():
+    ids = ObjectIds()
+    a = ids.ensure(0, H)
+    b = ids.ensure(1, H)
+    with pytest.raises(ValueError):
+        ids.renumber({1: 0})
+    assert ids.placed == {(0, H): a, (1, H): b}
 
 
 def test_renumbering_refuses_two_sections_on_one_number():
@@ -426,6 +436,31 @@ def test_reordering_right_after_a_delete_lets_the_id_die(series):
     _draw(series, section, H)
     section.save()
     assert _ids(series).peek(s1, H) not in (None, old)
+
+
+@pytest.mark.parametrize("where", ["top", "past the end"])
+def test_a_new_section_under_a_deleted_number_starts_clean(series, where):
+    """H only on the last section; delete it and, with no refresh, insert a
+    section, which reuses the deleted number. H drawn on the new section is
+    a new object."""
+    last = max(series.sections)
+    section = series.loadSection(last)
+    _draw(series, section, H)
+    section.save()
+    old = _ids(series).peek(last, H)
+
+    series.deleteSections([last])
+    assert _ids(series).live(H) == set()
+    index = min(series.sections) if where == "top" else last + 5
+    renumbered = series.insertSection(index, "no-image", 0.00254, 0.05)
+    assert last not in renumbered and index in series.sections
+
+    section = series.loadSection(index)
+    assert H not in section.contours
+    _draw(series, section, H)
+    section.save()
+    assert _ids(series).peek(index, H) not in (None, old)
+    assert _ids(series).live(H) == {_ids(series).peek(index, H)}
 
 
 def test_ids_are_not_saved(series, tmp_path):
