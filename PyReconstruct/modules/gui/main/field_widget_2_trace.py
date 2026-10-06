@@ -1287,6 +1287,7 @@ class FieldWidgetTrace(FieldWidgetBase):
             self,
             traces,
             tag_sets=self.series.tag_sets,
+            used_tags=self.series.data.usedTags(),
         )
         t, confirmed = dialog.exec()
         if not confirmed:
