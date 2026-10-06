@@ -224,6 +224,27 @@ def test_the_pick_survives_a_column_sort(qtbot):
     }
 
 
+def test_the_mouse_wheel_never_changes_a_pick(qtbot):
+    """Scrolling the list over a drop-down leaves its pick alone."""
+    from PySide6.QtCore import QPoint, QPointF
+    from PySide6.QtGui import QWheelEvent
+    cross = _group(("A", 0), ("B", 0), ("C", 0))
+    dialog = _dialog(qtbot, [cross], combine=_Combine())
+    _pick(dialog, cross, "B")
+    combo = _combo(dialog, 0)
+
+    # one turn down: a plain combo box on this style moves to "C"
+    event = QWheelEvent(
+        QPointF(5, 5), QPointF(combo.mapToGlobal(QPoint(5, 5))),
+        QPoint(0, 0), QPoint(0, -120), Qt.NoButton, Qt.NoModifier,
+        Qt.NoScrollPhase, False,
+    )
+    QApplication.sendEvent(combo, event)
+    QApplication.processEvents()
+
+    assert _shown(dialog, cross) == "B"
+
+
 # ---------------------------------------------------------------------------
 # combining
 # ---------------------------------------------------------------------------

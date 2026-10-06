@@ -576,9 +576,10 @@ class FieldWidgetObject(FieldWidgetTrace):
         # traces it cannot tell apart (said just above), or because a trace
         # is no longer where the scan saw it
         unsure = {id(m) for m in ambiguous}
+        combined = {id(group) for group, _keep in applied}
         unsure_rows = sum(
-            1 for group, keep in valid
-            if (group, keep) not in applied
+            1 for group, _keep in valid
+            if id(group) not in combined
             and any(id(m) in unsure for m in group["members"])
         )
         missed = len(valid) - len(applied) - locked_rows - unsure_rows

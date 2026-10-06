@@ -3308,8 +3308,8 @@ class Series():
 
         Duplicates can sit under one name or under two, so every trace on the
         section is compared with every other, and a dense autosegmented section
-        has enough traces
-        that measuring an overlap ratio for each of those pairs is not viable:
+        has enough traces that measuring an overlap ratio for each of those
+        pairs is not viable:
         Trace.getOverlapRatio rasterizes both polygons, which costs about 3 ms a
         pair. Two filters keep the number of ratios measured proportional to the
         number of traces rather than to its square:

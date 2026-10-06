@@ -572,6 +572,18 @@ class PixelDustDialog(MalformedContoursDialog):
         )
 
 
+class _KeepNameCombo(QComboBox):
+    """A drop-down that ignores the mouse wheel.
+
+    Several styles change a combo box's value on a wheel turn over it, so
+    scrolling the list would change the picks it passed over. The wheel
+    scrolls the table instead.
+    """
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+
 class _KeepNameDelegate(QStyledItemDelegate):
     """The drop-down in a duplicates row's Keep cell.
 
@@ -583,7 +595,7 @@ class _KeepNameDelegate(QStyledItemDelegate):
     PLACEHOLDER = "Pick a name"
 
     def createEditor(self, parent, option, index):
-        combo = QComboBox(parent)
+        combo = _KeepNameCombo(parent)
         combo.addItems(index.data(NAMES_ROLE) or [])
         combo.setPlaceholderText(self.PLACEHOLDER)
         combo.setCurrentIndex(-1)
