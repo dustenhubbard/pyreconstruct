@@ -2631,20 +2631,21 @@ class MainWindow(QMainWindow):
                 than re-serializing the entire series again. Used by the save
                 paths so a save + autobackup is one full serialization, not two.
         """
-        if check_auto and not self.series.getOption("autobackup"):
+        if check_auto and not self.series.autobackupOn():
             return
 
         # make sure the backup directory exists
-        if not os.path.isdir(self.series.getOption("backup_dir")):
+        if not os.path.isdir(self.series.backupFolder(create=True)):
             notify(
                 "Backup folder not found.\n" +
                 "Please set the backup folder in following dialog."
             )
-            self.series.setOption("backup_dir", "")
+            if not self.series.usesBackupDefaults():
+                self.series.setOption("backup_dir", "")
             self.setBackup()
 
         # double check if user entered a valid backup directory
-        if os.path.isdir(self.series.getOption("backup_dir")):
+        if os.path.isdir(self.series.backupFolder(create=True)):
             fp = self.series.getBackupPath(comment)
             if (
                 from_saved
@@ -2661,8 +2662,17 @@ class MainWindow(QMainWindow):
                 "Backup folder not found.\n" +
                 "Backup file not saved."
             )
-            self.series.setOption("backup_dir", "")
-            self.series.setOption("autobackup", False)
+            # Turn auto-backup off for this series alone, so it stops asking
+            # on every save. The defaults other series use stay as they are,
+            # and a series on the defaults with auto-backup already off has
+            # nothing to turn off, so it stays on them.
+            if (
+                not self.series.usesBackupDefaults()
+                or self.series.autobackupOn()
+            ):
+                self.series.setBackupUsesDefaults(False)
+                self.series.setOption("backup_dir", "")
+                self.series.setOption("autobackup", False)
     
     def saveToJser(self, notify=False, close=False):
         """Store data in JSER file.
