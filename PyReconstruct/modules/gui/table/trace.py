@@ -254,6 +254,7 @@ class TraceTableWidget(DataTable):
                 "text": "List",
                 "opts":
                 [
+                    ("refresh_act", "Refresh", "", self.refresh),
                     ("columns_act", "Set columns...", "", self.setColumns),
                     ("export_act", "Export...", "", self.export),
                     ("exportall_act", "Export all traces in series...", "", self.exportAll)
