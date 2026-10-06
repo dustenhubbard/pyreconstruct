@@ -176,7 +176,7 @@ def test_skipped_dialog_navigates_and_copies(qapp, gui_dialogs):
         navigate=lambda snum, name, index: visited.append((snum, name)),
     )
     try:
-        assert "scissors" in dialog._headingText()
+        assert "scissors" in dialog._explanationText()
         dialog.table.selectRow(0)
         dialog._navigateToRow(0)
         assert visited == [(4, "figure8")]
@@ -200,7 +200,7 @@ def test_repaired_dialog_summarizes_with_the_same_roads(qapp, gui_dialogs):
     record = dict(_looped_record(), repairable=True)
     dialog = RepairedCrossingsDialog(None, [record], navigate=lambda *a: None)
     try:
-        heading = dialog._headingText()
+        heading = dialog._explanationText()
         assert "Repaired 1 self-crossing trace" in heading
         assert "one undo" in heading
         labels = [b.text() for b in dialog.findChildren(QPushButton)]
