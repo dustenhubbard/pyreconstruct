@@ -172,3 +172,25 @@ def test_an_edit_after_a_switch_marks_the_open_series_object_stale(
         "the first series' object was marked" if theirs.id in objs.stale_ids
         else "nothing was marked"
     )
+
+
+def test_a_refresh_after_a_switch_leaves_the_first_series_mark_alone(
+    main_window, series_jser, tmp_path, monkeypatch
+):
+    """A stale object from the first series cannot be checked against the
+    open series by name, so it keeps its mark instead of being resolved
+    against the open series (rebuilding a same-named object there)."""
+    window = main_window
+    name = sorted(window.series.data["objects"])[0]
+    viewer, launched = _viewer(window, monkeypatch)
+    objs = viewer.plt.objs
+    theirs = objs.add(_mesh(), window.series, name, "object", (1, 1, 1), 1)
+    viewer.markStale([name])
+    assert objs.stale_ids == {theirs.id}
+
+    first = _open_other(window, series_jser, tmp_path)
+    viewer.refreshStale()
+
+    assert launched == [], "a same-named object was built from the open series"
+    assert objs.stale_ids == {theirs.id}
+    assert objs.search(name, "object", first.jser_fp) is theirs

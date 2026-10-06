@@ -1580,7 +1580,10 @@ class CustomPlotter(QVTKRenderWindowInteractor):
         """
         if self.is_closed:
             return
-        obj_names, ztrace_names = self.plt.objs.popStale()
+        # names alone cannot be checked against a series that is not open:
+        # after a series switch, a stale object from the first series keeps
+        # its mark until that series is open again
+        obj_names, ztrace_names = self.plt.objs.popStale(self.series.jser_fp)
         if not (obj_names or ztrace_names):
             return
 
@@ -1882,23 +1885,30 @@ class SceneObjectList():
             if scene_obj.type in ("object", "ztrace") and scene_obj.series_fp == series_fp:
                 self.stale_ids.add(scene_obj.id)
 
-    def popStale(self):
-        """Return the names of the stale scene objects and clear the stale set.
+    def popStale(self, series_fp=None):
+        """Return the names of the stale scene objects and clear their marks.
 
+            Params:
+                series_fp (str): only pop objects from this series; the
+                    others keep their mark. None pops every stale object.
             Returns:
                 obj_names (list): the names of the stale objects
                 ztrace_names (list): the names of the stale ztraces
         """
         obj_names, ztrace_names = [], []
+        kept = set()
         for obj_id in self.stale_ids:
             scene_obj = self[obj_id]
             if scene_obj is None:  # no longer in the scene
+                continue
+            if series_fp is not None and scene_obj.series_fp != series_fp:
+                kept.add(obj_id)
                 continue
             if scene_obj.type == "object":
                 obj_names.append(scene_obj.name)
             elif scene_obj.type == "ztrace":
                 ztrace_names.append(scene_obj.name)
-        self.stale_ids.clear()
+        self.stale_ids.intersection_update(kept)
         return obj_names, ztrace_names
 
     def getExportDict(self):
