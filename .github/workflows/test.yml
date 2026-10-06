@@ -6,17 +6,19 @@ name: tests
 # (gui.main), so the job installs the headless Qt system libs and runs under the
 # offscreen QPA platform, with no X server / xvfb needed.
 #
-# Two of the three jobs here block a merge: `test` and `type`. `lint` does fail
-# the run when it goes red, but it is not a required status check, so on its
-# own it does not stop the pull request merging -- fix it anyway, it is the
-# critical-error set and nothing else catches those. `type` fails the run when
+# This file defines five jobs: `lint`, `type`, `test`, `test-python` and
+# `updater-apply`. Two of them block a merge: `test` and `type`. `lint`,
+# `test-python` and `updater-apply` do fail the run when they go red, but they
+# are not required status checks, so on their own they do not stop the pull
+# request merging. Fix a red `lint` anyway, it is the critical-error set and
+# nothing else catches those. `type` fails the run when
 # a pull request adds mypy errors compared with its merge base, or when mypy
 # does not run to completion; it is a required status check. See its own
 # comment for the rule, and `mypy.ini` for what it covers.
 #
 # The authority on what blocks a merge is branch protection on `main`, whose
 # required contexts are exactly `test`, `merge-evidence` and `type` -- not this
-# comment, and not the set of jobs defined here. Note the second one is not in
+# comment, and not the set of jobs defined here. Note `merge-evidence` is not in
 # this file: `merge-evidence` is a separate workflow,
 # `.github/workflows/merge-evidence.yml`, and is no part of this one. Editing
 # the jobs below changes neither list; changing what gates is a branch
