@@ -37,6 +37,8 @@
     "decbr_act": "str",
     "deletefromsections_act": "str",
     "deccon_act": "str",
+    "default_autobackup": "bool",
+    "default_backup_dir": "str",
     "deselect_act": "str",
     "display_closest": "bool",
     "edittrace_act": "str",

@@ -41,7 +41,12 @@ class BackupDialog(QDialog):
         vlayout1 = QVBoxLayout()
         vlayout2 = QVBoxLayout()
 
-        # create the directory widget first
+        # this series: use the defaults, or its own folder and auto-backup
+        self.use_defaults_cb = QCheckBox(self, text="Use my defaults for this series")
+        self.use_defaults_cb.setChecked(series.usesBackupDefaults())
+        self.use_defaults_cb.toggled.connect(self.updateEnabled)
+        vlayout1.addWidget(self.use_defaults_cb)
+
         hbl = QHBoxLayout()
         bdir = series.getOption("backup_dir")
         if not os.path.isdir(bdir):
@@ -59,8 +64,34 @@ class BackupDialog(QDialog):
         # group the directory and autobackup widgets
         bw1 = BorderedWidget(self)
         bw1.setLayout(vlayout1)
-        bw1.addTitle("Backup Options")
+        bw1.addTitle("This Series")
         vlayout.addWidget(bw1)
+
+        # my defaults: used by every series set to use them
+        vlayout3 = QVBoxLayout()
+        hbl = QHBoxLayout()
+        self.default_dir_widget = BrowseWidget(
+            self, "dir", series.getOption("default_backup_dir")
+        )
+        self.default_dir_widget.le.textChanged.connect(self.updateDefaultFolder)
+        hbl.addWidget(QLabel(self, text="Backup Folder:"))
+        hbl.addWidget(self.default_dir_widget)
+        vlayout3.addLayout(hbl)
+        vlayout3.addWidget(QLabel(
+            self,
+            text="Type {series} in the folder to use the series code, so each series gets its own folder."
+        ))
+        self.default_folder_lbl = QLabel(self)
+        vlayout3.addWidget(self.default_folder_lbl)
+
+        self.default_auto_cb = QCheckBox(self, text="Auto-backup (create backup on every save)")
+        self.default_auto_cb.setChecked(series.getOption("default_autobackup"))
+        vlayout3.addWidget(self.default_auto_cb)
+
+        bw3 = BorderedWidget(self)
+        bw3.setLayout(vlayout3)
+        bw3.addTitle("My Defaults (all series)")
+        vlayout.addWidget(bw3)
 
         # create the delimiter widget
         r = QHBoxLayout()
@@ -139,6 +170,23 @@ class BackupDialog(QDialog):
 
         self.setLayout(vlayout)
         self.updateWidgets()
+        self.updateEnabled()
+        self.updateDefaultFolder()
+
+    def updateEnabled(self):
+        """Lock this series' own folder and auto-backup while it uses the defaults."""
+        own = not self.use_defaults_cb.isChecked()
+        self.dir_widget.setEnabled(own)
+        self.auto_cb.setEnabled(own)
+
+    def updateDefaultFolder(self):
+        """Show where the default folder puts this series' backups."""
+        folder = self.default_dir_widget.text()
+        if folder:
+            folder = self.series.expandBackupFolder(folder)
+            self.default_folder_lbl.setText(f"For this series: {folder}")
+        else:
+            self.default_folder_lbl.setText("")
     
     def updateWidgets(self):
         """Update the display widgets."""
@@ -170,8 +218,11 @@ class BackupDialog(QDialog):
         """Set the series options with the requested backup data"""
         if self.accept():
             # set the series options
+            self.series.setBackupUsesDefaults(self.use_defaults_cb.isChecked())
             self.series.setOption("autobackup", self.auto_cb.isChecked())
             self.series.setOption("backup_dir", self.dir_widget.text())
+            self.series.setOption("default_autobackup", self.default_auto_cb.isChecked())
+            self.series.setOption("default_backup_dir", self.default_dir_widget.text())
             for name, (cb, w) in self.widgets.items():
                 self.series.setOption(
                     f"backup_{name}",
