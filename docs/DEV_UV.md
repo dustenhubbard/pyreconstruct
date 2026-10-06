@@ -8,7 +8,7 @@ the flow this project develops and releases against. uv has two advantages for
 contributors:
 
 - It provisions the correct interpreter itself (the project pins
-  `requires-python = ">=3.11,<3.13"`, and `.python-version` picks 3.11), so you
+  `requires-python = ">=3.11,<3.14"`, and `.python-version` picks 3.11), so you
   don't need a separate conda env just to get Python 3.11.
 - `uv sync` installs PyReconstruct into a project-local `.venv` and resolves
   against the committed `uv.lock`, so everyone gets the same pinned dependency

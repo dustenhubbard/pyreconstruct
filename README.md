@@ -51,7 +51,7 @@ All builds, checksums, and past versions are on the
 | macOS | macOS 12 (Monterey), Apple Silicon or Intel |
 | Linux | glibc 2.28 or newer (Ubuntu 20.04, Debian 10, RHEL 8 and up), x86_64 |
 | Graphics | OpenGL for the 3D scene; Windows builds carry a software fallback |
-| Python | 3.11 or 3.12, for source installs only. The installers include their own. |
+| Python | 3.11, 3.12 or 3.13, for source installs only. The installers include their own. |
 
 Older systems are not blocked from installing, but parts of the app will fail
 at runtime rather than at startup.
@@ -84,12 +84,12 @@ installation. A once-per-day startup check is on by default; turn it off under
 To track the latest commits on `main` (this replaces the old in-app "Developer"
 update channel), run a source install rather than a frozen build.
 
-PyReconstruct requires **Python 3.11 or 3.12**. Its native dependencies are
-tested on those versions (the project pins `>=3.11,<3.13`). The
+PyReconstruct requires **Python 3.11, 3.12 or 3.13**. Its native dependencies are
+tested on those versions (the project pins `>=3.11,<3.14`). The
 canonical setup uses [uv](https://docs.astral.sh/uv/): it reads the checkout's
 `.python-version`, fetches Python 3.11 for you, and installs the exact
 dependency set recorded in the committed `uv.lock`. No system Python changes,
-no version guessing. To use 3.12 instead, set `UV_PYTHON=3.12` in your shell
+no version guessing. To use 3.12 or 3.13 instead, set `UV_PYTHON=3.12` (or `3.13`) in your shell
 before `uv sync` and `uv run`.
 
 ```
@@ -110,7 +110,7 @@ starting with your saved choice or `main`, then reinstalls it.
 <details>
 <summary>Alternative: a plain <code>venv</code> without uv</summary>
 
-If you already have `python3.11` or `python3.12` on PATH, an editable install
+If you already have `python3.11`, `python3.12` or `python3.13` on PATH, an editable install
 works too, though it resolves dependencies fresh rather than from `uv.lock`:
 
 ```

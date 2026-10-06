@@ -46,11 +46,12 @@ def _matrix_pythons():
     return {v.strip().strip("'\"") for v in line.group(1).split(",") if v.strip()}
 
 
-def test_python_3_11_and_3_12_are_supported():
+def test_python_3_11_through_3_13_are_supported():
     spec = _requires_python()
-    for version in ("3.11.0", "3.11.15", "3.12.0", "3.12.14"):
+    for version in ("3.11.0", "3.11.15", "3.12.0", "3.12.14", "3.13.0", "3.13.16"):
         assert spec.contains(version), f"requires-python {spec} refuses {version}"
     assert not spec.contains("3.10.14"), f"requires-python {spec} admits 3.10"
+    assert not spec.contains("3.14.0"), f"requires-python {spec} admits 3.14"
 
 
 def test_default_python_is_the_oldest_supported():
@@ -108,6 +109,49 @@ def test_every_supported_python_gets_exactly_one_numpy():
             r for r in _pins("numpy") if r.marker is None or r.marker.evaluate(env)
         ]
         assert len(applying) == 1, f"{len(applying)} numpy pins apply on {minor}"
+
+
+def test_every_supported_python_gets_exactly_one_pin_of_each_dependency():
+    """numpy, opencv, scikit-image and trimesh each carry one pin per Python
+    line. A marker gap would install nothing for that package on some line,
+    and an overlap would hand the installer two versions at once."""
+    data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+    names = {Requirement(spec).name.lower() for spec in data["project"]["dependencies"]}
+    for minor in sorted(_admitted_minors()):
+        env = {"python_version": minor, "python_full_version": f"{minor}.0"}
+        for name in sorted(names):
+            applying = [
+                r for r in _pins(name) if r.marker is None or r.marker.evaluate(env)
+            ]
+            assert len(applying) == 1, f"{len(applying)} {name} pins apply on {minor}"
+
+
+# The lines numpy 2 brought to 3.13. 3.11 and 3.12 stay on numpy 1, and the
+# installers build on 3.11, so none of these may reach either of them.
+NUMPY_2_PINS = {
+    "numpy": ("1.26.4", "2.2.6"),
+    "opencv-python-headless": ("4.8.1.78", "4.10.0.84"),
+    "scikit-image": ("0.23.2", "0.25.2"),
+    "trimesh": ("3.18.1", "4.4.9"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(NUMPY_2_PINS))
+def test_numpy_2_pins_apply_only_from_3_13(name):
+    numpy_1_line, numpy_2_line = NUMPY_2_PINS[name]
+
+    def pinned_on(minor):
+        env = {"python_version": minor, "python_full_version": f"{minor}.0"}
+        (req,) = [
+            r for r in _pins(name) if r.marker is None or r.marker.evaluate(env)
+        ]
+        (version,) = [s.version for s in req.specifier if s.operator == "=="]
+        return version
+
+    assert pinned_on("3.12") == numpy_1_line
+    assert pinned_on("3.13") == numpy_2_line
+    if name != "numpy":
+        assert pinned_on("3.11") == numpy_1_line
 
 
 LINUX_INSTALLER = REPO_ROOT / "packaging" / "linux" / "install.sh"

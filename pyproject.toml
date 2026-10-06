@@ -7,10 +7,9 @@ name = "pyreconstruct"
 dynamic = ["version"]
 description = "RECONSTRUCT in Python"
 readme = "README.md"
-# 3.11 and 3.12, and CI runs the suite on both. 3.13 stays out until numpy
-# can move to 2.x, the first line with 3.13 wheels, and that needs a newer
-# opencv built against it.
-requires-python = ">=3.11,<3.13"
+# 3.11, 3.12 and 3.13, and CI runs the suite on all three. 3.13 gets numpy 2
+# and the opencv and scikit-image that support it; see the pins below.
+requires-python = ">=3.11,<3.14"
 license = { text = "GPL-3.0-or-later" }
 authors = [
     { name = "Julian Falco" },
@@ -25,18 +24,29 @@ dependencies = [
     "PySide6==6.9.3",
     "vtk==9.5.2",
     "vedo==2025.5.4",
-    "opencv-python-headless==4.8.1.78",
-    # Two numpy pins, one per Python line. 1.24.1 has no wheels for 3.12, whose
-    # first numpy is 1.26. 3.11 keeps 1.24.1 so the installers, which build on
-    # 3.11, and every existing 3.11 environment resolve exactly what they did
-    # before 3.12 was allowed. The installer build reads the first numpy pin in
-    # this file for its macOS wheels, so the 3.11 line has to stay first.
+    # 4.8.1.78 is built against numpy 1 and cannot load under numpy 2, so 3.13
+    # takes 4.10.0.84, the first opencv built against numpy 2.
+    "opencv-python-headless==4.8.1.78; python_version < '3.13'",
+    "opencv-python-headless==4.10.0.84; python_version >= '3.13'",
+    # Three numpy pins, one per Python line. 1.24.1 has no wheels for 3.12, whose
+    # first numpy is 1.26, and 1.26 has none for 3.13, whose first is 2.1. 3.11
+    # keeps 1.24.1 so the installers, which build on 3.11, and every existing
+    # 3.11 environment resolve exactly what they did before 3.12 was allowed.
+    # 2.2 is the newest line scipy 1.14.1 accepts. The installer build reads the
+    # first numpy pin in this file for its macOS wheels, so the 3.11 line has to
+    # stay first.
     "numpy==1.24.1; python_version < '3.12'",
-    "numpy==1.26.4; python_version >= '3.12'",
+    "numpy==1.26.4; python_version >= '3.12' and python_version < '3.13'",
+    "numpy==2.2.6; python_version >= '3.13'",
     "scipy==1.14.1",
-    "scikit-image==0.23.2",
+    # 0.23.2 has no 3.13 wheels; 0.25 is the first scikit-image line with them.
+    "scikit-image==0.23.2; python_version < '3.13'",
+    "scikit-image==0.25.2; python_version >= '3.13'",
     "shapely==2.1.1",
-    "trimesh==3.18.1",
+    # 3.18.1 calls ndarray.ptp(), which numpy 2 removed; 4.4 is the first
+    # trimesh line without it.
+    "trimesh==3.18.1; python_version < '3.13'",
+    "trimesh==4.4.9; python_version >= '3.13'",
     "zarr==2.18.2",
     "numcodecs==0.15.0",
     "cloud-volume==11.0.0",

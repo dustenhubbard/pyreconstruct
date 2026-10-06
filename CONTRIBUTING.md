@@ -29,7 +29,7 @@ For a security problem, don't open a public issue. See [SECURITY.md](SECURITY.md
 
 ## Setup
 
-PyReconstruct runs on Python 3.11 and 3.12 with PySide6 6.9.3. I use [uv](https://docs.astral.sh/uv/):
+PyReconstruct runs on Python 3.11, 3.12 and 3.13 with PySide6 6.9.3. I use [uv](https://docs.astral.sh/uv/):
 
 ```bash
 git clone https://github.com/dustenhubbard/PyReconstruct
