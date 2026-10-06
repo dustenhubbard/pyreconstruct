@@ -278,7 +278,7 @@ def convert_vedo_to_tm(obj) -> trimesh.Trimesh:
 
         mesh = trimesh.Trimesh(
             vertices=point_array,
-            prcess=False
+            process=False
         )
 
         return mesh.convex_hull
