@@ -288,6 +288,7 @@ class FieldWidgetObject(FieldWidgetTrace):
             tags=tags,
             is_obj_list=True,
             tag_sets=self.series.tag_sets,
+            used_tags=self.series.data.usedTags(),
             smooth_default=self.series.getOption("roll_window"),
             smooth_window=smooth_window,
             smooth_mixed=smooth_mixed,

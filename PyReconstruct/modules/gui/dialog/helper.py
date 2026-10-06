@@ -72,7 +72,7 @@ class BrowseWidget(QWidget):
 
 class MultiInput(QWidget):
 
-    def __init__(self, parent : QWidget, entries : list = None, combo=False, combo_items : list = [], restrict_to_opts=True, combo_tooltips : dict = None):
+    def __init__(self, parent : QWidget, entries : list = None, combo=False, combo_items : list = [], restrict_to_opts=True, combo_tooltips : dict = None, sort_items=True):
         """Create the multi line edit widget.
 
             Params:
@@ -82,6 +82,7 @@ class MultiInput(QWidget):
                 combo_items (list): the options every dropdown row offers
                 restrict_to_opts (bool): True to refuse text outside the options
                 combo_tooltips (dict): option -> tooltip shown on that option
+                sort_items (bool): False keeps `combo_items` in the order given
         """
         super().__init__(parent)
         self.container = parent
@@ -91,6 +92,7 @@ class MultiInput(QWidget):
         self.combo_items = combo_items
         self.restrict_to_opts = restrict_to_opts
         self.combo_tooltips = combo_tooltips or {}
+        self.sort_items = sort_items
 
         vbl = QVBoxLayout()
         self.input_layout = QVBoxLayout()
@@ -130,7 +132,10 @@ class MultiInput(QWidget):
     
     def makeCombo(self):
         """One dropdown row: the options, their tooltips, blank when free text is allowed."""
-        w = CompleterBox(self, self.combo_items, allow_new=(not self.restrict_to_opts))
+        w = CompleterBox(
+            self, self.combo_items,
+            allow_new=(not self.restrict_to_opts), sort=self.sort_items,
+        )
         for i in range(w.count()):
             tip = self.combo_tooltips.get(w.itemText(i))
             if tip:

@@ -516,7 +516,21 @@ class SeriesData():
             for trace_data in trace_list:
                 tags = tags.union(trace_data.getTags())
         return tags
-    
+
+    def usedTags(self) -> set:
+        """Every tag on a trace anywhere in the series.
+
+        Read from this cache, which the field updates after each edit, so no
+        section file is opened.
+        """
+        tags = set()
+        for obj_data in self.data["objects"].values():
+            for trace_list in obj_data.traces.values():
+                for trace_data in trace_list:
+                    if trace_data.tags:
+                        tags.update(trace_data.tags)
+        return tags
+
     def getColorCounts(self, obj_name : str) -> dict:
         """Traces per color for an object, across every section it is on.
 
