@@ -226,9 +226,8 @@ class ObjectIds():
         for oid in sorted(parked):
             self._record("release", name, oid)
         before = {oid: True for oid in parked}
-        oid = self.unplaced.pop(name, None)
-        if oid is not None:
-            before[oid] = True
+        if name in self.unplaced:
+            before[self.unplaced.pop(name)] = True
         self._settle(before)
 
     # -- undo of parking ------------------------------------------------------ #
