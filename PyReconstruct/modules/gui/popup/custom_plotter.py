@@ -41,7 +41,6 @@ class VPlotter(vedo.Plotter):
     def __init__(self, qt_parent, *args, **kwargs):
         self.qt_parent = qt_parent
         self.mainwindow = qt_parent.mainwindow
-        self.series = self.mainwindow.series
         super().__init__(*args, **kwargs)
 
         self.objs = SceneObjectList()
@@ -66,6 +65,17 @@ class VPlotter(vedo.Plotter):
 
         self.saveState = self.qt_parent.saveState  # connect save state function
         
+    @property
+    def series(self):
+        """The series open in the main window right now.
+
+        Read live rather than stored at construction: the 3D window outlives
+        `File > Open series`, and a copy taken then kept pointing at the
+        first series after a switch. Every add, remove and stale mark that
+        was given names only went to that series' objects (fork #786).
+        """
+        return self.mainwindow.series
+
     def getSectionFromZ(self, z):
         """Get the section number from a z coordinate."""
         snum = round(z / self.mainwindow.field.section.thickness)  # probably change this
@@ -935,7 +945,6 @@ class CustomPlotter(QVTKRenderWindowInteractor):
         self.container.setCentralWidget(self)
 
         self.mainwindow = mainwindow
-        self.series = self.mainwindow.series
         self.screen_info = mainwindow.screen_info  # info about primary screen
 
         self.is_closed = False
@@ -1087,6 +1096,11 @@ class CustomPlotter(QVTKRenderWindowInteractor):
         self.plt.show(*self.plt.actors, resetcam=(False if load_fp else None))
         self.show()
         self.container.show()
+
+    @property
+    def series(self):
+        """The series open in the main window right now (see VPlotter.series)."""
+        return self.mainwindow.series
 
     def _syncRenderWindowSize(self):
         """Resize the render window if it no longer matches this widget.
