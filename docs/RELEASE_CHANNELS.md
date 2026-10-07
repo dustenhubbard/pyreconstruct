@@ -62,7 +62,10 @@ Under the default draft policy, a successful nightly publishes immediately
 as a GitHub pre-release and never becomes Latest. Its release notes are
 GitHub's generated change list, compared with the previous nightly, or with
 the newest stable for the first nightly. Nightlies do not require a
-`WHATS_NEW.md` section and skip the in-app What's New popup.
+`WHATS_NEW.md` section and skip the in-app What's New popup. `Help` >
+`What's new` in the Dev app shows the newest stable section at or below the
+nightly's base version, with a line above it that links the changelog for the
+changes since that release.
 
 A failed build leaves its tag in place. If `main` has not changed, the next
 scheduled run skips too. Recover by rerunning the installer workflow on the
