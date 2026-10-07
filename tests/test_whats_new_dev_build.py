@@ -160,8 +160,8 @@ def test_dev_build_note_is_the_approved_text_with_one_link():
     note = F.dev_build_note("1.23.0", url="https://example.test/CHANGELOG.md")
     assert note == (
         "This is the nightly build. The notes below are for 1.23.0, the latest "
-        "stable release. The changes since then are in the "
-        '<a href="https://example.test/CHANGELOG.md">changelog</a>.'
+        "stable release. The latest PyReconstruct Dev changes can be found in "
+        'the <a href="https://example.test/CHANGELOG.md">live changelog</a>.'
     )
     assert note.count("<a ") == 1
     for dash in ("—", "–", "--"):

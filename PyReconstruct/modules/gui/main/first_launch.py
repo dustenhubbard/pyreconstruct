@@ -334,15 +334,15 @@ def dev_build_note(stable_version, url=None):
 
     Rich text, not markdown: the dialog renders it as its own label above the
     notes browser, so it is on screen however far the notes scroll, and the
-    label takes HTML. Only the one word is a link. ``url`` defaults to the
+    label takes HTML. Only "live changelog" is a link. ``url`` defaults to the
     changelog on GitHub; injectable so a test can pin it.
     """
     if url is None:
         url = github_changelog_url()
     return (
         f"This is the nightly build. The notes below are for {escape(stable_version)}, "
-        f"the latest stable release. The changes since then are in the "
-        f'<a href="{url}">changelog</a>.'
+        f"the latest stable release. The latest PyReconstruct Dev changes can be "
+        f'found in the <a href="{url}">live changelog</a>.'
     )
 
 
