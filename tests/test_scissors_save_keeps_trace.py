@@ -11,6 +11,11 @@ the same as Backspace does, so the trace goes back exactly as it was. A jump to
 another section finishes the cut first instead, on the section it was open on,
 the way paging always has; the 3D scene's double-click used to skip that.
 
+Undo saves before it undoes, so it settles the cut before that save: it
+finishes the cut and takes that back, rather than letting the save back it out
+and then taking the edit made before it. Redo backs the cut out, since
+finishing it would end the redo.
+
 Driven through the live `MainWindow`: a real left click with the Scissors tool,
 then the real Save action, a real close and a fresh `Series.openJser`.
 """
@@ -22,6 +27,7 @@ from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 
 from PyReconstruct.modules.datatypes.series import Series
+from PyReconstruct.modules.datatypes.trace import Trace
 from PyReconstruct.modules.gui.main.field_widget_5_mouse import SCISSORS
 
 pytestmark = pytest.mark.gui
@@ -285,3 +291,128 @@ def test_a_jump_within_the_section_finishes_the_cut_before_the_view_moves(
     ]
     for got, want in zip(_bounds(kept), (x0, y0, x1, y1)):
         assert abs(got - want) <= 2 * per_pixel
+
+
+def _draw_closed(main_window, qapp):
+    """Draw a small closed trace with the Closed Trace tool, a click per
+    corner and a right-click to finish, away from the fixture's traces. It
+    gets an object of its own, so counting the picked-up trace's object
+    does not count it."""
+    field = main_window.field
+    field.series.setOption("trace_mode", "poly")
+    main_window.mouse_palette.activateModeButton("Closed Trace")
+    qapp.processEvents()
+    field.setTracingTrace(Trace("scissors_undo_a", (255, 0, 0), True))
+    before = list(field.section.tracesAsList())
+    x0, y0 = field.width() // 20, field.height() // 20
+    corners = [(x0, y0), (x0 + 30, y0), (x0 + 30, y0 + 30), (x0, y0 + 30)]
+    for x, y in corners:
+        QTest.mouseClick(field, Qt.LeftButton, Qt.NoModifier, QPoint(x, y))
+    QTest.mouseClick(field, Qt.RightButton, Qt.NoModifier, QPoint(*corners[-1]))
+    qapp.processEvents()
+    (drawn,) = [
+        t for t in field.section.tracesAsList()
+        if not any(t is b for b in before)
+    ]
+    return drawn.name, list(drawn.points)
+
+
+@pytest.mark.parametrize("closed", [True, False])
+def test_undo_in_the_middle_of_a_cut_takes_back_the_cut_only(
+    main_window, qapp, closed
+):
+    """Undo finishes the cut and takes it back, and Redo brings the cut back.
+    Undo saves first; when that save backed the cut out, it left no state
+    for the cut, and this Undo took the trace drawn before it instead."""
+    field = main_window.field
+    trace = _pick_trace(field, closed)
+    name, points = trace.name, list(trace.points)
+    before = _count(field.section, name)
+    a_name, a_points = _draw_closed(main_window, qapp)
+    states = field.series_states[field.section.n]
+    undo_before = len(states.undo_states)
+
+    _pickup(main_window, qapp, trace)
+    main_window.undo_act.trigger()  # Cmd+Z
+    qapp.processEvents()
+
+    assert not field.is_scissoring
+    assert not field.is_line_tracing
+    assert field.mouse_mode == SCISSORS
+    assert len(_matching(field.section, a_name, a_points)) == 1, (
+        "Undo during the cut took the trace drawn before it"
+    )
+    assert _count(field.section, name) == before
+    assert len(_matching(field.section, name, points)) == 1
+    assert len(states.undo_states) == undo_before
+
+    assert main_window.redo_act.isEnabled()
+    main_window.redo_act.trigger()  # Cmd+Y
+    qapp.processEvents()
+
+    assert len(_matching(field.section, a_name, a_points)) == 1
+    assert _count(field.section, name) == before
+    assert len(states.undo_states) == undo_before + 1
+
+
+def test_undo_in_the_middle_of_a_cut_leaves_a_series_edit_alone(
+    main_window, qapp
+):
+    """With a series-wide edit as the newest undo, Undo during a cut takes
+    back the cut and leaves the series edit for the next Undo."""
+    field = main_window.field
+    trace = _pick_trace(field, True)
+    name, points = trace.name, list(trace.points)
+    before = _count(field.section, name)
+    other = next(
+        n for n in field.section.contours
+        if n != name and field.section.contours[n].getTraces()
+        and not field.series.getAttr(n, "locked")
+    )
+    field.section.selected_traces = field.section.contours[other].getTraces()[:1]
+    field.lockObjects()
+    assert field.series.getAttr(other, "locked")
+
+    _pickup(main_window, qapp, trace)
+    main_window.undo_act.trigger()
+    qapp.processEvents()
+
+    assert not field.is_scissoring
+    assert _count(field.section, name) == before
+    assert len(_matching(field.section, name, points)) == 1
+    assert field.series.getAttr(other, "locked"), (
+        "Undo during the cut also undid the series edit before it"
+    )
+
+    main_window.undo_act.trigger()
+    qapp.processEvents()
+    assert not field.series.getAttr(other, "locked")
+    assert len(_matching(field.section, name, points)) == 1
+
+
+def test_redo_in_the_middle_of_a_cut_backs_the_cut_out_and_redoes(
+    main_window, qapp
+):
+    """Redo backs the cut out, then redoes. Finishing the cut instead would be
+    a new edit, and a new edit ends every redo, the one asked for included."""
+    field = main_window.field
+    trace = _pick_trace(field, True)
+    name, points = trace.name, list(trace.points)
+    before = _count(field.section, name)
+    a_name, a_points = _draw_closed(main_window, qapp)
+    main_window.undo_act.trigger()
+    qapp.processEvents()
+    assert not _matching(field.section, a_name, a_points)
+
+    _pickup(main_window, qapp, trace)
+    assert main_window.redo_act.isEnabled()
+    main_window.redo_act.trigger()
+    qapp.processEvents()
+
+    assert not field.is_scissoring
+    assert not field.is_line_tracing
+    assert len(_matching(field.section, a_name, a_points)) == 1, (
+        "Redo during the cut lost the redo"
+    )
+    assert _count(field.section, name) == before
+    assert len(_matching(field.section, name, points)) == 1

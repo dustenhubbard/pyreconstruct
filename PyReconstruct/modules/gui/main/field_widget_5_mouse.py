@@ -858,9 +858,26 @@ class FieldWidgetMouse(FieldWidgetData):
         MainWindow.changeSection or a 3D double-click through moveTo, ends
         the gesture with endPendingEvents before the field moves, and a cut
         never outlives its section.
+
+        Undo is the one exception, and finishes the cut instead
+        (finishOpenScissorsCut).
         """
         if self.is_scissoring and self.is_line_tracing:
             self.cancelScissors()
+
+    def finishOpenScissorsCut(self):
+        """Finish a scissors cut that is still open, as a right-click would.
+
+        MainWindow.undo calls this before its own save. Finished, the cut is
+        an edit with an undo state, so that Undo takes back the cut and
+        nothing older, and Redo brings the cut back. Left to the save, the
+        cut would be backed out with no state, and the Undo would take the
+        edit made before it.
+
+        Does nothing unless a cut is open.
+        """
+        if self.is_scissoring and self.is_line_tracing:
+            self.lineRelease(override=True)
 
     def stampPress(self, event):
         """Called when mouse is pressed in stamp mode.

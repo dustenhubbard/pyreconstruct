@@ -4290,6 +4290,16 @@ class MainWindow(QMainWindow):
             Params:
                 redo (bool): True if redo should be performed
         """
+        # An open scissors cut is settled before the save below, which would
+        # otherwise back it out with no undo state and leave this Undo to take
+        # the edit made before the cut. Undo finishes the cut, so the cut is
+        # what it takes back and Redo can bring it back. Redo backs the cut
+        # out instead: finishing it would be a new edit, and a new edit ends
+        # every redo, the one asked for included.
+        if redo:
+            self.field.cancelOpenScissorsCut()
+        else:
+            self.field.finishOpenScissorsCut()
         self.saveAllData()
         can_3D, can_2D, linked = self.field.series_states.canUndo(redo=redo)
         def act2D():
