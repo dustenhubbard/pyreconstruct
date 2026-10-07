@@ -4029,8 +4029,9 @@ class MainWindow(QMainWindow):
         series = self.series
         groups = series.findDuplicateTraces(threshold, include_locked)
         if self.series is not series:
-            # a .jser opened from the Finder during the scan's progress
-            # dialog: the rows name the series left (see _closeCleanupLists)
+            # a .jser opened from the Finder at the scan's last progress
+            # update (an earlier one stops the scan: SeriesClosedError): the
+            # rows name the series left (see _closeCleanupLists)
             return
         if not groups:
             notify("No duplicate traces found at that overlap threshold.")
@@ -4079,8 +4080,9 @@ class MainWindow(QMainWindow):
         series = self.series
         candidates = series.findPixelDustTraces(threshold)
         if self.series is not series:
-            # a .jser opened from the Finder during the scan's progress
-            # dialog: the rows name the series left (see _closeCleanupLists)
+            # a .jser opened from the Finder at the scan's last progress
+            # update (an earlier one stops the scan: SeriesClosedError): the
+            # rows name the series left (see _closeCleanupLists)
             return
         if not candidates:
             notify("No pixel-dust traces found at or below that pixel area.")

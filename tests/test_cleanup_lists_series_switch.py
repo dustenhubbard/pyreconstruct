@@ -21,8 +21,9 @@ What is pinned here:
     from the Finder leaves B unchanged
   * a notice from a Delete or Combine that B opens under ends the action
     without touching the closed list
-  * a pixel-dust or Duplicates scan of A that B opens under, at its last
-    progress update, opens no list on B
+  * a pixel-dust or Duplicates scan of A that B opens under, at its first,
+    a middle or its last progress update, opens no list on B and shows no
+    error
 """
 import shutil
 
@@ -361,25 +362,55 @@ def test_b_opening_under_a_notice_from_combine_ends_it_quietly(
     assert not window.series.modified
 
 
-def _b_opens_as_the_scan_finishes(window, tmp_path, qtbot):
-    """Open B from the Finder at the last progress update of A's next scan.
+SCAN_UPDATES = {
+    "first": lambda percent: True,
+    "middle": lambda percent: 0 < percent < 100,
+    "last": lambda percent: percent >= 100,
+}
+
+
+def _b_opens_during_the_scan(window, tmp_path, qtbot, update):
+    """Open B from the Finder at one progress update of A's next scan.
 
     The scan's progress dialog runs the event loop on each update, so a
-    .jser opened from the Finder reaches the window there. Returns the
-    progress values A's scan reported.
+    .jser opened from the Finder reaches the window there. update names the
+    update (see SCAN_UPDATES); before the last one, the scan still has
+    sections of A to read. Returns the progress values A's scan reported.
     """
     from PyReconstruct.modules.backend.progress import NullProgressReporter
     reported = []
+    due = SCAN_UPDATES[update]
 
     class OpensB(NullProgressReporter):
         def set_progress(self, percent):
             reported.append(percent)
-            if percent >= 100 and window.series is first:
+            if due(percent) and window.series is first:
                 _open_copy(window, tmp_path, qtbot, from_finder=True)
 
     first = window.series
     first.setProgressReporter(OpensB)
     return reported
+
+
+def _errors_shown(monkeypatch, tmp_path):
+    """Route exceptions from Qt to the app's own hook, recording its windows.
+
+    Set in the test body: pytest-qt puts its own hook in for the call.
+    """
+    import sys
+    from PyReconstruct.modules.backend.func import logging_setup
+    from PyReconstruct.modules.gui.utils import errors
+    shown = []
+    monkeypatch.setattr(
+        errors, "show_error_report", lambda summary, report, *a, **k:
+        shown.append(report) or True,
+    )
+    monkeypatch.setattr(errors, "_reported_signatures", set())
+    monkeypatch.setattr(
+        logging_setup, "log_file_path", lambda: str(tmp_path / "log.txt")
+    )
+    monkeypatch.setattr(sys, "excepthook", errors.customExcepthook)
+    return shown
 
 
 def _open_lists(window, kind):
@@ -389,8 +420,10 @@ def _open_lists(window, kind):
     ]
 
 
+@pytest.mark.parametrize("update", list(SCAN_UPDATES))
 def test_a_pixel_dust_scan_b_opens_under_lists_nothing_on_b(
-    main_window, main_window_dialogs, confirmed, finder, tmp_path, qtbot
+    update, main_window, main_window_dialogs, confirmed, finder, monkeypatch,
+    tmp_path, qtbot
 ):
     from PyReconstruct.modules.gui.dialog.malformed_contours import (
         PixelDustDialog,
@@ -399,13 +432,15 @@ def test_a_pixel_dust_scan_b_opens_under_lists_nothing_on_b(
     snum = _plant(window, "SWITCH_DUST", DUST)
     first = window.series
     saved = _counts(first, snum)
-    reported = _b_opens_as_the_scan_finishes(window, tmp_path, qtbot)
+    reported = _b_opens_during_the_scan(window, tmp_path, qtbot, update)
     main_window_dialogs.responses = [([10.0], True)]
+    shown = _errors_shown(monkeypatch, tmp_path)
 
-    window.removePixelDustTraces()
+    window.removepixeldust_act.trigger()
 
-    assert 100 in reported
+    assert any(SCAN_UPDATES[update](p) for p in reported)
     assert window.series is not first
+    assert shown == []
     lists = _open_lists(window, PixelDustDialog)
     for dialog in lists:
         dialog.deleteAllContours()
@@ -414,8 +449,10 @@ def test_a_pixel_dust_scan_b_opens_under_lists_nothing_on_b(
     assert not window.series.modified
 
 
+@pytest.mark.parametrize("update", list(SCAN_UPDATES))
 def test_a_duplicates_scan_b_opens_under_lists_nothing_on_b(
-    main_window, main_window_dialogs, confirmed, finder, tmp_path, qtbot
+    update, main_window, main_window_dialogs, confirmed, finder, monkeypatch,
+    tmp_path, qtbot
 ):
     from PyReconstruct.modules.gui.dialog.malformed_contours import (
         DuplicateTracesDialog,
@@ -425,15 +462,17 @@ def test_a_duplicates_scan_b_opens_under_lists_nothing_on_b(
     first = window.series
     saved = _counts(first, snum)
     assert saved["SWITCH_DUP"] == 2
-    reported = _b_opens_as_the_scan_finishes(window, tmp_path, qtbot)
+    reported = _b_opens_during_the_scan(window, tmp_path, qtbot, update)
     main_window_dialogs.responses = [
         ([0.95, [("check locked traces", False)]], True)
     ]
+    shown = _errors_shown(monkeypatch, tmp_path)
 
-    window.reviewDuplicateTraces()
+    window.duplicates_act.trigger()
 
-    assert 100 in reported
+    assert any(SCAN_UPDATES[update](p) for p in reported)
     assert window.series is not first
+    assert shown == []
     lists = _open_lists(window, DuplicateTracesDialog)
     for dialog in lists:
         dialog.combineAll()

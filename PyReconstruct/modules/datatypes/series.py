@@ -56,6 +56,19 @@ class SeriesOptionError(Exception):
     """Raised when an option read from the series file has the wrong shape."""
 
 
+class SeriesClosedError(FileNotFoundError):
+    """Raised when a section pass reaches a section of a closed series.
+
+    A progress dialog runs the event loop on each update, so another series
+    can open under any pass that shows one (a .jser opened from the Finder
+    reaches the window there), and opening it closes this series and deletes
+    its working files. The pass stops before it reads the next section
+    instead of failing on the missing file. A FileNotFoundError still, so a
+    caller that handles that one handles this the same; the app's exception
+    hook shows no error for it (gui.utils.errors.customExcepthook).
+    """
+
+
 def _checkColumnsOption(option_name : str, value):
     """Raise if a ``*_columns`` option is not a list of (name, shown) pairs.
 
@@ -547,6 +560,8 @@ class Series():
         self.modified_ztraces = set()
         self.modified_objects = set()
         self.leave_open = False
+        # set by close(); a section pass stops on it (SeriesClosedError)
+        self.closed = False
 
         # possible zarr overlay
         self.zarr_overlay_fp = None
@@ -1261,7 +1276,11 @@ class Series():
     
     def close(self):
         """Clear the hidden directory of the series."""
-        
+
+        # before the early return: a series left open for the one replacing
+        # it in the same hidden dir must not go on editing that one's files
+        self.closed = True
+
         if self.isWelcomeSeries() or self.leave_open:
             return
         
@@ -6006,6 +6025,12 @@ class SeriesIterator():
         if self.sni < len(self.section_numbers):
             if self.show_progress:
                     self.reporter.set_progress(self.sni / len(self.section_numbers) * 100)
+            # the progress update above, or the loop body, ran the event
+            # loop, where another series can open and close this one
+            if self.series.closed:
+                raise SeriesClosedError(
+                    f"{self.series.name} was closed during: {self.message}"
+                )
             snum = self.section_numbers[self.sni]
             self.section = self.series.loadSection(snum)
             self.sni += 1
