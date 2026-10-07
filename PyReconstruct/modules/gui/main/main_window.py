@@ -2665,6 +2665,16 @@ class MainWindow(QMainWindow):
         if check_auto and not self.series.autobackupOn():
             return
 
+        # A backup that arrives while a save is writing (the progress dialog
+        # lets queued events through) is refused here, before the backup
+        # folder is made or the settings dialog opens, with a notice and no
+        # exception. from_saved is not exempt: the file it would copy is the
+        # one the running save is replacing, so the copy would not be of a
+        # saved series.
+        if self.series.jserSaveRunning():
+            self.series.refuseNestedSave(self.series.backupFolder())
+            return
+
         # make sure the backup directory exists
         if not os.path.isdir(self.series.backupFolder(create=True)):
             notify(
@@ -2717,7 +2727,8 @@ class MainWindow(QMainWindow):
             close (bool): If true, delete hidden series files.
         Returns:
             (str): "cancel" when nothing was written because the user backed
-                out, either at the save prompt or at the Save As dialog. Every
+                out, either at the save prompt or at the Save As dialog, or
+                because another save of this series was still running. Every
                 caller that goes on to close or discard the series must treat
                 that as an abort.
         """
@@ -2725,6 +2736,16 @@ class MainWindow(QMainWindow):
         ## If welcome series, close without saving
         if self.series.isWelcomeSeries():
             return
+
+        # A save, close or open that arrives while a save is running (the
+        # progress dialog lets queued events through) is refused here, before
+        # anything is written or closed: closing deletes the working folder
+        # the running save is reading. The series stays modified, and
+        # returning instead of raising keeps the exception hook from opening
+        # an error report for a save that was only skipped.
+        if self.series.jserSaveRunning():
+            self.series.refuseNestedSave(self.series.jser_fp)
+            return "cancel"
 
         ## Populate hidden files with unsaved data
         self.saveAllData()
@@ -2833,6 +2854,14 @@ class MainWindow(QMainWindow):
     
     def manualBackup(self):
         """Back up series to a specified location."""
+        # Backup now, chosen while a save is writing: refused before the
+        # working files are rewritten under the save that is reading them,
+        # and before the comment dialog opens. backup() checks again for its
+        # other callers; this one has to come first.
+        if self.series.jserSaveRunning():
+            self.series.refuseNestedSave(self.series.backupFolder())
+            return
+
         self.saveAllData()
 
         response, confirmed = BackupCommentDialog(self, self.series).exec()

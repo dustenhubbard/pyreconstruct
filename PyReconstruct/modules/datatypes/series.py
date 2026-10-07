@@ -877,10 +877,12 @@ class Series():
         progress lets Qt deliver queued events, so a second save (a shortcut, a
         menu action, an autosave) can start inside the first. Two saves of one
         series at once have nothing to gain and every way to collide, so the
-        second is refused with a message, writes nothing, and raises. The
-        message promises nothing about the first save: if the refusal's
+        second is refused with a notice, writes nothing, and raises. The
+        notice promises nothing about the first save: if the refusal's
         exception reaches it, it stops like any failed save and keeps the old
-        file. Nothing in the app queues saves, so refusing is the whole fix.
+        file. The GUI checks `jserSaveRunning` before it gets here, so in the
+        app the refusal is the notice alone.
+        Nothing in the app queues saves, so refusing is the whole fix.
         See `_saveJser` for what a save does.
 
             Params:
@@ -906,9 +908,17 @@ class Series():
     def refuseNestedSave(self, target : str) -> SeriesSaveError:
         """Tell the user a save was skipped because one is running.
 
-        Shows the message and returns the error for the caller to raise. Save
-        As calls it before moving the series, since a move followed by a
-        refused save would leave the series pointing at a path with no file.
+        Shows the message and returns the error for the caller to raise. The
+        GUI's save, close and backup paths call it themselves, before anything
+        is written or closed, and return without raising: raised from a menu
+        action, the error reaches the exception hook, which opens the
+        error-report window anyway. Save As also calls it before moving the
+        series, since a move followed by a refused save would leave the series
+        pointing at a path with no file.
+
+        The message is a plain notice, not the "Save failed" report window. A
+        skipped save is expected and nothing failed, so there is nothing to
+        report.
 
             Params:
                 target (str): the path the skipped save would have written
@@ -918,13 +928,15 @@ class Series():
         err = SeriesSaveError(
             "this series is already being saved, so this save was skipped."
         )
-        self._surfaceSaveError(
-            target, err,
-            message=(
-                "Save skipped: this series is already being saved.\n\n"
-                f"This save wrote nothing to:\n{target}"
-            ),
-        )
+        message = "Save skipped: this series is already being saved."
+        if target:
+            message += f"\n\nThis save wrote nothing to:\n{target}"
+        try:
+            shown = self._notifier().notify(message)
+        except Exception:
+            shown = False  # the notice must never stop the refusal
+        if not shown:
+            print(message)
         return err
 
     def _saveJser(self, save_fp : str = None, close : bool = False):
