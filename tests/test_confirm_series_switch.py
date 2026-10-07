@@ -35,7 +35,8 @@ FLAT = [(1.0, 1.0), (2.0, 1.0), (3.0, 1.0)]
 
 @pytest.fixture
 def confirmed_after_b_opens(
-    monkeypatch, main_window, main_window_dialogs, finder, tmp_path, qtbot
+    monkeypatch, main_window, main_window_dialogs, tmp_path, qtbot,
+    finder,  # noqa: F811  (the imported fixture)
 ):
     """Accept the main window's next confirmation only after B opens under it.
 
