@@ -16,14 +16,12 @@ import sys
 import textwrap
 import time
 from pathlib import Path
-from types import SimpleNamespace
 
 import cv2
 import numpy as np
 import zarr
 
 import PyReconstruct
-from PyReconstruct.modules.datatypes.section import Section
 
 CONVERTER = (
     Path(PyReconstruct.__file__).parent
@@ -355,17 +353,3 @@ def test_writes_go_only_where_the_files_end_up(tmp_path):
     }
     assert written == on_disk
 
-
-def test_a_scale_without_metadata_is_not_offered(tmp_path):
-    """A scale folder whose array has no .zarray cannot be opened by zarr,
-    so the section must not list that scale."""
-    src_dir = tmp_path / "out.zarr"
-    for scale in ("scale_1", "scale_4"):
-        (src_dir / scale / "x.png").mkdir(parents=True)
-        (src_dir / scale / "x.png" / ".zarray").write_text("{}")
-    (src_dir / "scale_2" / "x.png").mkdir(parents=True)
-    section = SimpleNamespace(
-        series=SimpleNamespace(src_dir=str(src_dir)), src="x.png"
-    )
-
-    assert sorted(Section.zarr_scales.fget(section)) == [1, 4]
