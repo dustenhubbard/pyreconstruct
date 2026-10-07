@@ -806,10 +806,12 @@ class Section():
     @property
     def src_fp(self):
         if self.series.src_dir.endswith("zarr"):
+            # the finest scale that is finished; with none finished, the path
+            # scale_1 would have, which opens as no image
             scales = self.zarr_scales
             return os.path.join(
                 self.series.src_dir,
-                f"scale_{min(scales)}",
+                f"scale_{min(scales) if scales else 1}",
                 self.src
             )
         else:
@@ -824,6 +826,13 @@ class Section():
     
     @property
     def zarr_scales(self):
+        """The scales with a finished array for this section's image.
+
+        An array counts once its .zarray is written. A conversion that stops
+        partway can leave a scale folder with chunks and no .zarray, which
+        zarr cannot open, so that scale is left out. Empty when no scale is
+        finished; None when the images are not in a zarr.
+        """
         if self.series.src_dir.endswith("zarr"):
             return [
                 int(s.split("_")[1])
@@ -831,7 +840,9 @@ class Section():
                 if (
                     s.startswith("scale_") and 
                     s.split("_")[1].isnumeric() and 
-                    self.src in os.listdir(os.path.join(self.series.src_dir, s))
+                    os.path.isfile(os.path.join(
+                        self.series.src_dir, s, self.src, ".zarray"
+                    ))
                 )
             ]
 
