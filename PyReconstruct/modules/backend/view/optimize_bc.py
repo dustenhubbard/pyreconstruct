@@ -130,8 +130,11 @@ def optimizeSectionBC(section : Section, desired_mean=128, desired_std=60, windo
             window (list): the x, y, w, h window (None if using full images)
     """
     # make sure the image exists
+    scales = section.zarr_scales  # None unless the images are in a zarr
+    if scales == []:  # no scale of this image has a .zarray
+        return
     fp = section.src_fp
-    if not (os.path.isfile(fp) or os.path.isdir(fp)):
+    if scales is None and not (os.path.isfile(fp) or os.path.isdir(fp)):
         return
     
     # get the image array
@@ -141,9 +144,9 @@ def optimizeSectionBC(section : Section, desired_mean=128, desired_std=60, windo
                 image = cv2.imread(fp, cv2.IMREAD_GRAYSCALE)
             else:  # get the smallest image if using a zarr
                 if lowest_res:
-                    scale_zg = f"scale_{max(section.zarr_scales)}"
+                    scale_zg = f"scale_{max(scales)}"
                 else:
-                    scale_zg = f"scale_{min(section.zarr_scales)}"
+                    scale_zg = f"scale_{min(scales)}"
                 fp = os.path.join(
                     section.series.src_dir,
                     scale_zg,
