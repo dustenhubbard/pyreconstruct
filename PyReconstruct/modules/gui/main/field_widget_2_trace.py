@@ -1580,16 +1580,14 @@ class FieldWidgetTrace(FieldWidgetBase):
         context_menu_list = [
             ("editztracce_act", "Edit z-trace attributes...", "", self.editZtraceAttributes),
             ("smoothztrace_act", "Smooth", "", self.smoothZtrace),
-            # Hoisted out of "3D >" alongside the object menu's equivalent (this
-            # lab is 3D-heavy). The label gains "3D" because at top level it no
-            # longer has the submenu for context.
-            ("addto3D_act", "Add to 3D scene", "", self.addZtraceTo3D),
             None,
             {
                 "attr_name": "ztracemenu_3D",
                 "text": "3D",
                 "opts":
                 [
+                    # same order and labels as the object menu's "3D >"
+                    ("addto3D_act", "Add to scene", "", self.addZtraceTo3D),
                     ("remove3D_act", "Remove from scene", "", self.removeZtrace3D)
                 ]
             },

@@ -324,6 +324,36 @@ def test_the_field_object_menu_keeps_add_and_remove_reachable(main_window):
     assert _cpp(paths["3D > Remove from scene"]) == wanted_remove
 
 
+def test_the_field_ztrace_menu_keeps_add_and_remove_together_under_3d(
+    main_window,
+):
+    """`Add to scene` sits beside `Remove from scene` in the z-trace `3D >`.
+
+    The z-trace menu is built by `FieldWidgetTrace.getZtraceMenu`, not by
+    `context_menu_list.py`, so it kept the old hoist (`Add to 3D scene` at top
+    level, `3D >` holding only the removal) after the object menu went back to
+    stable's layout. This pins stable's layout: both rows in `3D >`, in the
+    object menu's order and labels, nothing 3D left at the top level.
+    """
+    wanted_add = _cpp(main_window.addto3D_act)
+    wanted_remove = _cpp(main_window.remove3D_act)
+    add_shortcut = main_window.addto3D_act.shortcut().toString()
+
+    ztrace_menu = submenu_at(main_window.field_menu, "Ztrace")
+    assert ztrace_menu is not None
+
+    paths = menu_leaf_paths(ztrace_menu)
+
+    assert [p for p in paths if p.startswith("3D > ")] == [
+        "3D > Add to scene",
+        "3D > Remove from scene",
+    ]
+    assert _cpp(paths["3D > Add to scene"]) == wanted_add
+    assert _cpp(paths["3D > Remove from scene"]) == wanted_remove
+    assert "Add to 3D scene" not in paths
+    assert add_shortcut == ""
+
+
 # Every option-backed action now applies the key its option holds. `sethosts_act`
 # was the last exemption: it was built with `""` in `get_context_menu_list_obj`,
 # so its `Ctrl+Shift+H` default and its shortcuts-dialog row bound nothing. It
