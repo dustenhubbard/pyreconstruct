@@ -923,19 +923,26 @@ def label_volume(labels_array):
     """A labels array as (z, y, x), the way import and the overlay index it.
 
     A 4D array is channel first, as its four-entry ``voxel_size`` is read.
-    With one channel, that channel is the labels. With more, nothing says
-    which one is, so the array is refused.
+    One integer channel is the labels, as ``is_label_array`` counts it. With
+    more channels nothing says which one is, and a float channel is a
+    prediction rather than label ids, so either is refused.
     """
 
     shape = getattr(labels_array, "shape", None)
     if shape is None or len(shape) != 4:
         return labels_array
-    if shape[0] == 1:
-        return _FirstChannel(labels_array)
-    raise ValueError(
-        f"This Zarr label array has {shape[0]} channels. PyReconstruct imports "
-        "labels from a single channel, so save them as (z, y, x) or (1, z, y, x)."
-    )
+    if shape[0] != 1:
+        raise ValueError(
+            f"This Zarr label array has {shape[0]} channels. PyReconstruct imports "
+            "labels from a single channel, so save them as (z, y, x) or (1, z, y, x)."
+        )
+    if not np.issubdtype(labels_array.dtype, np.integer):
+        raise ValueError(
+            f"This Zarr label array is {labels_array.dtype}, not an integer type. "
+            "PyReconstruct imports label ids, so save a prediction as integer "
+            "labels before importing it."
+        )
+    return _FirstChannel(labels_array)
 
 
 def is_label_array(array):

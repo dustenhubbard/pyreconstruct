@@ -5,8 +5,8 @@ was read as the section. Section 0 handed a whole (z, y, x) volume to
 ``cv2.findContours``, which raised, and every later section failed the bounds
 check and was skipped without a word. The overlay counted only 3D arrays as
 labels, so a 4D one went down the image path, which draws one channel as
-nothing. One channel is the labels now. Several channels are refused, and
-4D images stay images.
+nothing. One integer channel is the labels now. Several channels and a float
+prediction are refused before any section imports, and 4D images stay images.
 """
 import types
 
@@ -110,6 +110,21 @@ def test_several_channels_are_refused_before_any_section(tmp_path):
         conversions.getLabelsToObjectsData(fp, "labels_x")
     with pytest.raises(ValueError, match="has 2 channels"):
         conversions.importSection(zg, "labels_x", 0, object())
+
+
+def test_a_float_channel_is_refused_before_any_section(tmp_path):
+    fp = str(tmp_path / "prediction.zarr")
+    zg = zarr.open(fp, "w")
+    raw = zg.create_dataset("raw", data=np.zeros((2, 32, 32), dtype=np.uint8))
+    raw.attrs.update({"voxel_size": [50, 4, 4], "sections": [0, 1]})
+    prediction = np.zeros((1, 2, 32, 32), dtype=np.float32)
+    prediction[0, 1, 18:28, 10:20] = 0.5
+    zg.create_dataset("labels_x", data=prediction)
+
+    with pytest.raises(ValueError, match="float32"):
+        conversions.getLabelsToObjectsData(fp, "labels_x")
+    with pytest.raises(ValueError, match="float32"):
+        conversions.importSection(zg, "labels_x", 1, object())
 
 
 ## the overlay
