@@ -2791,8 +2791,18 @@ class MainWindow(QMainWindow):
             (str): "cancel" if the user dismissed the dialog. Nothing was
                 written in that case, and saveToJser relies on hearing about
                 it; None on success (and for the welcome series, which has
-                nothing to save either way).
+                nothing to save either way). Also "cancel" when another save
+                of this series was still running.
         """
+        # A Save As that arrives while a save is running (the progress dialog
+        # lets queued events through) is refused first: before the working
+        # files are rewritten under the save that is reading them, before the
+        # file dialog asks for a place it will not save to, and before the
+        # series moves, which would leave it pointed at a path with no file.
+        if self.series.jserSaveRunning():
+            self.series.refuseNestedSave("")
+            return "cancel"
+
         ## Store series data in hidden files
         self.saveAllData()
 
@@ -2809,13 +2819,6 @@ class MainWindow(QMainWindow):
             file_name=f"{self.series.name}.jser"
         )
         if not new_jser_fp:
-            return "cancel"
-        # A Save As that arrives while a save is running (the progress dialog
-        # lets queued events through) would move the series and then have its
-        # save refused, leaving the series pointed at a path with no file.
-        # Refuse before anything moves.
-        if self.series.jserSaveRunning():
-            self.series.refuseNestedSave(new_jser_fp)
             return "cancel"
         if not self._saveAsTargetFree(new_jser_fp):
             return "cancel"

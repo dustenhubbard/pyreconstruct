@@ -120,4 +120,6 @@ def test_save_as_during_a_save_is_refused_before_the_series_moves(
     assert notifier.errors == []
     assert len(notifier.notices) == 1
     assert notifier.notices[0].startswith("Save skipped")
-    assert str(dest) in notifier.notices[0]
+    # refused before the file dialog, so no destination was ever asked for
+    assert main_window_dialogs.dialogs == []
+    assert main_window_dialogs.file_responses == [str(dest)]
