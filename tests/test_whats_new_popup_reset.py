@@ -254,8 +254,10 @@ def test_only_the_whats_new_keys_are_touched():
 
 
 def test_the_marker_is_written_last():
-    """A write that fails must leave the reset unrecorded, so it runs again
-    next launch rather than being recorded as done."""
+    """The marker is the last write, after the suppression removal or the
+    recorded version, never before it. A store that cannot be saved at all is
+    the startup wrapper's to catch; see
+    ``test_startup_does_not_report_a_store_it_could_not_save``."""
     settings = FakeSettings({SEEN: "1.23.0", OFF: True})
     F.reset_whats_new_popup_once(settings, "1.24.0")
     assert settings.writes[-1] == (MARKER, True)
@@ -372,6 +374,38 @@ def test_startup_under_the_dev_flavor_leaves_both_stores_alone(qapp, monkeypatch
             assert stable.value(key) == before, key
     finally:
         _clear(QSettings(*DEV))
+
+
+def test_startup_does_not_report_a_store_it_could_not_save(qapp, monkeypatch,
+                                                           capsys):
+    """``sync()`` does not raise when the store cannot be written; it sets
+    ``status()``. Such a launch must not count the reset as applied: the
+    marker never reached the file, so the reset runs again next launch, and
+    the log says the save failed rather than that it worked."""
+    import os
+    import uuid
+    from PySide6 import QtCore
+
+    # A domain of its own inside the suite's redirected tree, whose folder is
+    # taken by a plain file, so the store cannot be created there.
+    org = f"unwritable-{uuid.uuid4().hex}"
+    path = QtCore.QSettings(org, W.APP).fileName()
+    with open(os.path.dirname(path), "w"):
+        pass
+
+    class Unwritable(QtCore.QSettings):
+        def __init__(self, *args):
+            super().__init__(org, W.APP)
+
+    monkeypatch.setattr(QtCore, "QSettings", Unwritable)
+    try:
+        assert F.reset_whats_new_popup_startup(current="1.24.0") is False
+    finally:
+        os.remove(os.path.dirname(path))
+
+    err = capsys.readouterr().err
+    assert "applied" not in err
+    assert "What's new (startup reset) could not be saved" in err
 
 
 def test_startup_never_raises(monkeypatch):

@@ -199,8 +199,9 @@ def reset_whats_new_popup_once(settings, current, shared=None):
       ordinary once-per-version rules show the notes once on this launch, and
       the user can switch the popup off again from the dialog or the Help menu.
 
-    The marker is written last, so a write that fails leaves the reset to run
-    again next launch rather than recording it as done. Never writes
+    The marker is written last, after the change it records. A store that
+    cannot be saved is caught by ``reset_whats_new_popup_startup``, which
+    checks the status after ``sync()``. Never writes
     ``suppress_whatsnew`` itself: the default carries the "on", and a stored
     ``False`` would be indistinguishable from a user's choice.
 
@@ -241,8 +242,9 @@ def reset_whats_new_popup_startup(current=None):
     must not be able to stop PyReconstruct from opening, and an unrecorded
     reset simply runs again next launch. The failure is logged first, the
     way ``MainWindow.showWhatsNewStartup`` logs its own: a store that keeps
-    missing the reset would otherwise leave no trace of why. ``current`` is
-    injectable for tests.
+    missing the reset would otherwise leave no trace of why. A store that
+    ``sync()`` could not write is logged too, and returns False: the reset
+    did not reach the file. ``current`` is injectable for tests.
     """
     try:
         from PySide6.QtCore import QSettings
@@ -259,6 +261,15 @@ def reset_whats_new_popup_startup(current=None):
         ran = reset_whats_new_popup_once(settings, current, shared=shared)
         if ran:
             settings.sync()
+            if settings.status() != QSettings.NoError:
+                # sync() reports an unwritable store through status() rather
+                # than raising. The marker did not reach the file, so the
+                # reset runs again next launch.
+                log_note(
+                    "What's new (startup reset) could not be saved "
+                    f"({settings.status().name}); it runs again next launch"
+                )
+                return False
             log_note("What's new (startup reset): applied to this store")
         return ran
     except Exception:
