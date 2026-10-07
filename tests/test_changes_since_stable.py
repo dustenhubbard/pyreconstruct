@@ -167,48 +167,53 @@ def test_version_key_orders_releases(below, above):
 
 
 # ---- one line per item, structure kept ---------------------------------------
-def test_nested_lists_code_blocks_and_tables_keep_their_lines(tmp_path):
-    fragment = (
+@pytest.mark.parametrize("fragment", [
+    pytest.param(
         "- **Import changes.**\n"
         "  Supported types:\n"
         "  - XML, which the old importer\n"
         "    also read\n"
-        "  - JSON\n"
+        "  - JSON\n",
+        id="nested-list",
+    ),
+    pytest.param(
+        "- **Steps.** In\n"
+        "  order:\n"
+        "  1. Open the\n"
+        "     series.\n"
+        "  2. Save it.\n",
+        id="numbered-list",
+    ),
+    pytest.param(
         "- **A command.** Run it as\n"
         "  ```sh\n"
         "  pyreconstruct --check-history\n"
         "    series.jser\n"
         "  ```\n"
         "  and read the\n"
-        "  output.\n"
-        "- **Shortcuts.**\n"
-        "  | Key | Action |\n"
-        "  | --- | --- |\n"
-        "  | K | Knife |\n"
-        "  > A quoted\n"
-        "  line.\n"
-    )
-    root = repo(tmp_path, fragments={"a.changed.md": fragment})
-    out = section(root)
-    assert out.split("### Changed\n", 1)[1].split("\n### Fixed", 1)[0] == (
-        "- **Import changes.** Supported types:\n"
-        "  - XML, which the old importer also read\n"
-        "  - JSON\n"
-        "- **A command.** Run it as\n"
-        "  ```sh\n"
-        "  pyreconstruct --check-history\n"
-        "    series.jser\n"
+        "  output.\n",
+        id="fenced-code",
+    ),
+    pytest.param(
+        "- **Fences.** Shown as\n"
+        "  ~~~~\n"
         "  ```\n"
-        "  and read the output.\n"
-        "- **Shortcuts.**\n"
-        "  | Key | Action |\n"
-        "  | --- | --- |\n"
-        "  | K | Knife |\n"
-        "  > A quoted line.\n"
-    )
-
-
-@pytest.mark.parametrize("fragment", [
+        "  one\n"
+        "  two\n"
+        "  ~~~\n"
+        "  three\n"
+        "  ~~~~\n",
+        id="fence-inside-a-fence",
+    ),
+    pytest.param(
+        "- **Code.**\n"
+        "  ```text\n"
+        "      ```\n"
+        "  first()\n"
+        "  second()\n"
+        "  ```\n",
+        id="deeper-fence-is-code",
+    ),
     pytest.param(
         "- **Example command.**\n"
         "\n"
@@ -231,6 +236,12 @@ def test_nested_lists_code_blocks_and_tables_keep_their_lines(tmp_path):
         id="setext-heading",
     ),
     pytest.param(
+        "- **Import details.** Supported\n"
+        "  formats\n"
+        "  ===\n",
+        id="setext-heading-under-the-bullet",
+    ),
+    pytest.param(
         "- **Two halves.** Before\n"
         "  ***\n"
         "  after.\n",
@@ -242,7 +253,27 @@ def test_nested_lists_code_blocks_and_tables_keep_their_lines(tmp_path):
         "  | --- | --- |\n"
         "  | K | Knife |\n"
         "  More keys.\n",
-        id="table-then-prose",
+        id="table",
+    ),
+    pytest.param(
+        "- **Shortcuts.**\n"
+        "\n"
+        "  Key | Action\n"
+        "  --- | ---\n"
+        "  K | Knife\n",
+        id="table-without-outer-pipes",
+    ),
+    pytest.param(
+        "- **Shortcuts.** Press\n"
+        "  Key | Action\n"
+        "  --- | ---\n",
+        id="table-header-wrapped-from-the-bullet",
+    ),
+    pytest.param(
+        "- **Quoted.** As\n"
+        "  > a quoted\n"
+        "  line.\n",
+        id="quote",
     ),
     pytest.param(
         "- **Hidden note.** Shown\n"
@@ -259,64 +290,87 @@ def test_nested_lists_code_blocks_and_tables_keep_their_lines(tmp_path):
         "  </details>\n",
         id="html-block",
     ),
+    pytest.param(
+        "- **Broken.** A line ending in a hard break\\\n"
+        "  stays two lines.\n",
+        id="hard-break",
+    ),
+    pytest.param(
+        "- **Lazy.** A line at the margin\n"
+        "  --- | ---\n",
+        id="delimiter-row-under-prose",
+    ),
+    pytest.param(
+        "-  **Wide.** Its text starts three columns in, so\n"
+        "  ```\n"
+        "- **Fenced.** This bullet is code at the margin,\n"
+        "  not a bullet.\n",
+        id="wide-bullet-then-a-fence-at-the-margin",
+    ),
 ])
-def test_code_headings_rules_and_html_inside_a_bullet_keep_their_lines(tmp_path, fragment):
+def test_a_bullet_with_anything_but_prose_keeps_its_lines(tmp_path, fragment):
     """Joining any of these would change what they are, not just rewrap them:
-    two code lines become one, a heading becomes words in a sentence."""
+    two code lines become one, a heading or a table becomes words in a
+    sentence. A bullet is joined only while its lines are plain prose, so from
+    the first line that is anything else it comes out exactly as it went in."""
     out = section(repo(tmp_path, fragments={"a.changed.md": fragment}))
     assert out.split("### Changed\n", 1)[1].split("\n### Fixed", 1)[0] == fragment
 
 
-def test_wrapped_numbered_items_and_nested_quotes_still_join(tmp_path):
+def test_prose_paragraphs_join_up_to_the_first_thing_that_is_not_prose(tmp_path):
     fragment = (
         "- **Steps.** In\n"
         "  order:\n"
+        "\n"
+        "  Each one\n"
+        "  [links](https://example.com) its page.\n"
+        "\n"
         "  1. Open the\n"
         "     series.\n"
-        "  2. Save it.\n"
-        "     > Quoted and\n"
-        "     wrapped.\n"
         "\n"
-        "      Indented, but a paragraph\n"
-        "      of the second step.\n"
+        "  Then a paragraph\n"
+        "  that could be in the list.\n"
     )
     out = section(repo(tmp_path, fragments={"a.changed.md": fragment}))
     assert out.split("### Changed\n", 1)[1].split("\n### Fixed", 1)[0] == (
         "- **Steps.** In order:\n"
-        "  1. Open the series.\n"
-        "  2. Save it.\n"
-        "     > Quoted and wrapped.\n"
         "\n"
-        "      Indented, but a paragraph of the second step.\n"
+        "  Each one [links](https://example.com) its page.\n"
+        "\n"
+        "  1. Open the\n"
+        "     series.\n"
+        "\n"
+        "  Then a paragraph\n"
+        "  that could be in the list.\n"
     )
 
 
-def test_a_fence_closes_only_on_its_own_kind_and_length(tmp_path):
-    """A shorter fence, or one of the other character, inside a fenced block
-    is content; closing on it would join the code lines that follow."""
-    fragment = (
-        "- **Fences.** Shown as\n"
-        "  ~~~~\n"
-        "  ```\n"
-        "  one\n"
-        "  two\n"
-        "  ~~~\n"
-        "  three\n"
-        "  ~~~~\n"
-        "  and after\n"
-        "  it.\n"
+def test_a_line_at_the_margin_that_is_not_a_bullet_leaves_the_rest_as_written(tmp_path):
+    """A fragment cannot hold one, but ``CHANGELOG.md`` can: a fence at the
+    margin may hold text that looks like a bullet, so nothing after a margin
+    line that is not a bullet is joined."""
+    unreleased = (
+        "### Fixed\n"
+        "- **Before.** Joined\n"
+        "  as usual.\n"
+        "\n"
+        "```\n"
+        "- **Inside a fence.** Not\n"
+        "  joined.\n"
+        "```\n"
     )
-    out = section(repo(tmp_path, fragments={"a.added.md": fragment}))
-    assert out.split("### Added\n", 1)[1].split("\n### Fixed", 1)[0] == (
-        "- **Fences.** Shown as\n"
-        "  ~~~~\n"
-        "  ```\n"
-        "  one\n"
-        "  two\n"
-        "  ~~~\n"
-        "  three\n"
-        "  ~~~~\n"
-        "  and after it.\n"
+    changelog = CHANGELOG.replace(
+        "### Fixed\n- **Parked under Unreleased.** Written before\n  the fragments existed.\n",
+        unreleased,
+    )
+    out = section(repo(tmp_path, changelog=changelog))
+    assert out.split("### Fixed\n", 1)[1] == (
+        "- **Before.** Joined as usual.\n"
+        "\n"
+        "```\n"
+        "- **Inside a fence.** Not\n"
+        "  joined.\n"
+        "```\n"
     )
 
 

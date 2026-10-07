@@ -20,13 +20,14 @@ already in the file before fragments) and prints one section::
     - **One bullet per change, on one line.** ...
 
 Fragments are hard-wrapped at 80 columns with two-space continuation lines,
-and a GitHub release body renders every newline as a line break, so each
-bullet's continuation lines are joined onto its first line. A nested list
-item, a code block (fenced or indented), a heading, a rule, a table row, a
-blockquote and an HTML block keep their own lines: joining those would flatten
-a valid list into one run-on sentence, or code and headings into prose. A
-second paragraph inside a bullet (after a blank line) stays a paragraph of its
-own.
+and a GitHub release body renders every newline as a line break, so a bullet's
+wrapped prose is joined onto one line. Only prose is joined, and only where
+nothing before it in the bullet could have changed what it is: a bullet's
+paragraphs are joined from the top for as long as each one is plain prose
+(see ``join_wrapped``), and from the first one that is not (a nested list,
+code, a table, a heading, a quote, HTML), the rest of the bullet is left
+exactly as written. Joining lines of one paragraph changes only line breaks,
+so whatever Markdown goes in, the same structure comes out.
 
 Prints nothing and exits 0 when there is nothing since the stable, so the
 caller can test the output for emptiness. A fragment the assembler refuses (a
@@ -56,56 +57,48 @@ import changelog_fragments as frag  # noqa: E402
 # em dash in older sections, and the date is not needed here.
 SECTION_RE = re.compile(r"^## \[(?P<version>[^\]]+)\]")
 
-# Lines that keep their own line when wrapped prose around them is joined.
-# A list item or a blockquote may still take a wrapped continuation (a lazy
-# one, in CommonMark's word); a heading, a rule or setext underline, and a
-# table row may not, since joining onto them changes what they are.
-LIST_ITEM_RE = re.compile(r"^(\s*)([-*+]|\d+[.)])(\s+|$)")
-QUOTE_RE = re.compile(r"^\s*>")
-STANDALONE_RE = re.compile(
-    r"^\s*(?:#{1,6}(?:\s|$)|(?:-\s*){3,}$|(?:\*\s*){3,}$|(?:_\s*){3,}$|=+\s*$|\|)"
+# A bulleted item with text, at the left margin, which is where every
+# fragment's bullet starts. Nothing above it can hold it as content, since it
+# ends any item or paragraph before it; an empty or numbered item can be a
+# paragraph's lazy line instead. One space after the marker puts its text two
+# columns in, where ``in_bullet`` expects it. A rule made of dashes or stars is
+# not an item, though it starts like one.
+ITEM_RE = re.compile(r"^[-*+] \S")
+RULE_RE = re.compile(r"^([-*_])(?:[ \t]*\1){2,}[ \t]*$")
+BULLET = "- "  # the bullet whose prose is joined: a dash, one space, text
+INDENT = "  "  # where that bullet's text, and each wrapped line of it, starts
+
+# The first character of a line of plain prose: one that cannot start a list,
+# code, a heading, a rule, a quote, a table, HTML or a link definition, nor
+# turn the line before into a heading or a table header. A letter; a number
+# that is not a numbered item's; emphasis or code that opens a span; an
+# opening bracket or quote. A line inside a paragraph may also start with
+# ``[`` (a link definition cannot interrupt a paragraph, though a footnote's
+# may), with an issue number (``#`` is a heading only with a space after it)
+# or with punctuation.
+PROSE_START_RE = re.compile(
+    r"^(?:[^\W\d_]|\d+(?!\d|[.)](?:\s|$))|[*_]{1,2}[^\s*_]|`(?!``)|[(\"'“‘!])"
 )
-FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
-
-# The HTML blocks that may interrupt a paragraph (CommonMark 4.6, kinds 1, 2
-# and 6), each with what ends it; an empty end is a blank line.
-HTML_BLOCK_TAGS = (
-    "address|article|aside|base|basefont|blockquote|body|caption|center|col|"
-    "colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|"
-    "form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|"
-    "menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|"
-    "summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul"
-)
-HTML_STARTS = (
-    (re.compile(r"^\s*<(?:script|pre|style|textarea)(?:\s|>|$)", re.I), "</"),
-    (re.compile(r"^\s*<!--"), "-->"),
-    (re.compile(rf"^\s*</?(?:{HTML_BLOCK_TAGS})(?:\s|/?>|$)", re.I), ""),
-)
+PROSE_INSIDE_RE = re.compile(rf"(?:{PROSE_START_RE.pattern[1:]}|\[(?!\^)|#\d|[).,;?/%&@])")
 
 
-def indent_of(line):
-    return len(line.expandtabs(4)) - len(line.expandtabs(4).lstrip())
+def is_prose(text, first):
+    """Whether ``text`` (a line with its indentation removed) is plain prose,
+    as the first line of a paragraph or as a line inside one. A line ending
+    in a hard break (two spaces or a backslash) is not: joining would lose it."""
+    pattern = PROSE_START_RE if first else PROSE_INSIDE_RE
+    return bool(pattern.match(text)) and not text.endswith(("  ", "\\"))
 
 
-def html_block(line):
-    """What ends the HTML block ``line`` opens, or None when it opens none."""
-    for start, end in HTML_STARTS:
-        if start.match(line):
-            return end
-    return None
+def is_item(line):
+    return bool(ITEM_RE.match(line)) and not RULE_RE.match(line)
 
 
-def html_ends(end, line):
-    if end == "</":
-        return re.search(r"</(?:script|pre|style|textarea)>", line, re.I) is not None
-    return not line.strip() if end == "" else end in line
-
-
-def closes(fence, line):
-    """Whether ``line`` closes a block opened by ``fence``: the same character,
-    at least as many of it, and nothing else on the line (CommonMark 4.5)."""
-    stripped = line.strip()
-    return set(stripped) == {fence[0]} and len(stripped) >= len(fence)
+def in_bullet(line):
+    """Whether ``line`` is indented at least as far as a ``- `` bullet's text,
+    and so belongs to the bullet above it whatever it is."""
+    expanded = line.expandtabs(4)
+    return len(expanded) - len(expanded.lstrip()) >= len(INDENT)
 
 
 def version_key(text):
@@ -174,79 +167,72 @@ def merge_buckets(bodies):
 
 
 def join_wrapped(lines):
-    """Each bullet's continuation lines joined onto its first line.
+    """Each bullet's wrapped prose joined onto one line, and nothing else changed.
 
-    A continuation line is an indented line of prose. It joins onto the line
-    before it when that line is prose too, or a list item or blockquote it
-    wraps. Code passes through untouched: a fenced block until a fence of the
-    opening kind and at least its length closes it, and an indented block (four
-    columns past the list item it sits in, where a paragraph cannot run on into
-    it) until a line indented less. So does an HTML block, until its end.
+    A bullet here is a ``- `` item at the left margin with text on its first
+    line, and every line after it indented as far as its text. Its
+    paragraphs (runs of lines between blank ones) are joined from the top for
+    as long as each is plain prose: every line indented two spaces, the width
+    of ``- ``, and starting the way only prose can start (``is_prose``). Each
+    joined paragraph has only plain paragraphs before it in its bullet, so it
+    cannot be inside code or HTML, and a line of prose can neither start a
+    block nor change the line before it. From the first paragraph that is not
+    plain, the rest of the bullet is left as written. So is everything after a
+    line indented less than a bullet's text that does not start a bullet: it
+    may have ended the bullet above and opened code or HTML that runs on past
+    it.
     """
     out = []
-    joinable = False  # the line before may take a continuation
-    fence = None  # the opening fence, inside a fenced block
-    code_indent = None  # the indentation of an indented code block, inside one
-    html_end = None  # what ends the HTML block, inside one
-    items = []  # where each open list item's content starts, innermost last
-    for line in lines:
-        if fence is not None:
-            out.append(line)
-            if closes(fence, line):
-                fence = None
-            continue
-        if html_end is not None:
-            out.append(line)
-            if html_ends(html_end, line):
-                html_end = None
-            continue
-        indent = indent_of(line)
-        if code_indent is not None:
-            if not line.strip() or indent >= code_indent:
-                out.append(line)
-                continue
-            code_indent = None
+    at = 0
+    while at < len(lines):
+        line = lines[at]
         if not line.strip():
             out.append(line)
-            joinable = False
+            at += 1
             continue
-        if not joinable:
-            # Not a run-on line, so its indentation says which item it is in.
-            while items and indent < items[-1]:
-                items.pop()
-            code_at = (items[-1] if items else 0) + 4
-            if indent >= code_at:
-                code_indent = code_at
-                out.append(line)
-                continue
-        opening = FENCE_RE.match(line)
-        if opening:
-            fence = opening.group(1)
-            out.append(line)
-            joinable = False
+        if not is_item(line):
+            out.extend(lines[at:])
+            break
+        end = at + 1
+        while end < len(lines) and (not lines[end].strip() or in_bullet(lines[end])):
+            end += 1
+        # A paragraph that runs straight into a line outside the bullet may be
+        # that line's: a table header, or a lazy line before a setext underline.
+        runs_on = end < len(lines) and lines[end - 1].strip() and not is_item(lines[end])
+        out.extend(join_bullet(lines[at:end], runs_on))
+        at = end
+    return out
+
+
+def join_bullet(bullet, runs_on):
+    """One bullet's lines, its leading plain paragraphs joined (``join_wrapped``)."""
+    out = []
+    at = 0
+    while at < len(bullet):
+        if not bullet[at].strip():
+            out.append(bullet[at])
+            at += 1
             continue
-        end = html_block(line)
-        if end is not None:
-            out.append(line)
-            joinable = False
-            if not html_ends(end, line):
-                html_end = end
-            continue
-        if STANDALONE_RE.match(line):
-            out.append(line)
-            joinable = False
-            continue
-        item = LIST_ITEM_RE.match(line.expandtabs(4))
-        if item:
-            marker, spaces = item.end(2), len(item.group(3))
-            while items and indent < items[-1]:
-                items.pop()
-            items.append(marker + (spaces if 1 <= spaces <= 4 else 1))
-        elif line.startswith("  ") and joinable and not QUOTE_RE.match(line):
-            out[-1] = out[-1] + " " + line.strip()
-            continue
-        out.append(line)
-        joinable = True
+        end = at
+        while end < len(bullet) and bullet[end].strip():
+            end += 1
+        paragraph = bullet[at:end]
+        first = paragraph[0]
+        lead = BULLET if at == 0 else INDENT
+        plain = (
+            first.startswith(lead)
+            and is_prose(first[len(lead):], first=True)
+            and all(
+                line.startswith(INDENT) and is_prose(line[len(INDENT):], first=False)
+                for line in paragraph[1:]
+            )
+            and not (end == len(bullet) and runs_on)
+        )
+        if not plain:
+            out.extend(bullet[at:])
+            break
+        out.append(" ".join([first] + [line.strip() for line in paragraph[1:]]))
+        at = end
     return out
 
 
