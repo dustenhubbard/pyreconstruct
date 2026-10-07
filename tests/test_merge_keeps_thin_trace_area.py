@@ -8,8 +8,9 @@ into a spike with no area. The merge used to return the spike, keeping about
 0.01 of the triangle's 25, and the caller deleted both originals.
 
 The merge now refuses when the outline would keep less than half of any
-trace, so the caller keeps both traces. The same shapes on a finer grid still
-merge and keep the triangle.
+trace, so the caller keeps both traces and says the merge would lose area. It
+does not say the trace left no outline, since one exists. The same shapes on a
+finer grid still merge and keep the triangle.
 """
 import pytest
 import shapely
@@ -17,6 +18,7 @@ from shapely.geometry import Polygon
 
 from PyReconstruct.modules.calc.grid import (
     Grid,
+    MergeLosesArea,
     mergeCellSize,
     mergeTracesInField,
     reducePoints,
@@ -48,7 +50,8 @@ def test_the_grid_outline_keeps_the_sliver_until_it_is_simplified():
 
 
 def test_merge_refuses_when_a_sliver_would_lose_most_of_its_area():
-    assert mergeTracesInField([RECT, SLIVER], MAG) == []
+    with pytest.raises(MergeLosesArea):
+        mergeTracesInField([RECT, SLIVER], MAG)
 
 
 @pytest.mark.parametrize("mag", [2, 0.4])
@@ -94,4 +97,8 @@ def test_merge_keeps_both_traces_when_a_sliver_would_lose_its_area(
 
     after = sorted(tuple(map(tuple, t.points)) for t in section.contours[NAME])
     assert after == before
-    assert notices, "the merge refused without saying why"
+    assert len(notices) == 1, notices
+    assert "lose most of the area" in notices[0], notices
+    # an outline exists, and a thin trace is not a speck to delete
+    assert "no outline" not in notices[0], notices
+    assert "delete" not in notices[0], notices

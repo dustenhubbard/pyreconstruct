@@ -397,6 +397,14 @@ def _losesArea(shape, others : list) -> bool:
 MERGE_MIN_KEPT = 0.5
 
 
+class MergeLosesArea(ValueError):
+    """The merged outline would keep less than MERGE_MIN_KEPT of a trace.
+
+    Raised rather than returned as an empty result: an outline exists, so the
+    caller's message for a trace that leaves no outline would be wrong.
+    """
+
+
 def _losesMostOf(shapes : list, outlines : list) -> bool:
     """True if the outlines cover less than MERGE_MIN_KEPT of any shape's area.
 
@@ -432,9 +440,11 @@ def mergeTracesInField(field_traces : list, mag : float) -> list:
             (list): the merged trace(s), points in field units; empty if any
                 trace would be lost: one that shrinks to nothing on its
                 group's grid while covering area that no trace surviving on
-                that grid covers, or one the merged outline covers less than
-                MERGE_MIN_KEPT of. A caller that keeps its traces on an empty result
-                then never loses one the result left out.
+                that grid covers. A caller that keeps its traces on an empty
+                result then never loses one the result left out.
+        Raises:
+            MergeLosesArea: if the merged outline covers less than
+                MERGE_MIN_KEPT of a trace's area
     """
     shapes = [_filledShape(trace) for trace in field_traces]
     result = []
@@ -462,7 +472,7 @@ def mergeTracesInField(field_traces : list, mag : float) -> list:
         # a sliver thinner than a cell can survive the rounding above and
         # still close up into a line when the outline is simplified
         if _losesMostOf([shapes[i] for i in group], outlines):
-            return []
+            raise MergeLosesArea()
         result += outlines
     return result
 
