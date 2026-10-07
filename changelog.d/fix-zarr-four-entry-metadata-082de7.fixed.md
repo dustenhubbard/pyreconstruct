@@ -1,7 +1,4 @@
-- **Zarr labels import in place when the metadata has a channel entry.** When
-  an `offset`, `voxel_size` or `resolution` has four entries, channel first,
-  PyReconstruct now uses the last three for the images as well as the labels,
-  and reads `units` for those three axes. Before, the channel entry of an
-  image voxel size was read as the section thickness, and a four entry label
-  offset was measured against the wrong axes, so labels were imported and
-  overlaid in the wrong place.
+- **Zarr labels import in place when the metadata has a channel entry.** A
+  four-entry `offset`, `voxel_size` or `resolution` is now read channel first
+  on the images as well as the labels, so the channel entry no longer shifts
+  the labels or passes for the section thickness.
