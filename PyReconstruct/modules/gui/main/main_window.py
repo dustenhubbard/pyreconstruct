@@ -154,15 +154,25 @@ def _probeEntries(folder):
     return None
 
 
+def _sameVolume(a, b):
+    """True if two existing paths are on the same volume."""
+    try:
+        return os.stat(a).st_dev == os.stat(b).st_dev
+    except (OSError, TypeError, ValueError):
+        return False
+
+
 def _caseInsensitive(folder):
     """True if names inside a folder ignore case.
 
     Probes inside the folder first, since folders above it can sit on
     another volume. With no entry to probe, it looks the folder's own name
-    up in its parent in the other case, which tests the parent's volume:
-    the best available guess, wrong only when the folder is a mount point.
-    A name with no letters (2026) says nothing either, so it walks up one
-    folder at a time and asks the same of each.
+    up in its parent in the other case, which tests the parent's volume,
+    so it only does that when the parent is on the folder's volume. A
+    mount point is not: an empty drive mounted at /mnt/Data says nothing
+    about itself through /mnt. A name with no letters (2026) says nothing
+    either, so it walks up one folder at a time and asks the same of each,
+    stopping at the top of the folder's volume.
     """
     folder = os.path.realpath(folder)
     while True:
@@ -170,15 +180,15 @@ def _caseInsensitive(folder):
         if found is not None:
             return found
         parent, name = os.path.split(folder)
-        swapped = name.swapcase()
-        if name and swapped != name:
-            return _sameDir(folder, os.path.join(parent, swapped))
-        if not name or parent == folder:
-            # Nothing on the way up could tell. Say case-insensitive: the
+        if not name or parent == folder or not _sameVolume(folder, parent):
+            # Nothing on this volume could tell. Say case-insensitive: the
             # caller then treats names differing only in case as one file,
             # which can only refuse a save, never allow one over a series
             # in the 3D scene.
             return True
+        swapped = name.swapcase()
+        if swapped != name:
+            return _sameDir(folder, os.path.join(parent, swapped))
         folder = parent
 
 
@@ -1580,6 +1590,7 @@ class MainWindow(QMainWindow):
         """Create (or reset) the field widget and the mouse palette."""
         # create field
         if self.field is not None:  # close previous field widget
+            self._closeCleanupLists()
             self.field.createField(self.series)
         else:
             self.field = FieldWidget(self.series, self)
@@ -1595,6 +1606,22 @@ class MainWindow(QMainWindow):
         self.changeTracingTrace(
             self.series.palette_traces[palette_group][index]
         ) # set the current trace
+
+    def _closeCleanupLists(self):
+        """Close every open clean-up review list before the series changes.
+
+        Pixel dust, Duplicates, the self-crossing lists and the smoothing
+        list are modeless and parented to this window. Their rows name
+        traces in the series being left, but their Delete and Combine
+        buttons call the field, which is reused for the new series: a list
+        left open deleted or combined the matching trace in the series
+        opened next. Found through the children rather than the attributes
+        that hold them, so a list from an earlier run of the same clean-up
+        closes too. A Delete or Combine already waiting on its confirmation
+        stops itself (MalformedContoursDialog._forOpenSeries).
+        """
+        for dialog in self.findChildren(MalformedContoursDialog):
+            dialog.close()
 
     def _ensureImagesAvailable(self):
         """Locate the section images, and offer to scale unscaled zarrs."""
@@ -2593,6 +2620,10 @@ class MainWindow(QMainWindow):
         """Write current series and section data into hidden files."""
         if self.series.isWelcomeSeries():
             return
+        # Save, Save As, Close, Open and New all write through here, so a
+        # scissors cut still open puts its trace back first; otherwise the
+        # section is written without it
+        self.field.cancelOpenScissorsCut()
         # # save the trace palette
         # self.series.palette_traces = []
         # for button in self.mouse_palette.palette_buttons:  # get trace palette
@@ -2632,6 +2663,16 @@ class MainWindow(QMainWindow):
                 paths so a save + autobackup is one full serialization, not two.
         """
         if check_auto and not self.series.autobackupOn():
+            return
+
+        # A backup that arrives while a save is writing (the progress dialog
+        # lets queued events through) is refused here, before the backup
+        # folder is made or the settings dialog opens, with a notice and no
+        # exception. from_saved is not exempt: the file it would copy is the
+        # one the running save is replacing, so the copy would not be of a
+        # saved series.
+        if self.series.jserSaveRunning():
+            self.series.refuseNestedSave(self.series.backupFolder())
             return
 
         # make sure the backup directory exists
@@ -2686,7 +2727,8 @@ class MainWindow(QMainWindow):
             close (bool): If true, delete hidden series files.
         Returns:
             (str): "cancel" when nothing was written because the user backed
-                out, either at the save prompt or at the Save As dialog. Every
+                out, either at the save prompt or at the Save As dialog, or
+                because another save of this series was still running. Every
                 caller that goes on to close or discard the series must treat
                 that as an abort.
         """
@@ -2694,6 +2736,16 @@ class MainWindow(QMainWindow):
         ## If welcome series, close without saving
         if self.series.isWelcomeSeries():
             return
+
+        # A save, close or open that arrives while a save is running (the
+        # progress dialog lets queued events through) is refused here, before
+        # anything is written or closed: closing deletes the working folder
+        # the running save is reading. The series stays modified, and
+        # returning instead of raising keeps the exception hook from opening
+        # an error report for a save that was only skipped.
+        if self.series.jserSaveRunning():
+            self.series.refuseNestedSave(self.series.jser_fp)
+            return "cancel"
 
         ## Populate hidden files with unsaved data
         self.saveAllData()
@@ -2802,6 +2854,14 @@ class MainWindow(QMainWindow):
     
     def manualBackup(self):
         """Back up series to a specified location."""
+        # Backup now, chosen while a save is writing: refused before the
+        # working files are rewritten under the save that is reading them,
+        # and before the comment dialog opens. backup() checks again for its
+        # other callers; this one has to come first.
+        if self.series.jserSaveRunning():
+            self.series.refuseNestedSave(self.series.backupFolder())
+            return
+
         self.saveAllData()
 
         response, confirmed = BackupCommentDialog(self, self.series).exec()
@@ -4286,6 +4346,25 @@ class MainWindow(QMainWindow):
             Params:
                 redo (bool): True if redo should be performed
         """
+        # An open scissors cut is settled before the save below, which would
+        # otherwise back it out with no undo state and leave this Undo to take
+        # the edit made before the cut. Undo finishes the cut, so the cut is
+        # what it takes back and Redo can bring it back. Redo backs the cut
+        # out instead: finishing it would be a new edit, and a new edit ends
+        # every redo, the one asked for included.
+        if redo:
+            self.field.cancelOpenScissorsCut()
+        elif self.field.hide_trace_layer:
+            # With the trace layer hidden, newTrace refuses the finished cut,
+            # so finishing would only put the trace back with a state that
+            # changes nothing, end the redo, and leave undoState (which does
+            # nothing while hidden) to skip it. The cut is backed out with no
+            # state instead, and that is the whole Undo, as taking back the
+            # finished cut is with traces shown.
+            if self.field.cancelOpenScissorsCut():
+                return
+        else:
+            self.field.finishOpenScissorsCut()
         self.saveAllData()
         can_3D, can_2D, linked = self.field.series_states.canUndo(redo=redo)
         def act2D():

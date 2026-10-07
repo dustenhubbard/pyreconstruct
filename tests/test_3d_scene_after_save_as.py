@@ -505,3 +505,109 @@ def test_case_probe_follows_a_folder_symlink_in_either_order(tmp_path, monkeypat
         _fake_case_rules(m, reject)
         assert _same_both_ways(str(alias / "B.jser"), str(data / "b.jser"))
         assert not _same_both_ways(str(alias / "B.jser"), str(data / "C.jser"))
+
+
+def _fake_mount(monkeypatch, mount):
+    """Make os.stat and os.lstat put a folder on a volume of its own.
+
+    The folder and everything in it get another st_dev than the folder
+    holding it, the way a drive mounted there would, and nothing else
+    changes. Names inside keep the case rules of the test volume.
+    """
+    import os
+    import stat
+    mount = os.path.normcase(os.path.realpath(mount))
+    inside = mount + os.sep
+    real_stat, real_lstat = os.stat, os.lstat
+
+    def wrap(real):
+        def fake(p, *a, **k):
+            st = real(p, *a, **k)
+            path = os.fspath(p) if isinstance(p, (str, os.PathLike)) else None
+            if not isinstance(path, str):
+                return st
+            path = os.path.normcase(os.path.normpath(path))
+            if path != mount and not path.startswith(inside):
+                return st
+            fields = list(st)
+            fields[stat.ST_DEV] = st.st_dev + 1
+            # the rest by name; Python 3.13 refuses a field given twice
+            in_fields = os.stat_result.__match_args__
+            named = {
+                n: getattr(st, n) for n in dir(st)
+                if n.startswith("st_") and n not in in_fields
+            }
+            return os.stat_result(fields, named)
+        return fake
+
+    monkeypatch.setattr(os, "stat", wrap(real_stat))
+    monkeypatch.setattr(os, "lstat", wrap(real_lstat))
+
+
+def _folder_minds_case_of(monkeypatch, folder):
+    """Make the folder holding `folder` find it only by its exact name."""
+    import os
+    holder, name = os.path.split(os.path.realpath(folder))
+    inside = holder + os.sep
+
+    def reject(p):
+        if not p.startswith(inside):
+            return False
+        first = p[len(inside):].split(os.sep)[0]
+        return first != name and first.casefold() == name.casefold()
+
+    _fake_case_rules(monkeypatch, reject)
+
+
+@pytest.mark.parametrize("below", ["", "2026"], ids=["mount", "folder-in-mount"])
+def test_case_probe_does_not_judge_an_empty_mount_by_the_folder_above(
+    below, tmp_path, monkeypatch
+):
+    """An empty mount cannot tell its case, so names differing in case match.
+
+    Looking the mount's name up in the folder above tests that folder's
+    volume. Saying the names match can only refuse a save.
+    """
+    mount = tmp_path / "Data"
+    folder = mount / below if below else mount
+    folder.mkdir(parents=True)
+    a, b, c = (str(folder / n) for n in ("B.jser", "b.jser", "C.jser"))
+
+    with monkeypatch.context() as m:
+        _folder_minds_case_of(m, mount)
+        # on one volume, the folder above still decides
+        assert not _same_both_ways(a, b)
+        _fake_mount(m, mount)
+        assert _same_both_ways(a, b)
+        assert not _same_both_ways(a, c)
+
+
+def test_save_as_refuses_a_scene_series_in_other_case_on_an_empty_mount(
+    main_window, main_window_dialogs, tmp_path, series_jser, monkeypatch
+):
+    """The other series' .jser is gone and its mount is empty, so its name is still taken."""
+    import os
+
+    window = main_window
+    _viewer_, _mine, theirs, other_fp = _scene_with_other_series(
+        window, tmp_path, series_jser, monkeypatch
+    )
+    os.remove(other_fp)
+    mount = os.path.dirname(other_fp)
+    assert os.listdir(mount) == []
+    own_fp = window.series.jser_fp
+    chosen = os.path.join(mount, "OTHER.jser")
+
+    with monkeypatch.context() as m:
+        _folder_minds_case_of(m, mount)
+        _fake_mount(m, mount)
+        main_window_dialogs.file_responses.append(chosen)
+        result = window.saveAsToJser()
+
+    assert result == "cancel"
+    assert window.series.jser_fp == own_fp
+    assert theirs.series_fp == other_fp
+    assert os.listdir(mount) == []
+    assert any(
+        "3D scene" in text for _title, text in main_window_dialogs.message_boxes
+    )

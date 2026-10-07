@@ -217,7 +217,8 @@ def test_label_resolution_uses_spatial_axes(attribute, label_size, expected):
     assert labels.attrs[attribute] == label_size
 
 
-@pytest.mark.parametrize("units", ["um", ["nm", "um", "nm", "um"]])
+## three units name the three spatial axes, not the channel and two of them
+@pytest.mark.parametrize("units", ["um", ["nm", "um", "nm", "um"], ["um", "nm", "um"]])
 def test_channel_first_label_resolution_keeps_declared_units(units):
     raw = zarr.zeros((1, 8, 8), dtype=np.uint8)
     raw.attrs["voxel_size"] = [50, 8, 8]
@@ -229,15 +230,46 @@ def test_channel_first_label_resolution_keeps_declared_units(units):
     assert conversions.get_label_resolutions(labels, raw) == ([40, 8, 4], [50, 8, 8])
 
 
-def test_label_resolution_normalization_leaves_raw_readers_unchanged():
+## raw's channel entry is no more a section thickness than the labels' is
+@pytest.mark.parametrize("raw_size", [[1, 50, 8, 8], [0, 50, 8, 8]])
+def test_four_entry_raw_voxel_size_is_channel_first(raw_size):
     raw = zarr.zeros((1, 1, 8, 8), dtype=np.uint8)
-    raw.attrs["voxel_size"] = [1, 50, 8, 8]
+    raw.attrs["voxel_size"] = raw_size
     labels = zarr.zeros((1, 1, 8, 8), dtype=np.uint64)
     labels.attrs["voxel_size"] = [1, 40, 4, 4]
 
-    assert conversions.get_label_resolutions(labels, raw) == ([40, 4, 4], [1, 50, 8, 8])
-    assert conversions.get_thickness(raw) == pytest.approx(0.001)
+    assert conversions.get_label_resolutions(labels, raw) == ([40, 4, 4], [50, 8, 8])
+    assert conversions.get_voxel_size_um(raw) == pytest.approx([0.05, 0.008, 0.008])
+    assert conversions.get_thickness(raw) == pytest.approx(0.05)
     assert conversions.get_true_mag(raw) == pytest.approx(0.008)
+    assert raw.attrs["voxel_size"] == raw_size
+
+
+@pytest.mark.parametrize(
+    "label_size, expected",
+    [([1, 0, 0, 0], [50, 4, 8]), ([0, 0, 0], [50, 4, 8]), ([1, 40, 0, 2], [40, 4, 2])],
+)
+def test_label_zeros_fill_from_raws_spatial_axes(label_size, expected):
+    raw = zarr.zeros((1, 8, 8), dtype=np.uint8)
+    raw.attrs["voxel_size"] = [1, 50, 4, 8]
+    labels = zarr.zeros((1, 8, 8), dtype=np.uint64)
+    labels.attrs["voxel_size"] = label_size
+
+    assert conversions.get_label_resolutions(labels, raw) == (expected, [50, 4, 8])
+
+
+@pytest.mark.parametrize(
+    "units", [["um", "um", "um"], ["", "um", "um", "um"], "um"]
+)
+def test_four_entry_raw_voxel_size_keeps_declared_units(units):
+    raw = zarr.zeros((1, 8, 8), dtype=np.uint8)
+    raw.attrs.update({"voxel_size": [1, 0.05, 0.004, 0.008], "units": units})
+    labels = zarr.zeros((1, 8, 8), dtype=np.uint64)  # no size: raw's grid
+
+    assert conversions.get_voxel_size_um(raw) == pytest.approx([0.05, 0.004, 0.008])
+    assert conversions.get_thickness(raw) == pytest.approx(0.05)
+    assert conversions.get_true_mag(raw) == pytest.approx(0.008)
+    assert conversions.get_label_resolutions(labels, raw) == ([50, 4, 8], [50, 4, 8])
 
 
 def test_channel_first_label_metadata_imports_on_raw_grid(export):

@@ -329,6 +329,17 @@ def _default_progress_reporter_factory():
     return _PROGRESS_REPORTER_FACTORY
 
 
+def _openingText(name: str) -> str:
+    """The progress text while a series opens, naming the series.
+
+    An open runs one of two passes: `openJser` unpacking the .jser, or the
+    series-data pass in `Series.__init__` that a recovered or already-unpacked
+    working folder takes instead. Both say this, with the name the window
+    title shows once the series is open.
+    """
+    return f"Opening {name}..."
+
+
 _NOTIFIER = None
 
 
@@ -552,7 +563,14 @@ class Series():
         # keep track of relevant overall series data
         self.data = SeriesData(self)
         if get_series_data:
-            self.data.refresh()
+            if self.isWelcomeSeries():
+                # The welcome series PyReconstruct opens at launch is one
+                # bundled section with no traces, read in well under a
+                # millisecond. Its bar only flashed "Loading series data..."
+                # before the user had chosen any series, so it gets none.
+                self.data.refresh(show_progress=False)
+            else:
+                self.data.refresh(message=_openingText(self.name))
 
         # objects for non-GUI users
         self.objects = Objects(self)
@@ -716,7 +734,7 @@ class Series():
         # 2026); the bar itself only appears after Qt's minimum duration, so a
         # small local file still opens without a flash.
         factory = progress if progress is not None else _default_progress_reporter_factory()
-        reporter = factory(text="Opening series...")
+        reporter = factory(text=_openingText(sname))
         try:
             jser_data, collisions = Series._readJserForOpen(fp, notifier)
         except BaseException:
@@ -861,7 +879,7 @@ class Series():
         finally:
             # The dialog closes only at 100%, which a failure never reaches:
             # the raise above used to leave the window-modal "Opening
-            # series..." dialog standing behind the error that follows it
+            # <name>..." dialog standing behind the error that follows it
             # (found 2026-08-28) -- the same shape saveJser's finally already
             # fixes. Cancel returns pass through here too; finishing a
             # reporter twice is harmless.
@@ -877,10 +895,12 @@ class Series():
         progress lets Qt deliver queued events, so a second save (a shortcut, a
         menu action, an autosave) can start inside the first. Two saves of one
         series at once have nothing to gain and every way to collide, so the
-        second is refused with a message, writes nothing, and raises. The
-        message promises nothing about the first save: if the refusal's
+        second is refused with a notice, writes nothing, and raises. The
+        notice promises nothing about the first save: if the refusal's
         exception reaches it, it stops like any failed save and keeps the old
-        file. Nothing in the app queues saves, so refusing is the whole fix.
+        file. The GUI checks `jserSaveRunning` before it gets here, so in the
+        app the refusal is the notice alone.
+        Nothing in the app queues saves, so refusing is the whole fix.
         See `_saveJser` for what a save does.
 
             Params:
@@ -906,9 +926,17 @@ class Series():
     def refuseNestedSave(self, target : str) -> SeriesSaveError:
         """Tell the user a save was skipped because one is running.
 
-        Shows the message and returns the error for the caller to raise. Save
-        As calls it before moving the series, since a move followed by a
-        refused save would leave the series pointing at a path with no file.
+        Shows the message and returns the error for the caller to raise. The
+        GUI's save, close and backup paths call it themselves, before anything
+        is written or closed, and return without raising: raised from a menu
+        action, the error reaches the exception hook, which opens the
+        error-report window anyway. Save As also calls it before moving the
+        series, since a move followed by a refused save would leave the series
+        pointing at a path with no file.
+
+        The message is a plain notice, not the "Save failed" report window. A
+        skipped save is expected and nothing failed, so there is nothing to
+        report.
 
             Params:
                 target (str): the path the skipped save would have written
@@ -918,13 +946,15 @@ class Series():
         err = SeriesSaveError(
             "this series is already being saved, so this save was skipped."
         )
-        self._surfaceSaveError(
-            target, err,
-            message=(
-                "Save skipped: this series is already being saved.\n\n"
-                f"This save wrote nothing to:\n{target}"
-            ),
-        )
+        message = "Save skipped: this series is already being saved."
+        if target:
+            message += f"\n\nThis save wrote nothing to:\n{target}"
+        try:
+            shown = self._notifier().notify(message)
+        except Exception:
+            shown = False  # the notice must never stop the refusal
+        if not shown:
+            print(message)
         return err
 
     def _saveJser(self, save_fp : str = None, close : bool = False):

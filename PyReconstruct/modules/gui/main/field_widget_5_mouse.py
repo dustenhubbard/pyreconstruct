@@ -836,6 +836,59 @@ class FieldWidgetMouse(FieldWidgetData):
         )
         self.generateView()
 
+    def cancelOpenScissorsCut(self):
+        """Back out of a scissors cut that is still open, before a write or reload.
+
+        Until a cut ends, its trace lives outside the section. A save in that
+        window wrote the section without it and marked the series saved, and
+        a close then deleted the working folder, so the trace was permanently
+        lost. Anything that writes or rereads the field's section, or records
+        an undo state of it (saveState), calls this first, and the trace goes
+        back exactly as it was, as with Backspace.
+
+        Backing out rather than finishing is deliberate. Finishing would save
+        a cut nobody finished: on an open trace the pickup has already dropped
+        the shorter side of the click.
+
+        Does nothing unless a cut is open. lineRelease clears is_line_tracing
+        before it finishes a cut, so a save reached from inside it, through a
+        table refresh, leaves the cut alone.
+
+        The trace goes back into self.section, so this relies on the cut
+        being on the section shown: every section change, paging through
+        MainWindow.changeSection or a 3D double-click through moveTo, ends
+        the gesture with endPendingEvents before the field moves, and a cut
+        never outlives its section.
+
+        Undo is the one exception, and finishes the cut instead
+        (finishOpenScissorsCut) unless the trace layer is hidden.
+
+            Returns:
+                (bool): True if a cut was open and is now backed out
+        """
+        if self.is_scissoring and self.is_line_tracing:
+            self.cancelScissors()
+            return True
+        return False
+
+    def finishOpenScissorsCut(self):
+        """Finish a scissors cut that is still open, as a right-click would.
+
+        MainWindow.undo calls this before its own save. Finished, the cut is
+        an edit with an undo state, so that Undo takes back the cut and
+        nothing older, and Redo brings the cut back. Left to the save, the
+        cut would be backed out with no state, and the Undo would take the
+        edit made before it.
+
+        Not for a hidden trace layer, where newTrace refuses the finished
+        trace and lineRelease puts the original back with a state that
+        changes nothing. Undo backs the cut out there instead.
+
+        Does nothing unless a cut is open.
+        """
+        if self.is_scissoring and self.is_line_tracing:
+            self.lineRelease(override=True)
+
     def stampPress(self, event):
         """Called when mouse is pressed in stamp mode.
         

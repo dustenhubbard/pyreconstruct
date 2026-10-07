@@ -94,6 +94,8 @@ class MalformedContoursDialog(QDialog):
         # hidden dialog children parented to the main window
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.mainwindow = mainwindow
+        # the series the rows name (see _forOpenSeries)
+        self.series = getattr(mainwindow, "series", None)
         self.records = records
         self.navigate = navigate
         self.delete = delete
@@ -306,6 +308,17 @@ class MalformedContoursDialog(QDialog):
             return "—"
         return f"({loc[0]}, {loc[1]})"
 
+    def _forOpenSeries(self):
+        """Whether the series the rows name is still the open one.
+
+        A Delete or Combine waits on its confirmation, and on any notice
+        its callback shows, inside that message's own event loop. A .jser
+        opened from the Finder still reaches the main window meanwhile, and
+        opening it closes and deletes this list. What resumes afterwards
+        must not act on the series now open or touch the deleted table.
+        """
+        return getattr(self.mainwindow, "series", None) is self.series
+
     def _addExtraButtons(self):
         """Subclass hook: append (button, needs_selection) to extra_buttons.
 
@@ -379,10 +392,11 @@ class MalformedContoursDialog(QDialog):
             f"Delete {count} {noun} from the series?\n\n"
             f"This can be undone ({undo_chord()}).",
             yn=True,
-        ):
+        ) or not self._forOpenSeries():
             return
         deleted = self.delete(records)
-        self._pruneRecords(deleted or [])
+        if self._forOpenSeries():
+            self._pruneRecords(deleted or [])
 
     def _pruneRecords(self, deleted):
         """Remove the rows/records that were actually deleted.
@@ -865,10 +879,11 @@ class DuplicateTracesDialog(MalformedContoursDialog):
             f"the others.{unpicked_note}\n\n"
             f"This can be undone ({undo_chord()}).",
             yn=True,
-        ):
+        ) or not self._forOpenSeries():
             return
         applied = self.combine(choices) or []
-        self._pruneCombined(applied)
+        if self._forOpenSeries():
+            self._pruneCombined(applied)
 
     def _pruneCombined(self, applied):
         """Drop the combined rows, and shift the traces of the rows left.
@@ -961,12 +976,19 @@ class DuplicateTracesDialog(MalformedContoursDialog):
             "and deletes the others. A row with one name has it picked "
             "already. A row with more than one is left alone until you pick "
             "one.\n\n"
-            "Select a row and click “Go to trace” to see it in the field. "
-            "The Overlap column is the lowest overlap ratio between the "
-            "row's traces: for closed traces, the area they share over the "
-            "area they cover together, so 1 means the same points; for open "
-            "traces, how much of each line lies within a few image pixels of "
-            "the other.\n\n"
+            "Select a row and click “Go to trace” to see it in the field.\n\n"
+            # the column shows Series.findDuplicateTraces' "ratio", the lowest
+            # of the pairs that joined the group. Groups chain, so two traces
+            # in one row can overlap less than that. A pair that passes
+            # Trace.pointsMatch scores 1.0 without its area being measured.
+            "Overlap is how alike the scan found two traces, from 0 to 1, "
+            "and the “Overlap threshold” you chose sets how alike two traces "
+            "must be to share a row. Higher means more alike. 1 means the "
+            "scan could not tell them apart, but two traces at 1 can still "
+            "differ slightly. The column shows the lowest Overlap among the "
+            "pairs that put the traces in one row. If A overlaps B and B "
+            "overlaps C, all three are one row, and A and C can overlap less "
+            "than the number shown.\n\n"
             "Nothing changes until you combine, and combining can be undone "
             f"({undo_chord()})."
         )

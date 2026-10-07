@@ -806,10 +806,13 @@ class Section():
     @property
     def src_fp(self):
         if self.series.src_dir.endswith("zarr"):
-            scales = self.zarr_scales
+            # always the full-resolution array: img_dims and the exports turn
+            # its pixels into field units with mag. A coarser scale is never
+            # substituted, since its size is rounded and coordinates made from
+            # it would be off; without a usable scale_1, readers get an error.
             return os.path.join(
                 self.series.src_dir,
-                f"scale_{min(scales)}",
+                "scale_1",
                 self.src
             )
         else:
@@ -824,6 +827,12 @@ class Section():
     
     @property
     def zarr_scales(self):
+        """The scales whose array for this section's image has a .zarray.
+
+        A conversion that stops partway can write a scale's chunks without its
+        .zarray, and zarr cannot open that array, so the scale is left out.
+        Empty when no scale has one; None when the images are not in a zarr.
+        """
         if self.series.src_dir.endswith("zarr"):
             return [
                 int(s.split("_")[1])
@@ -831,7 +840,9 @@ class Section():
                 if (
                     s.startswith("scale_") and 
                     s.split("_")[1].isnumeric() and 
-                    self.src in os.listdir(os.path.join(self.series.src_dir, s))
+                    os.path.isfile(os.path.join(
+                        self.series.src_dir, s, self.src, ".zarray"
+                    ))
                 )
             ]
 

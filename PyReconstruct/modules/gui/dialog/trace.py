@@ -138,12 +138,16 @@ class TraceDialog(QDialog):
             tags = trace.tags - pick_one_values
             fill_style = trace.fill_mode[0]
             # what each fill box says for each trace; two values in a set
-            # means the traces disagree on that box
+            # means the traces disagree on that box. The boxes follow
+            # TraceLayer.drawTrace, which fills an unselected trace unless its
+            # condition is "selected", so a fill whose condition is "none" (a
+            # palette edited in Edit all palettes..., or a .jser) shows as
+            # "unselected", which is how it draws.
             sel_values = {
                 t.fill_mode[1] in ("selected", "always") for t in traces
             }
             unsel_values = {
-                t.fill_mode[1] in ("unselected", "always") for t in traces
+                t.fill_mode[1] != "selected" for t in traces
             }
             for set_name in pick_one_names:
                 pick_one_seed[set_name] = tag_sets.chosen(set_name, trace.tags)
@@ -335,6 +339,9 @@ class TraceDialog(QDialog):
             else:
                 box.setChecked(values.pop())
             box.clicked.connect(self.settleCondition)
+        # the fill rows as they opened: exec() leaves every trace's fill
+        # condition alone while they still read this way
+        self.fill_seed = self.fillRows()
         style_row.addWidget(style_text)
         style_row.addWidget(self.style_none)
         style_row.addWidget(self.style_transparent)
@@ -473,6 +480,16 @@ class TraceDialog(QDialog):
 
         self.setLayout(vlayout)
     
+    def fillRows(self) -> tuple:
+        """The fill style radios and both fill boxes, as they read now."""
+        return (
+            self.style_none.isChecked(),
+            self.style_transparent.isChecked(),
+            self.style_solid.isChecked(),
+            self.selected_input.checkState(),
+            self.unselected_input.checkState(),
+        )
+
     def settleCondition(self):
         """Make both fill boxes plain two-state once the user chooses.
 
@@ -631,12 +648,15 @@ class TraceDialog(QDialog):
                 style = None
                 condition = None
             
-            condition_mixed = any(
-                box.checkState() == Qt.PartiallyChecked
-                for box in (self.selected_input, self.unselected_input)
-            )
-            if style in ("transparent", "solid") and condition_mixed:
-                # the traces disagreed and the user left the boxes alone
+            if self.fillRows() == self.fill_seed:
+                # The fill rows are as they opened, so OK keeps each trace's
+                # fill_mode. Read back, the boxes would rewrite what they
+                # cannot show: a box the traces disagree on is still partially
+                # checked (fork #528), a fill's "none" would come back
+                # "unselected", and any condition under the None style would
+                # come back "none". No condition is "leave it alone" to every
+                # caller. A partially checked box cannot reach the branch
+                # below: a click settles it, and so does a style switch.
                 condition = None
             elif style in ("transparent", "solid"):
                 sel = self.selected_input.isChecked()
