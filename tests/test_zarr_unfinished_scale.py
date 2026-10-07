@@ -10,11 +10,19 @@ scale and then:
 - `src_fp` did `min([])` once such scales were left out, which aborted
   `optimizeSeriesBC` for the whole batch and `saveFieldView`;
 - `img_dims` opened the folder to write and planted a `.zgroup` in it, which
-  the converter then takes for a finished image and never rewrites.
+  the converter's update then counts as present and skips;
+- falling back to a coarser scale for `src_fp` gave `img_dims` that scale's
+  size while `mag` stayed scale_1's, so ROI import and export and the SVG
+  export placed every point wrong.
 
-Each test drives a consumer against a real zarr on disk.
+Each test drives a consumer against a real zarr on disk. Only the .roi codec
+is a stand-in (see `roifile_standin`).
 """
+import enum
+import json
 import os
+import sys
+import types
 
 import numpy as np
 import pytest
@@ -130,7 +138,8 @@ def test_a_scale_2_section_whose_scale_1_is_unfinished_still_draws(
 
     assert layer.selected_scale == 2
     assert _gray(image).any()
-    assert section.src_fp == os.path.join(fp, "scale_2", "img.png")
+    # the path is still scale_1's: its pixels are the ones mag describes
+    assert section.src_fp == os.path.join(fp, "scale_1", "img.png")
 
 
 def test_a_section_with_no_finished_scale_loads_as_no_image(
@@ -187,6 +196,21 @@ def test_optimize_bc_reads_a_finished_scale(qapp, real_series, tmp_path):
     assert (section.brightness, section.contrast) != (0, 0)
 
 
+def test_optimize_bc_with_no_scale_1_folder_reads_the_scale_it_has(
+    qapp, real_series, tmp_path
+):
+    """src_fp names scale_1 whether or not that folder exists."""
+    from PyReconstruct.modules.backend.view.optimize_bc import optimizeSectionBC
+
+    fp = _write_zarr(tmp_path, {"img.png": {2: True}})
+    section = _section(real_series, fp, "img.png")
+    section.brightness, section.contrast = 0, 0
+
+    optimizeSectionBC(section, desired_mean=200, desired_std=10)
+
+    assert (section.brightness, section.contrast) != (0, 0)
+
+
 def test_optimize_series_bc_goes_on_past_a_section_with_no_finished_scale(
     qapp, real_series, tmp_path, capsys
 ):
@@ -226,3 +250,194 @@ def test_save_field_view_with_no_finished_scale(main_window, tmp_path):
     main_window.saveFieldView(False)
 
     assert not QApplication.clipboard().image().isNull()
+
+
+# --- the image size: always scale_1's -------------------------------------------
+
+def test_img_dims_never_reports_a_coarser_scale(qapp, real_series, tmp_path):
+    """scale_2 is half size; reading it as the image would halve every height."""
+    fp = _write_zarr(tmp_path, {"img.png": {1: False, 2: True}})
+    section = _section(real_series, fp, "img.png")
+
+    with pytest.raises(FileNotFoundError):
+        section.img_dims
+
+
+def test_img_dims_reports_scale_1(qapp, real_series, tmp_path):
+    fp = _write_zarr(tmp_path, {"img.png": {1: True, 2: True}})
+    section = _section(real_series, fp, "img.png")
+    assert section.img_dims == (IH, IW)
+
+
+def test_a_malformed_zarray_raises_its_own_error(qapp, real_series, tmp_path):
+    """Only a missing array reads as a missing image."""
+    fp = _write_zarr(tmp_path, {"img.png": {1: True}})
+    with open(os.path.join(fp, "scale_1", "img.png", ".zarray"), "w") as f:
+        f.write("{")
+    section = _section(real_series, fp, "img.png")
+
+    with pytest.raises(json.JSONDecodeError):
+        section.img_dims
+
+
+def test_a_folder_already_turned_into_a_group_reads_as_no_image(
+    qapp, real_series, tmp_path
+):
+    """The .zgroup the old reader planted holds no array either."""
+    import zarr
+
+    fp = _write_zarr(tmp_path, {"img.png": {1: False}})
+    zarr.open_group(os.path.join(fp, "scale_1", "img.png"), mode="a")
+    section = _section(real_series, fp, "img.png")
+
+    assert section.zarr_scales == []
+    with pytest.raises(FileNotFoundError):
+        section.img_dims
+
+
+# --- coordinates: ROI import and export, SVG export ---------------------------
+
+ROI_PIXELS = [(10.0, 20.0), (60.0, 20.0), (60.0, 70.0), (10.0, 70.0)]
+
+
+def _roi_field(points):
+    """Field coordinates of image pixels on the full-resolution image."""
+    return [(x * MAG, (IH - y) * MAG) for x, y in points]
+
+
+class _RoiType(enum.IntEnum):
+    POLYGON = 0
+    POLYLINE = 5
+    POINT = 10
+
+
+class _ImagejRoi:
+    """What `Roi` and `RoiExporter` use of roifile.ImagejRoi, kept as JSON."""
+
+    def __init__(self, points):
+        self.points = np.asarray(points, dtype=float)
+        self.roitype = _RoiType.POLYGON
+        self.options = 0
+        self.name = ""
+
+    @classmethod
+    def frompoints(cls, points):
+        return cls(points)
+
+    @classmethod
+    def fromfile(cls, fp):
+        with open(fp) as f:
+            return cls(json.load(f))
+
+    def coordinates(self, multi=False):
+        return [self.points] if multi else self.points
+
+    def tofile(self, fp):
+        with open(fp, "w") as f:
+            json.dump(self.points.tolist(), f)
+
+
+@pytest.fixture
+def roifile_standin(monkeypatch):
+    """A `roifile` the menu actions find without the package installed.
+
+    roifile is optional and not installed with the suite, so with the real
+    codec these tests would skip everywhere they run. What they check is the
+    pixel height PyReconstruct hands the codec, not the .roi format, which
+    test_roi_import_geometry.py covers with the real package.
+    """
+    module = types.ModuleType("roifile")
+    module.ImagejRoi = _ImagejRoi
+    module.ROI_TYPE = _RoiType
+    monkeypatch.setitem(sys.modules, "roifile", module)
+    return module
+
+
+def _zarr_window(main_window, tmp_path, scales):
+    """Point the open window's section at a zarr with these scales."""
+    from PyReconstruct.modules.datatypes import Transform
+
+    fp = _write_zarr(tmp_path, {"img.png": scales})
+    main_window.series.src_dir = fp
+    section = main_window.field.section
+    section.src = "img.png"
+    section.mag = MAG
+    section.tform = Transform.identity()
+    return section
+
+
+def _import_probe(main_window, main_window_dialogs, tmp_path):
+    fp = tmp_path / "probe.roi"
+    _ImagejRoi(ROI_PIXELS).tofile(fp)
+    main_window_dialogs.file_responses.append([str(fp)])
+    main_window.importROIFiles()
+
+
+def test_roi_import_places_pixels_on_the_full_image(
+    main_window, main_window_dialogs, roifile_standin, tmp_path
+):
+    section = _zarr_window(main_window, tmp_path, {1: True, 2: True})
+
+    _import_probe(main_window, main_window_dialogs, tmp_path)
+
+    (trace,) = section.contours["probe"].traces
+    assert np.allclose(trace.points, _roi_field(ROI_PIXELS), atol=1e-9)
+
+
+def test_roi_import_with_scale_1_unfinished_imports_nothing(
+    main_window, main_window_dialogs, roifile_standin, tmp_path
+):
+    """No full-resolution height to place the pixels with: an error, not
+    every point at half height."""
+    section = _zarr_window(main_window, tmp_path, {1: False, 2: True})
+
+    with pytest.raises(FileNotFoundError):
+        _import_probe(main_window, main_window_dialogs, tmp_path)
+
+    assert "probe" not in section.contours
+
+
+def _export_probe(main_window, main_window_dialogs, tmp_path):
+    from PyReconstruct.modules.datatypes import Trace
+
+    trace = Trace("probe", (255, 255, 0), closed=True)
+    trace.points = _roi_field(ROI_PIXELS)
+    main_window.field.section.addTrace(trace, log_event=False)
+    out = tmp_path / "rois"
+    out.mkdir()
+    main_window_dialogs.file_responses.append(str(out))
+    main_window.exportROIFiles()
+    return out
+
+
+def test_roi_export_gives_back_the_full_image_pixels(
+    main_window, main_window_dialogs, roifile_standin, tmp_path
+):
+    _zarr_window(main_window, tmp_path, {1: True, 2: True})
+
+    out = _export_probe(main_window, main_window_dialogs, tmp_path)
+
+    coords = _ImagejRoi.fromfile(out / "probe-exported.roi").points
+    assert np.allclose(coords, ROI_PIXELS, atol=1e-6)
+
+
+def test_roi_export_with_scale_1_unfinished_writes_nothing(
+    main_window, main_window_dialogs, roifile_standin, tmp_path
+):
+    _zarr_window(main_window, tmp_path, {1: False, 2: True})
+
+    with pytest.raises(FileNotFoundError):
+        _export_probe(main_window, main_window_dialogs, tmp_path)
+
+    assert not any((tmp_path / "rois").iterdir())
+
+
+def test_svg_export_with_scale_1_unfinished_raises(qapp, real_series, tmp_path):
+    """It would otherwise embed scale_2 at half size under full-size traces."""
+    fp = _write_zarr(tmp_path, {"img.png": {1: False, 2: True}})
+    section = _section(real_series, fp, "img.png")
+
+    with pytest.raises(FileNotFoundError):
+        section.exportAsSVG(str(tmp_path / "out.svg"))
+
+    assert not (tmp_path / "out.svg").exists()

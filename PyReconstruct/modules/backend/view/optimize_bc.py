@@ -131,10 +131,10 @@ def optimizeSectionBC(section : Section, desired_mean=128, desired_std=60, windo
     """
     # make sure the image exists
     scales = section.zarr_scales  # None unless the images are in a zarr
-    if scales == []:  # no finished array for this image
+    if scales == []:  # no scale of this image has a .zarray
         return
     fp = section.src_fp
-    if not (os.path.isfile(fp) or os.path.isdir(fp)):
+    if scales is None and not (os.path.isfile(fp) or os.path.isdir(fp)):
         return
     
     # get the image array
