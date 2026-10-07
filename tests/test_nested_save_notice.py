@@ -354,3 +354,45 @@ def test_an_autobackup_from_the_saved_file_during_a_save_copies_nothing(
     copies = list(folder.iterdir())
     assert len(copies) == 1
     assert copies[0].read_bytes() == saved
+
+
+def test_save_as_during_a_save_shows_only_a_notice(
+    main_window, main_window_dialogs, screen, touches, tmp_path
+):
+    """File > Save as... chosen while a save is writing.
+
+    Refused before it does anything. It used to rewrite the working files under
+    the save that was reading them and open the file dialog, and only noticed the
+    running save after the user had picked a place to save to.
+    """
+    window = main_window
+    series = window.series
+    old_jser = series.jser_fp
+    _edit(window, "nested_save_as_marker")
+    # where a user would save to, though the dialog must not open at all
+    dest = tmp_path / "saved_as" / "elsewhere.jser"
+    dest.parent.mkdir()
+    main_window_dialogs.file_responses.append(str(dest))
+
+    def save_as():
+        touches.active = True
+        try:
+            window.saveas_act.trigger()
+        finally:
+            touches.active = False
+        return {
+            "working-file writes": touches.working_file_writes,
+            "dialogs": list(main_window_dialogs.dialogs),
+            "error reports": list(screen.reports),
+        }
+
+    seen = _save_with(window, save_as)
+
+    assert seen["result"] == {"working-file writes": 0, "dialogs": [], "error reports": []}
+    assert screen.notices == [SKIPPED]
+    # the series did not move, and the first save finished and wrote the edit
+    assert series.jser_fp == old_jser
+    assert not dest.exists()
+    assert series.modified is False
+    with open(series.jser_fp, "rb") as f:
+        assert b"nested_save_as_marker" in f.read()
