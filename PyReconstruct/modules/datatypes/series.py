@@ -5422,6 +5422,12 @@ class Series():
         fname_list = [s.strip() for s in fname_list]
         fname = dl.join(fname_list)
         fname = dl.join(fname.split())
+        # Every part is text from a series file or a settings field, so a
+        # separator would put the file in another folder, and an absolute
+        # code would make os.path.join drop the backup folder. ":" goes
+        # too: on Windows "C:" starts a drive and any other colon writes an
+        # alternate data stream.
+        fname = fname.replace("/", "_").replace("\\", "_").replace(":", "_")
 
         folder = self.backupFolder()
         fp = os.path.join(folder, fname)
