@@ -36,7 +36,7 @@ qt_offscreen = os.getenv("QT_QPA_PLATFORM") == "offscreen"
 
 # Set to "1" by a caller that is driving the GUI with nobody at the keyboard: a
 # click-test harness, a screenshot script, a computer-use agent. See
-# `user_is_present`, the only reader.
+# `is_unattended`, the only reader.
 UNATTENDED_ENV_VAR = "PYRECON_UNATTENDED"
 
 
@@ -593,10 +593,26 @@ def user_is_present() -> bool:
     Both `qt_offscreen` and the environment variable are read at call time (a
     module global and an `os.environ` lookup, not default arguments) so a test
     can flip either to exercise the other branch.
+
+    False here does not yet mean nobody is there. Offscreen, or with no
+    `QApplication`, a person may still be at the terminal, so `notify` and
+    `notifyConfirm` ask on the console. Only `is_unattended()` rules that out.
     """
-    if os.environ.get(UNATTENDED_ENV_VAR) == "1":
+    if is_unattended():
         return False
     return bool(QApplication.instance()) and not qt_offscreen
+
+
+def is_unattended() -> bool:
+    """Whether the caller has said nobody is at the keyboard or the terminal.
+
+    True only for `PYRECON_UNATTENDED=1`. This is the stronger half of
+    `user_is_present()`: offscreen with the variable unset, a person may still
+    be at the terminal and the console prompts are theirs to answer. With it
+    set there is nobody to read stdin either, so a console prompt would wait
+    forever, or raise `EOFError` when stdin is closed.
+    """
+    return os.environ.get(UNATTENDED_ENV_VAR) == "1"
 
 
 def notify(message, title="PyReconstruct"):
@@ -616,11 +632,19 @@ def notify(message, title="PyReconstruct"):
     else:
 
         print(message)
-        input("Press Enter to continue...")
+        # nobody to press Enter: the notice is printed, and that is all of it
+        if not is_unattended():
+            input("Press Enter to continue...")
 
 
 def notifyConfirm(message, yn=False, title="Confirm"):
-    """Ask the user to confirm. Returns True if they accept (Yes / OK)."""
+    """Ask the user to confirm. Returns True if they accept (Yes / OK).
+
+    Unattended (`is_unattended()`), nobody can accept, so the answer is never
+    True: a yes/no question answers False without reading stdin. An OK/Cancel
+    question with no user present returns False (cancel) without asking at all,
+    unattended or not.
+    """
 
     if yn:
 
@@ -639,6 +663,11 @@ def notifyConfirm(message, yn=False, title="Confirm"):
         else:
 
             print(message)
+
+            if is_unattended():
+                print("There is nobody to answer this; answering no.")
+                return False
+
             return ask_yes_no()
         
     else:
@@ -654,6 +683,10 @@ def notifyConfirm(message, yn=False, title="Confirm"):
             )
             
             return response == QMessageBox.Ok
+
+        # Cancel, as False rather than a fall-through None: `randomizeProject`
+        # and `derandomizeProject` test `response == False`, and None passes it
+        return False
 
 
 def noUndoWarning():

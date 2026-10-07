@@ -118,6 +118,11 @@ user's session. This variable is how the caller says so; each prompt then takes
 the same deliberate no-user answer it already takes offscreen
 (`gui/utils/utils.py`, `user_is_present`).
 
+Offscreen without this variable, a plain notice or a yes/no question falls back
+to the console and waits for an answer on stdin. With it set, nothing reads
+stdin: a notice is printed and the run continues, and a yes/no question is
+printed and answered no.
+
 Exactly `1` enables it. Leave it unset for an ordinary launch — it suppresses
 dialogs a real user wants to see.
 
