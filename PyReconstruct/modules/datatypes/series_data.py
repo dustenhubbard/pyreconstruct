@@ -222,18 +222,27 @@ class SeriesData():
 
         return trace_data
     
-    def refresh(self):
-        """Completely refresh the series data."""
+    def refresh(self, message="Loading series data...", show_progress=True):
+        """Completely refresh the series data.
+
+            Params:
+                message (str): the progress text. `Series.__init__` names the
+                    series it opens; a refresh of the open series keeps the
+                    default.
+                show_progress (bool): False to show no progress bar at all
+        """
 
         self.data = {
             "sections": {},
             "objects": {},
         }
 
-        # No time estimate here: this is the pass behind "Loading series
-        # data..." when a series opens, and an opening series must not carry
-        # one (his call, 2026-09-14). Every other operation bar does.
-        for snum, section in self.series.enumerateSections(eta=False):
+        # No time estimate here: this is the pass behind the "Opening
+        # <name>..." bar when a series opens, and an opening series must not
+        # carry one (decided 2026-09-14). Every other operation bar does.
+        for snum, section in self.series.enumerateSections(
+            show_progress=show_progress, message=message, eta=False
+        ):
 
             self.updateSection(section, update_traces=True, log_events=False, read_store=True)
 
