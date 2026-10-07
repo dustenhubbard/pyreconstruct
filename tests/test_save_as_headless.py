@@ -78,6 +78,11 @@ def test_save_as_during_a_save_is_refused_before_the_series_moves(
     class Recording(NullNotifier):
         def __init__(self):
             self.errors = []
+            self.notices = []
+
+        def notify(self, message):
+            self.notices.append(message)
+            return True
 
         def notify_error(self, message, report):
             self.errors.append(message)
@@ -111,6 +116,8 @@ def test_save_as_during_a_save_is_refused_before_the_series_moves(
     assert series.jser_fp == old_jser
     assert series.hidden_dir == old_hidden
     assert not dest.exists()
-    assert len(notifier.errors) == 1
-    assert notifier.errors[0].startswith("Save skipped")
-    assert str(dest) in notifier.errors[0]
+    # a notice, not the "Save failed" report window
+    assert notifier.errors == []
+    assert len(notifier.notices) == 1
+    assert notifier.notices[0].startswith("Save skipped")
+    assert str(dest) in notifier.notices[0]
