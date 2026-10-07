@@ -223,6 +223,9 @@ class FieldWidgetData(FieldWidgetObject):
             Params:
                 to_end (bool): True propagates to the end, False propagates to beginning
         """
+        # the field's section is written below without saveAllData, so an
+        # open scissors cut has to put its trace back here
+        self.cancelOpenScissorsCut()
         # Reading each candidate section can take time before propagation
         # itself begins. Acknowledge the command before even this preparation.
         checking = getProgbar("Checking sections for propagation...", cancel=False)
