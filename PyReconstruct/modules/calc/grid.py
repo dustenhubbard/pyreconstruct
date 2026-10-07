@@ -388,6 +388,34 @@ def _losesArea(shape, others : list) -> bool:
     return lost > shape.area * 1e-6
 
 
+# The merge grid moves an outline by up to about a cell, so a trace a few cells
+# across keeps only part of its area even when nothing goes wrong: a speck half
+# an image pixel wide can keep 60%. A trace thinner than a cell can lose almost
+# all of it: the two sides of a sliver fall within the simplification's
+# tolerance of each other and close up into a line. The merge refuses when a
+# trace would keep less than this share of its area.
+MERGE_MIN_KEPT = 0.5
+
+
+def _losesMostOf(shapes : list, outlines : list) -> bool:
+    """True if the outlines cover less than MERGE_MIN_KEPT of any shape's area.
+
+        Params:
+            shapes (list): the shapely geometries of the traces being merged
+            outlines (list): the merged traces, points in field units
+    """
+    import shapely
+
+    covered = shapely.union_all([_filledShape(o) for o in outlines])
+    for shape in shapes:
+        if shape.area == 0:
+            continue
+        lost = shape.difference(covered).area
+        if lost > shape.area * (1 - MERGE_MIN_KEPT):
+            return True
+    return False
+
+
 def mergeTracesInField(field_traces : list, mag : float) -> list:
     """Merge closed traces given in field units, at a resolution set by the
     image rather than the screen.
@@ -404,7 +432,8 @@ def mergeTracesInField(field_traces : list, mag : float) -> list:
             (list): the merged trace(s), points in field units; empty if any
                 trace would be lost: one that shrinks to nothing on its
                 group's grid while covering area that no trace surviving on
-                that grid covers. A caller that keeps its traces on an empty result
+                that grid covers, or one the merged outline covers less than
+                MERGE_MIN_KEPT of. A caller that keeps its traces on an empty result
                 then never loses one the result left out.
     """
     shapes = [_filledShape(trace) for trace in field_traces]
@@ -429,7 +458,12 @@ def mergeTracesInField(field_traces : list, mag : float) -> list:
         # which is no closed outline either
         if not any(len(trace) >= 3 for trace in merged):
             return []
-        result += [[(x * cell, y * cell) for x, y in trace] for trace in merged]
+        outlines = [[(x * cell, y * cell) for x, y in trace] for trace in merged]
+        # a sliver thinner than a cell can survive the rounding above and
+        # still close up into a line when the outline is simplified
+        if _losesMostOf([shapes[i] for i in group], outlines):
+            return []
+        result += outlines
     return result
 
 
