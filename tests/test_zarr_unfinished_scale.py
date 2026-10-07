@@ -79,9 +79,16 @@ def _window(zoom):
 
 
 def _gray(image):
+    """The layer's gray levels, copied out.
+
+    A copy, not a view: the converted QImage is freed when this returns, and
+    a view into it reads whatever the allocator writes there next (glibc's
+    free-list pointers on Linux, which failed the blank-layer check in CI).
+    """
     image = image.convertToFormat(QImage.Format.Format_Grayscale8)
     buf = np.frombuffer(image.constBits(), np.uint8, image.sizeInBytes())
-    return buf.reshape(image.height(), image.bytesPerLine())[:, : image.width()]
+    rows = buf.reshape(image.height(), image.bytesPerLine())
+    return rows[:, : image.width()].copy()
 
 
 def test_zarr_scales_lists_only_finished_arrays(qapp, real_series, tmp_path):
