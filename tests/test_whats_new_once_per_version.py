@@ -396,7 +396,7 @@ def test_startup_shows_the_notes_once_per_version_in_the_real_window(
     # real startup handler and dialog
     assert F.MAINTAINER_BYLINE not in rendered
     # the byline label carries link markup, so compare what it *renders*: the
-    # approved sentence, as it is, on one line
+    # one sentence, as it is, on one line
     from PySide6.QtGui import QTextDocumentFragment
     def shows_byline(lab):
         return F.MAINTAINER_BYLINE in (

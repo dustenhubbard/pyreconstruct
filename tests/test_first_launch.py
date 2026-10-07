@@ -319,11 +319,11 @@ def test_whats_new_reads_bundled_file_and_is_offline_safe(monkeypatch, tmp_path)
 
 
 # ---- the maintainer byline (provenance line on every framing) ---------------
-# The byline says what this build is, so a lab that installs it knows it is not
-# the upstream release. It is a distinct field so the dialog can set it off from
-# the notes as a quiet aside rather than mixing it into the release bullets, and
-# it must be present on every framing. The dialog shows it as it is, on one
-# line: there is no display form distinct from the constant.
+# The provenance line says what this build is, so a lab that installs it knows
+# it is not the upstream release. It is a distinct field so the dialog can set it
+# off from the notes as a quiet aside rather than mixing it into the release
+# bullets, and it must be present on every framing. The dialog shows it as it
+# is, on one line: there is no display form distinct from the constant.
 BYLINE = "A fork of PyReconstruct."
 
 
@@ -833,9 +833,8 @@ def test_dialog_renders_the_byline_once_as_its_own_widget(qapp, kwargs, orienter
     try:
         # not in the scroll any more: the browser carries the notes and nothing else
         assert BYLINE not in dlg._notes.toPlainText()
-        # its own label, the approved words, exactly once across the whole
-        # dialog. The label carries link markup now, so compare what it
-        # *renders*.
+        # its own label, the one sentence, exactly once across the dialog.
+        # The label carries link markup now, so compare what it *renders*.
         assert dlg._byline is not None
         assert rendered_text(dlg._byline) == BYLINE
         labels = [lab for lab in dlg.findChildren(QLabel)
@@ -845,14 +844,13 @@ def test_dialog_renders_the_byline_once_as_its_own_widget(qapp, kwargs, orienter
         dlg.deleteLater()
 
 
-def test_dialog_byline_renders_on_one_line(qapp):
-    """The byline reads "A fork of PyReconstruct." on a single footer line.
+def test_dialog_provenance_line_renders_on_one_line(qapp):
+    """The footer reads "A fork of PyReconstruct." on a single line.
 
     The sentence is short, so the dialog adds no explicit break to it: the
     markup carries no ``<br/>``, the rendered text is the constant itself
     with no newline, and the label stands one line tall at the minimum width
-    and much wider. The earlier two-line byline was broken at its comma by
-    the dialog; this pins that the break did not survive the shorter text.
+    and much wider.
     """
     from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
 
@@ -871,7 +869,7 @@ def test_dialog_byline_renders_on_one_line(qapp):
         for width in (700, 1100):
             dlg.resize(width, 620)
             assert dlg._byline.height() < 2 * line, (
-                f"byline is more than one line tall at width {width}"
+                f"the footer line is more than one line tall at width {width}"
             )
     finally:
         dlg.deleteLater()
@@ -935,10 +933,10 @@ def test_dialog_minimum_size_and_where_extra_space_goes(qapp):
     rather than inherited, and click-tested and approved by Dusten at these
     values:
 
-    * Width 540 -> 700. The byline is one short line at every width (see
-      ``test_dialog_byline_renders_on_one_line``), so the width is not what
-      shapes the footer; the extra room is about how much of a release note
-      line fits unwrapped.
+    * Width 540 -> 700. The provenance line is one short line at every width
+      (see ``test_dialog_provenance_line_renders_on_one_line``), so the width
+      is not what shapes the footer; the extra room is about how much of a
+      release note line fits unwrapped.
     * The notes browser's minimum height 260 -> 320, which is the entirety of
       the height increase (about 13% on the whole dialog at the default
       size): the notes are the one part of the dialog worth more room, and
@@ -1156,7 +1154,7 @@ def measure_byline_pixels(dlg):
     )
     dlg._byline.setFont(font)
 
-    # The x-coordinate mapping below reads the byline's one line, "A fork of
+    # The x-coordinate mapping below reads the footer's one line, "A fork of
     # <PyReconstruct>.", which is the same at every width. 760 just gives the
     # grab a stable, roomy canvas past the 700 minimum.
     dlg.resize(760, 620)
@@ -1482,7 +1480,7 @@ def test_dialog_byline_click_activates_only_on_the_project_name(qapp):
     try:
         # 760 for the same reason measure_byline_pixels resizes to 760: a
         # stable, roomy canvas past the 700 minimum. The click coordinates
-        # below address the byline's one line, "A fork of <PyReconstruct>.",
+        # below address the footer's one line, "A fork of <PyReconstruct>.",
         # which is the same at every width.
         dlg.resize(760, 620)
         dlg.show()
@@ -1509,6 +1507,11 @@ def test_dialog_byline_click_activates_only_on_the_project_name(qapp):
         # outside it, including immediately either side
         for x in (8, lead - 8, lead + word + 8, lead + word + 140):
             assert click(x) == [], f"the line activated at x={x}, off the name"
+        # and nothing below the line is the anchor, even directly under the
+        # name: the link region ends with the text
+        assert click(lead + word // 2, y=middle + line) == [], (
+            "the anchor leaked below the footer line"
+        )
     finally:
         dlg.deleteLater()
 
