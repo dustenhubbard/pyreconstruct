@@ -1607,7 +1607,8 @@ class MainWindow(QMainWindow):
         left open deleted or combined the matching trace in the series
         opened next. Found through the children rather than the attributes
         that hold them, so a list from an earlier run of the same clean-up
-        closes too.
+        closes too. A Delete or Combine already waiting on its confirmation
+        stops itself (MalformedContoursDialog._forOpenSeries).
         """
         for dialog in self.findChildren(MalformedContoursDialog):
             dialog.close()
