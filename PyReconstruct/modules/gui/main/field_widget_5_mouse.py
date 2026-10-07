@@ -355,6 +355,14 @@ class FieldWidgetMouse(FieldWidgetData):
         Dropped rather than committed: a selection made by a tool change or a
         pinch is one nobody asked for. Nothing is lost, so there is no notice.
 
+        The press goes with it. The button is usually still down, and the
+        tool that inherits it must not act on a press it never saw: with the
+        click flags clear no move or release handler does, and with no
+        recorded press neither does the pointer, until a fresh press.
+        Otherwise a rectangle trace indexed the emptied ``current_trace``, a
+        pencil or stamp drew, the knife cut, and the pointer, after the pinch
+        or a switch back, started a second lasso and its timer.
+
             Returns:
                 (bool): True if a lasso was in progress and was dropped
         """
@@ -364,6 +372,8 @@ class FieldWidgetMouse(FieldWidgetData):
         self.is_selecting_traces = False
         self.current_trace = []
         self.deactivateMouseBoundaryTimer()
+        self.lclick, self.rclick, self.mclick = False, False, False
+        self.pointer_press_recorded = False
         self.update()
 
         return True

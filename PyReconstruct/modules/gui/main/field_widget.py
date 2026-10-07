@@ -447,6 +447,14 @@ class FieldWidget(QWidget, FieldWidgetView):
             self.trigger_edit_flag = False
             return
 
+        # A press dropped mid-gesture (`cancelLasso`) leaves no click for a
+        # tool to finish. Host acts on any release, so without this it would
+        # start a link from a press it never saw.
+        if not (self.lclick or self.rclick):
+            self.pointer_press_recorded = False
+            self.single_click = False
+            return
+
         if self.mouse_mode == POINTER:
             self.pointerRelease(event)
         elif self.mouse_mode == PANZOOM:
