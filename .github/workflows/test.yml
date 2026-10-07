@@ -351,7 +351,11 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 25   # headroom for the cold wheel install (vtk/scipy/...); the suite itself is ~seconds
+    # The suite is no longer seconds: green runs from Oct 3 to 7, 2026 took a
+    # median of 16 minutes and up to 24.4 on a loaded runner, and a 25-minute
+    # cap cancelled jobs that had passed every test. 40 covers the slowest
+    # green run plus a full apt retry (10 minutes, below) with room to spare.
+    timeout-minutes: 40
     steps:
       # Still a shallow clone: no test reads the setuptools-scm version. Tags
       # are the one exception and they are cheap to add on their own.
@@ -372,16 +376,31 @@ jobs:
         # PySide6 6.5 needs these even under the offscreen platform. libglib2.0-0t64,
         # libX11, libfreetype6 and zlib are already present on the ubuntu-latest image.
         # PNG export draws with QtSvg, so no Cairo is needed.
+        #
+        # apt-get can hang rather than fail. On Oct 7, 2026 three jobs sat in
+        # `apt-get update` for the whole job cap after the image's
+        # azure.archive.ubuntu.com mirror went unreachable and apt fell back to
+        # archive.ubuntu.com: the last line was the noble-security InRelease
+        # fetch and nothing followed it. apt's own timeouts never fired, and
+        # the old retry loop only retried an update that exited. So each
+        # attempt (update, then install) is killed at 4 minutes and tried once
+        # more; a healthy one takes 12 seconds at the median and 229 at the
+        # slowest seen. The step's own timeout backs that up.
+        timeout-minutes: 10
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          for i in 1 2 3; do sudo apt-get update && break || sleep 5; done
           # fonts-dejavu-core: the screenshot tests pin DejaVu Sans and DejaVu
           # Sans Mono, so their baselines do not move when the runner image
           # changes its fonts.
-          sudo apt-get install -y --no-install-recommends \
-            libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 \
-            fonts-dejavu-core
+          attempt() {
+            sudo timeout --kill-after=10 240 sh -c '
+              apt-get -o Acquire::Retries=3 update &&
+              apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
+                libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 \
+                fonts-dejavu-core'
+          }
+          attempt || { echo '::warning::apt failed or hung (exit 124 is the 4-minute limit); trying once more'; sleep 10; attempt; }
 
       - name: Install project + test deps (frozen against uv.lock)
         # --frozen: use the committed lock exactly, fail if it drifted from pyproject.toml.
@@ -455,7 +474,7 @@ jobs:
       matrix:
         python: ["3.12", "3.13"]
     runs-on: ubuntu-latest
-    timeout-minutes: 25   # the cold wheel install, as in `test`
+    timeout-minutes: 40   # the suite's run time plus an apt retry, as in `test`
     env:
       UV_PYTHON: ${{ matrix.python }}
     steps:
@@ -470,14 +489,21 @@ jobs:
           cache-suffix: py${{ matrix.python }}
 
       - name: Install headless Qt system libs
+        # A 4-minute limit per attempt and one retry, as in `test`, for the
+        # same hang.
+        timeout-minutes: 10
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          for i in 1 2 3; do sudo apt-get update && break || sleep 5; done
           # fonts-dejavu-core: the screenshot tests run here too, as in `test`
-          sudo apt-get install -y --no-install-recommends \
-            libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 \
-            fonts-dejavu-core
+          attempt() {
+            sudo timeout --kill-after=10 240 sh -c '
+              apt-get -o Acquire::Retries=3 update &&
+              apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
+                libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 \
+                fonts-dejavu-core'
+          }
+          attempt || { echo '::warning::apt failed or hung (exit 124 is the 4-minute limit); trying once more'; sleep 10; attempt; }
 
       - name: Install project + test deps (frozen against uv.lock)
         run: uv sync --frozen --no-default-groups --extra test
