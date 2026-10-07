@@ -12,7 +12,9 @@ pinch would have left it.
 
 A press made during the pinch was ignored, so no tool saw it. A cancel drops it
 too, and its release finishes nothing: before, a stamp was placed, and a closed
-trace in combo mode indexed an empty trace.
+trace in combo mode indexed an empty trace. A press made before the pinch is
+dropped as well, so what it started ends with the cancel: a lasso kept its
+edge-pan timer and went on moving the view.
 
 The pinch is a stand-in event: a `QPinchGesture`'s state is set only by Qt's
 gesture manager, so a test cannot build one in a given state.
@@ -26,6 +28,7 @@ from PySide6.QtGui import QPointingDevice
 from PyReconstruct.modules.gui.main.field_widget_5_mouse import (
     CLOSEDTRACE,
     PANZOOM,
+    POINTER,
     STAMP,
 )
 
@@ -216,3 +219,59 @@ def test_a_press_released_before_the_cancel_does_not_eat_the_next_click(
     field.mousePressEvent(FakeMouseEvent(60, 70, Qt.MouseButton.LeftButton))
     field.mouseReleaseEvent(FakeMouseEvent(60, 70))
     assert _trace_count(field) == traces_before + 1
+
+
+def _drag_then_cancel_a_pinch(field):
+    """Press and drag past the click time, then pinch, cancel and let go."""
+    field.generateView(update=False)
+    field.mousePressEvent(FakeMouseEvent(40, 50, Qt.MouseButton.LeftButton))
+    field.click_time -= 10  # past max_click_time, so this is a drag
+    field.mouseMoveEvent(FakeMouseEvent(5, 60, Qt.MouseButton.LeftButton))
+    field.mouseMoveEvent(FakeMouseEvent(3, 80, Qt.MouseButton.LeftButton))
+    started = (field.is_selecting_traces, field.is_drawing_rad, list(field.current_trace))
+
+    field.gestureEvent(FakeGestureEvent(FakePinch(STARTED, 200, 150, 1.0)))
+    field.gestureEvent(FakeGestureEvent(FakePinch(UPDATED, 210, 150, 1.5)))
+    field.gestureEvent(FakeGestureEvent(FakePinch(CANCELED, 210, 150, 1.5)))
+    field.mouseReleaseEvent(FakeMouseEvent(3, 80))
+    return started
+
+
+def test_a_lasso_held_through_a_canceled_pinch_ends(main_window):
+    main_window.usepointer_act.trigger()
+    field = main_window.field
+    assert field.mouse_mode == POINTER
+
+    is_selecting, _rad, trace = _drag_then_cancel_a_pinch(field)
+    # the lasso was under way near the edge, with its edge-pan timer
+    assert is_selecting is True
+    assert trace
+
+    assert field.is_selecting_traces is False
+    assert field.mouse_boundary_timer is None
+    assert field.current_trace == []
+
+
+def test_a_stamp_radius_held_through_a_canceled_pinch_ends(main_window):
+    main_window.usestamp_act.trigger()
+    field = main_window.field
+    traces_before = _trace_count(field)
+
+    _is_selecting, is_drawing_rad, _trace = _drag_then_cancel_a_pinch(field)
+    assert is_drawing_rad is True
+
+    assert field.is_drawing_rad is False
+    assert field.current_trace == []
+    assert _trace_count(field) == traces_before
+
+
+def test_a_pencil_stroke_held_through_a_canceled_pinch_ends(main_window):
+    main_window.usectrace_act.trigger()
+    field = main_window.field
+    traces_before = _trace_count(field)
+
+    _is_selecting, _rad, trace = _drag_then_cancel_a_pinch(field)
+    assert len(trace) > 1
+
+    assert field.current_trace == []
+    assert _trace_count(field) == traces_before
