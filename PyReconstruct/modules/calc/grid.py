@@ -404,15 +404,13 @@ class MergeLosesArea(ValueError):
     caller's message for a trace that leaves no outline would be wrong.
 
         Attributes:
-            pixels (float): the cell size of the grid that lost the area, in
-                image pixels, so the caller can say how thin is too thin
-            coarse (bool): True if that grid was coarsened because its traces
-                span more than MERGE_MAX_CELLS cells
+            coarse (bool): True if the grid that lost the area was coarsened
+                because its traces span more than MERGE_MAX_CELLS cells, so
+                merging traces that span less would use a finer grid
     """
 
     def __init__(self, cell : float, mag : float):
         super().__init__(cell, mag)
-        self.pixels = cell / mag
         self.coarse = cell > mag / MERGE_SUPERSAMPLE
 
 

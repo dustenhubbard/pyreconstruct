@@ -37,6 +37,10 @@ WIDE_RECT = [(0, 0), (2500, 0), (2500, 10), (0, 10)]
 RIBBON = [(5, 0), (55, -50), (56.1, -50), (6.1, 0)]
 WIDE_MAG = 0.1
 
+# A ribbon 1.41 cells wide on the uncoarsened grid still loses most of its
+# area, so the refusal is not a width cutoff and the message must not say so.
+BROAD_RIBBON = [(5.501, 0), (55.501, -50), (57.499, -50), (7.499, 0)]
+
 
 def _kept(trace, outlines):
     """Share of trace's area the outlines cover."""
@@ -62,12 +66,11 @@ def test_merge_refuses_when_a_sliver_would_lose_most_of_its_area():
         mergeTracesInField([RECT, SLIVER], MAG)
 
 
-def test_the_refusal_names_the_cell_size_of_the_grid_that_lost_the_area():
+def test_the_refusal_says_whether_the_grid_was_coarsened():
     from PyReconstruct.modules.calc.grid import MergeLosesArea
 
     with pytest.raises(MergeLosesArea) as fine:
         mergeTracesInField([RECT, SLIVER], MAG)
-    assert fine.value.pixels == pytest.approx(0.25)
     assert not fine.value.coarse
 
     # width across the ribbon, in image pixels: area over its long side
@@ -75,7 +78,6 @@ def test_the_refusal_names_the_cell_size_of_the_grid_that_lost_the_area():
     assert Polygon(RIBBON).area / long_side / WIDE_MAG == pytest.approx(7.78, abs=0.01)
     with pytest.raises(MergeLosesArea) as coarse:
         mergeTracesInField([WIDE_RECT, RIBBON], WIDE_MAG)
-    assert coarse.value.pixels == pytest.approx(10)
     assert coarse.value.coarse
 
 
@@ -89,15 +91,16 @@ def test_the_same_sliver_merges_on_a_finer_grid(mag):
 
 @pytest.mark.gui
 @pytest.mark.parametrize(
-    "rect, sliver, cell_pixels, says",
+    "rect, sliver, cell_pixels, coarse",
     [
-        (RECT, SLIVER, 0.25, "A cell is a quarter of an image pixel."),
-        (WIDE_RECT, RIBBON, 10, "so here it is 10 image pixels."),
+        (RECT, SLIVER, 0.25, False),
+        (RECT, BROAD_RIBBON, 0.25, False),
+        (WIDE_RECT, RIBBON, 10, True),
     ],
-    ids=["sub-pixel", "coarse-grid"],
+    ids=["sub-pixel", "ribbon-over-a-cell-wide", "coarse-grid"],
 )
 def test_merge_keeps_both_traces_when_a_sliver_would_lose_its_area(
-    main_window, monkeypatch, rect, sliver, cell_pixels, says
+    main_window, monkeypatch, rect, sliver, cell_pixels, coarse
 ):
     from PyReconstruct.modules.datatypes.trace import Trace
     from PyReconstruct.modules.gui.main import field_widget_2_trace as fw2
@@ -131,12 +134,16 @@ def test_merge_keeps_both_traces_when_a_sliver_would_lose_its_area(
     after = sorted(tuple(map(tuple, t.points)) for t in section.contours[NAME])
     assert after == before
     assert len(notices) == 1, notices
-    assert "lose most of the area" in notices[0], notices
-    assert "thinner than a cell of the grid the merge uses" in notices[0], notices
-    assert says in notices[0], notices
-    # the coarse grid refuses a trace several image pixels wide, so the
-    # message must not put the limit at an image pixel
-    assert "thinner than an image pixel" not in notices[0], notices
+    msg = notices[0]
+    assert "lose most of the area of at least one trace" in msg, msg
+    assert "the traces were left as they are" in msg, msg
+    assert "Drawing that trace wider may let it merge" in msg, msg
+    # a smaller span only gives a finer grid where the grid was coarsened
+    assert ("merging traces that span less of the section" in msg) == coarse, msg
+    # the refusal is no width cutoff: a ribbon over a cell wide is refused
+    # too, so the message makes no claim about thickness or grid size
+    for claim in ("thin", "cell", "pixel", "grid"):
+        assert claim not in msg, msg
     # an outline exists, and a thin trace is not a speck to delete
-    assert "no outline" not in notices[0], notices
-    assert "delete" not in notices[0], notices
+    assert "no outline" not in msg, msg
+    assert "delete" not in msg, msg
