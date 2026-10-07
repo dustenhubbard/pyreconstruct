@@ -353,7 +353,7 @@ jobs:
     runs-on: ubuntu-latest
     # The suite is no longer seconds: green runs from Oct 3 to 7, 2026 took a
     # median of 16 minutes and up to 24.4 on a loaded runner, and a 25-minute
-    # cap cancelled jobs that had passed every test. 40 covers the slowest
+    # cap canceled jobs that had passed every test. 40 covers the slowest
     # green run plus a full apt retry (10 minutes, below) with room to spare.
     timeout-minutes: 40
     steps:
