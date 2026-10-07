@@ -12,6 +12,8 @@ What is pinned here:
 
   * one group per structure: same name, two names, and three tracings are each
     one group, never a pair per overlap
+  * a group chains, and its ratio is the lowest of the pairs that joined it,
+    which two of its traces can fall below
   * different shapes, neighbors, and open against closed are never grouped
   * the threshold is honored, and the fast path agrees with comparing every
     pair through `Trace.overlaps`, across names and within one
@@ -22,7 +24,7 @@ What is pinned here:
   * a group that would delete a trace of a locked object is left whole
   * a group whose traces changed since the scan is left whole, never half done
   * the field layer saves first, refreshes every name, and says why a row was
-    not combined
+    not combined, suggesting a locked name to keep only when keeping it works
 
 Runs against the real shapes1.jser fixture with synthetic traces layered on, the
 same way tests/test_data_cleanup.py does.
@@ -185,6 +187,30 @@ def test_a_structure_traced_three_times_is_one_group(tmp_path):
 
     assert _shapes(groups) == {("A", "B", "C")}
     assert _only(groups, "A", "B", "C")["count"] == 3
+
+
+def test_a_chained_group_reports_its_lowest_joining_pair(tmp_path):
+    """A over B and B over C is one group though A and C fall short, and the
+    ratio is the lower of A-B and B-C, not A-C. The Duplicates help text says
+    exactly this about the Overlap column; change one, change the other."""
+    threshold = 0.95
+    series = _load_series(tmp_path)
+    snum = _seed(series, [
+        ("A", SQUARE, ()),
+        ("B", _shifted(SQUARE, 0.2), ()),
+        ("C", _shifted(SQUARE, 0.4), ()),
+    ])
+    section = series.loadSection(snum)
+    a, b, c = (section.contours[name][0] for name in ("A", "B", "C"))
+    ab = a.getOverlapRatio(b, section.mag)
+    bc = b.getOverlapRatio(c, section.mag)
+    ac = a.getOverlapRatio(c, section.mag)
+    assert min(ab, bc) > threshold > ac, "premise: a chain, not a clique"
+
+    group = _only(series.findDuplicateTraces(threshold), "A", "B", "C")
+
+    assert group["ratio"] == pytest.approx(min(ab, bc))
+    assert group["ratio"] > ac
 
 
 def test_both_kinds_of_duplicate_land_in_one_group(tmp_path):
@@ -978,6 +1004,58 @@ def test_the_field_layer_names_a_locked_object_it_refused(tmp_path,
         "combine again."
     ]
     assert _count(series, snum, "B") == 1
+
+
+def test_a_row_of_one_locked_name_is_told_only_to_unlock(tmp_path,
+                                                         monkeypatch):
+    """Both traces are the locked object's, so keeping its name, already
+    picked, still deletes one of them. Only unlocking lets the row combine."""
+    series = _load_series(tmp_path)
+    snum = _seed(series, [
+        ("A", SQUARE, ()), ("A", _shifted(SQUARE, 0.2), ()),
+    ])
+    series.setAttr("A", "locked", True)
+    group = _only(
+        series.findDuplicateTraces(0.95, include_locked=True), "A", "A"
+    )
+    mod, notices = _field(monkeypatch)
+
+    assert mod.FieldWidgetObject.combineDuplicateTraces(
+        _StubField(series), [(group, "A")]
+    ) == []
+    assert notices == [
+        "PyReconstruct did not combine 1 row because it would delete traces "
+        "of a locked object:\n\n  A\n\nUnlock it and combine again."
+    ]
+    assert _count(series, snum, "A") == 2
+
+
+def test_keeping_a_name_is_offered_only_when_every_refused_row_can_use_it(
+        tmp_path, monkeypatch):
+    """`A` alone is locked in its row, so keeping `A` would save that row. The
+    other row holds two locked traces, `B` and `C`, and keeping either name
+    deletes the other, so the notice says to unlock."""
+    series = _load_series(tmp_path)
+    far = _shifted(SQUARE, 200.0, 200.0)
+    snum = _seed(series, [
+        ("A", SQUARE, ()), ("X", SQUARE, ()),
+        ("B", far, ()), ("C", far, ()), ("Y", far, ()),
+    ])
+    for name in ("A", "B", "C"):
+        series.setAttr(name, "locked", True)
+    groups = series.findDuplicateTraces(0.95, include_locked=True)
+    ax, bcy = _only(groups, "A", "X"), _only(groups, "B", "C", "Y")
+    mod, notices = _field(monkeypatch)
+
+    assert mod.FieldWidgetObject.combineDuplicateTraces(
+        _StubField(series), [(ax, "X"), (bcy, "B")]
+    ) == []
+    assert notices == [
+        "PyReconstruct did not combine 2 rows because they would delete "
+        "traces of locked objects:\n\n  A\n  C\n\nUnlock them and combine "
+        "again."
+    ]
+    assert [_count(series, snum, n) for n in "ABCXY"] == [1, 1, 1, 1, 1]
 
 
 def test_the_field_layer_says_a_row_changed_since_the_scan(tmp_path,
