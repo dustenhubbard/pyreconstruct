@@ -154,6 +154,66 @@ def test_without_a_stable_only_the_waiting_entries_are_printed(tmp_path):
     assert section(root, stable="v1.23.0", repository="").startswith("## Changes since v1.23.0\n")
 
 
+# ---- a release heading in a code example is not a release --------------------
+def test_a_release_heading_in_a_code_example_is_not_a_release(tmp_path):
+    """The stable's own notes show what a section looks like, in a fenced
+    example. Its ``## [1.24.0]`` is above the stable, but it is code: nothing
+    has landed since, so nothing is printed."""
+    changelog = (
+        "## [Unreleased]\n"
+        "\n"
+        "## [1.23.0] - 2026-09-27\n"
+        "\n"
+        "### Added\n"
+        "- **Already shipped.** An example:\n"
+        "\n"
+        "```markdown\n"
+        "## [1.24.0]\n"
+        "### Fixed\n"
+        "- **Old example, not a new fix.**\n"
+        "```\n"
+    )
+    assert section(repo(tmp_path, changelog=changelog)) == ""
+
+
+def test_a_prepared_section_keeps_its_code_example(tmp_path):
+    changelog = CHANGELOG.replace(
+        "## [1.23.0] - 2026-09-27",
+        "## [1.24.0] - 2026-10-08\n"
+        "\n"
+        "### Added\n"
+        "- **Prepared.** A heading looks like this:\n"
+        "\n"
+        "```markdown\n"
+        "## [1.25.0]\n"
+        "```\n"
+        "\n"
+        "## [1.23.0] - 2026-09-27",
+    )
+    out = section(repo(tmp_path, changelog=changelog))
+    assert "### Added\n- **Prepared.** A heading looks like this:\n\n```markdown\n## [1.25.0]\n```\n" in out
+
+
+@pytest.mark.parametrize("body,versions", [
+    pytest.param("~~~\n## [1.24.0]\n~~~\n", ["1.23.0"], id="tilde-fence"),
+    pytest.param("````\n```\n## [1.24.0]\n```\n````\n", ["1.23.0"], id="longer-fence-holds-a-shorter-one"),
+    pytest.param("\n   ```\n## [1.24.0]\n   ```\n", ["1.23.0"], id="fence-indented-at-the-margin"),
+    pytest.param("```\n## [1.24.0]\n", ["1.23.0"], id="unclosed-fence-runs-to-the-end"),
+    pytest.param("- **Example.**\n```\n## [1.24.0]\n```\n", ["1.23.0"], id="fence-after-a-bullet-at-the-margin"),
+    # "2)" cannot start a list inside a paragraph, so the fence is at the margin.
+    pytest.param("text\n2) two\n  ```\n## [1.24.0]\n```\n", ["1.23.0"], id="fence-a-paragraph-holds-past-a-2"),
+    # A fence as far in as an item's text is the item's, and a line at the
+    # margin ends both: the heading is real.
+    pytest.param("- **Example.**\n  ```\n## [1.24.0]\n", ["1.23.0", "1.24.0"], id="fence-in-a-bullet-ends-with-it"),
+    pytest.param("- a\n  1. b\n     ```\n## [1.24.0]\n", ["1.23.0", "1.24.0"], id="fence-in-a-nested-item-ends-with-it"),
+    pytest.param("- a\nlazy\n  ```\n## [1.24.0]\n", ["1.23.0", "1.24.0"], id="lazy-line-keeps-the-fence-in-the-bullet"),
+    pytest.param("``` a`b\n## [1.24.0]\n", ["1.23.0", "1.24.0"], id="not-a-fence-with-a-backtick-in-its-info"),
+])
+def test_only_a_fence_at_the_margin_hides_a_release_heading(body, versions):
+    """Each expectation is what a CommonMark parser makes of the same text."""
+    assert [version for version, _ in cs.sections("## [1.23.0]\n" + body)] == versions
+
+
 @pytest.mark.parametrize("below,above", [
     ("1.23.0", "1.24.0"),
     ("1.23.0", "1.23.1"),

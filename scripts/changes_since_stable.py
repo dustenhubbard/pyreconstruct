@@ -57,6 +57,14 @@ import changelog_fragments as frag  # noqa: E402
 # em dash in older sections, and the date is not needed here.
 SECTION_RE = re.compile(r"^## \[(?P<version>[^\]]+)\]")
 
+# What ``in_margin_code`` needs to tell a code example from a release heading,
+# each matched against a line with its indentation removed (a list item's
+# with it, since the indentation is part of its text column): a fence and its
+# info string, a heading, and a list item's marker, gap and text.
+FENCE_RE = re.compile(r"^(`{3,}|~{3,})(.*)$")
+HEADING_RE = re.compile(r"^#{1,6}(?:[ \t]|$)")
+LIST_ITEM_RE = re.compile(r"^( {0,3}(?:[-*+]|\d{1,9}[.)]))(?= |$)( *)(.*)$")
+
 # A bulleted item with text, at the left margin, which is where every
 # fragment's bullet starts. Nothing above it can hold it as content, since it
 # ends any item or paragraph before it; an empty or numbered item can be a
@@ -116,16 +124,168 @@ def version_key(text):
     return (int(major), int(minor), int(patch), 0 if suffix else 1, suffix)
 
 
+def fence_open(text):
+    """``(character, length)`` if ``text`` (indentation removed) opens a fenced
+    code block, else None. A backtick fence's info string has no backtick."""
+    match = FENCE_RE.match(text)
+    if not match or (match.group(1)[0] == "`" and "`" in match.group(2)):
+        return None
+    return match.group(1)[0], len(match.group(1))
+
+
+def fence_closes(text, fence):
+    """Whether ``text`` (indentation removed) closes ``fence``: a run of the same
+    character at least as long, and nothing after it."""
+    char, length = fence
+    run = len(text) - len(text.lstrip(char))
+    return run >= length and not text[run:].strip()
+
+
+def list_item(line, after_paragraph):
+    """``(column, first)`` if ``line`` (tabs expanded) starts a list item: the
+    column its text starts at, and the text on its first line (``""`` if none,
+    None if that is indented code). After a line of paragraph text, an item
+    with no text or numbered other than 1 is more of the paragraph instead."""
+    match = LIST_ITEM_RE.match(line)
+    if not match or RULE_RE.match(line.lstrip()):
+        return None
+    marker, gap, text = match.groups()
+    number = marker.strip()[:-1]
+    if after_paragraph and (not text or (number and int(number) != 1)):
+        return None
+    if not text:
+        return len(marker) + 1, ""
+    if len(gap) > 4:
+        return len(marker) + 1, None
+    return len(marker) + len(gap), text
+
+
+def starts_block(line, after_paragraph=False):
+    """Whether ``line`` (tabs expanded, indented at most three columns) starts
+    something that ends a paragraph rather than continuing it. Any list item
+    does on a line indented less than the paragraph (``list_item`` says which
+    do on a line of its own)."""
+    text = line.lstrip()
+    return bool(
+        fence_open(text) or HEADING_RE.match(text) or RULE_RE.match(text)
+        or text.startswith(">") or list_item(line, after_paragraph) is not None
+    )
+
+
+def paragraph_text(text, after_paragraph):
+    """Whether ``text`` (indentation removed, at most three columns of it) is a
+    line of a paragraph that the next line can continue. A quote's is not
+    counted: a line indented less ends the quote and whatever holds it."""
+    if not text or starts_block(text, after_paragraph):
+        return False
+    if re.match(r"^(?:=+|-+)[ \t]*$", text):  # a setext underline ends the paragraph
+        return not after_paragraph
+    return True
+
+
+def in_margin_code(lines):
+    """Whether each line is part of a fenced code block at the left margin.
+
+    Only such a block can hold a line that starts at the margin, so only it can
+    make a ``## [...]`` line look like a release heading when it is a code
+    example. Indented code cannot: four columns in, no line in it starts
+    ``## ``. A fence inside a list item (indented as far as the item's text) is
+    the item's, and ends with it at the first line at the margin, so it is not
+    counted. Telling the two apart means following the list items: a line
+    belongs to each open item whose text column it is indented to, and a line
+    indented less continues them only when it continues a paragraph, which no
+    fence, heading, rule, quote or list item does.
+    """
+    flags = []
+    fence = None  # the open fence at the margin
+    items = []  # the text columns of the open list items, the first at the margin
+    empty = False  # the innermost item has no text yet, so a blank line ends it
+    inner = None  # a fence open in the innermost item
+    lazy = False  # the line before is paragraph text the next line can continue
+    quote = False  # the same, for a quote's paragraph
+    for line in lines:
+        text = line.expandtabs(4)
+        stripped = text.lstrip()
+        indent = len(text) - len(stripped)
+        if fence:
+            flags.append(True)
+            if indent < 4 and fence_closes(stripped, fence):
+                fence = None
+            continue
+        blank = not stripped
+        held = len(items) if blank else sum(indent >= column for column in items)
+        if blank and empty:
+            held -= 1
+        elif held < len(items) and lazy and not starts_block(stripped):
+            flags.append(False)  # more of the innermost item's paragraph
+            continue
+        ended = held < len(items)
+        if ended:
+            del items[held:]
+            inner, lazy = None, False
+        empty = False
+        if items:
+            # The line is the innermost open item's; read it from its text column.
+            column = items[-1]
+            inside = text[column:]
+            body = inside.lstrip()
+            depth = len(inside) - len(body)
+            if blank:
+                lazy = False
+            elif inner:
+                if depth < 4 and fence_closes(body, inner):
+                    inner = None
+            elif depth < 4:  # deeper is more of the paragraph, or indented code
+                nested = list_item(inside, lazy)
+                if nested is not None:
+                    items.append(column + nested[0])
+                    body = nested[1]
+                    empty = body == ""
+                inner = fence_open(body) if body else None
+                lazy = bool(body) and paragraph_text(body, lazy and nested is None)
+            flags.append(False)
+            continue
+        fence = fence_open(stripped) if indent < 4 else None
+        flags.append(bool(fence))
+        opened = None if fence or indent >= 4 else list_item(text, lazy)
+        if opened is not None:
+            column, first = opened
+            items = [column]
+            empty, quote = first == "", False
+            inner = fence_open(first) if first else None
+            lazy = bool(first) and paragraph_text(first, False)
+        elif fence or blank:
+            lazy = quote = False
+        elif indent < 4 and stripped.startswith(">"):
+            # A quote. A list item may follow its paragraph, which a line at
+            # the margin continues as it would any other.
+            inside = stripped[2:] if stripped.startswith("> ") else stripped[1:]
+            body = inside.lstrip()
+            if len(inside) - len(body) < 4:
+                quote = bool(body) and paragraph_text(body, quote)
+            lazy = False
+        elif indent < 4 and quote and not starts_block(text):
+            lazy = False  # more of the quote's paragraph
+        elif indent < 4:
+            lazy, quote = paragraph_text(stripped, lazy), False
+    return flags
+
+
 def sections(changelog_text):
-    """``[(version, [body lines]), ...]`` for every ``## [...]`` heading, in file order."""
+    """``[(version, [body lines]), ...]`` for every ``## [...]`` heading, in file order.
+
+    A heading inside a fenced code block at the margin is an example's, not a
+    release's, and stays part of the section it is written in.
+    """
     found = []
     current = None
-    for line in changelog_text.splitlines():
-        match = SECTION_RE.match(line)
+    lines = changelog_text.splitlines()
+    for line, code in zip(lines, in_margin_code(lines)):
+        match = None if code else SECTION_RE.match(line)
         if match:
             current = (match.group("version"), [])
             found.append(current)
-        elif line.startswith("## "):
+        elif line.startswith("## ") and not code:
             current = None
         elif current is not None:
             current[1].append(line)
