@@ -39,23 +39,27 @@ class ZarrLayer():
             get_label_offset,
             get_label_resolutions,
             get_true_mag,
+            is_label_array,
+            label_volume,
         )
 
         group = zarr.open(self.series.zarr_overlay_fp)
-        self.zarr = group[self.series.zarr_overlay_group]
+        overlay = group[self.series.zarr_overlay_group]
         raw = group["raw"]
         # sizes and offsets in nm, whatever units each array declares. An
         # array with no size gets the grid label import gives it: raw the
         # series grid, labels raw's grid
         self.resolution, self.raw_resolution = get_label_resolutions(
-            self.zarr, raw, self.series
+            overlay, raw, self.series
         )
 
-        # check if labels or otherwise
-        self.is_labels = (len(self.zarr.shape) == 3)
+        # labels are read as (z, y, x), so a (1, z, y, x) label array is
+        # its one channel; an image keeps its channels
+        self.is_labels = is_label_array(overlay)
+        self.zarr = label_volume(overlay) if self.is_labels else overlay
 
         # get relevant data from overlay zarr
-        self.offset = get_label_offset(self.zarr, raw)
+        self.offset = get_label_offset(overlay, raw)
 
         # get the relevant data from the raw in the zarr folder
         self.zarr_x, self.zarr_y = tuple(raw.attrs["window"][:2])

@@ -676,6 +676,7 @@ def getLabelsToObjectsData(data_fp: str, group: str, raw_attrs: dict = None, ser
 
     raw = get_zarr_array(data_zg, "raw")
     labels_array = get_zarr_array(data_zg, group)
+    label_volume(labels_array)  # refuses several channels before any section starts
     sections = (raw.attrs if raw_attrs is None else raw_attrs)["sections"]
 
     resolution_z = get_label_resolutions(labels_array, raw, series, raw_attrs)[0][0]
@@ -912,6 +913,74 @@ def exportTraces(data_zg,
                 section.save()
 
 
+class _FirstChannel:
+    """Channel 0 of a (1, z, y, x) array, read and written as (z, y, x).
+
+    Every index goes straight to the array, so nothing is read until a slice
+    is asked for.
+    """
+
+    def __init__(self, array):
+        self.array = array
+        self.shape = tuple(array.shape[1:])
+
+    def __len__(self):
+        return self.shape[0]
+
+    def __getitem__(self, key):
+        return self.array[_channelKey(key)]
+
+    def __setitem__(self, key, value):
+        self.array[_channelKey(key)] = value
+
+
+def _channelKey(key):
+    return (0, *key) if isinstance(key, tuple) else (0, key)
+
+
+def label_volume(labels_array):
+    """A labels array as (z, y, x), the way import and the overlay index it.
+
+    A 4D array is channel first, as its four-entry ``voxel_size`` is read.
+    One integer channel is the labels, as ``is_label_array`` counts it. With
+    more channels nothing says which one is, and a float channel is a
+    prediction rather than label ids, so either is refused.
+    """
+
+    shape = getattr(labels_array, "shape", None)
+    if shape is None or len(shape) != 4:
+        return labels_array
+    if shape[0] != 1:
+        raise ValueError(
+            f"This Zarr label array has {shape[0]} channels. PyReconstruct imports "
+            "labels from a single channel, so save them as (z, y, x) or (1, z, y, x)."
+        )
+    if not np.issubdtype(labels_array.dtype, np.integer):
+        raise ValueError(
+            f"This Zarr label array is {labels_array.dtype}, not an integer type. "
+            "PyReconstruct imports label ids, so save a prediction as integer "
+            "labels before importing it."
+        )
+    return _FirstChannel(labels_array)
+
+
+def is_label_array(array):
+    """True if an overlay array holds label ids rather than an image.
+
+    (z, y, x) arrays are labels, as they always were. A 4D array is channel
+    first, and it is labels only as one integer channel. RGB images and
+    affinities have three channels, and a float channel is a prediction.
+    """
+
+    shape = array.shape
+    if len(shape) == 3:
+        return True
+    return (
+        len(shape) == 4 and shape[0] == 1
+        and np.issubdtype(array.dtype, np.integer)
+    )
+
+
 def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
     """Import label data for a single section.
     
@@ -931,6 +1000,10 @@ def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
 
     offset = get_label_offset(labels_array, raw)
     z_offset = round(offset[0] / resolution[0])
+
+    ## by section: the first axis of a (1, z, y, x) array is its channel,
+    ## and read as the section it sent a whole volume to findContours
+    labels = label_volume(labels_array)
 
     attrs = raw.attrs if raw_attrs is None else raw_attrs
     window = attrs["window"]
@@ -961,14 +1034,14 @@ def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
         return
     # the high bound stays best-effort: array-likes without a shape fall
     # through to the BoundsCheckError catch below, as they always did
-    shape = getattr(labels_array, "shape", None)
+    shape = getattr(labels, "shape", None)
     if shape is not None and zi >= shape[0]:
         return
 
     section = series.loadSection(snum)
 
     try:
-        arr = labels_array[zi]
+        arr = labels[zi]
     except zarr.errors.BoundsCheckError:  # return if out of bounds
         return
 
