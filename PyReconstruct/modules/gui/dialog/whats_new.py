@@ -396,12 +396,12 @@ class WhatsNewDialog(QDialog):
             else "What's new in PyReconstruct"
         )
         # 700 minimum width, up from the 540 the dialog opened at when the
-        # byline and the release-notes link stacked; click-tested and approved
-        # at this size. The width does not shape the footer: the byline is one
-        # short line at every width, so the extra room is purely about how much
-        # of a release note line fits unwrapped. The height increase lives on the notes
-        # browser below, the one widget that should absorb extra space; no
-        # other geometry is set, so the dialog keeps sizing itself from its
+        # footer text and the release-notes link stacked. The width does not
+        # shape the footer: the provenance line is one short line at every
+        # width, so the extra room is purely about how much of a release note
+        # line fits unwrapped. The height increase lives on the notes browser
+        # below, the one widget that should absorb extra space; no other
+        # geometry is set, so the dialog keeps sizing itself from its
         # contents.
         self.setMinimumWidth(700)
         self.setModal(False)  # modeless: does not block the app
@@ -526,8 +526,8 @@ class WhatsNewDialog(QDialog):
         # Same LinkLabel as the byline: this label has always had the same
         # stale-anchor-color behavior on a live theme switch, and fixing one
         # anchor in the dialog while leaving the other stale would show.
-        # AlignTop: should the byline ever wrap, the link stays level with its
-        # first line rather than floating mid-row.
+        # AlignTop: should the provenance line ever wrap, the link stays level
+        # with its first line rather than floating mid-row.
         link = LinkLabel(f'<a href="{url}">All release notes on GitHub ↗</a>')
         link.setOpenExternalLinks(True)
         footer.addWidget(link, 0, Qt.AlignTop)
