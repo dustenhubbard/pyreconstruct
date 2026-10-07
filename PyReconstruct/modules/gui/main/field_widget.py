@@ -224,14 +224,33 @@ class FieldWidget(QWidget, FieldWidgetView):
             # from before the pinch.
             self.is_gesturing = False
             self.is_panzooming = False
-            # A press made during the pinch was ignored, so no tool saw it,
-            # and its release must not finish anything either.
             if self.lclick or self.rclick or self.mclick:
-                self.lclick, self.rclick, self.mclick = False, False, False
-                self.single_click = False
-                self.pointer_press_recorded = False
-                self.pinch_dropped_press = True
+                self.dropPinchPress()
             self.generateView()
+
+    def dropPinchPress(self):
+        """Drop the press held when a pinch is canceled.
+
+        A press made during the pinch was ignored, so no tool saw it, and its
+        release must not finish anything either. A press made before the pinch
+        is dropped the same way, so what it started is ended here, as its
+        release would have: a lasso and its edge-pan timer, a stamp radius, and
+        a pencil, knife or lasso stroke. The pinch start already ended a line
+        trace and a trace drag (`endPendingEvents`). A z-trace and a host link
+        span several clicks and keep their points.
+        """
+        self.lclick, self.rclick, self.mclick = False, False, False
+        self.single_click = False
+        self.pointer_press_recorded = False
+        self.trigger_edit_flag = False
+        self.pinch_dropped_press = True
+
+        if self.is_selecting_traces:
+            self.is_selecting_traces = False
+            self.deactivateMouseBoundaryTimer()
+        self.is_drawing_rad = False
+        if not (self.is_line_tracing or self.is_z_tracing or self.hosted_trace):
+            self.current_trace = []
 
     def mousePressEvent(self, event):
         """Called when mouse is clicked.
