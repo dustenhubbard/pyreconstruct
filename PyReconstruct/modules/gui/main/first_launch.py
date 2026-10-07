@@ -288,16 +288,25 @@ def github_release_url(version=None):
     return f"{base}/tag/v{v}" if v and _safe_version(v) else base
 
 
-def github_changelog_url():
-    """``CHANGELOG.md`` on ``main`` of the repo the updater serves.
+# A nightly's version as nightly.yml tags it, X.Y.Z.devYYYYMMDD, without the v.
+# A source checkout of main is a dev release too (1.24.0.dev20261005+g41462b60d)
+# but has no release of its own, and its local part keeps it from matching.
+_NIGHTLY_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+\.dev\d{8}$")
 
-    Its ``[Unreleased]`` section is the list of what has landed since the last
-    stable release, which is exactly what a nightly carries that the stable
-    notes do not. Pinned to ``main`` rather than to the running version's tag:
-    a source checkout (``1.24.0.dev5+g0123abc``) has no tag, and the file at
-    ``main`` is never behind the build that is running.
+
+def nightly_release_url(version):
+    """This dev build's own GitHub release page, or the releases index.
+
+    A nightly's release body opens with the changes since the newest stable,
+    assembled from the changelog entries waiting on ``main``
+    (``build-installers.yml``), so that page is the live changelog for the
+    build that is running. Only a version shaped like a nightly tag has such a
+    page; any other dev version (a source checkout of main) gets the releases
+    index, where the nightlies are listed.
     """
-    return f"https://github.com/{GITHUB_REPO}/blob/main/CHANGELOG.md"
+    if _NIGHTLY_VERSION_RE.match(_normalize_version(version)):
+        return github_release_url(version)
+    return github_release_url()
 
 
 def latest_stable_section(sections, version):
@@ -329,16 +338,14 @@ def latest_stable_section(sections, version):
     return best
 
 
-def dev_build_note(stable_version, url=None):
+def dev_build_note(stable_version, url):
     """The line a dev build shows above the stable release's notes.
 
     Rich text, not markdown: the dialog renders it as its own label above the
     notes browser, so it is on screen however far the notes scroll, and the
-    label takes HTML. Only "live changelog" is a link. ``url`` defaults to the
-    changelog on GitHub; injectable so a test can pin it.
+    label takes HTML. Only "live changelog" is a link, and ``url`` is where it
+    goes: the build's own release page from ``nightly_release_url``.
     """
-    if url is None:
-        url = github_changelog_url()
     return (
         f"This is the nightly build. The notes below are for {escape(stable_version)}, "
         f"the latest stable release. The latest PyReconstruct Dev changes can be "
@@ -494,8 +501,9 @@ def whats_new_content(current, last_seen=None, cap=3, text=None, on_demand=False
                          the same on every framing; the dialog renders it once,
                          in the footer row below the body.
       * ``note``      -- on a dev build showing a stable release's notes, the
-                         rich-text line saying so and linking the changelog
-                         (``dev_build_note``); None everywhere else.
+                         rich-text line saying so and linking the build's own
+                         release page (``dev_build_note``); None everywhere
+                         else.
       * ``truncated`` -- True when more than ``cap`` missed sections existed.
 
     Sections shown: when ``last_seen`` is a valid version older than ``current``,
@@ -539,7 +547,7 @@ def whats_new_content(current, last_seen=None, cap=3, text=None, on_demand=False
         stable = latest_stable_section(sections, current)
         if stable is not None:
             shown_v = _safe_version(stable["version"])
-            note = dev_build_note(stable["version"])
+            note = dev_build_note(stable["version"], nightly_release_url(current))
     updating = (
         not on_demand
         and prev_v is not None and cur_v is not None and prev_v < cur_v

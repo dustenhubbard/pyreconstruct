@@ -7,8 +7,10 @@ name: build-installers
 #              with the WHATS_NEW.md body for that version.
 #   * nightly: a vX.Y.Z.devYYYYMMDD tag, cut by nightly.yml from main when main
 #              has new commits -> a GitHub pre-release, never marked latest,
-#              with GitHub's auto-generated notes against the previous nightly
-#              (or the newest stable, when no nightly exists yet).
+#              with the changes since the newest stable assembled from
+#              changelog.d, then GitHub's auto-generated notes against the
+#              previous nightly (or the newest stable, when no nightly exists
+#              yet).
 #
 # Any other tag shape that reaches here (vX.Y.ZrcN, vX.Y.ZaN, a dashed
 # pre-release) publishes as a pre-release with the WHATS_NEW body, as before.
@@ -982,7 +984,23 @@ jobs:
           name: sha256sums-signature
           path: dist
       - name: Build nightly release notes
-        # A nightly gets GitHub's auto-generated notes (the merged pull requests
+        # A nightly's body opens with the changes since the newest stable: the
+        # changelog.d fragments waiting on main, plus anything already under
+        # [Unreleased] in CHANGELOG.md, grouped under the same Added / Changed /
+        # Fixed / Removed headings a stable release gets. It is assembled by the
+        # same script the stable release uses, as a dry run: that prints the
+        # section and neither rewrites CHANGELOG.md nor removes a fragment, so
+        # the fragments stay for the stable that will collect them and nothing
+        # is committed. The dialog's "live changelog" link in the Dev app lands
+        # on this page, which is why the body has to carry it. The dry run's
+        # first line is its own version heading and its last a "(dry run: ...)"
+        # trailer; both are dropped, and the section gets a heading naming the
+        # stable it is measured from. A main with nothing waiting prints a
+        # one-line "Nothing to assemble" notice instead, which is skipped. A
+        # fragment the script refuses (a name that says nothing) is a warning
+        # here rather than a lost nightly; the stable assembly still fails on it.
+        #
+        # Below that come GitHub's auto-generated notes (the merged pull requests
         # and a compare link), measured against the previous release on the
         # same channel: the newest OTHER nightly by date, or the newest stable
         # when this is the first nightly. Nobody curates a nightly's notes, and
@@ -999,15 +1017,33 @@ jobs:
           set -o pipefail
           NIGHTLY_RE='^v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]{8}$'
           STABLE_RE='^v[0-9]+\.[0-9]+\.[0-9]+$'
+          STABLE="$(git tag --list 'v*' | grep -E "$STABLE_RE" | sort -V | tail -n 1 || true)"
           PREV="$(git tag --list 'v*' | grep -E "$NIGHTLY_RE" | grep -vxF "$GITHUB_REF_NAME" \
             | awk -F'[.]dev' '{ print $2, $0 }' | sort -k1,1n -k2,2V | tail -n 1 | cut -d' ' -f2 || true)"
           if [ -z "$PREV" ]; then
-            PREV="$(git tag --list 'v*' | grep -E "$STABLE_RE" | sort -V | tail -n 1 || true)"
+            PREV="$STABLE"
           fi
+          echo "newest stable: ${STABLE:-none}"
           echo "previous release on the nightly channel: ${PREV:-none}"
+          if ! python3 scripts/changelog_fragments.py assemble "${GITHUB_REF_NAME#v}" --dry-run > since_stable.md; then
+            echo "::warning::changelog.d did not assemble; the nightly body carries only the generated notes"
+            : > since_stable.md
+          fi
           {
             echo "Nightly build of PyReconstruct Dev from main at $(git rev-parse --short HEAD)."
             echo ""
+            if head -n 1 since_stable.md | grep -q '^## \['; then
+              if [ -n "$STABLE" ]; then
+                echo "## Changes since [$STABLE](https://github.com/$GITHUB_REPOSITORY/releases/tag/$STABLE)"
+              else
+                echo "## Changes since the last stable release"
+              fi
+              # the dry run's second line is already blank, so no echo here
+              sed -e '1d' -e '/^(dry run: /d' since_stable.md
+              echo ""
+              echo "---"
+              echo ""
+            fi
             gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
               -f tag_name="$GITHUB_REF_NAME" -f target_commitish="$GITHUB_SHA" \
               ${PREV:+-f previous_tag_name="$PREV"} --jq '.body'

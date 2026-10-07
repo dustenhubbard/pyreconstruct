@@ -92,7 +92,7 @@ def test_dev_build_shows_the_latest_stable_notes_with_the_note_first(dev):
     assert "Not shipped yet." not in c["body"]
     assert c["note"] is not None
     assert "1.23.0" in c["note"]
-    assert F.github_changelog_url() in c["note"]
+    assert f'href="{F.nightly_release_url(dev)}"' in c["note"]
 
 
 @pytest.mark.parametrize("kwargs", [
@@ -157,21 +157,30 @@ def test_stable_build_after_an_update_is_unchanged():
 
 # ---- the note and the link ---------------------------------------------------
 def test_dev_build_note_is_the_approved_text_with_one_link():
-    note = F.dev_build_note("1.23.0", url="https://example.test/CHANGELOG.md")
+    note = F.dev_build_note("1.23.0", "https://example.test/releases/tag/v1.24.0.dev20261007")
     assert note == (
         "This is the nightly build. The notes below are for 1.23.0, the latest "
         "stable release. The latest PyReconstruct Dev changes can be found in "
-        'the <a href="https://example.test/CHANGELOG.md">live changelog</a>.'
+        'the <a href="https://example.test/releases/tag/v1.24.0.dev20261007">live changelog</a>.'
     )
     assert note.count("<a ") == 1
     for dash in ("—", "–", "--"):
         assert dash not in note
 
 
-def test_github_changelog_url_points_at_the_updater_repo():
+def test_nightly_release_url_is_the_builds_own_page_or_the_index():
+    """A nightly links its own release; a source checkout has none and gets the list."""
     from PyReconstruct.modules.backend.updater.updater import GITHUB_REPO
-    url = F.github_changelog_url()
-    assert url == f"https://github.com/{GITHUB_REPO}/blob/main/CHANGELOG.md"
+    assert F.nightly_release_url(NIGHTLY) == F.github_release_url(NIGHTLY)
+    assert F.nightly_release_url(NIGHTLY) == (
+        f"https://github.com/{GITHUB_REPO}/releases/tag/v{NIGHTLY}"
+    )
+    assert F.nightly_release_url("v" + NIGHTLY) == F.nightly_release_url(NIGHTLY)
+    index = f"https://github.com/{GITHUB_REPO}/releases"
+    assert F.nightly_release_url(SOURCE_CHECKOUT) == index   # +g local part: no release
+    assert F.nightly_release_url("1.24.0.dev5") == index     # not a dated nightly tag
+    assert F.nightly_release_url("1.24.0") == index          # not a dev version at all
+    assert F.nightly_release_url(None) == index
 
 
 # ---- the dialog --------------------------------------------------------------
@@ -185,7 +194,7 @@ def test_dialog_renders_the_note_above_the_notes_on_a_dev_build(qapp):
     try:
         assert dialog._note is not None
         assert "nightly build" in dialog._note.text()
-        assert F.github_changelog_url() in dialog._note.text()
+        assert f'href="{F.github_release_url(NIGHTLY)}"' in dialog._note.text()
         lay = dialog.layout()
         assert lay.indexOf(dialog._note) < lay.indexOf(dialog._notes)
         assert dialog._notes.toPlainText().lstrip().startswith("1.23.0")
