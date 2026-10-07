@@ -984,21 +984,25 @@ jobs:
           name: sha256sums-signature
           path: dist
       - name: Build nightly release notes
-        # A nightly's body opens with the changes since the newest stable: the
-        # changelog.d fragments waiting on main, plus anything already under
-        # [Unreleased] in CHANGELOG.md, grouped under the same Added / Changed /
-        # Fixed / Removed headings a stable release gets. It is assembled by the
-        # same script the stable release uses, as a dry run: that prints the
-        # section and neither rewrites CHANGELOG.md nor removes a fragment, so
-        # the fragments stay for the stable that will collect them and nothing
-        # is committed. The dialog's "live changelog" link in the Dev app lands
-        # on this page, which is why the body has to carry it. The dry run's
-        # first line is its own version heading and its last a "(dry run: ...)"
-        # trailer; both are dropped, and the section gets a heading naming the
-        # stable it is measured from. A main with nothing waiting prints a
-        # one-line "Nothing to assemble" notice instead, which is skipped. A
-        # fragment the script refuses (a name that says nothing) is a warning
-        # here rather than a lost nightly; the stable assembly still fails on it.
+        # A nightly's body opens with every change since the last stable in
+        # its own history: the changelog.d fragments waiting on main, anything
+        # under [Unreleased] in CHANGELOG.md, and a release section already
+        # written into CHANGELOG.md ahead of its tag (release prep assembles
+        # the fragments before the stable is tagged), grouped under the same
+        # Added / Changed / Fixed / Removed headings a stable release gets, one
+        # line per item. scripts/changes_since_stable.py collates them with
+        # the assembler's own code and writes nothing, so the fragments stay
+        # for the stable that will collect them and nothing is committed. The
+        # dialog's "live changelog" link in the Dev app lands on this page,
+        # which is why the body has to carry it. The script prints nothing
+        # when nothing has landed, and then the section is skipped. A fragment
+        # the assembler refuses (a name that says nothing) is a warning here
+        # rather than a lost nightly; the stable assembly still fails on it.
+        #
+        # Only tags in this commit's history count, for the stable and for the
+        # previous nightly alike. A rebuild of an older nightly after a newer
+        # stable or nightly exists must not measure itself against a release
+        # that came after it.
         #
         # Below that come GitHub's auto-generated notes (the merged pull requests
         # and a compare link), measured against the previous release on the
@@ -1017,38 +1021,24 @@ jobs:
           set -o pipefail
           NIGHTLY_RE='^v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]{8}$'
           STABLE_RE='^v[0-9]+\.[0-9]+\.[0-9]+$'
-          STABLE="$(git tag --list 'v*' | grep -E "$STABLE_RE" | sort -V | tail -n 1 || true)"
-          PREV="$(git tag --list 'v*' | grep -E "$NIGHTLY_RE" | grep -vxF "$GITHUB_REF_NAME" \
+          TAGS="$(git tag --list 'v*' --merged HEAD)"
+          STABLE="$(printf '%s\n' "$TAGS" | grep -E "$STABLE_RE" | sort -V | tail -n 1 || true)"
+          PREV="$(printf '%s\n' "$TAGS" | grep -E "$NIGHTLY_RE" | grep -vxF "$GITHUB_REF_NAME" \
             | awk -F'[.]dev' '{ print $2, $0 }' | sort -k1,1n -k2,2V | tail -n 1 | cut -d' ' -f2 || true)"
           if [ -z "$PREV" ]; then
             PREV="$STABLE"
           fi
-          echo "newest stable: ${STABLE:-none}"
+          echo "newest stable in this build's history: ${STABLE:-none}"
           echo "previous release on the nightly channel: ${PREV:-none}"
-          if ! python3 scripts/changelog_fragments.py assemble "${GITHUB_REF_NAME#v}" --dry-run > since_stable.md; then
+          if ! python3 scripts/changes_since_stable.py --stable "$STABLE" --repository "$GITHUB_REPOSITORY" > since_stable.md; then
             echo "::warning::changelog.d did not assemble; the nightly body carries only the generated notes"
             : > since_stable.md
           fi
           {
             echo "Nightly build of PyReconstruct Dev from main at $(git rev-parse --short HEAD)."
             echo ""
-            if head -n 1 since_stable.md | grep -q '^## \['; then
-              if [ -n "$STABLE" ]; then
-                echo "## Changes since [$STABLE](https://github.com/$GITHUB_REPOSITORY/releases/tag/$STABLE)"
-              else
-                echo "## Changes since the last stable release"
-              fi
-              # The dry run's second line is already blank, so no echo here.
-              # Fragments are hard-wrapped at 80 columns with two-space
-              # continuation lines, and a release body renders every newline
-              # as a line break, so each bullet's continuation lines are
-              # joined onto its first line. A continuation after a blank
-              # line (a second paragraph inside a bullet) is left as it is.
-              sed -e '1d' -e '/^(dry run: /d' since_stable.md | awk '
-                /^  +[^ ]/ && have && buf != "" { sub(/^ +/, " "); buf = buf $0; next }
-                { if (have) print buf; buf = $0; have = 1 }
-                END { if (have) print buf }
-              '
+            if [ -s since_stable.md ]; then
+              cat since_stable.md
               echo ""
               echo "---"
               echo ""

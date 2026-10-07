@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -298,6 +299,55 @@ def fake_gh(tmp_path):
     return tmp_path
 
 
+CHANGELOG = (
+    "# Changelog\n\n## [Unreleased]\n\n"
+    "## [1.23.0] - 2026-09-27\n\n### Added\n- **Shipped in the stable.**\n"
+)
+FRAGMENT = (
+    "- **A fragment waiting on main.** Hard-wrapped at eighty columns, with\n"
+    "  the continuation indented by two spaces.\n"
+)
+FRAGMENT_ON_ONE_LINE = (
+    "- **A fragment waiting on main.** Hard-wrapped at eighty columns, with "
+    "the continuation indented by two spaces."
+)
+SINCE_STABLE = (
+    "## Changes since [v1.23.0](https://github.com/fixture/repository/releases/tag/v1.23.0)"
+)
+
+
+def nightly_repo(tmp_path, tags=("v1.23.0",), changelog=CHANGELOG, fragments=(FRAGMENT,)):
+    """A disposable repository with what the notes step reads: the collating
+    script and the assembler it imports under scripts/, CHANGELOG.md, and
+    changelog.d/, committed under ``tags``."""
+    repo, git = make_repo(tmp_path, tags=())
+    (repo / "scripts").mkdir()
+    for name in ("changelog_fragments.py", "changes_since_stable.py"):
+        shutil.copy(ROOT / "scripts" / name, repo / "scripts" / name)
+    (repo / "CHANGELOG.md").write_text(changelog)
+    (repo / "changelog.d").mkdir()
+    for index, text in enumerate(fragments):
+        (repo / "changelog.d" / f"entry-{index}.fixed.md").write_text(text)
+    subprocess.run(git + ["add", "scripts", "CHANGELOG.md", "changelog.d"], check=True)
+    commit(git, "the notes and the tools")
+    for tag in tags:
+        subprocess.run(git + ["tag", tag], check=True)
+    return repo, git
+
+
+def run_nightly_notes(tmp_path, repo, git, ref):
+    """The notes step on the checked-out commit, as ``ref``; the result and the body."""
+    sha = subprocess.check_output(git + ["rev-parse", "HEAD"], text=True).strip()
+    bindir = fake_gh(tmp_path)
+    result = run_step(repo, NIGHTLY_NOTES, {
+        "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
+        "GITHUB_REF_NAME": ref, "GITHUB_SHA": sha, "GITHUB_REPOSITORY": "fixture/repository",
+        "GH_TOKEN": "unused-by-fake-gh",
+    })
+    body = (repo / "release_body.md").read_text() if result.returncode == 0 else ""
+    return result, body, sha
+
+
 @linux_only
 @pytest.mark.parametrize("tags,ref,previous", [
     # the previous nightly is the newest by date
@@ -315,18 +365,79 @@ def fake_gh(tmp_path):
 def test_nightly_notes_compare_against_the_previous_release_on_the_channel(
     tmp_path, tags, ref, previous,
 ):
-    repo, git = make_repo(tmp_path, tags=tags)
+    repo, git = nightly_repo(tmp_path, tags=tags)
     subprocess.run(git + ["tag", ref], check=True)
-    sha = subprocess.check_output(git + ["rev-parse", "HEAD"], text=True).strip()
-    bindir = fake_gh(tmp_path)
-    result = run_step(repo, NIGHTLY_NOTES, {
-        "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
-        "GITHUB_REF_NAME": ref, "GITHUB_SHA": sha, "GITHUB_REPOSITORY": "fixture/repository",
-        "GH_TOKEN": "unused-by-fake-gh",
-    })
+    result, body, sha = run_nightly_notes(tmp_path, repo, git, ref)
     assert result.returncode == 0, result.stderr
-    body = (repo / "release_body.md").read_text()
+    assert "::warning::" not in result.stdout, result.stdout   # the real path, not the fallback
     assert body.startswith("Nightly build of PyReconstruct Dev from main at ")
+    # the since-stable section, one line per bullet, then a rule, then the generated notes
+    assert SINCE_STABLE in body
+    assert FRAGMENT_ON_ONE_LINE in body
+    assert "Shipped in the stable." not in body
+    assert body.index(SINCE_STABLE) < body.index("\n---\n") < body.index("GENERATED ")
     assert f"tag_name={ref}" in body
     assert f"target_commitish={sha}" in body
     assert f"previous_tag_name={previous}" in body
+
+
+@linux_only
+def test_a_rebuilt_nightly_measures_against_the_releases_in_its_own_history(tmp_path):
+    """Rebuilding v1.24.0.dev20261007 after v1.25.0 and a later nightly exist:
+    neither is in the rebuilt commit's history, so neither is its baseline, for
+    the since-stable heading or for the generated notes."""
+    repo, git = nightly_repo(tmp_path, tags=("v1.23.0", "v1.24.0.dev20261006"))
+    commit(git, "the night's work")
+    subprocess.run(git + ["tag", "v1.24.0.dev20261007"], check=True)
+    commit(git, "the next stable")
+    subprocess.run(git + ["tag", "v1.25.0"], check=True)
+    commit(git, "and a nightly after it")
+    subprocess.run(git + ["tag", "v1.26.0.dev20261101"], check=True)
+    subprocess.run(git + ["checkout", "--quiet", "v1.24.0.dev20261007"], check=True)
+    result, body, _sha = run_nightly_notes(tmp_path, repo, git, "v1.24.0.dev20261007")
+    assert result.returncode == 0, result.stderr
+    assert SINCE_STABLE in body
+    assert "previous_tag_name=v1.24.0.dev20261006" in body
+    assert "1.25.0" not in body and "1.26.0" not in body
+
+
+@linux_only
+def test_a_release_section_written_ahead_of_its_tag_is_in_the_nightly_body(tmp_path):
+    """Release prep assembles the fragments into ``## [1.24.0]`` on main before
+    v1.24.0 is tagged; a nightly built in that window has no fragments and
+    nothing under Unreleased, and still owes the Dev reader those changes."""
+    changelog = CHANGELOG.replace(
+        "## [1.23.0]",
+        "## [1.24.0] - 2026-10-08\n\n### Fixed\n- **Prepared for the next stable.** Written\n"
+        "  before its tag.\n\n## [1.23.0]",
+    )
+    repo, git = nightly_repo(tmp_path, changelog=changelog, fragments=())
+    subprocess.run(git + ["tag", "v1.24.0.dev20261007"], check=True)
+    result, body, _sha = run_nightly_notes(tmp_path, repo, git, "v1.24.0.dev20261007")
+    assert result.returncode == 0, result.stderr
+    assert "::warning::" not in result.stdout, result.stdout
+    assert SINCE_STABLE in body
+    assert "- **Prepared for the next stable.** Written before its tag." in body
+    assert "Shipped in the stable." not in body
+
+
+@linux_only
+def test_a_quiet_main_and_a_refused_fragment_both_leave_the_generated_notes(tmp_path):
+    """Nothing since the stable: no section and no warning. A fragment the
+    assembler refuses: a warning, and the nightly still publishes with the
+    generated notes alone rather than failing or dropping the fragment quietly."""
+    repo, git = nightly_repo(tmp_path, fragments=())
+    subprocess.run(git + ["tag", "v1.24.0.dev20261007"], check=True)
+    result, body, _sha = run_nightly_notes(tmp_path, repo, git, "v1.24.0.dev20261007")
+    assert result.returncode == 0, result.stderr
+    assert "::warning::" not in result.stdout
+    assert "Changes since" not in body
+    assert body.startswith("Nightly build of PyReconstruct Dev from main at ")
+    assert "GENERATED tag_name=v1.24.0.dev20261007" in body
+
+    (repo / "changelog.d" / "no-category.md").write_text("- **Named wrong.**\n")
+    result, body, _sha = run_nightly_notes(tmp_path, repo, git, "v1.24.0.dev20261007")
+    assert result.returncode == 0, result.stderr
+    assert "::warning::changelog.d did not assemble" in result.stdout
+    assert "Changes since" not in body
+    assert "GENERATED tag_name=v1.24.0.dev20261007" in body
