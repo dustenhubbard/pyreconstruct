@@ -41,9 +41,10 @@ Two implementation notes:
     the first, which is what someone fixing a bad merge actually wants.
 
 Note what this does and does not claim. Parsing is not importing: a file that
-compiles may still fail at import or at run time (every script in
-``dev/assets/misc/`` opens hardcoded local paths at module level, so none of
-them can be imported or executed whole here). Syntactic validity is the floor, and
+compiles may still fail at import or at run time (the other scripts in
+``dev/assets/misc/`` open hardcoded local paths at module level, so they cannot
+be imported or executed whole here; ``crop_zarr.py`` is run whole by
+``test_crop_zarr_cli.py``). Syntactic validity is the floor, and
 the floor is what was missing. A second gate goes one step higher for the
 directory that housed the broken file: each script's module-level import
 statements are extracted and actually executed -- see
