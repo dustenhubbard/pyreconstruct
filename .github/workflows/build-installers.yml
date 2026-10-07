@@ -1038,8 +1038,17 @@ jobs:
               else
                 echo "## Changes since the last stable release"
               fi
-              # the dry run's second line is already blank, so no echo here
-              sed -e '1d' -e '/^(dry run: /d' since_stable.md
+              # The dry run's second line is already blank, so no echo here.
+              # Fragments are hard-wrapped at 80 columns with two-space
+              # continuation lines, and a release body renders every newline
+              # as a line break, so each bullet's continuation lines are
+              # joined onto its first line. A continuation after a blank
+              # line (a second paragraph inside a bullet) is left as it is.
+              sed -e '1d' -e '/^(dry run: /d' since_stable.md | awk '
+                /^  +[^ ]/ && have && buf != "" { sub(/^ +/, " "); buf = buf $0; next }
+                { if (have) print buf; buf = $0; have = 1 }
+                END { if (have) print buf }
+              '
               echo ""
               echo "---"
               echo ""
