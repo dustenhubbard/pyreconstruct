@@ -852,6 +852,12 @@ class FieldWidgetMouse(FieldWidgetData):
         Does nothing unless a cut is open. lineRelease clears is_line_tracing
         before it finishes a cut, so a save reached from inside it, through a
         table refresh, leaves the cut alone.
+
+        The trace goes back into self.section, so this relies on the cut
+        being on the section shown: every section change, paging through
+        MainWindow.changeSection or a 3D double-click through moveTo, ends
+        the gesture with endPendingEvents before the field moves, and a cut
+        never outlives its section.
         """
         if self.is_scissoring and self.is_line_tracing:
             self.cancelScissors()

@@ -7,7 +7,9 @@ saved, and Close then deleted the working folder. Reopening the file found no
 trace, and undo had nothing to bring back.
 
 Anything that writes or rereads the section now backs the open cut out first,
-the same as Backspace does, so the trace goes back exactly as it was.
+the same as Backspace does, so the trace goes back exactly as it was. A jump to
+another section finishes the cut first instead, on the section it was open on,
+the way paging always has; the 3D scene's double-click used to skip that.
 
 Driven through the live `MainWindow`: a real left click with the Scissors tool,
 then the real Save action, a real close and a fresh `Series.openJser`.
@@ -193,3 +195,93 @@ def test_propagating_in_the_middle_of_a_cut_keeps_the_trace(
     assert len(_matching(field.section, name, points)) == 1
     on_disk = main_window.series.loadSection(snum)
     assert len(_matching(on_disk, name, points)) == 1
+
+
+def _neighbor(series, snum):
+    numbers = sorted(series.sections)
+    i = numbers.index(snum)
+    return numbers[i + 1] if i + 1 < len(numbers) else numbers[i - 1]
+
+
+def _bounds(trace):
+    xs = [x for x, _ in trace.points]
+    ys = [y for _, y in trace.points]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+@pytest.mark.parametrize("jump", ["3d_scene", "paging"])
+def test_a_jump_to_another_section_finishes_the_cut_where_it_was_open(
+    main_window, qapp, jump
+):
+    """A section change with a cut open finishes the cut first, on the section
+    it was open on, the way paging has always done through endPendingEvents.
+
+    The 3D scene's double-click (moveTo) reached the field's changeSection
+    without that step, so the cut stayed open across the jump. Backing it out
+    at the next save then put the trace into the section on screen, and the
+    section it came from was written without it. Paging is the control.
+    """
+    field = main_window.field
+    trace = _pick_trace(field, True)
+    name = trace.name
+    a = field.section.n
+    before_a = _count(field.section, name)
+    undo_before = len(field.series_states[a].undo_states)
+    b = _neighbor(field.series, a)
+    before_b = _count(field.series.loadSection(b), name)
+
+    _pickup(main_window, qapp, trace)
+
+    if jump == "3d_scene":
+        # the double-click in custom_plotter.leftButtonClickEvent, landing on
+        # a point of the object in field coordinates
+        x, y = trace.points[0]
+        field.moveTo(b, x, y)
+    else:
+        main_window.incrementSection(down=(b < a))
+    qapp.processEvents()
+
+    assert field.section.n == b
+    assert not field.is_scissoring
+    assert not field.is_line_tracing
+    assert field.mouse_mode == SCISSORS
+
+    # the cut finished on its own section (now the flickered-away one), with
+    # the undo state a finished cut gets, and the new section was left alone
+    assert _count(field.b_section, name) == before_a
+    assert _count(field.section, name) == before_b
+    assert len(field.series_states[a].undo_states) == undo_before + 1
+
+    main_window.saveAllData()
+    assert _count(main_window.series.loadSection(a), name) == before_a
+    assert _count(main_window.series.loadSection(b), name) == before_b
+
+
+def test_a_jump_within_the_section_finishes_the_cut_before_the_view_moves(
+    main_window, qapp
+):
+    """A 3D double-click on the section already shown only moves the view, but
+    the cut's points are in pixels of the view it was open in: finished after
+    the move, it would land wherever those pixels now point."""
+    field = main_window.field
+    trace = _pick_trace(field, True)
+    name = trace.name
+    a = field.section.n
+    others = [t for t in field.section.contours[name].getTraces() if t is not trace]
+    x0, y0, x1, y1 = _bounds(trace)
+    # a field unit per pixel at the current zoom, for the tolerance below
+    per_pixel = field.section.mag / field.section_layer.scaling
+
+    _pickup(main_window, qapp, trace)
+    field.moveTo(a, x1 + 5.0, y1 + 5.0)
+    qapp.processEvents()
+
+    assert field.section.n == a
+    assert not field.is_scissoring
+    assert not field.is_line_tracing
+    (kept,) = [
+        t for t in field.section.contours[name].getTraces()
+        if not any(t is o for o in others)
+    ]
+    for got, want in zip(_bounds(kept), (x0, y0, x1, y1)):
+        assert abs(got - want) <= 2 * per_pixel
