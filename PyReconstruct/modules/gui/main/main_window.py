@@ -2631,8 +2631,8 @@ class MainWindow(QMainWindow):
         #     if button.isChecked():
         #         self.series.current_trace = button.trace
 
-        # the b (flickered-away) section can hold unsaved edits: flickering and
-        # moveTo swap sections without saving, so it MUST be written here too --
+        # the b (flickered-away) section can hold unsaved edits: flickering
+        # swaps sections without saving, so it MUST be written here too --
         # otherwise a save drops those edits and then marks the series clean
         sections = [self.field.section]
         if self.field.b_section:
