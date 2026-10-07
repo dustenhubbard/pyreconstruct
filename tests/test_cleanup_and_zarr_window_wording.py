@@ -94,6 +94,42 @@ def test_the_duplicates_help_says_what_the_overlap_number_is(qtbot):
     assert "lowest overlap ratio between the row's traces" not in heading
 
 
+def test_the_duplicates_help_says_what_an_overlap_of_1_means(qtbot):
+    """1 is an equal area or a point-for-point match, not the same points:
+    a square with an extra point on one edge scores 1 by area, and a small
+    square shifted by half its point-match tolerance scores 1 by its points
+    while sharing only about 91% of its area."""
+    from PyReconstruct.modules.datatypes.trace import Trace
+
+    def trace(points):
+        t = Trace("A", (0, 0, 0), True)
+        t.points = points
+        return t
+
+    square = trace([(0, 0), (1, 0), (1, 1), (0, 1)])
+    extra_point = trace([(0, 0), (0.5, 0), (1, 0), (1, 1), (0, 1)])
+    assert square.getOverlapRatio(extra_point) == 1.0
+    assert not square.pointsMatch(extra_point)
+
+    small = trace([(0, 0), (0.1, 0), (0.1, 0.1), (0, 0.1)])
+    shifted = trace([(x + 0.005, y) for x, y in small.points])
+    assert small.pointsMatch(shifted)
+    assert small.getOverlapRatio(shifted) < 0.95
+
+    heading = _heading(
+        qtbot, DuplicateTracesDialog(None, [_group()], combine=lambda c: [])
+    )
+    assert "1 means the same points" not in heading
+    assert (
+        "so 1 means they cover the same area, even if their points differ"
+    ) in heading
+    assert (
+        "Two traces that match point for point, each point within 0.01 "
+        "series units of the other's, also show 1"
+    ) in heading
+    assert Trace.POINTS_MATCH_TOLERANCE == 0.01
+
+
 @pytest.fixture
 def start_process():
     spec = importlib.util.spec_from_file_location("start_process",
