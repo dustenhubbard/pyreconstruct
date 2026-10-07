@@ -26,6 +26,7 @@ from .feret import (
 from .grid import (
     mergeTraces,
     mergeTracesInField,
+    MergeLosesArea,
     mergeCellSize,
     cutTraces,
     reducePoints,
