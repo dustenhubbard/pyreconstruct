@@ -208,6 +208,89 @@ def test_nested_lists_code_blocks_and_tables_keep_their_lines(tmp_path):
     )
 
 
+@pytest.mark.parametrize("fragment", [
+    pytest.param(
+        "- **Example command.**\n"
+        "\n"
+        "      first()\n"
+        "      second()\n",
+        id="indented-code",
+    ),
+    pytest.param(
+        "- **Import details.**\n"
+        "  ### Supported formats\n"
+        "  XML and JSON.\n",
+        id="nested-heading",
+    ),
+    pytest.param(
+        "- **Import details.**\n"
+        "\n"
+        "  Supported formats\n"
+        "  -----------------\n"
+        "  XML and JSON.\n",
+        id="setext-heading",
+    ),
+    pytest.param(
+        "- **Two halves.** Before\n"
+        "  ***\n"
+        "  after.\n",
+        id="rule",
+    ),
+    pytest.param(
+        "- **Shortcuts.**\n"
+        "  | Key | Action |\n"
+        "  | --- | --- |\n"
+        "  | K | Knife |\n"
+        "  More keys.\n",
+        id="table-then-prose",
+    ),
+    pytest.param(
+        "- **Hidden note.** Shown\n"
+        "  <!-- not\n"
+        "  shown -->\n"
+        "  shown again.\n",
+        id="html-comment",
+    ),
+    pytest.param(
+        "- **Folded.** See\n"
+        "  <details>\n"
+        "  <summary>More</summary>\n"
+        "  Body.\n"
+        "  </details>\n",
+        id="html-block",
+    ),
+])
+def test_code_headings_rules_and_html_inside_a_bullet_keep_their_lines(tmp_path, fragment):
+    """Joining any of these would change what they are, not just rewrap them:
+    two code lines become one, a heading becomes words in a sentence."""
+    out = section(repo(tmp_path, fragments={"a.changed.md": fragment}))
+    assert out.split("### Changed\n", 1)[1].split("\n### Fixed", 1)[0] == fragment
+
+
+def test_wrapped_numbered_items_and_nested_quotes_still_join(tmp_path):
+    fragment = (
+        "- **Steps.** In\n"
+        "  order:\n"
+        "  1. Open the\n"
+        "     series.\n"
+        "  2. Save it.\n"
+        "     > Quoted and\n"
+        "     wrapped.\n"
+        "\n"
+        "      Indented, but a paragraph\n"
+        "      of the second step.\n"
+    )
+    out = section(repo(tmp_path, fragments={"a.changed.md": fragment}))
+    assert out.split("### Changed\n", 1)[1].split("\n### Fixed", 1)[0] == (
+        "- **Steps.** In order:\n"
+        "  1. Open the series.\n"
+        "  2. Save it.\n"
+        "     > Quoted and wrapped.\n"
+        "\n"
+        "      Indented, but a paragraph of the second step.\n"
+    )
+
+
 def test_a_fence_closes_only_on_its_own_kind_and_length(tmp_path):
     """A shorter fence, or one of the other character, inside a fenced block
     is content; closing on it would join the code lines that follow."""

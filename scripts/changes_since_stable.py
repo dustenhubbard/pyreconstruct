@@ -22,9 +22,11 @@ already in the file before fragments) and prints one section::
 Fragments are hard-wrapped at 80 columns with two-space continuation lines,
 and a GitHub release body renders every newline as a line break, so each
 bullet's continuation lines are joined onto its first line. A nested list
-item, a fenced code block, a table row and a blockquote keep their own lines:
-joining those would flatten a valid list into one run-on sentence. A second
-paragraph inside a bullet (after a blank line) stays a paragraph of its own.
+item, a code block (fenced or indented), a heading, a rule, a table row, a
+blockquote and an HTML block keep their own lines: joining those would flatten
+a valid list into one run-on sentence, or code and headings into prose. A
+second paragraph inside a bullet (after a blank line) stays a paragraph of its
+own.
 
 Prints nothing and exits 0 when there is nothing since the stable, so the
 caller can test the output for emptiness. A fragment the assembler refuses (a
@@ -54,10 +56,49 @@ import changelog_fragments as frag  # noqa: E402
 # em dash in older sections, and the date is not needed here.
 SECTION_RE = re.compile(r"^## \[(?P<version>[^\]]+)\]")
 
-# A line that keeps its own line when wrapped prose around it is joined: a
-# list item at any indentation, a fence, a table row, a blockquote.
-STRUCTURAL_RE = re.compile(r"^\s*(?:[-*+]\s|\d+[.)]\s|```|~~~|\||>)")
+# Lines that keep their own line when wrapped prose around them is joined.
+# A list item or a blockquote may still take a wrapped continuation (a lazy
+# one, in CommonMark's word); a heading, a rule or setext underline, and a
+# table row may not, since joining onto them changes what they are.
+LIST_ITEM_RE = re.compile(r"^(\s*)([-*+]|\d+[.)])(\s+|$)")
+QUOTE_RE = re.compile(r"^\s*>")
+STANDALONE_RE = re.compile(
+    r"^\s*(?:#{1,6}(?:\s|$)|(?:-\s*){3,}$|(?:\*\s*){3,}$|(?:_\s*){3,}$|=+\s*$|\|)"
+)
 FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
+
+# The HTML blocks that may interrupt a paragraph (CommonMark 4.6, kinds 1, 2
+# and 6), each with what ends it; an empty end is a blank line.
+HTML_BLOCK_TAGS = (
+    "address|article|aside|base|basefont|blockquote|body|caption|center|col|"
+    "colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|"
+    "form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|"
+    "menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|"
+    "summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul"
+)
+HTML_STARTS = (
+    (re.compile(r"^\s*<(?:script|pre|style|textarea)(?:\s|>|$)", re.I), "</"),
+    (re.compile(r"^\s*<!--"), "-->"),
+    (re.compile(rf"^\s*</?(?:{HTML_BLOCK_TAGS})(?:\s|/?>|$)", re.I), ""),
+)
+
+
+def indent_of(line):
+    return len(line.expandtabs(4)) - len(line.expandtabs(4).lstrip())
+
+
+def html_block(line):
+    """What ends the HTML block ``line`` opens, or None when it opens none."""
+    for start, end in HTML_STARTS:
+        if start.match(line):
+            return end
+    return None
+
+
+def html_ends(end, line):
+    if end == "</":
+        return re.search(r"</(?:script|pre|style|textarea)>", line, re.I) is not None
+    return not line.strip() if end == "" else end in line
 
 
 def closes(fence, line):
@@ -135,32 +176,73 @@ def merge_buckets(bodies):
 def join_wrapped(lines):
     """Each bullet's continuation lines joined onto its first line.
 
-    A continuation line is an indented line that is not itself structure (a
-    nested list item, a fence, a table row, a blockquote). It joins onto the
-    line before it when that line is prose: not blank, not a fence, not inside
-    a code block. Everything inside a fenced block passes through untouched,
-    until a fence of the opening kind and at least its length closes it.
+    A continuation line is an indented line of prose. It joins onto the line
+    before it when that line is prose too, or a list item or blockquote it
+    wraps. Code passes through untouched: a fenced block until a fence of the
+    opening kind and at least its length closes it, and an indented block (four
+    columns past the list item it sits in, where a paragraph cannot run on into
+    it) until a line indented less. So does an HTML block, until its end.
     """
     out = []
-    joinable = False
-    fence = None
+    joinable = False  # the line before may take a continuation
+    fence = None  # the opening fence, inside a fenced block
+    code_indent = None  # the indentation of an indented code block, inside one
+    html_end = None  # what ends the HTML block, inside one
+    items = []  # where each open list item's content starts, innermost last
     for line in lines:
         if fence is not None:
             out.append(line)
             if closes(fence, line):
                 fence = None
             continue
+        if html_end is not None:
+            out.append(line)
+            if html_ends(html_end, line):
+                html_end = None
+            continue
+        indent = indent_of(line)
+        if code_indent is not None:
+            if not line.strip() or indent >= code_indent:
+                out.append(line)
+                continue
+            code_indent = None
+        if not line.strip():
+            out.append(line)
+            joinable = False
+            continue
+        if not joinable:
+            # Not a run-on line, so its indentation says which item it is in.
+            while items and indent < items[-1]:
+                items.pop()
+            code_at = (items[-1] if items else 0) + 4
+            if indent >= code_at:
+                code_indent = code_at
+                out.append(line)
+                continue
         opening = FENCE_RE.match(line)
         if opening:
             fence = opening.group(1)
             out.append(line)
             joinable = False
             continue
-        if not line.strip():
+        end = html_block(line)
+        if end is not None:
+            out.append(line)
+            joinable = False
+            if not html_ends(end, line):
+                html_end = end
+            continue
+        if STANDALONE_RE.match(line):
             out.append(line)
             joinable = False
             continue
-        if line.startswith("  ") and not STRUCTURAL_RE.match(line) and joinable:
+        item = LIST_ITEM_RE.match(line.expandtabs(4))
+        if item:
+            marker, spaces = item.end(2), len(item.group(3))
+            while items and indent < items[-1]:
+                items.pop()
+            items.append(marker + (spaces if 1 <= spaces <= 4 else 1))
+        elif line.startswith("  ") and joinable and not QUOTE_RE.match(line):
             out[-1] = out[-1] + " " + line.strip()
             continue
         out.append(line)
