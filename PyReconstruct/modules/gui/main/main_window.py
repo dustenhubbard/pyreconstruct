@@ -154,15 +154,25 @@ def _probeEntries(folder):
     return None
 
 
+def _sameVolume(a, b):
+    """True if two existing paths are on the same volume."""
+    try:
+        return os.stat(a).st_dev == os.stat(b).st_dev
+    except (OSError, TypeError, ValueError):
+        return False
+
+
 def _caseInsensitive(folder):
     """True if names inside a folder ignore case.
 
     Probes inside the folder first, since folders above it can sit on
     another volume. With no entry to probe, it looks the folder's own name
-    up in its parent in the other case, which tests the parent's volume:
-    the best available guess, wrong only when the folder is a mount point.
-    A name with no letters (2026) says nothing either, so it walks up one
-    folder at a time and asks the same of each.
+    up in its parent in the other case, which tests the parent's volume,
+    so it only does that when the parent is on the folder's volume. A
+    mount point is not: an empty drive mounted at /mnt/Data says nothing
+    about itself through /mnt. A name with no letters (2026) says nothing
+    either, so it walks up one folder at a time and asks the same of each,
+    stopping at the top of the folder's volume.
     """
     folder = os.path.realpath(folder)
     while True:
@@ -170,15 +180,15 @@ def _caseInsensitive(folder):
         if found is not None:
             return found
         parent, name = os.path.split(folder)
-        swapped = name.swapcase()
-        if name and swapped != name:
-            return _sameDir(folder, os.path.join(parent, swapped))
-        if not name or parent == folder:
-            # Nothing on the way up could tell. Say case-insensitive: the
+        if not name or parent == folder or not _sameVolume(folder, parent):
+            # Nothing on this volume could tell. Say case-insensitive: the
             # caller then treats names differing only in case as one file,
             # which can only refuse a save, never allow one over a series
             # in the 3D scene.
             return True
+        swapped = name.swapcase()
+        if swapped != name:
+            return _sameDir(folder, os.path.join(parent, swapped))
         folder = parent
 
 
