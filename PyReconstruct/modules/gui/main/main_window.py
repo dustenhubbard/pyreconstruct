@@ -4298,6 +4298,15 @@ class MainWindow(QMainWindow):
         # every redo, the one asked for included.
         if redo:
             self.field.cancelOpenScissorsCut()
+        elif self.field.hide_trace_layer:
+            # With the trace layer hidden, newTrace refuses the finished cut,
+            # so finishing would only put the trace back with a state that
+            # changes nothing, end the redo, and leave undoState (which does
+            # nothing while hidden) to skip it. The cut is backed out with no
+            # state instead, and that is the whole Undo, as taking back the
+            # finished cut is with traces shown.
+            if self.field.cancelOpenScissorsCut():
+                return
         else:
             self.field.finishOpenScissorsCut()
         self.saveAllData()

@@ -860,10 +860,15 @@ class FieldWidgetMouse(FieldWidgetData):
         never outlives its section.
 
         Undo is the one exception, and finishes the cut instead
-        (finishOpenScissorsCut).
+        (finishOpenScissorsCut) unless the trace layer is hidden.
+
+            Returns:
+                (bool): True if a cut was open and is now backed out
         """
         if self.is_scissoring and self.is_line_tracing:
             self.cancelScissors()
+            return True
+        return False
 
     def finishOpenScissorsCut(self):
         """Finish a scissors cut that is still open, as a right-click would.
@@ -873,6 +878,10 @@ class FieldWidgetMouse(FieldWidgetData):
         nothing older, and Redo brings the cut back. Left to the save, the
         cut would be backed out with no state, and the Undo would take the
         edit made before it.
+
+        Not for a hidden trace layer, where newTrace refuses the finished
+        trace and lineRelease puts the original back with a state that
+        changes nothing. Undo backs the cut out there instead.
 
         Does nothing unless a cut is open.
         """

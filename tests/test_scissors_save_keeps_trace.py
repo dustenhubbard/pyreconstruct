@@ -293,18 +293,18 @@ def test_a_jump_within_the_section_finishes_the_cut_before_the_view_moves(
         assert abs(got - want) <= 2 * per_pixel
 
 
-def _draw_closed(main_window, qapp):
+def _draw_closed(main_window, qapp, name="scissors_undo_a", slot=0):
     """Draw a small closed trace with the Closed Trace tool, a click per
     corner and a right-click to finish, away from the fixture's traces. It
     gets an object of its own, so counting the picked-up trace's object
-    does not count it."""
+    does not count it. Each slot is a spot of its own along the top."""
     field = main_window.field
     field.series.setOption("trace_mode", "poly")
     main_window.mouse_palette.activateModeButton("Closed Trace")
     qapp.processEvents()
-    field.setTracingTrace(Trace("scissors_undo_a", (255, 0, 0), True))
+    field.setTracingTrace(Trace(name, (255, 0, 0), True))
     before = list(field.section.tracesAsList())
-    x0, y0 = field.width() // 20, field.height() // 20
+    x0, y0 = field.width() // 20 + 50 * slot, field.height() // 20
     corners = [(x0, y0), (x0 + 30, y0), (x0 + 30, y0 + 30), (x0, y0 + 30)]
     for x, y in corners:
         QTest.mouseClick(field, Qt.LeftButton, Qt.NoModifier, QPoint(x, y))
@@ -415,4 +415,65 @@ def test_redo_in_the_middle_of_a_cut_backs_the_cut_out_and_redoes(
         "Redo during the cut lost the redo"
     )
     assert _count(field.section, name) == before
+    assert len(_matching(field.section, name, points)) == 1
+
+
+def _history(field):
+    states = field.series_states[field.section.n]
+    return (
+        len(states.undo_states), len(states.redo_states),
+        len(field.series_states.undos), len(field.series_states.redos),
+    )
+
+
+@pytest.mark.parametrize("redo", [False, True])
+def test_undo_or_redo_with_traces_hidden_leaves_the_history_alone(
+    main_window, qapp, redo
+):
+    """With the trace layer hidden, a section Undo or Redo does nothing, and
+    the cut cannot be finished either: newTrace refuses the trace. Finishing
+    it anyway put the trace back with a state of its own, which ended the
+    redo, and left an Undo that changes nothing once traces are shown. The
+    cut is backed out instead, with no state, and the history stays as it
+    was."""
+    field = main_window.field
+    trace = _pick_trace(field, True)
+    name, points = trace.name, list(trace.points)
+    before = _count(field.section, name)
+    a_name, a_points = _draw_closed(main_window, qapp, "scissors_undo_a", 0)
+    c_name, c_points = _draw_closed(main_window, qapp, "scissors_undo_c", 1)
+    main_window.undo_act.trigger()
+    qapp.processEvents()
+    assert not _matching(field.section, c_name, c_points)
+    history = _history(field)
+
+    _pickup(main_window, qapp, trace)
+    main_window.hideall_act.trigger()  # Toggle hide all
+    qapp.processEvents()
+    assert field.hide_trace_layer
+    (main_window.redo_act if redo else main_window.undo_act).trigger()
+    qapp.processEvents()
+
+    assert not field.is_scissoring
+    assert not field.is_line_tracing
+    assert _count(field.section, name) == before
+    assert len(_matching(field.section, name, points)) == 1
+    assert len(_matching(field.section, a_name, a_points)) == 1
+    assert not _matching(field.section, c_name, c_points)
+    assert _history(field) == history, "the hidden Undo or Redo changed the history"
+
+    main_window.hideall_act.trigger()
+    qapp.processEvents()
+    assert not field.hide_trace_layer
+    main_window.redo_act.trigger()
+    qapp.processEvents()
+    assert len(_matching(field.section, c_name, c_points)) == 1, (
+        "C could not be redone"
+    )
+    main_window.undo_act.trigger()
+    main_window.undo_act.trigger()
+    qapp.processEvents()
+    assert not _matching(field.section, a_name, a_points), (
+        "an Undo that changes nothing was left in the history"
+    )
     assert len(_matching(field.section, name, points)) == 1
