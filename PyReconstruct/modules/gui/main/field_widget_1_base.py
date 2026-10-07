@@ -649,6 +649,11 @@ class FieldWidgetBase:
         # remembered for propagation recording no longer applies
         self.tform_before_change = None
 
+        # an open scissors cut ends here with its trace back: left open across
+        # the reload, finishing it would add a second copy beside the one
+        # read back from the file
+        self.cancelOpenScissorsCut()
+
         # reload the actual sections
         self.section = self.series.loadSection(self.series.current_section)
         self.section_layer.section = self.section

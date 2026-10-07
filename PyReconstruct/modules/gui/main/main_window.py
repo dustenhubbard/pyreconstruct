@@ -2593,6 +2593,10 @@ class MainWindow(QMainWindow):
         """Write current series and section data into hidden files."""
         if self.series.isWelcomeSeries():
             return
+        # Save, Save As, Close, Open and New all write through here, so a
+        # scissors cut still open puts its trace back first; otherwise the
+        # section is written without it
+        self.field.cancelOpenScissorsCut()
         # # save the trace palette
         # self.series.palette_traces = []
         # for button in self.mouse_palette.palette_buttons:  # get trace palette

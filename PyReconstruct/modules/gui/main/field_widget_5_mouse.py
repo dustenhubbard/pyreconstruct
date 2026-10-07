@@ -836,6 +836,26 @@ class FieldWidgetMouse(FieldWidgetData):
         )
         self.generateView()
 
+    def cancelOpenScissorsCut(self):
+        """Back out of a scissors cut that is still open, before a write or reload.
+
+        Until a cut ends, its trace lives outside the section. A save in that
+        window wrote the section without it and marked the series saved, and
+        a close then deleted the working folder, so the trace was gone for
+        good. Anything that writes or rereads the field's section calls this
+        first, and the trace goes back exactly as it was, as with Backspace.
+
+        Backing out rather than finishing is deliberate. Finishing would save
+        a cut nobody finished: on an open trace the pickup has already dropped
+        the shorter side of the click.
+
+        Does nothing unless a cut is open. lineRelease clears is_line_tracing
+        before it finishes a cut, so a save reached from inside it, through a
+        table refresh, leaves the cut alone.
+        """
+        if self.is_scissoring and self.is_line_tracing:
+            self.cancelScissors()
+
     def stampPress(self, event):
         """Called when mouse is pressed in stamp mode.
         

@@ -219,6 +219,8 @@ def _real_stub(monkeypatch, series, current_section, stored_tform):
     stub.generateView = lambda *a, **k: None
     stub.saveState = lambda *a, **k: None
     stub.reload = lambda *a, **k: None
+    # no scissors cut is open on a stub field
+    stub.cancelOpenScissorsCut = lambda: None
     monkeypatch.setattr(
         fw, "getProgbar",
         lambda *a, **k: types.SimpleNamespace(
