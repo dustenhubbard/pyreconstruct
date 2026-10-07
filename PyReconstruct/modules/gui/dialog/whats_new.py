@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QFrame,
 )
 from PySide6.QtGui import (
-    QColor, QPalette, QTextCursor, QTextCharFormat,
+    QColor, QPalette, QTextCursor, QTextCharFormat, QTextBlockFormat,
     QFontMetricsF,
 )
 from PySide6.QtCore import Qt, QSettings, QEvent
@@ -92,27 +92,18 @@ class LinkLabel(QLabel):
 
 
 # How far the secondary color steps from the dialog background toward the
-# full text color (0 is the background, invisible; 1 is body text). Dusten
-# wants these lines light: "i wanted a lighter gray that was slightly less
-# light than the original release date color that was too white." The number
-# is his, chosen 2026-08-13 from a rendered ladder of candidates with the
-# measured contrast printed beside each: 0.55, the smallest step clearing
-# the 4.5:1 floor, still read as too dark to him, and he picked 0.34, about
-# 2.3:1 on the light backgrounds (#9c9c9c on cocoa's #ececec). That is a
-# deliberate lowering of the legibility floor for these two SECONDARY lines
-# only: the pixel tests now hold them above the old disabled rendering's
-# 1.6:1, which was reported unreadable, rather than above 4.5:1, and the
-# body text's own contrast is untouched. Raising this back toward
-# legible-everywhere is one number, but it is his to raise.
-SECONDARY_TEXT_BLEND = 0.34
+# full text color (0 is the background, invisible; 1 is body text). The
+# release date, "Released" and the footer line are asides, so they stay
+# lighter than the notes, but still clear the 4.5:1 contrast floor in both
+# themes: 5.2:1 light (#efefef background), 5.0:1 dark (qdark's #19232d).
+SECONDARY_TEXT_BLEND = 0.58
 
 # How far the release-note body text steps from the dialog background toward
 # the full text color. The notes are read in bulk, so they take a darker gray
-# than the two secondary lines above: 0.55 is the smallest step that clears
-# the 4.5:1 contrast floor on the light theme (#6a6a6a on cocoa's #ececec),
-# while the version headings stay in the full text color, so a claim still
-# reads darker than its explainer. One number, and his to move.
-NOTES_TEXT_BLEND = 0.55
+# than the secondary lines above and clear 7:1: 9.6:1 light, 7.5:1 dark. The
+# version headings stay in the full text color, so a heading still reads
+# darker than the notes under it.
+NOTES_TEXT_BLEND = 0.75
 
 
 def blend_toward_text(palette, fraction):
@@ -191,15 +182,26 @@ class SecondaryLabel(LinkLabel):
 # wraps under its own first word (``restyle_notes``).
 ITEM_MARKER = "\u2014 "
 
+# How much larger than the dialog's own font the notes are, in points. The
+# notes are the one thing here read at length, so they get a little more
+# size than the labels around them.
+NOTES_SIZE_STEP = 1.5
+
+# Line height of the notes, as a percentage of the font's own: a wrapped item
+# reads as one paragraph with air between its lines, not a dense block.
+NOTES_LINE_HEIGHT = 150
+
 # Vertical rhythm of the notes, in pixels: between items, above a version
 # heading, and above a type heading (New, Improved, Changed, Fixed) within a
-# version.
-ITEM_GAP = 7
-VERSION_GAP = 26
-TYPE_GAP = 12
+# version. These add to the room the line height already leaves under each
+# line.
+ITEM_GAP = 10
+VERSION_GAP = 40
+TYPE_GAP = 14
 
-# How much larger than the body a version heading is, in points. Two less
-# than the dialog's own title, which stays the largest text on screen.
+# How much larger than the notes a version heading is, in points. With
+# NOTES_SIZE_STEP this stays under the dialog's own title, which remains the
+# largest text on screen.
 VERSION_HEADING_STEP = 4
 
 
@@ -217,7 +219,11 @@ def restyle_notes(doc, palette):
       ``ITEM_MARKER`` and hangs: the left margin is the marker's width and the
       first line is pulled back by the same amount, so a wrapped item lines
       up under its own first word, not under the marker;
-    * all other text, items included, paints in ``notes_text_color``.
+    * every non-heading paragraph, items included, takes
+      ``NOTES_LINE_HEIGHT`` and paints in ``notes_text_color``.
+
+    Sizes are relative to the document's default font, which
+    ``NotesBrowser`` sets ``NOTES_SIZE_STEP`` above the dialog's own.
 
     Colors are written into the character formats rather than set on the
     widget, for the reason ``SecondaryLabel`` gives: an inline color is the
@@ -270,7 +276,7 @@ def restyle_notes(doc, palette):
                                    QTextCursor.KeepAnchor)
                 cursor.setCharFormat(date_fmt)
             bfmt.setTopMargin(0 if first_version else VERSION_GAP)
-            bfmt.setBottomMargin(4)
+            bfmt.setBottomMargin(8)
             first_version = False
             cursor.setPosition(block.position())
             cursor.setBlockFormat(bfmt)
@@ -283,7 +289,7 @@ def restyle_notes(doc, palette):
                                QTextCursor.KeepAnchor)
             cursor.setCharFormat(type_fmt)
             bfmt.setTopMargin(TYPE_GAP)
-            bfmt.setBottomMargin(2)
+            bfmt.setBottomMargin(6)
             cursor.setPosition(block.position())
             cursor.setBlockFormat(bfmt)
         else:
@@ -303,6 +309,8 @@ def restyle_notes(doc, palette):
                 bfmt = block.blockFormat()
             bfmt.setTopMargin(0)
             bfmt.setBottomMargin(ITEM_GAP)
+            bfmt.setLineHeight(NOTES_LINE_HEIGHT,
+                               QTextBlockFormat.LineHeightTypes.ProportionalHeight.value)
             cursor.setPosition(block.position())
             cursor.setBlockFormat(bfmt)
         block = block.next()
@@ -341,7 +349,13 @@ class NotesBrowser(QTextBrowser):
     def render(self):
         """Rebuild the document from the markdown against the current palette."""
         scroll = self.verticalScrollBar().value()
-        self.document().setDefaultFont(self.font())
+        font = self.font()
+        if font.pointSizeF() > 0:
+            font.setPointSizeF(font.pointSizeF() + NOTES_SIZE_STEP)
+        else:
+            # a font set in pixels: the same step, at 4 px to 3 pt
+            font.setPixelSize(font.pixelSize() + round(NOTES_SIZE_STEP * 4 / 3))
+        self.document().setDefaultFont(font)
         try:
             self.setMarkdown(self._markdown)
             restyle_notes(self.document(), self.palette())

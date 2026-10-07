@@ -202,6 +202,74 @@ def test_items_hang_from_a_dash_marker(qapp):
         dlg.deleteLater()
 
 
+def test_items_wrap_under_their_first_word_not_the_marker(qapp):
+    """Rendered, a wrapped item's second line starts where its first word does.
+
+    The margins above are the recipe; this checks the result in the laid-out
+    document at the notes' own font size, so a size change that left the
+    hang measured in a different font would show here.
+    """
+    from PyReconstruct.modules.gui.dialog.whats_new import ITEM_MARKER
+    dlg = _dialog(settings=FakeSettings())
+    try:
+        dlg.resize(760, 640)
+        dlg.show()
+        QApplication.instance().processEvents()
+        block = next(b for b in _blocks(dlg) if "shiny new thing" in b.text())
+        layout = block.layout()
+        assert layout.lineCount() >= 2, "the fixture item did not wrap"
+        first, second = layout.lineAt(0), layout.lineAt(1)
+        first_word = first.cursorToX(len(ITEM_MARKER))[0]
+        marker = first.cursorToX(0)[0]
+        second_start = second.cursorToX(second.textStart())[0]
+        assert second_start == pytest.approx(first_word, abs=1.0)
+        assert second_start > marker + 1
+    finally:
+        dlg.deleteLater()
+
+
+def test_notes_are_larger_than_the_dialog_font_with_open_line_spacing(qapp):
+    """The notes sit NOTES_SIZE_STEP above the dialog's font, and every
+    non-heading paragraph takes the proportional NOTES_LINE_HEIGHT, which
+    the layout honors: a wrapped item's lines are that much taller than the
+    font's own line."""
+    from PySide6.QtGui import QFontMetricsF, QTextBlockFormat
+    from PyReconstruct.modules.gui.dialog.whats_new import (
+        NOTES_SIZE_STEP, NOTES_LINE_HEIGHT,
+    )
+    assert 1 <= NOTES_SIZE_STEP <= 2
+    assert NOTES_LINE_HEIGHT == 150
+    dlg = _dialog(settings=FakeSettings())
+    try:
+        doc = dlg._notes.document()
+        assert doc.defaultFont().pointSizeF() == pytest.approx(
+            dlg._notes.font().pointSizeF() + NOTES_SIZE_STEP)
+        body = [b for b in _blocks(dlg) if not b.blockFormat().headingLevel()]
+        assert body
+        for block in body:
+            fmt = block.blockFormat()
+            assert fmt.lineHeightType() == QTextBlockFormat.LineHeightTypes.ProportionalHeight.value
+            assert fmt.lineHeight() == NOTES_LINE_HEIGHT
+
+        dlg.resize(760, 640)
+        dlg.show()
+        QApplication.instance().processEvents()
+        block = next(b for b in body if "shiny new thing" in b.text())
+        layout = block.layout()
+        pitch = layout.lineAt(1).y() - layout.lineAt(0).y()
+        font_line = QFontMetricsF(doc.defaultFont()).height()
+        assert pitch == pytest.approx(font_line * NOTES_LINE_HEIGHT / 100, rel=0.1)
+    finally:
+        dlg.deleteLater()
+
+
+def test_versions_are_further_apart_than_items(qapp):
+    """The gap above a version heading is clearly larger than between items."""
+    from PyReconstruct.modules.gui.dialog.whats_new import ITEM_GAP, VERSION_GAP
+    assert VERSION_GAP >= 3 * ITEM_GAP
+    assert ITEM_GAP >= 8
+
+
 def test_version_headings_are_large_and_bold_with_the_date_secondary(qapp):
     """A version heading is larger than the body and bold; the date after it
     is body-sized, normal weight, in the secondary gray; and a gap separates
@@ -211,7 +279,7 @@ def test_version_headings_are_large_and_bold_with_the_date_secondary(qapp):
     )
     dlg = _dialog(settings=FakeSettings())
     try:
-        base = dlg._notes.font().pointSizeF()
+        base = dlg._notes.document().defaultFont().pointSizeF()
         secondary = secondary_text_color(dlg._notes.palette()).name()
         headings = [b for b in _blocks(dlg) if b.blockFormat().headingLevel() == 3]
         assert [b.text().split(" ")[0] for b in headings] == ["1.21.0", "1.20.3"]
@@ -300,6 +368,62 @@ def test_notes_gray_follows_the_dark_theme_and_a_live_switch(qapp):
         for dlg in (switched, fresh):
             if dlg is not None:
                 dlg.deleteLater()
+        app.setStyleSheet(previous)
+        app.setPalette(app.style().standardPalette())
+
+
+def _contrast(a, b):
+    """WCAG contrast ratio between two QColors, 1 to 21."""
+    def luminance(color):
+        def channel(v):
+            v /= 255
+            return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+        return (0.2126 * channel(color.red()) + 0.7152 * channel(color.green())
+                + 0.0722 * channel(color.blue()))
+    lo, hi = sorted((luminance(a), luminance(b)))
+    return (hi + 0.05) / (lo + 0.05)
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_notes_and_secondary_grays_clear_their_contrast_floors(qapp, theme):
+    """Against the dialog background, the notes gray clears 7:1 and the
+    secondary gray (date, "Released", footer line) clears 4.5:1, measured on
+    the palette each widget really paints from, in both themes the app has."""
+    import qdarkstyle
+    from PySide6.QtWidgets import QLabel
+    from PyReconstruct.modules.gui.dialog.whats_new import (
+        notes_text_color, secondary_text_color,
+    )
+    app = QApplication.instance()
+    previous = app.styleSheet()
+    dlg = None
+    try:
+        if theme == "dark":
+            app.setStyleSheet(qdarkstyle.load_stylesheet_pyside6())
+        else:
+            app.setStyleSheet("")
+            app.setPalette(app.style().standardPalette())
+        dlg = _dialog(settings=FakeSettings())
+        dlg.show()
+        app.processEvents()
+        date_label = next(lab for lab in dlg.findChildren(QLabel)
+                          if "Released" in lab.text())
+        for widget, color_of, floor in (
+            (dlg._notes, notes_text_color, 7.0),
+            (date_label, secondary_text_color, 4.5),
+            (dlg._byline, secondary_text_color, 4.5),
+        ):
+            palette = widget.palette()
+            bg = palette.color(QPalette.Active, QPalette.Window)
+            ratio = _contrast(color_of(palette), bg)
+            assert ratio >= floor, (
+                f"{theme}: {color_of.__name__} on {bg.name()} is {ratio:.2f}:1"
+            )
+        if theme == "dark":
+            assert dlg._notes.palette().color(QPalette.Window).lightness() < 128
+    finally:
+        if dlg is not None:
+            dlg.deleteLater()
         app.setStyleSheet(previous)
         app.setPalette(app.style().standardPalette())
 
