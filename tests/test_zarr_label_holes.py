@@ -57,17 +57,18 @@ class _InlinePool:
         return True
 
 
-def _export(tmp_path, monkeypatch, contours):
-    """Labels for one 100 by 100 section at 1 px per unit; returns (array, ids)."""
+def _export(tmp_path, monkeypatch, contours, mag=1.0):
+    """Labels for one 100 by 100 pixel section at mag units per pixel;
+    returns (array, ids)."""
     fp = str(tmp_path / "labels.zarr")
     zg = zarr.open(fp, mode="w")
     raw = zg.create_dataset("raw", shape=(1, 100, 100), dtype=np.uint8)
     raw.attrs.update({
         "alignment": {"0": IDENTITY},
-        "window": [0, 0, 100, 100],
+        "window": [0, 0, 100 * mag, 100 * mag],
         "offset": [0, 0, 0],
         "sections": [0],
-        "true_mag": 1.0,
+        "true_mag": mag,
         "voxel_size": [50, 1, 1],
     })
     monkeypatch.setattr(conversions, "ThreadPoolProgBar", _InlinePool)
@@ -152,3 +153,40 @@ def test_island_inside_its_own_hole_keeps_the_label(tmp_path, monkeypatch):
     assert _at(arr, 50, 50) == ids["donut"]  # the island
     assert _at(arr, 35, 35) == 0  # the hole, outside the island
     assert _at(arr, 20, 20) == ids["donut"]  # the ring
+
+
+def _rect(name, x0, y0, x1, y1, negative=False):
+    trace = Trace(name, (255, 0, 0), closed=True)
+    trace.points = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    trace.negative = negative
+    return trace
+
+
+@pytest.mark.parametrize("cut_left, island_px", [
+    (60.4, 430),  # rounds onto the island's edge column
+    (61, 441),  # a pixel away
+    (61.4, 441),  # over a pixel away
+])
+def test_negative_beside_an_island_at_four_units_a_pixel(
+    tmp_path, monkeypatch, cut_left, island_px
+):
+    ## at 4 units a pixel, a negative 0.4 pixels from the island is 1.6 units
+    ## away, yet it rounds onto the island's edge column and clears it, as it
+    ## does with no hole; one a pixel or more away clears none of the island
+    mag = 4.0
+    outer = _square("a", 10 * mag, 90 * mag)
+    hole = _square("a", 30 * mag, 70 * mag, negative=True)
+    island = _square("a", 40 * mag, 60 * mag)
+    cut = _rect("a", cut_left * mag, 45 * mag, 66 * mag, 55 * mag, negative=True)
+
+    arr, ids = _export(
+        tmp_path, monkeypatch, {"a": _Contour([outer, hole, island, cut])}, mag
+    )
+    no_hole, _ = _export(
+        tmp_path, monkeypatch, {"a": _Contour([outer, island, cut])}, mag
+    )
+
+    ## the island's pixels: 40 to 60 pixels across and down
+    pixels = arr[100 - 60:100 - 40 + 1, 40:61]
+    assert int((pixels == ids["a"]).sum()) == island_px
+    np.testing.assert_array_equal(pixels, no_hole[100 - 60:100 - 40 + 1, 40:61])
