@@ -15,7 +15,7 @@ converter prints, and errors exit nonzero before anything is written.
 The output must be a new path: not one that exists, not a drive or file
 system root, and not the source zarr, inside it, or a folder that holds it.
 The script never deletes anything; remove an old output yourself to reuse
-its name.
+its name. That includes the partial output a stopped run leaves behind.
 """
 
 import argparse
@@ -128,12 +128,17 @@ def isWithin(path : str, folder : str):
 def resolvePaths(series : Series, obj_name : str, src_dir : str = "", out_fp : str = ""):
     """Check the source and output and return (out_fp, src_group, scales).
 
+    Both paths are resolved once, links and ".." included, and every check,
+    read and write uses the resolved path. zarr would otherwise collapse
+    "link/.." by text and could name a different folder than the one checked.
     Nothing is written here. cropSections creates the output folder itself,
     in one step that fails if anything got there first.
     """
     # use the override if given, otherwise the location stored in the series
     src_dir = trimSeparators(src_dir or series.src_dir)
     out_fp = trimSeparators(out_fp) if out_fp else defaultOutput(src_dir, obj_name)
+    src_dir = os.path.realpath(src_dir)
+    out_fp = os.path.realpath(out_fp)
     src_group, scales = openSource(src_dir)
 
     if isRoot(out_fp):
@@ -203,8 +208,10 @@ def cropSections(
     """
     # Make the output folder in one step that fails if the path exists, so
     # an output another program made after resolvePaths checked is never
-    # written into. Its parent folders may be new.
-    parent = os.path.dirname(os.path.abspath(new_zarr_fp))
+    # written into. Its parent folders may be new. The path is resolved so
+    # that mkdir and zarr name the same folder.
+    new_zarr_fp = os.path.realpath(new_zarr_fp)
+    parent = os.path.dirname(new_zarr_fp)
     os.makedirs(parent, exist_ok=True)
     try:
         os.mkdir(new_zarr_fp)

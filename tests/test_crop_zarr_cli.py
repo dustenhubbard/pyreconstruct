@@ -288,6 +288,62 @@ def test_output_overlapping_the_source_is_refused(case, kind):
     assert sorted(p.name for p in src.parent.iterdir()) == holder_before
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need extra rights on Windows")
+def test_output_path_through_a_link_and_dotdot_is_written_where_it_resolves(case, tmp_path):
+    """"link/.." means the link target's parent, for the checks and the write.
+
+    Here the path reads as inside the source but resolves outside it, so the
+    crop must land outside and leave the source alone.
+    """
+    jser, src = case
+    (tmp_path / "outside" / "deep").mkdir(parents=True)
+    (src / "link").symlink_to(tmp_path / "outside" / "deep", target_is_directory=True)
+    source_before = _tree(src)
+    entries_before = sorted(p.name for p in src.iterdir())
+
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS,
+        "--out", src / "link" / ".." / "crop",
+    ])
+    assert result.returncode == 0, result.stderr
+    assert _tree(src) == source_before
+    assert sorted(p.name for p in src.iterdir()) == entries_before
+    got = _arrays(tmp_path / "outside" / "crop")
+    want = _expected(src)
+    assert got.keys() == want.keys()
+    for key in want:
+        np.testing.assert_array_equal(got[key], want[key], err_msg=str(key))
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need extra rights on Windows")
+def test_source_path_through_a_link_and_dotdot_reads_where_it_resolves(case, tmp_path):
+    """The zarr that is read is the one the path resolves to, the one checked."""
+    jser, src = case
+    ## a second source whose pixels differ from the first everywhere
+    other = tmp_path / "b" / "imgs.zarr"
+    shutil.copytree(src, other)
+    group = zarr.open_group(str(other), mode="r+")
+    for scale in SCALES:
+        for name in group[f"scale_{scale}"].array_keys():
+            array = group[f"scale_{scale}"][name]
+            array[:] = 256 - array[:].astype(np.uint16)
+    (tmp_path / "b" / "sub").mkdir()
+    (tmp_path / "l").symlink_to(tmp_path / "b" / "sub", target_is_directory=True)
+
+    ## "l/../imgs.zarr" reads as the first source but resolves to the second
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS,
+        "--zarr", tmp_path / "l" / ".." / "imgs.zarr", "--out", out,
+    ])
+    assert result.returncode == 0, result.stderr
+    got = _arrays(out)
+    want = _expected(other)
+    assert got.keys() == want.keys()
+    for key in want:
+        np.testing.assert_array_equal(got[key], want[key], err_msg=str(key))
+
+
 def _make_existing(out, what):
     """Put something at out; return the folder whose files must not change."""
     if what == "zarr":
@@ -330,7 +386,7 @@ def test_existing_output_is_refused_and_left_alone(case, what):
 
     result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", arg])
     assert result.returncode == 1, result.stderr
-    assert "already exists" in result.stderr
+    assert "already exists" in result.stderr and "Remove it" in result.stderr
     assert "@@PROGRESS@@" not in result.stdout
     assert _tree(kept) == before
     assert os.path.lexists(out)
