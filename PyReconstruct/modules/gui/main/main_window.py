@@ -2659,6 +2659,10 @@ class MainWindow(QMainWindow):
                 # the series was just saved -- copy those bytes instead of
                 # re-dumping the entire (potentially very large) jser again
                 shutil.copyfile(self.series.jser_fp, fp)
+            elif self.series.jserSaveRunning():
+                # Backup now, during a save: refused like a nested save, with
+                # a notice and no exception
+                self.series.refuseNestedSave(fp)
             else:
                 self.series.saveJser(fp)
         else:
@@ -2686,7 +2690,8 @@ class MainWindow(QMainWindow):
             close (bool): If true, delete hidden series files.
         Returns:
             (str): "cancel" when nothing was written because the user backed
-                out, either at the save prompt or at the Save As dialog. Every
+                out, either at the save prompt or at the Save As dialog, or
+                because another save of this series was still running. Every
                 caller that goes on to close or discard the series must treat
                 that as an abort.
         """
@@ -2694,6 +2699,16 @@ class MainWindow(QMainWindow):
         ## If welcome series, close without saving
         if self.series.isWelcomeSeries():
             return
+
+        # A save, close or open that arrives while a save is running (the
+        # progress dialog lets queued events through) is refused here, before
+        # anything is written or closed: closing deletes the working folder
+        # the running save is reading. The series stays modified, and
+        # returning instead of raising keeps the exception hook from opening
+        # an error report for a save that was only skipped.
+        if self.series.jserSaveRunning():
+            self.series.refuseNestedSave(self.series.jser_fp)
+            return "cancel"
 
         ## Populate hidden files with unsaved data
         self.saveAllData()
