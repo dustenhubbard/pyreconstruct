@@ -841,9 +841,10 @@ class FieldWidgetMouse(FieldWidgetData):
 
         Until a cut ends, its trace lives outside the section. A save in that
         window wrote the section without it and marked the series saved, and
-        a close then deleted the working folder, so the trace was gone for
-        good. Anything that writes or rereads the field's section calls this
-        first, and the trace goes back exactly as it was, as with Backspace.
+        a close then deleted the working folder, so the trace was permanently
+        lost. Anything that writes or rereads the field's section, or records
+        an undo state of it (saveState), calls this first, and the trace goes
+        back exactly as it was, as with Backspace.
 
         Backing out rather than finishing is deliberate. Finishing would save
         a cut nobody finished: on an open trace the pickup has already dropped

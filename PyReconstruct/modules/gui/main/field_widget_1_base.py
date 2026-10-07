@@ -414,6 +414,15 @@ class FieldWidgetBase:
         
         ALSO updates the lists.
         """
+        # An edit made while a scissors cut is open (an arrow key moving the
+        # alignment, a paste) is recorded here, and the picked-up trace is
+        # outside the section until the cut ends. The state would hold the
+        # section without it, so undoing and redoing the edit took the trace
+        # out again after a save had put it back. The cut is backed out first,
+        # as a save does. A finished cut records its own state here too, and
+        # lineRelease clears is_line_tracing before that, so it is left alone.
+        self.cancelOpenScissorsCut()
+
         # save the current state
         section_states = self.series_states[self.series.current_section]
         section_states.addState(self.section, self.series)

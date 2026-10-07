@@ -477,3 +477,68 @@ def test_undo_or_redo_with_traces_hidden_leaves_the_history_alone(
         "an Undo that changes nothing was left in the history"
     )
     assert len(_matching(field.section, name, points)) == 1
+
+
+@pytest.mark.parametrize("edit", ["alignment", "paste"])
+def test_an_edit_in_the_middle_of_a_cut_records_the_trace(
+    main_window, qapp, edit
+):
+    """An edit made while a cut is open records an undo state, and that state
+    held the section without the picked-up trace. Save put the trace back,
+    then Undo and Redo replayed the state and took it out again, and the next
+    save wrote the section without it. A state recorded during a cut now backs
+    the cut out first, so it holds the trace.
+
+    `Left` moves the alignment of an unlocked section. `Paste` adds a trace;
+    its list refresh happened to clear the record of the pickup, so its state
+    left the trace's object out, but it too was recorded with the cut open."""
+    main_window.show()
+    main_window.activateWindow()
+    field = main_window.field
+    field.section.align_locked = False
+    trace = _pick_trace(field, True)
+    name, points = trace.name, list(trace.points)
+    snum = field.section.n
+    before = _count(field.section, name)
+    tform_before = field.section.tform.getList()
+    if edit == "paste":
+        other = next(
+            t for t in field.section.tracesAsList() if t.name != name
+        )
+        field.section.selected_traces = [other]
+        field.copy()
+        field.deselectAllTraces()
+    qapp.processEvents()
+
+    _pickup(main_window, qapp, trace)
+    if edit == "alignment":
+        field.setFocus()
+        qapp.processEvents()
+        QTest.keyClick(field, Qt.Key_Left)
+        assert field.section.tform.getList() != tform_before
+    else:
+        main_window.paste_act.trigger()
+    qapp.processEvents()
+    assert not field.is_scissoring
+    assert not field.is_line_tracing
+    assert len(_matching(field.section, name, points)) == 1
+
+    main_window.save_act.trigger()
+    qapp.processEvents()
+    assert not field.is_scissoring
+    assert len(_matching(field.section, name, points)) == 1
+
+    main_window.undo_act.trigger()
+    qapp.processEvents()
+    assert len(_matching(field.section, name, points)) == 1
+    main_window.redo_act.trigger()
+    qapp.processEvents()
+    if edit == "alignment":
+        assert field.section.tform.getList() != tform_before
+    assert _count(field.section, name) == before
+    assert len(_matching(field.section, name, points)) == 1, (
+        "Redo took the picked-up trace out again"
+    )
+
+    main_window.saveAllData()
+    assert len(_matching(main_window.series.loadSection(snum), name, points)) == 1
