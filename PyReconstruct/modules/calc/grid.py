@@ -402,7 +402,18 @@ class MergeLosesArea(ValueError):
 
     Raised rather than returned as an empty result: an outline exists, so the
     caller's message for a trace that leaves no outline would be wrong.
+
+        Attributes:
+            pixels (float): the cell size of the grid that lost the area, in
+                image pixels, so the caller can say how thin is too thin
+            coarse (bool): True if that grid was coarsened because its traces
+                span more than MERGE_MAX_CELLS cells
     """
+
+    def __init__(self, cell : float, mag : float):
+        super().__init__(cell, mag)
+        self.pixels = cell / mag
+        self.coarse = cell > mag / MERGE_SUPERSAMPLE
 
 
 def _losesMostOf(shapes : list, outlines : list) -> bool:
@@ -472,7 +483,7 @@ def mergeTracesInField(field_traces : list, mag : float) -> list:
         # a sliver thinner than a cell can survive the rounding above and
         # still close up into a line when the outline is simplified
         if _losesMostOf([shapes[i] for i in group], outlines):
-            raise MergeLosesArea()
+            raise MergeLosesArea(cell, mag)
         result += outlines
     return result
 
