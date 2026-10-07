@@ -22,17 +22,28 @@ back, started a second lasso and timer. The pointer shortcut pressed mid-lasso
 calls `setMouseMode(POINTER)` with the pointer already the tool, and that
 lasso keeps going (pinned below, and in `test_pointer_move_without_press.py`).
 
+The dropped press stays dropped until every button is up (`dropPress`).
+`mousePressEvent` reads the held buttons afresh, so a second button pressed
+while the first is still down used to hand it back: the branch that ignores a
+middle press combined with another kept the left one, and a rectangle trace
+indexed the emptied `current_trace` after all. A right press mid-lasso, from a
+second button or a tablet's barrel button, still opens the context menu, and
+the menu ends the lasso as a tool change does. Before, the lasso kept its
+edge-pan timer through the menu. The release after the menu finishes nothing,
+and the next lasso starts from its own press, not from the old lasso's points.
+
 Driven against a real `MainWindow`, a real `FieldWidget` and a real
 `TraceLayer`, over a writable copy of the fixture series. The mode changes go
-through the real shortcut actions, and the moves and release after them go
-through the field's own `mouseMoveEvent` and `mouseReleaseEvent`, the way Qt
-delivers them. The pinch is a stand-in event: a `QPinchGesture`'s state is set
-only by Qt's gesture manager, so a test cannot build one in the started state.
+through the real shortcut actions, and every press, move and release goes
+through the field's own `mousePressEvent`, `mouseMoveEvent` and
+`mouseReleaseEvent`, reporting the buttons held the way Qt does. The pinch is a
+stand-in event: a `QPinchGesture`'s state is set only by Qt's gesture manager,
+so a test cannot build one in the started state.
 """
 
 import pytest
 
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QPointingDevice
 
 from PyReconstruct.modules.gui.main.field_widget_5_mouse import (
@@ -57,12 +68,22 @@ OBJ = "d03p14"
 HELD = Qt.MouseButton.LeftButton
 UP = Qt.MouseButton.NoButton
 
+# A second button pressed while the first is held. The side button is in for
+# what `get_clicked` does not read: it reports left, middle and right only, so
+# a press of any other button with the left one down reads as a left press.
+SECONDARY = {
+    "middle": Qt.MouseButton.MiddleButton,
+    "right": Qt.MouseButton.RightButton,
+    "side": Qt.MouseButton.XButton1,
+}
+
 
 class FakeMouseEvent:
     """The accessors the mouse handlers read off a mouse event.
 
-    `buttons` is what is down once the event has happened: the left button
-    for a move while it is held, nothing for the release.
+    `buttons` is what is down once the event has happened, the way Qt reports
+    it: for a press, the button pressed and any already held; for a move, what
+    is held; for a release, what is still held, so nothing for the last one.
     """
 
     def __init__(self, x, y, buttons=UP):
@@ -78,6 +99,9 @@ class FakeMouseEvent:
 
     def buttons(self):
         return self._buttons
+
+    def globalPos(self):
+        return QPoint(self._x, self._y)
 
     def pointerType(self):
         return QPointingDevice.PointerType.Generic
@@ -135,20 +159,70 @@ def field_notices(monkeypatch):
     return notices
 
 
-def _visible_trace(field):
+@pytest.fixture
+def field_menu(main_window, monkeypatch):
+    """Record the field's context menu instead of showing it.
+
+    `exec` spins a modal loop offscreen with no one to dismiss it. Returning at
+    once is the menu dismissed without a choice.
+    """
+    shown = []
+    monkeypatch.setattr(
+        main_window.field_menu, "exec", lambda *a, **kw: shown.append(a)
+    )
+    return shown
+
+
+def _visible_trace(field, name=OBJ):
     field.generateView(update=False)
     for trace in field.section_layer.traces_in_view:
-        if trace.name == OBJ:
+        if trace.name == name:
             return trace
-    pytest.fail(f"no trace of {OBJ} is in view on section {field.section.n}")
+    pytest.fail(f"no trace of {name} is in view on section {field.section.n}")
+
+
+def _add_square(field, name, x0, y0, x1, y1):
+    """Put a closed square trace at these pixel corners, and return it."""
+    from PyReconstruct.modules.calc import pixmapPointToField
+    from PyReconstruct.modules.datatypes.trace import Trace
+
+    square = Trace(name, (255, 0, 0), closed=True)
+    for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
+        point = pixmapPointToField(
+            x, y, field.pixmap_dim, field.series.window, field.section.mag
+        )
+        square.add(field.section.tform.map(*point, inverted=True))
+    field.section.addTrace(square, log_event=False)
+    return _visible_trace(field, name)
+
+
+def _box_around(field, trace, margin=15):
+    xs, ys = zip(*field.section_layer.traceToPix(trace))
+    return [
+        (min(xs) - margin, min(ys) - margin),
+        (max(xs) + margin, min(ys) - margin),
+        (max(xs) + margin, max(ys) + margin),
+        (min(xs) - margin, max(ys) + margin),
+    ]
+
+
+def _drag_lasso(field, corners):
+    """Press at the first corner and drag through them all, button still down.
+
+    Through the field's own handlers. The press is put past the single-click
+    window, which is what makes the moves a lasso rather than a click.
+    """
+    assert field.mouse_mode == POINTER
+    field.mousePressEvent(FakeMouseEvent(*corners[0], HELD))
+    field.click_time = 0
+    for x, y in corners:
+        field.mouseMoveEvent(FakeMouseEvent(x, y, HELD))
 
 
 def _start_lasso(window):
     """Press beside a trace and drag a lasso all the way around it.
 
-    Drives the pointer handlers directly, so the test can put the press past
-    the single-click window that separates a click from a lasso. Returns the
-    trace and the edge-pan timer the lasso started.
+    Returns the trace and the edge-pan timer the lasso started.
     """
     window.usepointer_act.trigger()
     field = window.field
@@ -157,23 +231,7 @@ def _start_lasso(window):
     trace = _visible_trace(field)
     field.section.selected_traces.clear()
 
-    xs, ys = zip(*field.section_layer.traceToPix(trace))
-    margin = 15
-    corners = [
-        (min(xs) - margin, min(ys) - margin),
-        (max(xs) + margin, min(ys) - margin),
-        (max(xs) + margin, max(ys) + margin),
-        (min(xs) - margin, max(ys) + margin),
-    ]
-
-    field.lclick = True
-    field.single_click = True
-    field.pointerPress(FakeMouseEvent(*corners[0], HELD))
-    # past the single-click window, which is what makes the moves a lasso
-    field.single_click = False
-    field.click_time = 0
-    for x, y in corners:
-        field.pointerMove(FakeMouseEvent(x, y, HELD))
+    _drag_lasso(field, _box_around(field, trace))
 
     # true before the fix as well, so a test fails on its own subject
     assert field.is_selecting_traces is True
@@ -326,4 +384,201 @@ def test_a_pinch_mid_lasso_drops_it_and_its_press(
         assert after_moves == []
 
     _assert_lasso_dropped(field, timer)
+    assert field_notices == []
+
+
+def _pinch(field):
+    started = Qt.GestureState.GestureStarted
+    updated = Qt.GestureState.GestureUpdated
+    finished = Qt.GestureState.GestureFinished
+    field.gestureEvent(FakeGestureEvent(FakePinch(started, 200, 150, 1.0)))
+    field.gestureEvent(FakeGestureEvent(FakePinch(updated, 210, 150, 1.5)))
+    field.gestureEvent(FakeGestureEvent(FakePinch(finished, 210, 150, 1.5)))
+
+
+@pytest.mark.parametrize("secondary", list(SECONDARY))
+@pytest.mark.parametrize(
+    "interruption, shape",
+    [
+        ("usectrace_act", "rect"),
+        ("usectrace_act", "trace"),
+        ("useknife_act", "trace"),
+        ("usestamp_act", "trace"),
+        ("usepanzoom_act", "trace"),
+        ("usehost_act", "trace"),
+        ("pinch", "trace"),
+    ],
+    ids=[
+        "closed-rectangle",
+        "closed-trace",
+        "knife",
+        "stamp",
+        "panzoom",
+        "host",
+        "pinch",
+    ],
+)
+def test_a_second_button_does_not_hand_the_dropped_press_back(
+    main_window,
+    main_window_dialogs,
+    field_notices,
+    field_menu,
+    interruption,
+    shape,
+    secondary,
+):
+    """The press a tool change or a pinch dropped stays dropped while held.
+
+    A second press used to hand the left button back to the new tool: a
+    rectangle trace raised `IndexError` on the emptied `current_trace`,
+    Pan/Zoom raised `AttributeError` or moved the view, the pencil, the knife
+    and the stamp drew, Host started a link, and the pointer started another
+    lasso. A right press opened the menu. It is ignored now as well, so no
+    menu opens under a press the field has let go of.
+    """
+    field = main_window.field
+    field.closed_trace_shape = shape
+    trace, timer = _start_lasso(main_window)
+    points_before = [tuple(p) for p in trace.points]
+    count_before = len(field.section.tracesAsList())
+
+    if interruption == "pinch":
+        _pinch(field)
+    else:
+        getattr(main_window, interruption).trigger()
+    _assert_lasso_dropped(field, timer)
+    # after the interruption: the pinch moves the view itself
+    window_before = list(field.series.window)
+
+    # the first button is still down; press another with it, move, and let go
+    # of them one at a time
+    x, y = field.section_layer.traceToPix(trace)[0]
+    both = HELD | SECONDARY[secondary]
+    field.mousePressEvent(FakeMouseEvent(x - 20, y - 10, both))
+    field.mouseMoveEvent(FakeMouseEvent(x - 10, y - 5, both))
+    field.mouseMoveEvent(FakeMouseEvent(x, y, both))
+    after_moves = list(field.current_trace)
+    field.mouseReleaseEvent(FakeMouseEvent(x, y, HELD))
+    field.mouseMoveEvent(FakeMouseEvent(x + 5, y + 5, HELD))
+    field.mouseReleaseEvent(FakeMouseEvent(x + 5, y + 5))
+
+    assert after_moves == []
+    _assert_lasso_dropped(field, timer)
+    assert len(field.section.tracesAsList()) == count_before
+    assert [tuple(p) for p in trace.points] == points_before
+    assert list(field.series.window) == window_before
+    assert field.hosted_trace is None
+    assert field_menu == []
+    assert main_window_dialogs.dialogs == []
+    assert field_notices == []
+
+    # every button is up, so the press is over: the next one is a fresh press
+    main_window.usepointer_act.trigger()
+    corners = _box_around(field, trace)
+    _drag_lasso(field, corners)
+    field.mouseReleaseEvent(FakeMouseEvent(*corners[-1]))
+    assert trace in field.section.selected_traces
+
+
+def test_a_lost_release_does_not_cost_the_next_press(
+    main_window, main_window_dialogs, field_notices, field_menu
+):
+    """A press of one button alone is a fresh press.
+
+    The dropped button cannot still be down, whether or not its release
+    reached the field, so the drop does not swallow it.
+    """
+    field = main_window.field
+    trace, timer = _start_lasso(main_window)
+    main_window.useknife_act.trigger()
+    main_window.usepointer_act.trigger()
+    _assert_lasso_dropped(field, timer)
+
+    # no release: the next thing the field hears is a fresh press
+    corners = _box_around(field, trace)
+    _drag_lasso(field, corners)
+    field.mouseReleaseEvent(FakeMouseEvent(*corners[-1]))
+
+    assert trace in field.section.selected_traces
+    assert field_menu == []
+    assert field_notices == []
+
+
+@pytest.mark.parametrize("barrel", ["on its own", "with the pen still down"])
+def test_a_barrel_press_mid_lasso_ends_it_before_the_menu(
+    main_window, main_window_dialogs, field_notices, field_menu, barrel
+):
+    """The right press still opens the menu; the lasso under it ends.
+
+    Both shapes a tablet's barrel press arrives in: with the tip, or, when the
+    tablet stops reporting the tip for one event, on its own. The second leaves
+    nothing in the event to say a lasso is under way.
+    """
+    main_window.usepointer_act.trigger()
+    field = main_window.field
+    # placed where the two lassos' points, run together, also go around it
+    _add_square(field, "old-region", 75, 50, 90, 65)
+    _add_square(field, "new-region", 150, 150, 170, 170)
+    field.section.selected_traces.clear()
+
+    _drag_lasso(field, [(40, 40), (100, 40), (100, 100), (40, 100)])
+    timer = field.mouse_boundary_timer
+    assert field.is_selecting_traces is True
+    assert timer is not None and timer.isActive()
+
+    if barrel == "on its own":
+        field.mousePressEvent(FakeMouseEvent(60, 60, Qt.MouseButton.RightButton))
+    else:
+        field.mousePressEvent(
+            FakeMouseEvent(60, 60, HELD | Qt.MouseButton.RightButton)
+        )
+    assert len(field_menu) == 1
+    after_menu = (
+        field.is_selecting_traces,
+        field.mouse_boundary_timer,
+        timer.isActive(),
+        list(field.current_trace),
+    )
+    if barrel == "with the pen still down":
+        field.mouseReleaseEvent(FakeMouseEvent(60, 60, HELD))
+    field.mouseReleaseEvent(FakeMouseEvent(60, 60))
+
+    # a fresh lasso somewhere else selects what it goes around, and only that
+    corners = [(140, 140), (180, 140), (180, 180), (140, 180)]
+    _drag_lasso(field, corners)
+    lasso = list(field.current_trace)
+    field.mouseReleaseEvent(FakeMouseEvent(*corners[-1]))
+
+    assert [t.name for t in field.section.selected_traces] == ["new-region"]
+    assert lasso == corners
+    assert after_menu == (False, None, False, [])
+    assert field_notices == []
+
+
+def test_the_release_after_the_menu_still_clears_the_pointers_points(
+    main_window, main_window_dialogs, field_notices, field_menu
+):
+    """A barrel press before the lasso starts, while it could still be a click.
+
+    The pointer keeps those points in `current_trace` too, and `pointerRelease`
+    is what clears them. Only a dropped press's release is held back from the
+    tools, so the release after this menu still reaches it.
+    """
+    main_window.usepointer_act.trigger()
+    field = main_window.field
+    # a single-click window that lasts, however slow the run
+    field.max_click_time = 60
+
+    field.mousePressEvent(FakeMouseEvent(40, 40, HELD))
+    field.mouseMoveEvent(FakeMouseEvent(45, 45, HELD))
+    assert field.is_selecting_traces is False
+    assert field.current_trace == [(45, 45)]
+
+    field.mousePressEvent(FakeMouseEvent(45, 45, Qt.MouseButton.RightButton))
+    assert len(field_menu) == 1
+    field.mouseReleaseEvent(FakeMouseEvent(45, 45))
+
+    corners = [(140, 140), (180, 140), (180, 180), (140, 180)]
+    _drag_lasso(field, corners)
+    assert field.current_trace == corners
     assert field_notices == []

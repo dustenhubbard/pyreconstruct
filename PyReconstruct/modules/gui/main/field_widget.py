@@ -224,6 +224,14 @@ class FieldWidget(QWidget, FieldWidgetView):
         
         Overwritten from QWidget class.
         """
+        # A press made while a dropped press is still held joins it, and
+        # reading the held buttons below would hand the dropped one back
+        # (`dropPress`).
+        if self.press_dropped:
+            if len(event.buttons()) > 1:
+                return
+            self.press_dropped = False
+
         # check what was clicked
         self.lclick, self.mclick, self.rclick = get_clicked(event)
 
@@ -299,6 +307,11 @@ class FieldWidget(QWidget, FieldWidgetView):
         )
         
         if self.rclick and not exclude_context:  # open context menu
+
+            # The menu takes the press, and a lasso under way ends as it does
+            # on a tool change. Mid-lasso, this is a second button or a
+            # tablet's barrel button.
+            self.cancelLasso()
 
             clicked_label = None
 
@@ -385,7 +398,9 @@ class FieldWidget(QWidget, FieldWidgetView):
             self.lclick = False
             self.rclick = False
             self.mclick = False
-        
+            # every button is up, so a dropped press is over (`dropPress`)
+            self.press_dropped = False
+
         # panzoom if middle button clicked
         if self.mclick:
             self.mousePanzoomMove(event)
@@ -425,7 +440,10 @@ class FieldWidget(QWidget, FieldWidgetView):
         """
         # wait until all buttons are released
         if event.buttons(): return
-        
+
+        # Every button is up, so a dropped press is over (`dropPress`).
+        press_dropped, self.press_dropped = self.press_dropped, False
+
         # ignore ALL finger touch for windows
         if os.name == "nt":
             if event.pointerType() == QPointingDevice.PointerType.Finger:
@@ -447,11 +465,10 @@ class FieldWidget(QWidget, FieldWidgetView):
             self.trigger_edit_flag = False
             return
 
-        # A press dropped mid-gesture (`cancelLasso`) leaves no click for a
-        # tool to finish. Host acts on any release, so without this it would
-        # start a link from a press it never saw.
-        if not (self.lclick or self.rclick):
-            self.pointer_press_recorded = False
+        # A dropped press leaves no tool anything to finish. Host acts on any
+        # release, so without this it would start a link from a press it never
+        # saw.
+        if press_dropped:
             self.single_click = False
             return
 
