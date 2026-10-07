@@ -2610,6 +2610,10 @@ class MainWindow(QMainWindow):
         """Write current series and section data into hidden files."""
         if self.series.isWelcomeSeries():
             return
+        # Save, Save As, Close, Open and New all write through here, so a
+        # scissors cut still open puts its trace back first; otherwise the
+        # section is written without it
+        self.field.cancelOpenScissorsCut()
         # # save the trace palette
         # self.series.palette_traces = []
         # for button in self.mouse_palette.palette_buttons:  # get trace palette
@@ -4303,6 +4307,25 @@ class MainWindow(QMainWindow):
             Params:
                 redo (bool): True if redo should be performed
         """
+        # An open scissors cut is settled before the save below, which would
+        # otherwise back it out with no undo state and leave this Undo to take
+        # the edit made before the cut. Undo finishes the cut, so the cut is
+        # what it takes back and Redo can bring it back. Redo backs the cut
+        # out instead: finishing it would be a new edit, and a new edit ends
+        # every redo, the one asked for included.
+        if redo:
+            self.field.cancelOpenScissorsCut()
+        elif self.field.hide_trace_layer:
+            # With the trace layer hidden, newTrace refuses the finished cut,
+            # so finishing would only put the trace back with a state that
+            # changes nothing, end the redo, and leave undoState (which does
+            # nothing while hidden) to skip it. The cut is backed out with no
+            # state instead, and that is the whole Undo, as taking back the
+            # finished cut is with traces shown.
+            if self.field.cancelOpenScissorsCut():
+                return
+        else:
+            self.field.finishOpenScissorsCut()
         self.saveAllData()
         can_3D, can_2D, linked = self.field.series_states.canUndo(redo=redo)
         def act2D():

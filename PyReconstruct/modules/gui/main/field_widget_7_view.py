@@ -279,6 +279,17 @@ class FieldWidgetView(FieldWidgetPaint):
         if snum not in self.series.sections:
             return
 
+        # A gesture still open ends first, as paging does
+        # (MainWindow.changeSection). This is the one jump that reaches the
+        # field's changeSection without going through there, and a scissors
+        # cut left open across it belonged to the section the field has left:
+        # the next save backed it out into the section on screen, and wrote
+        # the one it came from without the trace. Within the section the view
+        # still moves, and the cut's points are pixels of the view it was
+        # open in, so it ends here too rather than landing where those pixels
+        # point afterwards.
+        self.endPendingEvents()
+
         if self.series.current_section != snum:
             self.changeSection(snum)
         
