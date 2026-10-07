@@ -22,6 +22,7 @@ from PyReconstruct.modules.calc import (
     pixmapPointToField,
     getExterior, 
     mergeTracesInField, 
+    MergeLosesArea,
     reducePoints,
     cutTraces,
     uncuttable_closed_traces,
@@ -1410,7 +1411,18 @@ class FieldWidgetTrace(FieldWidgetBase):
                 # (fork issue #423)
                 field_traces.append(tform.mapPointsArray(trace.points).tolist())
             
-            merged_traces = mergeTracesInField(field_traces, self.section.mag)
+            try:
+                merged_traces = mergeTracesInField(field_traces, self.section.mag)
+            except MergeLosesArea:
+                # an outline exists, but a sliver thinner than the merge grid
+                # closed up in it; refuse before deleting, as below
+                notify(
+                    "The merge would lose most of the area of at least one "
+                    "trace, so the traces were left as they are. This happens "
+                    "when a trace is much thinner than an image pixel. Draw it "
+                    "wider to merge it."
+                )
+                return False
 
             # A merge must not delete what its result leaves out: a trace
             # smaller than a grid cell leaves no outline behind, and the old
