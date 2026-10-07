@@ -14,6 +14,8 @@ converter prints, and errors exit nonzero before anything is written.
 
 The output must be a new path: not one that exists, not a drive or file
 system root, and not the source zarr, inside it, or a folder that holds it.
+Neither path may have a "." or ".." part after a folder name; "./" and "../"
+at the start are fine.
 The script never deletes anything; remove an old output yourself to reuse
 its name. That includes the partial output a stopped run leaves behind.
 """
@@ -57,6 +59,25 @@ def trimSeparators(path : str, pathmod=os.path):
     if trimmed in ("", pathmod.splitdrive(path)[0]):
         return path
     return trimmed
+
+
+def checkPlainPath(path : str, what : str):
+    """Raise if path has a "." or ".." part after a named part.
+
+    After a name that may be a link, "." and ".." mean different folders to
+    the file system and to zarr, which collapses them as text, and a link to
+    a missing folder given as "link/." would not count as existing. Leading
+    "./" and "../" are kept: they start from the current folder, which is
+    already a real path, so both read them the same way.
+    """
+    seps = os.sep + (os.altsep or "")
+    named = False
+    for part in re.split(f"[{re.escape(seps)}]+", path):
+        if part in (".", ".."):
+            if named:
+                raise CropError(f"Use a {what} path without . or .. parts: {path!r}")
+        elif part:
+            named = True
 
 
 def isRoot(path : str):
@@ -128,15 +149,17 @@ def isWithin(path : str, folder : str):
 def resolvePaths(series : Series, obj_name : str, src_dir : str = "", out_fp : str = ""):
     """Check the source and output and return (out_fp, src_group, scales).
 
-    Both paths are resolved once, links and ".." included, and every check,
-    read and write uses the resolved path. zarr would otherwise collapse
-    "link/.." by text and could name a different folder than the one checked.
+    A "." or ".." after a folder name is refused (checkPlainPath). Both
+    paths are then resolved once, links included, and every check, read and
+    write uses the resolved path.
     Nothing is written here. cropSections creates the output folder itself,
     in one step that fails if anything got there first.
     """
     # use the override if given, otherwise the location stored in the series
     src_dir = trimSeparators(src_dir or series.src_dir)
     out_fp = trimSeparators(out_fp) if out_fp else defaultOutput(src_dir, obj_name)
+    checkPlainPath(src_dir, "source")
+    checkPlainPath(out_fp, "output")
     given_out = out_fp
     src_dir = os.path.realpath(src_dir)
     out_fp = os.path.realpath(out_fp)
@@ -215,6 +238,7 @@ def cropSections(
     # an output another program made after resolvePaths checked is never
     # written into. Its parent folders may be new. The path is resolved so
     # that mkdir and zarr name the same folder.
+    checkPlainPath(new_zarr_fp, "output")
     if os.path.lexists(new_zarr_fp):
         raise outputExists(new_zarr_fp)
     new_zarr_fp = os.path.realpath(new_zarr_fp)
