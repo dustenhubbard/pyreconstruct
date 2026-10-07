@@ -87,6 +87,7 @@ class FieldWidgetBase:
         self.is_moving_trace : bool         = False
         self.is_panzooming : bool           = False
         self.is_gesturing : bool            = False
+        self.pinch_dropped_press : bool     = False  # see gestureEvent
         self.is_scissoring : bool           = False
         self.scissors_index : int           = None  # the picked-up trace's place in its contour
         self.is_z_tracing : bool            = False
@@ -213,6 +214,7 @@ class FieldWidgetBase:
         ## Mouse tool defaults
         self.is_panzooming        = False
         self.is_gesturing         = False
+        self.pinch_dropped_press  = False
         self.is_line_tracing      = False
         self.is_moving_trace      = False
         self.is_selecting_traces  = False

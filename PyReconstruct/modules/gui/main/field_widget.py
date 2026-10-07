@@ -224,6 +224,13 @@ class FieldWidget(QWidget, FieldWidgetView):
             # from before the pinch.
             self.is_gesturing = False
             self.is_panzooming = False
+            # A press made during the pinch was ignored, so no tool saw it,
+            # and its release must not finish anything either.
+            if self.lclick or self.rclick or self.mclick:
+                self.lclick, self.rclick, self.mclick = False, False, False
+                self.single_click = False
+                self.pointer_press_recorded = False
+                self.pinch_dropped_press = True
             self.generateView()
 
     def mousePressEvent(self, event):
@@ -281,6 +288,9 @@ class FieldWidget(QWidget, FieldWidgetView):
             self.clicked_y = self.mouse_y
         self.click_time = time.time()
         self.single_click = True
+        # a new press starts afresh, even if the dropped one's release never
+        # reached the field
+        self.pinch_dropped_press = False
 
         # ignore ALL finger touch for windows
         if os.name == "nt":
@@ -440,6 +450,12 @@ class FieldWidget(QWidget, FieldWidgetView):
         
         # if any finger touch
         if self.is_gesturing:
+            return
+
+        # the press a canceled pinch dropped finishes nothing
+        if self.pinch_dropped_press:
+            self.pinch_dropped_press = False
+            self.single_click = False
             return
         
         # panzoom if middle button

@@ -10,6 +10,10 @@ Qt cancels a running pinch only when a gesture on a parent widget with
 goes back to the one from before the pinch rather than to where a finished
 pinch would have left it.
 
+A press made during the pinch was ignored, so no tool saw it. A cancel drops it
+too, and its release finishes nothing: before, a stamp was placed, and a closed
+trace in combo mode indexed an empty trace.
+
 The pinch is a stand-in event: a `QPinchGesture`'s state is set only by Qt's
 gesture manager, so a test cannot build one in a given state.
 """
@@ -19,7 +23,11 @@ import pytest
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QPointingDevice
 
-from PyReconstruct.modules.gui.main.field_widget_5_mouse import PANZOOM
+from PyReconstruct.modules.gui.main.field_widget_5_mouse import (
+    CLOSEDTRACE,
+    PANZOOM,
+    STAMP,
+)
 
 pytestmark = pytest.mark.gui
 
@@ -145,3 +153,66 @@ def test_a_finished_pinch_still_commits_its_zoom(main_window):
     assert field.series.window != window_before
     # zoomed in 1.5x, so the window is two thirds as wide
     assert field.series.window[2] == pytest.approx(window_before[2] / 1.5)
+
+
+def _trace_count(field):
+    return sum(len(contour) for contour in field.section.contours.values())
+
+
+def _press_during_canceled_pinch(field):
+    """Press the left button mid-pinch, cancel the pinch, then let go."""
+    field.generateView(update=False)
+    field.gestureEvent(FakeGestureEvent(FakePinch(STARTED, 200, 150, 1.0)))
+    field.gestureEvent(FakeGestureEvent(FakePinch(UPDATED, 210, 150, 1.5)))
+    field.mousePressEvent(FakeMouseEvent(40, 50, Qt.MouseButton.LeftButton))
+    field.gestureEvent(FakeGestureEvent(FakePinch(CANCELED, 210, 150, 1.5)))
+    field.mouseReleaseEvent(FakeMouseEvent(40, 50))
+
+
+def test_a_press_made_during_a_canceled_pinch_places_no_stamp(main_window):
+    main_window.usestamp_act.trigger()
+    field = main_window.field
+    assert field.mouse_mode == STAMP
+    traces_before = _trace_count(field)
+
+    _press_during_canceled_pinch(field)
+
+    assert _trace_count(field) == traces_before
+    assert (field.lclick, field.rclick, field.mclick) == (False, False, False)
+
+    # the dropped press is over, so the next click places a stamp
+    field.mousePressEvent(FakeMouseEvent(60, 70, Qt.MouseButton.LeftButton))
+    field.mouseReleaseEvent(FakeMouseEvent(60, 70))
+    assert _trace_count(field) == traces_before + 1
+
+
+def test_a_press_made_during_a_canceled_pinch_starts_no_trace(main_window):
+    main_window.usectrace_act.trigger()
+    field = main_window.field
+    assert field.mouse_mode == CLOSEDTRACE
+    assert field.series.getOption("trace_mode") == "combo"
+
+    _press_during_canceled_pinch(field)
+
+    assert field.is_line_tracing is False
+    assert field.current_trace == []
+
+
+def test_a_press_released_before_the_cancel_does_not_eat_the_next_click(
+    main_window,
+):
+    """The pinch ignores the release too, so the cancel sees a stale press."""
+    main_window.usestamp_act.trigger()
+    field = main_window.field
+    traces_before = _trace_count(field)
+
+    field.generateView(update=False)
+    field.gestureEvent(FakeGestureEvent(FakePinch(STARTED, 200, 150, 1.0)))
+    field.mousePressEvent(FakeMouseEvent(40, 50, Qt.MouseButton.LeftButton))
+    field.mouseReleaseEvent(FakeMouseEvent(40, 50))
+    field.gestureEvent(FakeGestureEvent(FakePinch(CANCELED, 200, 150, 1.0)))
+    assert _trace_count(field) == traces_before
+
+    field.mousePressEvent(FakeMouseEvent(60, 70, Qt.MouseButton.LeftButton))
+    field.mouseReleaseEvent(FakeMouseEvent(60, 70))
+    assert _trace_count(field) == traces_before + 1
