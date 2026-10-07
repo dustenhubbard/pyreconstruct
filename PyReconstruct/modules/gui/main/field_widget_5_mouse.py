@@ -38,6 +38,13 @@ class FieldWidgetMouse(FieldWidgetData):
                 mode (int): number corresponding to mouse mode
         """
         self.endPendingEvents()  # end pending mouse events
+
+        # A real tool change ends a lasso. The pointer shortcut pressed
+        # mid-lasso is not one: it calls this with the pointer already the
+        # tool, and that lasso keeps going.
+        if mode != self.mouse_mode:
+            self.cancelLasso()
+
         self.mouse_mode = mode
 
         ## Set cursor icon
@@ -333,6 +340,31 @@ class FieldWidgetMouse(FieldWidgetData):
             "The traces you were dragging were put back.\n"
             "A drag has to end on the section it started on."
         )
+
+        return True
+
+    def cancelLasso(self) -> bool:
+        """Drop a lasso in progress without selecting anything.
+
+        Only ``pointerRelease`` ends a lasso, and only a release in pointer
+        mode outside a pinch reaches it. A tool change or a pinch with the
+        button still down left the lasso flag, its points and the edge-pan
+        timer behind: the points stayed on screen in the new tool's pen, and
+        the timer kept panning the view whenever the cursor came near an edge.
+
+        Dropped rather than committed: a selection made by a tool change or a
+        pinch is one nobody asked for. Nothing is lost, so there is no notice.
+
+            Returns:
+                (bool): True if a lasso was in progress and was dropped
+        """
+        if not self.is_selecting_traces:
+            return False
+
+        self.is_selecting_traces = False
+        self.current_trace = []
+        self.deactivateMouseBoundaryTimer()
+        self.update()
 
         return True
 

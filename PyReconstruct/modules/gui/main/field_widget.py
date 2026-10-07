@@ -194,6 +194,10 @@ class FieldWidget(QWidget, FieldWidgetView):
 
         if g.state() == Qt.GestureState.GestureStarted:
             self.is_gesturing = True
+            # Every mouse event is ignored while gesturing, the release
+            # included, so a lasso under way could never finish, and the pinch
+            # moves the view out from under its points.
+            self.cancelLasso()
             p = g.centerPoint()
             if os.name == "nt":
                 p = self.mapFromGlobal(p)
