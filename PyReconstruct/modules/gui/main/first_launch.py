@@ -72,13 +72,12 @@ def whats_new_suppressed(stored):
 # unreachable; it stops being pre-expanded.
 ON_DEMAND_CAP = 3
 
-# Provenance line shown below the notes in every framing of the What's-new dialog,
-# and near the footer of the GitHub release body. Maintainer-approved verbatim: it
-# names who maintains this build without naming any other repository, so a lab that
-# installs it knows whose build it is and reports its issues to the right person.
-# It is a quiet provenance line, not a boast; keep it a distinct field so it reads
-# as an aside below the notes rather than as one more release bullet.
-MAINTAINER_BYLINE = "An independent build of PyReconstruct, maintained by Dusten Hubbard."
+# Provenance line shown below the notes in every framing of the What's-new dialog.
+# Maintainer-approved verbatim: it says what this build is without naming any
+# other repository. It is a quiet provenance line, not a boast; keep it a distinct
+# field so it reads as an aside below the notes rather than as one more release
+# bullet. Short enough to sit on one line of the footer.
+MAINTAINER_BYLINE = "A fork of PyReconstruct."
 
 # Where the byline points, and which word carries the link. The project name
 # inside the provenance line is a link to the home page, so a lab that wants to
