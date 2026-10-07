@@ -21,6 +21,8 @@ What is pinned here:
     from the Finder leaves B unchanged
   * a notice from a Delete or Combine that B opens under ends the action
     without touching the closed list
+  * a pixel-dust or Duplicates scan of A that B opens under, at its last
+    progress update, opens no list on B
 """
 import shutil
 
@@ -356,4 +358,85 @@ def test_b_opening_under_a_notice_from_combine_ends_it_quietly(
     assert len(notices) == 1 and "changed" in notices[0]
     assert window.series is not first
     assert _counts(window.series, snum)["SWITCH_DUP"] == 2
+    assert not window.series.modified
+
+
+def _b_opens_as_the_scan_finishes(window, tmp_path, qtbot):
+    """Open B from the Finder at the last progress update of A's next scan.
+
+    The scan's progress dialog runs the event loop on each update, so a
+    .jser opened from the Finder reaches the window there. Returns the
+    progress values A's scan reported.
+    """
+    from PyReconstruct.modules.backend.progress import NullProgressReporter
+    reported = []
+
+    class OpensB(NullProgressReporter):
+        def set_progress(self, percent):
+            reported.append(percent)
+            if percent >= 100 and window.series is first:
+                _open_copy(window, tmp_path, qtbot, from_finder=True)
+
+    first = window.series
+    first.setProgressReporter(OpensB)
+    return reported
+
+
+def _open_lists(window, kind):
+    """The clean-up lists of one kind still open on the window."""
+    return [
+        d for d in window.findChildren(kind) if isValid(d) and d.isVisible()
+    ]
+
+
+def test_a_pixel_dust_scan_b_opens_under_lists_nothing_on_b(
+    main_window, main_window_dialogs, confirmed, finder, tmp_path, qtbot
+):
+    from PyReconstruct.modules.gui.dialog.malformed_contours import (
+        PixelDustDialog,
+    )
+    window = main_window
+    snum = _plant(window, "SWITCH_DUST", DUST)
+    first = window.series
+    saved = _counts(first, snum)
+    reported = _b_opens_as_the_scan_finishes(window, tmp_path, qtbot)
+    main_window_dialogs.responses = [([10.0], True)]
+
+    window.removePixelDustTraces()
+
+    assert 100 in reported
+    assert window.series is not first
+    lists = _open_lists(window, PixelDustDialog)
+    for dialog in lists:
+        dialog.deleteAllContours()
+    assert lists == []
+    assert _counts(window.series, snum) == saved
+    assert not window.series.modified
+
+
+def test_a_duplicates_scan_b_opens_under_lists_nothing_on_b(
+    main_window, main_window_dialogs, confirmed, finder, tmp_path, qtbot
+):
+    from PyReconstruct.modules.gui.dialog.malformed_contours import (
+        DuplicateTracesDialog,
+    )
+    window = main_window
+    snum = _plant(window, "SWITCH_DUP", SQUARE, copies=2)
+    first = window.series
+    saved = _counts(first, snum)
+    assert saved["SWITCH_DUP"] == 2
+    reported = _b_opens_as_the_scan_finishes(window, tmp_path, qtbot)
+    main_window_dialogs.responses = [
+        ([0.95, [("check locked traces", False)]], True)
+    ]
+
+    window.reviewDuplicateTraces()
+
+    assert 100 in reported
+    assert window.series is not first
+    lists = _open_lists(window, DuplicateTracesDialog)
+    for dialog in lists:
+        dialog.combineAll()
+    assert lists == []
+    assert _counts(window.series, snum) == saved
     assert not window.series.modified
