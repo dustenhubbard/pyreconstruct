@@ -99,6 +99,60 @@ def test_a_later_section_imports_instead_of_being_skipped(tmp_path, real_series)
     assert "autoseg_5" in real_series.loadSection(s1).contours
 
 
+## one square at label pixel rows 18:28, columns 10:20 on a 32 by 32 raw at
+## 4 nm, so its trace is x 0.04 to 0.076, y 0.02 to 0.056 in the field
+SQUARE = [(0.04, 0.056), (0.04, 0.02), (0.076, 0.02), (0.076, 0.056)]
+
+
+def _one_square(tmp_path, sections, label_attrs):
+    """A 2 by 32 by 32 raw with one (1, 1, 32, 32) label section holding label 5."""
+    zg = zarr.open(str(tmp_path / "square.zarr"), "w")
+    raw = zg.create_dataset("raw", shape=(2, 32, 32), dtype=np.uint8)
+    raw.attrs.update({
+        "voxel_size": [50, 4, 4], "true_mag": 0.004,
+        "window": [0, 0, 0.128, 0.128], "sections": list(sections),
+        "alignment": {str(s): Transform.identity().getList() for s in sections},
+    })
+    labels = zg.create_dataset("labels_x", shape=(1, 1, 32, 32), dtype=np.uint64)
+    labels[0, 0, 18:28, 10:20] = 5
+    labels.attrs.update(label_attrs)
+    return zg
+
+
+def _imported(zg, snum, series):
+    before = set(series.loadSection(snum).contours)
+    conversions.setDT()
+    conversions.importSection(zg, "labels_x", snum, series)
+    contours = series.loadSection(snum).contours
+    return {
+        name: [[tuple(p) for p in trace.points] for trace in contours[name]]
+        for name in contours if name not in before
+    }
+
+
+def test_a_four_entry_offset_lands_on_its_section(tmp_path, real_series):
+    """A `[0, 50, 0, 0]` offset is one section down, not 50 nm up the page."""
+    s0, s1 = sorted(real_series.sections)[:2]
+    zg = _one_square(tmp_path, (s0, s1), {
+        "voxel_size": [1, 50, 4, 4], "offset": [0, 50, 0, 0],
+    })
+
+    assert _imported(zg, s0, real_series) == {}
+    assert _imported(zg, s1, real_series) == {"autoseg_5": [SQUARE]}
+
+
+def test_three_units_over_a_four_entry_size_keep_the_grid(tmp_path, real_series):
+    """`[1, 0.05, 0.004, 0.004]` in µm is the 50 by 4 by 4 nm grid, not 1000 by 50 by 4."""
+    s0, s1 = sorted(real_series.sections)[:2]
+    zg = _one_square(tmp_path, (s0, s1), {
+        "voxel_size": [1, 0.05, 0.004, 0.004], "units": ["um", "um", "um"],
+    })
+
+    resolution, _ = conversions.get_label_resolutions(zg["labels_x"], zg["raw"], real_series)
+    assert resolution == [50, 4, 4]
+    assert _imported(zg, s0, real_series) == {"autoseg_5": [SQUARE]}
+
+
 def test_several_channels_are_refused_before_any_section(tmp_path):
     fp = str(tmp_path / "channels.zarr")
     zg = zarr.open(fp, "w")
@@ -130,7 +184,7 @@ def test_a_float_channel_is_refused_before_any_section(tmp_path):
 ## the overlay
 
 
-def _layer(tmp_path, name, data):
+def _layer(tmp_path, name, data, label_attrs=None):
     from PyReconstruct.modules.backend.view.zarr_layer import ZarrLayer
 
     fp = str(tmp_path / f"{name}.zarr")
@@ -140,7 +194,7 @@ def _layer(tmp_path, name, data):
         "voxel_size": [50, 4, 4], "true_mag": 0.004,
         "window": [0, 0, 0.128, 0.128], "sections": [0, 1],
     })
-    group.create_dataset("labels", data=data)
+    group.create_dataset("labels", data=data).attrs.update(label_attrs or {})
     series = types.SimpleNamespace(
         zarr_overlay_fp=fp, zarr_overlay_group="labels",
         sections={}, data={"sections": {}}, getOption=lambda name: None,
@@ -179,6 +233,15 @@ def test_one_channel_overlay_draws_picks_and_merges_like_3d(qapp, tmp_path):
     assert merged.shape == (1, 2, 32, 32)
     assert np.array_equal(merged[0], zarr.open(str(tmp_path / "flat.zarr"), "r")["labels"][:])
     assert 5 not in np.unique(merged[0]) and 3 in np.unique(merged[0, 1])
+
+
+def test_a_four_entry_offset_moves_the_overlay_one_section(tmp_path):
+    layer = _layer(tmp_path, "shifted", _volume()[None], {
+        "voxel_size": [1, 50, 4, 4], "offset": [0, 50, 0, 0],
+    })
+
+    assert layer.is_labels
+    assert (layer.zarr_s, layer.zarr_y, layer.zarr_x) == (1, 0, 0)
 
 
 def test_three_channel_image_stays_an_image(qapp, tmp_path):
