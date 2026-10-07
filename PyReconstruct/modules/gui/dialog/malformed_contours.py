@@ -94,6 +94,8 @@ class MalformedContoursDialog(QDialog):
         # hidden dialog children parented to the main window
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.mainwindow = mainwindow
+        # the series the rows name (see _forOpenSeries)
+        self.series = getattr(mainwindow, "series", None)
         self.records = records
         self.navigate = navigate
         self.delete = delete
@@ -306,6 +308,17 @@ class MalformedContoursDialog(QDialog):
             return "—"
         return f"({loc[0]}, {loc[1]})"
 
+    def _forOpenSeries(self):
+        """Whether the series the rows name is still the open one.
+
+        A Delete or Combine waits on its confirmation, and on any notice
+        its callback shows, inside that message's own event loop. A .jser
+        opened from the Finder still reaches the main window meanwhile, and
+        opening it closes and deletes this list. What resumes afterwards
+        must not act on the series now open or touch the deleted table.
+        """
+        return getattr(self.mainwindow, "series", None) is self.series
+
     def _addExtraButtons(self):
         """Subclass hook: append (button, needs_selection) to extra_buttons.
 
@@ -379,10 +392,11 @@ class MalformedContoursDialog(QDialog):
             f"Delete {count} {noun} from the series?\n\n"
             f"This can be undone ({undo_chord()}).",
             yn=True,
-        ):
+        ) or not self._forOpenSeries():
             return
         deleted = self.delete(records)
-        self._pruneRecords(deleted or [])
+        if self._forOpenSeries():
+            self._pruneRecords(deleted or [])
 
     def _pruneRecords(self, deleted):
         """Remove the rows/records that were actually deleted.
@@ -865,10 +879,11 @@ class DuplicateTracesDialog(MalformedContoursDialog):
             f"the others.{unpicked_note}\n\n"
             f"This can be undone ({undo_chord()}).",
             yn=True,
-        ):
+        ) or not self._forOpenSeries():
             return
         applied = self.combine(choices) or []
-        self._pruneCombined(applied)
+        if self._forOpenSeries():
+            self._pruneCombined(applied)
 
     def _pruneCombined(self, applied):
         """Drop the combined rows, and shift the traces of the rows left.

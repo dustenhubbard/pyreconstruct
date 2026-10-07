@@ -1580,6 +1580,7 @@ class MainWindow(QMainWindow):
         """Create (or reset) the field widget and the mouse palette."""
         # create field
         if self.field is not None:  # close previous field widget
+            self._closeCleanupLists()
             self.field.createField(self.series)
         else:
             self.field = FieldWidget(self.series, self)
@@ -1595,6 +1596,22 @@ class MainWindow(QMainWindow):
         self.changeTracingTrace(
             self.series.palette_traces[palette_group][index]
         ) # set the current trace
+
+    def _closeCleanupLists(self):
+        """Close every open clean-up review list before the series changes.
+
+        Pixel dust, Duplicates, the self-crossing lists and the smoothing
+        list are modeless and parented to this window. Their rows name
+        traces in the series being left, but their Delete and Combine
+        buttons call the field, which is reused for the new series: a list
+        left open deleted or combined the matching trace in the series
+        opened next. Found through the children rather than the attributes
+        that hold them, so a list from an earlier run of the same clean-up
+        closes too. A Delete or Combine already waiting on its confirmation
+        stops itself (MalformedContoursDialog._forOpenSeries).
+        """
+        for dialog in self.findChildren(MalformedContoursDialog):
+            dialog.close()
 
     def _ensureImagesAvailable(self):
         """Locate the section images, and offer to scale unscaled zarrs."""
