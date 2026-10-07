@@ -61,11 +61,12 @@ def get_voxel_size_um(zarr_array):
     """Get the (z, y, x) voxel size of a zarr in µm.
 
     Reads ``resolution`` or ``voxel_size``. Neuroglancer stores these in nm, so
-    they are divided by 1000 unless ``units`` says µm. Raises KeyError if the
-    zarr has neither attribute.
+    they are divided by 1000 unless ``units`` says µm. Four entries are
+    channel first, as in ``as_nm``. Raises KeyError if the zarr has neither
+    attribute.
     """
 
-    voxel_size = get_resolution(zarr_array)
+    voxel_size = _spatial_axes(get_resolution(zarr_array))
 
     return [
         v if um else v / 1000
@@ -73,23 +74,45 @@ def get_voxel_size_um(zarr_array):
     ]
 
 
+def _spatial_axes(entries):
+    """The (z, y, x) entries of per-axis zarr metadata.
+
+    Four entries are channel first, so the leading one is dropped. Any other
+    length comes back as it is.
+    """
+
+    return list(entries[-3:]) if len(entries) == 4 else entries
+
+
 def _in_um(zarr_array, n):
-    """For each of n axes, True if the zarr's ``units`` say µm (default nm)."""
+    """For each of n spatial axes, True if the zarr's ``units`` say µm (default nm).
+
+    A four-entry ``units`` list is channel first like the values it describes,
+    so its last three entries name the spatial axes.
+    """
 
     units = zarr_array.attrs.get("units", "nm")
     if isinstance(units, str):
         units = [units] * n
+    else:
+        units = _spatial_axes(units)
 
     return [str(u).lower() in ("um", "µm", "μm", "micrometer", "micron") for u in units]
 
 
 def as_nm(values, zarr_array):
-    """Sizes or offsets given in a zarr's ``units``, in nm.
+    """Sizes or offsets given in a zarr's ``units``, in nm per (z, y, x) axis.
+
+    Four values are channel first, so the channel entry is dropped before the
+    rest are paired with ``units``, which may name three axes or four. Paired
+    as given, four values against three units came back as channel, z and y.
 
     µm values round to a millionth of a nm, so a grid declared in µm reads
     the same as that grid in nm (0.0041 µm is 4.1 nm, not
     4.1000000000000005). nm values come back as they are.
     """
+
+    values = _spatial_axes(values)
 
     return [
         round(v * 1000, 6) if um else v
@@ -101,8 +124,9 @@ def get_label_offset(labels_array, raw):
     """Where a labels array starts against raw, in nm per (z, y, x) axis.
 
     Both offsets are positions in the same space, so an offset the two
-    arrays share moves neither. Labels with no ``offset`` start at raw's
-    corner, as they always have.
+    arrays share moves neither. A four-entry offset is channel first, so
+    only its spatial axes are compared. Labels with no ``offset`` start at
+    raw's corner, as they always have.
     """
 
     if "offset" not in labels_array.attrs:
@@ -163,21 +187,16 @@ def get_thickness(zarr_array):
         return 0.05  # the default section thickness, as get_true_mag defaults
 
 
-def _spatial_resolution(resolution):
-    """Drop a leading channel axis from four-entry label resolution metadata."""
-
-    return resolution[-3:] if len(resolution) == 4 else resolution
-
-
 def get_label_resolutions(labels_array, raw, series=None, raw_attrs=None):
     """Get the (labels, raw) resolutions for a label import.
 
     Both come back in nm, whatever ``units`` each array declares. Missing or
     zero raw axes use the exporter's grid: the first exported section's
     thickness and the saved export mag (or raw's metadata/default mag). Missing or
-    zero label axes share raw's grid. Four-entry label metadata is channel-first;
-    only its last three spatial axes are used. The existing metadata/default
-    fallback applies when the series section is unavailable.
+    zero label axes share raw's grid. Four-entry metadata on either array is
+    channel first; ``as_nm`` keeps only its last three spatial axes. The
+    existing metadata/default fallback applies when the series section is
+    unavailable.
     """
 
     try:
@@ -199,7 +218,7 @@ def get_label_resolutions(labels_array, raw, series=None, raw_attrs=None):
             raise ValueError("Cannot recover a nonzero series resolution for this Zarr.")
 
     try:
-        labels_res = _spatial_resolution(as_nm(get_resolution(labels_array), labels_array))
+        labels_res = as_nm(get_resolution(labels_array), labels_array)
     except KeyError:
         labels_res = [0, 0, 0]
 
