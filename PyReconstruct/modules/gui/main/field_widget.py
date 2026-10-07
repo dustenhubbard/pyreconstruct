@@ -289,7 +289,12 @@ class FieldWidget(QWidget, FieldWidgetView):
                 return
 
         # if any finger touch
+        #
+        # No tool sees a press made during a pinch, so it is dropped rather
+        # than left in the click flags for the moves after the pinch
+        # (`dropPress`).
         if self.is_gesturing:
+            self.dropPress()
             return
 
         # pan if middle button clicked

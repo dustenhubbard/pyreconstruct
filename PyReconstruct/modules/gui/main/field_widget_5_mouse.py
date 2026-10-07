@@ -392,6 +392,10 @@ class FieldWidgetMouse(FieldWidgetData):
           another button is ignored, the knife ignores one mid-cut, and a
           right press takes over from the left one. Where that opens the
           context menu, the menu takes the press and ends a lasso under way.
+        * A press made during a pinch is dropped as it arrives. Every mouse
+          event is ignored while gesturing, so no tool sees it, and its click
+          flags used to outlast the pinch: the moves after it acted on a
+          press no tool had started.
         * Dropping the press clears the click flags and the pointer's recorded
           press, and marks what is still held as dropped. A press that reports
           another button down as well joins the dropped one and is ignored.
@@ -400,10 +404,11 @@ class FieldWidgetMouse(FieldWidgetData):
           pressed.
         * The dropped press is over when every button is up: at the release
           that leaves none down, which finishes nothing, or a move that
-          reports none. A press of one button alone starts afresh as well.
-          Either the dropped button is up and its release never reached the
-          field, or the device stopped reporting it (a barrel press can arrive
-          alone), and a press cannot hand back a button it does not report.
+          reports none. A press of one button alone, outside a pinch, starts
+          afresh as well. Either the dropped button is up and its release
+          never reached the field, or the device stopped reporting it (a
+          barrel press can arrive alone), and a press cannot hand back a
+          button it does not report.
         """
         self.lclick, self.rclick, self.mclick = False, False, False
         self.pointer_press_recorded = False

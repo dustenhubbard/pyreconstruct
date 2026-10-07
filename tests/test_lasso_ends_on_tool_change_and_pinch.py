@@ -582,3 +582,94 @@ def test_the_release_after_the_menu_still_clears_the_pointers_points(
     _drag_lasso(field, corners)
     assert field.current_trace == corners
     assert field_notices == []
+
+
+def _rectangle(field, x0, y0, x1, y1, pressed=True):
+    """Drag a rectangle trace, through the field's own handlers.
+
+    With `pressed` False the press is taken to have happened already. Either
+    way it is put past the single-click window, where a release in the combo
+    trace mode would start a line trace instead.
+    """
+    if pressed:
+        field.mousePressEvent(FakeMouseEvent(x0, y0, HELD))
+    field.click_time = 0
+    field.mouseMoveEvent(FakeMouseEvent((x0 + x1) / 2, (y0 + y1) / 2, HELD))
+    field.mouseMoveEvent(FakeMouseEvent(x1, y1, HELD))
+    field.mouseReleaseEvent(FakeMouseEvent(x1, y1))
+
+
+@pytest.mark.parametrize("when", ["during the pinch", "after it"])
+def test_a_fresh_press_around_the_pinch_that_ended_a_lasso(
+    main_window, main_window_dialogs, field_notices, field_menu, when
+):
+    """The lasso's button comes up during the pinch, and a new press follows.
+
+    Every mouse event is ignored while gesturing, so a press made during the
+    pinch reaches no tool. Its click flags outlasted the pinch, and the moves
+    after it drew a rectangle `tracePress` never started: with `current_trace`
+    emptied by the lasso's end, that raised `IndexError`. Such a press is
+    dropped now, like the lasso's. A press after the pinch is a fresh one and
+    draws as usual.
+    """
+    field = main_window.field
+    trace, timer = _start_lasso(main_window)
+    x, y = field.current_trace[-1]
+    started = Qt.GestureState.GestureStarted
+    updated = Qt.GestureState.GestureUpdated
+    finished = Qt.GestureState.GestureFinished
+
+    field.gestureEvent(FakeGestureEvent(FakePinch(started, 200, 150, 1.0)))
+    field.gestureEvent(FakeGestureEvent(FakePinch(updated, 210, 150, 1.5)))
+    field.mouseReleaseEvent(FakeMouseEvent(x, y))
+    _assert_lasso_dropped(field, timer)
+
+    field.closed_trace_shape = "rect"
+    main_window.usectrace_act.trigger()
+    assert field.mouse_mode == CLOSEDTRACE
+    assert field.closed_trace_shape == "rect"
+    count = len(field.section.tracesAsList())
+
+    if when == "during the pinch":
+        field.mousePressEvent(FakeMouseEvent(300, 60, HELD))
+        field.gestureEvent(FakeGestureEvent(FakePinch(finished, 210, 150, 1.5)))
+        _rectangle(field, 300, 60, 340, 100, pressed=False)
+        assert len(field.section.tracesAsList()) == count
+        assert field.current_trace == []
+    else:
+        field.gestureEvent(FakeGestureEvent(FakePinch(finished, 210, 150, 1.5)))
+
+    # the next press draws, whichever came before it
+    _rectangle(field, 300, 60, 340, 100)
+    assert len(field.section.tracesAsList()) == count + 1
+    assert field_notices == []
+
+
+def test_a_press_during_a_pinch_does_not_start_a_host_link(
+    main_window, main_window_dialogs, field_notices, field_menu
+):
+    """The same press in Host, with no lasso before it.
+
+    Host acts on any release, so the press the pinch kept from it picked the
+    trace under the cursor as the start of a link.
+    """
+    field = main_window.field
+    main_window.usehost_act.trigger()
+    trace = _visible_trace(field)
+    started = Qt.GestureState.GestureStarted
+    finished = Qt.GestureState.GestureFinished
+
+    field.gestureEvent(FakeGestureEvent(FakePinch(started, 200, 150, 1.0)))
+    x, y = field.section_layer.traceToPix(trace)[0]
+    field.mousePressEvent(FakeMouseEvent(x, y, HELD))
+    field.gestureEvent(FakeGestureEvent(FakePinch(finished, 200, 150, 1.0)))
+    field.mouseMoveEvent(FakeMouseEvent(x, y, HELD))
+    field.mouseReleaseEvent(FakeMouseEvent(x, y))
+
+    assert field.hosted_trace is None
+
+    # a click after the pinch still starts one
+    field.mousePressEvent(FakeMouseEvent(x, y, HELD))
+    field.mouseReleaseEvent(FakeMouseEvent(x, y))
+    assert field.hosted_trace is not None
+    assert field_notices == []
