@@ -961,12 +961,17 @@ class DuplicateTracesDialog(MalformedContoursDialog):
             "and deletes the others. A row with one name has it picked "
             "already. A row with more than one is left alone until you pick "
             "one.\n\n"
-            "Select a row and click “Go to trace” to see it in the field. "
-            "The Overlap column is the lowest overlap ratio between the "
-            "row's traces: for closed traces, the area they share over the "
-            "area they cover together, so 1 means the same points; for open "
-            "traces, how much of each line lies within a few image pixels of "
-            "the other.\n\n"
+            "Select a row and click “Go to trace” to see it in the field.\n\n"
+            # the column shows Series.findDuplicateTraces' "ratio", the lowest
+            # of the pairs that joined the group. Groups chain, so two traces
+            # in one row can overlap less than that.
+            "The Overlap column is the lowest overlap ratio among the pairs "
+            "that put the traces in one row. If A overlaps B and B overlaps "
+            "C, all three are one row, and A and C can overlap less than the "
+            "number shown. For closed traces, the ratio is the area two "
+            "traces share over the area they cover together, so 1 means the "
+            "same points. For open traces, it is how much of each line lies "
+            "within a few image pixels of the other.\n\n"
             "Nothing changes until you combine, and combining can be undone "
             f"({undo_chord()})."
         )

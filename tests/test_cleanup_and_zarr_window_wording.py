@@ -80,6 +80,20 @@ def test_the_duplicates_heading_asks_for_one_name_per_row(qtbot):
     )
 
 
+def test_the_duplicates_help_says_what_the_overlap_number_is(qtbot):
+    """A row chains its traces, so the Overlap number is the lowest pair that
+    joined the row (tests/test_duplicate_traces.py pins that), and two traces
+    in the row can overlap less than it."""
+    heading = _heading(
+        qtbot, DuplicateTracesDialog(None, [_group()], combine=lambda c: [])
+    )
+    assert "lowest overlap ratio among the pairs that put the traces" in (
+        heading
+    )
+    assert "A and C can overlap less than the number shown" in heading
+    assert "lowest overlap ratio between the row's traces" not in heading
+
+
 @pytest.fixture
 def start_process():
     spec = importlib.util.spec_from_file_location("start_process",
