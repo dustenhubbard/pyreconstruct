@@ -765,7 +765,7 @@ class VPlotter(vedo.Plotter):
             if scene_obj.type != "object":
                 continue
             # get the host group names
-            host_group = self.objs.getHostGroup(scene_obj)
+            host_group = self.objs.getHostGroup(scene_obj, self.series)
             # add the objects to selected
             for so in host_group:
                 if so not in self.selected:
@@ -787,7 +787,7 @@ class VPlotter(vedo.Plotter):
             groups = []
             for scene_obj in self.objs.getType("object"):
                 if not any([scene_obj in hg for hg in groups]):  # if obj group has not been found yet
-                    groups.append(self.objs.getHostGroup(scene_obj))
+                    groups.append(self.objs.getHostGroup(scene_obj, self.series))
         else:
             groups = []
             for scene_obj in self.objs.getType("object"):
@@ -1985,16 +1985,24 @@ class SceneObjectList():
                 obj.series_fp == series_fp
             ): return obj
     
-    def getHostGroup(self, scene_obj : SceneObject):
+    def getHostGroup(self, scene_obj : SceneObject, series : Series = None):
         """Get the host group for an object.
         
             Params:
                 scene_obj (SceneObject): the scene object
+                series (Series): the series open in the main window. Its own
+                    objects read its host tree at the time of the call; a
+                    series undo or redo replaces that tree, so the one kept
+                    at add time can be out of date. Objects from any other
+                    series read the tree kept when they were added.
         """
         if not scene_obj.type == "object":
             return
         
-        host_tree = self.host_trees[scene_obj.series_fp]
+        if series is not None and scene_obj.series_fp == series.jser_fp:
+            host_tree = series.host_tree
+        else:
+            host_tree = self.host_trees[scene_obj.series_fp]
         names = host_tree.getHostGroup(
             scene_obj.name,
             [o.name for o in self.getType("object")]
