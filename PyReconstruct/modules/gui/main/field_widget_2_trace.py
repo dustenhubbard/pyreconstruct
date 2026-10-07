@@ -1413,14 +1413,22 @@ class FieldWidgetTrace(FieldWidgetBase):
             
             try:
                 merged_traces = mergeTracesInField(field_traces, self.section.mag)
-            except MergeLosesArea:
-                # an outline exists, but a sliver thinner than the merge grid
+            except MergeLosesArea as e:
+                # an outline exists, but a sliver thinner than a grid cell
                 # closed up in it; refuse before deleting, as below
+                if e.coarse:
+                    cell = (
+                        "A cell is usually a quarter of an image pixel, but "
+                        "these traces cover a wide area, so here it is "
+                        f"{e.pixels:.3g} image pixels."
+                    )
+                else:
+                    cell = "A cell is a quarter of an image pixel."
                 notify(
                     "The merge would lose most of the area of at least one "
                     "trace, so the traces were left as they are. This happens "
-                    "when a trace is much thinner than an image pixel. Draw it "
-                    "wider to merge it."
+                    "when a trace is thinner than a cell of the grid the merge "
+                    f"uses. {cell} Draw the thin trace wider to merge it."
                 )
                 return False
 
