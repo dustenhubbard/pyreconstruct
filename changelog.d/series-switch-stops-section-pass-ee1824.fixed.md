@@ -1,3 +1,3 @@
-- **Opening a series from the Finder while an operation shows its progress no
-  longer shows an error.** The operation stops before it reads any more of the
-  series it was working on.
+- **An operation cut short by opening another series from the Finder now says
+  so plainly.** It reads nothing more from the series it was working on, and
+  its error names that series and how many sections it finished.

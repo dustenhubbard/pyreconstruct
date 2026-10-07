@@ -392,15 +392,7 @@ def customExcepthook(exctype, value, tb):
     would never see it, in this session or any later moment of it. The startup
     timers ``MainWindow`` schedules make that ordinary rather than exotic -- they
     fire inside a report window's loop if one is up in the first few seconds.
-
-    A section pass stopped because another series opened under its progress
-    dialog (SeriesClosedError) is no fault: the user moved on, and the pass
-    did what it should. Nothing is shown or logged for it.
     """
-    from PyReconstruct.modules.datatypes.series import SeriesClosedError
-    if issubclass(exctype, SeriesClosedError):
-        return
-
     sys.__excepthook__(exctype, value, tb)  # keep console output for terminal users
 
     report = build_error_report(exctype, value, tb)

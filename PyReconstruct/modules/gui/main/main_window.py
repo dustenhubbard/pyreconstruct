@@ -9,7 +9,10 @@ from shiboken6 import isValid
 
 from .main_imports import *
 
-from PyReconstruct.modules.datatypes.series import SeriesOpenError
+from PyReconstruct.modules.datatypes.series import (
+    SeriesClosedError,
+    SeriesOpenError,
+)
 from PyReconstruct.modules.backend.func.window_geometry import (
     default_window_rect,
     window_geometry_is_usable,
@@ -4027,11 +4030,15 @@ class MainWindow(QMainWindow):
         include_locked = response[1][0][1]
 
         series = self.series
-        groups = series.findDuplicateTraces(threshold, include_locked)
+        try:
+            groups = series.findDuplicateTraces(threshold, include_locked)
+        except SeriesClosedError:
+            # a .jser opened from the Finder at an earlier progress update:
+            # the scan only reads, so stopping it loses nothing
+            return
         if self.series is not series:
-            # a .jser opened from the Finder at the scan's last progress
-            # update (an earlier one stops the scan: SeriesClosedError): the
-            # rows name the series left (see _closeCleanupLists)
+            # the same at the scan's last progress update: the rows name the
+            # series left (see _closeCleanupLists)
             return
         if not groups:
             notify("No duplicate traces found at that overlap threshold.")
@@ -4078,11 +4085,15 @@ class MainWindow(QMainWindow):
         # (deleteMalformedContours) refuses locked objects, so surfacing them
         # here would be a dead end. Empty-trace removal skips locked the same way.
         series = self.series
-        candidates = series.findPixelDustTraces(threshold)
+        try:
+            candidates = series.findPixelDustTraces(threshold)
+        except SeriesClosedError:
+            # a .jser opened from the Finder at an earlier progress update:
+            # the scan only reads, so stopping it loses nothing
+            return
         if self.series is not series:
-            # a .jser opened from the Finder at the scan's last progress
-            # update (an earlier one stops the scan: SeriesClosedError): the
-            # rows name the series left (see _closeCleanupLists)
+            # the same at the scan's last progress update: the rows name the
+            # series left (see _closeCleanupLists)
             return
         if not candidates:
             notify("No pixel-dust traces found at or below that pixel area.")

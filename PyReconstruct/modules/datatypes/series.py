@@ -63,9 +63,14 @@ class SeriesClosedError(FileNotFoundError):
     can open under any pass that shows one (a .jser opened from the Finder
     reaches the window there), and opening it closes this series and deletes
     its working files. The pass stops before it reads the next section
-    instead of failing on the missing file. A FileNotFoundError still, so a
-    caller that handles that one handles this the same; the app's exception
-    hook shows no error for it (gui.utils.errors.customExcepthook).
+    instead of failing on the missing file, or reading files the series that
+    replaced it now owns. A FileNotFoundError still, so a caller that handles
+    that one handles this the same.
+
+    Not quiet: a pass that writes may have saved some sections and not the
+    rest, so the app's exception hook reports it like any other error. Only
+    a caller that loses nothing by stopping (the read-only pixel-dust and
+    Duplicates scans in MainWindow) catches it and ends without a word.
     """
 
 
@@ -1277,19 +1282,22 @@ class Series():
     def close(self):
         """Clear the hidden directory of the series."""
 
-        # before the early return: a series left open for the one replacing
-        # it in the same hidden dir must not go on editing that one's files
-        self.closed = True
-
         if self.isWelcomeSeries() or self.leave_open:
+            # closed even so: a series left open for the one replacing it in
+            # the same hidden dir must not go on editing that one's files
+            self.closed = True
             return
-        
+
         if os.path.isdir(self.hidden_dir):
-            
+
             for f in os.listdir(self.hidden_dir):
                 os.remove(os.path.join(self.hidden_dir, f))
-                
+
             os.rmdir(self.hidden_dir)
+
+        # only once its files are gone: a close that raised part-way (a
+        # locked working file) leaves the series in the window, still usable
+        self.closed = True
     
     @staticmethod
     def updateJSON(series_data : dict):
@@ -6028,8 +6036,12 @@ class SeriesIterator():
             # the progress update above, or the loop body, ran the event
             # loop, where another series can open and close this one
             if self.series.closed:
+                done = self.sni
+                total = len(self.section_numbers)
                 raise SeriesClosedError(
-                    f"{self.series.name} was closed during: {self.message}"
+                    f"Series {self.series.name} was closed while this ran: "
+                    f"{self.message} It stopped part-way, after {done} of "
+                    f"{total} sections."
                 )
             snum = self.section_numbers[self.sni]
             self.section = self.series.loadSection(snum)

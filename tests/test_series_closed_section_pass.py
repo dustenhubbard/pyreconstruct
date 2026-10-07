@@ -13,7 +13,11 @@ What is pinned here:
   * the progress dialog is finished on the way out
   * a series closed with leave_open set (its files kept for a series opened
     into the same folder) stops the same way
-  * the app's exception hook shows and logs nothing for SeriesClosedError
+  * a write pass stopped that way is not quiet: the app's exception hook
+    shows and logs it, naming the series (only the read-only clean-up scans
+    end without a word; see test_cleanup_lists_series_switch.py)
+  * a close that fails part-way (a locked working file) leaves the series
+    open, and a pass over it reads every section
 """
 import pytest
 
@@ -77,7 +81,9 @@ def test_a_pass_stops_before_reading_a_closed_series(
     assert seen["finished"]
 
 
-def test_the_error_hook_passes_over_a_stopped_pass(monkeypatch, tmp_path):
+def test_a_write_pass_stopped_part_way_is_reported(
+    series, monkeypatch, tmp_path
+):
     import sys
     from PyReconstruct.modules.backend.func import logging_setup
     from PyReconstruct.modules.datatypes.series import SeriesClosedError
@@ -85,17 +91,47 @@ def test_the_error_hook_passes_over_a_stopped_pass(monkeypatch, tmp_path):
     shown, printed = [], []
     monkeypatch.setattr(
         errors, "show_error_report",
-        lambda *a, **k: shown.append(a) or True,
+        lambda summary, report, *a, **k: shown.append(report) or True,
     )
     monkeypatch.setattr(errors, "_reported_signatures", set())
     log = tmp_path / "log.txt"
     monkeypatch.setattr(logging_setup, "log_file_path", lambda: str(log))
     monkeypatch.setattr(sys, "__excepthook__", lambda *a: printed.append(a))
+    # an object on several sections, so the copy saves some and not others
+    name = "d03p14"
+    assert len(series.getObjectSections([name])) > 2
+    # leave_open keeps the working files, so the saved part of the copy stays
+    _closes_at(series, update=2, leave_open=True)
 
     try:
-        raise SeriesClosedError("series was closed during: Scanning...")
+        series.copyObjects([name])
     except SeriesClosedError:
         errors.customExcepthook(*sys.exc_info())
+    else:
+        pytest.fail("the copy ran on after its series closed")
 
-    assert shown == [] and printed == []
-    assert not log.exists()
+    assert len(shown) == 1 and len(printed) == 1
+    assert series.name in shown[0] and "part-way" in shown[0]
+    assert log.exists() and "SeriesClosedError" in log.read_text()
+
+
+def test_a_failed_close_leaves_the_series_usable(series, monkeypatch):
+    import os
+    removed = []
+
+    def locked(path):
+        removed.append(path)
+        raise PermissionError(13, "Permission denied", path)
+
+    monkeypatch.setattr(os, "remove", locked)
+    with pytest.raises(PermissionError):
+        series.close()
+    monkeypatch.undo()
+
+    assert len(removed) == 1 and os.path.isdir(series.hidden_dir)
+    assert not series.closed
+    visited = [
+        snum for snum, _section
+        in series.enumerateSections(message="Scanning...")
+    ]
+    assert visited == sorted(series.sections)
