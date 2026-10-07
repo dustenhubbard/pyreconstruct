@@ -18,7 +18,6 @@ from shapely.geometry import Polygon
 
 from PyReconstruct.modules.calc.grid import (
     Grid,
-    MergeLosesArea,
     mergeCellSize,
     mergeTracesInField,
     reducePoints,
@@ -50,6 +49,8 @@ def test_the_grid_outline_keeps_the_sliver_until_it_is_simplified():
 
 
 def test_merge_refuses_when_a_sliver_would_lose_most_of_its_area():
+    from PyReconstruct.modules.calc.grid import MergeLosesArea
+
     with pytest.raises(MergeLosesArea):
         mergeTracesInField([RECT, SLIVER], MAG)
 
