@@ -214,7 +214,18 @@ class FieldWidget(QWidget, FieldWidgetView):
                 p = self.mapFromGlobal(p)
             x, y = p.x(), p.y()
             self.panzoomRelease(x, y, g.totalScaleFactor())
-        
+
+        elif g.state() == Qt.GestureState.GestureCanceled:
+            # Qt cancels a running pinch when a gesture on a parent widget
+            # with CancelAllInContext takes it over. A cancel commits nothing,
+            # but every mouse event is ignored while gesturing, so the flag has
+            # to drop here too. The window was never moved (panzoomMove only
+            # redraws a copy of the field), so a fresh view puts back the one
+            # from before the pinch.
+            self.is_gesturing = False
+            self.is_panzooming = False
+            self.generateView()
+
     def mousePressEvent(self, event):
         """Called when mouse is clicked.
         
