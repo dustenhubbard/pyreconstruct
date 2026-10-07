@@ -34,10 +34,29 @@ WHATSNEW_KEY = "last_whatsnew_version"
 # the next launch.
 WHATSNEW_SUPPRESS_KEY = "suppress_whatsnew"
 
-# The popup ships off: nothing appears unasked until the user turns it back on
-# from the Help menu. The toggle and the dialog's "Don't show again" button
-# keep working either way; this is only what an unset preference means.
-WHATSNEW_SUPPRESS_DEFAULT = True
+# The popup ships on: with nothing stored, the stable app shows the notes once
+# after an update (his call, 2026-10-07; it shipped off from 2026-08-21 to
+# here, when the stable build was meant to stay quiet). The toggle and the
+# dialog's "Don't show again" button keep working either way; this is only
+# what an unset preference means. A dev build never shows it regardless; see
+# ``whats_new_due``.
+WHATSNEW_SUPPRESS_DEFAULT = False
+
+# Marker recording that ``reset_whats_new_popup_once`` has run in this store.
+# Per app, beside the two keys it governs; a plain key rather than ``meta/``,
+# following ``update_check_on_startup_default_applied``, so somebody reading
+# their own settings can see what happened. Mirrored as a literal in
+# constants/settings_domain.py (PER_APP_KEYS); the test on that list checks
+# the two stay in step.
+WHATSNEW_RESET_MARKER = "whatsnew_popup_reset_applied"
+
+# Keys a store holds only if PyReconstruct has launched from it before.
+# ``username`` is persisted by the first read of it, on every launch since the
+# option existed; the update-check marker has been written on every launch
+# since 1.21.0. Both are shared keys, so they are read from the shared store.
+# ``allKeys()`` is deliberately not used: on macOS it also lists the global
+# NSUserDefaults domain, so a fresh store never reads as empty through it.
+PRIOR_INSTALL_KEYS = ("username", "update_check_on_startup_default_applied")
 
 
 def whats_new_suppressed(stored):
@@ -148,6 +167,91 @@ def whats_new_due(stored, current):
     if prev is None:
         return True
     return prev < cur
+
+
+def reset_whats_new_popup_once(settings, current, shared=None):
+    """Bring the popup back on for everyone, once, and keep a fresh install quiet.
+
+    The popup shipped off by default from 2026-08-21 until this version, and
+    the Help toggle and the "Don't show again" button wrote ``suppress_whatsnew``
+    all that while. His call on turning it back on (2026-10-07): a user's own
+    choice to turn it off is respected only from this version on, so a value
+    stored before this version does not bind, and a fresh install does not
+    show the notes at all. ``maybe_show_whats_new`` cannot tell an old "off"
+    from a new one and cannot tell a fresh install from an upgrade on a store
+    that never showed the popup, so this runs first and settles both, at the
+    first launch of the first version that carries it:
+
+    * **marker present**: nothing, whatever is stored. Every write of
+      ``suppress_whatsnew`` after this point is a decision and is kept.
+    * **fresh install**: no last-seen version, and none of
+      ``PRIOR_INSTALL_KEYS`` in ``shared``. The running version is recorded
+      as seen, so the first popup this install ever shows is the update after
+      it. Recorded only when the popup would otherwise be due: a dev build
+      records nothing, the same as its gate.
+    * **anything else**: an upgrade. The stored suppression is removed, so the
+      ordinary once-per-version rules show the notes once on this launch, and
+      the user can switch the popup off again from the dialog or the Help menu.
+
+    The marker is written last, so a write that fails leaves the reset to run
+    again next launch rather than recording it as done. Never writes
+    ``suppress_whatsnew`` itself: the default carries the "on", and a stored
+    ``False`` would be indistinguishable from a user's choice.
+
+    ``settings`` is the store holding the What's new keys (this app's own);
+    ``shared`` is where the prior-install evidence lives, and defaults to
+    ``settings`` because for the stable app the two are one store. Both take
+    anything QSettings-shaped (``contains``/``value``/``setValue``/``remove``).
+    Returns True when the reset ran, whether or not it changed anything.
+    """
+    if settings.contains(WHATSNEW_RESET_MARKER):
+        return False
+    if shared is None:
+        shared = settings
+    fresh = (
+        not settings.contains(WHATSNEW_KEY)
+        and not any(shared.contains(key) for key in PRIOR_INSTALL_KEYS)
+    )
+    if fresh:
+        if whats_new_due(None, current):
+            settings.setValue(WHATSNEW_KEY, current)
+    else:
+        settings.remove(WHATSNEW_SUPPRESS_KEY)
+    settings.setValue(WHATSNEW_RESET_MARKER, True)
+    return True
+
+
+def reset_whats_new_popup_startup(current=None):
+    """Run ``reset_whats_new_popup_once`` against the real stores, at launch.
+
+    Called from ``run.py`` before the ``QApplication`` exists, beside the
+    settings fold: the fresh-install test reads keys that ``MainWindow``
+    writes while it is being built (``username`` through the welcome series,
+    the update-check marker through its own migration), so this has to look
+    before any of that runs. Resolves both domains through ``domain_for`` so
+    the Dev app resets its own popup state and reads the shared store for
+    the evidence. Never raises: a settings correction on the startup path
+    must not be able to stop PyReconstruct from opening, and an unrecorded
+    reset simply runs again next launch. ``current`` is injectable for tests.
+    """
+    try:
+        from PySide6.QtCore import QSettings
+        from PyReconstruct.modules.constants.settings_domain import domain_for
+        from PyReconstruct.modules.backend.updater.install_info import (
+            current_version_str,
+        )
+        if current is None:
+            current = current_version_str()
+        settings = QSettings(*domain_for(
+            WHATSNEW_KEY, WHATSNEW_SUPPRESS_KEY, WHATSNEW_RESET_MARKER,
+        ))
+        shared = QSettings(*domain_for(*PRIOR_INSTALL_KEYS))
+        ran = reset_whats_new_popup_once(settings, current, shared=shared)
+        if ran:
+            settings.sync()
+        return ran
+    except Exception:
+        return False
 
 
 # --- changelog notes ----------------------------------------------------------
