@@ -20,7 +20,7 @@ import sys
 
 import pytest
 from PySide6.QtCore import QEvent, QObject
-from PySide6.QtWidgets import QApplication, QProgressDialog
+from PySide6.QtWidgets import QApplication, QLabel, QProgressDialog
 
 from PyReconstruct.modules.backend.progress import NullProgressReporter
 
@@ -170,3 +170,92 @@ def test_a_launch_shows_no_bar_and_opening_a_series_names_it(
             window.close()
             window.deleteLater()
             QApplication.processEvents()
+
+
+# ---------------------------------------------------------------------------
+# the name as the dialog draws it
+# ---------------------------------------------------------------------------
+
+def _drawsLiterally(label, text):
+    """True if the label lays text out as typed: one line per line of text,
+    each as wide as its characters. Read as markup, "<br>" breaks the line
+    and "<b>x</b>" draws a bold x with no tags, so both tests fail."""
+    metrics = label.fontMetrics()
+    lines = text.split("\n")
+    size = label.sizeHint()
+    widest = max(metrics.horizontalAdvance(line) for line in lines)
+    return (
+        size.height() < (len(lines) + 1) * metrics.lineSpacing()
+        and size.width() >= widest
+    )
+
+
+class ShownLabels(QObject):
+    """Whether each progress dialog that appears draws its label as typed."""
+
+    def __init__(self):
+        super().__init__()
+        self.shown = []
+
+    def eventFilter(self, obj, event):
+        if isinstance(obj, QProgressDialog) and event.type() == QEvent.Show:
+            label = obj.findChild(QLabel)
+            self.shown.append(
+                (obj.labelText(), _drawsLiterally(label, obj.labelText()))
+            )
+        return False
+
+
+@pytest.mark.gui
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="Windows file names cannot hold < or >"
+)
+def test_a_file_name_that_looks_like_markup_is_drawn_as_typed(
+    qtbot, series_jser, monkeypatch
+):
+    from PySide6.QtWidgets import QWidget
+
+    from PyReconstruct.modules.backend.progress import QtProgressReporter
+    from PyReconstruct.modules.datatypes import Series
+    from PyReconstruct.modules.gui.utils import utils
+
+    name = "cortex<br>3"
+    destination = series_jser.parent / f"{name}.jser"
+    shutil.copy(series_jser, destination)
+
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    parent.show()
+    monkeypatch.setattr(utils, "mainwindow", parent)
+
+    shown = ShownLabels()
+    QApplication.instance().installEventFilter(shown)
+    try:
+        series = Series.openJser(str(destination), progress=QtProgressReporter)
+        series.close()
+    finally:
+        QApplication.instance().removeEventFilter(shown)
+    assert shown.shown == [(f"Opening {name}...", True)]
+
+
+@pytest.mark.gui
+def test_a_progress_label_set_later_is_drawn_as_typed(qtbot, monkeypatch):
+    """A running bar rewrites its label, with a time estimate or a percent,
+    and other bars name a group or a branch the user typed."""
+    from PySide6.QtWidgets import QWidget
+
+    from PyReconstruct.modules.gui.utils import utils
+
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    parent.show()
+    monkeypatch.setattr(utils, "mainwindow", parent)
+
+    bar = utils.getProgbar("Converting <b>dendrites</b> to contours...")
+    try:
+        label = bar.findChild(QLabel)
+        assert _drawsLiterally(label, bar.labelText())
+        bar.setLabelText("Converting <b>dendrites</b> to contours...\nabout 1 min left")
+        assert _drawsLiterally(label, bar.labelText())
+    finally:
+        bar.close()
