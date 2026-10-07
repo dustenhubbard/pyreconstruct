@@ -360,57 +360,69 @@ def test_output_overlapping_the_source_is_refused(case, kind):
     assert sorted(p.name for p in src.parent.iterdir()) == holder_before
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need extra rights on Windows")
-def test_output_path_through_a_link_and_dotdot_is_written_where_it_resolves(case, tmp_path):
-    """"link/.." means the link target's parent, for the checks and the write.
-
-    Here the path reads as inside the source but resolves outside it, so the
-    crop must land outside and leave the source alone.
-    """
+@pytest.mark.parametrize("flag", ["--out", "--zarr"])
+@pytest.mark.parametrize("tail", [".", ".."])
+def test_dot_parts_after_a_name_are_refused(case, tmp_path, flag, tail):
+    """"link/." and "link/.." can name a different folder than zarr writes to."""
+    if sys.platform == "win32":
+        pytest.skip("symlinks need extra rights on Windows")
     jser, src = case
     (tmp_path / "outside" / "deep").mkdir(parents=True)
     (src / "link").symlink_to(tmp_path / "outside" / "deep", target_is_directory=True)
     source_before = _tree(src)
     entries_before = sorted(p.name for p in src.iterdir())
+    outside_before = sorted(p.name for p in (tmp_path / "outside").iterdir())
 
+    path = f"{src}{os.sep}link{os.sep}{tail}"
+    if tail == "..":
+        path += f"{os.sep}crop" if flag == "--out" else f"{os.sep}imgs.zarr"
+    args = {"--out": tmp_path / "out.zarr", flag: path}
     result = _run([
         "--jser", jser, "--object", OBJECT, "--radius", RADIUS,
-        "--out", src / "link" / ".." / "crop",
+        *[x for pair in args.items() for x in pair],
     ])
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 1, result.stderr
+    assert "without . or .. parts" in result.stderr
     assert _tree(src) == source_before
     assert sorted(p.name for p in src.iterdir()) == entries_before
-    got = _arrays(tmp_path / "outside" / "crop")
-    want = _expected(src)
-    assert got.keys() == want.keys()
-    for key in want:
-        np.testing.assert_array_equal(got[key], want[key], err_msg=str(key))
+    assert sorted(p.name for p in (tmp_path / "outside").iterdir()) == outside_before
+    assert not (tmp_path / "out.zarr").exists()
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need extra rights on Windows")
-def test_source_path_through_a_link_and_dotdot_reads_where_it_resolves(case, tmp_path):
-    """The zarr that is read is the one the path resolves to, the one checked."""
+@pytest.mark.parametrize("path, ok", [
+    ("out.zarr", True),
+    ("./out.zarr", True),
+    ("../out.zarr", True),
+    ("./../data/out.zarr", True),
+    ("/data/out.zarr", True),
+    ("data/./out.zarr", False),
+    ("data/../out.zarr", False),
+    ("link/.", False),
+    ("link/..", False),
+    ("/data/link/../out.zarr", False),
+])
+def test_plain_path_rule(path, ok):
+    module = _load_script()
+    path = path.replace("/", os.sep)
+    if ok:
+        module.checkPlainPath(path, "output")
+    else:
+        with pytest.raises(module.CropError, match="without . or .. parts"):
+            module.checkPlainPath(path, "output")
+
+
+def test_leading_dot_parts_are_allowed(case, tmp_path):
+    """"./" and "../" start from the current folder and work as before."""
     jser, src = case
-    ## a second source whose pixels differ from the first everywhere
-    other = tmp_path / "b" / "imgs.zarr"
-    shutil.copytree(src, other)
-    group = zarr.open_group(str(other), mode="r+")
-    for scale in SCALES:
-        for name in group[f"scale_{scale}"].array_keys():
-            array = group[f"scale_{scale}"][name]
-            array[:] = 256 - array[:].astype(np.uint16)
-    (tmp_path / "b" / "sub").mkdir()
-    (tmp_path / "l").symlink_to(tmp_path / "b" / "sub", target_is_directory=True)
-
-    ## "l/../imgs.zarr" reads as the first source but resolves to the second
-    out = tmp_path / "out.zarr"
+    work = tmp_path / "work"
+    work.mkdir()
     result = _run([
         "--jser", jser, "--object", OBJECT, "--radius", RADIUS,
-        "--zarr", tmp_path / "l" / ".." / "imgs.zarr", "--out", out,
-    ])
+        "--zarr", f"..{os.sep}imgs.zarr", "--out", f".{os.sep}out.zarr",
+    ], cwd=work)
     assert result.returncode == 0, result.stderr
-    got = _arrays(out)
-    want = _expected(other)
+    got = _arrays(work / "out.zarr")
+    want = _expected(src)
     assert got.keys() == want.keys()
     for key in want:
         np.testing.assert_array_equal(got[key], want[key], err_msg=str(key))
@@ -433,7 +445,7 @@ def _make_existing(out, what):
     if what == "file":
         out.write_text("keep me")
         return out.parent
-    if what in ("link to a folder", "link to a folder, given as link/."):
+    if what == "link to a folder":
         target = out.parent / "elsewhere"
         target.mkdir()
         (target / "keep.txt").write_text("keep me")
@@ -443,8 +455,7 @@ def _make_existing(out, what):
 
 
 @pytest.mark.parametrize("what", [
-    "zarr", "folder named like a zarr", "empty folder", "file",
-    "link to a folder", "link to a folder, given as link/.",
+    "zarr", "folder named like a zarr", "empty folder", "file", "link to a folder",
 ])
 def test_existing_output_is_refused_and_left_alone(case, what):
     """Nothing that already exists at the output path is changed or deleted."""
@@ -454,9 +465,7 @@ def test_existing_output_is_refused_and_left_alone(case, what):
     out = jser.parent.parent / "out.zarr"
     kept = _make_existing(out, what)
     before = _tree(kept)
-    arg = f"{out}{os.sep}." if what.endswith("link/.") else out
-
-    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", arg])
+    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
     assert result.returncode == 1, result.stderr
     assert "already exists" in result.stderr and "Remove it" in result.stderr
     assert "@@PROGRESS@@" not in result.stdout
@@ -475,6 +484,36 @@ def test_dangling_output_link_is_refused(case, tmp_path):
     assert result.returncode == 1, result.stderr
     assert "already exists" in result.stderr
     assert out.is_symlink()
+    assert not os.path.lexists(missing)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need extra rights on Windows")
+def test_dangling_output_link_given_with_a_dot_is_refused(case, tmp_path):
+    """"link/." is refused too, so the missing target is never made."""
+    jser, src = case
+    out = tmp_path / "out.zarr"
+    missing = tmp_path / "missing.zarr"
+    out.symlink_to(missing, target_is_directory=True)
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", f"{out}{os.sep}.",
+    ])
+    assert result.returncode == 1, result.stderr
+    assert "without . or .. parts" in result.stderr
+    assert out.is_symlink()
+    assert not os.path.lexists(missing)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need extra rights on Windows")
+def test_dangling_link_given_with_a_dot_to_the_crop_step_is_refused(tmp_path):
+    """cropSections applies the same rule when it is called directly."""
+    module = _load_script()
+    out = tmp_path / "out.zarr"
+    missing = tmp_path / "missing.zarr"
+    out.symlink_to(missing, target_is_directory=True)
+    with pytest.raises(module.CropError, match="without . or .. parts"):
+        module.cropSections(
+            None, OBJECT, 0, None, [1], f"{out}{os.sep}.", show_progress=False,
+        )
     assert not os.path.lexists(missing)
 
 
