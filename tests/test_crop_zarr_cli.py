@@ -168,6 +168,78 @@ def test_flags_crop_without_prompts(case):
     assert not (src.parent / f"imgs_{OBJECT}_crop.zarr").exists()
 
 
+def _stored_chunks(out, scale, name):
+    """Chunk files on disk for one output array (metadata files excluded)."""
+    folder = Path(out) / f"scale_{scale}" / name
+    return sorted(p.name for p in folder.iterdir() if not p.name.startswith("."))
+
+
+def _touched_chunks(window, size=64):
+    """The chunk file names a (top, bottom, left, right) window overlaps."""
+    t, b, l, r = window
+    return sorted(
+        f"{row}.{col}"
+        for row in range(t // size, (b - 1) // size + 1)
+        for col in range(l // size, (r - 1) // size + 1)
+    )
+
+
+def test_all_zero_chunks_are_not_written(case):
+    """Only chunks that hold part of the object are stored; the rest read as 0."""
+    jser, src = case
+    out = jser.parent.parent / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out,
+    ])
+    assert result.returncode == 0, result.stderr
+
+    group = zarr.open_group(str(out), mode="r")
+    for (scale, name), expected in _expected(src).items():
+        array = group[f"scale_{scale}"][name]
+        assert array.fill_value == 0
+        assert array.shape == SCALES[scale]
+        np.testing.assert_array_equal(array[:], expected, err_msg=str((scale, name)))
+
+        snum = int(name.split("_")[1].split(".")[0])
+        window = KEPT.get((scale, snum))
+        want = _touched_chunks(window) if window else []
+        assert _stored_chunks(out, scale, name) == want, (scale, name)
+        assert len(want) < array.nchunks
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_negative_zero_survives_in_float_images(case, tmp_path, dtype):
+    """A chunk of -0.0 equals the fill value 0 but is still written, sign and all."""
+    jser, src = case
+    floats = tmp_path / "floats.zarr"
+    root = zarr.open_group(str(floats), mode="w")
+    for scale, shape in SCALES.items():
+        grp = root.create_group(f"scale_{scale}")
+        for snum in range(5):
+            grp.create_dataset(
+                f"shapes_{snum}.tif", chunks=(64, 64), data=np.full(shape, -0.0, dtype),
+            )
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS,
+        "--zarr", floats, "--out", out,
+    ])
+    assert result.returncode == 0, result.stderr
+
+    got = _arrays(out)
+    for scale, shape in SCALES.items():
+        for snum in range(5):
+            image = got[(scale, f"shapes_{snum}.tif")]
+            want = np.zeros(shape, dtype)  # +0.0 outside the window
+            if (scale, snum) in KEPT:
+                t, b, l, r = KEPT[(scale, snum)]
+                want[t:b, l:r] = -0.0
+            assert image.dtype == dtype
+            np.testing.assert_array_equal(
+                np.signbit(image), np.signbit(want), err_msg=str((scale, snum)),
+            )
+
+
 def test_default_output_and_zarr_override(case, tmp_path):
     jser, src = case
     moved = tmp_path / "moved" / "imgs-zarr"
