@@ -966,17 +966,14 @@ class DuplicateTracesDialog(MalformedContoursDialog):
             # of the pairs that joined the group. Groups chain, so two traces
             # in one row can overlap less than that. A pair that passes
             # Trace.pointsMatch scores 1.0 without its area being measured.
-            "The Overlap column is the lowest overlap ratio among the pairs "
-            "that put the traces in one row. If A overlaps B and B overlaps "
-            "C, all three are one row, and A and C can overlap less than the "
-            "number shown. For closed traces, the ratio is the area two "
-            "traces share over the area they cover together, so 1 means they "
-            "cover the same area, even if their points differ. Two traces "
-            "that match point for point, each point within 0.01 series units "
-            "of the other's, also show 1, so a very small trace can show 1 "
-            "while sitting slightly off the other. For open traces, the ratio "
-            "is how much of each line lies within a few image pixels of the "
-            "other.\n\n"
+            "Overlap is how alike the scan found two traces, from 0 to 1, "
+            "and the “Overlap threshold” you chose sets how alike two traces "
+            "must be to share a row. Higher means more alike. 1 means the "
+            "scan could not tell them apart, but two traces at 1 can still "
+            "differ slightly. The column shows the lowest Overlap among the "
+            "pairs that put the traces in one row. If A overlaps B and B "
+            "overlaps C, all three are one row, and A and C can overlap less "
+            "than the number shown.\n\n"
             "Nothing changes until you combine, and combining can be undone "
             f"({undo_chord()})."
         )

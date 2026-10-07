@@ -87,7 +87,7 @@ def test_the_duplicates_help_says_what_the_overlap_number_is(qtbot):
     heading = _heading(
         qtbot, DuplicateTracesDialog(None, [_group()], combine=lambda c: [])
     )
-    assert "lowest overlap ratio among the pairs that put the traces" in (
+    assert "lowest Overlap among the pairs that put the traces in one row" in (
         heading
     )
     assert "A and C can overlap less than the number shown" in heading
@@ -95,10 +95,12 @@ def test_the_duplicates_help_says_what_the_overlap_number_is(qtbot):
 
 
 def test_the_duplicates_help_says_what_an_overlap_of_1_means(qtbot):
-    """1 is an equal area or a point-for-point match, not the same points:
-    a square with an extra point on one edge scores 1 by area, and a small
-    square shifted by half its point-match tolerance scores 1 by its points
-    while sharing only about 91% of its area."""
+    """1 is no promise of the same points or the same area: a square with an
+    extra point on one edge scores 1 by area, a unit square and its copy
+    shifted 0.001 score 1 while their real areas differ, and a small square
+    shifted within the point-match tolerance scores 1 by its points while
+    sharing only about 91% of its area. So the help says what the range
+    means and makes no geometry promise."""
     from PyReconstruct.modules.datatypes.trace import Trace
 
     def trace(points):
@@ -111,6 +113,10 @@ def test_the_duplicates_help_says_what_an_overlap_of_1_means(qtbot):
     assert square.getOverlapRatio(extra_point) == 1.0
     assert not square.pointsMatch(extra_point)
 
+    nudged = trace([(x + 0.001, y) for x, y in reversed(square.points)])
+    assert square.getOverlapRatio(nudged) == 1.0
+    assert not square.pointsMatch(nudged)
+
     small = trace([(0, 0), (0.1, 0), (0.1, 0.1), (0, 0.1)])
     shifted = trace([(x + 0.005, y) for x, y in small.points])
     assert small.pointsMatch(shifted)
@@ -119,15 +125,18 @@ def test_the_duplicates_help_says_what_an_overlap_of_1_means(qtbot):
     heading = _heading(
         qtbot, DuplicateTracesDialog(None, [_group()], combine=lambda c: [])
     )
-    assert "1 means the same points" not in heading
+    assert "Higher means more alike." in heading
     assert (
-        "so 1 means they cover the same area, even if their points differ"
+        "1 means the scan could not tell them apart, but two traces at 1 can "
+        "still differ slightly."
     ) in heading
     assert (
-        "Two traces that match point for point, each point within 0.01 "
-        "series units of the other's, also show 1"
+        "the “Overlap threshold” you chose sets how alike two traces must be "
+        "to share a row"
     ) in heading
-    assert Trace.POINTS_MATCH_TOLERANCE == 0.01
+    for claim in ("the same points", "same area", "0.01", "series units",
+                  "image pixels", "point for point"):
+        assert claim not in heading, claim
 
 
 @pytest.fixture
