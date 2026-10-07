@@ -891,6 +891,12 @@ def getProgbar(text, cancel=True, maximum=100, window_modality=Qt.WindowModal):
                     0, maximum,
                     mainwindow if mainwindow is not None and mainwindow.isVisible() else None
                 )
+            # The text can name a series, a group or a branch, and Qt would
+            # draw one named "a<br>b" as markup. The label keeps this format
+            # through every later setLabelText.
+            label = progbar.findChild(QLabel)
+            if label is not None:
+                label.setTextFormat(Qt.PlainText)
             progbar.setMinimumDuration(0)
             progbar.setWindowTitle("PyReconstruct")
             progbar.setWindowModality(window_modality)
