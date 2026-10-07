@@ -594,13 +594,20 @@ class MousePalette():
         b_slider_value = round((abs(b)/100) ** (1/2) * 100) * (-1 if b < 0 else 1)
         c_slider_value = round((abs(c)/100) ** (1/2) * 100) * (-1 if c < 0 else 1)
 
+        # The sliders only show the section's values here. Unblocked, a moved
+        # slider fires setBrightness/setContrast, which square and round its
+        # position and write that back: 99 shows as 99 and comes back as 98.
         b_bttn, b_slider = self.bc_widgets[0]
         b_bttn.setText(str(b))
+        b_blocked = b_slider.blockSignals(True)
         b_slider.setValue(b_slider_value)
+        b_slider.blockSignals(b_blocked)
 
         c_bttn, c_slider = self.bc_widgets[1]
         c_bttn.setText(str(c))
+        c_blocked = c_slider.blockSignals(True)
         c_slider.setValue(c_slider_value)
+        c_slider.blockSignals(c_blocked)
     
     def createBCButtons(self):
         """Create the brightnes/contrast buttons."""
