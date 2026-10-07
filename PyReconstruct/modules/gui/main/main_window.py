@@ -804,8 +804,8 @@ class MainWindow(QMainWindow):
                 self,
                 "Images Not Found",
                 "Images not found.\nWould you like to locate them?",
-                QMessageBox.Yes,
-                QMessageBox.No
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes
             )
             if reply == QMessageBox.No:
                 return
