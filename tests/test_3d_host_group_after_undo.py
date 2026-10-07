@@ -23,8 +23,8 @@ from PyReconstruct.modules.datatypes.host_tree import HostTree
 pytestmark = pytest.mark.gui
 
 
-def _mesh():
-    return vedo.Mesh([[[0, 0, 0], [1, 0, 0], [0, 1, 0]], [[0, 1, 2]]])
+def _mesh(x=0):
+    return vedo.Mesh([[[x, 0, 0], [x + 1, 0, 0], [x, 1, 0]], [[0, 1, 2]]])
 
 
 def _plotter(window):
@@ -35,6 +35,8 @@ def _plotter(window):
         objs=cp.SceneObjectList(),
         selected=[],
         updateSelected=lambda: None,
+        saveState=lambda: None,
+        show=lambda: None,
     )
     assert plt.series is window.series
     return plt
@@ -80,6 +82,30 @@ def test_host_group_after_undo_and_redo_of_clear_hosts(main_window, monkeypatch)
     window.undo(redo=True)
     assert series.getObjHosts(traveler) == []
     assert _host_group(plt, t_obj) == [traveler]
+
+
+def test_organize_scene_after_undo_moves_the_host_group_together(
+    main_window, monkeypatch
+):
+    """`Organize scene...` centers each host group as one block, so a host and
+    its traveler keep their offset. Spaced as two groups, the traveler 10 to
+    the right of its host ends up 1 to the right."""
+    window = main_window
+    series = window.series
+    host, traveler = sorted(series.data["objects"])[:2]
+    series.setObjHosts([traveler], [host])
+
+    plt = _plotter(window)
+    h_obj = plt.objs.add(_mesh(), series, host, "object", (255, 0, 0), 1)
+    t_obj = plt.objs.add(_mesh(10), series, traveler, "object", (0, 255, 0), 1)
+
+    _select_in_list(window, monkeypatch, [traveler]).clearHosts()
+    window.undo()
+    assert series.getObjHosts(traveler) == [host]
+
+    plt.organizeScene()
+    offset = t_obj.center[0] - h_obj.center[0]
+    assert offset == pytest.approx(10)
 
 
 def test_object_from_another_series_reads_the_tree_kept_at_add(main_window):
