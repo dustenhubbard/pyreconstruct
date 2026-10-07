@@ -21,6 +21,7 @@ from PyReconstruct.modules.datatypes.default_settings import get_username
 from PyReconstruct.modules.constants.locations import assets_dir, src_dir
 from PyReconstruct.modules.backend.updater.updater import GITHUB_REPO
 from PyReconstruct.modules.backend.updater.install_info import install_kind
+from PyReconstruct.modules.backend.func.logging_setup import log_note, log_exception
 
 WHATSNEW_KEY = "last_whatsnew_version"
 
@@ -35,10 +36,10 @@ WHATSNEW_KEY = "last_whatsnew_version"
 WHATSNEW_SUPPRESS_KEY = "suppress_whatsnew"
 
 # The popup ships on: with nothing stored, the stable app shows the notes once
-# after an update (his call, 2026-10-07; it shipped off from 2026-08-21 to
-# here, when the stable build was meant to stay quiet). The toggle and the
-# dialog's "Don't show again" button keep working either way; this is only
-# what an unset preference means. A dev build never shows it regardless; see
+# after an update. It shipped off from 2026-08-21 until this version, while
+# the stable build was meant to stay quiet. The toggle and the dialog's
+# "Don't show again" button keep working either way; this is only what an
+# unset preference means. A dev build never shows it regardless; see
 # ``whats_new_due``.
 WHATSNEW_SUPPRESS_DEFAULT = False
 
@@ -174,21 +175,26 @@ def reset_whats_new_popup_once(settings, current, shared=None):
 
     The popup shipped off by default from 2026-08-21 until this version, and
     the Help toggle and the "Don't show again" button wrote ``suppress_whatsnew``
-    all that while. His call on turning it back on (2026-10-07): a user's own
-    choice to turn it off is respected only from this version on, so a value
-    stored before this version does not bind, and a fresh install does not
-    show the notes at all. ``maybe_show_whats_new`` cannot tell an old "off"
-    from a new one and cannot tell a fresh install from an upgrade on a store
-    that never showed the popup, so this runs first and settles both, at the
-    first launch of the first version that carries it:
+    all that while. With the default back on, a choice to turn the popup off
+    is kept only from this version on: a value stored before it does not
+    bind, and a fresh install does not show the notes at all.
+    ``maybe_show_whats_new`` cannot tell an old "off" from a new one and
+    cannot tell a fresh install from an upgrade on a store that never showed
+    the popup, so this runs first and settles both, at the first launch of
+    the first stable version that carries it:
 
     * **marker present**: nothing, whatever is stored. Every write of
       ``suppress_whatsnew`` after this point is a decision and is kept.
+    * **dev build, or no usable version**: nothing, and no marker. The gate
+      never shows the popup for these, so there is nothing to bring back on,
+      and a stored "off" keeps meaning what the Help row says. The reset
+      waits for a stable version to run in this store: a source checkout of
+      main uses the stable store, and must not record the reset as done for
+      the stable build installed after it.
     * **fresh install**: no last-seen version, and none of
       ``PRIOR_INSTALL_KEYS`` in ``shared``. The running version is recorded
       as seen, so the first popup this install ever shows is the update after
-      it. Recorded only when the popup would otherwise be due: a dev build
-      records nothing, the same as its gate.
+      it.
     * **anything else**: an upgrade. The stored suppression is removed, so the
       ordinary once-per-version rules show the notes once on this launch, and
       the user can switch the popup off again from the dialog or the Help menu.
@@ -206,6 +212,8 @@ def reset_whats_new_popup_once(settings, current, shared=None):
     """
     if settings.contains(WHATSNEW_RESET_MARKER):
         return False
+    if not whats_new_due(None, current):
+        return False            # a dev build or no version: deferred, untouched
     if shared is None:
         shared = settings
     fresh = (
@@ -213,8 +221,7 @@ def reset_whats_new_popup_once(settings, current, shared=None):
         and not any(shared.contains(key) for key in PRIOR_INSTALL_KEYS)
     )
     if fresh:
-        if whats_new_due(None, current):
-            settings.setValue(WHATSNEW_KEY, current)
+        settings.setValue(WHATSNEW_KEY, current)
     else:
         settings.remove(WHATSNEW_SUPPRESS_KEY)
     settings.setValue(WHATSNEW_RESET_MARKER, True)
@@ -232,7 +239,10 @@ def reset_whats_new_popup_startup(current=None):
     the Dev app resets its own popup state and reads the shared store for
     the evidence. Never raises: a settings correction on the startup path
     must not be able to stop PyReconstruct from opening, and an unrecorded
-    reset simply runs again next launch. ``current`` is injectable for tests.
+    reset simply runs again next launch. The failure is logged first, the
+    way ``MainWindow.showWhatsNewStartup`` logs its own: a store that keeps
+    missing the reset would otherwise leave no trace of why. ``current`` is
+    injectable for tests.
     """
     try:
         from PySide6.QtCore import QSettings
@@ -249,8 +259,10 @@ def reset_whats_new_popup_startup(current=None):
         ran = reset_whats_new_popup_once(settings, current, shared=shared)
         if ran:
             settings.sync()
+            log_note("What's new (startup reset): applied to this store")
         return ran
     except Exception:
+        log_exception("What's new (startup reset) failed; continuing without it")
         return False
 
 

@@ -2,8 +2,8 @@
 
 The popup shipped off by default from 2026-08-21 until this version, and all
 that while the Help toggle and the dialog's "Don't show again" button wrote
-``suppress_whatsnew``. Turning the default back on (his call, 2026-10-07) came
-with two rules:
+``suppress_whatsnew``. The default is back on from this version, under two
+rules:
 
 1. a user's choice to turn the popup off is respected from this version on. A
    value stored before it does not bind: the notes show once after this
@@ -186,18 +186,43 @@ def test_a_fresh_install_reads_the_evidence_from_the_shared_store():
     assert bare.value(SEEN) == "1.24.0"
 
 
-@pytest.mark.parametrize("current", [
+DEV_VERSIONS = [
     "1.24.0.dev20261007",      # a nightly
     "1.24.1.dev5+g0123abc",    # a source checkout of main
     None,                      # indeterminate
     "garbage",
-])
-def test_a_fresh_dev_build_records_nothing(current):
-    """A dev build never shows the popup and records nothing, the same as its
-    gate; the marker is still written so the reset does not run again."""
+]
+
+
+@pytest.mark.parametrize("current", DEV_VERSIONS)
+def test_a_fresh_dev_build_writes_nothing(current):
+    """A dev build never shows the popup, so there is nothing to bring back
+    on: the reset is deferred, writes nothing, and runs when a stable version
+    does."""
     settings = FakeSettings()
-    assert F.reset_whats_new_popup_once(settings, current) is True
-    assert not settings.contains(SEEN)
+    assert F.reset_whats_new_popup_once(settings, current) is False
+    assert settings.writes == []
+
+
+@pytest.mark.parametrize("current", DEV_VERSIONS)
+def test_a_dev_build_leaves_a_stored_off_alone(current):
+    """The Dev app's own "off" stays: the popup never opens on a dev build
+    whatever is stored, and the Help row keeps showing the choice."""
+    settings = FakeSettings({SEEN: "1.23.0", OFF: True})
+    shared = FakeSettings({"username": "alice"})
+    assert F.reset_whats_new_popup_once(settings, current, shared=shared) is False
+    assert settings.value(OFF) is True
+    assert settings.writes == []
+
+
+def test_a_stable_version_after_a_dev_one_still_resets():
+    """A source checkout of main runs on the stable store. Its launches must
+    not record the reset as done, or the stable build installed after it
+    would leave an old "off" bound."""
+    settings = FakeSettings({SEEN: "1.23.0", OFF: True})
+    assert F.reset_whats_new_popup_once(settings, "1.24.1.dev5+g0123abc") is False
+    assert F.reset_whats_new_popup_once(settings, "1.24.0") is True
+    assert not settings.contains(OFF)
     assert settings.value(MARKER) is True
 
 
@@ -321,10 +346,10 @@ def test_startup_keeps_a_fresh_stable_install_quiet(redirected_store, monkeypatc
             QSettings(W.ORG, W.APP).setValue("username", had_username)
 
 
-def test_startup_under_the_dev_flavor_resets_the_dev_store_only(qapp, monkeypatch):
-    """The Dev app's popup state is its own: the reset lands in the Dev
-    domain, reads the shared store for the evidence, and leaves the stable
-    app's keys exactly as they were."""
+def test_startup_under_the_dev_flavor_leaves_both_stores_alone(qapp, monkeypatch):
+    """The Dev app runs a dev version, so its launch writes nothing: a stored
+    "off" in the Dev domain stays, no marker appears there, and the stable
+    app's keys are exactly as they were."""
     from PySide6.QtCore import QSettings
 
     DEV = ("KHLab", "PyReconstruct Dev")
@@ -337,10 +362,10 @@ def test_startup_under_the_dev_flavor_resets_the_dev_store_only(qapp, monkeypatc
     dev.setValue(OFF, True)
     dev.sync(); stable.sync()
     try:
-        assert F.reset_whats_new_popup_startup(current="1.24.0.dev20261007") is True
+        assert F.reset_whats_new_popup_startup(current="1.24.0.dev20261007") is False
         dev = QSettings(*DEV)
-        assert not dev.contains(OFF)
-        assert dev.contains(MARKER)
+        assert F.whats_new_suppressed(dev.value(OFF))
+        assert not dev.contains(MARKER)
         assert not dev.contains(SEEN)
         stable = QSettings(*STABLE)
         for key, before in stable_before.items():
@@ -356,6 +381,20 @@ def test_startup_never_raises(monkeypatch):
         raise RuntimeError("no settings today")
     monkeypatch.setattr(F, "reset_whats_new_popup_once", boom)
     assert F.reset_whats_new_popup_startup(current="1.24.0") is False
+
+
+def test_startup_logs_the_cause_when_the_reset_fails(monkeypatch, capsys):
+    """Swallowed, but not silently: a store that keeps missing the reset
+    would otherwise leave no trace of why. The line goes through
+    ``log_exception``, so it lands in the log the Help menu opens."""
+    def boom(*a, **k):
+        raise RuntimeError("no settings today")
+    monkeypatch.setattr(F, "reset_whats_new_popup_once", boom)
+    assert F.reset_whats_new_popup_startup(current="1.24.0") is False
+
+    err = capsys.readouterr().err
+    assert "What's new (startup reset) failed" in err
+    assert "RuntimeError: no settings today" in err
 
 
 def test_run_calls_the_reset_before_the_application_exists():

@@ -449,7 +449,7 @@ def test_launch_shows_the_notes_once_while_the_preference_is_unset(qapp):
     """The default: an unset preference means the popup is on.
 
     A user who never touched the Help toggle updates, launches, and sees the
-    notes once (WHATSNEW_SUPPRESS_DEFAULT is False; his call, 2026-10-07).
+    notes once (WHATSNEW_SUPPRESS_DEFAULT is False).
     The same unset preference on a dev build still shows nothing: that gate
     is the version's dev marker, and the default does not reach past it.
     """
