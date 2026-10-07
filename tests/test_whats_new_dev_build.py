@@ -120,6 +120,19 @@ def test_dev_build_welcome_keeps_the_update_checks_note_under_the_notes():
     assert c["note"] is not None
 
 
+@pytest.mark.parametrize("last_seen", [STABLE, "1.23.5"])
+def test_dev_build_updated_from_its_stable_shows_that_stables_notes(last_seen):
+    """Nothing in the notes sits between the last-seen version and the stable
+    the nightly shows, so the update interval is empty. The stable's own
+    section stands in, under the note that says where the since part is."""
+    c = F.whats_new_content(NIGHTLY, last_seen=last_seen, text=NOTES)
+    assert c["orienter"] == f"What's new since {last_seen}"
+    assert "The latest stable." in c["body"]
+    assert "The one before." not in c["body"]
+    assert c["note"] is not None
+    assert c["truncated"] is False
+
+
 @pytest.mark.parametrize("text", [
     NOTES.split("## [1.23.0]")[0],   # only Unreleased, 1.25.0 and the beta remain
     "",

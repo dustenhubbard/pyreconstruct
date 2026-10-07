@@ -528,6 +528,8 @@ def whats_new_content(current, last_seen=None, cap=3, text=None, on_demand=False
     body's section heading. A dev build with no stable section at or below its
     base (nothing bundled, or notes that start after it) falls through to the
     generic body like any other version without a section, and carries no note.
+    One updated from the stable it shows, or from past it, has no section in
+    the update interval and shows that stable's section rather than nothing.
     """
     if text is None:
         text = _read_whats_new()
@@ -603,6 +605,11 @@ def whats_new_content(current, last_seen=None, cap=3, text=None, on_demand=False
             if _safe_version(s["version"]) is not None
             and prev_v < _safe_version(s["version"]) <= shown_v
         ]
+        # A dev build updated from the stable it shows, or from past it, has
+        # no section in that interval: the since part is in the live changelog
+        # the note links. The stable's own section stands in for an empty body.
+        if not shown and note is not None:
+            shown = [current_section]
         shown.sort(key=lambda s: _safe_version(s["version"]), reverse=True)
         if len(shown) > cap:
             shown, truncated = shown[:cap], True
