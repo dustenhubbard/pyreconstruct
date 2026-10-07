@@ -4097,7 +4097,8 @@ class MainWindow(QMainWindow):
 
         from PyReconstruct.modules.gui.utils import undo_chord
 
-        candidates = self.series.findSelfCrossingTraces()
+        series = self.series
+        candidates = series.findSelfCrossingTraces()
         if not candidates:
             notify("No self-crossing traces found.")
             return
@@ -4118,7 +4119,12 @@ class MainWindow(QMainWindow):
                     f"\n\n{len(looped)} more {skipped_noun} the scissors; "
                     "a review list opens after."
                 )
-            if notifyConfirm(prompt, yn=True):
+            confirmed = notifyConfirm(prompt, yn=True)
+            if self.series is not series:
+                # a .jser opened from the Finder during the confirmation:
+                # the records name the series left (see _closeCleanupLists)
+                return
+            if confirmed:
                 repaired = self.field.repairSelfCrossingContours(safe)
                 if repaired:
                     # a summary window with copy and save-as-CSV, not a
@@ -4158,7 +4164,8 @@ class MainWindow(QMainWindow):
         """
         self.saveAllData()
 
-        candidates = self.series.findEmptyTraces(include_locked=False)
+        series = self.series
+        candidates = series.findEmptyTraces(include_locked=False)
         if not candidates:
             notify("No empty traces found.")
             return
@@ -4171,7 +4178,9 @@ class MainWindow(QMainWindow):
             f"Remove {count} {noun} from the series?\n\n"
             f"This can be undone ({undo_chord()}).",
             yn=True,
-        ):
+        ) or self.series is not series:
+            # a .jser opened from the Finder during the confirmation: the
+            # records name the series left (see _closeCleanupLists)
             return
 
         deleted = self.field.deleteMalformedContours(candidates)
