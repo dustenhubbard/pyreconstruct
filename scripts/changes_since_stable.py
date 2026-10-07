@@ -57,7 +57,14 @@ SECTION_RE = re.compile(r"^## \[(?P<version>[^\]]+)\]")
 # A line that keeps its own line when wrapped prose around it is joined: a
 # list item at any indentation, a fence, a table row, a blockquote.
 STRUCTURAL_RE = re.compile(r"^\s*(?:[-*+]\s|\d+[.)]\s|```|~~~|\||>)")
-FENCE_RE = re.compile(r"^\s*(?:```|~~~)")
+FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
+
+
+def closes(fence, line):
+    """Whether ``line`` closes a block opened by ``fence``: the same character,
+    at least as many of it, and nothing else on the line (CommonMark 4.5)."""
+    stripped = line.strip()
+    return set(stripped) == {fence[0]} and len(stripped) >= len(fence)
 
 
 def version_key(text):
@@ -131,19 +138,21 @@ def join_wrapped(lines):
     A continuation line is an indented line that is not itself structure (a
     nested list item, a fence, a table row, a blockquote). It joins onto the
     line before it when that line is prose: not blank, not a fence, not inside
-    a code block. Everything inside a fenced block passes through untouched.
+    a code block. Everything inside a fenced block passes through untouched,
+    until a fence of the opening kind and at least its length closes it.
     """
     out = []
     joinable = False
-    in_fence = False
+    fence = None
     for line in lines:
-        if in_fence:
+        if fence is not None:
             out.append(line)
-            if FENCE_RE.match(line):
-                in_fence = False
+            if closes(fence, line):
+                fence = None
             continue
-        if FENCE_RE.match(line):
-            in_fence = True
+        opening = FENCE_RE.match(line)
+        if opening:
+            fence = opening.group(1)
             out.append(line)
             joinable = False
             continue

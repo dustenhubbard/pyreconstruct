@@ -208,6 +208,35 @@ def test_nested_lists_code_blocks_and_tables_keep_their_lines(tmp_path):
     )
 
 
+def test_a_fence_closes_only_on_its_own_kind_and_length(tmp_path):
+    """A shorter fence, or one of the other character, inside a fenced block
+    is content; closing on it would join the code lines that follow."""
+    fragment = (
+        "- **Fences.** Shown as\n"
+        "  ~~~~\n"
+        "  ```\n"
+        "  one\n"
+        "  two\n"
+        "  ~~~\n"
+        "  three\n"
+        "  ~~~~\n"
+        "  and after\n"
+        "  it.\n"
+    )
+    out = section(repo(tmp_path, fragments={"a.added.md": fragment}))
+    assert out.split("### Added\n", 1)[1].split("\n### Fixed", 1)[0] == (
+        "- **Fences.** Shown as\n"
+        "  ~~~~\n"
+        "  ```\n"
+        "  one\n"
+        "  two\n"
+        "  ~~~\n"
+        "  three\n"
+        "  ~~~~\n"
+        "  and after it.\n"
+    )
+
+
 def test_a_second_paragraph_inside_a_bullet_stays_a_paragraph(tmp_path):
     fragment = (
         "- **Two paragraphs.** The first\n"
