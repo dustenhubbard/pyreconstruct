@@ -546,12 +546,19 @@ class FieldWidgetObject(FieldWidgetTrace):
         # persist field edits to section data before reloading sections
         self.mainwindow.saveAllData()
 
+        series = self.series
         ambiguous = []
-        applied = self.series.combineDuplicateTraces(
+        applied = series.combineDuplicateTraces(
             valid,
             series_states=self.series_states,
             ambiguous=ambiguous,
         )
+        if self.series is not series:
+            # a .jser opened from the Finder during the combine's progress
+            # dialog: the tables, field and title are that series' now, and
+            # the rows and notices name the series left (see
+            # MainWindow._closeCleanupLists)
+            return []
 
         if applied:
             names = set()
