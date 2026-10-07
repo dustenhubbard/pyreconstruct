@@ -4,7 +4,8 @@ The old highlight was a wider stroke in the trace's own color at 40% opacity,
 which disappears for a light trace on a light image or a dark trace on a dark
 one. The outline has a black edge and a white band on either side of the trace
 line, so one of the two contrasts with whatever is underneath, and the trace's
-own color stays down the middle.
+own color stays down the middle. The whole outline is six pixels across: one of
+black, one of white, two of the trace's color, one of white, one of black.
 
 These render a real section headlessly and read the pixels across the top edge
 of an axis-aligned square trace.
@@ -76,11 +77,22 @@ def _column(series, selected, fill_mode=("none", "none"), closed=True, focus_on=
 
 def _bands(column):
     """The colors met going down the column, with repeats collapsed."""
-    bands = []
+    return [color for color, _ in _runs(column)]
+
+
+def _runs(column):
+    """The colors met going down the column, each with how many pixels it spans."""
+    runs = []
     for y in sorted(column):
-        if not bands or bands[-1] != column[y]:
-            bands.append(column[y])
-    return bands
+        if runs and runs[-1][0] == column[y]:
+            runs[-1][1] += 1
+        else:
+            runs.append([column[y], 1])
+    return [tuple(run) for run in runs]
+
+
+# one pixel of black, one of white, two of the trace's color, and back out
+OUTLINE_RUNS = [(BLACK, 1), (WHITE, 1), (MAGENTA, 2), (WHITE, 1), (BLACK, 1)]
 
 
 @pytest.mark.parametrize("closed", [True, False], ids=["closed", "open"])
@@ -89,6 +101,13 @@ def test_selected_trace_has_black_and_white_outline(series, closed):
     # black edge, white band, the trace's own color, white band, black edge
     assert _bands(column) == [BLACK, WHITE, MAGENTA, WHITE, BLACK], column
     assert column.get(EDGE_Y) == MAGENTA, column
+
+
+@pytest.mark.parametrize("closed", [True, False], ids=["closed", "open"])
+def test_outline_is_six_pixels_across(series, closed):
+    column = _column(series, selected=True, closed=closed)
+    assert _runs(column) == OUTLINE_RUNS, column
+    assert len(column) == 6, column
 
 
 def test_outline_keeps_a_forced_color_down_the_middle(series):
@@ -209,10 +228,10 @@ def test_a_transparent_fill_under_the_outline(series):
     assert (c.red(), c.green(), c.blue()) == pytest.approx(MAGENTA, abs=2)
     assert c.alpha() == pytest.approx(fill_opacity * 255, abs=2)
 
-    # the outline stays fully opaque over the fill
+    # the outline stays fully opaque over the fill, at its full width
     column = {}
     for y in range(EDGE_Y - 8, EDGE_Y + 9):
         p = image.pixelColor(COLUMN_X, y)
         if p.alpha() == 255:
             column[y] = (p.red(), p.green(), p.blue())
-    assert _bands(column) == [BLACK, WHITE, MAGENTA, WHITE, BLACK], column
+    assert _runs(column) == OUTLINE_RUNS, column

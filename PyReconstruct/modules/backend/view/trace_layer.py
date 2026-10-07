@@ -35,9 +35,9 @@ from PyReconstruct.modules.gui.utils import drawOutlinedText
 # How a selected trace is drawn: (color, pen width in pixels), widest first.
 # None stands for the trace's own color.
 SELECTION_OUTLINE = (
-    ((0, 0, 0), 8),
-    ((255, 255, 255), 6),
-    (None, 3),
+    ((0, 0, 0), 6),
+    ((255, 255, 255), 4),
+    (None, 2),
 )
 
 class TraceLayer():
