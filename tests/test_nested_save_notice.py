@@ -21,6 +21,7 @@ these into tests of two ordinary saves.
 """
 
 import os
+from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QTimer
@@ -161,35 +162,195 @@ def test_closing_during_a_save_is_refused_and_keeps_the_working_folder(
         assert b"nested_close_marker" in f.read()
 
 
-def test_backup_now_during_a_save_shows_only_a_notice(
-    main_window, screen, tmp_path, monkeypatch
-):
-    """`Backup now...` chosen while a save is writing."""
+# --- backups ------------------------------------------------------------------
+#
+# A backup during a save has more to get wrong than a save does. `manualBackup`
+# writes the working files first, through `saveAllData`, and the running save
+# is reading exactly those files, one section at a time. Then it opens the
+# comment dialog, and `backup` makes the backup folder and either copies the
+# .jser (`from_saved`, the save paths' own autobackup) or writes one. Every one
+# of those used to happen before the running save was noticed. So these tests
+# record each of them from inside the save, and expect none.
+
+
+class Touches:
+    """What a backup did to disk while ``active`` was set.
+
+    The running save calls `Series.save` itself and reads the working files, so
+    only calls made while the recorded action runs are counted.
+    """
+
+    def __init__(self):
+        self.active = False
+        self.working_file_writes = 0  # Section.save and Series.save
+        self.copies = 0  # shutil.copyfile, the from_saved backup
+
+
+@pytest.fixture
+def touches(monkeypatch):
+    """Count the working-file writers and the backup copy, while ``active``."""
+    from PyReconstruct.modules.datatypes import Section, Series
     from PyReconstruct.modules.gui.main import main_window as mw
 
-    class Comment:
-        """The backup comment dialog, answered with a comment and OK."""
+    touches = Touches()
 
+    def counted(name, original):
+        def call(*args, **kwargs):
+            if touches.active:
+                setattr(touches, name, getattr(touches, name) + 1)
+            return original(*args, **kwargs)
+
+        return call
+
+    monkeypatch.setattr(Section, "save", counted("working_file_writes", Section.save))
+    monkeypatch.setattr(Series, "save", counted("working_file_writes", Series.save))
+    monkeypatch.setattr(mw.shutil, "copyfile", counted("copies", mw.shutil.copyfile))
+    return touches
+
+
+@pytest.fixture
+def backup_dialogs(monkeypatch):
+    """Replace the two backup dialogs with stand-ins that record each one opened.
+
+    The comment dialog answers with a comment and OK, so a build that reaches it
+    goes on to the folder setup and the copy, where the assertions catch those
+    too. The settings dialog is dismissed.
+    """
+    from PyReconstruct.modules.gui.main import main_window as mw
+
+    opened = []
+
+    class Comment:
         def __init__(self, *args, **kwargs):
-            pass
+            opened.append("Backup With Comment")
 
         def exec(self):
             return ("during", False), True
 
+    class Settings:
+        def __init__(self, *args, **kwargs):
+            opened.append("Backup Settings")
+
+        def exec(self):
+            return False
+
     monkeypatch.setattr(mw, "BackupCommentDialog", Comment)
-    window = main_window
-    series = window.series
+    monkeypatch.setattr(mw, "BackupDialog", Settings)
+    return opened
+
+
+def _default_backup_folder(series, tmp_path):
+    """Point the series at the default backup folder, one it has yet to make.
+
+    The default folder names the series with ``{series}``, and `backup` makes
+    that folder on the way to writing, so whether it exists afterwards tells
+    whether the backup got that far.
+    """
     backups = tmp_path / "backups"
     backups.mkdir()
-    series.setBackupUsesDefaults(False)
-    series.setOption("backup_dir", str(backups))
+    series.setBackupUsesDefaults(True)
+    series.setOption("default_backup_dir", str(backups / "{series}"))
+    folder = Path(series.backupFolder())
+    assert folder.parent == backups and not folder.exists()
+    return folder
+
+
+def _recording(touches, backup_dialogs, folder, screen, action):
+    """Run ``action`` and return everything a backup could have done by then."""
+
+    def run():
+        touches.active = True
+        try:
+            action()
+        finally:
+            touches.active = False
+        return {
+            "working-file writes": touches.working_file_writes,
+            "backup copies": touches.copies,
+            "dialogs": list(backup_dialogs),
+            "folder made": folder.exists(),
+            "backup files": sorted(p.name for p in folder.parent.rglob("*") if p.is_file()),
+            "error reports": list(screen.reports),
+        }
+
+    return run
+
+
+NOTHING = {
+    "working-file writes": 0,
+    "backup copies": 0,
+    "dialogs": [],
+    "folder made": False,
+    "backup files": [],
+    "error reports": [],
+}
+
+
+def test_backup_now_during_a_save_shows_only_a_notice(
+    main_window, local_series_settings, screen, backup_dialogs, touches, tmp_path
+):
+    """`Backup now...` chosen while a save is writing.
+
+    Refused before it does anything: `manualBackup` used to rewrite the working
+    files under the save that was reading them, open the comment dialog and make
+    the backup folder, and only then notice the running save.
+    """
+    window = main_window
+    series = local_series_settings(window)
+    folder = _default_backup_folder(series, tmp_path)
     _edit(window, "nested_backup_marker")
 
-    _save_with(window, window.manualbackup_act.trigger)
+    seen = _save_with(
+        window,
+        _recording(touches, backup_dialogs, folder, screen, window.manualbackup_act.trigger),
+    )
 
-    assert list(backups.iterdir()) == [], "the refused backup wrote a file"
-    assert screen.reports == [], "an error-report window opened"
+    assert seen["result"] == NOTHING
     assert len(screen.notices) == 1
     assert screen.notices[0].startswith(SKIPPED)
-    assert str(backups) in screen.notices[0]
+    assert str(folder) in screen.notices[0]
+    # the first save finished and wrote the edit, and nothing came after it:
+    # this series does not back up on save
     assert series.modified is False
+    with open(series.jser_fp, "rb") as f:
+        assert b"nested_backup_marker" in f.read()
+    assert not folder.exists()
+
+
+def test_an_autobackup_from_the_saved_file_during_a_save_copies_nothing(
+    main_window, local_series_settings, screen, backup_dialogs, touches, tmp_path
+):
+    """The save paths' own `backup(check_auto=True, from_saved=True)`, inside a save.
+
+    ``from_saved`` copies the .jser instead of writing one, trusting that it was
+    just saved. Inside a save that file is the one being replaced, so the copy is
+    refused like any other backup, with the same notice. The save's own
+    autobackup, which runs after it, still makes the one copy.
+    """
+    window = main_window
+    series = local_series_settings(window)
+    folder = _default_backup_folder(series, tmp_path)
+    series.setOption("default_autobackup", True)
+    _edit(window, "nested_autobackup_marker")
+
+    seen = _save_with(
+        window,
+        _recording(
+            touches, backup_dialogs, folder, screen,
+            lambda: window.backup(check_auto=True, from_saved=True),
+        ),
+    )
+
+    assert seen["result"] == NOTHING
+    assert len(screen.notices) == 1
+    assert screen.notices[0].startswith(SKIPPED)
+    assert str(folder) in screen.notices[0]
+    # the first save finished and wrote the edit...
+    assert series.modified is False
+    with open(series.jser_fp, "rb") as f:
+        saved = f.read()
+    assert b"nested_autobackup_marker" in saved
+    # ...and its own autobackup, after it, copied that file once
+    copies = list(folder.iterdir())
+    assert len(copies) == 1
+    assert copies[0].read_bytes() == saved
