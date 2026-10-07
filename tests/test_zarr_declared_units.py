@@ -62,6 +62,43 @@ def test_label_offset_is_measured_from_raw(labels_attrs, expected):
     assert conversions.get_label_offset(labels, raw) == pytest.approx(expected)
 
 
+## four entries are channel first; the channel entry pairs with no axis
+@pytest.mark.parametrize(
+    "raw_attrs, labels_attrs",
+    [
+        ({"offset": [100, 200, 300]}, {"offset": [0, 140, 208, 304]}),
+        ({"offset": [0, 100, 200, 300]}, {"offset": [140, 208, 304]}),
+        ({"offset": [1, 100, 200, 300]}, {"offset": [0, 140, 208, 304]}),
+        (
+            {"offset": [100, 200, 300]},
+            {"offset": [0, 0.14, 0.208, 0.304], "units": ["um", "um", "um"]},
+        ),
+        (
+            {"offset": [0.1, 0.2, 0.3], "units": ["", "um", "um", "um"]},
+            {"offset": [140, 208, 304]},
+        ),
+    ],
+)
+def test_four_entry_label_offset_is_channel_first(raw_attrs, labels_attrs):
+    raw = _array(raw_attrs)
+    labels = _array(labels_attrs)
+
+    assert conversions.get_label_offset(labels, raw) == pytest.approx([40, 8, 4])
+
+
+@pytest.mark.parametrize(
+    "values, units",
+    [
+        ([1, 0.05, 0.004, 0.008], ["um", "um", "um"]),
+        ([1, 0.05, 0.004, 0.008], "um"),
+        ([0.05, 4, 8], ["", "um", "nm", "nm"]),
+        ([1, 0.05, 4, 8], ["", "um", "nm", "nm"]),
+    ],
+)
+def test_four_entry_units_pair_with_the_spatial_axes(values, units):
+    assert conversions.as_nm(values, _array({"units": units})) == pytest.approx([50, 4, 8])
+
+
 ## seriesToLabels
 
 
@@ -220,6 +257,35 @@ def test_raw_offset_shifts_imported_points(tmp_path, real_series, raw_offset, un
     assert bounds == pytest.approx((x0 + dx, x1 + dx, y0 + dy, y1 + dy))
 
 
+@pytest.mark.parametrize(
+    "raw_attrs, label_attrs",
+    [
+        (
+            {"voxel_size": [1, 50, 4, 4], "offset": [0, 0, 0]},
+            {"voxel_size": [50, 4, 4], "offset": [0, 0, 0]},
+        ),
+        (
+            {"voxel_size": [50, 4, 4], "offset": [0, 500, 1200, 2000]},
+            {"voxel_size": [1, 50, 4, 4], "offset": [500, 1200, 2000]},
+        ),
+        (
+            {
+                "voxel_size": [1, 0.05, 0.004, 0.004],
+                "offset": [0, 0.5, 1.2, 2.0],
+                "units": ["um", "um", "um"],
+            },
+            {"voxel_size": [50, 4, 4], "offset": [1, 500, 1200, 2000]},
+        ),
+    ],
+)
+def test_four_entry_metadata_imports_labels_in_place(
+    tmp_path, real_series, raw_attrs, label_attrs
+):
+    bounds = _import_box(tmp_path, real_series, raw_attrs, label_attrs)
+
+    assert bounds == pytest.approx(AT_ZERO)
+
+
 def test_shared_z_offset_starts_at_raw_first_section(tmp_path):
     fp = str(tmp_path / "z.zarr")
     zg = zarr.open(fp, "w")
@@ -313,6 +379,21 @@ def test_overlay_uses_channel_first_label_resolution(tmp_path, attribute, label_
         {"voxel_size": [50, 4, 4]},
         {attribute: label_size, "offset": [50, 4, 8]},
     ) == pytest.approx(RAW_GRID_OVERLAY)
+
+
+@pytest.mark.parametrize(
+    "raw_attrs, label_attrs",
+    [
+        ({"voxel_size": [1, 50, 4, 4]}, {"offset": [50, 4, 8]}),
+        ({"voxel_size": [50, 4, 4]}, {"offset": [1, 50, 4, 8]}),
+        (
+            {"voxel_size": [1, 0.05, 0.004, 0.004], "units": ["um", "um", "um"]},
+            {"voxel_size": [1, 0, 0, 0], "offset": [0, 50, 4, 8]},
+        ),
+    ],
+)
+def test_overlay_reads_four_entry_raw_and_offset_metadata(tmp_path, raw_attrs, label_attrs):
+    assert _overlay(tmp_path, raw_attrs, label_attrs) == pytest.approx(RAW_GRID_OVERLAY)
 
 
 def test_overlay_with_no_size_on_either_array_starts_at_raws_corner(tmp_path):
