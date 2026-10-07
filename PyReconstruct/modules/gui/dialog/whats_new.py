@@ -223,13 +223,12 @@ class WhatsNewDialog(QDialog):
             else "What's new in PyReconstruct"
         )
         # 700 minimum width, up from the 540 the dialog opened at when the
-        # byline and the release-notes link stacked; click-tested and approved
-        # at this size. The width does not shape the footer: the byline breaks
-        # into its two lines explicitly (see the footer below), the same at
-        # every width, so the extra room is purely about how much of a release
-        # note line fits unwrapped. The height increase lives on the notes
-        # browser below, the one widget that should absorb extra space; no
-        # other geometry is set, so the dialog keeps sizing itself from its
+        # footer text and the release-notes link stacked. The width does not
+        # shape the footer: the provenance line is one short line at every
+        # width, so the extra room is purely about how much of a release note
+        # line fits unwrapped. The height increase lives on the notes browser
+        # below, the one widget that should absorb extra space; no other
+        # geometry is set, so the dialog keeps sizing itself from its
         # contents.
         self.setMinimumWidth(700)
         self.setModal(False)  # modeless: does not block the app
@@ -337,15 +336,10 @@ class WhatsNewDialog(QDialog):
                 f'{before}<a href="{HOMEPAGE_URL}">{name}</a>{after}' if name
                 else before
             )
-            # Rendered as two lines, broken at the comma -- "An independent
-            # build of PyReconstruct," over "maintained by Dusten Hubbard." --
-            # matching the approved mockup. The break is an explicit <br/> so
-            # the shape is the same at every window width rather than wrap
-            # luck. It is a display concern of this dialog alone, which is why
-            # MAINTAINER_BYLINE itself stays one string: the GitHub release
-            # footer renders the same sentence inline. A byline without a
-            # comma-space renders unchanged, on one line.
-            self._byline = SecondaryLabel(markup.replace(", ", ",<br/>", 1))
+            # Rendered as it is, on one line: the sentence is short enough to
+            # fit the footer at the dialog's minimum width, so no explicit
+            # break is added.
+            self._byline = SecondaryLabel(markup)
             bf = self._byline.font()
             bf.setItalic(True)
             self._byline.setFont(bf)
@@ -359,9 +353,8 @@ class WhatsNewDialog(QDialog):
         # Same LinkLabel as the byline: this label has always had the same
         # stale-anchor-color behavior on a live theme switch, and fixing one
         # anchor in the dialog while leaving the other stale would show.
-        # AlignTop: the byline renders as two lines (see above), and the link
-        # stays level with the byline's first line rather than floating
-        # mid-row.
+        # AlignTop: should the provenance line ever wrap, the link stays level
+        # with its first line rather than floating mid-row.
         link = LinkLabel(f'<a href="{url}">All release notes on GitHub ↗</a>')
         link.setOpenExternalLinks(True)
         footer.addWidget(link, 0, Qt.AlignTop)
