@@ -290,8 +290,13 @@ class FieldWidgetView(FieldWidgetPaint):
         # point afterwards.
         self.endPendingEvents()
 
+        # Through the main window, as paging goes, so the section being left
+        # is saved first. The field holds one section besides the one on
+        # screen, and the field's own changeSection drops the older of the
+        # two: called here directly, a second jump threw away the unsaved
+        # edits of the section two jumps back.
         if self.series.current_section != snum:
-            self.changeSection(snum)
+            self.mainwindow.changeSection(snum)
         
         # set one micron diameter around object
         self.series.window = [x-0.5, y-0.5, 1, 1]

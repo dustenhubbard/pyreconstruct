@@ -70,12 +70,17 @@ class _StubWidget:
     def __init__(self):
         self.text = None
         self.value = None
+        self.blocked = False
 
     def setText(self, text):
         self.text = text
 
     def setValue(self, value):
         self.value = value
+
+    def blockSignals(self, block):
+        was, self.blocked = self.blocked, block
+        return was
 
 
 class _StubPalette:
