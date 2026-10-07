@@ -271,16 +271,17 @@ def _find_button(dialog, label):
     return next(b for b in dialog.findChildren(QPushButton) if b.text() == label)
 
 
-def test_dont_show_again_suppresses_the_popup_across_restarts(qapp):
-    """The button closes the dialog, and no later launch shows the popup.
+def test_unchecking_show_after_update_suppresses_the_popup_across_restarts(qapp):
+    """Clearing the checkbox writes the suppression, and no later launch shows the popup.
 
     Asserted through the persisted preference rather than any dialog state:
     the dialog writes the same store ``maybe_show_whats_new`` reads, so each
     fresh gate run below is a "restart" of the startup logic against the
-    settings the button left behind. The suppression must also beat a pending
-    version bump: a stored last-seen older than the running version is exactly
-    the state ``whats_new_due`` fires on, and the button has to win that
-    argument, or the very next update would undo the user's choice.
+    settings the checkbox left behind. The suppression must also beat a
+    pending version bump: a stored last-seen older than the running version
+    is exactly the state ``whats_new_due`` fires on, and the checkbox has to
+    win that argument, or the very next update would undo the user's choice.
+    The write happens on the toggle itself; Close only closes.
     """
     settings = FakeSettings({F.WHATSNEW_KEY: "1.20.3"})
     calls = []
@@ -288,9 +289,12 @@ def test_dont_show_again_suppresses_the_popup_across_restarts(qapp):
     dlg = W.WhatsNewDialog(None, "1.21.0", last_seen="1.20.3", settings=settings)
     try:
         dlg.show()
-        _find_button(dlg, "Don't show again").click()
-        assert not dlg.isVisible()                    # closed, like "Got it"
+        assert dlg._show_box.isChecked()              # the store says show
+        dlg._show_box.setChecked(False)
         assert F.whats_new_suppressed(settings.value(F.WHATSNEW_SUPPRESS_KEY))
+        assert dlg.isVisible()                        # the toggle does not close
+        _find_button(dlg, "Close").click()
+        assert not dlg.isVisible()
     finally:
         dlg.deleteLater()
 

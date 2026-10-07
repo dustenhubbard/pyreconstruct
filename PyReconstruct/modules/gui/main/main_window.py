@@ -498,7 +498,7 @@ class MainWindow(QMainWindow):
         self.toggleztraces_act.setChecked(bool(self.series.getOption("show_ztraces")))
 
         ## The What's-new popup toggle is the exception to the note above: the
-        ## dialog's "Don't show again" button can flip the stored preference
+        ## dialog's "Show changelog after each update" box can flip the stored preference
         ## behind the menu's back, so it resyncs on every Help open besides the
         ## build-time seed. The connection is made per rebuild without
         ## disconnecting: clearMenuBar discards the previous helpmenu, and the
@@ -991,13 +991,13 @@ class MainWindow(QMainWindow):
         """Reflect the stored What's-new popup preference on the Help toggle.
 
         Runs at menubar build and on every Help open (see createMenuBar): the
-        preference can change outside the menu, through the dialog's "Don't
-        show again" button, and a checkable that contradicts the stored state
-        would invert itself on the next click.
+        preference can change outside the menu, through the dialog's "Show
+        changelog after each update" checkbox, and a checkable that
+        contradicts the stored state would invert itself on the next click.
 
         Checked means the popup is OFF, matching the row's wording (his call,
         2026-08-26): the tick and the stored suppression flag are the same
-        thing now, so the dialog's button and this row always agree.
+        thing now, so the dialog's checkbox and this row always agree.
         """
         from PyReconstruct.modules.gui.main.first_launch import (
             WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT, whats_new_suppressed,

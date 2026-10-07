@@ -802,7 +802,7 @@ def test_whats_new_dialog_is_modeless_and_renders_its_content(qapp):
         assert "What's new since 1.20.1" in labels     # orienter
         assert "All release notes on GitHub" in labels
         assert "A shiny new thing." in dlg._notes.toPlainText()  # body rendered
-        assert "Got it" in [b.text() for b in dlg.findChildren(QPushButton)]
+        assert "Close" in [b.text() for b in dlg.findChildren(QPushButton)]
     finally:
         dlg.deleteLater()
 
@@ -918,7 +918,7 @@ def test_dialog_byline_and_link_share_a_footer_row_below_the_notes(qapp):
         assert byline.geometry().right() < link.geometry().left()
         # the action buttons are the row below the footer
         got_it = next(b for b in dlg.findChildren(QPushButton)
-                      if b.text() == "Got it")
+                      if b.text() == "Close")
         assert got_it.geometry().top() >= byline.geometry().bottom()
         assert got_it.geometry().top() >= link.geometry().bottom()
         # and the footer keeps the byline's register: italic, name linked
@@ -968,7 +968,7 @@ def test_dialog_minimum_size_and_where_extra_space_goes(qapp):
 
         # stretching the dialog stretches the notes, not the footer rows
         got_it = next(b for b in dlg.findChildren(QPushButton)
-                      if b.text() == "Got it")
+                      if b.text() == "Close")
         notes_h = dlg._notes.height()
         byline_h, button_h = dlg._byline.height(), got_it.height()
         dlg.resize(dlg.width(), dlg.height() + 200)

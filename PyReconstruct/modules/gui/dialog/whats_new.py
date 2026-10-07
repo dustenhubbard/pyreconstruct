@@ -16,8 +16,12 @@ from html import escape
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextBrowser,
+    QCheckBox, QFrame,
 )
-from PySide6.QtGui import QColor, QPalette, QTextCursor
+from PySide6.QtGui import (
+    QColor, QPalette, QTextCursor, QTextCharFormat,
+    QFontMetricsF,
+)
 from PySide6.QtCore import Qt, QSettings, QEvent
 
 from functools import partial
@@ -39,25 +43,6 @@ from PyReconstruct.modules.constants.settings_domain import (
 # app's popup state is never touched by a nightly.
 ORG = SETTINGS_ORG
 APP = SHARED_APP
-
-
-def _space_after_headings(browser, extra=10):
-    """Add breathing room below markdown headings in a notes browser.
-
-    Qt's ``setMarkdown`` ignores the document default stylesheet, so we walk the
-    blocks and bump the bottom margin on heading blocks instead. Applies to
-    whatever headings the notes carry.
-    """
-    doc = browser.document()
-    cursor = QTextCursor(doc)
-    block = doc.begin()
-    while block.isValid():
-        fmt = block.blockFormat()
-        if fmt.headingLevel() > 0:
-            fmt.setBottomMargin(fmt.bottomMargin() + extra)
-            cursor.setPosition(block.position())
-            cursor.setBlockFormat(fmt)
-        block = block.next()
 
 
 class LinkLabel(QLabel):
@@ -121,6 +106,39 @@ class LinkLabel(QLabel):
 # legible-everywhere is one number, but it is his to raise.
 SECONDARY_TEXT_BLEND = 0.34
 
+# How far the release-note body text steps from the dialog background toward
+# the full text color. The notes are read in bulk, so they take a darker gray
+# than the two secondary lines above: 0.55 is the smallest step that clears
+# the 4.5:1 contrast floor on the light theme (#6a6a6a on cocoa's #ececec),
+# while the version headings stay in the full text color, so a claim still
+# reads darker than its explainer. One number, and his to move.
+NOTES_TEXT_BLEND = 0.55
+
+
+def blend_toward_text(palette, fraction):
+    """A color ``fraction`` of the way from the dialog background to its text.
+
+    Both endpoints are palette roles (``QPalette::Window`` and ``QPalette::
+    Active WindowText``), so the result follows the theme; see
+    ``secondary_text_color`` for why these two roles and not the disabled one.
+    """
+    text = palette.color(QPalette.Active, QPalette.WindowText)
+    bg = palette.color(QPalette.Active, QPalette.Window)
+
+    def step(b, t):
+        return round(b + fraction * (t - b))
+
+    return QColor(
+        step(bg.red(), text.red()),
+        step(bg.green(), text.green()),
+        step(bg.blue(), text.blue()),
+    )
+
+
+def notes_text_color(palette):
+    """The gray the release-note body paints in; see ``NOTES_TEXT_BLEND``."""
+    return blend_toward_text(palette, NOTES_TEXT_BLEND)
+
 
 def secondary_text_color(palette):
     """The color the dialog's secondary lines paint in, derived from the theme.
@@ -147,17 +165,7 @@ def secondary_text_color(palette):
     resolves its own colors into the widget palette, so the same blend lands
     right on the dark background too.
     """
-    text = palette.color(QPalette.Active, QPalette.WindowText)
-    bg = palette.color(QPalette.Active, QPalette.Window)
-
-    def step(b, t):
-        return round(b + SECONDARY_TEXT_BLEND * (t - b))
-
-    return QColor(
-        step(bg.red(), text.red()),
-        step(bg.green(), text.green()),
-        step(bg.blue(), text.blue()),
-    )
+    return blend_toward_text(palette, SECONDARY_TEXT_BLEND)
 
 
 class SecondaryLabel(LinkLabel):
@@ -178,21 +186,186 @@ class SecondaryLabel(LinkLabel):
         return f'<span style="color:{color}">{self._markup}</span>'
 
 
+# The marker each release-note item hangs from. Qt rich text has no custom
+# list marker, so the item is a plain paragraph that starts with this and
+# wraps under its own first word (``restyle_notes``).
+ITEM_MARKER = "\u2014 "
+
+# Vertical rhythm of the notes, in pixels: between items, above a version
+# heading, and above a type heading (New, Improved, Changed, Fixed) within a
+# version.
+ITEM_GAP = 7
+VERSION_GAP = 26
+TYPE_GAP = 12
+
+# How much larger than the body a version heading is, in points. Two less
+# than the dialog's own title, which stays the largest text on screen.
+VERSION_HEADING_STEP = 4
+
+
+def restyle_notes(doc, palette):
+    """Restyle a markdown-built notes document in place.
+
+    ``setMarkdown`` has already parsed the notes; this walks the blocks and
+    sets what the markdown dialect cannot say:
+
+    * a level-3 heading, one per version, is large and bold in the full text
+      color, with the `` — date`` after the version in the secondary gray at
+      body size, and a gap above it that separates one version from the next;
+    * a level-4 heading, one per change type, is bold at body size;
+    * every list item leaves its list and becomes a paragraph that starts with
+      ``ITEM_MARKER`` and hangs: the left margin is the marker's width and the
+      first line is pulled back by the same amount, so a wrapped item lines
+      up under its own first word, not under the marker;
+    * all other text, items included, paints in ``notes_text_color``.
+
+    Colors are written into the character formats rather than set on the
+    widget, for the reason ``SecondaryLabel`` gives: an inline color is the
+    one thing that wins over the app-level dark stylesheet.
+    """
+    body = notes_text_color(palette)
+    secondary = secondary_text_color(palette)
+    base_font = doc.defaultFont()
+    # a font set in pixels reports no point size; size the headings from the
+    # metrics then, so they still grow instead of collapsing to 4pt
+    base_pt = base_font.pointSizeF()
+    if base_pt <= 0:
+        base_pt = QFontMetricsF(base_font).height() * 0.75
+    hang = QFontMetricsF(base_font).horizontalAdvance(ITEM_MARKER)
+
+    body_fmt = QTextCharFormat()
+    body_fmt.setForeground(body)
+
+    cursor = QTextCursor(doc)
+    cursor.beginEditBlock()
+    first_version = True
+    block = doc.begin()
+    while block.isValid():
+        bfmt = block.blockFormat()
+        level = bfmt.headingLevel()
+        cursor.setPosition(block.position())
+        # Headings get a whole new character format rather than a merge: the
+        # markdown parser sizes them through FontSizeAdjustment, which Qt
+        # applies over any point size merged in, so a merged size would be
+        # ignored and the heading would stay at the dialect's own step.
+        if level == 3:
+            heading_fmt = QTextCharFormat()
+            heading_fmt.setFont(base_font)
+            heading_fmt.setFontPointSize(base_pt + VERSION_HEADING_STEP)
+            heading_fmt.setFontWeight(700)
+            cursor.setPosition(block.position() + block.length() - 1,
+                               QTextCursor.KeepAnchor)
+            cursor.setCharFormat(heading_fmt)
+            # the date after the version: body size, normal weight, secondary
+            text = block.text()
+            cut = text.find(" \u2014 ")
+            if cut >= 0:
+                date_fmt = QTextCharFormat()
+                date_fmt.setFont(base_font)
+                date_fmt.setFontPointSize(base_pt)
+                date_fmt.setFontWeight(400)
+                date_fmt.setForeground(secondary)
+                cursor.setPosition(block.position() + cut)
+                cursor.setPosition(block.position() + len(text),
+                                   QTextCursor.KeepAnchor)
+                cursor.setCharFormat(date_fmt)
+            bfmt.setTopMargin(0 if first_version else VERSION_GAP)
+            bfmt.setBottomMargin(4)
+            first_version = False
+            cursor.setPosition(block.position())
+            cursor.setBlockFormat(bfmt)
+        elif level == 4:
+            type_fmt = QTextCharFormat()
+            type_fmt.setFont(base_font)
+            type_fmt.setFontPointSize(base_pt)
+            type_fmt.setFontWeight(700)
+            cursor.setPosition(block.position() + block.length() - 1,
+                               QTextCursor.KeepAnchor)
+            cursor.setCharFormat(type_fmt)
+            bfmt.setTopMargin(TYPE_GAP)
+            bfmt.setBottomMargin(2)
+            cursor.setPosition(block.position())
+            cursor.setBlockFormat(bfmt)
+        else:
+            cursor.setPosition(block.position() + block.length() - 1,
+                               QTextCursor.KeepAnchor)
+            cursor.mergeCharFormat(body_fmt)
+            cursor.setPosition(block.position())
+            text_list = block.textList()
+            if text_list is not None:
+                text_list.remove(block)
+                bfmt = block.blockFormat()
+                bfmt.setIndent(0)
+                bfmt.setLeftMargin(hang)
+                bfmt.setTextIndent(-hang)
+                cursor.setBlockFormat(bfmt)
+                cursor.insertText(ITEM_MARKER, body_fmt)
+                bfmt = block.blockFormat()
+            bfmt.setTopMargin(0)
+            bfmt.setBottomMargin(ITEM_GAP)
+            cursor.setPosition(block.position())
+            cursor.setBlockFormat(bfmt)
+        block = block.next()
+    cursor.endEditBlock()
+
+
+class NotesBrowser(QTextBrowser):
+    """A read-only browser that renders release-note markdown, restyled.
+
+    Keeps the markdown so a ``PaletteChange`` can rebuild the document against
+    the new palette: the body gray and the date gray are inline colors
+    computed from the palette at render time (see ``restyle_notes``), and
+    switching theme through Help > Theme with the dialog open would otherwise
+    leave them in the previous theme's colors, the same stale-color trap
+    ``LinkLabel`` closes for the anchors. The scroll position is kept across
+    the rebuild.
+    """
+
+    def __init__(self, markdown_text, parent=None):
+        super().__init__(parent)
+        self._markdown = markdown_text
+        self.setOpenExternalLinks(True)
+        # One flat surface with the dialog: no frame, and the viewport shows
+        # the dialog background through it instead of painting its own. The
+        # stylesheet line is for the dark theme, whose app-level sheet draws
+        # a border on every text edit; a widget's own sheet outranks the
+        # app's. It says nothing else on purpose: a ``background:
+        # transparent`` rule here resolves the widget palette's Window and
+        # WindowText to black, which the grays below are blended from.
+        self.setFrameShape(QFrame.NoFrame)
+        self.viewport().setAutoFillBackground(False)
+        self.setStyleSheet("NotesBrowser { border: none; }")
+        self.document().setDocumentMargin(2)
+        self.render()
+
+    def render(self):
+        """Rebuild the document from the markdown against the current palette."""
+        scroll = self.verticalScrollBar().value()
+        self.document().setDefaultFont(self.font())
+        try:
+            self.setMarkdown(self._markdown)
+            restyle_notes(self.document(), self.palette())
+        except Exception:
+            self.setPlainText(self._markdown)
+        self.verticalScrollBar().setValue(scroll)
+
+    def changeEvent(self, event):
+        # getattr: change events can arrive from inside QTextBrowser.__init__,
+        # before _markdown is assigned.
+        if event.type() == QEvent.Type.PaletteChange and getattr(self, "_markdown", None):
+            self.render()
+        super().changeEvent(event)
+
+
 def make_notes_browser(markdown_text, min_height=180):
-    """Build a read-only ``QTextBrowser`` that renders release-note markdown.
+    """Build a ``NotesBrowser`` for release-note markdown.
 
     Falls back to plain text if the markdown can't be rendered.
     """
     # Asterisks, not underscores: Qt's GitHub markdown dialect renders
     # _underscore emphasis_ as underline, which reads as a broken link.
     text = markdown_text or "*No release notes were published.*"
-    browser = QTextBrowser()
-    browser.setOpenExternalLinks(True)
-    try:
-        browser.setMarkdown(text)
-        _space_after_headings(browser)
-    except Exception:
-        browser.setPlainText(text)
+    browser = NotesBrowser(text)
     browser.setMinimumHeight(min_height)
     return browser
 
@@ -204,9 +377,9 @@ class WhatsNewDialog(QDialog):
                  settings=None):
         super().__init__(parent)
         self._version = version
-        # Where "Don't show again" persists its preference; injectable for
-        # headless testing. None defers building the real store to the click,
-        # so constructing the dialog alone never touches QSettings.
+        # Where the "Show changelog after each update" checkbox reads and
+        # writes its preference; injectable for headless testing. None means
+        # the real store, built once the footer needs it below.
         self._settings = settings
         if content is None:
             content = whats_new_content(version, last_seen)
@@ -360,32 +533,43 @@ class WhatsNewDialog(QDialog):
         footer.addWidget(link, 0, Qt.AlignTop)
         lay.addLayout(footer)
 
-        # "Don't show again" sits left of "Got it", which keeps the default
-        # (Enter) button in the ordinary rightmost spot: dismissing this once
-        # stays the one-keystroke action, switching it off for good takes a
-        # deliberate click. The preference it writes is the same one the Help
-        # menu toggle reads and writes, so either can undo the other.
+        # The last row: a "Show changelog after each update" checkbox on the
+        # left and one Close button on the right, the default (Enter) button
+        # in the ordinary rightmost spot. The checkbox is the popup preference
+        # stated the way round a reader expects (checked means it shows), and
+        # it is the inverse of the stored ``WHATSNEW_SUPPRESS_KEY``, the same
+        # key the Help menu toggle reads and writes, so either can undo the
+        # other. Each toggle writes at once; nothing waits for Close. The box
+        # opens on the stored state, so the dialog reads the store here.
         row = QHBoxLayout()
+        self._show_box = QCheckBox("Show changelog after each update")
+        self._show_box.setChecked(not whats_new_suppressed(
+            self._store().value(WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT)
+        ))
+        self._show_box.toggled.connect(self.setShowAfterUpdate)
+        row.addWidget(self._show_box)
         row.addStretch(1)
-        dont_show_btn = QPushButton("Don't show again")
-        dont_show_btn.clicked.connect(self.dontShowAgain)
-        row.addWidget(dont_show_btn)
-        close_btn = QPushButton("Got it")
+        close_btn = QPushButton("Close")
         close_btn.setDefault(True)
         close_btn.clicked.connect(self.accept)
         row.addWidget(close_btn)
         lay.addLayout(row)
 
-    def dontShowAgain(self):
-        """Persist the never-show preference, then close like "Got it".
+    def _store(self):
+        """The settings store the checkbox reads and writes."""
+        if self._settings is None:
+            self._settings = QSettings(*domain_for(WHATSNEW_SUPPRESS_KEY))
+        return self._settings
 
-        Writes ``WHATSNEW_SUPPRESS_KEY`` and nothing else: the once-per-version
-        record is left alone, so a user who later re-enables the popup from the
-        Help menu picks the ordinary rules back up where they stood.
+    def setShowAfterUpdate(self, checked):
+        """Persist the checkbox: checked means the popup shows after an update.
+
+        Writes ``WHATSNEW_SUPPRESS_KEY`` as the inverse of ``checked`` and
+        nothing else: the once-per-version record is left alone, so a user who
+        switches the popup back on picks the ordinary rules up where they
+        stood, a version bump missed while it was off included.
         """
-        settings = self._settings if self._settings is not None else QSettings(*domain_for(WHATSNEW_SUPPRESS_KEY))
-        settings.setValue(WHATSNEW_SUPPRESS_KEY, True)
-        self.accept()
+        self._store().setValue(WHATSNEW_SUPPRESS_KEY, not checked)
 
 
 def _default_show(parent, version, last_seen=None, content=None, settings=None):
@@ -413,7 +597,7 @@ def maybe_show_whats_new(parent, settings=None, current=None, show=None,
     headless testing. Returns True if shown.
 
     The suppression check comes first and returns without writing anything:
-    "Don't show again" beats a pending version bump, and leaving the last-seen
+    a switched-off popup beats a pending version bump, and leaving the last-seen
     record where it stood is what lets the Help-menu toggle hand the ordinary
     once-per-version rules back intact, pending bump included.
     """
@@ -427,8 +611,8 @@ def maybe_show_whats_new(parent, settings=None, current=None, show=None,
     if not whats_new_due(stored, current):
         return False
     if show is None:
-        # the default dialog gets this same store, so its "Don't show again"
-        # button writes where this gate reads; an injected show is a test seam
+        # the default dialog gets this same store, so its "Show changelog after
+        # each update" box writes where this gate reads; an injected show is a test seam
         # with the historical (parent, version, last_seen) signature
         show = partial(_default_show, settings=settings)
     show(parent, current, stored)
@@ -439,9 +623,9 @@ def maybe_show_whats_new(parent, settings=None, current=None, show=None,
 def show_whats_new(parent, current=None, show=None):
     """Show the What's-new dialog on demand (Help -> What's new).
 
-    Unlike ``maybe_show_whats_new`` there is no once-per-version gate, no
-    "Don't show again" suppression (a menu click is an explicit request, not a
-    popup), and the stored last-seen version is neither consulted nor updated:
+    Unlike ``maybe_show_whats_new`` there is no once-per-version gate and no
+    suppression (a menu click is an explicit request, not a popup), and the
+    stored last-seen version is neither consulted nor updated:
     the dialog always opens on the running version's notes rather than a
     fresh-install welcome.
     Earlier releases are reached through the truncation line and the "Full
