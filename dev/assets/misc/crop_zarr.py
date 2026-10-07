@@ -137,6 +137,7 @@ def resolvePaths(series : Series, obj_name : str, src_dir : str = "", out_fp : s
     # use the override if given, otherwise the location stored in the series
     src_dir = trimSeparators(src_dir or series.src_dir)
     out_fp = trimSeparators(out_fp) if out_fp else defaultOutput(src_dir, obj_name)
+    given_out = out_fp
     src_dir = os.path.realpath(src_dir)
     out_fp = os.path.realpath(out_fp)
     src_group, scales = openSource(src_dir)
@@ -148,6 +149,10 @@ def resolvePaths(series : Series, obj_name : str, src_dir : str = "", out_fp : s
         raise CropError(f"The output path is the source zarr or inside it: {out_fp!r}")
     if isWithin(src_dir, out_fp):
         raise CropError(f"The output path holds the source zarr: {out_fp!r}")
+    # the entry as given must be new too: a link to a missing folder exists,
+    # though resolving it names the missing folder
+    if os.path.lexists(given_out):
+        raise outputExists(given_out)
     if os.path.lexists(out_fp):
         raise outputExists(out_fp)
     return out_fp, src_group, scales
@@ -210,6 +215,8 @@ def cropSections(
     # an output another program made after resolvePaths checked is never
     # written into. Its parent folders may be new. The path is resolved so
     # that mkdir and zarr name the same folder.
+    if os.path.lexists(new_zarr_fp):
+        raise outputExists(new_zarr_fp)
     new_zarr_fp = os.path.realpath(new_zarr_fp)
     parent = os.path.dirname(new_zarr_fp)
     os.makedirs(parent, exist_ok=True)

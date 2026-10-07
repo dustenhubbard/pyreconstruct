@@ -464,6 +464,33 @@ def test_existing_output_is_refused_and_left_alone(case, what):
     assert os.path.lexists(out)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need extra rights on Windows")
+def test_dangling_output_link_is_refused(case, tmp_path):
+    """A link to a missing folder is an existing entry; its target is not made."""
+    jser, src = case
+    out = tmp_path / "out.zarr"
+    missing = tmp_path / "missing.zarr"
+    out.symlink_to(missing, target_is_directory=True)
+    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
+    assert result.returncode == 1, result.stderr
+    assert "already exists" in result.stderr
+    assert out.is_symlink()
+    assert not os.path.lexists(missing)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need extra rights on Windows")
+def test_dangling_link_made_after_the_checks_is_refused(tmp_path):
+    """cropSections refuses a dangling link at the output path by itself."""
+    module = _load_script()
+    out = tmp_path / "out.zarr"
+    missing = tmp_path / "missing.zarr"
+    out.symlink_to(missing, target_is_directory=True)
+    with pytest.raises(module.CropError, match="already exists"):
+        module.cropSections(None, OBJECT, 0, None, [1], str(out), show_progress=False)
+    assert out.is_symlink()
+    assert not os.path.lexists(missing)
+
+
 def test_root_output_is_refused(case, tmp_path):
     """A root keeps its meaning: "/" is not trimmed to "" (the current folder)."""
     jser, src = case
