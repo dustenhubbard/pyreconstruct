@@ -142,7 +142,7 @@ Requires Python 3.11. Extract and run `bash install.sh`.
 
 ## Documentation {#where-to-go-next}
 
-The user guide, performance notes, and developer setup.
+The user guide, performance notes, developer setup, and the Harris lab wiki.
 
 </div>
 <div class="pr-resource-links" markdown>
@@ -154,6 +154,8 @@ The user guide, performance notes, and developer setup.
 [**Developer resources** <span>Set up a source install with uv ↗</span>](DEV_UV.md)
 
 [**Contribute on GitHub** <span>Source code, issues, and contributions ↗</span>](https://github.com/dustenhubbard/PyReconstruct)
+
+[**Harris lab wiki** <span>Lab protocols and EM image processing guides ↗</span>](https://cloud.wikis.utexas.edu/wiki/spaces/khlab/overview)
 
 </div>
 </div>

@@ -1287,6 +1287,7 @@ class FieldWidgetTrace(FieldWidgetBase):
             self,
             traces,
             tag_sets=self.series.tag_sets,
+            used_tags=self.series.data.usedTags(),
         )
         t, confirmed = dialog.exec()
         if not confirmed:
@@ -1411,15 +1412,17 @@ class FieldWidgetTrace(FieldWidgetBase):
             
             merged_traces = mergeTracesInField(field_traces, self.section.mag)
 
-            # A merge that yields nothing must not delete what it was given:
-            # a trace smaller than a grid cell leaves no outline behind
-            # (fork #467 review), and the old traces were already gone by the
-            # time that showed. Refuse instead, and say so.
+            # A merge must not delete what its result leaves out: a trace
+            # smaller than a grid cell leaves no outline behind, and the old
+            # traces were already gone by the time that showed.
+            # mergeTracesInField returns nothing when any separate trace or
+            # group would vanish, so refuse before deleting, and say so.
             if not merged_traces:
                 notify(
-                    "The merge produced no outline, so the traces were left "
-                    "as they are. Traces this small are usually leftover "
-                    "specks; delete them or redraw them larger."
+                    "The merge produced no outline for at least one trace, so "
+                    "the traces were left as they are. Traces this small are "
+                    "usually leftover specks; delete them or redraw them "
+                    "larger."
                 )
                 return False
             

@@ -288,6 +288,7 @@ class FieldWidgetObject(FieldWidgetTrace):
             tags=tags,
             is_obj_list=True,
             tag_sets=self.series.tag_sets,
+            used_tags=self.series.data.usedTags(),
             smooth_default=self.series.getOption("roll_window"),
             smooth_window=smooth_window,
             smooth_mixed=smooth_mixed,
@@ -499,79 +500,98 @@ class FieldWidgetObject(FieldWidgetTrace):
 
         return deleted
 
-    def deleteDifferentlyNamedDuplicates(self, choices: list) -> list:
-        """Delete the unkept trace of each cross-name duplicate pair chosen.
+    def combineDuplicateTraces(self, choices: list) -> list:
+        """Combine the duplicate groups chosen in the duplicates list.
 
-        The delete callback behind the pairs list's "Delete unselected". Each
-        choice is a ``(record, keep)`` tuple naming which of the pair's two
-        traces to keep; the other one goes. Mirrors deleteMalformedContours:
-        save field data, delete through the series (whose enumerateSections
-        records the undo state), then refresh the tables and field. Returns the
-        choices actually applied so the dialog can prune exactly those rows.
+        The callback behind the list's Combine buttons. Each choice is a
+        ``(group, keep)`` tuple naming the object to keep. Mirrors
+        deleteMalformedContours: save field data, combine through the series
+        (whose enumerateSections records one undo state for the batch),
+        then refresh the tables and field. Returns the choices actually
+        combined so the dialog can prune exactly those rows.
 
-        Locked objects keep their traces. Series.deleteDifferentlyNamedDuplicates
-        is the guard that makes that true -- it re-checks the lock itself, so a
-        pair surfaced by a scan run with "check locked traces" on cannot be
-        resolved by deleting from the locked side. This layer only says so.
+        Series.combineDuplicateTraces refuses a group that would delete a
+        trace of a locked object, and one whose traces changed since the scan.
+        This layer says which, so no row goes uncombined without a reason.
         """
         if not choices:
             return []
 
-        # name the objects that would lose a trace, so a refusal can explain
-        # itself; the series refuses them again regardless of what is said here
+        # the rows the series will refuse for a lock, named so the notice can
+        # explain itself; the series checks the lock again regardless
         locked_names = set()
         locked_rows = 0
-        for record, keep in choices:
-            name = record["other_name"] if keep == "first" else record["name"]
-            if self.series.getAttr(name, "locked"):
-                locked_names.add(name)
+        valid = []
+        for group, keep in choices:
+            if not keep or keep not in group["names"]:
+                continue
+            valid.append((group, keep))
+            kept = self.series.duplicateKeptMember(group["members"], keep)
+            names = {
+                m["name"] for m in group["members"] if m is not kept
+                and self.series.getAttr(m["name"], "locked")
+            }
+            if names:
+                locked_names |= names
                 locked_rows += 1
-        if locked_names:
-            notify(
-                "Cannot delete traces of locked objects:\n"
-                + ", ".join(sorted(locked_names))
-                + "\n\nPlease unlock before deleting. Any other rows you "
-                "chose will still be applied."
-            )
 
         # persist field edits to section data before reloading sections
         self.mainwindow.saveAllData()
 
         ambiguous = []
-        applied = self.series.deleteDifferentlyNamedDuplicates(
-            choices,
+        applied = self.series.combineDuplicateTraces(
+            valid,
             series_states=self.series_states,
             ambiguous=ambiguous,
         )
 
         if applied:
             names = set()
-            for record, keep in applied:
-                names.add(record["name"])
-                names.add(record["other_name"])
+            for group, _keep in applied:
+                names.update(group["names"])
             self.table_manager.updateObjects(names)
             self.reload()
             self.mainwindow.seriesModified(True)
 
-        notifyAmbiguousTraces([
-            (record["other_name"], record["section"],
-             record.get("other_index"), record["other_match"])
-            if keep == "first" else
-            (record["name"], record["section"], record.get("index"),
-             record["match"])
-            for record, keep in ambiguous
-        ])
-
-        # a row can go unapplied because its object is locked (reported above),
-        # because more than one trace could be it (reported just above), or
-        # because the trace is no longer where the scan saw it
-        missed = len(choices) - len(applied) - locked_rows - len(ambiguous)
-        if missed > 0:
-            were, it = ("was", "It") if missed == 1 else ("were", "They")
+        if locked_names:
+            rows = "1 row" if locked_rows == 1 else f"{locked_rows} rows"
+            plural = len(locked_names) > 1
             notify(
-                f"{missed} of the traces you chose to delete {were} not found "
-                f"and could not be deleted. {it} may have changed or been "
-                "deleted after the scan."
+                f"PyReconstruct did not combine {rows} because "
+                f"{'they' if locked_rows > 1 else 'it'} would delete traces "
+                f"of {'locked objects' if plural else 'a locked object'}:"
+                "\n\n" + "\n".join(f"  {n}" for n in sorted(locked_names))
+                + "\n\n" + (
+                    "Unlock them, or keep their names, and combine again."
+                    if plural else
+                    "Unlock it, or keep its name, and combine again."
+                )
+            )
+
+        notifyAmbiguousTraces([
+            (m["name"], m["section"], m.get("index"), m["match"])
+            for m in ambiguous
+        ], verb="combine")
+
+        # a row can go uncombined for its lock (said above), for identical
+        # traces it cannot tell apart (said just above), or because a trace
+        # is no longer where the scan saw it
+        unsure = {id(m) for m in ambiguous}
+        combined = {id(group) for group, _keep in applied}
+        unsure_rows = sum(
+            1 for group, _keep in valid
+            if id(group) not in combined
+            and any(id(m) in unsure for m in group["members"])
+        )
+        missed = len(valid) - len(applied) - locked_rows - unsure_rows
+        if missed > 0:
+            rows, its = ("1 row", "Its") if missed == 1 else (
+                f"{missed} rows", "Their"
+            )
+            notify(
+                f"PyReconstruct did not combine {rows}. {its} traces changed "
+                "after the scan. Run the scan again to list them as they are "
+                "now."
             )
 
         return applied

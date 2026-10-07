@@ -2631,20 +2631,25 @@ class MainWindow(QMainWindow):
                 than re-serializing the entire series again. Used by the save
                 paths so a save + autobackup is one full serialization, not two.
         """
-        if check_auto and not self.series.getOption("autobackup"):
+        if check_auto and not self.series.autobackupOn():
             return
 
         # make sure the backup directory exists
-        if not os.path.isdir(self.series.getOption("backup_dir")):
+        if not os.path.isdir(self.series.backupFolder(create=True)):
             notify(
                 "Backup folder not found.\n" +
                 "Please set the backup folder in following dialog."
             )
-            self.series.setOption("backup_dir", "")
+            if not self.series.usesBackupDefaults():
+                # record the choice first: with auto-backup off and the folder
+                # cleared, the series would otherwise read as having nothing
+                # of its own and take the defaults
+                self.series.setBackupUsesDefaults(False)
+                self.series.setOption("backup_dir", "")
             self.setBackup()
 
         # double check if user entered a valid backup directory
-        if os.path.isdir(self.series.getOption("backup_dir")):
+        if os.path.isdir(self.series.backupFolder(create=True)):
             fp = self.series.getBackupPath(comment)
             if (
                 from_saved
@@ -2661,8 +2666,17 @@ class MainWindow(QMainWindow):
                 "Backup folder not found.\n" +
                 "Backup file not saved."
             )
-            self.series.setOption("backup_dir", "")
-            self.series.setOption("autobackup", False)
+            # Turn auto-backup off for this series alone, so it stops asking
+            # on every save. The defaults other series use stay as they are,
+            # and a series on the defaults with auto-backup already off has
+            # nothing to turn off, so it stays on them.
+            if (
+                not self.series.usesBackupDefaults()
+                or self.series.autobackupOn()
+            ):
+                self.series.setBackupUsesDefaults(False)
+                self.series.setOption("backup_dir", "")
+                self.series.setOption("autobackup", False)
     
     def saveToJser(self, notify=False, close=False):
         """Store data in JSER file.
@@ -3931,86 +3945,38 @@ class MainWindow(QMainWindow):
 
         self.series.setOption("find_zoom", z)
     
-    def deleteDuplicateTraces(self):
-        """Remove all duplicate traces from the series."""
-        self.saveAllData()
+    def reviewDuplicateTraces(self):
+        """Find duplicate traces and open them for review.
 
-        structure = [
-            ["Overlap threshold:", ("float", 0.95, (0, 1))],
-            [("check", ("check locked traces", True))]
-        ]
-        response, confirmed = QuickDialog.get(self, structure, "Remove duplicate traces")
-        if not confirmed:
-            return
-        threshold = response[0]
-        include_locked = response[1][0][1]
-        
-        removed = self.series.deleteDuplicateTraces(threshold, include_locked, self.field.series_states)
-
-        if removed:
-            message = "The following duplicate traces were removed:"
-            for snum in removed:
-                message += f"\nSection {snum}: " + ", ".join(removed[snum])
-            TextWidget(self, message, title="Removed Traces")
-        else:
-            notify("No duplicate traces found.")
-
-        self.field.reload()
-        self.seriesModified(True)
-
-    def findDifferentlyNamedDuplicates(self):
-        """Review traces that duplicate each other under two different names.
-
-        The sibling of "Remove duplicate traces...", for the case that one
-        cannot see: two people tracing the same structure give it two names, so
-        the two traces never end up in the same contour and the same-name
-        comparison never puts them side by side.
-
-        Which of the two names survives is a question about the data rather than
-        about geometry, so this operation never chooses one. The scan reports
-        every pair and the review list asks per row which name to keep; only the
-        rows answered there are acted on, and the trace under the other name is
-        what gets deleted. A row left unanswered is skipped, not defaulted.
+        One scan finds overlapping traces whether their names match or not,
+        one row per structure however many times it was traced. The list
+        asks which name to keep in each row and changes nothing until the
+        user combines; combining is one undoable step per press.
         """
         self.saveAllData()
 
-        # the same two controls as "Remove duplicate traces...", so the pair of
-        # operations reads the same way
         structure = [
             ["Overlap threshold:", ("float", 0.95, (0, 1))],
             [("check", ("check locked traces", False))]
         ]
-        response, confirmed = QuickDialog.get(
-            self, structure, "Find duplicates named differently"
-        )
+        response, confirmed = QuickDialog.get(self, structure, "Duplicates")
         if not confirmed:
             return
         threshold = response[0]
         include_locked = response[1][0][1]
 
-        pairs = self.series.findDifferentlyNamedDuplicates(
-            threshold, include_locked
-        )
-        if not pairs:
-            notify(
-                "No differently-named duplicate traces found at that overlap "
-                "threshold."
-            )
+        groups = self.series.findDuplicateTraces(threshold, include_locked)
+        if not groups:
+            notify("No duplicate traces found at that overlap threshold.")
             return
 
-        # a review list that can act on the rows the user answers, and only
-        # those: the callback takes (record, keep) choices, never the whole list
-        self.differently_named_duplicates_dialog = (
-            DifferentlyNamedDuplicatesDialog(
-                self,
-                pairs,
-                navigate=self.field.focusMalformedContour,
-                delete_unselected=(
-                    self.field.deleteDifferentlyNamedDuplicates
-                ),
-            )
+        self.duplicate_traces_dialog = DuplicateTracesDialog(
+            self,
+            groups,
+            navigate=self.field.focusMalformedContour,
+            combine=self.field.combineDuplicateTraces,
         )
-        self.differently_named_duplicates_dialog.show()
+        self.duplicate_traces_dialog.show()
 
     def removePixelDustTraces(self):
         """Find tiny "pixel-dust" traces and remove them through a review list.
@@ -4824,7 +4790,12 @@ class MainWindow(QMainWindow):
         for act_name in LEGACY_SHORTCUT_ALIASES:
             if act_name not in shortcuts_dict and getattr(self, act_name, None):
                 applySeriesShortcut(getattr(self, act_name), act_name, self.series)
-    
+
+        # the focus mode label names the focus_act shortcut
+        field = getattr(self, "field", None)
+        if field is not None:
+            field.updateFocusHint()
+
     def displayAbout(self):
         """Display the widget display information about the series."""
         # update the editors

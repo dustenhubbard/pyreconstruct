@@ -1,10 +1,14 @@
 import csv
+import html
 
 from PySide6.QtWidgets import (
     QWidget,
     QDialog,
     QLabel,
     QVBoxLayout,
+    QHBoxLayout,
+    QToolButton,
+    QToolTip,
     QTableWidget,
     QTableWidgetItem,
     QPushButton,
@@ -13,11 +17,20 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QFileDialog,
+    QComboBox,
+    QStyledItemDelegate,
 )
 from PySide6.QtCore import Qt
 
 from PyReconstruct.modules.gui.utils import undo_chord
 from PyReconstruct.modules.gui.utils import notifyConfirm
+
+
+# the heading once Delete has emptied a list
+DELETED_LINE = "All listed traces have been deleted. You can close this window."
+
+# the Keep cell of the duplicates list stores the row's names here
+NAMES_ROLE = Qt.UserRole + 1
 
 
 def _freeze(value):
@@ -88,8 +101,23 @@ class MalformedContoursDialog(QDialog):
         self.setWindowTitle(self.WINDOW_TITLE)
         self.resize(660, 420)
 
-        self.heading = QLabel(self._headingText(), self)
-        self.heading.setWordWrap(True)
+        # one line above the list; the full explanation is the tooltip of
+        # the "?" beside it
+        self.heading = QLabel(self)
+        # a button, not a label, so the keyboard can reach it too: Tab to
+        # it and press Space to show the same tooltip a hover shows
+        self.help_icon = QToolButton(self)
+        self.help_icon.setText("?")
+        self.help_icon.setAccessibleName("Explanation")
+        self.help_icon.setFocusPolicy(Qt.StrongFocus)
+        self.help_icon.setFixedSize(18, 18)
+        self.help_icon.setCursor(Qt.WhatsThisCursor)
+        self.help_icon.setStyleSheet(
+            "QToolButton { border: 1px solid palette(mid); border-radius: 9px;"
+            " font-weight: bold; padding: 0; }"
+        )
+        self.help_icon.clicked.connect(self._showExplanation)
+        self._refreshHeading()
 
         self.table = QTableWidget(len(self.records), len(self.COLUMNS), self)
         self.table.setHorizontalHeaderLabels(self.COLUMNS)
@@ -168,14 +196,46 @@ class MalformedContoursDialog(QDialog):
                 self.delete_all_button, QDialogButtonBox.ActionRole
             )
 
+        heading_row = QHBoxLayout()
+        heading_row.addWidget(self.heading)
+        heading_row.addWidget(self.help_icon)
+        heading_row.addStretch(1)
+
         layout = QVBoxLayout()
-        layout.addWidget(self.heading)
+        layout.addLayout(heading_row)
         layout.addWidget(self.table)
         layout.addWidget(buttonbox)
         self.setLayout(layout)
 
-    def _headingText(self):
-        """Build the heading text from the current records."""
+    def _refreshHeading(self):
+        """Set the one-line heading and the "?" tooltip from the records."""
+        self.heading.setText(self._summaryText())
+        explanation = self._explanationText()
+        # rich text, so Qt wraps the tooltip instead of drawing one long line
+        self.help_icon.setToolTip("".join(
+            f"<p>{html.escape(paragraph, quote=False)}</p>"
+            for paragraph in explanation.split("\n\n")
+        ))
+        self.help_icon.setAccessibleDescription(explanation)
+
+    def _showExplanation(self):
+        """Show the "?" tooltip under the icon, for a click or a key."""
+        QToolTip.showText(
+            self.help_icon.mapToGlobal(self.help_icon.rect().bottomLeft()),
+            self.help_icon.toolTip(),
+            self.help_icon,
+        )
+
+    def _summaryText(self):
+        """One short line that says what the list holds."""
+        num_traces = len(self.records)
+        if not num_traces:
+            return DELETED_LINE
+        trace_word = "trace" if num_traces == 1 else "traces"
+        return f"{num_traces} {trace_word} could not be smoothed."
+
+    def _explanationText(self):
+        """Build the full explanation (the "?" tooltip) from the records."""
         num_traces = len(self.records)
         if not num_traces:
             return (
@@ -324,42 +384,28 @@ class MalformedContoursDialog(QDialog):
         deleted = self.delete(records)
         self._pruneRecords(deleted or [])
 
-    def _pruneRecords(self, deleted, deleted_traces=None,
-                      deleted_identities=None):
-        """Remove the rows/records that were actually deleted, and any row
-        whose trace was deleted through another row.
+    def _pruneRecords(self, deleted):
+        """Remove the rows/records that were actually deleted.
 
             Params:
                 deleted (list): the records whose rows go
-                deleted_traces (list): optional (section, name, index) of each
-                    trace that was deleted. Defaults to each record's own
-                    trace; the pairs list passes the side it really deleted.
-                deleted_identities (list): the scan's "identity" of each entry
-                    of deleted_traces, in the same order (None where it has
-                    none). Defaults to each record's own.
         """
         if not deleted:
             return
         deleted_ids = {id(r) for r in deleted}
-        if deleted_traces is None:
-            deleted_traces = [
-                (d["section"], d["name"], d["index"]) for d in deleted
-            ]
-            deleted_identities = [d.get("identity") for d in deleted]
-        # two rows can delete one trace (both duplicating it), and it went
-        # once, so each distinct trace shifts the rest once
+        deleted_traces = [
+            (d["section"], d["name"], d["index"]) for d in deleted
+        ]
+        deleted_identities = [d.get("identity") for d in deleted]
+        # two rows can name one trace, and it went once, so each distinct
+        # trace shifts the rest once, and a row whose trace went goes too:
+        # left in, its index named whichever trace moved into that place
         distinct = set(deleted_traces)
-        # One trace can sit in several rows of the pairs list (`A` and `C`
-        # both duplicating one `B`). A row whose own or other trace was just
-        # deleted goes too: left in, its index named whichever trace moved
-        # into that place, and "Go to" framed it.
         for record in self._records_by_key.values():
-            for name_key, index_key in (("name", "index"),
-                                        ("other_name", "other_index")):
-                if index_key in record and (
-                    record["section"], record[name_key], record[index_key]
-                ) in distinct:
-                    deleted_ids.add(id(record))
+            if "index" in record and (
+                record["section"], record["name"], record["index"]
+            ) in distinct:
+                deleted_ids.add(id(record))
         self._countDownLookalikes(
             deleted_traces, deleted_identities, deleted_ids
         )
@@ -368,23 +414,18 @@ class MalformedContoursDialog(QDialog):
         # then framed a different trace than the row named, and the user
         # could delete a legitimate one believing they had inspected it
         # (found 2026-08-28). Decrement each survivor by how many deleted
-        # traces sat below its index in its own contour. A pair record
-        # carries a second trace under the "other_" keys, shifted the same way.
+        # traces sat below its index in its own contour.
         for record in self._records_by_key.values():
-            if id(record) in deleted_ids:
+            if id(record) in deleted_ids or "index" not in record:
                 continue
-            for name_key, index_key in (("name", "index"),
-                                        ("other_name", "other_index")):
-                if index_key not in record:
-                    continue
-                shift = sum(
-                    1 for section, name, index in distinct
-                    if section == record["section"]
-                    and name == record[name_key]
-                    and index < record[index_key]
-                )
-                if shift:
-                    record[index_key] -= shift
+            shift = sum(
+                1 for section, name, index in distinct
+                if section == record["section"]
+                and name == record["name"]
+                and index < record["index"]
+            )
+            if shift:
+                record["index"] -= shift
         # remove bottom-up so earlier row indices stay valid
         for row in range(self.table.rowCount() - 1, -1, -1):
             item = self.table.item(row, 0)
@@ -396,7 +437,7 @@ class MalformedContoursDialog(QDialog):
                 self.table.removeRow(row)
                 del self._records_by_key[key]
         self.records = list(self._records_by_key.values())
-        self.heading.setText(self._headingText())
+        self._refreshHeading()
         if self.delete_all_button is not None:
             self.delete_all_button.setEnabled(bool(self.records))
         self._updateRowActionButtons()
@@ -411,14 +452,11 @@ class MalformedContoursDialog(QDialog):
         survivors' counts and places follow it. Run before the index shift:
         the indexes compared here are the ones from before the delete.
         """
-        if not deleted_identities:
-            return
         counted = [
             record for record in self._records_by_key.values()
-            if id(record) not in deleted_ids and (
-                isinstance(record.get("lookalikes"), int)
-                or isinstance(record.get("other_lookalikes"), int)
-            )
+            if id(record) not in deleted_ids
+            and isinstance(record.get("lookalikes"), int)
+            and record.get("identity") is not None
         ]
         if not counted:
             return  # records from before the count existed
@@ -427,30 +465,21 @@ class MalformedContoursDialog(QDialog):
             if identity is not None:
                 gone[tuple(trace)] = _freeze(identity)
         for record in counted:
-            for name_key, index_key, identity_key, count_key, ordinal_key in (
-                ("name", "index", "identity", "lookalikes",
-                 "lookalike_ordinal"),
-                ("other_name", "other_index", "other_identity",
-                 "other_lookalikes", "other_lookalike_ordinal"),
-            ):
-                if not isinstance(record.get(count_key), int) or \
-                        record.get(identity_key) is None:
-                    continue
-                identity = _freeze(record[identity_key])
-                same = [
-                    index for (section, name, index), key in gone.items()
-                    if section == record["section"]
-                    and name == record[name_key] and key == identity
-                ]
-                if not same:
-                    continue
-                record[count_key] -= len(same)
-                # the place among the lookalikes drops by one for each
-                # deleted lookalike that sat before this trace
-                own = record.get(index_key)
-                if isinstance(record.get(ordinal_key), int) and \
-                        isinstance(own, int):
-                    record[ordinal_key] -= sum(1 for i in same if i < own)
+            identity = _freeze(record["identity"])
+            same = [
+                index for (section, name, index), key in gone.items()
+                if section == record["section"]
+                and name == record["name"] and key == identity
+            ]
+            if not same:
+                continue
+            record["lookalikes"] -= len(same)
+            # the place among the lookalikes drops by one for each deleted
+            # lookalike that sat before this trace
+            own = record.get("index")
+            if isinstance(record.get("lookalike_ordinal"), int) and \
+                    isinstance(own, int):
+                record["lookalike_ordinal"] -= sum(1 for i in same if i < own)
 
     def _rows_for_export(self):
         """Return the report as a list of rows (header first).
@@ -501,7 +530,12 @@ class SkippedCrossingsDialog(MalformedContoursDialog):
 
     WINDOW_TITLE = "Self-crossing traces to fix with the scissors"
 
-    def _headingText(self):
+    def _summaryText(self):
+        count = len(self.records)
+        noun = "trace" if count == 1 else "traces"
+        return f"{count} self-crossing {noun} to fix with the scissors."
+
+    def _explanationText(self):
         count = len(self.records)
         noun = "trace" if count == 1 else "traces"
         return (
@@ -525,7 +559,12 @@ class RepairedCrossingsDialog(MalformedContoursDialog):
 
     WINDOW_TITLE = "Repaired self-crossing traces"
 
-    def _headingText(self):
+    def _summaryText(self):
+        count = len(self.records)
+        noun = "trace" if count == 1 else "traces"
+        return f"Repaired {count} self-crossing {noun}."
+
+    def _explanationText(self):
         count = len(self.records)
         noun = "trace" if count == 1 else "traces"
         return (
@@ -545,7 +584,7 @@ class PixelDustDialog(MalformedContoursDialog):
     trace before "Delete selected" / "Delete all". Reuses all of the selection,
     navigation, deletion (undoable), and export behavior of
     MalformedContoursDialog; only the columns (a pixel-area column, plus its
-    physical-area equivalent) and the explanatory heading differ.
+    physical-area equivalent) and the heading and its explanation differ.
 
     The primary Area column is in pixels (px^2) so it reads in the same units as
     the threshold the user set; the "Area (um^2)" column shows the physical
@@ -569,7 +608,14 @@ class PixelDustDialog(MalformedContoursDialog):
             ("reason", "str"),
         ]
 
-    def _headingText(self):
+    def _summaryText(self):
+        num_traces = len(self.records)
+        if not num_traces:
+            return DELETED_LINE
+        trace_word = "trace" if num_traces == 1 else "traces"
+        return f"{num_traces} {trace_word} at or below the pixel-area threshold."
+
+    def _explanationText(self):
         """Explain the pixel-dust review and how to act on it."""
         num_traces = len(self.records)
         if not num_traces:
@@ -597,308 +643,330 @@ class PixelDustDialog(MalformedContoursDialog):
         )
 
 
-class DifferentlyNamedDuplicatesDialog(MalformedContoursDialog):
-    """Review traces that duplicate each other under two different names.
+class _KeepNameCombo(QComboBox):
+    """A drop-down that ignores the mouse wheel.
 
-    Each row is a pair: one shape traced twice, once under each of two object
-    names, which is what happens when two people trace the same structure. Both
-    names are shown, along with the measured overlap and each trace's area, so
-    the pair can be judged rather than guessed at. "Go to trace" frames the first
-    of the two and "Go to other trace" frames the second, so the same field view
-    can be compared against both.
-
-    **The choice is per row, and nothing is inferred.** Two traces sharing one
-    name are unambiguous and Series.deleteDuplicateTraces collapses them, but
-    when the names differ, which name is right is a question about the data: the
-    two objects can carry different hosts, groups or curation status. So this
-    dialog does not resolve a pair; it asks. The two name cells of a row are
-    checkable, mutually exclusive, and both start unchecked: checking one says
-    "this is the name to keep", and "Delete unselected" then deletes the other
-    trace of every row that was answered. **A row nobody answered is skipped**,
-    and the summary says how many were, because a default here would be the tool
-    guessing at the one thing it cannot know.
-
-    The choice lives in the two name cells rather than in a radio-button column
-    because a check state is item data and so travels with the row through any
-    column sort, and because a widget filling a name cell would take that cell's
-    click away from row selection -- which is what "Go to trace" and "Go to
-    other trace" run off.
-
-    Deletion is deliberately NOT the base class's: this dialog passes no
-    ``delete`` callback up, so "Delete selected" and "Delete all" never appear.
-    Both would be wrong here. Row selection is how a pair is inspected, not how
-    it is answered, and "all" of a pairs list would mean deleting both sides.
+    Several styles change a combo box's value on a wheel turn over it, so
+    scrolling the list would change the picks it passed over. The wheel
+    scrolls the table instead.
     """
 
-    COLUMNS = ["Object", "Duplicate of", "Section", "Overlap", "Area (um^2)",
-               "Other area (um^2)", "Point count", "Location (x, y)", "Reason"]
-    WINDOW_TITLE = "Duplicates named differently"
-    DEFAULT_SORT_COLUMN = 2  # "Section"
+    def wheelEvent(self, event):
+        event.ignore()
 
-    # the two checkable name columns, and the value each contributes to a choice
-    KEEP_COLUMNS = {0: "first", 1: "other"}
+
+class _KeepNameDelegate(QStyledItemDelegate):
+    """The drop-down in a duplicates row's Keep cell.
+
+    The pick is stored as the cell's own text, so it travels with its row
+    through a column sort and reaches the copied table as it is; the
+    drop-down is only the editor over it, kept open on every row.
+    """
+
+    PLACEHOLDER = "Pick a name"
+
+    def createEditor(self, parent, option, index):
+        combo = _KeepNameCombo(parent)
+        combo.addItems(index.data(NAMES_ROLE) or [])
+        combo.setPlaceholderText(self.PLACEHOLDER)
+        combo.setCurrentIndex(-1)
+        combo.currentIndexChanged.connect(
+            lambda _i, c=combo: self.commitData.emit(c)
+        )
+        return combo
+
+    def setEditorData(self, editor, index):
+        name = index.data(Qt.DisplayRole) or ""
+        editor.blockSignals(True)
+        editor.setCurrentIndex(editor.findText(name) if name else -1)
+        editor.blockSignals(False)
+
+    def setModelData(self, editor, model, index):
+        name = editor.currentText() if editor.currentIndex() >= 0 else ""
+        model.setData(index, name, Qt.EditRole)
+
+
+class DuplicateTracesDialog(MalformedContoursDialog):
+    """Review duplicate traces and combine each structure into one trace.
+
+    Each row is one group from Series.findDuplicateTraces: a structure traced
+    more than once, under one name or under several. The Keep cell is a
+    drop-down of the row's names. A row with one name has it picked; a row
+    with more than one starts with none, because which name is right is a
+    question about the data, and a row with no name picked is never combined.
+
+    "Combine selected" and "Combine all" hand the picked rows to the
+    ``combine`` callback, after a confirmation. Combining keeps one trace
+    under the picked name with the tags of the others and deletes the rest
+    (Series.combineDuplicateTraces). The base class's Delete buttons never
+    appear: this dialog passes no ``delete`` callback up.
+    """
+
+    COLUMNS = ["Keep", "Traced as", "Section", "Traces", "Overlap",
+               "Location (x, y)"]
+    WINDOW_TITLE = "Duplicates"
+    DEFAULT_SORT_COLUMN = 2  # "Section"
+    KEEP_COLUMN = 0
 
     def __init__(self, mainwindow: QWidget, records: list, navigate=None,
-                 delete_unselected=None):
-        """Create the pairs list.
+                 combine=None):
+        """Create the duplicates list.
 
             Params:
                 mainwindow (QWidget): the parent window
-                records (list): pair records from
-                    Series.findDifferentlyNamedDuplicates
+                records (list): groups from Series.findDuplicateTraces
                 navigate (callable): optional navigate(section_num, obj_name,
-                    index) callback, used by both "Go to" buttons
-                delete_unselected (callable): optional
-                    delete_unselected(choices) callback, taking
-                    ``(record, keep)`` tuples as
-                    Series.deleteDifferentlyNamedDuplicates does and returning
-                    the tuples actually applied. "Delete unselected" is only
-                    shown when it is provided; the list is otherwise read-only.
+                    index) callback for "Go to trace"
+                combine (callable): optional combine(choices) callback taking
+                    ``(group, keep)`` tuples as
+                    Series.combineDuplicateTraces does and returning the
+                    tuples it combined. The Combine buttons are only shown
+                    when it is provided.
         """
-        self.delete_unselected = delete_unselected
-        self._suppress_check_signal = False
-        # delete=None on purpose: see the class docstring. The base class's
-        # Delete buttons are the wrong two buttons for a list of pairs.
+        self.combine = combine
         super().__init__(mainwindow, records, navigate=navigate, delete=None)
-        self._makeNameCellsCheckable()
-        self.table.itemChanged.connect(self._onCheckStateChanged)
-        self._syncDeleteButton()
+        self.resize(760, 440)
+        self.table.setItemDelegateForColumn(
+            self.KEEP_COLUMN, _KeepNameDelegate(self.table)
+        )
+        self._openKeepEditors()
+        self.table.itemChanged.connect(self._syncCombineButtons)
+        self._syncCombineButtons()
 
-    def _makeNameCellsCheckable(self):
-        """Make both name cells of every row checkable, and start them empty.
-
-        Run after the base class has populated and sorted the table. Check state
-        is item data, so it stays with its row through later re-sorting.
-        """
-        self._suppress_check_signal = True
-        try:
-            for row in range(self.table.rowCount()):
-                for col in self.KEEP_COLUMNS:
-                    item = self.table.item(row, col)
-                    if item is None:
-                        continue
-                    item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-                    item.setCheckState(Qt.Unchecked)
-        finally:
-            self._suppress_check_signal = False
-
-    def _onCheckStateChanged(self, item):
-        """Keep a row's two name checkboxes mutually exclusive."""
-        if self._suppress_check_signal:
-            return
-        col = item.column()
-        if col not in self.KEEP_COLUMNS:
-            return
-        if item.checkState() == Qt.Checked:
-            # exactly one name can be kept, so checking one clears the other
-            self._suppress_check_signal = True
-            try:
-                for other_col in self.KEEP_COLUMNS:
-                    if other_col == col:
-                        continue
-                    other = self.table.item(item.row(), other_col)
-                    if other is not None:
-                        other.setCheckState(Qt.Unchecked)
-            finally:
-                self._suppress_check_signal = False
-        self._syncDeleteButton()
-
-    def _choiceAtRow(self, row):
-        """Return (record, keep) for a row, or None when it was not answered.
-
-        ``keep`` is "first" when the "Object" name is checked and "other" when
-        the "Duplicate of" name is. Nothing checked returns None, and no rule
-        turns that into a choice.
-        """
-        record = self._recordAtRow(row)
-        if record is None:
-            return None
-        for col, keep in self.KEEP_COLUMNS.items():
-            item = self.table.item(row, col)
-            if item is not None and item.checkState() == Qt.Checked:
-                return (record, keep)
-        return None
-
-    def chosenPairs(self):
-        """Return the (record, keep) tuples for every row that was answered."""
-        choices = []
+    def _openKeepEditors(self):
+        """Put a drop-down over every row's Keep cell."""
         for row in range(self.table.rowCount()):
-            choice = self._choiceAtRow(row)
-            if choice is not None:
-                choices.append(choice)
-        return choices
+            item = self.table.item(row, self.KEEP_COLUMN)
+            if item is not None:
+                self.table.openPersistentEditor(item)
 
-    def _syncDeleteButton(self):
-        """Enable "Delete unselected" only while some row has been answered."""
-        if self.delete_unselected_button is None:
+    def _populate(self):
+        """Fill the table from the groups."""
+        self._records_by_key = {}
+        for row, group in enumerate(self.records):
+            self._records_by_key[row] = group
+            names = list(group["names"])
+            keep = QTableWidgetItem(names[0] if len(names) == 1 else "")
+            keep.setData(Qt.UserRole, row)
+            keep.setData(NAMES_ROLE, names)
+            section = QTableWidgetItem()
+            section.setData(Qt.DisplayRole, int(group["section"]))
+            count = QTableWidgetItem()
+            count.setData(Qt.DisplayRole, int(group["count"]))
+            ratio = QTableWidgetItem()
+            ratio.setData(Qt.DisplayRole, round(float(group["ratio"]), 8))
+            cells = [
+                keep,
+                QTableWidgetItem(", ".join(names)),
+                section,
+                count,
+                ratio,
+                QTableWidgetItem(self._format_location(group.get("location"))),
+            ]
+            for col, item in enumerate(cells):
+                item.setTextAlignment(Qt.AlignCenter)
+                if col != self.KEEP_COLUMN:
+                    item.setToolTip(item.text())
+                self.table.setItem(row, col, item)
+
+    def _keepAtRow(self, row):
+        """The name picked in a row, or "" when none is."""
+        item = self.table.item(row, self.KEEP_COLUMN)
+        return item.text() if item is not None else ""
+
+    def _choicesForRows(self, rows):
+        """(group, keep) for each of the rows with a name picked, and how
+        many rows had none."""
+        choices = []
+        unpicked = 0
+        for row in rows:
+            group = self._recordAtRow(row)
+            if group is None:
+                continue
+            keep = self._keepAtRow(row)
+            if keep:
+                choices.append((group, keep))
+            else:
+                unpicked += 1
+        return choices, unpicked
+
+    def choices(self):
+        """Return (group, keep) for every row with a name picked."""
+        return self._choicesForRows(range(self.table.rowCount()))[0]
+
+    def _selectedRows(self):
+        return sorted(
+            index.row() for index in self.table.selectionModel().selectedRows()
+        )
+
+    def _addExtraButtons(self):
+        """Add the two Combine buttons when there is a callback for them."""
+        self.combine_selected_button = None
+        self.combine_all_button = None
+        if not self.combine:
             return
-        self.delete_unselected_button.setEnabled(bool(self.chosenPairs()))
+        self.combine_selected_button = QPushButton("Combine selected", self)
+        self.combine_selected_button.setToolTip(
+            "Combine each selected row into one trace under the name picked "
+            "(can be undone)"
+        )
+        self.combine_selected_button.clicked.connect(self.combineSelected)
+        self.extra_buttons.append((self.combine_selected_button, False))
+
+        self.combine_all_button = QPushButton("Combine all", self)
+        self.combine_all_button.setToolTip(
+            "Combine every row with a name picked into one trace under that "
+            "name (can be undone)"
+        )
+        self.combine_all_button.clicked.connect(self.combineAll)
+        self.extra_buttons.append((self.combine_all_button, False))
+
+    def _syncCombineButtons(self, *_args):
+        """Enable each Combine button only while it has a picked row to act on."""
+        if self.combine_all_button is None:
+            return
+        self.combine_all_button.setEnabled(bool(self.choices()))
+        self.combine_selected_button.setEnabled(
+            bool(self._choicesForRows(self._selectedRows())[0])
+        )
 
     def _updateRowActionButtons(self):
-        """Also refresh the delete button, which selection does not drive."""
+        """Also refresh the Combine buttons, which follow the selection too."""
         super()._updateRowActionButtons()
-        self._syncDeleteButton()
+        self._syncCombineButtons()
 
-    def deleteUnselectedTraces(self):
-        """Delete the unkept trace of every answered row, after confirming."""
-        if not self.delete_unselected:
+    def combineSelected(self):
+        """Combine the selected rows that have a name picked."""
+        self._combineRows(self._selectedRows())
+
+    def combineAll(self):
+        """Combine every row that has a name picked."""
+        self._combineRows(range(self.table.rowCount()))
+
+    def _combineRows(self, rows):
+        """Confirm, combine the picked rows, and prune the ones combined."""
+        if not self.combine:
             return
-        choices = self.chosenPairs()
+        choices, unpicked = self._choicesForRows(rows)
         if not choices:
             return
         count = len(choices)
-        noun = "trace" if count == 1 else "traces"
-        skipped = len(self.records) - count
-        skipped_note = ""
-        if skipped:
-            was = "pair was" if skipped == 1 else "pairs were"
-            skipped_note = (
-                f"\n\n{skipped} {was} left alone (no name selected). "
-                "Nothing is chosen for you."
+        noun = "row" if count == 1 else "rows"
+        unpicked_note = ""
+        if unpicked:
+            was = "row was" if unpicked == 1 else "rows were"
+            unpicked_note = (
+                f"\n\n{unpicked} {was} left alone because no name is picked."
             )
         if not notifyConfirm(
-            f"Delete {count} {noun} from the series?\n\n"
-            "In each row you selected a name, the trace under the OTHER name "
-            f"is deleted.{skipped_note}\n\n"
+            f"Combine {count} {noun}?\n\n"
+            "In each row, PyReconstruct keeps one trace under the name you "
+            "picked, adds the tags of the other traces to it, and deletes "
+            f"the others.{unpicked_note}\n\n"
             f"This can be undone ({undo_chord()}).",
             yn=True,
         ):
             return
-        applied = self.delete_unselected(choices) or []
-        # the trace that went is the side that was NOT kept, so "keep first"
-        # deleted the record's other trace, not its own
-        deleted_traces = []
-        deleted_identities = []
-        for record, keep in applied:
-            if keep == "first":
-                deleted_traces.append(
-                    (record["section"], record["other_name"],
-                     record["other_index"])
-                )
-                deleted_identities.append(record.get("other_identity"))
-            else:
-                deleted_traces.append(
-                    (record["section"], record["name"], record["index"])
-                )
-                deleted_identities.append(record.get("identity"))
-        self._pruneRecords(
-            [record for record, _keep in applied], deleted_traces,
-            deleted_identities,
-        )
+        applied = self.combine(choices) or []
+        self._pruneCombined(applied)
 
-    def _columnSpecs(self):
-        return [
-            ("name", "str"),
-            ("other_name", "str"),
-            ("section", "int"),
-            ("ratio", "float"),
-            ("area", "float"),
-            ("other_area", "float"),
-            ("points", "int"),
-            ("location", "loc"),
-            ("reason", "str"),
-        ]
+    def _pruneCombined(self, applied):
+        """Drop the combined rows, and shift the traces of the rows left.
 
-    def _addExtraButtons(self):
-        """Add "Go to other trace", and "Delete unselected" when it can delete.
-
-        "Delete unselected" is registered with needs_selection False: it is
-        driven by the per-row checkboxes, not by which row is highlighted.
+        A combine deletes every trace of a group but the one kept, so a later
+        trace of the same object on the same section moves up in its contour.
+        Each remaining member's index follows, so "Go to trace" still frames
+        the trace in its row. Traces in two groups are never the same
+        trace, so no remaining row loses a member here.
         """
-        self.goto_other_button = QPushButton("Go to other trace", self)
-        self.goto_other_button.setToolTip(
-            "Focus the field on the other trace of the selected pair"
-        )
-        self.goto_other_button.setEnabled(False)
-        self.goto_other_button.clicked.connect(self.goToSelectedOtherContour)
-        self.extra_buttons.append((self.goto_other_button, True))
+        if not applied:
+            return
+        from PyReconstruct.modules.datatypes.series import Series
+        combined_ids = {id(group) for group, _keep in applied}
+        removed = []
+        for group, keep in applied:
+            kept = Series.duplicateKeptMember(group["members"], keep)
+            removed.extend(
+                (m["section"], m["name"], m["index"])
+                for m in group["members"] if m is not kept
+            )
+        for group in self._records_by_key.values():
+            if id(group) in combined_ids:
+                continue
+            for member in group["members"]:
+                shift = sum(
+                    1 for section, name, index in removed
+                    if section == member["section"]
+                    and name == member["name"] and index < member["index"]
+                )
+                member["index"] -= shift
+        for row in range(self.table.rowCount() - 1, -1, -1):
+            item = self.table.item(row, 0)
+            if item is None:
+                continue
+            key = item.data(Qt.UserRole)
+            group = self._records_by_key.get(key)
+            if group is not None and id(group) in combined_ids:
+                self.table.removeRow(row)
+                del self._records_by_key[key]
+        self.records = list(self._records_by_key.values())
+        self._refreshHeading()
+        self._updateRowActionButtons()
 
-        self.delete_unselected_button = None
-        if self.delete_unselected:
-            self.delete_unselected_button = QPushButton(
-                "Delete unselected", self
-            )
-            self.delete_unselected_button.setToolTip(
-                "In every row where you selected a name, delete the trace "
-                "under the other name. Rows with no name selected are left "
-                "alone (can be undone)"
-            )
-            self.delete_unselected_button.setEnabled(False)
-            self.delete_unselected_button.clicked.connect(
-                self.deleteUnselectedTraces
-            )
-            self.extra_buttons.append((self.delete_unselected_button, False))
+    def _memberToShow(self, row):
+        """The member "Go to trace" frames: the one kept, once a name is
+        picked, and the row's first trace until then."""
+        group = self._recordAtRow(row)
+        if group is None:
+            return None
+        keep = self._keepAtRow(row)
+        if keep:
+            from PyReconstruct.modules.datatypes.series import Series
+            kept = Series.duplicateKeptMember(group["members"], keep)
+            if kept is not None:
+                return kept
+        return group["members"][0]
 
-    def goToSelectedOtherContour(self):
-        """Focus the field on the second trace of the selected pair."""
+    def _navigateToRow(self, row):
+        """Focus the field on a row's trace (see _memberToShow)."""
         if not self.navigate:
             return
-        rows = self.table.selectionModel().selectedRows()
-        if not rows:
+        member = self._memberToShow(row)
+        if member is None:
             return
-        record = self._recordAtRow(rows[0].row())
-        if record is None:
-            return
-        self.navigate(
-            record["section"], record["other_name"], record["other_index"]
-        )
+        self.navigate(member["section"], member["name"], member["index"])
 
-    def _headingText(self):
-        """Explain what a row is and that the choice in each one is the user's."""
-        num_pairs = len(self.records)
-        if not num_pairs:
-            return (
-                "No pairs left to report.\n\n"
-                "You can close this window."
-            )
+    def _summaryText(self):
+        num_rows = len(self.records)
+        if not num_rows:
+            return "Every row has been combined. You can close this window."
+        structures = "structure" if num_rows == 1 else "structures"
+        return f"{num_rows} {structures} traced more than once."
 
-        names = {r["name"] for r in self.records} | {
-            r["other_name"] for r in self.records
-        }
-        pair_word = "pair" if num_pairs == 1 else "pairs"
+    def _explanationText(self):
+        """Explain what a row is and what combining it does."""
+        num_rows = len(self.records)
+        if not num_rows:
+            return "Every row has been combined.\n\nYou can close this window."
 
-        text = (
-            f"{num_pairs} {pair_word} of overlapping traces across "
-            f"{len(names)} objects, each pair traced under two different "
-            "names.\n\n"
-            "Two traces of one object that sit on top of each other are "
-            "duplicates without any doubt, and "
-            "“Remove duplicate traces...” collapses those. When the names "
-            "differ the geometry says the same thing, but which name is the "
-            "right one does not follow from it: the two objects can carry "
-            "different hosts, groups or curation, and the answer may be to "
-            "rename or to merge rather than to delete one.\n\n"
-        )
-
-        ## the Overlap column means two different things now, and the row that
-        ## offers to delete a trace is the one that must say so: for a closed
-        ## pair the ratio is an area comparison, for an open pair it is how
-        ## closely the two lines run. Both branches carry the explanation.
-        overlap_text = (
-            "The Overlap column is the measured overlap ratio: for two closed "
-            "traces, the area they share over the area they cover together, so "
-            "1 means the two traces have the same points; for two open traces, "
-            "how much of each line lies within a few image pixels of the "
-            "other, so 1 means the two lines stay that close from end to end. "
-            "Both areas are physical (um^2) on that trace's own section."
-        )
-
-        if not self.delete_unselected:
-            return text + (
-                "So this list reports. Select a row and use “Go to trace” and "
-                "“Go to other trace” to see both traces of a pair in the "
-                "field, then decide. " + overlap_text + "\n\n"
-                "Nothing in the series has been changed."
-            )
-
-        return text + (
-            "So the choice in each row is yours. Select a row and use "
-            "“Go to trace” and “Go to other trace” to see both traces of a "
-            "pair in the field, then tick the name you want to KEEP, one name "
-            "per row. “Delete unselected” then deletes the trace under "
-            "the other name, in every row you ticked. " + overlap_text + "\n\n"
-            "Rows you leave unticked are left completely alone: nothing is "
-            "chosen for you, and no rule decides which name wins. Nothing is "
-            "deleted until you choose to delete, and it can be undone "
+        num_sections = len({g["section"] for g in self.records})
+        structures = "structure" if num_rows == 1 else "structures"
+        sections = "section" if num_sections == 1 else "sections"
+        return (
+            f"{num_rows} {structures} traced more than once, across "
+            f"{num_sections} {sections}. Each row is one structure, whether "
+            "its traces share a name or not.\n\n"
+            "Pick the name to keep in each row. Combining a row keeps one "
+            "trace under that name, adds the tags of the other traces to it, "
+            "and deletes the others. A row with one name has it picked "
+            "already. A row with more than one is left alone until you pick "
+            "one.\n\n"
+            "Select a row and click “Go to trace” to see it in the field. "
+            "The Overlap column is the lowest overlap ratio between the "
+            "row's traces: for closed traces, the area they share over the "
+            "area they cover together, so 1 means the same points; for open "
+            "traces, how much of each line lies within a few image pixels of "
+            "the other.\n\n"
+            "Nothing changes until you combine, and combining can be undone "
             f"({undo_chord()})."
         )

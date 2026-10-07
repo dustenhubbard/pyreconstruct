@@ -2955,12 +2955,11 @@ class Series():
         Trace.getList: points, color, closed, negative, hidden, fill mode and
         tags), "lookalikes" (how many traces under that name on the section
         have that identity, the record's own included) and "lookalike_ordinal"
-        (its place among them, from 0), plus the same under "other_" on a pair
-        record. Traces that differ in anything saved are not lookalikes, so
-        each is found as the only match wherever it moved; the place only
-        chooses between traces whose data is the same. At delete time a
-        changed count sets the record aside (see _resolveByLookalikes). Each
-        contour is read once per scan.
+        (its place among them, from 0). Traces that differ in anything saved
+        are not lookalikes, so each is found as the only match wherever it
+        moved; the place only chooses between traces whose data is the same.
+        At delete time a changed count sets the record aside (see
+        _resolveByLookalikes). Each contour is read once per scan.
         """
         positions = {}
 
@@ -2982,18 +2981,12 @@ class Series():
             return identity, len(indexes), indexes.index(index)
 
         for record in records:
-            for prefix, name_key, index_key in (
-                ("", "name", "index"),
-                ("other_", "other_name", "other_index"),
-            ):
-                if name_key not in record:
-                    continue
-                placed = place(record[name_key], record.get(index_key))
-                if placed is None:
-                    continue
-                (record[f"{prefix}identity"],
-                 record[f"{prefix}lookalikes"],
-                 record[f"{prefix}lookalike_ordinal"]) = placed
+            placed = place(record["name"], record.get("index"))
+            if placed is None:
+                continue
+            (record["identity"],
+             record["lookalikes"],
+             record["lookalike_ordinal"]) = placed
 
     @classmethod
     def _traceIdentity(cls, trace) -> tuple:
@@ -3303,7 +3296,7 @@ class Series():
 
     @classmethod
     def _duplicatePairs(cls, entries : list, threshold : float, mag : float = None):
-        """Yield every pair of differently-named traces on a section that overlap.
+        """Yield every pair of traces on a section that overlap.
 
         ``entries`` is one tuple per trace,
         ``(xmin, ymin, xmax, ymax, area, name, index, trace)``, where the bounds
@@ -3313,9 +3306,10 @@ class Series():
         before ``b`` in (name, index) order so the output does not depend on
         which order the section's contours were walked in.
 
-        Comparing across names means comparing every trace on the section with
-        every other, and a dense autosegmented section carries enough traces
-        that measuring an overlap ratio for each of those pairs is not viable:
+        Duplicates can sit under one name or under two, so every trace on the
+        section is compared with every other, and a dense autosegmented section
+        has enough traces that measuring an overlap ratio for each of those
+        pairs is not viable:
         Trace.getOverlapRatio rasterizes both polygons, which costs about 3 ms a
         pair. Two filters keep the number of ratios measured proportional to the
         number of traces rather than to its square:
@@ -3388,8 +3382,6 @@ class Series():
                 bxmin, bymin, bxmax, bymax, barea, bname, bindex, btrace = b
                 if bxmin > axmax + tol:
                     break  # sorted by xmin: nothing further can reach a
-                if aname == bname:
-                    continue  # same-name duplicates are deleteDuplicateTraces'
                 if atrace.closed != btrace.closed:
                     continue  # as in Trace.overlaps
                 if aymax + tol < bymin or bymax + tol < aymin:
@@ -3443,47 +3435,45 @@ class Series():
                 if Trace.ratioIsOverlap(ratio, threshold):
                     yield first, second, ratio, False
 
-    def findDifferentlyNamedDuplicates(self, threshold : float,
-                                       include_locked=False) -> list:
-        """Find traces that duplicate each other under two different names.
+    def findDuplicateTraces(self, threshold : float,
+                            include_locked=False) -> list:
+        """Find traces that duplicate each other, grouped by structure.
 
-        The same-name case is Series.deleteDuplicateTraces, and it stays exactly
-        as it is: that comparison only ever sees traces already grouped under one
-        contour name, so two people tracing one structure under two names produce
-        a duplicate it cannot find. This scans across names instead, comparing
-        every trace on a section with every other one, and reports what it finds.
+        One scan for both kinds of duplicate: a structure traced twice under
+        one name, and a structure traced under two names, which is what two
+        people tracing it produce. Every trace on a section is compared with
+        every other (see _duplicatePairs), and the overlapping pairs are
+        joined into groups: a structure traced three times is one group of
+        three, not three pairs. The joining is transitive, so A over B and B
+        over C is one group even if A and C fall just short of each other.
 
-        This scan modifies nothing. Which of the two names is the right one is a
-        judgment about the data rather than something geometry can settle, so
-        this operation never chooses: the review list it feeds asks the person
-        reading it, one row at a time, and deleteDifferentlyNamedDuplicates
-        applies only the choices actually made. A row nobody answered is left
-        alone rather than resolved by any rule, because every rule available
-        here ("keep the name on more sections", "keep the larger trace") would
-        be geometry answering a question about the data. Locked objects are
-        skipped unless ``include_locked`` is True, matching findPixelDustTraces
-        and findEmptyTraces; a locked object surfaced that way can still not
-        have a trace deleted (see deleteDifferentlyNamedDuplicates).
+        This scan modifies nothing. Which name to keep is a question about the
+        data, so combineDuplicateTraces only acts on a name the caller picks.
+        Locked objects are skipped unless ``include_locked`` is True, matching
+        findPixelDustTraces and findEmptyTraces; even then, combining never
+        deletes a trace of a locked object (see combineDuplicateTraces).
 
-        Overlap is decided exactly as it is for same-name duplicates, by
-        Trace.overlaps' two tests: an identical point sequence, or an overlap
-        ratio above ``threshold``. See _duplicatePairs for how the comparison is
-        kept affordable across a whole section.
+        Overlap is decided as Trace.overlaps decides it: an identical point
+        sequence, or an overlap ratio above ``threshold``.
 
             Params:
                 threshold (float): the overlap ratio above which two traces
                     count as duplicates
                 include_locked (bool): True to also consider locked objects
             Returns:
-                (list): one record per pair (see _cleanupRecord), describing the
-                    first trace of the pair, with the second carried alongside
-                    under the "other_" keys, plus the measured "ratio"
+                (list): one dict per group, in section order: "section";
+                    "members", one record per trace (see _cleanupRecord, with
+                    the lookalike count of _recordLookalikes), in (name,
+                    index) order; "names", the distinct object names, sorted;
+                    "count", the number of traces; "ratio", the lowest overlap
+                    ratio among the pairs that joined the group (1.0 for a
+                    point-for-point match); and "location", the first
+                    member's
         """
-        candidates = []
+        groups = []
         for snum, section in self.enumerateSections(
-            message="Scanning for duplicates named differently...",
+            message="Scanning for duplicate traces...",
         ):
-            section_start = len(candidates)
             tform = section.tform
             entries = []
             for cname in section.contours:
@@ -3496,151 +3486,199 @@ class Series():
                     ## the untransformed polygon area, in the same coordinates
                     ## getOverlapRatio rasterizes, for the ceiling in
                     ## _duplicatePairs. Not the physical area: that is measured
-                    ## through the section transform, below, for the pairs that
-                    ## survive.
+                    ## through the section transform, below, for the traces
+                    ## that end up in a group.
                     _, area, _, _ = traceGeometry(trace.points, True)
                     entries.append(
                         (xmin, ymin, xmax, ymax, abs(area), cname, index, trace)
                     )
 
-            for first, second, ratio, points_match in self._duplicatePairs(
+            ## union-find over (name, index): each overlapping pair is an edge
+            ## and each group is a connected component
+            parent = {}
+
+            def find(key):
+                parent.setdefault(key, key)
+                while parent[key] != key:
+                    parent[key] = parent[parent[key]]
+                    key = parent[key]
+                return key
+
+            traces = {}
+            edges = []
+            for first, second, ratio, _points_match in self._duplicatePairs(
                 entries, threshold, section.mag
             ):
-                fname, findex, ftrace = first[5], first[6], first[7]
-                sname, sindex, strace = second[5], second[6], second[7]
-                if points_match:
-                    reason = f"Point-for-point match with '{sname}'"
-                else:
-                    reason = (
-                        f"Overlap {ratio:.4g} with '{sname}' "
-                        f"(above {threshold:.4g})"
+                fkey, skey = (first[5], first[6]), (second[5], second[6])
+                traces[fkey], traces[skey] = first[7], second[7]
+                froot, sroot = find(fkey), find(skey)
+                if froot != sroot:
+                    parent[sroot] = froot
+                edges.append((fkey, ratio))
+            if not edges:
+                continue
+
+            keys_by_root = {}
+            for key in traces:
+                keys_by_root.setdefault(find(key), []).append(key)
+            lowest = {}
+            for key, ratio in edges:
+                root = find(key)
+                lowest[root] = min(lowest.get(root, ratio), ratio)
+
+            section_groups = []
+            all_members = []
+            for root, keys in keys_by_root.items():
+                keys.sort()
+                members = [
+                    self._cleanupRecord(
+                        name, snum, index, traces[(name, index)], reason="",
+                        area=self._traceArea(traces[(name, index)], tform),
                     )
-                record = self._cleanupRecord(
-                    fname, snum, findex, ftrace, reason=reason,
-                    area=self._traceArea(ftrace, tform),
-                )
-                other = self._cleanupRecord(
-                    sname, snum, sindex, strace, reason=reason,
-                    area=self._traceArea(strace, tform),
-                )
-                record["ratio"] = ratio
-                record["other_name"] = other["name"]
-                record["other_index"] = other["index"]
-                record["other_points"] = other["points"]
-                record["other_location"] = other["location"]
-                record["other_area"] = other["area"]
-                record["other_match"] = other["match"]
-                candidates.append(record)
-            self._recordLookalikes(section, candidates[section_start:])
+                    for name, index in keys
+                ]
+                all_members.extend(members)
+                section_groups.append({
+                    "section": snum,
+                    "members": members,
+                    "names": sorted({m["name"] for m in members}),
+                    "count": len(members),
+                    "ratio": float(lowest[root]),
+                    "location": members[0]["location"],
+                })
+            self._recordLookalikes(section, all_members)
+            section_groups.sort(
+                key=lambda g: (g["members"][0]["name"], g["members"][0]["index"])
+            )
+            groups.extend(section_groups)
 
-        return candidates
+        return groups
 
-    def deleteDifferentlyNamedDuplicates(self, choices : list,
-                                         series_states=None,
-                                         log_event=True,
-                                         ambiguous : list = None) -> list:
-        """Delete the unkept side of cross-name duplicate pairs the user chose.
+    @staticmethod
+    def duplicateKeptMember(members : list, keep : str):
+        """The member of a duplicate group that combining under ``keep`` keeps.
 
-        The removal half of findDifferentlyNamedDuplicates. Each choice is a
-        ``(record, keep)`` tuple: ``record`` is a pair record from that scan and
-        ``keep`` names which of the pair's two traces to keep, ``"first"`` for
-        the record's own trace (its "name") or ``"other"`` for the one carried
-        under the "other_" keys. The trace that was not kept is deleted; both
-        traces of the pair survive if no choice was made.
-
-        **Nothing is inferred.** A choice that is neither ``"first"`` nor
-        ``"other"`` -- ``None`` above all, which is what an unanswered row
-        carries -- is skipped, not resolved by a default. Silence is not a
-        selection: the caller has to say which name is right, because that is
-        the one thing the geometry cannot say.
-
-        **A locked object never loses a trace here**, even when the scan that
-        produced the record was run with ``include_locked=True`` and so put the
-        locked object on the list. Deleting a trace changes quantitative data,
-        which is exactly what locking an object refuses; the lock is checked
-        against the object being *deleted from*, since keeping a trace does not
-        modify it.
-
-        Deletion runs through deleteMalformedTraces, the same path the
-        pixel-dust and empty-trace clean-ups use, so it is one undoable
-        operation (enumerateSections records the undo state into
-        ``series_states``) and each trace is re-found after its section is
-        reloaded by its recorded index and color+points signature rather than
-        by identity.
+        A name can hold more than one trace of the group (a structure traced
+        twice under one name), so the name alone does not pick a trace. The
+        one with the most points is kept, as the most detailed tracing, then
+        the first in its contour. The dialog reads this too, to know which
+        traces a combine removed.
 
             Params:
-                choices (list): (record, keep) tuples, described above
+                members (list): the group's member records
+                keep (str): the object name chosen
+            Returns:
+                (dict): the member record kept, or None when no member has
+                    that name
+        """
+        candidates = [m for m in members if m["name"] == keep]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda m: (-m["points"], m["index"]))
+
+    def combineDuplicateTraces(self, choices : list, series_states=None,
+                               log_event=True, ambiguous : list = None) -> list:
+        """Combine each chosen duplicate group into one trace.
+
+        Each choice is a ``(group, keep)`` tuple: ``group`` from
+        findDuplicateTraces and ``keep`` the object name to keep, one of the
+        group's own "names". One trace under that name survives (see
+        duplicateKeptMember) and takes the tags of every other trace in the
+        group; the others are deleted.
+
+        **Nothing is inferred.** A choice whose ``keep`` is empty, None, or not
+        one of the group's names is skipped.
+
+        **A locked object never loses a trace here.** A group that would delete
+        a trace of a locked object is skipped whole. Keeping a locked trace is
+        allowed: the others are deleted and only its tags change, which leaves
+        every measurement of it as it was.
+
+        **A group is combined whole or not at all.** Sections are loaded fresh,
+        so each member is re-found the way deleteMalformedTraces re-finds a
+        record (see _resolveRecordedTraces). If any member of a group cannot be
+        found, or more than one trace could be it, the group is left alone;
+        the members set aside for the second reason go into ``ambiguous``.
+
+        All the chosen groups are combined in one pass of enumerateSections,
+        so they are one undo step.
+
+            Params:
+                choices (list): (group, keep) tuples, described above
                 series_states (dict): optional dict of undo states for GUI
                 log_event (bool): True if events should be logged
-                ambiguous (list): optional; receives each (record, keep) tuple
-                    left alone because more than one identical trace could be
-                    the one to delete (see deleteMalformedTraces)
+                ambiguous (list): optional; receives each member record set
+                    aside because more than one trace could be it
             Returns:
-                (list): the (record, keep) tuples whose trace was found and
-                    deleted, so a caller can prune exactly those rows
+                (list): the (group, keep) tuples that were combined
         """
-        targets = []
+        plans = {}
         for choice in choices:
-            record, keep = choice
-            if keep == "first":
-                delete_name = record["other_name"]
-                delete_index = record.get("other_index")
-                delete_lookalikes = record.get("other_lookalikes")
-                delete_ordinal = record.get("other_lookalike_ordinal")
-                delete_identity = record.get("other_identity")
-                delete_match = record["other_match"]
-                keep_name = record["name"]
-            elif keep == "other":
-                delete_name = record["name"]
-                delete_index = record.get("index")
-                delete_lookalikes = record.get("lookalikes")
-                delete_ordinal = record.get("lookalike_ordinal")
-                delete_identity = record.get("identity")
-                delete_match = record["match"]
-                keep_name = record["other_name"]
-            else:
+            group, keep = choice
+            if not keep or keep not in group["names"]:
                 continue  # no choice made: never guess which name is right
-            if self.getAttr(delete_name, "locked"):
+            kept = self.duplicateKeptMember(group["members"], keep)
+            doomed = [m for m in group["members"] if m is not kept]
+            if any(self.getAttr(m["name"], "locked") for m in doomed):
                 continue  # deleting a trace is a quantitative change
-            targets.append({
-                "name": delete_name,
-                "section": record["section"],
-                # tells identical traces under one name apart
-                "index": delete_index,
-                "lookalikes": delete_lookalikes,
-                "lookalike_ordinal": delete_ordinal,
-                "identity": delete_identity,
-                "match": delete_match,
-                ## carried through deleteMalformedTraces, which returns the very
-                ## dicts it deleted, so the log and the return value can name
-                ## the pair each deletion came from
-                "keep_name": keep_name,
-                "choice": choice,
-            })
+            plans.setdefault(group["section"], []).append(
+                (choice, keep, kept, doomed)
+            )
 
-        if not targets:
+        if not plans:
             return []
 
-        unsure = []
-        deleted = self.deleteMalformedTraces(
-            targets,
+        combined = []
+        for snum, section in self.enumerateSections(
+            message="Combining duplicate traces...",
             series_states=series_states,
-            message="Deleting duplicates named differently...",
-            ambiguous=unsure,
-        )
-        if ambiguous is not None:
-            ambiguous.extend(target["choice"] for target in unsure)
+            section_numbers=sorted(plans),
+        ):
+            section_plans = plans.get(snum, [])
+            records = [
+                member
+                for _choice, _keep, kept, doomed in section_plans
+                for member in [kept] + doomed
+            ]
+            found, unsure = self._resolveRecordedTraces(section, records)
+            if ambiguous is not None:
+                ambiguous.extend(unsure)
 
-        if log_event:
-            for target in deleted:
-                self.addLog(
-                    target["name"],
-                    target["section"],
-                    "Delete duplicate trace named differently "
-                    f"(kept '{target['keep_name']}')",
-                )
+            used = set()
+            kept_names = set()
+            for choice, keep, kept, doomed in section_plans:
+                members = [kept] + doomed
+                if any(id(m) not in found for m in members):
+                    continue  # changed since the scan: leave the group whole
+                traces = [found[id(m)] for m in members]
+                ids = {id(t) for t in traces}
+                if len(ids) != len(traces) or ids & used:
+                    continue  # two members on one trace: never guess
+                used |= ids
+                kept_trace = traces[0]
+                for trace in traces[1:]:
+                    kept_trace.mergeTags(trace)
+                    section.removeTrace(trace, log_event=log_event)
+                    if log_event:
+                        self.addLog(
+                            trace.name, snum,
+                            f"Combine duplicate traces (kept '{keep}')",
+                        )
+                kept_names.add(kept_trace.name)
+                combined.append(choice)
 
-        return [target["choice"] for target in deleted]
+            if kept_names:
+                ## mergeTags rewrote the kept traces' tags in place, outside
+                ## Section: name their contours as modified so the undo state
+                ## records them, and rebuild the columnar store, which no hook
+                ## told about the new tags (see Section.resyncColumnarStore)
+                section.modified_contours.update(kept_names)
+                section.resyncColumnarStore()
+                section.save()
+
+        if combined:
+            self.modified = True
+        return combined
 
     def editObjectRadius(self, obj_names : list, new_rad : float, series_states=None):
         """Change the radii of all traces of an object.
@@ -4500,59 +4538,6 @@ class Series():
                 g = group
         return g
     
-    def deleteDuplicateTraces(self, threshold : float, include_locked=False, series_states=None, log_event=True):
-        """Delete all duplicate traces in the series (keep tags).
-        
-            Params:
-                threshold (float): the threshold for overlapping traces to be considered duplicates
-                series_states (dict): optional dict of undo states for GUI
-                log_event (bool): True if event should be logged
-        """
-        removed = {}
-        for snum, section in self.enumerateSections(
-            message="Removing duplicate traces...",
-            series_states=series_states
-        ):
-            found_on_section = False
-            for cname in section.contours:
-                if not include_locked and self.getAttr(cname, "locked"):
-                    continue
-                i = 1
-                while i < len(section.contours[cname]):
-                    trace1 = section.contours[cname][i]
-                    # check against all previous traces
-                    for j in range(i-1, -1, -1):
-                        trace2 = section.contours[cname][j]
-                        # if overlaps, remove trace and break
-                        if trace1.overlaps(trace2, threshold=threshold,
-                                           mag=section.mag):
-                            if snum not in removed:
-                                removed[snum] = set()
-                            removed[snum].add(cname)
-                            found_on_section = True
-                            trace1.mergeTags(trace2)
-                            section.removeTrace(trace2)
-                            i -= 1
-                            break
-                    i += 1
-            if found_on_section:
-                # `section.removeTrace(trace2)` is a hooked mutation and the
-                # store follows it, but `trace1.mergeTags(trace2)` above rewrote
-                # `tags` in place on a trace the section keeps -- outside
-                # `Section`, so nothing repaired trace1's row. It only diverges
-                # when the two duplicates carry different tags, which is exactly
-                # the messy series this clean-up is run on. Without the rebuild
-                # the save below logs the drift instead of absorbing it silently
-                # (D11), and the user's next edit to trace1 raises
-                # `ColumnarDualWriteMismatch`.
-                section.resyncColumnarStore()
-                section.save()
-
-        if log_event:
-            self.addLog(None, None, "Delete all duplicate traces")
-
-        return removed
-
     def addLog(self, obj_name : str, snum : int, event : str):
         """Add a log to the log set.
         
@@ -5322,6 +5307,75 @@ class Series():
                 editors.add(l.user)
         return editors
 
+    def usesBackupDefaults(self) -> bool:
+        """Return True if this series takes its backup folder and auto-backup
+        from the user's defaults (`default_backup_dir`, `default_autobackup`)
+        instead of settings of its own (`backup_dir`, `autobackup`).
+
+        The Backup Settings dialog records the choice per series under
+        `backup_use_defaults`. A series it has never saved has no such key,
+        and its own stored values cannot answer either: getOption stores the
+        default (off, no folder) the first time it reads one, so "never set
+        up" and "set to off with no folder" look the same. A series with a
+        folder or with auto-backup on was set up by someone and keeps its
+        own; any other series had no backups and takes the defaults.
+
+        The key is read here and written by setBackupUsesDefaults, never
+        through getOption: getOption would store a default for it, and one
+        default cannot be right for both kinds of series above.
+        """
+        if not self.isWelcomeSeries():
+            store = self._settingsStore()
+            if store.contains(self.code, "backup_use_defaults"):
+                return bool(store.value(self.code, "backup_use_defaults", bool))
+        return not (self.getOption("autobackup") or self.getOption("backup_dir"))
+
+    def setBackupUsesDefaults(self, value : bool):
+        """Record whether this series uses the user's backup defaults."""
+        if self.isWelcomeSeries():
+            return
+        self._settingsStore().set_value(self.code, "backup_use_defaults", bool(value))
+
+    def expandBackupFolder(self, folder : str) -> str:
+        """Replace {series} in a folder with this series' code.
+
+        The code is whatever was typed in the series code dialog, so path
+        separators become "_", and so does every dot in a code made only of
+        dots: "." or ".." would name the folder itself or its parent.
+        """
+        code = (self.code or self.name).replace("/", "_").replace("\\", "_")
+        if not code.strip("."):
+            code = "_" * max(len(code), 1)
+        return folder.replace("{series}", code)
+
+    def autobackupOn(self) -> bool:
+        """Return True if this series backs up on every save."""
+        if self.usesBackupDefaults():
+            return bool(self.getOption("default_autobackup"))
+        return bool(self.getOption("autobackup"))
+
+    def backupFolder(self, create : bool = False) -> str:
+        """Return the backup folder in effect for this series ("" if none).
+
+            Params:
+                create (bool): make the folder if it comes from the default
+                    folder, `{series}` names part of it, and the part before
+                    `{series}` exists. A folder the user picked whole is never
+                    created: a missing one is reported, as before.
+        """
+        if not self.usesBackupDefaults():
+            return self.getOption("backup_dir")
+        template = self.getOption("default_backup_dir")
+        folder = self.expandBackupFolder(template)
+        i = template.find("{series}")
+        if create and i != -1 and not os.path.isdir(folder):
+            if os.path.isdir(os.path.dirname(template[:i])):
+                try:
+                    os.makedirs(folder, exist_ok=True)
+                except OSError:
+                    pass  # reported by the caller as a missing folder
+        return folder
+
     def getBackupPath(self, comment : str = "", check_existing : bool = True):
         """Get the file path for a backup file for this series.
         
@@ -5369,7 +5423,7 @@ class Series():
         fname = dl.join(fname_list)
         fname = dl.join(fname.split())
 
-        folder = self.getOption("backup_dir")
+        folder = self.backupFolder()
         fp = os.path.join(folder, fname)
 
         if check_existing and os.path.isfile(f"{fp}.jser"):

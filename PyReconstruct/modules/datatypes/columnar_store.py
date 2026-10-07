@@ -1766,7 +1766,7 @@ class ContourView():
     (remove / mutate / add it back, or remove / `.copy()` / add the copy, as
     `splitObject` does). The other five mean the removal: `Section.deleteTraces`
     and, in `series.py`, `deleteObjects`, `deleteAllTraces`,
-    `deleteMalformedTraces` and `deleteDuplicateTraces`. The count is
+    `deleteMalformedTraces` and `combineDuplicateTraces`. The count is
     package-wide -- `section.py` and `series.py` both -- and an AST walk in the
     tests holds it there. `removeRow` tombstones: the row number retires for
     good and every `TraceView` over it raises from then on, so the *mutate* step
