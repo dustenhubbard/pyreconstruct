@@ -329,6 +329,17 @@ def _default_progress_reporter_factory():
     return _PROGRESS_REPORTER_FACTORY
 
 
+def _openingText(name: str) -> str:
+    """The progress text while a series opens, naming the series.
+
+    An open runs one of two passes: `openJser` unpacking the .jser, or the
+    series-data pass in `Series.__init__` that a recovered or already-unpacked
+    working folder takes instead. Both say this, with the name the window
+    title shows once the series is open.
+    """
+    return f"Opening {name}..."
+
+
 _NOTIFIER = None
 
 
@@ -552,7 +563,14 @@ class Series():
         # keep track of relevant overall series data
         self.data = SeriesData(self)
         if get_series_data:
-            self.data.refresh()
+            if self.isWelcomeSeries():
+                # The welcome series PyReconstruct opens at launch is one
+                # bundled section with no traces, read in well under a
+                # millisecond. Its bar only flashed "Loading series data..."
+                # before the user had chosen any series, so it gets none.
+                self.data.refresh(show_progress=False)
+            else:
+                self.data.refresh(message=_openingText(self.name))
 
         # objects for non-GUI users
         self.objects = Objects(self)
@@ -716,7 +734,7 @@ class Series():
         # 2026); the bar itself only appears after Qt's minimum duration, so a
         # small local file still opens without a flash.
         factory = progress if progress is not None else _default_progress_reporter_factory()
-        reporter = factory(text="Opening series...")
+        reporter = factory(text=_openingText(sname))
         try:
             jser_data, collisions = Series._readJserForOpen(fp, notifier)
         except BaseException:
@@ -861,7 +879,7 @@ class Series():
         finally:
             # The dialog closes only at 100%, which a failure never reaches:
             # the raise above used to leave the window-modal "Opening
-            # series..." dialog standing behind the error that follows it
+            # <name>..." dialog standing behind the error that follows it
             # (found 2026-08-28) -- the same shape saveJser's finally already
             # fixes. Cancel returns pass through here too; finishing a
             # reporter twice is harmless.
