@@ -103,8 +103,12 @@ def test_dmg_leaves_out_first_launch_help_for_a_signed_app(tmp_path):
 
 @pytest.mark.skipif(sys.platform != "darwin" or not shutil.which("dmgbuild"),
                     reason="needs macOS, hdiutil and dmgbuild on PATH")
-@pytest.mark.parametrize("readable", [True, False])
-def test_dmg_build_fails_when_the_app_copy_into_the_image_fails(tmp_path, readable):
+@pytest.mark.parametrize("unreadable,error", [
+    (None, None),
+    ("Frameworks/lib.dylib", "does not match"),
+    ("Frameworks", "could not list"),   # its contents are unknown, so no listing is complete
+])
+def test_dmg_build_fails_when_the_app_copy_into_the_image_fails(tmp_path, unreadable, error):
     # The real dmgbuild and hdiutil: dmgbuild copies the app with ditto and
     # ignores its exit status, so make_dmg.sh must catch a short copy itself.
     packaging = tmp_path / "packaging"
@@ -120,8 +124,9 @@ def test_dmg_build_fails_when_the_app_copy_into_the_image_fails(tmp_path, readab
     (contents / "Resources").symlink_to("Frameworks")
     lib = contents / "Frameworks" / "lib.dylib"
     lib.write_bytes(b"x" * 4096)
-    if not readable:
-        lib.chmod(0)   # ditto cannot read it, so the app in the image lacks it
+    if unreadable:
+        # ditto cannot read it, so the app in the image lacks it.
+        (contents / unreadable).chmod(0)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     # Retry at once, and leave other disk images on this machine alone.
@@ -134,15 +139,43 @@ def test_dmg_build_fails_when_the_app_copy_into_the_image_fails(tmp_path, readab
         result = subprocess.run(["bash", "packaging/macos/make_dmg.sh"], cwd=tmp_path,
                                 env=env, capture_output=True, text=True, timeout=600)
     finally:
+        (contents / "Frameworks").chmod(0o755)
         lib.chmod(0o644)
     out = tmp_path / "PyReconstruct-1.24.0-macOS-arm64.dmg"
-    if readable:
+    if unreadable:
+        assert result.returncode != 0
+        assert error in result.stderr
+        assert not out.exists()
+    else:
         assert result.returncode == 0, result.stderr
         assert out.is_file()
-    else:
-        assert result.returncode != 0
-        assert "does not match" in result.stderr
-        assert not out.exists()
+
+
+@pytest.mark.parametrize("python", ["exit 1", "exit 0"])
+def test_dmg_build_fails_when_the_app_cannot_be_listed(tmp_path, python):
+    # A listing that fails, or that prints nothing, must not count as a match.
+    packaging = tmp_path / "packaging"
+    shutil.copytree(ROOT / "packaging" / "macos", packaging / "macos")
+    (tmp_path / "dist" / "PyReconstruct.app").mkdir(parents=True)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    # Signed, so make_dmg.sh runs $PYTHON only to list the app.
+    codesign = bin_dir / "codesign"
+    codesign.write_text("#!/bin/sh\n"
+                        "echo 'Authority=Developer ID Application: Test (ABCDE12345)' >&2\n")
+    for name, body in (("broken-python", python), ("sleep", ""), ("killall", "")):
+        (bin_dir / name).write_text(f"#!/bin/sh\n{body}\n")
+    for tool in bin_dir.iterdir():
+        tool.chmod(0o755)
+    _fake_dmgbuild(bin_dir)
+    env = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+               PYTHON=str(bin_dir / "broken-python"),
+               PYR_PUBLIC="1.24.0", ARCH="arm64", TMPDIR=str(tmp_path))
+    result = subprocess.run(["bash", "packaging/macos/make_dmg.sh"], cwd=tmp_path,
+                            env=env, capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "could not list" in result.stderr
+    assert not (tmp_path / "PyReconstruct-1.24.0-macOS-arm64.dmg").exists()
 
 
 def _fake_dmgbuild(bin_dir):

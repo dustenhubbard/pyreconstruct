@@ -54,13 +54,15 @@ make_dmg() {
 }
 
 # Every path in an app bundle, sorted, with its type and a file's size or a
-# link's target.
+# link's target. A directory it cannot read is an error, not an empty one.
 app_listing() {
     "${PYTHON:-python3}" - "$1" <<'PY'
 import os, sys
 root = sys.argv[1]
 rows = []
-for top, dirs, files in os.walk(root):
+def fail(error):
+    raise error
+for top, dirs, files in os.walk(root, onerror=fail):
     for name in dirs + files:
         path = os.path.join(top, name)
         rel = os.path.relpath(path, root)
@@ -82,12 +84,17 @@ check_dmg() {
     mnt="$(mktemp -d)"
     hdiutil attach -readonly -nobrowse -noautoopen -mountpoint "$mnt" "$OUT" >/dev/null \
         || { rmdir "$mnt"; return 1; }
-    if ! diff <(app_listing "$APP") <(app_listing "$mnt/${APP_NAME}.app") >&2; then
-        echo "error: the app in $OUT does not match $APP" >&2
+    if ! app_listing "$APP" >"$mnt.want" || ! [ -s "$mnt.want" ] \
+        || ! app_listing "$mnt/${APP_NAME}.app" >"$mnt.got" || ! [ -s "$mnt.got" ]; then
+        echo "error: could not list $APP or ${APP_NAME}.app in $OUT" >&2
+        status=1
+    elif ! diff "$mnt.want" "$mnt.got" >&2; then
+        echo "error: ${APP_NAME}.app in $OUT does not match $APP" >&2
         status=1
     fi
     hdiutil detach "$mnt" >/dev/null || hdiutil detach -force "$mnt" >/dev/null || true
     rmdir "$mnt" 2>/dev/null || true
+    rm -f "$mnt.want" "$mnt.got"
     return "$status"
 }
 
