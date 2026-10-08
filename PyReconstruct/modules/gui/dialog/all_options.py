@@ -640,6 +640,17 @@ class AllOptionsDialog(QDialog):
         """The main window's field, or None when there is no window."""
         return getattr(self.parent(), "field", None)
 
+    def _glowLayers(self):
+        """The field and the section layers it draws (two when blending).
+
+        Returns (None, []) when there is no window.
+        """
+        field = self._field()
+        if field is None:
+            return None, []
+        layers = (field.section_layer, getattr(field, "b_section_layer", None))
+        return field, [layer for layer in layers if layer is not None]
+
     def _previewGlow(self, percent):
         """Redraw the field with the selection glow at `percent`; nothing is stored.
 
@@ -647,9 +658,10 @@ class AllOptionsDialog(QDialog):
         be judged on the field while the slider moves. OK stores the option;
         Cancel redraws with the stored value (_endGlowPreview).
         """
-        field = self._field()
+        field, layers = self._glowLayers()
         if field is not None:
-            field.section_layer.glow_opacity_preview = percent
+            for layer in layers:
+                layer.glow_opacity_preview = percent
             field.generateView(generate_image=False)
             self._glow_previewed = True
 
@@ -661,9 +673,10 @@ class AllOptionsDialog(QDialog):
         """
         if not getattr(self, "_glow_previewed", False):
             return
-        field = self._field()
+        field, layers = self._glowLayers()
         if field is not None:
-            field.section_layer.glow_opacity_preview = None
+            for layer in layers:
+                layer.glow_opacity_preview = None
             if redraw:
                 field.generateView(generate_image=False)
         self._glow_previewed = False
@@ -701,6 +714,11 @@ class AllOptionsDialog(QDialog):
         self.placeWidgets()
         # set the tab
         self.tabs.setCurrentIndex(current_tab)
+        # the new glow slider starts at the default without a valueChanged,
+        # so show the field at that value too
+        self._previewGlow(
+            self.all_widgets["selection_glow"].inputs[0].widget.slider.value()
+        )
 
 # all widgets used in the options MUST have a accept() and set() method
 # accept is used to check if the response are valid

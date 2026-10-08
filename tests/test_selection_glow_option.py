@@ -111,6 +111,48 @@ def test_reset_defaults_puts_the_slider_at_40(qapp, main_window):
     assert _slider(dlg).value() == 40
 
 
+def test_reset_defaults_previews_the_default(qapp, main_window, monkeypatch):
+    """Reset Defaults builds a new slider at 40%; the field must follow it."""
+    series = main_window.series
+    series.setOption("selection_glow_opacity", 40)
+    dlg = AllOptionsDialog(main_window, series)
+    _slider(dlg).setValue(70)
+    qapp.processEvents()
+    redraws = _Redraws(main_window.field, monkeypatch)
+
+    dlg.resetDefaults()
+    qapp.processEvents()
+
+    assert _slider(dlg).value() == 40
+    assert redraws.count >= 1
+    assert main_window.field.section_layer.glow_opacity_preview == 40
+    assert main_window.field.section_layer._glow_opacity == pytest.approx(0.4)
+
+
+def test_a_blended_section_previews_too(qapp, main_window):
+    """With blending on, the B section's selected traces follow the slider."""
+    series = main_window.series
+    field = main_window.field
+    stored = series.getOption("selection_glow_opacity")
+    target = 0 if stored != 0 else 80
+    field.changeSection(next(n for n in series.sections if n != field.section.n))
+    field.blend_sections = True
+    b_layer = field.b_section_layer
+    dlg = AllOptionsDialog(main_window, series)
+
+    _slider(dlg).setValue(target)
+    qapp.processEvents()
+
+    assert b_layer.glow_opacity_preview == target
+    assert b_layer._glow_opacity == pytest.approx(target / 100)
+
+    dlg.reject()
+    qapp.processEvents()
+
+    assert b_layer.glow_opacity_preview is None
+    assert b_layer._glow_opacity == pytest.approx(stored / 100)
+
+
 def test_a_dialog_with_no_window_behind_it_does_not_mind(qapp, main_window):
     dlg = AllOptionsDialog(None, main_window.series)   # tests build it this way
     _slider(dlg).setValue(50)
