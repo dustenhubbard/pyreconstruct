@@ -840,7 +840,7 @@ def test_dialog_renders_the_byline_once_as_its_own_widget(qapp, kwargs, orienter
 
 
 def test_dialog_byline_is_one_line_beside_close(qapp):
-    """The byline renders on one line, beside Close, at every width.
+    """The footer line renders on one line, beside Close, at every width.
 
     No break in the markup, no word wrap, and at the 700 minimum width the
     whole sentence fits in its label with Close still to its right, so
@@ -865,7 +865,7 @@ def test_dialog_byline_is_one_line_beside_close(qapp):
             dlg.resize(width, 620)
             QApplication.processEvents()
             assert dlg._byline.height() < 2 * line, (
-                f"byline is more than one line tall at width {width}"
+                f"footer line is more than one line tall at width {width}"
             )
             assert dlg._byline.width() >= dlg._byline.sizeHint().width()
             assert close.geometry().left() > dlg._byline.geometry().right()
@@ -875,13 +875,12 @@ def test_dialog_byline_is_one_line_beside_close(qapp):
 
 
 def test_dialog_byline_shares_the_bottom_row_with_close(qapp):
-    """The byline is a footer under the notes, on the bottom row with Close.
+    """The footer line sits under the notes, on the bottom row with Close.
 
-    The approved placement: the "Show this changelog window after each
-    update?" box and the "All release notes on GitHub" link share the row
-    right under the scrollable notes browser, and the byline sits bottom-left
-    on the row below it, with Close bottom-right. The byline stays outside the
-    scroll, so it is on screen from the moment the dialog opens. Asserted as
+    The "Show this changelog window after each update?" box and the "All
+    release notes on GitHub" link share the row right under the scrollable
+    notes browser, and the footer line sits bottom-left on the row below it,
+    with Close bottom-right. The footer line stays outside the scroll, so it is on screen from the moment the dialog opens. Asserted as
     rendered geometry rather than layout indexes, so any layout that produces
     the rows counts and none that merely declares them does.
 
@@ -914,7 +913,7 @@ def test_dialog_byline_shares_the_bottom_row_with_close(qapp):
                      if b.text() == "Close")
         assert byline.geometry().top() < close.geometry().bottom()
         assert close.geometry().top() < byline.geometry().bottom()
-        # ...with the byline on the left and Close on the right
+        # ...with the footer line on the left and Close on the right
         assert byline.geometry().right() < close.geometry().left()
         # and the footer keeps the byline's register: italic, name linked
         assert byline.font().italic() is True
@@ -930,7 +929,7 @@ def test_dialog_minimum_size_and_where_extra_space_goes(qapp):
     rather than inherited, and click-tested and approved by Dusten at these
     values:
 
-    * Width 540 -> 700. The one-line byline and the release-notes link fit
+    * Width 540 -> 700. The one-line footer and the release-notes link fit
       side by side well inside it (see
       ``test_dialog_byline_is_one_line_beside_close``); the
       extra room is about how much of a release note line fits unwrapped.
@@ -1028,8 +1027,8 @@ def test_dialog_byline_is_italic_and_not_muted(qapp):
 def test_dialog_date_and_byline_share_the_secondary_style(qapp):
     """The release date and the byline are the dialog's two secondary lines.
 
-    The date sits beside each version heading in the notes and the byline in
-    the footer; both paint in the same palette-derived secondary color, so
+    The date sits beside each version heading in the notes and the footer
+    line below them; both paint in the same palette-derived secondary color, so
     they read as one register: quieter than the body text, darker than the
     near-invisible disabled gray the date line used to borrow through
     ``setEnabled(False)``. Pinned as the relationship rather than as pixel
@@ -1048,10 +1047,10 @@ def test_dialog_date_and_byline_share_the_secondary_style(qapp):
     dlg = WhatsNewDialog(None, "1.20.3", content=content,
                          url="https://example.test/releases")
     try:
-        # the byline is italic, the aside register
+        # the footer line is italic, the aside register
         assert dlg._byline.font().italic() is True
         # one shared color: the date run after the first version heading
-        # paints in it, and the byline spells it into its markup
+        # paints in it, and the footer line spells it into its markup
         color = secondary_text_color(dlg._notes.palette())
         block = dlg._notes.document().begin()
         it = block.begin()
@@ -1155,7 +1154,7 @@ def measure_byline_pixels(dlg):
     )
     dlg._byline.setFont(font)
 
-    # The x-coordinate mapping below reads the byline's one line, which never
+    # The x-coordinate mapping below reads the footer's one line, which never
     # wraps; the words after the name contribute only plain ink, which the
     # measurements below already tolerate on either side of the anchor. 760
     # just gives the grab a stable, roomy canvas past the 700 minimum.
@@ -1478,7 +1477,7 @@ def test_dialog_byline_click_activates_only_on_the_project_name(qapp):
     try:
         # 760 for the same reason measure_byline_pixels resizes to 760: a
         # stable, roomy canvas past the 700 minimum. The click coordinates
-        # below address the byline's one line, which never wraps.
+        # below address the footer's one line, which never wraps.
         dlg.resize(760, 620)
         dlg.show()
         label = dlg._byline
@@ -1506,19 +1505,19 @@ def test_dialog_byline_click_activates_only_on_the_project_name(qapp):
             assert click(x) == [], f"the line activated at x={x}, off the name"
         # and the second line is not the anchor, even directly below the name
         assert click(lead + word // 2, y=middle + line) == [], (
-            "the anchor leaked onto the byline's second line"
+            "the anchor leaked onto the footer's second line"
         )
     finally:
         dlg.deleteLater()
 
 
 def test_dialog_footer_keeps_its_places_when_the_content_has_no_byline(qapp):
-    """No byline leaves the GitHub link on the left and Close on the right.
+    """No footer line leaves the GitHub link on the left and Close on the right.
 
-    Some framings carry no byline at all. The link leads its own row, so it
-    stays on the left edge either way, and the footer keeps a stretch where
-    the byline would be so Close stays in the bottom right whether the
-    provenance line is there or not.
+    Some framings carry no footer line at all. The link leads its own row, so
+    it stays on the left edge either way, and the footer keeps a stretch where
+    the line would be so Close stays in the bottom right whether the line is
+    there or not.
     """
     from PySide6.QtWidgets import QLabel, QPushButton
     from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
