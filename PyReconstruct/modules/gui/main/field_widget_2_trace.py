@@ -1148,6 +1148,14 @@ class FieldWidgetTrace(FieldWidgetBase):
                 else:
                     selected_traces = self.section.selected_traces.copy()
 
+                # an explicit restrict list (autoMerge) names the traces the
+                # action works on, so it stands in for the selection whichever
+                # widget has focus: the draw's undo state refreshes the Trace
+                # List, and a focused list has lost its selection by now
+                restrict = kwargs.get("restrict")
+                if restrict:
+                    selected_traces = list(restrict)
+
                 ## If no objs selected
                 if not selected_traces:
                     return
