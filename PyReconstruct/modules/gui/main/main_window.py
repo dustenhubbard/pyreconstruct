@@ -1,6 +1,7 @@
 """The main window."""
 
 
+import functools
 import math
 import shutil
 import traceback
@@ -89,6 +90,38 @@ def remappedBCProfile(current : str, profiles_dict : dict) -> str:
 ## recovered, fall through to the .jser" answer from _recoverUnsavedSeries,
 ## and the two must not collapse into one another.
 _OPEN_ABORTED = object()
+
+
+def _oneOpenAtATime(open_series):
+    """Make an open that arrives while one is under way wait for it.
+
+    One arrives that way from the Finder, under one of the first open's
+    dialogs. Run in the middle, it took the window, and the first open then
+    closed that series without asking about its unsaved work. The folders
+    the closes kept aside are named once the open is over, for the same
+    reason: a notice runs its own event loop.
+    """
+    @functools.wraps(open_series)
+    def guarded(self, series_obj=None, jser_fp=None, query_prev=True):
+        if getattr(self, "_opening_series", False):
+            if jser_fp:
+                self._open_after = jser_fp
+            return
+
+        self._opening_series = True
+        self._open_after = None
+        self._series_closed = []
+        try:
+            open_series(self, series_obj, jser_fp, query_prev)
+        finally:
+            self._opening_series = False
+            after, self._open_after = self._open_after, None
+            closed, self._series_closed = self._series_closed, []
+
+        self._reportKeptFolders(*closed)
+        if after:
+            self.openSeries(jser_fp=after)
+    return guarded
 
 
 def _sameDir(a, b):
@@ -1202,41 +1235,14 @@ class MainWindow(QMainWindow):
         if layout:
             self.field.table_manager.restoreLayout(layout, self.field.section)
 
+    @_oneOpenAtATime
     def openSeries(self, series_obj=None, jser_fp=None, query_prev=True):
         """Open an existing series and create the field.
-
-        An open that arrives while one is under way (a Finder open, under
-        one of its dialogs) waits for it to finish. Run in the middle, it
-        took the window, and the first open then closed that series
-        without asking about its unsaved work.
 
             Params:
                 series_obj (Series): the series object (optional)
                 query_prev (bool): True if query user about saving data
         """
-        if getattr(self, "_opening_series", False):
-            if jser_fp:
-                self._open_after = jser_fp
-            return
-
-        self._opening_series = True
-        self._open_after = None
-        self._series_closed = []
-        try:
-            self._openSeries(series_obj, jser_fp, query_prev)
-        finally:
-            self._opening_series = False
-            after, self._open_after = self._open_after, None
-            closed, self._series_closed = self._series_closed, []
-
-        # only now that the open is over: a notice runs its own event loop,
-        # and an open from the Finder can run in it
-        self._reportKeptFolders(*closed)
-        if after:
-            self.openSeries(jser_fp=after)
-
-    def _openSeries(self, series_obj, jser_fp, query_prev):
-        """The body of openSeries, run one at a time."""
 
         if self.series:  # series open and save yes
 
@@ -1323,7 +1329,7 @@ class MainWindow(QMainWindow):
         # reopen the lists this series had open last time, where they were
         self._restoreListLayout()
 
-        # told about by openSeries, once the open is over
+        # named by _oneOpenAtATime, once the open is over
         self._series_closed += [prev_series, replaced]
 
     def _reportKeptFolders(self, *closed):
@@ -1443,10 +1449,12 @@ class MainWindow(QMainWindow):
         self.series.leave_open = True
 
         # query_prev=False: there is nothing left to save, and asking would
-        # run saveAllData against the dir that was just deleted. The body,
-        # not openSeries: this runs inside the open it puts right, which
-        # openSeries would make it wait for.
-        self._openSeries(recovered, None, False)
+        # run saveAllData against the dir that was just deleted. Unguarded:
+        # this runs inside the open it puts right, which the guard would make
+        # it wait for.
+        type(self).openSeries.__wrapped__(
+            self, series_obj=recovered, query_prev=False
+        )
 
     def _recoverUnsavedSeries(self, jser_fp):
         """Offer the unsaved work in the hidden series dir, if there is any.
