@@ -479,6 +479,11 @@ asks; Cancel leaves the file untouched. A renamed object keeps its `obj_attrs` e
 its group memberships and its place in `host_tree`, which follow it to the new name.
 Where several names merge, groups and hosts are combined, and one name's attributes win,
 with any attribute it lacks filled in from the others.
+The `host_tree` part holds only for host lists stored as arrays, which is all the writer
+emits. An entry whose value is a bare string (see
+[5.3](#53-groups-hosts-and-attributes)) is left exactly as stored, so neither its object
+name nor its host follows the rename: `{"my object": "host", "child": "my object"}`
+still names `my object` after the contour has become `my_object`.
 The `log` is not rewritten, so the history keeps the old name.
 
 So `"my square, big"` on disk becomes the contour `my_square__big` in memory, and that
@@ -664,8 +669,13 @@ row gains `resolved = false` at the end, and a 6-element row gains an `id` at th
 front. Because the checks run in sequence, a 5-element row picks up both
 repairs in one pass and arrives at 7 elements. The repaired `id` is **derived from the
 flag's own content** (its section number and stored fields), in the same alphabet and
-length as a generated one, and never repeats an id already in that section. So a legacy
+length as a generated one. The reader tries up to 1,000 content-derived candidates and
+takes the first that no flag in that section holds yet, so legacy flags with identical
+content in one section get distinct ids in a fixed order. Within that limit a legacy
 flag gets the same id on every open, in every copy of the file, with no save needed.
+Past it, once one section holds more than 1,000 legacy flags with identical content,
+each extra flag falls back to a random id: that id differs between opens and is not
+checked against the ids already in the section.
 
 ### 4.3 Comment rows
 
@@ -832,7 +842,8 @@ object with no hosts is omitted entirely. The inverse index is recomputed on loa
 never stored. Two notes:
 
 - The reader accepts a bare string where the writer only ever emits an array, so
-  `{"obj": "host"}` loads as `{"obj": ["host"]}`.
+  `{"obj": "host"}` loads as `{"obj": ["host"]}`. A bare-string entry is not repointed
+  when a contour name is normalized; see [Contour names](#contour-names).
 - **Loading is not an identity operation.** A host that is already a transitive superhost
   of the same object is pruned on load and will not be written back.
 
@@ -950,12 +961,15 @@ For the five list options, columns absent from a stored list are appended from t
 defaults when that list opens, so an old `.jser` gains new columns without losing the
 user's ordering. `hover_columns` is not back-filled this way.
 
-Each `*_columns` value **must be a JSON array of `[name, shown]` pairs** with a string
-name. Nothing checks this at load time, so a `.jser` carrying `"object_columns": {}` opens
-and round-trips back to disk unchanged. Every read of the option checks it, though, and
-a malformed value raises an error that names the option, says what is wrong with it, and
-says that deleting the entry under `options` restores the default. So the requirement is
-normative and enforced on use, not on load.
+Each `*_columns` value **must be a JSON array of `[name, shown]` pairs**, with a string
+`name` and a boolean `shown`. That is the format. The reader enforces only part of it,
+and only on use. Nothing checks the value at load time, so a `.jser` carrying
+`"object_columns": {}` opens and round-trips back to disk unchanged. Every read of the
+option checks that the value is an array of two-element pairs with a string name, and a
+value that fails raises an error that names the option, says what is wrong with it, and
+says that deleting the entry under `options` restores the default. That check does not
+look at `shown`: any value passes and is read by truthiness, so `[["Host", "false"]]`
+passes and shows the column.
 
 `autoseg` is a dormant placeholder, because the automatic segmentation feature that
 populated it is disabled. A series that never had it populated carries `{}`. Historic
@@ -1079,7 +1093,7 @@ before the per-object functions, and one step run after them.
 | Root has neither `sections` nor `series` | Treats every root key as a file name. A key whose extension is numeric is that-numbered section; the other key is the series. Builds the `sections` array from the numbers, filling gaps with `null`. This is the original one-key-per-file layout. |
 | Root has no `log` | Inserts the bare CSV header line. |
 | Two distinct contour names, in any sections, normalize to the same name | Lists them and asks before anything is unpacked. Cancel leaves the file untouched and opens nothing. |
-| A section migration renamed a contour | After the series migration, repoints `obj_attrs`, `object_groups` and `host_tree` to the new name. Merged names combine their groups and hosts; one name's attributes win and the others fill only what it lacks. The `log` is left pointing at the old name. |
+| A section migration renamed a contour | After the series migration, repoints `obj_attrs`, `object_groups` and the array-valued entries of `host_tree` to the new name; a bare-string `host_tree` entry keeps the old name. Merged names combine their groups and hosts; one name's attributes win and the others fill only what it lacks. The `log` is left pointing at the old name. |
 
 **Series migrations**
 
@@ -1441,14 +1455,17 @@ file was opened, so until the section was saved the flag had no stable identity,
 people who each opened the same legacy file held the same flag under two ids. Imports
 match flags by `id` alone, so merging one copy into the other duplicated every legacy
 flag. The id is now derived from the flag's own content, so every open of every copy
-agrees on it with no save needed.
+agrees on it with no save needed. The fix has a limit: past 1,000 legacy flags with
+identical content in one section, each extra flag gets a random id again (see
+[4.2](#42-flag-rows)).
 
-**11. Contour names are normalized on read (the warning and the series data are FIXED).**
+**11. Contour names are normalized on read (the warning and most of the series data are FIXED).**
 Whitespace and commas in a contour name are rewritten to underscores, and two names that
 normalize to the same string have their traces merged. This used to happen with no
 warning, and a renamed object lost everything the series kept under its old name. Now a
 merge of distinct names is listed and confirmed before the file is unpacked, and a
-renamed object's `obj_attrs`, groups and hosts follow it to the new name. A plain rename
+renamed object's `obj_attrs`, groups and hosts follow it to the new name. A `host_tree`
+entry stored as a bare string rather than an array is still not repointed. A plain rename
 with no merge still happens without asking, and the `log` keeps the old name. A generator
 must pre-normalize names or accept that its object names will change.
 
@@ -1520,7 +1537,7 @@ re-checked.
 | Legacy one-key-per-file layout migration | `PyReconstruct/modules/datatypes/series.py` (`Series._readJserForOpen`) |
 | Missing `log` defaulted to the header line | `PyReconstruct/modules/datatypes/series.py` (`Series._readJserForOpen`) |
 | Contour-name merges confirmed before unpacking | `PyReconstruct/modules/datatypes/series.py` (`contourNameCollisions`, `contourMergeWarning`, `Series._readJserForOpen`) |
-| Renamed objects keep their attributes, groups and hosts; the log does not follow | `PyReconstruct/modules/datatypes/series.py` (`applyContourRenames`, called from `Series.openJser`) |
+| Renamed objects keep their attributes, groups and array-valued hosts; bare-string hosts and the log do not follow | `PyReconstruct/modules/datatypes/series.py` (`applyContourRenames`, called from `Series.openJser`) |
 | `sections` array length is `max(number)+1` | `PyReconstruct/modules/datatypes/series.py` (`Series._saveJser`, `slots`) |
 | Sections re-read opaquely on save | `PyReconstruct/modules/datatypes/series.py` (`sections` inside `Series._saveJser`) |
 | `log_set` removed unconditionally on save (divergence 5) | `PyReconstruct/modules/datatypes/series.py` (`tail` inside `Series._saveJser`) |
@@ -1619,7 +1636,7 @@ re-checked.
 | Flag row layout on write | `PyReconstruct/modules/datatypes/flag.py` (`Flag.getList`) |
 | Flag row layout on read, section number supplied externally | `PyReconstruct/modules/datatypes/flag.py` (`Flag.fromList`) |
 | Flag id alphabet and length | `PyReconstruct/modules/datatypes/flag.py` (`possible_chars`, `Flag.generateID`) |
-| Legacy flag id derived from content | `PyReconstruct/modules/datatypes/flag.py` (`Flag.deriveID`), `PyReconstruct/modules/datatypes/section.py` (`Section.updateJSON`) |
+| Legacy flag id derived from content, random past 1,000 identical flags in a section | `PyReconstruct/modules/datatypes/flag.py` (`Flag.deriveID`), `PyReconstruct/modules/datatypes/section.py` (`Section.updateJSON`) |
 | Comment row layout | `PyReconstruct/modules/datatypes/flag.py` (`Comment.getList`, `Comment.fromList`) |
 | Transform 6-number layout and Qt conversion | `PyReconstruct/modules/datatypes/transform.py` (`Transform.__init__`, `Transform.getQTransform`) |
 | Transform application order | `PyReconstruct/modules/datatypes/transform.py` (`Transform.map`, and the convention restated in `Transform.mapPointsArray`) |
@@ -1636,7 +1653,7 @@ re-checked.
 | Unknown `options` keys deleted | `PyReconstruct/modules/datatypes/series.py` (`Series.updateJSON`) |
 | `options` cannot gain keys at runtime | `PyReconstruct/modules/datatypes/series.py` (`Series.setOption`) |
 | Setting resolution order | `PyReconstruct/modules/datatypes/series.py` (`Series.getOption`) |
-| `*_columns` must be an array of pairs, checked on every read | `PyReconstruct/modules/datatypes/series.py` (`_checkColumnsOption`, `Series.getOption`) |
+| `*_columns` pair shape and string names checked on every read; `shown` not type-checked | `PyReconstruct/modules/datatypes/series.py` (`_checkColumnsOption`, `Series.getOption`) |
 | First read of a computer-scoped setting writes the default | `PyReconstruct/modules/datatypes/series.py` (`Series.getOption`) |
 | Per-series settings scoped by series `code` | `PyReconstruct/modules/backend/settings_store.py` (`QSettingsStore._settings`) |
 | Global and per-series computer settings | `PyReconstruct/modules/datatypes/default_settings.py` (`default_settings`, `default_series_settings`) |
