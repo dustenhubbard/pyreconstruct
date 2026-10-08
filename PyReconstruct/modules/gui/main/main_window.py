@@ -12,6 +12,7 @@ from .main_imports import *
 from PyReconstruct.modules.datatypes.series import (
     SeriesClosedError,
     SeriesOpenError,
+    keptFoldersMessage,
 )
 from PyReconstruct.modules.backend.func.window_geometry import (
     default_window_rect,
@@ -1204,10 +1205,38 @@ class MainWindow(QMainWindow):
     def openSeries(self, series_obj=None, jser_fp=None, query_prev=True):
         """Open an existing series and create the field.
 
+        An open that arrives while one is under way (a Finder open, under
+        one of its dialogs) waits for it to finish. Run in the middle, it
+        took the window, and the first open then closed that series
+        without asking about its unsaved work.
+
             Params:
                 series_obj (Series): the series object (optional)
                 query_prev (bool): True if query user about saving data
         """
+        if getattr(self, "_opening_series", False):
+            if jser_fp:
+                self._open_after = jser_fp
+            return
+
+        self._opening_series = True
+        self._open_after = None
+        self._series_closed = []
+        try:
+            self._openSeries(series_obj, jser_fp, query_prev)
+        finally:
+            self._opening_series = False
+            after, self._open_after = self._open_after, None
+            closed, self._series_closed = self._series_closed, []
+
+        # only now that the open is over: a notice runs its own event loop,
+        # and an open from the Finder can run in it
+        self._reportKeptFolders(*closed)
+        if after:
+            self.openSeries(jser_fp=after)
+
+    def _openSeries(self, series_obj, jser_fp, query_prev):
+        """The body of openSeries, run one at a time."""
 
         if self.series:  # series open and save yes
 
@@ -1220,6 +1249,7 @@ class MainWindow(QMainWindow):
             # where the outgoing series lives on disk, read before it is
             # closed: an abandoned open needs it to put the window back
             prev_jser_fp = self.series.jser_fp
+            prev_series = self.series
 
             if query_prev:
 
@@ -1235,6 +1265,7 @@ class MainWindow(QMainWindow):
 
             first_open = True
             prev_jser_fp = None
+            prev_series = None
 
         if not series_obj:  # if series is not provided
             new_series = self._acquireSeries(jser_fp)
@@ -1252,6 +1283,7 @@ class MainWindow(QMainWindow):
             new_series = series_obj
 
         # clear the series
+        replaced = self.series
         if self.series and not self.series.isWelcomeSeries():
             # Reopening the series that is already open (File > Open series,
             # or the macOS file-open event, on the same .jser) unpacks the
@@ -1290,6 +1322,30 @@ class MainWindow(QMainWindow):
 
         # reopen the lists this series had open last time, where they were
         self._restoreListLayout()
+
+        # told about by openSeries, once the open is over
+        self._series_closed += [prev_series, replaced]
+
+    def _reportKeptFolders(self, *closed):
+        """Tell the user where closing these series kept folders aside.
+
+        Call only once a series transition is over: a notice runs its own
+        event loop, and an open from the Finder can run in it.
+
+            Params:
+                closed (Series): the series closed, None for none
+        """
+        told = []
+        for series in closed:
+            if series is None or any(series is t for t in told):
+                continue
+            told.append(series)
+            paths = getattr(series, "kept_folders", None)
+            if paths:
+                # cleared first, so an open run under the notice cannot
+                # show it again
+                series.kept_folders = []
+                notify(keptFoldersMessage(series.name, paths))
 
     # ------------------------------------------------------------------
     # openSeries steps.
@@ -1387,8 +1443,10 @@ class MainWindow(QMainWindow):
         self.series.leave_open = True
 
         # query_prev=False: there is nothing left to save, and asking would
-        # run saveAllData against the dir that was just deleted
-        self.openSeries(series_obj=recovered, query_prev=False)
+        # run saveAllData against the dir that was just deleted. The body,
+        # not openSeries: this runs inside the open it puts right, which
+        # openSeries would make it wait for.
+        self._openSeries(recovered, None, False)
 
     def _recoverUnsavedSeries(self, jser_fp):
         """Offer the unsaved work in the hidden series dir, if there is any.
@@ -5493,6 +5551,7 @@ class MainWindow(QMainWindow):
             # app instead of exiting (found 2026-08-28)
             self.restart_mainwindow = False
             return
+        self._reportKeptFolders(self.series)
         # persist window geometry so size/position survive a restart
         windowGeometrySettings().setValue("window/geometry", self.saveGeometry())
         if self.viewer and not self.viewer.is_closed:

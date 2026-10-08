@@ -11,6 +11,10 @@ sync client can refuse it), the open stops there. What is pinned here:
 A close keeps a folder inside the working folder (a backup folder set
 there). Also pinned: File > Open on the same file opens it again, and a
 cancelled File > Open puts the series back, both with the folder kept.
+
+A folder that cannot go back is named in a notice once the next series is
+open. A notice runs its own event loop, so a Finder open can run under it:
+one that does keeps the unsaved work of the series it opens.
 """
 import os
 import sys
@@ -131,3 +135,129 @@ def test_a_cancelled_open_puts_back_a_series_closed_beside_a_folder(
     assert window.series.jser_fp == first.jser_fp
     assert sorted(window.series.sections) == sorted(first.sections)
     assert _holds_snapshot(snapshot)
+
+
+def _two_more_series(window, tmp_path):
+    """Series B, and series C with work left unsaved in its working folder.
+
+    Returns B's file, C's file, and C's unsaved section file with its bytes.
+    """
+    import shutil
+
+    from PyReconstruct.modules.backend.progress import NullProgressReporter
+    from PyReconstruct.modules.datatypes.series import Series
+    from PyReconstruct.modules.datatypes.trace import Trace
+    first = window.series
+
+    def copy(name):
+        fp = tmp_path / name / f"{name}.jser"
+        fp.parent.mkdir()
+        shutil.copyfile(first.jser_fp, fp)
+        return str(fp)
+
+    b_fp, c_fp = copy("series_b"), copy("series_c")
+    # as a crash leaves it
+    c = Series.openJser(c_fp, progress=NullProgressReporter)
+    snum = sorted(c.sections)[0]
+    section = c.loadSection(snum)
+    trace = Trace("unsaved", (255, 0, 0), closed=True)
+    trace.points = [(0, 0), (1, 0), (1, 1)]
+    section.addTrace(trace, log_event=False)
+    section.save()
+    unsaved_fp = os.path.join(c.hidden_dir, c.sections[snum])
+    with open(unsaved_fp, "rb") as f:
+        return b_fp, c_fp, unsaved_fp, f.read()
+
+
+@pytest.fixture
+def finder(qapp, main_window, monkeypatch):
+    """Send the event a Finder open sends, routed as the app routes it.
+
+    Opening C takes its unsaved work.
+    """
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QFileOpenEvent
+
+    from PyReconstruct.modules.gui.main import main_window as mw
+    from PyReconstruct.run import FileOpenWatcher
+    watcher = FileOpenWatcher()
+    watcher.main_window = main_window
+    qapp.installEventFilter(watcher)
+    monkeypatch.setattr(mw, "unsavedNotify", lambda *a, **k: True)
+    yield lambda fp: qapp.sendEvent(qapp, QFileOpenEvent(QUrl.fromLocalFile(fp)))
+    qapp.removeEventFilter(watcher)
+
+
+def _holds(fp, data):
+    if not os.path.isfile(fp):
+        return False
+    with open(fp, "rb") as f:
+        return f.read() == data
+
+
+def test_a_finder_open_under_the_kept_folder_notice_keeps_its_unsaved_work(
+    main_window, finder, monkeypatch, tmp_path
+):
+    from PyReconstruct.modules.backend import notifier
+    from PyReconstruct.modules.gui.main import main_window as mw
+    window = main_window
+    first = window.series
+    _backup_folder(first)
+    hidden_dir = first.hidden_dir
+    b_fp, c_fp, unsaved_fp, unsaved = _two_more_series(window, tmp_path)
+
+    rename = os.rename
+
+    def held(src, dst, *args, **kwargs):
+        # the backup folder cannot go back as the first series closes
+        if (
+            os.path.basename(src) == "series-backups"
+            and os.path.dirname(os.path.normpath(dst)) == hidden_dir
+        ):
+            raise PermissionError(13, "Permission denied", src)
+        return rename(src, dst, *args, **kwargs)
+
+    notices = []
+
+    def notice(message, *args, **kwargs):
+        # a notice runs its own event loop: C is opened from the Finder
+        # while the one naming the kept folder is up
+        notices.append(message)
+        if "series-backups" in message and len(notices) == 1:
+            finder(c_fp)
+        return True
+
+    monkeypatch.setattr(mw, "notify", notice)
+    monkeypatch.setattr(notifier.QtNotifier, "notify", lambda self, m: notice(m))
+    monkeypatch.setattr(os, "rename", held)
+    try:
+        window.openSeries(jser_fp=b_fp)
+    finally:
+        monkeypatch.setattr(os, "rename", rename)
+
+    assert _holds(unsaved_fp, unsaved)
+    assert any("series-backups" in n for n in notices)
+    assert window.series.jser_fp == c_fp and not window.series.closed
+
+
+def test_a_finder_open_under_the_open_dialog_keeps_its_unsaved_work(
+    main_window, finder, monkeypatch, tmp_path
+):
+    from PyReconstruct.modules.gui.dialog import FileDialog
+    window = main_window
+    snapshot = _backup_folder(window.series)
+    b_fp, c_fp, unsaved_fp, unsaved = _two_more_series(window, tmp_path)
+
+    def choose_b(*args, **kwargs):
+        # the file dialog runs its own event loop, after the first series
+        # closed and before B opens: C is opened from the Finder in it
+        finder(c_fp)
+        return b_fp
+
+    monkeypatch.setattr(FileDialog, "get", staticmethod(choose_b))
+    window.open_act.trigger()
+
+    assert _holds(unsaved_fp, unsaved)
+    assert _holds_snapshot(snapshot)
+    # C opens once the open of B is over
+    assert window.series.jser_fp == c_fp and not window.series.closed

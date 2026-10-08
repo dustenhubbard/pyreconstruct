@@ -28,8 +28,10 @@ What is pinned here:
   * the working files move aside together or not at all: a refused close
     whose moved files could not be moved back is not possible, so no
     section goes missing from a series left open
-  * a folder that cannot go back after a close stays whole, and the user is
-    told where it is
+  * a folder that cannot go back after a close stays whole, and the close
+    names where it is without showing anything itself
+  * a close on Windows that cannot hide the folder it makes still closes,
+    with every folder back in place
   * a series closed beside a kept folder opens again from its file, and a
     cancelled open keeps the folder
 """
@@ -355,7 +357,7 @@ def test_a_folder_that_cannot_go_back_is_kept_and_named(series, monkeypatch):
         return rename(src, dst, *args, **kwargs)
 
     monkeypatch.setattr(os, "rename", held)
-    series.close()
+    returned = series.close()
     monkeypatch.undo()
 
     assert series.closed
@@ -369,11 +371,13 @@ def test_a_folder_that_cannot_go_back_is_kept_and_named(series, monkeypatch):
     assert os.listdir(os.path.dirname(where)) == ["series-backups"]
     with open(os.path.join(where, "series-snapshot.jser")) as f:
         assert f.read() == "snapshot"
-    assert len(told) == 1 and where in told[0]
+    # named for the window to show once the next series is open; a notice
+    # from inside the close would let another open run in the middle of it
+    assert returned == series.kept_folders == [where]
+    assert told == []
 
 
 def test_a_series_closed_beside_a_folder_opens_again(series, series_jser):
-    import os
     from PyReconstruct.modules.datatypes.series import Series
     kept = _with_folders(series)
     sections = sorted(series.sections)
@@ -404,3 +408,31 @@ def test_a_cancelled_open_keeps_the_folders_in_the_working_folder(
     assert Series.openJser(str(series_jser), progress=Cancels) is None
     assert _contents(kept) == kept
     assert sorted(os.listdir(series.hidden_dir)) == ["notes", "series-backups"]
+
+
+def test_a_close_that_cannot_hide_a_folder_still_closes(series, monkeypatch):
+    import os
+    import subprocess
+    kept = _with_folders(series)
+    hidden_dir = series.hidden_dir
+    parent = os.path.dirname(hidden_dir)
+    others = set(os.listdir(parent))
+
+    def cannot_launch(*args, **kwargs):
+        raise PermissionError(13, "Permission denied", "attrib")
+
+    # Windows: the folder made for the folders that go back is hidden with
+    # attrib, which can fail to launch
+    monkeypatch.setattr(subprocess, "call", cannot_launch)
+    monkeypatch.setattr(subprocess, "check_call", cannot_launch)
+    monkeypatch.setattr(os, "name", "nt")
+    try:
+        series.close()
+    finally:
+        # back before anything else runs: pytest's own paths read os.name
+        monkeypatch.undo()
+
+    assert series.closed
+    assert sorted(os.listdir(hidden_dir)) == ["notes", "series-backups"]
+    assert _contents(kept) == kept
+    assert set(os.listdir(parent)) == others

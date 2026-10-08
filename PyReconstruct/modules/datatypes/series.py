@@ -476,28 +476,47 @@ def _closingDir(folder : str) -> str:
             return closing_dir
 
 
-def _putFoldersBack(names : list, closing_dir : str, folder : str) -> list:
+def _putFoldersBack(names : list, closing_dir : str, folder : str):
     """Move the named folders from closing_dir into a new folder at folder.
 
-    Returns the paths of the ones that could not go back. They stay whole in
-    closing_dir; nothing is deleted here.
+    Never raises. One that cannot go back stays whole in closing_dir;
+    nothing is deleted here.
     """
     if not names:
-        return []
+        return
     try:
         os.mkdir(folder)
     except OSError:
-        return [os.path.join(closing_dir, name) for name in names]
+        return
     if os.name == "nt":  # manually hide if windows
-        import subprocess
-        subprocess.call(["attrib", "+H", folder])
-    left = []
+        try:
+            import subprocess
+            subprocess.call(["attrib", "+H", folder])
+        except Exception as e:
+            # a folder left visible is no reason to stop a close part-way
+            print(f"Could not hide {folder}: {e}")
     for name in names:
         try:
             os.rename(os.path.join(closing_dir, name), os.path.join(folder, name))
         except OSError:
-            left.append(os.path.join(closing_dir, name))
-    return left
+            pass  # stays in closing_dir; close reports it
+    try:
+        os.rmdir(folder)  # only if none went back
+    except OSError:
+        pass  # one did
+
+
+def keptFoldersMessage(name : str, paths : list) -> str:
+    """What to tell the user about folders a close of a series kept aside."""
+    one = len(paths) == 1
+    return (
+        f"Closing {name} could not put "
+        + ("this folder" if one else "these folders")
+        + " back in its working folder. Nothing in "
+        + ("it" if one else "them") + " was deleted. "
+        + ("It is" if one else "They are")
+        + " here now:\n\n" + "\n".join(paths)
+    )
 
 
 def _clearFiles(folder : str):
@@ -627,6 +646,8 @@ class Series():
         self.leave_open = False
         # set by close(); a section pass stops on it (SeriesClosedError)
         self.closed = False
+        # the folders a close could not put back in the working folder
+        self.kept_folders = []
 
         # possible zarr overlay
         self.zarr_overlay_fp = None
@@ -1341,13 +1362,17 @@ class Series():
             b_section.filepath = moved(b_section.filepath)
     
     def close(self):
-        """Clear the hidden directory of the series."""
+        """Clear the hidden directory of the series.
+
+        Shows nothing. Returns the paths of the folders it could not put
+        back (also kept_folders), for the caller to tell the user about.
+        """
 
         if self.isWelcomeSeries() or self.leave_open:
             # closed even so: a series left open for the one replacing it in
             # the same hidden dir must not go on editing that one's files
             self.closed = True
-            return
+            return self.kept_folders
 
         if os.path.isdir(self.hidden_dir):
             # the series' own files are the ones directly in its folder; a
@@ -1364,28 +1389,27 @@ class Series():
             # none of its files are where the series reads them now, so it
             # is closed even if a folder cannot go back or a file cannot be
             # cleared
-            left = _putFoldersBack(folders, closing_dir, self.hidden_dir)
+            _putFoldersBack(folders, closing_dir, self.hidden_dir)
+            # what is still beside the working folder, however putting the
+            # folders back went
+            kept = [
+                p for p in (os.path.join(closing_dir, n) for n in folders)
+                if os.path.lexists(p)
+            ]
             _clearFiles(closing_dir)
-            if left:
-                one = len(left) == 1
-                message = (
-                    f"Closing {self.name} could not put "
-                    + ("this folder" if one else "these folders")
-                    + " back in its working folder. Nothing in "
-                    + ("it" if one else "them") + " was deleted. "
-                    + ("It is" if one else "They are")
-                    + " here now:\n\n" + "\n".join(left)
-                )
-                try:
-                    shown = self._notifier().notify(message)
-                except Exception:
-                    shown = False  # the notice must never stop the close
-                if not shown:
-                    print(message)
+            if kept:
+                # logged here; shown by the window once the series that
+                # replaces this one is open. A notice shown from here would
+                # let another open run in the middle of this one.
+                print(keptFoldersMessage(self.name, kept))
+                # added to, not replaced: a second close of the same series
+                # before the window says anything must not lose these
+                self.kept_folders = self.kept_folders + kept
 
         # only once its files are out of place: a close whose move failed
         # leaves the series in the window, still usable
         self.closed = True
+        return self.kept_folders
     
     @staticmethod
     def updateJSON(series_data : dict):
