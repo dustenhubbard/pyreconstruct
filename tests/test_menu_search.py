@@ -296,7 +296,7 @@ def test_a_disabled_command_is_visible_but_not_runnable(main_window):
 
 def test_shortcut_text_rides_along_in_the_result_row(main_window):
     field = _snapshotted_field(main_window)
-    # "Show/hide lists" carries a remappable default chord, so its row must
+    # "Show/Hide lists" carries a remappable default chord, so its row must
     # show one; the old probe ("Search menus...") has no menu row any more
     field._query.setText("hide lists")
     labels = [field._results.item(i).text() for i in range(field._results.count())]

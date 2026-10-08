@@ -92,12 +92,11 @@ def whats_new_suppressed(stored):
 # unreachable; it stops being pre-expanded.
 ON_DEMAND_CAP = 3
 
-# Provenance line shown below the notes in every framing of the What's-new dialog.
-# It says what this build is without naming any other repository. It is a quiet
-# provenance line, not a boast; keep it a distinct field so it reads as an aside
-# below the notes rather than as one more release bullet. Short enough to sit on
-# one line of the footer.
-MAINTAINER_BYLINE = "A fork of PyReconstruct."
+# The footer line shown below the notes in every framing of the What's-new
+# dialog. Keep it a distinct field so it reads as an aside below the notes
+# rather than as one more release bullet, and short enough to sit on one line
+# beside Close.
+MAINTAINER_BYLINE = "A fork of PyReconstruct, maintained by Dusten Hubbard."
 
 # Where the byline points, and which word carries the link. The project name
 # inside the provenance line is a link to the home page, so a lab that wants to

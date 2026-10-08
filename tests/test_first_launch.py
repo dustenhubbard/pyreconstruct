@@ -311,18 +311,21 @@ def test_whats_new_reads_bundled_file_and_is_offline_safe(monkeypatch, tmp_path)
 
 
 # ---- the maintainer byline (provenance line on every framing) ---------------
-# The provenance line says what this build is, so a lab that installs it knows
-# it is not the upstream release. It is a distinct field so the dialog can set it
-# off from the notes as a quiet aside rather than mixing it into the release
-# bullets, and it must be present on every framing. The dialog shows it as it
-# is, on one line: there is no display form distinct from the constant.
-BYLINE = "A fork of PyReconstruct."
+# The footer line is a distinct field so the dialog can set it off from the
+# notes as a quiet aside rather than mixing it into the release bullets, and it
+# must be present on every framing.
+BYLINE = "A fork of PyReconstruct, maintained by Dusten Hubbard."
+
+# What the dialog's footer label actually shows: the same sentence, on one line.
+BYLINE_RENDERED = BYLINE
 
 
 def test_maintainer_byline_constant_is_the_approved_text_verbatim():
     # Locked verbatim: it is maintainer-approved and checked to contain no fork
     # tells; a reword could reintroduce one.
     assert F.MAINTAINER_BYLINE == BYLINE
+    # the dialog shows the sentence as it is, with no break
+    assert BYLINE_RENDERED == BYLINE
 
 
 @pytest.mark.parametrize("kwargs", [
@@ -789,12 +792,11 @@ def test_whats_new_dialog_is_modeless_and_renders_its_content(qapp):
         assert dlg.isModal() is False                 # modeless: must not block startup
         assert "1.20.3" in dlg.windowTitle()
         labels = " ".join(lab.text() for lab in dlg.findChildren(QLabel))
-        assert "PyReconstruct 1.20.3" in labels       # prominent version header
-        assert "Released June 29, 2026" in labels      # release date
-        assert "What's new since 1.20.1" in labels     # orienter
+        assert dlg._header.text() == "What's new since 1.20.1"   # the header
+        assert "Released" not in labels    # the date is on the version heading
         assert "All release notes on GitHub" in labels
         assert "A shiny new thing." in dlg._notes.toPlainText()  # body rendered
-        assert "Got it" in [b.text() for b in dlg.findChildren(QPushButton)]
+        assert "Close" in [b.text() for b in dlg.findChildren(QPushButton)]
     finally:
         dlg.deleteLater()
 
@@ -825,58 +827,62 @@ def test_dialog_renders_the_byline_once_as_its_own_widget(qapp, kwargs, orienter
     try:
         # not in the scroll any more: the browser carries the notes and nothing else
         assert BYLINE not in dlg._notes.toPlainText()
-        # its own label, the one sentence, exactly once across the dialog.
-        # The label carries link markup now, so compare what it *renders*.
+        # its own label, the sentence on one line, exactly once across
+        # the whole dialog. The label carries link markup now, so
+        # compare what it *renders*.
         assert dlg._byline is not None
-        assert rendered_text(dlg._byline) == BYLINE
+        assert rendered_text(dlg._byline) == BYLINE_RENDERED
         labels = [lab for lab in dlg.findChildren(QLabel)
-                  if BYLINE in rendered_text(lab)]
+                  if BYLINE_RENDERED in rendered_text(lab)]
         assert labels == [dlg._byline]
     finally:
         dlg.deleteLater()
 
 
-def test_dialog_provenance_line_renders_on_one_line(qapp):
-    """The footer reads "A fork of PyReconstruct." on a single line.
+def test_dialog_byline_is_one_line_beside_close(qapp):
+    """The footer line renders on one line, beside Close, at every width.
 
-    The sentence is short, so the dialog adds no explicit break to it: the
-    markup carries no ``<br/>``, the rendered text is the constant itself
-    with no newline, and the label stands one line tall at the minimum width
-    and much wider.
+    No break in the markup, no word wrap, and at the 700 minimum width the
+    whole sentence fits in its label with Close still to its right, so
+    narrowing the dialog cannot push it onto a second line.
     """
+    from PySide6.QtWidgets import QApplication, QPushButton
     from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
 
     content = F.whats_new_content("1.20.3", last_seen="1.20.1", text=WN)
     dlg = WhatsNewDialog(None, "1.20.3", content=content,
                          url="https://example.test/releases")
     try:
-        # no break in the markup, and the rendered text is the one sentence
         assert "<br" not in dlg._byline.text()
-        assert rendered_text(dlg._byline) == "A fork of PyReconstruct."
-        assert "\n" not in rendered_text(dlg._byline)
+        assert dlg._byline.wordWrap() is False
+        assert rendered_text(dlg._byline) == BYLINE
 
-        # rendered as exactly one line at the minimum width and much wider
+        close = next(b for b in dlg.findChildren(QPushButton)
+                     if b.text() == "Close")
         dlg.show()
         line = dlg._byline.fontMetrics().height()
         for width in (700, 1100):
             dlg.resize(width, 620)
+            QApplication.processEvents()
             assert dlg._byline.height() < 2 * line, (
-                f"the footer line is more than one line tall at width {width}"
+                f"footer line is more than one line tall at width {width}"
             )
+            assert dlg._byline.width() >= dlg._byline.sizeHint().width()
+            assert close.geometry().left() > dlg._byline.geometry().right()
+            assert close.geometry().top() < dlg._byline.geometry().bottom()
     finally:
         dlg.deleteLater()
 
 
-def test_dialog_byline_and_link_share_a_footer_row_below_the_notes(qapp):
-    """The byline is a footer under the notes, sharing one row with the link.
+def test_dialog_byline_shares_the_bottom_row_with_close(qapp):
+    """The footer line sits under the notes, on the bottom row with Close.
 
-    The approved placement: byline bottom-left and the "Full release notes on
-    GitHub" link bottom-right of the same row, below the scrollable notes
-    browser and above the action buttons. The byline stays outside the scroll,
-    so it is on screen from the moment the dialog opens; sharing the row keeps
-    the two small-text footer items from stacking into what reads as a single
-    block. Asserted as rendered geometry rather than layout indexes, so any
-    layout that produces the row counts and none that merely declares it does.
+    The "Show this changelog window after each update?" box and the "All
+    release notes on GitHub" link share the row right under the scrollable
+    notes browser, and the footer line sits bottom-left on the row below it,
+    with Close bottom-right. The footer line stays outside the scroll, so it is on screen from the moment the dialog opens. Asserted as
+    rendered geometry rather than layout indexes, so any layout that produces
+    the rows counts and none that merely declares them does.
 
     This is also the regression probe for keeping the byline out of the notes.
     Reverting that fix, by appending ``_{byline}_`` back onto
@@ -899,18 +905,16 @@ def test_dialog_byline_and_link_share_a_footer_row_below_the_notes(qapp):
         # nothing else, and the byline widget does not hang off the browser
         assert BYLINE not in notes.toPlainText()
         assert not notes.isAncestorOf(byline)
-        # below the notes...
+        # below the notes and below the link's row...
         assert byline.geometry().top() >= notes.geometry().bottom()
-        # ...on the same row as the link: their vertical extents overlap...
-        assert byline.geometry().top() < link.geometry().bottom()
-        assert link.geometry().top() < byline.geometry().bottom()
-        # ...with the byline on the left and the link on the right
-        assert byline.geometry().right() < link.geometry().left()
-        # the action buttons are the row below the footer
-        got_it = next(b for b in dlg.findChildren(QPushButton)
-                      if b.text() == "Got it")
-        assert got_it.geometry().top() >= byline.geometry().bottom()
-        assert got_it.geometry().top() >= link.geometry().bottom()
+        assert byline.geometry().top() >= link.geometry().bottom()
+        # ...on the same row as Close: their vertical extents overlap...
+        close = next(b for b in dlg.findChildren(QPushButton)
+                     if b.text() == "Close")
+        assert byline.geometry().top() < close.geometry().bottom()
+        assert close.geometry().top() < byline.geometry().bottom()
+        # ...with the footer line on the left and Close on the right
+        assert byline.geometry().right() < close.geometry().left()
         # and the footer keeps the byline's register: italic, name linked
         assert byline.font().italic() is True
         assert f'<a href="{F.HOMEPAGE_URL}">{F.LINKED_NAME}</a>' in byline.text()
@@ -925,10 +929,10 @@ def test_dialog_minimum_size_and_where_extra_space_goes(qapp):
     rather than inherited, and click-tested and approved by Dusten at these
     values:
 
-    * Width 540 -> 700. The provenance line is one short line at every width
-      (see ``test_dialog_provenance_line_renders_on_one_line``), so the width
-      is not what shapes the footer; the extra room is about how much of a
-      release note line fits unwrapped.
+    * Width 540 -> 700. The one-line footer and the release-notes link fit
+      side by side well inside it (see
+      ``test_dialog_byline_is_one_line_beside_close``); the
+      extra room is about how much of a release note line fits unwrapped.
     * The notes browser's minimum height 260 -> 320, which is the entirety of
       the height increase (about 13% on the whole dialog at the default
       size): the notes are the one part of the dialog worth more room, and
@@ -958,7 +962,7 @@ def test_dialog_minimum_size_and_where_extra_space_goes(qapp):
 
         # stretching the dialog stretches the notes, not the footer rows
         got_it = next(b for b in dlg.findChildren(QPushButton)
-                      if b.text() == "Got it")
+                      if b.text() == "Close")
         notes_h = dlg._notes.height()
         byline_h, button_h = dlg._byline.height(), got_it.height()
         dlg.resize(dlg.width(), dlg.height() + 200)
@@ -996,9 +1000,8 @@ def test_dialog_byline_is_italic_and_not_muted(qapp):
     palette role and rendered it at roughly 1.6:1 against the dialog
     background, switched-off rather than secondary. Who maintains this build
     is what a lab needs in order to report an issue to the right person, so
-    the pixel tests below still hold the rendered contrast above that broken
-    1.6:1 (the floor is 2.0:1; the maintainer chose the light 0.34 blend, at
-    about 2.3:1, off a measured ladder, see SECONDARY_TEXT_BLEND). Asserted
+    the pixel tests below hold the rendered contrast at 4.5:1 or better (see
+    SECONDARY_TEXT_BLEND), well clear of that broken 1.6:1. Asserted
     on the constructed widget: a regression restoring the disabled state, or
     setting the weight instead of the slant, fails here.
     """
@@ -1024,17 +1027,17 @@ def test_dialog_byline_is_italic_and_not_muted(qapp):
 def test_dialog_date_and_byline_share_the_secondary_style(qapp):
     """The release date and the byline are the dialog's two secondary lines.
 
-    Both are italic and both paint in the same palette-derived secondary
-    color, so they read as one register: quieter than the body text, darker
-    than the near-invisible disabled gray the date line used to borrow
-    through ``setEnabled(False)``. Pinned as the relationship rather than as
-    pixel values: the shared color must sit strictly between the dialog
-    background and the full text lightness (the blend's own endpoints), and
-    both labels must spell exactly that color into their markup, so the
-    assertions hold under any theme without naming one.
+    The date sits beside each version heading in the notes and the footer
+    line below them; both paint in the same palette-derived secondary color, so
+    they read as one register: quieter than the body text, darker than the
+    near-invisible disabled gray the date line used to borrow through
+    ``setEnabled(False)``. Pinned as the relationship rather than as pixel
+    values: the shared color must sit strictly between the dialog background
+    and the full text lightness (the blend's own endpoints), and both must
+    carry exactly that color, so the assertions hold under any theme without
+    naming one.
     """
     from PySide6.QtGui import QPalette
-    from PySide6.QtWidgets import QLabel
     from PyReconstruct.modules.gui.dialog.whats_new import (
         WhatsNewDialog, secondary_text_color,
     )
@@ -1044,17 +1047,22 @@ def test_dialog_date_and_byline_share_the_secondary_style(qapp):
     dlg = WhatsNewDialog(None, "1.20.3", content=content,
                          url="https://example.test/releases")
     try:
-        date_lab = next(lab for lab in dlg.findChildren(QLabel)
-                        if "Released" in lab.text())
-        # both italic: the shared aside register
-        assert date_lab.font().italic() is True
+        # the footer line is italic, the aside register
         assert dlg._byline.font().italic() is True
-        # the date is a real enabled label now, not the disabled-role dimming
-        assert date_lab.isEnabled() is True
-        # one shared color, spelled identically into both labels' markup
-        color = secondary_text_color(dlg.palette())
-        assert f"color:{color.name()}" in date_lab.text()
-        assert f"color:{color.name()}" in dlg._byline.text()
+        # one shared color: the date run after the first version heading
+        # paints in it, and the footer line spells it into its markup
+        color = secondary_text_color(dlg._notes.palette())
+        block = dlg._notes.document().begin()
+        it = block.begin()
+        dates = []
+        while not it.atEnd():
+            fragment = it.fragment()
+            if "June 29, 2026" in fragment.text():
+                dates.append(fragment.charFormat().foreground().color())
+            it += 1
+        assert dates == [color]
+        byline_color = secondary_text_color(dlg.palette())
+        assert f"color:{byline_color.name()}" in dlg._byline.text()
         # ...and that color sits strictly between the dialog background and
         # the full text lightness -- visible, and quieter than the body --
         # whichever way the active theme points
@@ -1146,9 +1154,10 @@ def measure_byline_pixels(dlg):
     )
     dlg._byline.setFont(font)
 
-    # The x-coordinate mapping below reads the footer's one line, "A fork of
-    # <PyReconstruct>.", which is the same at every width. 760 just gives the
-    # grab a stable, roomy canvas past the 700 minimum.
+    # The x-coordinate mapping below reads the footer's one line, which never
+    # wraps; the words after the name contribute only plain ink, which the
+    # measurements below already tolerate on either side of the anchor. 760
+    # just gives the grab a stable, roomy canvas past the 700 minimum.
     dlg.resize(760, 620)
     dlg.layout().activate()
     pixmap = dlg.grab()
@@ -1243,12 +1252,10 @@ def test_dialog_byline_renders_dark_and_unbroken(qapp):
     The property assertions above can all hold while the widget still paints
     wrong -- ``setEnabled(False)`` on an ancestor, a palette override, an
     unhonoured CSS rule -- so this reads the actual rendered pixels. The
-    contrast must clear 2.0:1: the disabled rendering this replaced measured
-    ~1.6:1 and was reported unreadable, while the maintainer's chosen 0.34
-    blend (see SECONDARY_TEXT_BLEND) renders about 2.3:1, so the threshold
-    sits between the broken look and the chosen one. The window is narrow by
-    his choice of a light gray; the exact-color pin in the shared-style test
-    is what guards the other direction, a repaint back toward black. And the
+    contrast must clear 4.5:1, the floor SECONDARY_TEXT_BLEND is set to meet;
+    the disabled rendering this replaced measured ~1.6:1 and was reported
+    unreadable. The exact-color pin in the shared-style test is what guards
+    the other direction, a repaint back toward black. And the
     plain text must carry no underline; the linked project name is allowed
     one and is checked separately below.
     """
@@ -1259,10 +1266,9 @@ def test_dialog_byline_renders_dark_and_unbroken(qapp):
                          url="https://example.test/releases")
     try:
         m = measure_byline_pixels(dlg)
-        assert m["plain_contrast"] >= 2.0, (
+        assert m["plain_contrast"] >= 4.5, (
             f"byline ink {m['plain_ink']} on {m['background']} is only "
-            f"{m['plain_contrast']:.2f}:1 -- that is the switched-off disabled "
-            "look, not the chosen secondary gray"
+            f"{m['plain_contrast']:.2f}:1, under the secondary gray's floor"
         )
         assert m["plain_longest_run"] < 0.85 * m["plain_width"], (
             f"an unbroken {m['plain_longest_run']}px run across "
@@ -1338,11 +1344,9 @@ def test_dialog_byline_stays_legible_under_the_dark_theme(qapp):
         dlg = WhatsNewDialog(None, "1.20.3", content=content,
                              url="https://example.test/releases")
         m = measure_byline_pixels(dlg)
-        # same 2.0:1 floor as the light-theme pixel test, for the same reason
-        # (see SECONDARY_TEXT_BLEND: the maintainer chose a light secondary
-        # gray at about 2.3:1, and the floor separates it from the broken
-        # disabled look rather than enforcing 4.5:1)
-        assert m["plain_contrast"] >= 2.0, (
+        # same 4.5:1 floor as the light-theme pixel test (see
+        # SECONDARY_TEXT_BLEND)
+        assert m["plain_contrast"] >= 4.5, (
             f"under the dark theme the byline renders {m['plain_ink']} on "
             f"{m['background']} -- {m['plain_contrast']:.2f}:1"
         )
@@ -1443,8 +1447,9 @@ def test_dialog_byline_is_a_link_to_the_home_page(qapp):
         # exactly one anchor, wrapping exactly the name
         assert markup.count("<a ") == 1
         assert dlg._byline.openExternalLinks() is True
-        # the sentence still reads as itself once the markup is resolved
-        assert rendered_text(dlg._byline) == BYLINE
+        # the sentence still reads as itself once the markup is resolved,
+        # on one line
+        assert rendered_text(dlg._byline) == BYLINE_RENDERED
         # the name occurs once in the byline, so the first-occurrence split is
         # unambiguous; if it ever occurred zero times there would be no anchor
         assert BYLINE.count(F.LINKED_NAME) == 1
@@ -1472,8 +1477,7 @@ def test_dialog_byline_click_activates_only_on_the_project_name(qapp):
     try:
         # 760 for the same reason measure_byline_pixels resizes to 760: a
         # stable, roomy canvas past the 700 minimum. The click coordinates
-        # below address the footer's one line, "A fork of <PyReconstruct>.",
-        # which is the same at every width.
+        # below address the footer's one line, which never wraps.
         dlg.resize(760, 620)
         dlg.show()
         label = dlg._byline
@@ -1499,25 +1503,23 @@ def test_dialog_byline_click_activates_only_on_the_project_name(qapp):
         # outside it, including immediately either side
         for x in (8, lead - 8, lead + word + 8, lead + word + 140):
             assert click(x) == [], f"the line activated at x={x}, off the name"
-        # and nothing below the line is the anchor, even directly under the
-        # name: the link region ends with the text
+        # and the second line is not the anchor, even directly below the name
         assert click(lead + word // 2, y=middle + line) == [], (
-            "the anchor leaked below the footer line"
+            "the anchor leaked onto the footer's second line"
         )
     finally:
         dlg.deleteLater()
 
 
-def test_dialog_link_stays_right_when_the_content_has_no_byline(qapp):
-    """No byline still leaves the GitHub link on the right edge of its row.
+def test_dialog_footer_keeps_its_places_when_the_content_has_no_byline(qapp):
+    """No footer line leaves the GitHub link on the left and Close on the right.
 
-    The byline is what pushes the link rightward in the footer, and some
-    framings carry no byline at all. Without something taking its place the
-    link would slide to the left edge on exactly those framings, so the footer
-    keeps a stretch where the byline would be and the link stays put whether
-    the provenance line is there or not.
+    Some framings carry no footer line at all. The link leads its own row, so
+    it stays on the left edge either way, and the footer keeps a stretch where
+    the line would be so Close stays in the bottom right whether the line is
+    there or not.
     """
-    from PySide6.QtWidgets import QLabel
+    from PySide6.QtWidgets import QLabel, QPushButton
     from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
 
     content = {"version": "1.20.3", "date": None, "orienter": "Recent releases",
@@ -1530,8 +1532,11 @@ def test_dialog_link_stays_right_when_the_content_has_no_byline(qapp):
         assert dlg._byline is None
         link = next(lab for lab in dlg.findChildren(QLabel)
                     if "All release notes on GitHub" in lab.text())
-        # right-aligned: the link's whole width sits in the right half
-        assert link.geometry().left() > dlg.width() // 2
+        close = next(b for b in dlg.findChildren(QPushButton)
+                     if b.text() == "Close")
+        # the link's whole width sits in the left half, Close's in the right
+        assert link.geometry().right() < dlg.width() // 2
+        assert close.geometry().left() > dlg.width() // 2
     finally:
         dlg.deleteLater()
 

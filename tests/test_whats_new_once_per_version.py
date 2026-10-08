@@ -259,16 +259,17 @@ def _find_button(dialog, label):
     return next(b for b in dialog.findChildren(QPushButton) if b.text() == label)
 
 
-def test_dont_show_again_suppresses_the_popup_across_restarts(qapp):
-    """The button closes the dialog, and no later launch shows the popup.
+def test_unchecking_show_after_update_suppresses_the_popup_across_restarts(qapp):
+    """Clearing the checkbox writes the suppression, and no later launch shows the popup.
 
     Asserted through the persisted preference rather than any dialog state:
     the dialog writes the same store ``maybe_show_whats_new`` reads, so each
     fresh gate run below is a "restart" of the startup logic against the
-    settings the button left behind. The suppression must also beat a pending
-    version bump: a stored last-seen older than the running version is exactly
-    the state ``whats_new_due`` fires on, and the button has to win that
-    argument, or the very next update would undo the user's choice.
+    settings the checkbox left behind. The suppression must also beat a
+    pending version bump: a stored last-seen older than the running version
+    is exactly the state ``whats_new_due`` fires on, and the checkbox has to
+    win that argument, or the very next update would undo the user's choice.
+    The write happens on the toggle itself; Close only closes.
     """
     settings = FakeSettings({F.WHATSNEW_KEY: "1.20.3"})
     calls = []
@@ -276,9 +277,12 @@ def test_dont_show_again_suppresses_the_popup_across_restarts(qapp):
     dlg = W.WhatsNewDialog(None, "1.21.0", last_seen="1.20.3", settings=settings)
     try:
         dlg.show()
-        _find_button(dlg, "Don't show again").click()
-        assert not dlg.isVisible()                    # closed, like "Got it"
+        assert dlg._show_box.isChecked()              # the store says show
+        dlg._show_box.setChecked(False)
         assert F.whats_new_suppressed(settings.value(F.WHATSNEW_SUPPRESS_KEY))
+        assert dlg.isVisible()                        # the toggle does not close
+        _find_button(dlg, "Close").click()
+        assert not dlg.isVisible()
     finally:
         dlg.deleteLater()
 
@@ -384,24 +388,27 @@ def test_startup_shows_the_notes_once_per_version_in_the_real_window(
     # real startup handler and dialog
     assert F.MAINTAINER_BYLINE not in rendered
     # the byline label carries link markup, so compare what it *renders*: the
-    # one sentence, as it is, on one line
+    # sentence on one line, exactly as the constant reads
+    one_line_byline = F.MAINTAINER_BYLINE
     from PySide6.QtGui import QTextDocumentFragment
     def shows_byline(lab):
-        return F.MAINTAINER_BYLINE in (
+        return one_line_byline in (
             QTextDocumentFragment.fromHtml(lab.text()).toPlainText()
         )
 
     shown = QTextDocumentFragment.fromHtml(dialog._byline.text()).toPlainText()
-    assert shown == F.MAINTAINER_BYLINE
+    assert shown == one_line_byline
     bylines = [lab for lab in dialog.findChildren(QLabel) if shows_byline(lab)]
     assert bylines == [dialog._byline]
     # placement, on the dialog the real startup handler built: the byline sits
-    # in the footer row below the notes, left of the "All release notes" link
+    # on the bottom row, below the "All release notes" link's row and left of
+    # Close
     dialog.layout().activate()
     link = next(lab for lab in dialog.findChildren(QLabel)
                 if "All release notes on GitHub" in lab.text())
     assert dialog._byline.geometry().top() >= dialog._notes.geometry().bottom()
-    assert dialog._byline.geometry().right() < link.geometry().left()
+    assert dialog._byline.geometry().top() >= link.geometry().bottom()
+    assert dialog._byline.geometry().right() < dialog._close.geometry().left()
     assert settings.value(F.WHATSNEW_KEY) == "1.21.0"     # recorded as seen
 
     dialog.close()
@@ -552,6 +559,31 @@ def test_help_toggle_reenables_the_popup(main_window):
     calls = []
     assert _shown_once(settings, "1.21.0", calls) is True
     assert calls == [("1.21.0", "1.20.3")]
+
+
+def test_an_open_dialog_follows_the_help_toggle(main_window):
+    """The Help toggle changes the preference while the dialog is open, and the
+    dialog's checkbox shows the change: one click on the box undoes it."""
+    from PySide6.QtCore import QSettings
+
+    settings = QSettings(W.ORG, W.APP)
+    settings.remove(F.WHATSNEW_SUPPRESS_KEY)
+    main_window.syncWhatsNewPopupToggle()
+    dlg = W._default_show(main_window, "1.21.0", last_seen="1.20.3")
+    try:
+        assert dlg._show_box.isChecked() is True
+
+        main_window.togglewhatsnew_act.trigger()       # Help: popup off
+        assert F.whats_new_suppressed(settings.value(F.WHATSNEW_SUPPRESS_KEY))
+        assert dlg._show_box.isChecked() is False
+
+        dlg._show_box.click()                          # one click: back on
+        assert dlg._show_box.isChecked() is True
+        assert not F.whats_new_suppressed(settings.value(F.WHATSNEW_SUPPRESS_KEY))
+        main_window.helpmenu.aboutToShow.emit()
+        assert main_window.togglewhatsnew_act.isChecked() is False
+    finally:
+        dlg.close()
 
 
 # ---- the log line that makes an absence readable -----------------------------
