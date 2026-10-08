@@ -16,8 +16,10 @@ What is pinned here:
   * a write pass stopped that way is not quiet: the app's exception hook
     shows and logs it, naming the series (only the read-only clean-up scans
     end without a word; see test_cleanup_lists_series_switch.py)
-  * a close that fails part-way (a locked working file) leaves the series
-    open, and a pass over it reads every section
+  * a close that a held working file refuses deletes none of the series'
+    files: the series stays open, and a pass over it reads every section
+  * a close that cannot clear a file once the folder is out of place still
+    closes the series, so nothing is left half-deleted under its name
 """
 import pytest
 
@@ -115,23 +117,73 @@ def test_a_write_pass_stopped_part_way_is_reported(
     assert log.exists() and "SeriesClosedError" in log.read_text()
 
 
-def test_a_failed_close_leaves_the_series_usable(series, monkeypatch):
-    import os
-    removed = []
+def _locks_a_later_file(series, monkeypatch, holds_folder):
+    """Make the working file close removes last refuse to go.
 
-    def locked(path):
-        removed.append(path)
+    A file held open on Windows (another program, a sync client) cannot be
+    removed, and its folder cannot be renamed while it is held: holds_folder.
+    Without it, only the removal fails.
+    """
+    import os
+    hidden_dir = series.hidden_dir
+    names = os.listdir(hidden_dir)
+    assert len(names) > 2
+    locked = names[-1]
+    remove, unlink, rename, replace = (
+        os.remove, os.unlink, os.rename, os.replace
+    )
+
+    def refused(path):
         raise PermissionError(13, "Permission denied", path)
 
-    monkeypatch.setattr(os, "remove", locked)
+    def removal(real):
+        def call(path, *args, **kwargs):
+            if os.path.basename(path) == locked:
+                refused(path)
+            return real(path, *args, **kwargs)
+        return call
+
+    def move(real):
+        def call(src, dst, *args, **kwargs):
+            if holds_folder and os.path.normpath(src) == hidden_dir:
+                refused(src)
+            return real(src, dst, *args, **kwargs)
+        return call
+
+    monkeypatch.setattr(os, "remove", removal(remove))
+    monkeypatch.setattr(os, "unlink", removal(unlink))
+    monkeypatch.setattr(os, "rename", move(rename))
+    monkeypatch.setattr(os, "replace", move(replace))
+
+
+def test_a_close_a_held_file_refuses_deletes_nothing(series, monkeypatch):
+    import os
+    before = sorted(os.listdir(series.hidden_dir))
+    _locks_a_later_file(series, monkeypatch, holds_folder=True)
+
     with pytest.raises(PermissionError):
         series.close()
     monkeypatch.undo()
 
-    assert len(removed) == 1 and os.path.isdir(series.hidden_dir)
+    assert sorted(os.listdir(series.hidden_dir)) == before
     assert not series.closed
     visited = [
         snum for snum, _section
         in series.enumerateSections(message="Scanning...")
     ]
     assert visited == sorted(series.sections)
+
+
+def test_a_close_that_cannot_clear_a_file_still_closes(series, monkeypatch):
+    import os
+    from PyReconstruct.modules.datatypes.series import SeriesClosedError
+    _locks_a_later_file(series, monkeypatch, holds_folder=False)
+
+    series.close()
+    monkeypatch.undo()
+
+    assert series.closed
+    assert not os.path.exists(series.hidden_dir)
+    with pytest.raises(SeriesClosedError):
+        for _snum, _section in series.enumerateSections(message="Scanning..."):
+            pass
