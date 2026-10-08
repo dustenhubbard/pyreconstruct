@@ -59,10 +59,20 @@ major release. A rerun on the same UTC date skips if that day's tag already
 exists. A day without new commits also skips.
 
 Under the default draft policy, a successful nightly publishes immediately
-as a GitHub pre-release and never becomes Latest. Its release notes are
-GitHub's generated change list, compared with the previous nightly, or with
-the newest stable for the first nightly. Nightlies do not require a
-`WHATS_NEW.md` section and skip the in-app What's New popup.
+as a GitHub pre-release and never becomes Latest. Its release body opens
+with every change since the newest stable in its history, one line per item:
+the `changelog.d` fragments on `main`, anything under `[Unreleased]` in
+`CHANGELOG.md`, and a release section already written there ahead of its
+tag, collated by `scripts/changes_since_stable.py` with the same code a
+stable release uses, reading everything and writing nothing. Below that is
+GitHub's generated change list, compared with the previous nightly in its
+history, or with that stable for the first nightly. Only tags in the built
+commit's history count, so rebuilding an older nightly after a newer release
+exists still measures it from its own baseline. Nightlies do not require a
+`WHATS_NEW.md` section and skip the
+in-app What's New popup. `Help` > `What's new` in the Dev app shows the newest
+stable section at or below the nightly's base version, with a line above it
+that links the nightly's own release page as the live changelog.
 
 A failed build leaves its tag in place. If `main` has not changed, the next
 scheduled run skips too. Recover by rerunning the installer workflow on the

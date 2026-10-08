@@ -13,6 +13,7 @@ The GUI shells that call these live in ``main_window`` (startup wiring) and
 
 import re
 from datetime import datetime
+from html import escape
 from pathlib import Path
 
 from packaging.version import Version, InvalidVersion
@@ -413,6 +414,71 @@ def github_release_url(version=None):
     return f"{base}/tag/v{v}" if v and _safe_version(v) else base
 
 
+# A nightly's version as nightly.yml tags it, X.Y.Z.devYYYYMMDD, without the v.
+# A source checkout of main is a dev release too (1.24.0.dev20261005+g41462b60d)
+# but has no release of its own, and its local part keeps it from matching.
+_NIGHTLY_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+\.dev\d{8}$")
+
+
+def nightly_release_url(version):
+    """This dev build's own GitHub release page, or the releases index.
+
+    A nightly's release body opens with the changes since the newest stable,
+    assembled from the changelog entries waiting on ``main``
+    (``build-installers.yml``), so that page is the live changelog for the
+    build that is running. Only a version shaped like a nightly tag has such a
+    page; any other dev version (a source checkout of main) gets the releases
+    index, where the nightlies are listed.
+    """
+    if _NIGHTLY_VERSION_RE.match(_normalize_version(version)):
+        return github_release_url(version)
+    return github_release_url()
+
+
+def latest_stable_section(sections, version):
+    """The newest final-release section at or below ``version``'s base, or None.
+
+    For a dev build (``1.24.0.dev20261007``, or a source checkout's
+    ``1.24.0.dev5+g0123abc``) the notes it should show are the latest stable
+    release's: the nightly is that stable plus whatever has landed since, and
+    the since part is in the changelog, not in ``WHATS_NEW.md``. The base is
+    the version the dev build previews (``1.24.0``), so a ``[1.24.0]`` section
+    that has landed on ``main`` ahead of its tag is picked up by the nightly
+    built after it, and a ``[1.25.0]`` section never is.
+
+    Final releases only: a beta (``1.21.0-beta-5``, which parses as a
+    pre-release) or another dev heading is not a stable, and ``[Unreleased]``
+    does not parse at all.
+    """
+    cur_v = _safe_version(version)
+    if cur_v is None:
+        return None
+    base = Version(cur_v.base_version)
+    best = None
+    for s in sections:
+        sv = _safe_version(s["version"])
+        if sv is None or sv.is_prerelease or sv.is_devrelease or sv > base:
+            continue
+        if best is None or sv > _safe_version(best["version"]):
+            best = s
+    return best
+
+
+def dev_build_note(stable_version, url):
+    """The line a dev build shows above the stable release's notes.
+
+    Rich text, not markdown: the dialog renders it as its own label above the
+    notes browser, so it is on screen however far the notes scroll, and the
+    label takes HTML. Only "live changelog" is a link, and ``url`` is where it
+    goes: the build's own release page from ``nightly_release_url``.
+    """
+    return (
+        f"This is the nightly build. The notes below are for {escape(stable_version)}, "
+        f"the latest stable release. The latest PyReconstruct Dev changes can be "
+        f'found in the <a href="{url}">live changelog</a>.'
+    )
+
+
 # Shown when the running version has no friendly highlights bundled at all; the
 # detailed changelog is reached via the "All release notes on GitHub" link.
 GENERIC_NOTES = (
@@ -560,6 +626,10 @@ def whats_new_content(current, last_seen=None, cap=3, text=None, on_demand=False
       * ``byline``    -- the maintainer provenance line (``MAINTAINER_BYLINE``),
                          the same on every framing; the dialog renders it once,
                          in the footer row below the body.
+      * ``note``      -- on a dev build showing a stable release's notes, the
+                         rich-text line saying so and linking the build's own
+                         release page (``dev_build_note``); None everywhere
+                         else.
       * ``truncated`` -- True when more than ``cap`` missed sections existed.
 
     Sections shown: when ``last_seen`` is a valid version older than ``current``,
@@ -572,6 +642,20 @@ def whats_new_content(current, last_seen=None, cap=3, text=None, on_demand=False
     bundled notes (for testing); by default the bundled ``WHATS_NEW.md`` is read.
     ``installed_app`` overrides the install-kind check that gates the
     update-checks note (for testing); by default ``install_kind()`` answers it.
+
+    A dev build (a nightly, or a source checkout of main) has no section of its
+    own and never will: its version changes every day and the notes are written
+    for stable releases. It shows the latest stable's notes instead, as if that
+    stable were running, with ``note`` set above them: the section
+    ``latest_stable_section`` picks stands in for the running version in every
+    rule above, so a nightly lists exactly what the stable it is built on lists,
+    and the header still names the version actually running. The release date
+    line is left out, since the date belongs to the stable and is already in the
+    body's section heading. A dev build with no stable section at or below its
+    base (nothing bundled, or notes that start after it) falls through to the
+    generic body like any other version without a section, and carries no note.
+    One updated from the stable it shows, or from past it, has no section in
+    the update interval and shows that stable's section rather than nothing.
     """
     if text is None:
         text = _read_whats_new()
@@ -581,6 +665,17 @@ def whats_new_content(current, last_seen=None, cap=3, text=None, on_demand=False
 
     cur_v = _safe_version(current)
     prev_v = _safe_version(last_seen)
+
+    # The version whose notes are shown: the running one, or on a dev build the
+    # latest stable at or below its base. ``cur_v`` keeps deciding the framing
+    # (updating or not) because that is about the versions actually run.
+    note = None
+    shown_v = cur_v
+    if cur_v is not None and cur_v.is_devrelease:
+        stable = latest_stable_section(sections, current)
+        if stable is not None:
+            shown_v = _safe_version(stable["version"])
+            note = dev_build_note(stable["version"], nightly_release_url(current))
     updating = (
         not on_demand
         and prev_v is not None and cur_v is not None and prev_v < cur_v
@@ -611,12 +706,12 @@ def whats_new_content(current, last_seen=None, cap=3, text=None, on_demand=False
     # [1.20.4-rc.1] -- matches a 1.20.4rc1 runtime (mirrors whats_new_due).
     current_section = next(
         (s for s in sections
-         if cur_v is not None and _safe_version(s["version"]) == cur_v),
+         if shown_v is not None and _safe_version(s["version"]) == shown_v),
         None,
     )
     friendly = (
         friendly_date(current_section["date"])
-        if current_section and current_section["date"] else None
+        if current_section and current_section["date"] and note is None else None
     )
 
     # No notes for the running version at all -> friendly generic body. An
@@ -627,15 +722,20 @@ def whats_new_content(current, last_seen=None, cap=3, text=None, on_demand=False
         body = GENERIC_WELCOME_NOTES if welcoming else GENERIC_NOTES
         return {"version": current, "date": friendly, "orienter": orienter,
                 "body": _with_welcome_note(body) if show_update_note else body,
-                "byline": MAINTAINER_BYLINE, "truncated": False}
+                "byline": MAINTAINER_BYLINE, "note": None, "truncated": False}
 
     truncated = False
     if updating:
         shown = [
             s for s in sections
             if _safe_version(s["version"]) is not None
-            and prev_v < _safe_version(s["version"]) <= cur_v
+            and prev_v < _safe_version(s["version"]) <= shown_v
         ]
+        # A dev build updated from the stable it shows, or from past it, has
+        # no section in that interval: the since part is in the live changelog
+        # the note links. The stable's own section stands in for an empty body.
+        if not shown and note is not None:
+            shown = [current_section]
         shown.sort(key=lambda s: _safe_version(s["version"]), reverse=True)
         if len(shown) > cap:
             shown, truncated = shown[:cap], True
@@ -647,7 +747,7 @@ def whats_new_content(current, last_seen=None, cap=3, text=None, on_demand=False
         shown = sorted(
             (s for s in sections
              if _safe_version(s["version"]) is not None
-             and (cur_v is None or _safe_version(s["version"]) <= cur_v)),
+             and (shown_v is None or _safe_version(s["version"]) <= shown_v)),
             key=lambda s: _safe_version(s["version"]), reverse=True,
         )
         if len(shown) > cap:
@@ -656,4 +756,4 @@ def whats_new_content(current, last_seen=None, cap=3, text=None, on_demand=False
     body = _render_sections(shown, truncated)
     return {"version": current, "date": friendly, "orienter": orienter,
             "body": _with_welcome_note(body) if show_update_note else body,
-            "byline": MAINTAINER_BYLINE, "truncated": truncated}
+            "byline": MAINTAINER_BYLINE, "note": note, "truncated": truncated}
