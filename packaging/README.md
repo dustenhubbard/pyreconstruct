@@ -60,7 +60,7 @@ bash packaging/macos/make_dmg.sh
 ```
 
 `make_dmg.sh` lays out the dmg window with `dmgbuild` (`dmg_settings.py`):
-the app, a chevron, and the Applications alias. The background images come
+PyReconstruct, a chevron, and the Applications alias. The background images come
 from `make_dmg_background.py`; rerun it after changing the layout.
 
 `make_dmg.sh` names the dmg by arch via the `ARCH` env var (defaults to
