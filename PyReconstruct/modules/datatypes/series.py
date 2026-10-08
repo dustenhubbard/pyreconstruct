@@ -461,6 +461,85 @@ def _sweepStaleSaveTemps(*folders):
             pass  # best-effort cleanup must never prevent opening a series
 
 
+def _closingDir(folder : str) -> str:
+    """A free path beside the folder, to move the folder to.
+
+    The name is short, since the folder's own may already be as long as a
+    folder name can be. It is never the folder itself: a series named
+    "closing-<hex>" has a folder named as this one could be.
+    """
+    while True:
+        closing_dir = os.path.join(
+            os.path.dirname(folder), f".closing-{secrets.token_hex(4)}"
+        )
+        if not os.path.lexists(closing_dir):
+            return closing_dir
+
+
+def _putFoldersBack(names : list, closing_dir : str, folder : str):
+    """Move the named folders from closing_dir into a new folder at folder.
+
+    Never raises. One that cannot go back stays whole in closing_dir;
+    nothing is deleted here.
+    """
+    if not names:
+        return
+    try:
+        os.mkdir(folder)
+    except OSError:
+        return
+    if os.name == "nt":  # manually hide if windows
+        try:
+            import subprocess
+            subprocess.call(["attrib", "+H", folder])
+        except Exception as e:
+            # a folder left visible is no reason to stop a close part-way
+            print(f"Could not hide {folder}: {e}")
+    for name in names:
+        try:
+            os.rename(os.path.join(closing_dir, name), os.path.join(folder, name))
+        except OSError:
+            pass  # stays in closing_dir; close reports it
+    try:
+        os.rmdir(folder)  # only if none went back
+    except OSError:
+        pass  # one did
+
+
+def keptFoldersMessage(name : str, paths : list) -> str:
+    """What to tell the user about folders a close of a series kept aside."""
+    one = len(paths) == 1
+    return (
+        f"Closing {name} could not put "
+        + ("this folder" if one else "these folders")
+        + " back in its working folder. Nothing in "
+        + ("it" if one else "them") + " was deleted. "
+        + ("It is" if one else "They are")
+        + " here now:\n\n" + "\n".join(paths)
+    )
+
+
+def _clearFiles(folder : str):
+    """Remove the files directly in a folder, then the folder if it is empty.
+
+    Never recursive: a folder in it, and a file that cannot be removed, stay
+    where they are.
+    """
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return
+    for name in names:
+        try:
+            os.remove(os.path.join(folder, name))
+        except OSError:
+            pass  # held open, or a folder
+    try:
+        os.rmdir(folder)
+    except OSError:
+        pass  # still holds something
+
+
 def renamedSeriesFile(filename : str, old_name : str, new_name : str) -> str:
     """The filename with its series-name PREFIX swapped, else unchanged.
 
@@ -567,6 +646,8 @@ class Series():
         self.leave_open = False
         # set by close(); a section pass stops on it (SeriesClosedError)
         self.closed = False
+        # the folders a close could not put back in the working folder
+        self.kept_folders = []
 
         # possible zarr overlay
         self.zarr_overlay_fp = None
@@ -786,7 +867,8 @@ class Series():
         # recovery scans (the fast path above and the GUI's unsaved-work
         # prompt) require it, so a cancelled or crashed open can never leave
         # a partial hidden dir that is later mistaken for unsaved work.
-        # On any cancel or exception, remove the partial hidden dir entirely.
+        # On any cancel or exception, remove the files of the partial hidden
+        # dir, then the dir; a folder in it that a close kept stays.
         try:
             # extract JSON section data
             sections = {}
@@ -843,7 +925,7 @@ class Series():
                     f.write(fast_dumps(section_data))
 
                 if reporter.was_canceled():
-                    shutil.rmtree(hidden_dir, ignore_errors=True)
+                    _clearFiles(hidden_dir)
                     return None
                 progress += 1
                 reporter.set_progress(progress/final_value * 100)
@@ -856,7 +938,7 @@ class Series():
             with open(existing_log_fp, "w", encoding="utf-8") as f:
                 f.write(log_str)
             if reporter.was_canceled():
-                shutil.rmtree(hidden_dir, ignore_errors=True)
+                _clearFiles(hidden_dir)
                 return None
             progress += 1
             reporter.set_progress(progress/final_value * 100)
@@ -875,7 +957,7 @@ class Series():
             with open(series_fp, "wb") as f:
                 f.write(fast_dumps(series_data))
             if reporter.was_canceled():
-                shutil.rmtree(hidden_dir, ignore_errors=True)
+                _clearFiles(hidden_dir)
                 return None
             progress += 1
             reporter.set_progress(progress/final_value * 100)
@@ -888,13 +970,13 @@ class Series():
             for snum, section in series.enumerateSections(show_progress=False):
                 series.data.updateSection(section, update_traces=True, log_events=False, read_store=True)
                 if reporter.was_canceled():
-                    shutil.rmtree(hidden_dir, ignore_errors=True)
+                    _clearFiles(hidden_dir)
                     return None
                 progress += 1
                 reporter.set_progress(progress/final_value * 100)
 
         except BaseException:
-            shutil.rmtree(hidden_dir, ignore_errors=True)
+            _clearFiles(hidden_dir)
             raise
         finally:
             # The dialog closes only at 100%, which a failure never reaches:
@@ -1280,24 +1362,54 @@ class Series():
             b_section.filepath = moved(b_section.filepath)
     
     def close(self):
-        """Clear the hidden directory of the series."""
+        """Clear the hidden directory of the series.
+
+        Shows nothing. Returns the paths of the folders it could not put
+        back (also kept_folders), for the caller to tell the user about.
+        """
 
         if self.isWelcomeSeries() or self.leave_open:
             # closed even so: a series left open for the one replacing it in
             # the same hidden dir must not go on editing that one's files
             self.closed = True
-            return
+            return self.kept_folders
 
         if os.path.isdir(self.hidden_dir):
+            # the series' own files are the ones directly in its folder; a
+            # folder in it (a backup folder set there) is not, and keeps all
+            # it holds
+            with os.scandir(self.hidden_dir) as it:
+                folders = [e.name for e in it if e.is_dir(follow_symlinks=False)]
+            closing_dir = _closingDir(self.hidden_dir)
+            # the whole folder moves aside in one step before anything is
+            # deleted, so its files are either all in place or all out of
+            # it, never some: if the move fails (a working file held open,
+            # common on Windows), the close raises with every file in place
+            os.rename(self.hidden_dir, closing_dir)
+            # none of its files are where the series reads them now, so it
+            # is closed even if a folder cannot go back or a file cannot be
+            # cleared
+            _putFoldersBack(folders, closing_dir, self.hidden_dir)
+            # what is still beside the working folder, however putting the
+            # folders back went
+            kept = [
+                p for p in (os.path.join(closing_dir, n) for n in folders)
+                if os.path.lexists(p)
+            ]
+            _clearFiles(closing_dir)
+            if kept:
+                # logged here; shown by the window once the series that
+                # replaces this one is open. A notice shown from here would
+                # let another open run in the middle of this one.
+                print(keptFoldersMessage(self.name, kept))
+                # added to, not replaced: a second close of the same series
+                # before the window says anything must not lose these
+                self.kept_folders = self.kept_folders + kept
 
-            for f in os.listdir(self.hidden_dir):
-                os.remove(os.path.join(self.hidden_dir, f))
-
-            os.rmdir(self.hidden_dir)
-
-        # only once its files are gone: a close that raised part-way (a
-        # locked working file) leaves the series in the window, still usable
+        # only once its files are out of place: a close whose move failed
+        # leaves the series in the window, still usable
         self.closed = True
+        return self.kept_folders
     
     @staticmethod
     def updateJSON(series_data : dict):
