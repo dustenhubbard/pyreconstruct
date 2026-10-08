@@ -162,7 +162,7 @@ def test_the_build_refuses_a_fallback_and_a_version_that_is_not_the_tag(job):
     script = _compute_version_script(job)
     assert 'V="$(python -m setuptools_scm)"' in script
     assert "0.0.0*|*unknown*)" in script
-    assert r"(\.dev[0-9]{8})?$" in script          # nightly tags are checked too
+    assert r"(\.dev[0-9]{8}([0-9]{4})?)?$" in script   # nightly tags are checked too
     assert '"$V" != "${GITHUB_REF_NAME#v}"' in script
     assert 'echo "PYR_VERSION=$V" >> "$GITHUB_ENV"' in script
     assert 'echo "PYR_PUBLIC=${V%%+*}" >> "$GITHUB_ENV"' in script
@@ -237,4 +237,29 @@ def test_a_clone_without_tags_is_refused_not_built_as_the_fallback(tmp_path, job
     result, exported = _run_step(tmp_path, repo, job, "v1.24.0.dev20260929")
     assert result.returncode != 0
     assert "fallback version (0.0.0+unknown" in result.stdout
+    assert exported == {}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Linux workflow shell integration")
+@pytest.mark.parametrize("job", BUILD_JOBS)
+def test_a_timed_nightly_tag_build_carries_exactly_the_tag_version(tmp_path, job):
+    """A 12-digit vX.Y.Z.devYYYYMMDDHHMM tag, cut since 2026-10-08, builds as
+    exactly that version."""
+    (tmp_path / "repo").mkdir()
+    repo = _full_clone(tmp_path / "repo", past_nightly=True)
+    _git(repo, "tag", "v1.24.0.dev202610081315")
+    result, exported = _run_step(tmp_path, repo, job, "v1.24.0.dev202610081315")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert exported == {"PYR_VERSION": "1.24.0.dev202610081315",
+                        "PYR_PUBLIC": "1.24.0.dev202610081315"}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Linux workflow shell integration")
+@pytest.mark.parametrize("job", BUILD_JOBS)
+def test_a_timed_nightly_build_past_its_tag_is_refused(tmp_path, job):
+    (tmp_path / "repo").mkdir()
+    repo = _full_clone(tmp_path / "repo", past_nightly=True)
+    result, exported = _run_step(tmp_path, repo, job, "v1.24.0.dev202610081315")
+    assert result.returncode != 0
+    assert "for the tag v1.24.0.dev202610081315" in result.stdout
     assert exported == {}

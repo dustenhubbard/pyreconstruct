@@ -181,6 +181,17 @@ def test_dev_takes_only_a_nightly(env):
     assert "tag=v1.25.0.dev20261002" in paths(env, "dev")["marker"].read_text()
 
 
+def test_dev_takes_a_timed_nightly(env):
+    """A nightly cut since 2026-10-08 is tagged vX.Y.Z.devYYYYMMDDHHMM."""
+    rels = [
+        dev_release("v1.25.0.dev202610081315"),
+        dev_release("v1.25.0.dev20261008"),
+    ]
+    with FakeGitHub(rels) as gh:
+        run(env, gh, "--dev")
+    assert "tag=v1.25.0.dev202610081315" in paths(env, "dev")["marker"].read_text()
+
+
 def test_dev_falls_back_to_the_newest_nightly_with_an_appimage(env):
     rels = [
         release("v1.25.0.dev20261002", prerelease=True, assets={"PyReconstruct-1.25.0.dev20261002-macOS-arm64-Dev.dmg": b"x"}),

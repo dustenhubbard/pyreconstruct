@@ -140,8 +140,10 @@ def test_a_stable_flagged_as_prerelease_is_not_a_stable():
 
 
 def test_the_nightly_shape_is_exactly_the_workflow_tag_shape():
-    assert NIGHTLY_RE.pattern == r"^v(\d+)\.(\d+)\.(\d+)\.dev(\d{8})$"
+    assert NIGHTLY_RE.pattern == r"^v(\d+)\.(\d+)\.(\d+)\.dev(\d{8}(?:\d{4})?)$"
     assert NIGHTLY_RE.match("v1.24.0.dev20260928")
+    assert NIGHTLY_RE.match("v1.24.0.dev202610081315")
+    assert not NIGHTLY_RE.match("v1.24.0.dev2026100813")
     assert NIGHTLY_RE.match("v10.0.12.dev20261231")
     assert not NIGHTLY_RE.match("v1.24.0.dev2026092")
     assert not NIGHTLY_RE.match("v1.24.0dev20260928")
@@ -161,3 +163,13 @@ def test_the_script_runs_as_the_workflow_runs_it():
         nightly("1.24.0", 1), nightly("1.24.0", 2), nightly("1.24.0", 3),
         "v1.23.0-beta-6", "v1.23.0-beta-5", "v1.22.1-beta-1",
     ])
+
+
+def test_timed_nightlies_count_with_the_dated_ones_in_time_order():
+    """Since 2026-10-08 a nightly's dev number is YYYYMMDDHHMM. Every one sorts
+    above every 8-digit YYYYMMDD tag, and the seven kept are the newest seven."""
+    dated = [nightly("1.24.0", d, month=10) for d in range(3, 9)]   # 10-03 .. 10-08
+    timed = ["v1.24.0.dev202610081315", "v1.24.0.dev202610081840",
+             "v1.24.0.dev202610090600"]
+    rows = lines(("v1.23.0", "false"), *((tag, "true") for tag in timed + dated))
+    assert sorted(select_prunable(rows)) == sorted(dated[:2])   # 10-03 and 10-04 go

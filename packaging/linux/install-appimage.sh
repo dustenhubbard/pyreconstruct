@@ -17,7 +17,8 @@
 #
 # Which release, mirroring the in-app updater's strict channels:
 #   stable  the repository's latest release (releases/latest), never a pre-release
-#   --dev   the newest pre-release whose tag is a nightly (vX.Y.Z.devYYYYMMDD),
+#   --dev   the newest pre-release whose tag is a nightly (vX.Y.Z.devYYYYMMDDHHMM,
+#           or the older vX.Y.Z.devYYYYMMDD),
 #           never a stable release, a release candidate, or a draft
 #
 # Plain POSIX sh: runs under bash, dash, and busybox ash.
@@ -32,7 +33,7 @@ set -eu
 REPO="dustenhubbard/PyReconstruct"
 INSTALLER_URL="https://pyreconstruct.org/install.sh"
 API="${PYRECON_RELEASES_API:-https://api.github.com/repos/$REPO}"
-NIGHTLY_RE='^v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]{8}$'
+NIGHTLY_RE='^v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]{8}([0-9]{4})?$'
 ROLLING_TAG="prerelease"
 MIME_TYPE="application/x-pyreconstruct-jser"
 GLIBC_MIN="2.28"
