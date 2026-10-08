@@ -14,7 +14,7 @@ release-history evidence. Two rules, in order:
    is stale; v1.24.0.dev20260928 previews 1.24.0, and once v1.24.0 has
    shipped nobody should install the preview.
 2. SUPERSEDED: of the nightlies still ahead of stable, only the NEWEST SEVEN
-   stay (by date, then by version), a week of rollback room in case a night's
+   stay (by date and time, then by version), rollback room in case a night's
    build turns out bad. Older ones serve nobody and clutter the releases
    sidebar. This counts across base versions: a planned major line and the
    regular minor line share the seven.
@@ -23,8 +23,8 @@ The retired vX.Y.Z-beta-N shape is still recognized, for rule 1 only, so the
 pre-releases left over from that channel are cleaned up as their stables
 ship. Nothing new is ever tagged in that shape.
 
-Guardrails: only tags shaped vX.Y.Z.devYYYYMMDD or vX.Y.Z-beta-N are ever
-selected, stables and oddly-shaped tags are never touched, and with no stable
+Guardrails: only tags shaped vX.Y.Z.devYYYYMMDD, vX.Y.Z.devYYYYMMDDHHMM or
+vX.Y.Z-beta-N are ever selected, stables and oddly-shaped tags are never touched, and with no stable
 release at all nothing is pruned. Stdlib only, like its sibling
 prune_prereleases.py, so the workflow needs no environment and the tests
 need no GitHub.
@@ -34,7 +34,10 @@ import re
 import sys
 
 STABLE_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
-NIGHTLY_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)\.dev(\d{8})$")
+# The dev number is the UTC date, or since 2026-10-08 the date and time
+# (YYYYMMDDHHMM). Compared as an integer, as PEP 440 does, every 12-digit tag
+# sorts above every 8-digit one.
+NIGHTLY_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)\.dev(\d{8}(?:\d{4})?)$")
 LEGACY_BETA_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)-beta-(\d+)$")
 
 KEEP_NIGHTLIES = 7
