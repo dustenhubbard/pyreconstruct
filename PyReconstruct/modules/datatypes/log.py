@@ -136,6 +136,15 @@ def splitRow(s : str, decode : bool = True):
     )
 
 
+def hasSixFields(s : str) -> bool:
+    """Whether splitRow reads s as a whole row, quoting included."""
+    try:
+        splitRow(s)
+    except ValueError:
+        return False
+    return True
+
+
 class Log():
 
     def __init__(self, date : str, time : str, user : str, obj_name : str, section, event : str):
@@ -485,7 +494,7 @@ class LogSet():
         two separate changes and is worth stating as one claim because earlier
         versions of this docstring had to qualify it.
 
-        A row holding FEWER than six comma fields is first joined to the lines
+        A row holding FEWER than the six fields splitRow reads is first joined to the lines
         after it by the continuation loop below, because a name or event
         carrying a literal newline reaches us split across the physical lines
         it was written to. That join used to be unguarded, so it took whatever
@@ -574,7 +583,40 @@ class LogSet():
                     # newline -- the "return key in name" this loop was written
                     # for -- reaches us split across the physical lines it was
                     # written to, so a short row is joined to the line after it
-                    # until it has six comma fields.
+                    # until it has six fields.
+                    #
+                    # "Six fields" is splitRow's count, the one Log.fromStr
+                    # reads with: ", " delimiters, a quoted user or object
+                    # name read as one field. It used to be a count of bare
+                    # commas, which can only run ahead of the parser's count:
+                    # a field holding commas without spaces ("foo,bar,baz"),
+                    # or a quoted name holding ", ", made a partial row look
+                    # whole, so the join stopped early and the row raised.
+                    # Asking the parser itself is the only count that cannot
+                    # drift from it.
+                    #
+                    # What goes back where the line break was follows the
+                    # rule normalizeObjectName applies to a trace name on open:
+                    # a break at either end of a field is dropped, and a break
+                    # inside one becomes "_". At the end is the common case,
+                    # the Return key pressed after typing a name, and the one
+                    # real damaged file this was measured on holds exactly
+                    # that ("d001sp003" then ", 12, ..."). The object is
+                    # called "d001sp003" in the series, so that is what its
+                    # history row must say. Inside a field, "_" is also the
+                    # byte Log.__str__ now writes for a newline, so the row
+                    # reads as this build would have written it. The writer
+                    # emits ", " as a unit between fields, so a break at a
+                    # field's edge always leaves the ", " whole at the end of
+                    # one piece or the start of the next.
+                    #
+                    # The join used to add nothing, which got neither case
+                    # right consistently: the first break survived as the head
+                    # line's own "\n" (readlines keeps it, so the name above
+                    # read "d001sp003\n" from a real file), and every later
+                    # break was stripped away, gluing "foo" and "bar" into
+                    # "foobar". Only the line ending is removed from each
+                    # piece now: other spaces are part of the field.
                     #
                     # The join is anchored too, and this is the second place.
                     # It refuses to absorb a line
@@ -654,7 +696,7 @@ class LogSet():
                     # this protects what is already on disk, plus hand-edited
                     # files and any route a future writer opens by accident.
                     #
-                    while len(log_str.split(",")) < 6:
+                    while not hasSixFields(log_str):
                         nxt = log_list[i+1]
                         if ROW_START.match(nxt.strip()):
                             # A row, not a continuation. Stop rather than eat
@@ -663,7 +705,10 @@ class LogSet():
                             # records this line alone, and the scan resumes at
                             # nxt so it gets read as the row it is.
                             break
-                        log_str += nxt.strip()
+                        head = log_str.rstrip("\r\n")
+                        tail = nxt.rstrip("\r\n")
+                        at_edge = head.endswith(", ") or tail.startswith(", ")
+                        log_str = head + ("" if at_edge else "_") + tail
                         i += 1
                     log = Log.fromStr(log_str)
                 except (ValueError, IndexError):
