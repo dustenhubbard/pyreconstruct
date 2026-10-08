@@ -27,6 +27,8 @@ What is pinned here:
     wrote combined, also the section shown and the flickered-away one: the
     save writes the field's loaded copies of those, and copies loaded before
     the combine put the duplicates back
+  * a section the combine wrote is in its undo step even when refreshing
+    the field's copy of it raised
 """
 import shutil
 
@@ -273,3 +275,41 @@ def test_saving_a_at_the_prompt_keeps_what_the_combine_wrote(
         )
     finally:
         a.close()
+
+
+def test_a_failed_field_refresh_leaves_the_written_section_undoable(
+    main_window, main_window_dialogs, monkeypatch, confirmed,  # noqa: F811
+):
+    from PyReconstruct.modules.backend.table.manager import TableManager
+    window = main_window
+    snums = _plant_where_the_field_holds(window, "SWITCH_DUP", "shown")
+    # the planting has no undo state: start the history after it
+    window.field.clearStates()
+    dialog = _scan(window, main_window_dialogs, "SWITCH_DUP")
+    series = window.series
+    change_section = TableManager.changeSection
+    failed = []
+
+    def fails_once(manager, section):
+        if not failed:
+            failed.append(section.n)
+            raise RuntimeError("table refresh failed")
+        return change_section(manager, section)
+
+    monkeypatch.setattr(TableManager, "changeSection", fails_once)
+
+    with pytest.raises(RuntimeError, match="table refresh failed"):
+        dialog.combineAll()
+
+    def counts():
+        window.saveAllData()
+        return [_counts(series, snum)["SWITCH_DUP"] for snum in snums]
+
+    assert failed == [snums[0]]
+    assert counts() == [1, 2]
+    assert len(window.field.series_states[snums[0]].undo_states) == 1
+    main_window_dialogs.linked_undo_responses = ["all", "all"]
+    window.undo()
+    assert counts() == [2, 2]
+    window.undo(redo=True)
+    assert counts() == [1, 2]

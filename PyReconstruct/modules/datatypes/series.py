@@ -3740,7 +3740,15 @@ class Series():
                 # if it is marked modified
                 self.modified = True
                 if written is not None:
-                    written(section)
+                    try:
+                        written(section)
+                    except BaseException:
+                        # the pass ends here, so SeriesIterator.__next__
+                        # never adds this section's undo state: add it here
+                        if series_states is not None:
+                            series_states[snum].addState(section, self)
+                            series_states.addSectionUndo(snum)
+                        raise
 
         return combined
 
