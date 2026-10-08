@@ -6,6 +6,37 @@ full release notes on GitHub (linked from the dialog).
 
 ## [Unreleased]
 
+## [1.24.0] - 2026-10-08
+
+#### New
+
+- **Install on Linux with one command:** `curl -fsSL https://pyreconstruct.org/install.sh | bash`. Run it again to update.
+- **Delete a trace from just the sections you pick** with Delete from sections..., under Copy to sections....
+- **A palette button can fill in a new object's groups and custom columns.**
+- **Each object can have its own smoothing window,** in Edit attributes of traces....
+- **The object list has a 3D column.** It shows which objects are in the 3D scene, and a click adds or removes one.
+- **An object list of only your selected traces,** from Lists ▸ Object list of selected traces.
+- **Set auto-backup and the backup folder once for every series** in File ▸ Backup ▸ Settings....
+- **Align a section first and propagate afterward.**
+- **Set Attributes offers the tags already used in the series.**
+- **Focus mode shows a label while it is on.**
+
+#### Improved
+
+- **The macOS app opens without the Terminal step.** It is signed and notarized by Apple.
+- **Updates are checked against a signature before they install.**
+- **Bug reports open with your version and system filled in.**
+- **Every progress bar says how long is left,** including the 3D scene.
+- **Large series use less memory and open a little faster.**
+- **One Duplicates finder replaces the two old ones** in Series ▸ Clean up.
+- **Updates show in the status bar** instead of a dialog at launch.
+- **PyReconstruct Dev is a nightly build** you can install beside PyReconstruct.
+- **What's new has a new look, is back on, and opens once after an update.** To turn it off again, untick the box at the bottom or use Help ▸ Turn off What's new pop-up.
+
+#### Fixed
+
+- **More than 150 fixes.** Most keep your work safe: traces drawn since the last save survive more actions, Save As, undo and scissors cuts lose nothing, and zarr sizes and labels come out right. The full list is in the [changelog](https://github.com/dustenhubbard/PyReconstruct/blob/v1.24.0/CHANGELOG.md).
+
 ## [1.23.0] - 2026-09-27
 
 #### New
