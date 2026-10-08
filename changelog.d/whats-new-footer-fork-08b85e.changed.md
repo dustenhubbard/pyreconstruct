@@ -1,2 +1,2 @@
-- **The What's new footer reads "A fork of PyReconstruct, maintained by Dusten
-  Hubbard."** It sits on one line, and `PyReconstruct` links to the home page.
+- **The What's new footer sits on one line, beside `Close`.** Its
+  `PyReconstruct` link goes to the home page.
