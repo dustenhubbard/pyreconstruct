@@ -137,13 +137,39 @@ def splitRow(s : str, decode : bool = True):
     )
 
 
-def hasSixFields(s : str) -> bool:
+def _leavesQuoteOpen(s : str) -> bool:
+    """Whether a user or object field in s opens a quote that s never closes.
+
+    splitRow reads such a field the old way, up to the next ", ", so a row
+    whose quoted name an older build split with a line break can look whole
+    before its closing quote has been read.
+    """
+    pos = 0
+    for i in range(4):
+        if i in (2, 3) and s.startswith('"', pos):
+            quoted = _readQuoted(s, pos)
+            if quoted is None:
+                return True
+            if (
+                s.startswith(", ", quoted[1])
+                and _onlyQuotedShape(quoted[0], i == 3)
+            ):
+                pos = quoted[1] + 2
+                continue
+        k = s.find(", ", pos)
+        if k == -1:
+            return False
+        pos = k + 2
+    return False
+
+
+def _isWholeRow(s : str) -> bool:
     """Whether splitRow reads s as a whole row, quoting included."""
     try:
         splitRow(s)
     except ValueError:
         return False
-    return True
+    return not _leavesQuoteOpen(s)
 
 
 def _dropLineEnding(s : str) -> str:
@@ -154,10 +180,34 @@ def _dropLineEnding(s : str) -> str:
     return s
 
 
-## A z-trace event, as every writer words one: "Create ztrace",
-## "Rename ztrace to ...", "Modify ztrace" and so on. Any other event with an
-## object name is about a trace object.
-ZTRACE_EVENT = re.compile(r"\w+ ztrace\b")
+## The events older versions wrote about a trace object and never about a
+## z-trace. Only an older version split a row across lines (Log.__str__ keeps
+## one on one line), so the list is closed. Left out on purpose: the z-trace
+## events ("Modify ztrace" and the rest) and the four that both kinds write,
+## "Add to group '...'", "Remove from group '...'", "Remove from all object
+## groups" and "Edit default alignment", whose row cannot say which kind it
+## names.
+TRACE_EVENT = re.compile(
+    r"Create (new )?(trace\(s\)|object)"  # LogSet.addLog folds trace(s) into object
+    r"|Create copy "
+    r"|Delete (trace\(s\)|object|duplicate trace)"
+    r"|Combine duplicate traces"
+    r"|Rename (object )?to "
+    r"|Modify (trace\(s\)|radius|shape|object)"
+    r"|Remove trace\(s\) during import"
+    r"|Remove all trace tags"
+    r"|Smooth .* traces$"
+    r"|Smoothed trace\(s\)"
+    r"|Split into individual objects per trace"
+    r"|Reapply (custom color palette|autoseg colors|palette colors)"
+    r"|(Hide|Unhide) object"
+    r"|Restore previous visibility"
+    r"|Mark as (curated|needs curation)"
+    r"|Edit object comment"
+    r"|Set user column "
+    r"|Set attributes from palette",
+    re.S,
+)
 
 
 def _repairJoinedName(log : "Log"):
@@ -165,12 +215,13 @@ def _repairJoinedName(log : "Log"):
 
     A trace name passes through normalizeObjectName when a section loads, so
     "foo\nbar" is the trace "foo_bar" and "spine1\n" is "spine1". A
-    z-trace keeps its name as written, line break included, so its row is left
-    alone. Only a name that holds a line break is touched: a break elsewhere in
-    the row says nothing about the name.
+    z-trace keeps its name as written, line break included. So only the name
+    in a trace event is normalized; any other row keeps its name as written,
+    since that name may be a z-trace's. Only a name that holds a line break is
+    touched: a break elsewhere in the row says nothing about the name.
     """
     name = log.obj_name
-    if name and "\n" in name and not ZTRACE_EVENT.match(log.event):
+    if name and "\n" in name and TRACE_EVENT.match(log.event):
         log.obj_name = normalizeObjectName(name)
 
 
@@ -620,9 +671,12 @@ class LogSet():
                     # is the literal text '"alice, axon"': joining it to the
                     # next line would read a different row. A row that does
                     # not parse is joined only while splitRow, quoting
-                    # included, finds fewer than six fields in it. A row with
-                    # six that still does not parse is broken some other way,
-                    # and another line cannot mend it.
+                    # included, finds fewer than six fields in it, or while a
+                    # quoted user or object name in it has not closed: read
+                    # the old way, the head of a name such as
+                    # "a,b, c, d, e, <Return>f" already holds six. A row with
+                    # six and no open quote that still does not parse is
+                    # broken some other way, and another line cannot mend it.
                     #
                     # The six fields are splitRow's count, not a count of bare
                     # commas, which can only run ahead of it: a field holding
@@ -642,10 +696,11 @@ class LogSet():
                     # into "foobar".
                     #
                     # What the object is called is then up to its kind (see
-                    # _repairJoinedName): a trace name with a break in it is
-                    # normalized as a section normalizes it on open, so a
-                    # name typed as "spine1" and a Return reads as the trace
-                    # "spine1"; a z-trace name stays as written.
+                    # _repairJoinedName): a name with a break in it, in an
+                    # event only a trace writes, is normalized as a section
+                    # normalizes it on open, so a name typed as "spine1" and a
+                    # Return reads as the trace "spine1"; a name in any other
+                    # event stays as written, since it may be a z-trace's.
                     # Every other field keeps its "\n", and Log.__str__ writes
                     # it as "_".
                     #
@@ -732,7 +787,7 @@ class LogSet():
                             log = Log.fromStr(log_str)
                             break
                         except ValueError:
-                            if hasSixFields(log_str):
+                            if _isWholeRow(log_str):
                                 raise
                             nxt = log_list[i+1]
                             if ROW_START.match(nxt.strip()):
