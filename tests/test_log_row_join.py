@@ -1,4 +1,4 @@
-"""A log row split across lines is rejoined by the parser's own field rule.
+"""A log row split across lines is rejoined as the older build wrote it.
 
 Older builds wrote a newline in a name straight into existing_log.csv, so one
 row reached ``LogSet.fromList`` as several physical lines. The join that puts
@@ -8,12 +8,19 @@ as "foo,bar,baz" made a partial row look whole, the join stopped a line early,
 and the row raised. The join also put nothing where the line break was, so
 "foo" and "bar" read as "foobar" while a name ending in a Return kept its
 "\\n" or not depending on how the lines were read.
+
+The join now puts a "\\n" back at each break, so the joined row is the text
+the older build wrote, and the parser splits it the way it would have split
+that row on one line. A trace name holding a break is then normalized the way
+a trace name is normalized on open; a z-trace name is not, because a z-trace
+keeps its name as written.
 """
 
 import pytest
 
 from PyReconstruct.modules.datatypes.log import Log, LogSet
-from PyReconstruct.modules.datatypes.trace import normalizeObjectName
+from PyReconstruct.modules.datatypes.trace import Trace
+from PyReconstruct.modules.datatypes.ztrace import Ztrace
 
 
 def _readlines(text):
@@ -21,9 +28,26 @@ def _readlines(text):
     return text.splitlines(keepends=True)
 
 
+def _line_forms(text):
+    """The same file as readlines, as bare lines, and with CRLF endings."""
+    return (
+        _readlines(text),
+        text.split("\n"),
+        text.replace("\n", "\r\n").splitlines(keepends=True),
+    )
+
+
 def _older_build_row(user, obj_name, section, event):
     """The row an older build wrote: the same f-string, newlines left raw."""
     return f"26-01-01, 10:00, {user}, {obj_name}, {section}, {event}\n"
+
+
+def _trace_named(name):
+    return Trace(name, (255, 0, 0)).name
+
+
+def _ztrace_named(name):
+    return Ztrace.fromDict(name, {"color": [255, 0, 0], "points": []}).name
 
 
 @pytest.mark.parametrize("lines", [
@@ -36,7 +60,8 @@ def test_a_field_with_bare_commas_keeps_joining(lines):
     assert len(log_set.all_logs) == 1
     log = log_set.all_logs[0]
     assert log.user == "alice"
-    assert log.obj_name == "foo,bar,baz_qux"
+    assert log.obj_name == "foo_bar_baz_qux"
+    assert log.obj_name == _trace_named("foo,bar,baz\nqux")
     assert log.section_ranges == [(1, 1)]
     assert log.event == "Modified trace(s)"
 
@@ -54,26 +79,58 @@ def test_a_quoted_name_holding_commas_keeps_joining():
     assert log.section_ranges == [(1, 1)]
 
 
-@pytest.mark.parametrize("obj_name, read_as", [
-    ("foo\nbar", "foo_bar"),
-    ("a\nb\nc", "a_b_c"),
-    ("d001sp003\n", "d001sp003"),
-    ("\nfoo", "foo"),
-    ("\nfoo\n", "foo"),
+def test_a_break_inside_a_quoted_field_stays_inside_it():
+    lines = [
+        '26-01-01, 10:00, "a, \n',
+        'b", foo, 1, Modified trace(s)\n',
+    ]
+
+    log = LogSet.fromList(lines).all_logs[0]
+
+    assert log.user == "a, \nb"
+    assert log.obj_name == "foo"
+    assert str(log) == '26-01-01, 10:00, "a, _b", foo, 1, Modified trace(s)'
+
+
+@pytest.mark.parametrize("obj_name", [
+    "foo\nbar",
+    "a\nb\nc",
+    "spine1\n",
+    "\nfoo",
+    "\nfoo\n",
+    "foo\n\nbar",
+    "foo\n bar",
 ])
-def test_a_split_name_reads_as_its_object_is_named(obj_name, read_as):
+def test_a_split_trace_name_reads_as_the_trace_is_named(obj_name):
     text = _older_build_row("alice", obj_name, 1, "Modified trace(s)")
     assert text.count("\n") > 1, "the older row really is split"
 
-    for lines in (_readlines(text), text.split("\n")):
+    for lines in _line_forms(text):
         log_set = LogSet.fromList(lines)
 
         assert len(log_set.all_logs) == 1
         log = log_set.all_logs[0]
-        assert log.obj_name == read_as
-        assert log.obj_name == normalizeObjectName(obj_name)
+        assert log.obj_name == _trace_named(obj_name)
         assert log.section_ranges == [(1, 1)]
         assert log.event == "Modified trace(s)"
+
+
+@pytest.mark.parametrize("obj_name", [
+    "foo\n",
+    "foo\nbar",
+    "\nfoo",
+    "foo\n bar",
+])
+def test_a_split_ztrace_name_reads_as_the_ztrace_is_named(obj_name):
+    text = _older_build_row("alice", obj_name, "-", "Modify ztrace")
+
+    for lines in _line_forms(text):
+        log = LogSet.fromList(lines).all_logs[0]
+
+        assert log.obj_name == obj_name
+        assert log.obj_name == _ztrace_named(obj_name)
+        assert log.section_ranges is None
+        assert log.event == "Modify ztrace"
 
 
 def test_a_break_inside_a_name_reads_as_this_build_writes_it():
@@ -83,6 +140,32 @@ def test_a_break_inside_a_name_reads_as_this_build_writes_it():
 
     written_now = Log("26-01-01", "10:00", "alice", "a\nb\nc", 1, "Modified trace(s)")
     assert str(log) == str(written_now)
+
+
+def test_a_whole_row_read_the_old_way_is_not_joined():
+    # Short of six fields read with quoting, but whole read the old way,
+    # which Log.fromStr falls back to.
+    lines = ['26-06-29, 12:00, "alice, axon", 3, Modify trace(s)\n']
+
+    log_set = LogSet.fromList(lines)
+
+    assert log_set.all_logs == [Log.fromStr(lines[0])]
+    assert log_set.all_logs[0].user == '"alice'
+    assert log_set.skipped_rows == []
+
+
+def test_a_whole_row_read_the_old_way_does_not_swallow_a_fragment():
+    lines = [
+        '26-06-29, 12:00, "alice, axon", 3, 1\n',
+        ", Changed event\n",
+    ]
+
+    with pytest.raises(ValueError):
+        LogSet.fromList(lines)
+
+    log_set = LogSet.fromList(lines, skip_corrupt=True)
+    assert log_set.all_logs == [Log.fromStr(lines[0])]
+    assert log_set.skipped_rows == [lines[1]]
 
 
 def test_a_short_row_before_another_row_still_raises():
