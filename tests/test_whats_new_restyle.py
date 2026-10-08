@@ -970,6 +970,76 @@ def test_every_code_span_after_a_path_keeps_its_own_text(qapp):
         browser.deleteLater()
 
 
+def test_linked_code_stays_a_link_across_a_theme_switch(qapp):
+    """A code span written as a link, ``[`changelog`](url)``, keeps its anchor
+    and target when first drawn and after each rebuild a theme switch makes,
+    and a click on it still opens the target."""
+    import qdarkstyle
+    from PySide6.QtCore import QObject, Qt, QUrl, Slot
+    from PySide6.QtGui import QDesktopServices, QTextCursor
+    from PySide6.QtTest import QTest
+    from PyReconstruct.modules.gui.dialog.whats_new import make_notes_browser
+
+    url = "https://example.test/notes"
+
+    class Opener(QObject):
+        def __init__(self):
+            super().__init__()
+            self.opened = []
+
+        @Slot(QUrl)
+        def open(self, target):
+            self.opened.append(target.toString())
+
+    def linked_code(browser):
+        runs = [f for f in _fragments(browser.document().begin())
+                if f.charFormat().fontFixedPitch()]
+        assert [_shown(f.text()) for f in runs] == ["changelog"]
+        return runs[0]
+
+    def check(browser, opener):
+        run = linked_code(browser)
+        fmt = run.charFormat()
+        assert fmt.isAnchor()
+        assert fmt.anchorHref() == url
+        cursor = QTextCursor(browser.document())
+        cursor.setPosition(run.position() + run.length() // 2)
+        at = browser.cursorRect(cursor).center()
+        opener.opened.clear()
+        QTest.mouseClick(browser.viewport(), Qt.LeftButton, Qt.NoModifier, at)
+        assert opener.opened == [url]
+
+    app = QApplication.instance()
+    previous = app.styleSheet()
+    opener = Opener()
+    QDesktopServices.setUrlHandler("https", opener, "open")
+    browser = make_notes_browser(f"- Open [`changelog`]({url}).")
+    try:
+        app.setStyleSheet("")
+        app.setPalette(app.style().standardPalette())
+        browser.resize(400, 200)
+        browser.show()
+        app.processEvents()
+        check(browser, opener)
+        light = _foreground(linked_code(browser))
+
+        app.setStyleSheet(qdarkstyle.load_stylesheet_pyside6())
+        app.processEvents()
+        assert _foreground(linked_code(browser)) != light, "no rebuild ran"
+        check(browser, opener)
+
+        app.setStyleSheet("")
+        app.setPalette(app.style().standardPalette())
+        app.processEvents()
+        assert _foreground(linked_code(browser)) == light
+        check(browser, opener)
+    finally:
+        QDesktopServices.unsetUrlHandler("https")
+        browser.deleteLater()
+        app.setStyleSheet(previous)
+        app.setPalette(app.style().standardPalette())
+
+
 # ---- characters outside the BMP ----------------------------------------------
 
 @pytest.mark.parametrize("item,styled", [

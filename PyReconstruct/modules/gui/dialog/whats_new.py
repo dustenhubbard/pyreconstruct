@@ -268,7 +268,8 @@ def restyle_code_runs(cursor, block, base_font, base_pt, color, tint):
     is the weight the markdown gave the words it sits among, and it never
     breaks: spaces become no-break spaces and a word joiner follows each "/"
     or "-", so a command such as ``pyreconstruct /path/to/series.jser`` wraps
-    as one word instead of splitting across two lines.
+    as one word instead of splitting across two lines. A run that is a link,
+    as in ``[`changelog`](url)``, stays one: its anchor and target carry over.
     """
     runs = []
     weight = 400
@@ -277,20 +278,24 @@ def restyle_code_runs(cursor, block, base_font, base_pt, color, tint):
         fragment = it.fragment()
         fmt = fragment.charFormat()
         if fmt.fontFixedPitch():
-            runs.append((fragment.position(), fragment.length(), weight))
+            runs.append((fragment.position(), fragment.length(), weight, fmt))
         else:
             weight = fmt.fontWeight()
         it += 1
     # Back to front: the word joiners lengthen a run, which would move every
     # later run off the position saved for it.
-    for start, length, run_weight in reversed(runs):
+    for start, length, run_weight, old in reversed(runs):
         cursor.setPosition(start)
         cursor.setPosition(start + length, QTextCursor.KeepAnchor)
         text = "".join(
             "\u00a0" if ch == " " else ch + WORD_JOINER if ch in "/-" else ch
             for ch in cursor.selectedText())
-        cursor.insertText(text, code_char_format(
-            base_font, base_pt, run_weight, color, tint))
+        fmt = code_char_format(base_font, base_pt, run_weight, color, tint)
+        if old.isAnchor():
+            fmt.setAnchor(True)
+            fmt.setAnchorHref(old.anchorHref())
+            fmt.setAnchorNames(old.anchorNames())
+        cursor.insertText(text, fmt)
 
 
 # Keyboard shortcuts in the notes: one or more modifiers joined by "+" to a
