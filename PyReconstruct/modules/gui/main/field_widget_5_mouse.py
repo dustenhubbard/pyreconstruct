@@ -423,7 +423,7 @@ class FieldWidgetMouse(FieldWidgetData):
             # `endPendingEvents` normally catches this at the moment the section
             # changes, which is every route through `MainWindow.changeSection`.
             # This is the invariant behind that: `FieldWidget.changeSection` can
-            # also be called directly (`moveTo` from the 3D scene), and the
+            # also be called directly, and the
             # commit below is only meaningful against the section the drag
             # started on. Identity, not section number: a mid-drag `reload`
             # rebuilds the section, and the carried traces belong to the old
