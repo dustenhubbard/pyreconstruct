@@ -49,6 +49,8 @@ def _run(cores, *args, env=None):
 #  - HOLD_ARRAY: the second chunk write creates FAULT_MARKER and waits until
 #    FAULT_RELEASE exists, so that array is part written in the meantime.
 #  - WRITE_LOG: the path of every store key written is appended to this file.
+#  - WAIT_KEY: a check for this store key, e.g. "scale_1/a.png/.zarray",
+#    first waits until WAIT_FOR exists.
 FAULTS = textwrap.dedent("""
     import json, os, time
     import zarr.storage
@@ -98,6 +100,15 @@ FAULTS = textwrap.dedent("""
         return _orig(self, key, value)
 
     zarr.storage.DirectoryStore.__setitem__ = _setitem
+
+    _orig_contains = zarr.storage.DirectoryStore.__contains__
+
+    def _contains(self, key):
+        if key == os.environ.get("WAIT_KEY"):
+            _wait_for(os.environ.get("WAIT_FOR"), 120)
+        return _orig_contains(self, key)
+
+    zarr.storage.DirectoryStore.__contains__ = _contains
 """)
 
 
@@ -294,33 +305,105 @@ def test_an_update_writes_into_a_folder_left_without_metadata(tmp_path):
     _assert_every_level(out, sources)
 
 
-def test_an_update_refuses_a_scale_1_image_left_unfinished(tmp_path):
+@pytest.mark.parametrize("a, b", [("a.png", "b.png"), (".a.png", ".b.png")])
+def test_an_update_refuses_a_scale_1_image_left_unfinished(tmp_path, a, b):
     """A conversion from images stops partway through scale_1/b.png, after
     a.png is done. b.png's folder has chunks but no .zarray, so zarr lists
     only a.png. The update has no source to rebuild b.png from, so it must
-    fail and name it, not finish without it."""
+    fail and name it, not finish without it. A name starting with a dot is
+    an image like any other, not a metadata file."""
     imgs = tmp_path / "imgs"
     imgs.mkdir()
-    cv2.imwrite(str(imgs / "a.png"), np.full((512, 512), 7, np.uint8))
+    cv2.imwrite(str(imgs / a), np.full((512, 512), 7, np.uint8))
     cv2.imwrite(
-        str(imgs / "b.png"),
+        str(imgs / b),
         np.random.default_rng(0).integers(0, 256, (2048, 2048), np.uint8),
     )
     out = tmp_path / "out.zarr"
 
-    # one worker, so a.png is done before b.png starts
-    failed = _run(1, imgs, out, env=_fault_env(tmp_path, FAIL_ARRAY="scale_1/b.png"))
+    # one worker, so a is done before b starts
+    failed = _run(1, imgs, out, env=_fault_env(tmp_path, FAIL_ARRAY=f"scale_1/{b}"))
 
     assert failed.returncode != 0
     assert "simulated full disk" in failed.stderr
-    assert (out / "scale_1" / "b.png").is_dir()
-    assert list(zarr.open(str(out), "r")["scale_1"]) == ["a.png"]
+    assert (out / "scale_1" / b).is_dir()
+    assert list(zarr.open(str(out), "r")["scale_1"]) == [a]
 
     update = _run(1, out)
 
     assert update.returncode != 0
     assert "Zarr validation complete." not in update.stdout
-    assert "scale_1/b.png" in update.stderr
+    assert f"scale_1/{b}" in update.stderr
+
+
+def test_an_update_ignores_files_beside_the_images(tmp_path):
+    """A file such as Thumbs.db in scale_1 is not an image left unfinished:
+    those are folders. The update must finish."""
+    out = tmp_path / "out.zarr"
+    sources = _scale_1_only(out)
+    (out / "scale_1" / "Thumbs.db").write_bytes(b"not zarr")
+
+    result = _run(5, out)
+
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert "Zarr validation complete." in result.stdout
+    _assert_only_whole_arrays(out, sources)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a backslash is a separator")
+def test_two_names_for_one_array_stop_the_conversion(tmp_path):
+    """a\\b.png and a\\\\b.png are both stored as scale_1/a/b.png. Two
+    workers must never write one array, so the conversion stops before any
+    worker starts and names both images."""
+    imgs = tmp_path / "imgs"
+    imgs.mkdir()
+    cv2.imwrite(str(imgs / "a\\b.png"), np.full((768, 1024), 7, np.uint8))
+    cv2.imwrite(str(imgs / "a\\\\b.png"), np.full((768, 1024), 199, np.uint8))
+    out = tmp_path / "out.zarr"
+
+    result = _run(2, imgs, out)
+
+    assert result.returncode != 0
+    assert "Zarr validation complete." not in result.stdout
+    assert "@@PROGRESS@@ TOTAL" not in result.stdout
+    assert "a\\b.png" in result.stderr
+    assert "a\\\\b.png" in result.stderr
+    assert not (out / "scale_1" / "a").exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a backslash is a separator")
+@pytest.mark.parametrize("first", ["parent", "child"])
+def test_an_image_inside_another_stops_the_conversion(tmp_path, first):
+    """foo.png\\bar.png is stored as scale_1/foo.png/bar.png, inside the
+    array of foo.png. zarr cannot hold both, so the conversion stops before
+    any worker starts and names both images, whichever would be written
+    first. With one worker foo.png is written first. With two, foo.png's
+    worker checks for its array only once bar.png's .zarray is on disk."""
+    imgs = tmp_path / "imgs"
+    imgs.mkdir()
+    parent, child = "foo.png", "foo.png\\bar.png"
+    cv2.imwrite(
+        str(imgs / parent),
+        np.random.default_rng(0).integers(0, 256, (2048, 2048), np.uint8),
+    )
+    cv2.imwrite(str(imgs / child), np.full((512, 512), 7, np.uint8))
+    out = tmp_path / "out.zarr"
+
+    if first == "parent":
+        result = _run(1, imgs, out)
+    else:
+        env = _fault_env(
+            tmp_path, WAIT_KEY=f"scale_1/{parent}/.zarray",
+            WAIT_FOR=out / "scale_1" / "foo.png" / "bar.png" / ".zarray",
+        )
+        result = _run(2, imgs, out, env=env)
+
+    assert result.returncode != 0
+    assert "Zarr validation complete." not in result.stdout
+    assert "@@PROGRESS@@ TOTAL" not in result.stdout
+    assert parent in result.stderr
+    assert child in result.stderr
+    assert not (out / "scale_1" / parent).exists()
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="a backslash is a separator")

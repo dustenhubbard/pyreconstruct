@@ -37,6 +37,7 @@ for _thread_var in (
 import cv2
 import zarr
 from zarr.storage import contains_array, contains_group
+from zarr.util import normalize_storage_path
 
 os.environ["OPENCV_LOG_LEVEL"] = "FATAL"
 os.environ["OPENCV_IO_MAX_IMAGE_PIXELS"] = "18500000000"  # Go big or go home?
@@ -292,6 +293,38 @@ def validate_zarr(zg, images):
         raise Exception(f"Zarr conversion incomplete:\n{preview}")
 
 
+def check_array_paths(images):
+    """Stop before any worker starts if two images need one place in the zarr.
+
+    zarr turns each name into a path (a backslash is a separator), so
+    a\\b.png and a\\\\b.png are both stored as a/b.png, and foo.png\\bar.png
+    is stored inside the array of foo.png. Each worker only checks its own
+    array, so two workers could write one array, or an array and a group at
+    one path. Checking every name here gives each array one image.
+    """
+    owners = {}
+    clashes = []
+    for filename in images:
+        path = normalize_storage_path(filename)
+        if path in owners:
+            clashes.append(f"{owners[path]} and {filename} are both stored as {path}")
+        else:
+            owners[path] = filename
+    for path, filename in owners.items():
+        parts = path.split("/")
+        for i in range(1, len(parts)):
+            parent = "/".join(parts[:i])
+            if parent in owners:
+                clashes.append(f"{filename} would be stored inside {owners[parent]}")
+
+    if clashes:
+        raise Exception(
+            "These image names cannot all be stored in one zarr:\n"
+            + "\n".join(clashes)
+            + "\nRename the images and convert them again."
+        )
+
+
 def require_scale_group(zg, scale_group):
     """Return the scale group, creating it if it does not exist yet.
 
@@ -336,18 +369,22 @@ def write_array(zarr_fp, scale_group, filename, arr):
 
 
 def unfinished_arrays(zg, scale_group):
-    """Names in the scale group that are folders but not arrays or groups.
+    """Folders in the scale group that are not arrays or groups.
 
     A conversion that stopped partway leaves the image's folder without its
     .zarray (see write_array), and zarr does not list it. An update can
     rebuild any other level from scale_1, but not scale_1 itself, so it
-    checks here instead of finishing without the image.
+    checks here instead of finishing without the image. Files, such as
+    .zgroup or a Thumbs.db, are not images; a folder is, even one whose
+    name starts with a dot.
     """
     store = zg.store
     unfinished = []
     for name in store.listdir(scale_group):
         path = f"{scale_group}/{name}"
-        if name.startswith(".") or contains_array(store, path) or contains_group(store, path):
+        if not os.path.isdir(store.dir_path(path)):
+            continue
+        if contains_array(store, path) or contains_group(store, path):
             continue
         unfinished.append(path)
     return unfinished
@@ -358,8 +395,9 @@ def create2D(args):
 
     Each worker opens the store and writes its own arrays, so the compression
     and the disk writes run in parallel across the Pool. No two workers write
-    the same file: every array is its own directory in the DirectoryStore and
-    each image goes to exactly one worker. The only shared writes are the
+    the same file: every array is its own directory in the DirectoryStore,
+    each image goes to exactly one worker, and check_array_paths gives each
+    image its own array path. The only shared writes are the
     scale groups, handled by require_scale_group. write_array lists each
     array only once it is complete.
 
@@ -435,6 +473,9 @@ if __name__ == "__main__":
         images = sorted(list(zg["scale_1"]))
         if not images:
             raise Exception(f"No scale_1 images found in {zarr_fp}.")
+
+    # no two images may share an array path (see check_array_paths)
+    check_array_paths(images)
 
     # fail fast if the target volume cannot hold the new scales
     check_disk_space(images)
