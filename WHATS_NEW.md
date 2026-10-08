@@ -12,8 +12,8 @@ full release notes on GitHub (linked from the dialog).
 
 - **Double-click a `.jser` file to open it in PyReconstruct.** This works on Windows, macOS, and
   Linux once this version is installed, and the command line takes the path directly:
-  `pyreconstruct series.jser`.
-- **Hide the lists with one click.** Use the sidebar button in the status bar, View ▸ Show/hide
+  `pyreconstruct /path/to/series.jser`.
+- **Hide the lists with one click.** Use the sidebar button in the status bar, View ▸ Show/Hide
   lists, or Cmd+Option+S (Ctrl+Alt+S on Windows and Linux), and the same toggle brings them back.
 - **The status bar has clickable buttons.** Section, alignment, and B/C profile open their menus
   where you clicked, and the alignment and B/C profile menus can create a new entry.

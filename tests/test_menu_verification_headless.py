@@ -267,7 +267,7 @@ def test_view_keeps_its_order_with_the_four_inserted_after_show_z_traces(
     and tests/test_autoseg_reapply_colors.py pins its semantics.
 
     Second sanctioned addition (2026-08-25, stage 1 of his sidebar):
-    "Show/hide lists" leads the menu -- it is the one View row about whether
+    "Show/Hide lists" leads the menu -- it is the one View row about whether
     the lists are on screen at all, and it mirrors the status bar's Lists
     pill. Everything after it is the prior order, unmoved.
     """
@@ -277,7 +277,7 @@ def test_view_keeps_its_order_with_the_four_inserted_after_show_z_traces(
     order = [p for p in menu_leaf_paths(view) if " > " not in p]
 
     assert order == [
-        "Show/hide lists",
+        "Show/Hide lists",
         "Copy view to clipboard",
         "Save view to file",
         "Change theme...",
