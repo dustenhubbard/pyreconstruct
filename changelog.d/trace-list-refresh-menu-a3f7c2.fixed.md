@@ -1,1 +1,0 @@
-- **The trace list now has Refresh in its List menu.** The other lists already had it; the trace list was the only one without.
