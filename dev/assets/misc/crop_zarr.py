@@ -12,6 +12,10 @@ questions, for example from another program:
 With flags, progress goes to stdout as the same "@@PROGRESS@@" lines the zarr
 converter prints, and errors exit nonzero before anything is written.
 
+A crop that would keep no pixels is an error too, found before anything is
+written: when no section's image name is in the zarr (the series and the zarr
+do not belong together), or when the object is inside no section image.
+
 The output must be a new path: not one that exists, not a drive or file
 system root, and not the source zarr, inside it, or a folder that holds it.
 Neither path may have a "." or ".." part after a folder name; "./" and "../"
@@ -220,6 +224,54 @@ def pixelWindow(bounds : tuple, radius : float, mag : float, shape : tuple):
     return top, bottom, left, right
 
 
+def someNames(names : list, limit : int = 3):
+    """The first few names, quoted, for an error message."""
+    shown = ", ".join(repr(name) for name in names[:limit])
+    return shown + ", ..." if len(names) > limit else shown
+
+
+def checkPixelsKept(series : Series, obj_name : str, radius : float, src_group, scales : list):
+    """Raise if the crop would keep no pixels on any section.
+
+    cropSections skips a section whose image name is not in a scale group, so
+    a zarr made for other images (or named differently) would give an output
+    with no arrays at all. A section keeps pixels when its image is in the
+    zarr, the object is on it, and the object's window is not empty at some
+    scale level. Reads only array shapes, never pixels.
+    """
+    groups = [src_group[f"scale_{scale}"] for scale in scales]
+    sections = series.data["sections"]
+    with_image = {
+        snum for snum, data in sections.items()
+        if any(data["src"] in group for group in groups)
+    }
+    if not with_image:
+        series_names = [sections[snum]["src"] for snum in sorted(sections)]
+        zarr_names = sorted(groups[0].array_keys())
+        raise CropError(
+            f"No section image in this series is in the zarr. "
+            f"The series names {someNames(series_names)}; "
+            f"the zarr's scale_{scales[0]} has {someNames(zarr_names) or 'no images'}. "
+            f"Check that the zarr was made for this series."
+        )
+
+    snums = sorted(with_image & series.getObjectSections([obj_name]))
+    for snum, section in series.enumerateSections(show_progress=False, section_numbers=snums):
+        if obj_name not in section.contours:
+            continue
+        bounds = section.contours[obj_name].getBounds()
+        for scale, group in zip(scales, groups):
+            if section.src not in group:
+                continue
+            mag = section.mag * scale
+            t, b, l, r = pixelWindow(bounds, radius, mag, group[section.src].shape)
+            if b > t and r > l:
+                return
+    raise CropError(
+        f"The crop would be empty: {obj_name!r} is inside no section image in the zarr."
+    )
+
+
 def cropSections(
         series : Series,
         obj_name : str,
@@ -241,6 +293,7 @@ def cropSections(
     checkPlainPath(new_zarr_fp, "output")
     if os.path.lexists(new_zarr_fp):
         raise outputExists(new_zarr_fp)
+    checkPixelsKept(series, obj_name, radius, src_group, scales)
     new_zarr_fp = os.path.realpath(new_zarr_fp)
     parent = os.path.dirname(new_zarr_fp)
     os.makedirs(parent, exist_ok=True)

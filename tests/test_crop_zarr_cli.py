@@ -633,3 +633,98 @@ def test_incomplete_or_bad_flags_are_refused(args):
     result = _run(args)
     assert result.returncode == 2
     assert "Jser filepath" not in result.stdout
+
+
+def _zarr_of(folder, names):
+    """A two-scale zarr holding nonzero images under the given array names."""
+    root = zarr.open_group(str(folder), mode="w")
+    for scale, shape in SCALES.items():
+        grp = root.create_group(f"scale_{scale}")
+        for name in names:
+            grp.create_dataset(name, chunks=(64, 64), data=np.full(shape, 9, np.uint8))
+    return folder
+
+
+def _move_square(jser, square):
+    """Put the square at (xmin, ymin, xmax, ymax) microns on every section that has it."""
+    data = json.loads(jser.read_text())
+    xmin, ymin, xmax, ymax = square
+    for section in data["sections"]:
+        if OBJECT in section["contours"]:
+            (trace,) = section["contours"][OBJECT]
+            trace[0] = [xmin, xmax, xmax, xmin]
+            trace[1] = [ymin, ymin, ymax, ymax]
+    jser.write_text(json.dumps(data))
+
+
+def _assert_refused_before_writing(result, out, jser, fragment):
+    assert result.returncode == 1, result.stderr
+    assert result.stderr.strip().startswith("error:")
+    assert len(result.stderr.strip().splitlines()) == 1, result.stderr
+    assert fragment in result.stderr
+    assert "@@PROGRESS@@" not in result.stdout
+    assert "Crop complete" not in result.stdout
+    assert not os.path.lexists(out)
+    assert _hidden_dirs(jser.parent) == []
+
+
+def test_zarr_with_other_image_names_is_refused(case, tmp_path):
+    """No section's image name is in the zarr: stop, naming both sides, and write nothing.
+
+    Before this check every section was skipped and the run printed
+    "Crop complete" over an output holding only .zgroup.
+    """
+    jser, src = case
+    other = _zarr_of(tmp_path / "other.zarr", [f"00{n}_grid0{n}.tif" for n in range(5)])
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS,
+        "--zarr", other, "--out", out,
+    ])
+    _assert_refused_before_writing(result, out, jser, "No section image in this series is in the zarr")
+    assert "'shapes_0.tif'" in result.stderr
+    assert "'000_grid00.tif'" in result.stderr
+
+
+@pytest.mark.parametrize("where", ["outside every image", "only on sections without an image"])
+def test_crop_that_keeps_no_pixels_is_refused(case, tmp_path, where):
+    jser, src = case
+    args = ["--jser", jser, "--object", OBJECT, "--radius", RADIUS]
+    if where == "outside every image":
+        _move_square(jser, SQUARES[4])
+    else:
+        ## the zarr holds only the section without the square
+        args += ["--zarr", _zarr_of(tmp_path / "part.zarr", [f"shapes_{BLANK_SECTION}.tif"])]
+    out = tmp_path / "out.zarr"
+    result = _run([*args, "--out", out])
+    _assert_refused_before_writing(result, out, jser, "The crop would be empty")
+    assert "'square'" in result.stderr
+
+
+def test_zarr_missing_some_sections_still_crops(case, tmp_path):
+    """One section with the square in its image is enough; the rest are skipped as before."""
+    jser, src = case
+    part = _zarr_of(tmp_path / "part.zarr", ["shapes_0.tif"])
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", part, "--out", out,
+    ])
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[-1] == f"Crop complete: {out}"
+    got = _arrays(out)
+    assert sorted(got) == [(1, "shapes_0.tif"), (2, "shapes_0.tif")]
+    for scale in SCALES:
+        t, b, l, r = KEPT[(scale, 0)]
+        assert got[(scale, "shapes_0.tif")][t:b, l:r].all()
+        assert got[(scale, "shapes_0.tif")].sum() == 9 * (b - t) * (r - l)
+
+
+def test_prompts_refuse_an_empty_crop(case, tmp_path):
+    """The no-argument path stops with the same error and makes no default output."""
+    jser, src = case
+    other = _zarr_of(tmp_path / "other.zarr", ["000_grid00.tif"])
+    result = _run([], stdin=f"{jser}\n{OBJECT}\n{RADIUS}\n{other}\n")
+    assert result.returncode == 1, result.stderr
+    assert "No section image in this series is in the zarr" in result.stderr
+    assert not (tmp_path / f"other_{OBJECT}_crop.zarr").exists()
+    assert not (src.parent / f"imgs_{OBJECT}_crop.zarr").exists()
