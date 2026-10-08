@@ -24,7 +24,10 @@ from PyReconstruct.modules.datatypes import Series
 from PyReconstruct.modules.backend.func.utils import (
     zarr_worker_count, MAX_ZARR_WORKERS,
 )
-from PyReconstruct.modules.datatypes.default_settings import validPinnedLength
+from PyReconstruct.modules.datatypes.default_settings import (
+    validPinnedLength,
+    MAX_SELECTION_HIGHLIGHT_OPACITY,
+)
 
 
 def cpuSliderReadout(percent : int) -> str:
@@ -143,7 +146,7 @@ class AllOptionsDialog(QDialog):
                 ["show_ztraces"],
                 ["show_flags"],
                 ["fill_opacity"],
-                ["selection_glow"],
+                ["selection_highlight_opacity"],
                 ["find_zoom"],
                 ["hover_columns"],
                 ["smoothing_3D"]
@@ -452,20 +455,26 @@ class AllOptionsDialog(QDialog):
             self.series.setOption("fill_opacity", response[0])
         self.addOptionWidget("fill_opacity", structure, setOption)
 
-        # selection_glow_opacity: how see-through the glow around a selected
-        # trace is. A thin solid line in the trace's color always sits on top,
-        # so at 0% only that line shows.
+        # selection_highlight_opacity: how see-through the highlight around a
+        # selected trace is. A thin solid line in the trace's color always sits
+        # on top, so at 0% only that line shows. The slider stops at 50%; a
+        # larger stored value shows as 50%, which is also how it draws.
+        highlight = min(
+            self.series.getOption("selection_highlight_opacity", use_defaults),
+            MAX_SELECTION_HIGHLIGHT_OPACITY,
+        )
         structure = [
-            ["Selected trace glow opacity:",
-             ("slider", self.series.getOption("selection_glow_opacity", use_defaults),
-              {"suffix": "%"})],
+            ["Selected trace highlight opacity:",
+             ("slider", highlight, 10,
+              {"maximum": MAX_SELECTION_HIGHLIGHT_OPACITY, "suffix": "%"})],
         ]
         def setOption(response):
-            self.series.setOption("selection_glow_opacity", response[0])
-        self.addOptionWidget("selection_glow", structure, setOption)
-        # the glow previews on the field as the slider moves (see _previewGlow)
-        self.all_widgets["selection_glow"].inputs[0].widget.slider.valueChanged.connect(
-            self._previewGlow
+            self.series.setOption("selection_highlight_opacity", response[0])
+        self.addOptionWidget("selection_highlight_opacity", structure, setOption)
+        # the highlight previews on the field as the slider moves
+        # (see _previewHighlight)
+        self.all_widgets["selection_highlight_opacity"].inputs[0].widget.slider.valueChanged.connect(
+            self._previewHighlight
         )
 
         # find_zoom
@@ -640,7 +649,7 @@ class AllOptionsDialog(QDialog):
         """The main window's field, or None when there is no window."""
         return getattr(self.parent(), "field", None)
 
-    def _glowLayers(self):
+    def _highlightLayers(self):
         """The field and the section layers it draws (two when blending).
 
         Returns (None, []) when there is no window.
@@ -651,35 +660,35 @@ class AllOptionsDialog(QDialog):
         layers = (field.section_layer, getattr(field, "b_section_layer", None))
         return field, [layer for layer in layers if layer is not None]
 
-    def _previewGlow(self, percent):
-        """Redraw the field with the selection glow at `percent`; nothing is stored.
+    def _previewHighlight(self, percent):
+        """Redraw the field with the selection highlight at `percent`; nothing is stored.
 
         The right opacity depends on the image under the traces, so it has to
         be judged on the field while the slider moves. OK stores the option;
-        Cancel redraws with the stored value (_endGlowPreview).
+        Cancel redraws with the stored value (_endHighlightPreview).
         """
-        field, layers = self._glowLayers()
+        field, layers = self._highlightLayers()
         if field is not None:
             for layer in layers:
-                layer.glow_opacity_preview = percent
+                layer.highlight_opacity_preview = percent
             field.generateView(generate_image=False)
-            self._glow_previewed = True
+            self._highlight_previewed = True
 
-    def _endGlowPreview(self, redraw : bool):
-        """Hand the glow back to the stored option.
+    def _endHighlightPreview(self, redraw : bool):
+        """Hand the highlight back to the stored option.
 
             Params:
                 redraw (bool): True to redraw the field now
         """
-        if not getattr(self, "_glow_previewed", False):
+        if not getattr(self, "_highlight_previewed", False):
             return
-        field, layers = self._glowLayers()
+        field, layers = self._highlightLayers()
         if field is not None:
             for layer in layers:
-                layer.glow_opacity_preview = None
+                layer.highlight_opacity_preview = None
             if redraw:
                 field.generateView(generate_image=False)
-        self._glow_previewed = False
+        self._highlight_previewed = False
 
     def reject(self):
         """Overwritten: previewed views go back to their stored settings."""
@@ -688,7 +697,7 @@ class AllOptionsDialog(QDialog):
             if palette is not None:
                 palette.restoreScaleBar()
             self._scale_bar_previewed = False
-        self._endGlowPreview(redraw=True)
+        self._endHighlightPreview(redraw=True)
         super().reject()
 
     def accept(self):
@@ -700,7 +709,7 @@ class AllOptionsDialog(QDialog):
         for w in widgets:
             w.set()
         # the caller redraws the field after OK, now from the stored value
-        self._endGlowPreview(redraw=False)
+        self._endHighlightPreview(redraw=False)
         super().accept()
         return True
 
@@ -714,10 +723,10 @@ class AllOptionsDialog(QDialog):
         self.placeWidgets()
         # set the tab
         self.tabs.setCurrentIndex(current_tab)
-        # the new glow slider starts at the default without a valueChanged,
+        # the new highlight slider starts at the default without a valueChanged,
         # so show the field at that value too
-        self._previewGlow(
-            self.all_widgets["selection_glow"].inputs[0].widget.slider.value()
+        self._previewHighlight(
+            self.all_widgets["selection_highlight_opacity"].inputs[0].widget.slider.value()
         )
 
 # all widgets used in the options MUST have a accept() and set() method

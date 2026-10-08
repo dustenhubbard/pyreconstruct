@@ -30,19 +30,26 @@ from PyReconstruct.modules.calc import (
     getExterior
 )
 from PyReconstruct.modules.calc.nesting import islandCuts
-from PyReconstruct.modules.datatypes.default_settings import default_settings
+from PyReconstruct.modules.datatypes.default_settings import (
+    default_settings,
+    MAX_SELECTION_HIGHLIGHT_OPACITY,
+)
 from PyReconstruct.modules.gui.utils import drawOutlinedText
 
 # How a selected trace is drawn, both in the trace's own color: a see-through
-# glow, then a solid line on top. Widths are in pixels. How see-through the
-# glow is comes from the selection_glow_opacity option.
-SELECTION_GLOW_WIDTH = 5
+# highlight, then a solid line on top. Widths are in pixels. How see-through the
+# highlight is comes from the selection_highlight_opacity option.
+SELECTION_HIGHLIGHT_WIDTH = 5
 SELECTION_LINE_WIDTH = 2
 
 
-def selectionGlowOpacity(percent) -> float:
-    """Return the painter opacity for a selection_glow_opacity value (0-100)."""
-    return min(max(percent, 0), 100) / 100
+def selectionHighlightOpacity(percent) -> float:
+    """Return the painter opacity for a selection_highlight_opacity value.
+
+    The value is a percent; above MAX_SELECTION_HIGHLIGHT_OPACITY it draws as
+    that maximum.
+    """
+    return min(max(percent, 0), MAX_SELECTION_HIGHLIGHT_OPACITY) / 100
 
 class TraceLayer():
 
@@ -63,11 +70,11 @@ class TraceLayer():
         self._temp_hide_set = set()
         self._group_hide_set = set()
         self._group_hidden_names = set()
-        # the selection glow opacity (0-100) the options dialog's slider
+        # the selection highlight opacity (a percent) the options dialog's slider
         # shows while it moves; None uses the stored option
-        self.glow_opacity_preview = None
-        self._glow_opacity = selectionGlowOpacity(
-            default_settings["selection_glow_opacity"]
+        self.highlight_opacity_preview = None
+        self._highlight_opacity = selectionHighlightOpacity(
+            default_settings["selection_highlight_opacity"]
         )
 
     def pointToPix(self, pt : tuple, apply_tform=True, tform : Transform = None, qpoint=False) -> tuple:
@@ -359,9 +366,9 @@ class TraceLayer():
         return True
 
     def _drawSelectionOutline(self, painter : QPainter, qpoints, closed : bool, draw_color):
-        """Draw a selected trace as a see-through glow with a solid line on top.
+        """Draw a selected trace as a see-through highlight with a solid line on top.
 
-        Both are in the trace's own color. The glow lets the image show
+        Both are in the trace's own color. The highlight lets the image show
         through it, so a membrane under the trace stays visible, and makes
         the selection easy to find when zoomed out.
 
@@ -374,7 +381,7 @@ class TraceLayer():
         painter.setBrush(Qt.NoBrush)
         draw = painter.drawPolygon if closed else painter.drawPolyline
         for width, opacity in (
-            (SELECTION_GLOW_WIDTH, self._glow_opacity),
+            (SELECTION_HIGHLIGHT_WIDTH, self._highlight_opacity),
             (SELECTION_LINE_WIDTH, 1),
         ):
             if not opacity:
@@ -590,10 +597,10 @@ class TraceLayer():
         show_ztraces = self.series.getOption("show_ztraces")
         show_flags = self.series.getOption("show_flags")
         flag_size = self.series.getOption("flag_size")
-        glow_opacity = self.glow_opacity_preview
-        if glow_opacity is None:
-            glow_opacity = self.series.getOption("selection_glow_opacity")
-        self._glow_opacity = selectionGlowOpacity(glow_opacity)
+        highlight_opacity = self.highlight_opacity_preview
+        if highlight_opacity is None:
+            highlight_opacity = self.series.getOption("selection_highlight_opacity")
+        self._highlight_opacity = selectionHighlightOpacity(highlight_opacity)
 
         if window_moved:
             trace_list = self.section.tracesAsList()
