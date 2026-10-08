@@ -28,6 +28,9 @@ Nightlies build new commits daily ahead of the next stable release. To run
   by Apple.** The first launch shows the usual question for an app downloaded
   from the internet; click Open. The Terminal step that earlier versions
   needed is gone, and the disk image no longer carries the first-launch guide.
+- **The macOS disk image opens to a drag-to-install window.** Large icons for
+  PyReconstruct and the Applications folder sit on a light background with a
+  chevron between them, and the window title no longer carries the version.
 - **PyReconstruct checks each update's signature before installing it.** Every
   release carries a signed list of checksums, and PyReconstruct refuses a
   download that is missing from the list or whose signature does not match.
@@ -110,9 +113,6 @@ Nightlies build new commits daily ahead of the next stable release. To run
 - **The clean-up lists open with one line.** Duplicates..., Remove pixel-dust
   traces..., the self-crossing lists and the smoothing list say what they hold
   in one line, and the full explanation is in the `?` tooltip beside it.
-- **Selected traces stand out on any image and in any color.** A selected
-  trace has a thin black and white outline around its own color, so it shows on
-  light and dark images alike.
 - **Progress bars say how long is left.** Renaming, deleting, recoloring, and
   every other task that walks the sections shows a time estimate once it has
   run long enough to know. Opening a series still shows a plain bar.
@@ -128,9 +128,6 @@ Nightlies build new commits daily ahead of the next stable release. To run
   with more space between items. A "Show this changelog window after each
   update?" checkbox at the bottom replaces the "Don't show again" button, and
   Got it is now Close.
-- **The What's new footer reads "A fork of PyReconstruct, maintained by Dusten
-  Hubbard."** It sits on one line beside Close, and PyReconstruct still links
-  to the home page.
 - **The bottom of the Help menu is one flat list for reporting a problem.**
   Copy diagnostic report, Email developers, Report a bug..., Request a
   feature..., See unresolved issues, View log file, and Open log folder sit in
@@ -160,10 +157,14 @@ Nightlies build new commits daily ahead of the next stable release. To run
   in a day. It installs beside PyReconstruct, and Help > Download
   PyReconstruct Dev (nightly)... links to it. PyReconstruct is offered stable
   releases only and PyReconstruct Dev nightly builds only, so neither is ever
-  offered the other one's installer.
+  offered the other one's installer. The What's new pop-up stays quiet on a
+  nightly.
   The Help menu, the update window, and the welcome note say Nightly, and the
   welcome note points at Help > Automatically check for updates instead of a
   channel switch that no longer exists.
+- **Linux AppImage Dev users: re-run the Dev install once to keep getting
+  nightlies.** Run `curl -fsSL https://pyreconstruct.org/install.sh | bash -s -- --dev`
+  again; macOS, Windows and the Linux tarball need nothing.
 - **PyReconstruct and PyReconstruct Dev share one set of settings.** Options,
   shortcuts, the palette layout, and the recent series list set in one app
   show up in the other; only the What's new pop-up and the window position
