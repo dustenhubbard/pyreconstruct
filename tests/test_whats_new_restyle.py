@@ -165,20 +165,32 @@ def test_close_is_the_only_button_and_the_default(qapp):
         dlg.deleteLater()
 
 
-def test_box_sits_left_of_close_on_the_row_below_the_footer(qapp):
-    """Checkbox bottom-left, Close bottom-right, both below the byline row."""
-    from PySide6.QtWidgets import QPushButton
+def test_box_and_link_sit_above_byline_and_close(qapp):
+    """Two footer rows: checkbox left and link right directly under the notes,
+    then byline left and Close bottom right."""
+    from PySide6.QtWidgets import QLabel, QPushButton
     dlg = _dialog(settings=FakeSettings())
     try:
         dlg.show()
         dlg.resize(760, 620)
         dlg.layout().activate()
         close = next(b for b in dlg.findChildren(QPushButton) if b.text() == "Close")
-        box = dlg._show_box
-        assert box.geometry().top() >= dlg._byline.geometry().bottom()
-        assert box.geometry().right() < close.geometry().left()
-        assert box.geometry().top() < close.geometry().bottom()
-        assert close.geometry().top() < box.geometry().bottom()
+        link = next(lab for lab in dlg.findChildren(QLabel)
+                    if "All release notes on GitHub" in lab.text())
+        box, byline, notes = (dlg._show_box.geometry(), dlg._byline.geometry(),
+                              dlg._notes.geometry())
+        link, close = link.geometry(), close.geometry()
+
+        def same_row(a, b):
+            return a.top() < b.bottom() and b.top() < a.bottom()
+
+        assert box.top() >= notes.bottom()
+        assert same_row(box, link) and box.right() < link.left()
+        assert same_row(byline, close) and byline.right() < close.left()
+        assert byline.top() >= box.bottom() and byline.top() >= link.bottom()
+        assert close.top() >= link.bottom()
+        assert close.right() >= link.right() - 1        # bottom right
+        assert box.left() == pytest.approx(byline.left(), abs=1)
     finally:
         dlg.deleteLater()
 
@@ -702,3 +714,135 @@ def test_close_follows_a_live_theme_switch(qapp):
             dlg.deleteLater()
         app.setStyleSheet(previous)
         app.setPalette(app.style().standardPalette())
+
+
+# ---- shortcuts and menu paths ------------------------------------------------
+
+KEY_NOTES = """## [1.21.0] — 2026-07-20
+
+- **Hide the lists with Cmd+Option+S (Ctrl+Alt+S on Windows and Linux).** Shift+K
+  picks the scissors (Series ▸ Options ▸ View picks the hover), and View ▸
+  Show/hide lists brings them back.
+- Read Cmd as Ctrl on Windows and Linux, and View the series as you like.
+- In Series ▸ Options ▸ Mouse Tools, uncheck it.
+- Double-click a `.jser` file.
+"""
+
+
+def _key_dialog():
+    from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
+    content = F.whats_new_content("1.21.0", last_seen="1.20.1", text=KEY_NOTES)
+    return WhatsNewDialog(None, "1.21.0", content=content,
+                          settings=FakeSettings(), url="https://example.test")
+
+
+def _code_runs(dlg):
+    """(text, format) of each inline-code run, adjacent fragments joined."""
+    runs = []
+    for block in _blocks(dlg):
+        last = None
+        for fragment in _fragments(block):
+            fmt = fragment.charFormat()
+            if not fmt.fontFixedPitch():
+                last = None
+                continue
+            if last is not None and last[1].fontWeight() == fmt.fontWeight():
+                runs[-1] = (runs[-1][0] + fragment.text(), runs[-1][1])
+            else:
+                runs.append((fragment.text(), fmt))
+            last = runs[-1]
+    return runs
+
+
+def _shown(text):
+    """The text as read: no-break spaces as spaces, word joiners dropped."""
+    return text.replace("\u00a0", " ").replace("\u2060", "")
+
+
+def test_shortcuts_and_menu_paths_take_the_inline_code_style(qapp):
+    """Plain-text key combos and menu paths render exactly like `.jser`.
+
+    A combo inside the bold claim keeps the claim's bold weight; the
+    "on Windows and Linux" words around an alternate combo stay plain; a menu
+    path inside parentheses is styled up to its last label and not the
+    sentence after it, and a capitalized word before a path stays out of it.
+    """
+    dlg = _key_dialog()
+    try:
+        runs = [(_shown(t), f) for t, f in _code_runs(dlg)]
+        assert [t for t, _ in runs] == [
+            "Cmd+Option+S", "Ctrl+Alt+S", "Shift+K",
+            "Series ▸ Options ▸ View", "View ▸ Show/hide lists",
+            "Series ▸ Options ▸ Mouse Tools", ".jser",
+        ]
+        weights = {t: f.fontWeight() for t, f in runs}
+        assert weights["Cmd+Option+S"] == 700      # inside the bold claim
+        assert weights["Ctrl+Alt+S"] == 700
+        assert weights["Shift+K"] == 400
+        assert weights["Series ▸ Options ▸ View"] == 400
+        jser = dict(runs)[".jser"]
+        for text, fmt in runs:
+            assert fmt.fontFamilies() == jser.fontFamilies(), text
+            assert fmt.fontPointSize() == pytest.approx(jser.fontPointSize()), text
+            assert fmt.foreground().color() == jser.foreground().color(), text
+            assert fmt.background().color() == jser.background().color(), text
+            assert fmt.fontLetterSpacing() == jser.fontLetterSpacing(), text
+    finally:
+        dlg.deleteLater()
+
+
+def test_a_sentence_without_a_combo_or_path_stays_plain(qapp):
+    """Key names without "+" and a capitalized word are ordinary text."""
+    dlg = _key_dialog()
+    try:
+        block = next(b for b in _blocks(dlg) if "Read Cmd as Ctrl" in b.text())
+        assert not any(f.charFormat().fontFixedPitch() for f in _fragments(block))
+    finally:
+        dlg.deleteLater()
+
+
+def test_a_combo_never_splits_and_a_path_wraps_only_after_an_arrow(qapp):
+    """Laid out narrow, no line starts inside a combo or inside a menu label."""
+    from PyReconstruct.modules.gui.dialog.whats_new import KEY_OR_MENU
+    dlg = _key_dialog()
+    try:
+        doc = dlg._notes.document()
+        block = next(b for b in _blocks(dlg) if "Shift+K" in b.text())
+        text = block.text()
+        spans = []
+        for fragment in _fragments(block):
+            if fragment.charFormat().fontFixedPitch():
+                start = fragment.position() - block.position()
+                if spans and spans[-1][1] == start:
+                    start = spans.pop()[0]
+                spans.append((start, start + fragment.length()))
+        assert [_shown(text[a:b]) for a, b in spans] == [
+            "Cmd+Option+S", "Ctrl+Alt+S", "Shift+K",
+            "Series ▸ Options ▸ View", "View ▸ Show/hide lists"]
+        for width in range(140, 420, 7):
+            doc.setTextWidth(width)
+            layout = block.layout()
+            starts = [layout.lineAt(i).textStart()
+                      for i in range(1, layout.lineCount())]
+            for start, end in spans:
+                for line_start in starts:
+                    if start < line_start < end:
+                        assert text[line_start - 2:line_start] == "▸ ", (
+                            width, text[start:end], line_start - start)
+    finally:
+        dlg.deleteLater()
+
+
+def test_every_multi_word_menu_label_is_a_real_label():
+    """Each entry of MENU_LABELS is spelled as the app spells it, or as a
+    shipped note names a label since renamed."""
+    import re
+    from pathlib import Path
+    from PyReconstruct.modules.gui.dialog.whats_new import MENU_LABELS
+    import PyReconstruct
+    root = Path(PyReconstruct.__file__).parent
+    source = "".join(p.read_text(encoding="utf-8") for p in root.rglob("*.py"))
+    notes = re.sub(r"\s+", " ", (root.parent / "WHATS_NEW.md").read_text(
+        encoding="utf-8"))
+    for label in MENU_LABELS:
+        assert f'"{label}' in source or f"\u25b8 {label}" in notes, label

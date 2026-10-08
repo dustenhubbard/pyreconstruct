@@ -12,6 +12,7 @@ installed, so showing them there meant the same notes appeared twice around
 every update.
 """
 
+import re
 import sys
 from html import escape
 
@@ -282,6 +283,103 @@ def restyle_code_runs(cursor, block, base_font, base_pt, color, tint):
             base_font, base_pt, run_weight, color, tint))
 
 
+# Keyboard shortcuts in the notes: one or more modifiers joined by "+" to a
+# key, as in Shift+K, Cmd+Option+S or Cmd+comma. The notes write them as plain
+# text; ``restyle_key_and_menu_runs`` sets them like inline code.
+KEY_COMBO = (
+    r"(?<![\w+])(?:(?:Cmd|Ctrl|Option|Alt|Shift)\+)+"
+    r"(?:[A-Za-z0-9]+|[,./;'\[\]=\\-])"
+)
+
+# Menu labels of more than one word that the notes name, longest first in the
+# pattern so "What's new?" wins over "What's new". A label of one word, or of
+# capitalized words only ("Mouse Tools"), needs no entry; a lowercase second
+# word cannot be told from the sentence going on ("View picks which data")
+# without one.
+MENU_LABELS = (
+    "Show/hide lists", "Clean up", "Shortcuts list", "Reset window",
+    "Search menus", "What's new?", "What's new", "Recolor all objects from palette",
+    "View log file", "Color filter", "Set filter...", "Autoseg import colors",
+    "Import alignments", "Online resources", "Turn off What's new pop-up",
+    # the Help menu toggle's name before 1.23; older notes still say it
+    "Show what's new after updates",
+)
+
+# Menu paths in the notes: two or more labels joined by " ▸ ". A label is
+# one of MENU_LABELS or a run of capitalized words, except the first, which
+# is one word, so a capitalized word before the path ("In Series ▸ Options")
+# stays out of it.
+_KNOWN_LABEL = (
+    "(?:" + "|".join(re.escape(label) for label in
+                     sorted(MENU_LABELS, key=len, reverse=True))
+    + r")(?!\w)"
+)
+_WORD = r"[A-Z][\w'’/&-]*"
+MENU_PATH = (
+    rf"(?<![\w'’])(?:{_KNOWN_LABEL}|{_WORD})"
+    rf"(?: \u25b8 (?:{_KNOWN_LABEL}|{_WORD}(?: {_WORD})*))+"
+)
+
+KEY_OR_MENU = re.compile(rf"{KEY_COMBO}|{MENU_PATH}")
+
+
+def unbreakable_key_or_menu(text):
+    """Per character of ``text``, what it becomes so the run breaks right.
+
+    Spaces inside a label become no-break spaces, and so does the space before
+    each "▸", so a path wraps only after a "▸" and a label never splits. A
+    "/" or "-" is followed by a word joiner, since Qt breaks after either
+    ("Show/hide lists" broke at the slash).
+    """
+    out = []
+    for i, ch in enumerate(text):
+        if ch == " ":
+            after_arrow = i > 0 and text[i - 1] == "\u25b8"
+            out.append(" " if after_arrow else "\u00a0")
+        elif ch in "/-":
+            out.append(ch + "\u2060")
+        else:
+            out.append(ch)
+    return out
+
+
+def restyle_key_and_menu_runs(cursor, block, base_font, base_pt, color, tint):
+    """Set the plain-text shortcuts and menu paths in ``block`` like inline code.
+
+    Matches ``KEY_OR_MENU`` and gives each match the format
+    ``code_char_format`` gives a backtick run, in the weight of the text it
+    sits in, so one inside a bold claim stays bold. A match that touches
+    inline code or a link is left alone. Runs after ``restyle_code_runs``,
+    which would otherwise take these runs for code and rejoin a path's
+    breakable spaces.
+    """
+    origin = block.position()
+    pieces = []
+    it = block.begin()
+    while not it.atEnd():
+        fragment = it.fragment()
+        pieces.append((fragment.position() - origin, fragment.length(),
+                       fragment.charFormat()))
+        it += 1
+    # Back to front: a word joiner lengthens the text, and this way it only
+    # moves positions already done.
+    matches = list(KEY_OR_MENU.finditer(block.text()))
+    for match in reversed(matches):
+        start, end = match.span()
+        touched = [(pos, length, fmt) for pos, length, fmt in pieces
+                   if pos < end and pos + length > start]
+        if any(fmt.fontFixedPitch() or fmt.isAnchor() for _, _, fmt in touched):
+            continue
+        styled = unbreakable_key_or_menu(match.group())
+        for pos, length, fmt in reversed(touched):
+            lo, hi = max(pos, start), min(pos + length, end)
+            cursor.setPosition(origin + lo)
+            cursor.setPosition(origin + hi, QTextCursor.KeepAnchor)
+            cursor.insertText("".join(styled[lo - start:hi - start]),
+                              code_char_format(base_font, base_pt,
+                                               fmt.fontWeight(), color, tint))
+
+
 def restyle_notes(doc, palette):
     """Restyle a markdown-built notes document in place.
 
@@ -300,7 +398,8 @@ def restyle_notes(doc, palette):
       ``NOTES_LINE_HEIGHT`` and paints in ``notes_text_color``;
     * inline code inside those paragraphs is set by ``restyle_code_runs``:
       the platform monospace, the body's x-height, color and weight, on a
-      faint tint.
+      faint tint; plain-text shortcuts and menu paths take the same style
+      from ``restyle_key_and_menu_runs``.
 
     Sizes are relative to the document's default font, which
     ``NotesBrowser`` sets ``NOTES_SIZE_STEP`` above the dialog's own.
@@ -378,6 +477,8 @@ def restyle_notes(doc, palette):
                                QTextCursor.KeepAnchor)
             cursor.mergeCharFormat(body_fmt)
             restyle_code_runs(cursor, block, base_font, base_pt, body, code_tint)
+            restyle_key_and_menu_runs(cursor, block, base_font, base_pt, body,
+                                      code_tint)
             cursor.setPosition(block.position())
             text_list = block.textList()
             if text_list is not None:
@@ -528,7 +629,7 @@ class WhatsNewDialog(QDialog):
         )
         # 700 minimum width, up from the 540 the dialog opened at when the
         # byline and the release-notes link stacked. At 700 the one-line byline
-        # and the link fit side by side, so the extra room is about how much
+        # and Close fit side by side, so the extra room is about how much
         # of a release note line fits unwrapped. The height increase lives on the notes
         # browser below, the one widget that should absorb extra space; no
         # other geometry is set, so the dialog keeps sizing itself from its
@@ -556,7 +657,7 @@ class WhatsNewDialog(QDialog):
         # markdown, below a rule, which put it inside the scroll: on a release
         # with more than a screenful of notes -- the normal case -- a reader had
         # to scroll to the bottom to find out who maintains this build, and most
-        # never did. It now lives in the footer row below the browser (see
+        # never did. It now lives in the footer below the browser (see
         # below), so it is on screen from the moment the dialog opens.
         #
         # 320 minimum height, up from 260: the whole of the dialog's height
@@ -607,13 +708,37 @@ class WhatsNewDialog(QDialog):
         # double up with the notes above it. Some framings carry no byline, and
         # then no widget is added at all.
         #
-        # It shares one footer row with the "All release notes" link: byline
-        # on the left, link on the right, action buttons on their own row
-        # below. Stacked, the two small-text lines read as one block and cost a
-        # row of vertical space each; side by side they are two footer items
-        # with distinct jobs. When the byline is absent a stretch keeps the
-        # link on the right, where it always is.
-        footer = QHBoxLayout()
+        # The footer is two rows. The upper one, right under the notes, holds
+        # the "Show this changelog window after each update?" checkbox on the
+        # left and the "All release notes" link on the right; the lower one
+        # holds the byline on the left and Close on the right, the default
+        # (Enter) button in the ordinary bottom-right spot. When the byline is
+        # absent a stretch keeps Close on the right, where it always is.
+        #
+        # The checkbox is the popup preference stated the way round a reader
+        # expects (checked means it shows), and it is the inverse of the
+        # stored ``WHATSNEW_SUPPRESS_KEY``, the same key the Help menu toggle
+        # reads and writes, so either can undo the other. Each toggle writes
+        # at once; nothing waits for Close. The box opens on the stored state,
+        # so the dialog reads the store here.
+        options = QHBoxLayout()
+        self._show_box = QCheckBox("Show this changelog window after each update?")
+        self._show_box.setChecked(not whats_new_suppressed(
+            self._store().value(WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT)
+        ))
+        self._show_box.toggled.connect(self.setShowAfterUpdate)
+        options.addWidget(self._show_box)
+        options.addStretch(1)
+
+        # Same LinkLabel as the byline: this label has always had the same
+        # stale-anchor-color behavior on a live theme switch, and fixing one
+        # anchor in the dialog while leaving the other stale would show.
+        link = LinkLabel(f'<a href="{url}">All release notes on GitHub ↗</a>')
+        link.setOpenExternalLinks(True)
+        options.addWidget(link)
+        lay.addLayout(options)
+
+        row = QHBoxLayout()
         byline = content.get("byline")
         if byline:
             before, name, after = escape(byline).partition(LINKED_NAME)
@@ -622,42 +747,17 @@ class WhatsNewDialog(QDialog):
                 else before
             )
             # One line, never wrapped: the label's minimum width is the whole
-            # sentence, so the footer cannot squeeze it onto a second line.
+            # sentence, so the row cannot squeeze it onto a second line.
             self._byline = SecondaryLabel(markup)
             bf = self._byline.font()
             bf.setItalic(True)
             self._byline.setFont(bf)
             self._byline.setOpenExternalLinks(True)
             self._byline.setWordWrap(False)
-            footer.addWidget(self._byline, 1)
+            row.addWidget(self._byline, 1)
         else:
             self._byline = None
-            footer.addStretch(1)
-
-        # Same LinkLabel as the byline: this label has always had the same
-        # stale-anchor-color behavior on a live theme switch, and fixing one
-        # anchor in the dialog while leaving the other stale would show.
-        link = LinkLabel(f'<a href="{url}">All release notes on GitHub ↗</a>')
-        link.setOpenExternalLinks(True)
-        footer.addWidget(link)
-        lay.addLayout(footer)
-
-        # The last row: a "Show this changelog window after each update?"
-        # checkbox on the left and one Close button on the right, the default
-        # (Enter) button in the ordinary rightmost spot. The checkbox is the popup preference
-        # stated the way round a reader expects (checked means it shows), and
-        # it is the inverse of the stored ``WHATSNEW_SUPPRESS_KEY``, the same
-        # key the Help menu toggle reads and writes, so either can undo the
-        # other. Each toggle writes at once; nothing waits for Close. The box
-        # opens on the stored state, so the dialog reads the store here.
-        row = QHBoxLayout()
-        self._show_box = QCheckBox("Show this changelog window after each update?")
-        self._show_box.setChecked(not whats_new_suppressed(
-            self._store().value(WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT)
-        ))
-        self._show_box.toggled.connect(self.setShowAfterUpdate)
-        row.addWidget(self._show_box)
-        row.addStretch(1)
+            row.addStretch(1)
         self._close = QPushButton("Close")
         self._close.setDefault(True)
         self._close.clicked.connect(self.accept)

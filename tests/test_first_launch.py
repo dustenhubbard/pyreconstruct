@@ -840,14 +840,14 @@ def test_dialog_renders_the_byline_once_as_its_own_widget(qapp, kwargs, orienter
         dlg.deleteLater()
 
 
-def test_dialog_byline_is_one_line_beside_the_release_notes_link(qapp):
-    """The byline renders on one line, beside the GitHub link, at every width.
+def test_dialog_byline_is_one_line_beside_close(qapp):
+    """The byline renders on one line, beside Close, at every width.
 
     No break in the markup, no word wrap, and at the 700 minimum width the
-    whole sentence fits in its label with the link still to its right, so
+    whole sentence fits in its label with Close still to its right, so
     narrowing the dialog cannot push it onto a second line.
     """
-    from PySide6.QtWidgets import QApplication, QLabel
+    from PySide6.QtWidgets import QApplication, QPushButton
     from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
 
     content = F.whats_new_content("1.20.3", last_seen="1.20.1", text=WN)
@@ -858,8 +858,8 @@ def test_dialog_byline_is_one_line_beside_the_release_notes_link(qapp):
         assert dlg._byline.wordWrap() is False
         assert rendered_text(dlg._byline) == BYLINE
 
-        link = next(lab for lab in dlg.findChildren(QLabel)
-                    if "All release notes" in lab.text())
+        close = next(b for b in dlg.findChildren(QPushButton)
+                     if b.text() == "Close")
         dlg.show()
         line = dlg._byline.fontMetrics().height()
         for width in (700, 1100):
@@ -869,22 +869,22 @@ def test_dialog_byline_is_one_line_beside_the_release_notes_link(qapp):
                 f"byline is more than one line tall at width {width}"
             )
             assert dlg._byline.width() >= dlg._byline.sizeHint().width()
-            assert link.geometry().left() > dlg._byline.geometry().right()
-            assert link.geometry().top() < dlg._byline.geometry().bottom()
+            assert close.geometry().left() > dlg._byline.geometry().right()
+            assert close.geometry().top() < dlg._byline.geometry().bottom()
     finally:
         dlg.deleteLater()
 
 
-def test_dialog_byline_and_link_share_a_footer_row_below_the_notes(qapp):
-    """The byline is a footer under the notes, sharing one row with the link.
+def test_dialog_byline_shares_the_bottom_row_with_close(qapp):
+    """The byline is a footer under the notes, on the bottom row with Close.
 
-    The approved placement: byline bottom-left and the "Full release notes on
-    GitHub" link bottom-right of the same row, below the scrollable notes
-    browser and above the action buttons. The byline stays outside the scroll,
-    so it is on screen from the moment the dialog opens; sharing the row keeps
-    the two small-text footer items from stacking into what reads as a single
-    block. Asserted as rendered geometry rather than layout indexes, so any
-    layout that produces the row counts and none that merely declares it does.
+    The approved placement: the "Show this changelog window after each
+    update?" box and the "All release notes on GitHub" link share the row
+    right under the scrollable notes browser, and the byline sits bottom-left
+    on the row below it, with Close bottom-right. The byline stays outside the
+    scroll, so it is on screen from the moment the dialog opens. Asserted as
+    rendered geometry rather than layout indexes, so any layout that produces
+    the rows counts and none that merely declares them does.
 
     This is also the regression probe for keeping the byline out of the notes.
     Reverting that fix, by appending ``_{byline}_`` back onto
@@ -907,18 +907,16 @@ def test_dialog_byline_and_link_share_a_footer_row_below_the_notes(qapp):
         # nothing else, and the byline widget does not hang off the browser
         assert BYLINE not in notes.toPlainText()
         assert not notes.isAncestorOf(byline)
-        # below the notes...
+        # below the notes and below the link's row...
         assert byline.geometry().top() >= notes.geometry().bottom()
-        # ...on the same row as the link: their vertical extents overlap...
-        assert byline.geometry().top() < link.geometry().bottom()
-        assert link.geometry().top() < byline.geometry().bottom()
-        # ...with the byline on the left and the link on the right
-        assert byline.geometry().right() < link.geometry().left()
-        # the action buttons are the row below the footer
-        got_it = next(b for b in dlg.findChildren(QPushButton)
-                      if b.text() == "Close")
-        assert got_it.geometry().top() >= byline.geometry().bottom()
-        assert got_it.geometry().top() >= link.geometry().bottom()
+        assert byline.geometry().top() >= link.geometry().bottom()
+        # ...on the same row as Close: their vertical extents overlap...
+        close = next(b for b in dlg.findChildren(QPushButton)
+                     if b.text() == "Close")
+        assert byline.geometry().top() < close.geometry().bottom()
+        assert close.geometry().top() < byline.geometry().bottom()
+        # ...with the byline on the left and Close on the right
+        assert byline.geometry().right() < close.geometry().left()
         # and the footer keeps the byline's register: italic, name linked
         assert byline.font().italic() is True
         assert f'<a href="{F.HOMEPAGE_URL}">{F.LINKED_NAME}</a>' in byline.text()
@@ -935,7 +933,7 @@ def test_dialog_minimum_size_and_where_extra_space_goes(qapp):
 
     * Width 540 -> 700. The one-line byline and the release-notes link fit
       side by side well inside it (see
-      ``test_dialog_byline_is_one_line_beside_the_release_notes_link``); the
+      ``test_dialog_byline_is_one_line_beside_close``); the
       extra room is about how much of a release note line fits unwrapped.
     * The notes browser's minimum height 260 -> 320, which is the entirety of
       the height increase (about 13% on the whole dialog at the default
