@@ -13,6 +13,585 @@ Nightlies build new commits daily ahead of the next stable release. To run
 
 ## [Unreleased]
 
+## [1.24.0] - 2026-10-08
+
+### Added
+- **Install PyReconstruct on Linux with one command.**
+  `curl -fsSL https://pyreconstruct.org/install.sh | bash` installs the
+  AppImage, adds a `pyreconstruct` command and a menu entry, and needs no root
+  and no Python. Re-run it to update. Ending it with `bash -s -- --dev`
+  installs PyReconstruct Dev beside it, and `bash -s -- --uninstall` removes
+  it. On Linux, Help > Check for updates... now shows the one command that
+  updates your install, with a Copy button, instead of offering an update from
+  source that then failed.
+- **The macOS app and disk image are signed with a Developer ID and notarized
+  by Apple.** The first launch shows the usual question for an app downloaded
+  from the internet; click Open. The Terminal step that earlier versions
+  needed is gone, and the disk image no longer carries the first-launch guide.
+- **PyReconstruct checks each update's signature before installing it.** Every
+  release carries a signed list of checksums, and PyReconstruct refuses a
+  download that is missing from the list or whose signature does not match.
+- **Delete a trace from just the sections you pick.** Delete from sections...
+  sits under Copy to sections... in the field and trace list menus. It uses the
+  same section picker and removes the selected trace names from only those
+  sections. The default shortcut is Cmd+Option+X (Ctrl+Alt+X on Windows and
+  Linux), and undo brings the traces back.
+- **A palette button can fill in a new object's groups and custom columns.**
+  Edit a palette button, pick the groups a new object should join, and set
+  each custom column from its own drop-down of the column's options. The first
+  trace you draw from that button puts them on the object, so there is no trip
+  back to the object list; objects that already exist are left alone. Renaming
+  a column renames it on every button, and deleting a column or one of its
+  options clears it there, so a button never gives a new object a value that
+  is not a current option.
+- **Each object can have its own smoothing window.** Set it in the Smoothing
+  drop-down of Edit attributes of traces... in the object list; the trace mode
+  option stays the default.
+- **The object list shows which objects are in the 3D scene.** A 3D column has
+  a checked box on each object in the scene, and it updates as you add or
+  remove objects, clear the scene, undo in the 3D window, or close it. Clicking
+  an empty box adds the object to the scene, and clicking a checked box removes
+  it. Hide the column with Columns > Set columns.... The column is part of the
+  default column list, and a series saved by an earlier version gets it the
+  first time its object list opens.
+- **An object list can show only the objects you have selected.** Lists >
+  Object list of selected traces opens one limited to the objects with a trace
+  selected in the field. It keeps the usual columns and updates when the
+  selection changes. Filter > Selected traces only turns this on or off in any
+  object list.
+- **Auto-backup and the backup folder can be set once for every series.** Set
+  them under My Defaults in File > Backup > Settings..., where `{series}` in
+  the folder becomes each series' code. A series with its own backup settings
+  keeps them.
+- **You can align a section first and propagate the alignment afterward.**
+  Alignments > Propagate transform > Start propagation recording picks up every
+  transform change made on the current section since you last changed the
+  transform of a different section, so an Align by correlation you have
+  already checked can go straight to Propagate to start or Propagate to end.
+  The record starts over after you record, undo or redo a transform change,
+  switch alignments, or make a series-wide change such as importing
+  transforms, a series undo, or inserting or reordering sections.
+- **Set Attributes offers the tags already used in the series.** The Trace
+  Tags rows list the tag set tags first, then every other tag in use, each
+  once.
+- **Focus mode says it is on.** A label at the top of the field names the
+  focused object and the key that turns it off, for example `Focus: d001.
+  Press X to exit.`
+- **Bug reports from the Help menu and the error windows arrive with the
+  details filled in.** Help > Report a bug... and Help > Request a feature...
+  each open a short GitHub form with your version and operating system already
+  in About your setup, so only what you were doing is left to type. The crash
+  window, the Save failed window, and Help > Copy diagnostic report have a
+  Report a bug on GitHub button that opens the form with the report in its
+  Error report box, and an Email developers button that opens a new email to
+  `issues@pyreconstruct.org` with the report in it.
+- **The 3D scene and the 3D exports show a progress bar with a time
+  estimate.** Generating 3D... in the status bar was a spinner that said
+  nothing, and exporting 3D meshes or 3D data ran with no bar at all. Writing
+  the mesh files and measuring surface area and volume each show a bar now.
+- **Source installs run on Python 3.12 and 3.13 as well as 3.11.** This
+  includes the Linux from-source installer. On 3.13 PyReconstruct uses numpy 2
+  and the opencv, scikit-image and trimesh releases built for it; a 3.11
+  install gets the same packages as before. The Windows, macOS and AppImage
+  builds carry their own Python.
+- **`PyReconstruct --check-history` finds history rows PyReconstruct cannot
+  read.** From a source install, give it a `.jser` or a folder. It lists the
+  file, line and text of each row and changes nothing. The installed apps take
+  a `.jser` path only.
+
+### Changed
+- **Series > Clean up > Duplicates... replaces Remove duplicate traces... and
+  Find duplicates named differently....** One scan lists each traced structure
+  once, whatever its names. Combining a row keeps one trace under the name you
+  pick, the one with the most points, and gives it the tags of the rest; the
+  others are deleted, and every row you combine is one undo step. A row that
+  would delete a trace of a locked object is skipped, and keeping a locked
+  trace only adds tags to it. The `?` help says what the Overlap number means.
+- **The clean-up lists open with one line.** Duplicates..., Remove pixel-dust
+  traces..., the self-crossing lists and the smoothing list say what they hold
+  in one line, and the full explanation is in the `?` tooltip beside it.
+- **Selected traces stand out on any image and in any color.** A selected
+  trace has a thin black and white outline around its own color, so it shows on
+  light and dark images alike.
+- **Progress bars say how long is left.** Renaming, deleting, recoloring, and
+  every other task that walks the sections shows a time estimate once it has
+  run long enough to know. Opening a series still shows a plain bar.
+- **A new update no longer opens a dialog at launch.** The daily check puts
+  `Update available` in the status bar, and it stays there until you click it,
+  which opens the update the same way Help > Check for updates... does.
+- **The What's new pop-up is on by default and opens once after an update.**
+  It opens once for everyone with this version, including anyone who turned it
+  off before. Turning it off again, from the pop-up or Help > Turn off What's
+  new pop-up, is kept, and a fresh install does not show it.
+- **The What's new dialog has a cleaner look.** Each version is a large heading
+  with its date beside it, and each item starts with a dash, in larger text
+  with more space between items. A "Show this changelog window after each
+  update?" checkbox at the bottom replaces the "Don't show again" button, and
+  Got it is now Close.
+- **The What's new footer reads "A fork of PyReconstruct, maintained by Dusten
+  Hubbard."** It sits on one line beside Close, and PyReconstruct still links
+  to the home page.
+- **The bottom of the Help menu is one flat list for reporting a problem.**
+  Copy diagnostic report, Email developers, Report a bug..., Request a
+  feature..., See unresolved issues, View log file, and Open log folder sit in
+  that order, with Online resources last. The Report issues (GitHub) submenu
+  is gone and its items moved up a level; nothing was removed.
+- **Add to scene on the z-trace right-click menu moved inside 3D.** It sits
+  above Remove from scene, as in the object menu, and the top-level Add to 3D
+  scene row is gone.
+- **View > Show/hide lists is now spelled Show/Hide lists.** A shortcut you set
+  for it keeps working.
+- **Saving a large series needs far less memory.** PyReconstruct used to read
+  every section into memory and build the full file before writing it. It now
+  writes the file one section at a time, and the saved file is exactly the
+  same as before.
+- **Optimize brightness and contrast needs far less memory on large
+  sections.** It used to copy the full image to floating point first, about
+  2 GB extra on a 16384 by 16384 section. It now counts the pixel levels in
+  place.
+- **Opening a series is a little faster.** The pass that measures every trace
+  when a series opens reads each section's points from the array the section
+  already keeps, instead of building a list of points per trace and converting
+  it back.
+- **PyReconstruct Dev is a nightly build, and each app updates only from its
+  own channel.** Each morning that main has new commits, a dated build of
+  PyReconstruct Dev is published as a pre-release. Its tag ends in the UTC
+  date and time, such as `v1.24.0.dev202610081408`, so more than one can ship
+  in a day. It installs beside PyReconstruct, and Help > Download
+  PyReconstruct Dev (nightly)... links to it. PyReconstruct is offered stable
+  releases only and PyReconstruct Dev nightly builds only, so neither is ever
+  offered the other one's installer.
+  The Help menu, the update window, and the welcome note say Nightly, and the
+  welcome note points at Help > Automatically check for updates instead of a
+  channel switch that no longer exists.
+- **PyReconstruct and PyReconstruct Dev share one set of settings.** Options,
+  shortcuts, the palette layout, and the recent series list set in one app
+  show up in the other; only the What's new pop-up and the window position
+  stay separate.
+
+### Fixed
+- **Insert section and Reorder sections no longer overwrite a section.** With
+  unsaved changes, both could write the section you were on over the one that
+  took its number, so one section showed up twice and another was lost. On a
+  series reopened from its working folder after a crash, Reorder sections
+  could give most sections another section's image and traces. Every section
+  now keeps its content.
+- **Deleting every section is refused, and Insert section refuses a negative
+  section number.** The first used to delete all the section files, clear
+  undo, and crash, leaving a series that could not be saved; the second was
+  accepted, and the save then dropped a section and left the working copy
+  unreadable. Both now say what is wrong and change nothing.
+- **Save As no longer deletes another series' unsaved work or mixes two
+  series.** Saving over a `.jser` that is open in another window, or that has
+  objects in the 3D scene, stops and says so. Saving over one that holds
+  unsaved work from a session that did not close asks first, and No keeps that
+  work.
+- **Save As keeps each section on its own file when the series name is short
+  or numeric.** A series named "1" saved as "2" pointed section 11 at section
+  22's file, so the next save overwrote section 22. The series and the open
+  sections now get the same rename as the files on disk.
+- **Save As refuses a name that differs only in case on an empty mounted
+  drive.** A drive that ignores case, mounted in a folder that does not, let
+  `b.jser` through while the 3D scene still held objects from a deleted
+  `B.jser`.
+- **Opening the series that is already open reloads it.** Picking the open
+  series in File > Open series, or opening its `.jser` from your file
+  browser, used to delete its working folder, so PyReconstruct crashed and
+  every later save failed. It now reloads the series from its `.jser` after
+  the usual save prompt.
+- **A new series leaves existing folders alone.** Making a new series from
+  images or a legacy `.ser` used to empty any hidden folder with the same
+  name, including the working folder of a series open in another window. It
+  now makes a folder of its own.
+- **Opening a series cleans up files left behind by an interrupted save.** A
+  crash or power loss in the middle of a save could leave a hidden `.save-`
+  temp file next to the `.jser`, as large as the series itself. PyReconstruct
+  now deletes these when a series opens from its `.jser`, leaving alone any
+  that changed in the last ten minutes in case a save is still writing one.
+- **A save, close or backup started while a save is still writing is skipped
+  with a plain notice.** It used to open the error-report window, and a close
+  shut the window before the save had finished. Save As chosen then is skipped
+  before its file dialog opens, instead of asking where to save first.
+- **A backup file always lands in the backup folder.** A `/`, `\` or `:` in
+  the series code or any other part of the backup name now becomes `_`, so a
+  code such as `/tmp/outside` no longer saves the backup outside the folder.
+- **Unsaved traces survive the commands that reload a section.** Toggling a
+  group, switching alignment, importing labels, propagating a transform,
+  Optimize brightness and contrast, and Edit all image sources each reloaded
+  sections from disk without saving first, so traces drawn on the current or
+  flickered section since the last write disappeared and the next save wrote
+  the section without them. Each now saves first.
+- **Double-clicking in the 3D scene no longer loses unsaved edits.** It now
+  saves the section you leave, the same way paging through sections does.
+- **A merge that cannot keep every trace leaves them all alone.** A trace
+  smaller than one merge grid cell has nothing to outline, and merging it used
+  to delete the inputs before finding that out; merging a long trace with a
+  small one kept the long outline and lost the small trace. If any trace is
+  too small to keep, the merge now stops before deleting anything.
+- **Merging no longer deletes most of a very thin trace.** If the merge would
+  keep less than half of a trace's area, it leaves every trace as it was and
+  says so.
+- **Merging traces gives the same outline at any zoom.** Merge used to work on
+  the screen's pixels, so a merge while zoomed in kept more detail than the
+  same merge while zoomed out. It now works on a grid tied to the image, four
+  cells per image pixel, and the view no longer matters.
+- **Backing out of a scissors cut keeps the trace, and unlocking a section in
+  the middle of a cut keeps the object.** Holding Backspace down to the last
+  point of a cut used to end it with the trace deleted and no undo;
+  PyReconstruct now puts the original trace back as it was. Choosing Unlock
+  current section while cutting used to drop the object from the object list
+  and log it as deleted; it now refreshes only the section list.
+- **Saving in the middle of a scissors cut no longer loses the trace.** A save,
+  close, open, reload or propagate now backs out of an unfinished cut first,
+  the same as Backspace, and a double-click in the 3D scene finishes it first,
+  the same as changing sections.
+- **Undo works in the middle of a scissors cut on a section with nothing else
+  to undo.** It was grayed out there, so only Backspace could take the cut
+  back.
+- **Undo after a scissors cut that merges into another trace gives back both
+  traces as they were before the cut.** It used to give back the merged trace.
+- **A scissors cut that merges no longer asks to unlock a locked object
+  selected in the trace list.** The merge only touches the traces it found.
+- **Smoothing no longer deletes or collapses very small traces.** A closed
+  trace smaller than the smoothing spacing used to collapse to a single point
+  and vanish on the next save, and one a few thousandths of a unit across came
+  back as a thin triangle. Both now stay as they were, Smooth object traces
+  lists the skipped traces, and larger traces smooth exactly as before.
+- **The knife cuts an open trace where the stroke crosses it, and where the
+  stroke runs along it.** A stroke that crossed an open trace two or more
+  times could join a piece to a crossing on another part of the trace, adding
+  an edge that was never drawn; the pieces now follow the original trace
+  exactly. A stroke that followed the trace for a stretch cut nothing there;
+  it now cuts at both ends of that stretch, the same as a stroke drawn just
+  beside the trace.
+- **Calibrate pixel size... and Manually set pixel mag... can be undone, and
+  Calibrate refuses a length of zero or less.** A length of 0 used to move
+  every point in the series to the origin, and a negative one mirrored the
+  series, with no undo. The prompt now asks for a number greater than zero,
+  and one undo puts back the old pixel size and every trace as it was.
+- **Edit radius keeps a trace as it is when you press OK unchanged.** On a
+  scaled section the prompt showed a different radius from the one on screen,
+  so an untouched OK shrank or grew the trace. The prompt now shows the radius
+  you see, and it refuses zero or a negative radius, which used to collapse or
+  flip the trace.
+- **Edit attributes keeps each trace's fill condition when they differ.**
+  With two filled traces selected, one filled when selected and one filled
+  always, an untouched OK took the fill off both. A fill box the traces
+  disagree on now shows as partly checked and leaves each trace alone unless
+  you click it.
+- **OK in Edit attributes... no longer removes a fill whose condition is
+  none.** Such a fill, from Edit all palettes... or a `.jser` file, now opens
+  with Fill when unselected ticked, which is how it draws.
+- **Pasting no longer adds traces to a locked object.** Copying a locked
+  object's trace is allowed, and pasting it used to add a second trace to that
+  object. Paste is now refused with the same message as drawing into a locked
+  object.
+- **Redo replays steps in the right order, and a new action clears redo.**
+  After a series step and then a section step were both undone, redo replayed
+  the section step first and the series step then reverted it. Redo also
+  survived a new action and replayed the old step over it. Redo now replays
+  steps in the order they were made and is cleared by any new action, which
+  also stops it from failing after a z-trace is deleted or renamed.
+- **Undo and redo bring back everything an object had.** Undoing the delete
+  of an object's last trace, redoing the first trace of a recreated object,
+  redoing a rename, and Undo with Only this section after an object list
+  delete or rename or on the first section of a rename all used to bring the
+  trace back without the object's groups, custom columns, comment, 3D
+  settings, alignment, hosts and travelers. They now restore all of it. A host
+  and its traveler deleted on different sections come back linked, and the
+  object list's Alignment cell refreshes at once.
+- **Groups follow undo and redo.** A group restored by undo gets its row under
+  View > Groups again, hidden if it was hidden, and Remove from all groups
+  works on it. Undoing the draw of a group's only object takes its row off the
+  menu. A trace brought back by undo or redo stays hidden while its group is
+  hidden, and drawing a trace into a hidden group shows the group again, so
+  the new trace does not vanish. Closing Edit 3D settings... with nothing
+  changed no longer clears redo.
+- **Undo leaves the object list's columns alone.** Every series undo and redo
+  put back the column choices from when the step was made, so a column turned
+  on after adding an object to a group was hidden again by undoing the group
+  add. Columns now change on undo only when the step created or deleted a
+  categorical column.
+- **Renaming an object on some of its sections keeps both objects whole.** The
+  old object used to lose its hosts and travelers to the new one, and both
+  shared one set of custom column values, so setting a column on one changed
+  the other. Each now keeps its own hosts, travelers and columns.
+- **Adding many objects to a new group is fast, and Remove from group... no
+  longer fails partway.** Add to group... rebuilt the menu bar once per object
+  when the group was new, so 2,000 objects took about 40 seconds; it now
+  rebuilds it once and finishes in under a second. Remove from group... stopped
+  with an error when the selection included an object that was not in the
+  group, or when the group had come back through an undo; it now finishes and
+  removes the emptied group from the Groups menu.
+- **Arrow keys in a focused list move through the list.** Pressing an arrow
+  key in the object list or trace list used to nudge the selected traces, or
+  the section when nothing was selected, and the list row stayed put. Nudging
+  now works only when the field has focus.
+- **Export... from a list writes the Locked and CR columns.** The object and
+  section lists exported an empty Locked cell for every row, and the object
+  list an empty CR cell. Locked exports `yes` or `no`; CR exports `yes` for
+  curated rows, `partial` for rows that need curation, and `no` for blank
+  rows.
+- **Numeric names keep one row in the trace and z-trace lists.** With `1`,
+  `2` and `10` in a list, editing `2` added a second row for it, and deleting
+  it did not remove its row.
+- **The z-trace list keeps its filters when it updates.** With a regex or
+  group filter on, changing a section thickness or editing a z-trace outside
+  the filter added the hidden z-traces back to the list.
+- **Saying No to unlock from the trace list leaves its checkboxes working.**
+  Ticking Hidden or Closed on a locked object and declining to unlock it left
+  the box ticked with nothing changed, and every later checkbox in the list
+  did nothing.
+- **The trace list has Refresh in its List menu,** as the other lists already
+  did.
+- **A blank number box in Series > Options asks for a number.** Clearing a
+  box such as the grid size and clicking OK saved an empty value, and the grid
+  tool then failed on the next click. The dialog now stays open until the box
+  has a number; the scale bar's fixed length can still be left blank to keep
+  the length it has.
+- **Importing or switching palettes no longer crashes or breaks the series.**
+  Importing a shorter palette CSV with a button selected past its end crashed,
+  and a save then left a series that would not open. Picking a palette of
+  another length in Edit all palettes..., or removing the current one, kept
+  the old buttons and crashed. A series saved with an empty palette crashed on
+  open. All of these open and work now, a palette CSV with no rows is refused,
+  Edit all palettes... refuses to save an empty palette, and importing a
+  palette marks the series as changed.
+- **Importing palettes from another series brings clean buttons.** Imported
+  buttons keep only custom column values this series can hold, and after an
+  import over the palette on screen, the palette shows the new buttons and
+  drawing uses them.
+- **Editing a default palette button no longer changes a second button.**
+  After Reset current palette, each button shared its trace with the button
+  ten places after it, so an edit changed both, and the save kept both.
+- **Clean-up lists act on the trace a row names, not an identical neighbor.**
+  With two traces of the same color and points under one name on a section,
+  deleting the second from the duplicates, pixel-dust or empty traces list
+  deleted the first, and Repair self-crossing traces... repaired the open
+  lookalike and left the crossed trace alone. Each row now acts on its own
+  trace, once, and the repaired trace keeps its place so Go to trace frames
+  it. If a trace moved after the scan and more than one trace could be it,
+  PyReconstruct leaves it and lists it.
+- **Clean-up lists close when you open another series.** A list left open
+  could delete or combine the matching trace in the series opened next.
+- **A pixel-dust or Duplicates scan stops and opens no list if another series
+  opens during it.** The list named traces in the first series but deleted or
+  combined the matching trace in the second.
+- **Repair self-crossing traces and Remove empty traces stop if another series
+  opens while they ask.** Saying yes used to change the matching traces in the
+  series opened from the Finder.
+- **Opening a series during a Duplicates combine leaves it unchanged.** The
+  combine marked it modified and refreshed its lists, and could close the
+  series it was combining without asking to save it.
+- **A task cut short by opening another series from the Finder says so.** It
+  reads nothing more from the series it was working on, and its error names
+  that series and how many sections it finished.
+- **Renaming the current alignment keeps it on.** In Alignments > Edit
+  alignments..., renaming the alignment in use and clicking OK with no row
+  selected switched the view to no-alignment.
+- **Importing transforms says what it could not read.** A `.txt` file that
+  ended with a blank line, or started with a header line, imported nothing
+  and still showed the success message; blank lines are now skipped, and a
+  line that does not fit stops the import with a message that names it. SWiFT
+  transforms go to the sections in order, so a series numbered from 1 imports
+  right, and the cal grid identity goes to the marked section rather than the
+  first. A file that is not JSON or not a SWiFT project, a project with no
+  transforms at the chosen scale, or one with the wrong number of sections
+  gets a message instead of an error report.
+- **Optimize brightness and contrast lands on the mean and deviation you ask
+  for.** It used to treat both settings as linear, so a dark section asked for
+  128/60 came out nearly white.
+- **Moving to a section no longer nudges its brightness or contrast.** Showing
+  a value such as 99 on the palette's sliders wrote it back rounded, as 98.
+- **Traces sit exactly on the section image.** Each screen pixel shows the
+  image pixel under its center, the same way traces and the zarr label overlay
+  are placed, so traces no longer sit up to a pixel off the image, or more when
+  zoomed out on a rotated section, and the image no longer loses pixels to
+  black at its edges.
+- **Convert to scaled images works on images of different sizes.** It made
+  the smaller scales from the first image alone, so a larger image later in
+  the folder stopped the conversion and left only full-size images.
+- **PNG export works from the installers, and large sections export to SVG
+  and PNG.** PNG export needed the Cairo library, which the Windows and macOS
+  installers never included; it now draws with Qt. A section image over about
+  13,000 pixels on a side failed both exports because the image library
+  refused it as too large; the export now opens it, since it is your own
+  image.
+- **A new series from a zarr made by another tool gets the right pixel size
+  and leaves that zarr alone.** Neuroglancer stores the voxel size in
+  nanometers, and the import used that number as micrometers per pixel, so a
+  4 nm zarr came in 1000 times too large; it now converts from nanometers
+  unless the zarr says micrometers, reads `voxel_size` as well as
+  `resolution`, and uses 4 nm pixels and 50 nm sections when the zarr has no
+  voxel size at all. The import also wrote into the source zarr as it worked,
+  and a failed import left it changed; the source is now opened read only, and
+  a failed import removes the images zarr it started.
+- **Zarr labels import onto the image grid whatever their metadata says.**
+  Labels coarser or finer than `raw`, labels that share an offset with the
+  images, labels with no `resolution` or `voxel_size`, a voxel size stored as
+  0 by an older export, and a four-entry channel-first voxel size such as
+  `[1, 0, 0, 0]` each placed labels off their traces, often outside the image,
+  or made Import labels or the label overlay fail. All now land in place.
+- **Zarr labels import in place when the metadata has a channel entry.** A
+  four-entry `offset`, `voxel_size` or `resolution` is now read channel first
+  on the images as well as the labels, so the channel entry no longer shifts
+  the labels or passes for the section thickness.
+- **A `(1, z, y, x)` zarr label array imports and shows in the label overlay
+  like a 3D one.** Label import used to fail on its first section and skip the
+  rest, and the overlay drew nothing.
+- **Clicking a label in the zarr overlay selects the label drawn there.** The
+  right half of each label pixel picked its neighbor, so Merge labels could
+  rewrite the wrong label on disk, and panning by part of a pixel drew the
+  overlay offset from the image under it.
+- **A zarr conversion that fails partway says so.** When a section failed,
+  the Task Error window showed and the conversion carried on: the export left
+  a zarr of blank images, the label import said it had worked, and a new
+  series from a zarr was still built. Now the export deletes the zarr it made
+  and exits with an error, the label import skips its success message, and no
+  new series is created.
+- **Zooming no longer fails on a zarr whose conversion stopped partway.** A
+  scale with no `.zarray` is skipped, and a section with none opens with no
+  image.
+- **The zarr window shows the time left from the first step.** A start time
+  of zero was read as no start time, so the estimate never appeared.
+- **Every object gets its own label in a Neuroglancer (Zarr) export.** Labels
+  came from a hash of the name that ignored case and punctuation, so `Axon`
+  and `axon` became one segment, and an object named `0` or `_` got label 0
+  and was left out as background. Each object in the group now gets its own
+  number starting at 1, so label numbers differ from an export made by an
+  earlier version, and `gt_lookup` lists the objects from every section.
+- **Neuroglancer (Zarr) export keeps sizes, offsets and padding exact.** The
+  voxel size was cut to whole nanometers, so 2.54 nm pixels were stored as
+  2 nm and pixels under 1 nm as 0, which also broke label import from those
+  zarrs. Label crop offsets were rounded to whole nanometers, putting labels
+  up to a pixel off at pixel sizes under 1 nm. With Export all tissue, every
+  section used the first section's image size, which cut off larger images.
+  The group padding you enter never reached the export, which always used 50
+  pixels. A gap in section numbers stopped the export or put labels one slice
+  off. And `create_ng_zarr.py` ignored `-m`. All of these are right now.
+- **Holes and islands come out right in 3D and in label export.** A negative
+  trace used to fill its hole with the object's label on export. A positive
+  trace drawn inside a negative trace of the same object was filled and then
+  cleared with the hole, so the mesh, the volume Export quantitative data
+  measures, and the label export all left the island out. A negative trace
+  beside such an island cleared nothing. Each island now fills back in after
+  the hole, less every negative that touches or cuts it, and objects without
+  an island mesh exactly as before.
+- **Label export clears an island's edge under a negative trace less than a
+  pixel away.** A negative within a pixel's diagonal of an island in a hole now
+  cuts it at every export scale, as one within a voxel's diagonal does in 3D.
+- **The 3D scene follows the series that is open.** After File > Open series
+  with the 3D window up, Add to scene, Remove from scene and the object list's
+  3D box acted on the first series' objects. After File > Save as..., objects
+  from the open series were treated as if they came from another one, so a
+  double-click no longer jumped to them in the field. And Revert selected...
+  gave an object added with From other series... the color its name had in
+  the open series rather than its own.
+- **Host groups in the 3D scene follow a series undo.** After Clear host(s)...
+  and an undo, Select object's host group still used the old hosts.
+- **Loading a 3D scene with missing objects names them all.** A scene that
+  named two objects the series no longer has raised an error when loaded, and
+  with some of its objects still there the prompt named the wrong ones.
+  PyReconstruct now lists every missing object and goes on with the rest if
+  you say yes.
+- **Export scene writes only the scene and names what it could not export.**
+  It used to delete other files in the folder; it now writes only the scene
+  `.obj` and `.mtl`, asks before replacing an existing `.mtl`, and gives
+  objects that share a name their own names in the scene. When the scene is
+  empty or no object exports, it writes no files and shows `No scene
+  exported.`
+- **Export quantitative data writes every row it can and measures
+  spheres-mode objects exactly.** One object that failed to measure, or one in
+  contours mode, which has no surface or volume, kept the CSV from being
+  written at all; the other rows are now written and the notice names the
+  objects left out. Spheres-mode volume and area were measured from the coarse
+  sphere mesh drawn in the 3D scene, so an object with two or more traces came
+  out 13% low in volume and 7% low in area; both now come from the radii.
+- **Export to XML writes magnification, thickness and colors in full.** The
+  image magnification and the section thickness were rounded to four decimals,
+  so `0.00254` became `0.0025` and the images came out 1.6% off their traces,
+  and `0.04787` became `0.0479` on every section. The average thickness came
+  out as `0.04700000000000001`. Palette and z-trace colors read back one step
+  darker on every round trip. Each value now goes out as it is stored, or to
+  twelve significant figures, and colors go out as values that read back the
+  same.
+- **Export to XML keeps every trace as it is and finishes on every series.**
+  Reconstruct reads a closed trace as negative when its points run clockwise,
+  and the export reversed every negative trace without checking, so a hole
+  imported from XML or any trace drawn clockwise came back with the opposite
+  sign; points now go out in the direction that matches the trace, and traces
+  on mirrored sections open with the right sign. Open palette traces went into
+  the `.ser` as closed. A contour whose fill mode PyReconstruct has no style
+  for stopped the export at its section; it now exports as a solid fill. An
+  image or palette name with `&` or `"` stopped the export; those names now
+  export and import back unchanged.
+- **Export to XML writes a fill condition of none the way PyReconstruct draws
+  it.** A filled trace with that condition is filled when unselected, but the
+  export wrote it as filled when selected, so it came back the other way
+  around after an import.
+- **XML export uses the file name you choose and asks before replacing
+  files.** It used to name every file after the series, so a new name wrote
+  nothing under it and replaced the series' existing files without a prompt.
+  It now lists any file it would replace, and any old section files under the
+  name, before it writes.
+- **New series from a legacy `.ser` opens the series as Reconstruct saved
+  it.** Contours marked hidden all came in shown; they now open hidden. The
+  inverse of a polynomial transform could settle on the wrong solution, so a
+  trace opened in the wrong place or with the wrong sign. Negative traces in a
+  contour with its own transform came in wound the other way. A series with
+  z-traces had the 20 default palette traces added after its own 20. Another
+  series in the same folder broke the import, and converting a series named
+  `ser` again could delete its XML files; only the chosen `.ser` and its own
+  `<name>.<number>` sections are read now.
+- **ImageJ `.roi` import keeps each shape as ImageJ drew it, and open traces
+  stay open on export.** Polygons and rectangles come in as their own corners,
+  composite and multi-point rois keep every part with holes as negative
+  traces, traces land in place on a transformed section, and a file that
+  cannot be imported is listed while the rest still import. Export used to
+  write open traces as FREEHAND, which ImageJ reads as a closed shape, so a
+  dendrite centerline reported an area instead of a length; open traces now
+  export as POLYLINE and one-point traces as POINT, and both come back open.
+  ImageJ `.roi` import and export need the optional `roifile` package, which
+  the installers do not include; they are available from a source install.
+- **A comma in your username or a z-trace name no longer breaks the series
+  history.** The log split each row on commas, so a name like `Smith, John`
+  made crash recovery, Lists > Series history and importing from another
+  series fail with an error. Such names are now quoted in the log. A row that
+  an older version already wrote with such a name still cannot be read.
+- **Importing traces from a section range trims their history to that
+  range.** An edit logged on sections 2 to 7 in the other series kept that
+  range in an import of sections 5 to 9, and later imports then treated those
+  sections as modified.
+- **De-randomize checks a project before it moves anything, and keeps
+  z-traces on the right sections.** It used to stop with a project half
+  decoded; it now checks every image and file first, and when something is
+  wrong it leaves the project as it was and says what to fix. Deleted
+  sections, a `.DS_Store`, `.TIF` images and a `decode.txt` made on Windows
+  all decode now, and each decoded series gets only its own z-trace points,
+  moved to its new section numbers.
+- **Help > Email developers writes to `issues@pyreconstruct.org`.** It still
+  opened a mail addressed to the two original developers' personal addresses.
+- **The install dialog blocks every window while pip runs.** It blocked only
+  the main window, so another PyReconstruct window still took clicks during a
+  package install from a source install.
+- **Launching PyReconstruct no longer shows "Loading series data..." before
+  you choose a series.** Opening a series now names it in the progress bar.
+- **Yes is the default button when images are not found.** Return opens the
+  folder picker to locate them.
+- **Dragging with the pointer no longer crashes when the press was dropped.**
+  A finger touch on Windows, or a touch gesture, could swallow the press but
+  leave the left button marked as down, and the next move raised an error.
+- **Small traces far from the origin get the right area, centroid, and
+  radius.** PyReconstruct measures each trace from its own first point, so a
+  tiny trace at large coordinates reads the same as it would anywhere else,
+  and other traces change only in the last digits.
+
+### Removed
+- **Series > Clean up > Remove duplicate traces... and Find duplicates named
+  differently....** Duplicates... does both jobs.
+- **The Help menu's Report issues (GitHub) submenu.** Its items sit directly
+  in the Help menu's reporting list.
+
 ## [1.23.0] - 2026-09-27
 
 ### Added
