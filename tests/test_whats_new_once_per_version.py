@@ -561,6 +561,31 @@ def test_help_toggle_reenables_the_popup(main_window):
     assert calls == [("1.21.0", "1.20.3")]
 
 
+def test_an_open_dialog_follows_the_help_toggle(main_window):
+    """The Help toggle changes the preference while the dialog is open, and the
+    dialog's checkbox shows the change: one click on the box undoes it."""
+    from PySide6.QtCore import QSettings
+
+    settings = QSettings(W.ORG, W.APP)
+    settings.remove(F.WHATSNEW_SUPPRESS_KEY)
+    main_window.syncWhatsNewPopupToggle()
+    dlg = W._default_show(main_window, "1.21.0", last_seen="1.20.3")
+    try:
+        assert dlg._show_box.isChecked() is True
+
+        main_window.togglewhatsnew_act.trigger()       # Help: popup off
+        assert F.whats_new_suppressed(settings.value(F.WHATSNEW_SUPPRESS_KEY))
+        assert dlg._show_box.isChecked() is False
+
+        dlg._show_box.click()                          # one click: back on
+        assert dlg._show_box.isChecked() is True
+        assert not F.whats_new_suppressed(settings.value(F.WHATSNEW_SUPPRESS_KEY))
+        main_window.helpmenu.aboutToShow.emit()
+        assert main_window.togglewhatsnew_act.isChecked() is False
+    finally:
+        dlg.close()
+
+
 # ---- the log line that makes an absence readable -----------------------------
 #
 # The startup hook swallows its own failures on purpose, so nothing must be able

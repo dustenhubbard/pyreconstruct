@@ -968,3 +968,68 @@ def test_every_code_span_after_a_path_keeps_its_own_text(qapp):
         assert len(tint) == 1
     finally:
         browser.deleteLater()
+
+
+# ---- characters outside the BMP ----------------------------------------------
+
+@pytest.mark.parametrize("item,styled", [
+    ("Use Cmd+S to save.", "Cmd+S"),
+    ("Use View ▸ Show/Hide lists now.", "View ▸ Show/Hide lists"),
+    ("Use `/a/b` and `c-d` here.", "/a/bc-d"),
+])
+def test_an_emoji_before_a_run_leaves_the_text_as_written(qapp, item, styled):
+    """An emoji is one character but two places in a Qt document. With one
+    before a shortcut, a menu path or a code span, the item still reads and
+    copies as written, and only the run takes the code style."""
+    from PyReconstruct.modules.gui.dialog.whats_new import (
+        ITEM_MARKER, make_notes_browser,
+    )
+    browser = make_notes_browser(f"- 🧠 {item}")
+    try:
+        expected = ITEM_MARKER + "🧠 " + item.replace("`", "")
+        assert _shown(browser.toPlainText()) == expected
+        browser.selectAll()
+        assert _shown(browser.createMimeDataFromSelection().text()) == expected
+        code = "".join(_shown(f.text()) for f in _fragments(browser.document().begin())
+                       if f.charFormat().fontFixedPitch())
+        assert code == styled
+    finally:
+        browser.deleteLater()
+
+
+def test_an_emoji_in_a_version_heading_leaves_the_date_whole(qapp):
+    """The date after a version takes the secondary style over exactly its own
+    text when the heading has an emoji before it."""
+    from PyReconstruct.modules.gui.dialog.whats_new import make_notes_browser
+    browser = make_notes_browser("### 1.0 🧠 — 2026-01-02\n\n- One.")
+    try:
+        heading = browser.document().begin()
+        sizes = {}
+        for fragment in _fragments(heading):
+            size = fragment.charFormat().fontPointSize()
+            sizes[size] = sizes.get(size, "") + fragment.text()
+        assert sorted(sizes.values()) == sorted(["1.0 🧠", " — 2026-01-02"])
+    finally:
+        browser.deleteLater()
+
+
+def test_two_open_dialogs_keep_their_boxes_in_step(qapp):
+    """With the startup dialog and the Help one open together, a click on
+    either box shows on the other, and only the click writes."""
+    from PySide6.QtWidgets import QWidget
+    window = QWidget()
+    settings = FakeSettings({F.WHATSNEW_SUPPRESS_KEY: False})
+    content = F.whats_new_content("1.21.0", last_seen="1.20.1", text=NOTES)
+    from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
+    first, second = (WhatsNewDialog(window, "1.21.0", content=content,
+                                    settings=settings, url="https://example.test")
+                     for _ in range(2))
+    try:
+        first._show_box.click()
+        assert second._show_box.isChecked() is False
+        second._show_box.click()
+        assert first._show_box.isChecked() is True
+        assert settings.writes == [(F.WHATSNEW_SUPPRESS_KEY, True),
+                                   (F.WHATSNEW_SUPPRESS_KEY, False)]
+    finally:
+        window.deleteLater()

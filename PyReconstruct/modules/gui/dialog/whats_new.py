@@ -354,6 +354,19 @@ def unbreakable_key_or_menu(text):
     return out
 
 
+def utf16_offsets(text):
+    """Where each character of ``text`` starts in a Qt document, and its end.
+
+    A document position counts UTF-16 units, so a character outside the
+    Basic Multilingual Plane, such as an emoji, takes two positions there and
+    one index in Python.
+    """
+    offsets = [0]
+    for ch in text:
+        offsets.append(offsets[-1] + (2 if ord(ch) > 0xFFFF else 1))
+    return offsets
+
+
 def restyle_key_and_menu_runs(cursor, block, base_font, base_pt, color, tint):
     """Set the plain-text shortcuts and menu paths in ``block`` like inline code.
 
@@ -365,16 +378,24 @@ def restyle_key_and_menu_runs(cursor, block, base_font, base_pt, color, tint):
     breakable spaces.
     """
     origin = block.position()
+    text = block.text()
+    # The matches index characters; the fragments and the cursor count
+    # document positions. Pieces are kept in characters, converted at the
+    # cursor.
+    offsets = utf16_offsets(text)
+    index = {offset: i for i, offset in enumerate(offsets)}
     pieces = []
     it = block.begin()
     while not it.atEnd():
         fragment = it.fragment()
-        pieces.append((fragment.position() - origin, fragment.length(),
+        pos = fragment.position() - origin
+        start = index[pos]
+        pieces.append((start, index[pos + fragment.length()] - start,
                        fragment.charFormat()))
         it += 1
     # Back to front: a word joiner lengthens the text, and this way it only
     # moves positions already done.
-    matches = list(KEY_OR_MENU.finditer(block.text()))
+    matches = list(KEY_OR_MENU.finditer(text))
     for match in reversed(matches):
         start, end = match.span()
         touched = [(pos, length, fmt) for pos, length, fmt in pieces
@@ -384,8 +405,8 @@ def restyle_key_and_menu_runs(cursor, block, base_font, base_pt, color, tint):
         styled = unbreakable_key_or_menu(match.group())
         for pos, length, fmt in reversed(touched):
             lo, hi = max(pos, start), min(pos + length, end)
-            cursor.setPosition(origin + lo)
-            cursor.setPosition(origin + hi, QTextCursor.KeepAnchor)
+            cursor.setPosition(origin + offsets[lo])
+            cursor.setPosition(origin + offsets[hi], QTextCursor.KeepAnchor)
             cursor.insertText("".join(styled[lo - start:hi - start]),
                               code_char_format(base_font, base_pt,
                                                fmt.fontWeight(), color, tint))
@@ -457,13 +478,14 @@ def restyle_notes(doc, palette):
             text = block.text()
             cut = text.find(" \u2014 ")
             if cut >= 0:
+                offsets = utf16_offsets(text)
                 date_fmt = QTextCharFormat()
                 date_fmt.setFont(base_font)
                 date_fmt.setFontPointSize(base_pt)
                 date_fmt.setFontWeight(400)
                 date_fmt.setForeground(secondary)
-                cursor.setPosition(block.position() + cut)
-                cursor.setPosition(block.position() + len(text),
+                cursor.setPosition(block.position() + offsets[cut])
+                cursor.setPosition(block.position() + offsets[-1],
                                    QTextCursor.KeepAnchor)
                 cursor.setCharFormat(date_fmt)
             bfmt.setTopMargin(0 if first_version else VERSION_GAP)
@@ -707,12 +729,11 @@ class WhatsNewDialog(QDialog):
         # stored ``WHATSNEW_SUPPRESS_KEY``, the same key the Help menu toggle
         # reads and writes, so either can undo the other. Each toggle writes
         # at once; nothing waits for Close. The box opens on the stored state,
-        # so the dialog reads the store here.
+        # and ``sync_show_boxes`` brings it back to that state whenever the
+        # Help toggle or another open dialog changes it.
         options = QHBoxLayout()
         self._show_box = QCheckBox("Show this changelog window after each update?")
-        self._show_box.setChecked(not whats_new_suppressed(
-            self._store().value(WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT)
-        ))
+        self.syncShowAfterUpdate()
         self._show_box.toggled.connect(self.setShowAfterUpdate)
 
         # Same LinkLabel as the footer line: this label has always had the same
@@ -788,6 +809,28 @@ class WhatsNewDialog(QDialog):
         stood, a version bump missed while it was off included.
         """
         self._store().setValue(WHATSNEW_SUPPRESS_KEY, not checked)
+        if self.parent() is not None:
+            sync_show_boxes(self.parent())
+
+    def syncShowAfterUpdate(self):
+        """Set the checkbox from the stored preference, writing nothing."""
+        blocked = self._show_box.blockSignals(True)
+        self._show_box.setChecked(not whats_new_suppressed(
+            self._store().value(WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT)
+        ))
+        self._show_box.blockSignals(blocked)
+
+
+def sync_show_boxes(window):
+    """Bring the checkbox of every What's new dialog open on ``window`` back to
+    the stored preference.
+
+    The dialog is modeless, so the Help toggle, or the checkbox of a second
+    dialog, can change the preference while it is open; a box left as it was
+    would show the old state and take two clicks to change it.
+    """
+    for dialog in window.findChildren(WhatsNewDialog):
+        dialog.syncShowAfterUpdate()
 
 
 def _default_show(parent, version, last_seen=None, content=None, settings=None):

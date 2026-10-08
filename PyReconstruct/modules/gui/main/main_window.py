@@ -1070,6 +1070,8 @@ class MainWindow(QMainWindow):
         settings.setValue(
             WHATSNEW_SUPPRESS_KEY, self.togglewhatsnew_act.isChecked()
         )
+        from PyReconstruct.modules.gui.dialog.whats_new import sync_show_boxes
+        sync_show_boxes(self)
 
     def changeUsername(self, new_name : str = None):
         """Edit the login name used to track history.
