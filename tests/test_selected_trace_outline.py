@@ -1,11 +1,12 @@
-"""A selected trace is drawn with a black and white outline (issue #438).
+"""A selected trace is drawn as a see-through glow with a solid line on top.
 
-The old highlight was a wider stroke in the trace's own color at 40% opacity,
-which disappears for a light trace on a light image or a dark trace on a dark
-one. The outline has a black edge and a white band on either side of the trace
-line, so one of the two contrasts with whatever is underneath, and the trace's
-own color stays down the middle. The whole outline is six pixels across: one of
-black, one of white, two of the trace's color, one of white, one of black.
+Both are in the trace's own color. The glow is five pixels across and its
+opacity is the `selection_glow_opacity` option (a percent, 40 by default); the
+line is two pixels across and always solid. The glow lets the image show
+through, so a membrane under the trace stays visible, and the selection is
+still easy to find zoomed out. The look before this was a black, white and
+color band six pixels across (issue #438), which hid the image under it and
+washed out the trace's color.
 
 These render a real section headlessly and read the pixels across the top edge
 of an axis-aligned square trace.
@@ -19,10 +20,13 @@ import pytest
 W, H = 400, 400
 PPU = 100.0                      # pixels per field unit
 MAGENTA = (255, 0, 255)
-BLACK = (0, 0, 0)
-WHITE = (255, 255, 255)
 EDGE_Y = 100                     # pixel row of the square's top edge
 COLUMN_X = 300                   # a pixel column crossing that edge
+
+
+def _alpha(percent):
+    """The alpha a glow pixel gets at `percent` opacity on an empty layer."""
+    return round(percent / 100 * 255)
 
 
 @pytest.fixture
@@ -30,15 +34,19 @@ def series(shapes1_jser):
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication(["test"])
     from PyReconstruct.modules.datatypes.series import Series
+    from PyReconstruct.modules.backend.settings_store import DictSettingsStore
     s = Series.openJser(str(shapes1_jser))
+    s.setSettingsStore(DictSettingsStore())
     yield s
+    s.setSettingsStore(None)
     s.close()
 
 
-def _column(series, selected, fill_mode=("none", "none"), closed=True, focus_on=False):
-    """Render one magenta square and return the opaque RGB pixels across its top edge.
+def _column(series, selected, fill_mode=("none", "none"), closed=True, focus_on=False,
+            preview=None):
+    """Render one magenta square and return the pixels across its top edge.
 
-    Returns a dict of pixel row -> (r, g, b) for rows near the edge; rows
+    Returns a dict of pixel row -> (r, g, b, a) for rows near the edge; rows
     with nothing drawn are left out.
     """
     from PyReconstruct.modules.datatypes.trace import Trace
@@ -63,6 +71,7 @@ def _column(series, selected, fill_mode=("none", "none"), closed=True, focus_on=
         section.addSelectedTrace(trace)
 
     layer = SectionLayer(section, series, load_image_layer=False)
+    layer.glow_opacity_preview = preview
     image = layer.generateTraceLayer(
         (W, H), window, window_moved=True, focus_on=focus_on
     ).toImage()
@@ -70,62 +79,148 @@ def _column(series, selected, fill_mode=("none", "none"), closed=True, focus_on=
     column = {}
     for y in range(EDGE_Y - 8, EDGE_Y + 9):
         c = image.pixelColor(COLUMN_X, y)
-        if c.alpha() == 255:
-            column[y] = (c.red(), c.green(), c.blue())
+        if c.alpha() > 0:
+            column[y] = (c.red(), c.green(), c.blue(), c.alpha())
     return column
 
 
-def _bands(column):
-    """The colors met going down the column, with repeats collapsed."""
-    return [color for color, _ in _runs(column)]
-
-
-def _runs(column):
-    """The colors met going down the column, each with how many pixels it spans."""
+def _alphas(column):
+    """The alphas met going down the column, each with how many pixels it spans."""
     runs = []
     for y in sorted(column):
-        if runs and runs[-1][0] == column[y]:
+        a = column[y][3]
+        if runs and abs(runs[-1][0] - a) <= 2:
             runs[-1][1] += 1
         else:
-            runs.append([column[y], 1])
+            runs.append([a, 1])
     return [tuple(run) for run in runs]
 
 
-# one pixel of black, one of white, two of the trace's color, and back out
-OUTLINE_RUNS = [(BLACK, 1), (WHITE, 1), (MAGENTA, 2), (WHITE, 1), (BLACK, 1)]
+def _colors(column):
+    return {rgba[:3] for rgba in column.values()}
+
+
+def _glow_runs(percent):
+    """Glow, solid line, glow: five pixels across with the line inside.
+
+    An odd-width pen at whole-pixel coordinates puts its extra pixel on the
+    far side, so the glow shows one pixel above the line and two below.
+    """
+    a = _alpha(percent)
+    return [(a, 1), (255, 2), (a, 2)]
+
+
+def _assert_runs(column, expected):
+    got = _alphas(column)
+    assert len(got) == len(expected), column
+    for (a, n), (want_a, want_n) in zip(got, expected):
+        assert n == want_n, column
+        assert a == pytest.approx(want_a, abs=2), column
+
+
+# --------------------------------------------------------------------------
+# the look: a glow and a solid line, both in the trace's own color
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("closed", [True, False], ids=["closed", "open"])
+def test_selected_trace_is_a_glow_with_a_solid_line(series, closed):
+    column = _column(series, selected=True, closed=closed)
+    # the trace's own color only: no black or white band
+    assert _colors(column) == {MAGENTA}, column
+    _assert_runs(column, _glow_runs(40))
+    assert column[EDGE_Y][3] == 255, column
 
 
 @pytest.mark.parametrize("closed", [True, False], ids=["closed", "open"])
-def test_selected_trace_has_black_and_white_outline(series, closed):
+def test_glow_is_five_pixels_and_the_line_two(series, closed):
     column = _column(series, selected=True, closed=closed)
-    # black edge, white band, the trace's own color, white band, black edge
-    assert _bands(column) == [BLACK, WHITE, MAGENTA, WHITE, BLACK], column
-    assert column.get(EDGE_Y) == MAGENTA, column
+    assert len(column) == 5, column
+    assert sum(1 for rgba in column.values() if rgba[3] == 255) == 2, column
 
 
-@pytest.mark.parametrize("closed", [True, False], ids=["closed", "open"])
-def test_outline_is_six_pixels_across(series, closed):
-    column = _column(series, selected=True, closed=closed)
-    assert _runs(column) == OUTLINE_RUNS, column
-    assert len(column) == 6, column
-
-
-def test_outline_keeps_a_forced_color_down_the_middle(series):
-    # focus mode forces the focused object's color
+def test_outline_keeps_a_forced_color(series):
+    # focus mode forces the focused object's color, glow and line both
+    focus = (246, 249, 72)
     column = _column(series, selected=True, focus_on="outline_probe")
-    assert column.get(EDGE_Y) == (246, 249, 72), column
-    assert {BLACK, WHITE} <= set(column.values()), column
+    assert column[EDGE_Y - 1] == (*focus, 255), column
+    assert column[EDGE_Y] == (*focus, 255), column
+    # the outer glow; inside, focus mode also lays a 25% fill under it
+    assert column[EDGE_Y - 2][3] == pytest.approx(_alpha(40), abs=2), column
+    for rgba in column.values():
+        assert rgba[:3] == pytest.approx(focus, abs=3), column
 
 
 def test_unselected_trace_has_no_outline(series):
     column = _column(series, selected=False)
-    assert set(column.values()) == {MAGENTA}, column
+    assert list(column.values()) == [(*MAGENTA, 255)], column
 
 
-def test_outline_is_drawn_over_a_solid_fill(series):
-    column = _column(series, selected=True, fill_mode=("solid", "always"))
-    inside = {column.get(y) for y in range(EDGE_Y + 1, EDGE_Y + 5)}
-    assert WHITE in inside, f"the fill covered the inner side of the outline: {column}"
+# --------------------------------------------------------------------------
+# the selection_glow_opacity option
+# --------------------------------------------------------------------------
+
+def test_the_glow_opacity_defaults_to_40_percent(series):
+    from PyReconstruct.modules.datatypes.default_settings import default_settings
+    assert default_settings["selection_glow_opacity"] == 40
+    assert series.getOption("selection_glow_opacity") == 40
+
+
+def test_settings_without_the_key_get_the_default(series):
+    # settings saved by a build that had no glow option: other keys, not this one
+    from PyReconstruct.modules.backend.settings_store import DictSettingsStore
+    store = DictSettingsStore()
+    store.set_value(None, "fill_opacity", 0.3)
+    series.setSettingsStore(store)
+    assert not store.contains(None, "selection_glow_opacity")
+
+    column = _column(series, selected=True)
+
+    _assert_runs(column, _glow_runs(40))
+    assert series.getOption("selection_glow_opacity") == 40
+
+
+@pytest.mark.parametrize("percent", [20, 70])
+def test_the_option_sets_the_glow_opacity(series, percent):
+    series.setOption("selection_glow_opacity", percent)
+    column = _column(series, selected=True)
+    assert _colors(column) == {MAGENTA}, column
+    _assert_runs(column, _glow_runs(percent))
+
+
+def test_at_0_percent_only_the_solid_line_shows(series):
+    series.setOption("selection_glow_opacity", 0)
+    column = _column(series, selected=True)
+    assert list(column.values()) == [(*MAGENTA, 255)] * 2, column
+
+
+def test_at_100_percent_the_glow_is_solid(series):
+    series.setOption("selection_glow_opacity", 100)
+    column = _column(series, selected=True)
+    assert list(column.values()) == [(*MAGENTA, 255)] * 5, column
+
+
+@pytest.mark.parametrize("stored, used", [(-10, 0), (150, 100)])
+def test_a_value_out_of_range_is_clamped(series, stored, used):
+    series.setOption("selection_glow_opacity", stored)
+    column = _column(series, selected=True)
+    expected = _column(series, selected=True, preview=used)
+    assert column == expected
+
+
+def test_each_redraw_reads_the_option(series):
+    series.setOption("selection_glow_opacity", 20)
+    before = _column(series, selected=True)
+    series.setOption("selection_glow_opacity", 70)
+    after = _column(series, selected=True)
+    _assert_runs(before, _glow_runs(20))
+    _assert_runs(after, _glow_runs(70))
+
+
+def test_a_preview_overrides_the_stored_value(series):
+    series.setOption("selection_glow_opacity", 40)
+    column = _column(series, selected=True, preview=70)
+    _assert_runs(column, _glow_runs(70))
+    assert series.getOption("selection_glow_opacity") == 40
 
 
 # --------------------------------------------------------------------------
@@ -222,16 +317,16 @@ def test_a_fill_follows_its_condition(series, condition, selected, filled):
 def test_a_transparent_fill_under_the_outline(series):
     fill_opacity = series.getOption("fill_opacity")
     assert 0 < fill_opacity < 1, "the test needs a partly transparent fill"
+    glow = series.getOption("selection_glow_opacity") / 100
     image = _render(series, [(True, ("transparent", "always"), True, SQUARE)])
 
     c = image.pixelColor(*INSIDE)
     assert (c.red(), c.green(), c.blue()) == pytest.approx(MAGENTA, abs=2)
     assert c.alpha() == pytest.approx(fill_opacity * 255, abs=2)
 
-    # the outline stays fully opaque over the fill, at its full width
-    column = {}
-    for y in range(EDGE_Y - 8, EDGE_Y + 9):
-        p = image.pixelColor(COLUMN_X, y)
-        if p.alpha() == 255:
-            column[y] = (p.red(), p.green(), p.blue())
-    assert _runs(column) == OUTLINE_RUNS, column
+    # the line stays solid over the fill; the inner glow adds to the fill
+    line = image.pixelColor(COLUMN_X, EDGE_Y)
+    assert line.alpha() == 255
+    inner = image.pixelColor(COLUMN_X, EDGE_Y + 2)
+    both = 1 - (1 - fill_opacity) * (1 - glow)
+    assert inner.alpha() == pytest.approx(both * 255, abs=3)

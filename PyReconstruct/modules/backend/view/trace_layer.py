@@ -30,15 +30,19 @@ from PyReconstruct.modules.calc import (
     getExterior
 )
 from PyReconstruct.modules.calc.nesting import islandCuts
+from PyReconstruct.modules.datatypes.default_settings import default_settings
 from PyReconstruct.modules.gui.utils import drawOutlinedText
 
-# How a selected trace is drawn: (color, pen width in pixels), widest first.
-# None stands for the trace's own color.
-SELECTION_OUTLINE = (
-    ((0, 0, 0), 6),
-    ((255, 255, 255), 4),
-    (None, 2),
-)
+# How a selected trace is drawn, both in the trace's own color: a see-through
+# glow, then a solid line on top. Widths are in pixels. How see-through the
+# glow is comes from the selection_glow_opacity option.
+SELECTION_GLOW_WIDTH = 5
+SELECTION_LINE_WIDTH = 2
+
+
+def selectionGlowOpacity(percent) -> float:
+    """Return the painter opacity for a selection_glow_opacity value (0-100)."""
+    return min(max(percent, 0), 100) / 100
 
 class TraceLayer():
 
@@ -59,7 +63,13 @@ class TraceLayer():
         self._temp_hide_set = set()
         self._group_hide_set = set()
         self._group_hidden_names = set()
-    
+        # the selection glow opacity (0-100) the options dialog's slider
+        # shows while it moves; None uses the stored option
+        self.glow_opacity_preview = None
+        self._glow_opacity = selectionGlowOpacity(
+            default_settings["selection_glow_opacity"]
+        )
+
     def pointToPix(self, pt : tuple, apply_tform=True, tform : Transform = None, qpoint=False) -> tuple:
         """Return the pixel point corresponding to a field point.
         
@@ -349,10 +359,11 @@ class TraceLayer():
         return True
 
     def _drawSelectionOutline(self, painter : QPainter, qpoints, closed : bool, draw_color):
-        """Draw a selected trace as a black and white band with its own color down the middle.
+        """Draw a selected trace as a see-through glow with a solid line on top.
 
-        The black edge shows on a light image and the white band on a dark
-        one, whatever the trace's own color is.
+        Both are in the trace's own color. The glow lets the image show
+        through it, so a membrane under the trace stays visible, and makes
+        the selection easy to find when zoomed out.
 
             Params:
                 painter (QPainter): the painter
@@ -360,15 +371,20 @@ class TraceLayer():
                 closed (bool): True to draw a polygon, False for a polyline
                 draw_color: the color the trace line is drawn in
         """
-        painter.setOpacity(1)
         painter.setBrush(Qt.NoBrush)
         draw = painter.drawPolygon if closed else painter.drawPolyline
-        for color, width in SELECTION_OUTLINE:
-            pen = QPen(QColor(*(color or draw_color)), width)
+        for width, opacity in (
+            (SELECTION_GLOW_WIDTH, self._glow_opacity),
+            (SELECTION_LINE_WIDTH, 1),
+        ):
+            if not opacity:
+                continue
+            pen = QPen(QColor(*draw_color), width)
             # round joins cost about twice the stroke time on long traces, so
             # corners keep the default bevel; round caps only on open ends
             if not closed:
                 pen.setCapStyle(Qt.RoundCap)
+            painter.setOpacity(opacity)
             painter.setPen(pen)
             draw(qpoints)
     
@@ -574,6 +590,10 @@ class TraceLayer():
         show_ztraces = self.series.getOption("show_ztraces")
         show_flags = self.series.getOption("show_flags")
         flag_size = self.series.getOption("flag_size")
+        glow_opacity = self.glow_opacity_preview
+        if glow_opacity is None:
+            glow_opacity = self.series.getOption("selection_glow_opacity")
+        self._glow_opacity = selectionGlowOpacity(glow_opacity)
 
         if window_moved:
             trace_list = self.section.tracesAsList()

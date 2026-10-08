@@ -70,6 +70,7 @@ default_settings = {
     "screenshot_res": 300,
     "show_ztraces": True,  # MFO
     "fill_opacity": 0.2,  # MFO
+    "selection_glow_opacity": 40,  # % opacity of the glow around a selected trace  # MFO
     "find_zoom": 95.0,  # MFO
     "show_flags": "unresolved",  # MFO
     "display_closest": True,  # MFO
