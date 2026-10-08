@@ -143,6 +143,7 @@ class AllOptionsDialog(QDialog):
                 ["show_ztraces"],
                 ["show_flags"],
                 ["fill_opacity"],
+                ["selection_glow"],
                 ["find_zoom"],
                 ["hover_columns"],
                 ["smoothing_3D"]
@@ -451,6 +452,22 @@ class AllOptionsDialog(QDialog):
             self.series.setOption("fill_opacity", response[0])
         self.addOptionWidget("fill_opacity", structure, setOption)
 
+        # selection_glow_opacity: how see-through the glow around a selected
+        # trace is. A thin solid line in the trace's color always sits on top,
+        # so at 0% only that line shows.
+        structure = [
+            ["Selected trace glow opacity:",
+             ("slider", self.series.getOption("selection_glow_opacity", use_defaults),
+              {"suffix": "%"})],
+        ]
+        def setOption(response):
+            self.series.setOption("selection_glow_opacity", response[0])
+        self.addOptionWidget("selection_glow", structure, setOption)
+        # the glow previews on the field as the slider moves (see _previewGlow)
+        self.all_widgets["selection_glow"].inputs[0].widget.slider.valueChanged.connect(
+            self._previewGlow
+        )
+
         # find_zoom
         structure = [
             ["Zoom level for finding contours:", (True, "float", self.series.getOption("find_zoom", use_defaults))]
@@ -619,13 +636,46 @@ class AllOptionsDialog(QDialog):
             palette.previewScaleBarWidth(percent)
             self._scale_bar_previewed = True
 
+    def _field(self):
+        """The main window's field, or None when there is no window."""
+        return getattr(self.parent(), "field", None)
+
+    def _previewGlow(self, percent):
+        """Redraw the field with the selection glow at `percent`; nothing is stored.
+
+        The right opacity depends on the image under the traces, so it has to
+        be judged on the field while the slider moves. OK stores the option;
+        Cancel redraws with the stored value (_endGlowPreview).
+        """
+        field = self._field()
+        if field is not None:
+            field.section_layer.glow_opacity_preview = percent
+            field.generateView(generate_image=False)
+            self._glow_previewed = True
+
+    def _endGlowPreview(self, redraw : bool):
+        """Hand the glow back to the stored option.
+
+            Params:
+                redraw (bool): True to redraw the field now
+        """
+        if not getattr(self, "_glow_previewed", False):
+            return
+        field = self._field()
+        if field is not None:
+            field.section_layer.glow_opacity_preview = None
+            if redraw:
+                field.generateView(generate_image=False)
+        self._glow_previewed = False
+
     def reject(self):
-        """Overwritten: a previewed scale bar goes back to its stored size."""
+        """Overwritten: previewed views go back to their stored settings."""
         if getattr(self, "_scale_bar_previewed", False):
             palette = self._palette()
             if palette is not None:
                 palette.restoreScaleBar()
             self._scale_bar_previewed = False
+        self._endGlowPreview(redraw=True)
         super().reject()
 
     def accept(self):
@@ -636,6 +686,8 @@ class AllOptionsDialog(QDialog):
                 return False
         for w in widgets:
             w.set()
+        # the caller redraws the field after OK, now from the stored value
+        self._endGlowPreview(redraw=False)
         super().accept()
         return True
 
