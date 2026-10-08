@@ -56,6 +56,24 @@ class SeriesOptionError(Exception):
     """Raised when an option read from the series file has the wrong shape."""
 
 
+class SeriesClosedError(FileNotFoundError):
+    """Raised when a section pass reaches a section of a closed series.
+
+    A progress dialog runs the event loop on each update, so another series
+    can open under any pass that shows one (a .jser opened from the Finder
+    reaches the window there), and opening it closes this series and deletes
+    its working files. The pass stops before it reads the next section
+    instead of failing on the missing file, or reading files the series that
+    replaced it now owns. A FileNotFoundError still, so a caller that handles
+    that one handles this the same.
+
+    Not quiet: a pass that writes may have saved some sections and not the
+    rest, so the app's exception hook reports it like any other error. Only
+    a caller that loses nothing by stopping (the read-only pixel-dust and
+    Duplicates scans in MainWindow) catches it and ends without a word.
+    """
+
+
 def _checkColumnsOption(option_name : str, value):
     """Raise if a ``*_columns`` option is not a list of (name, shown) pairs.
 
@@ -547,6 +565,8 @@ class Series():
         self.modified_ztraces = set()
         self.modified_objects = set()
         self.leave_open = False
+        # set by close(); a section pass stops on it (SeriesClosedError)
+        self.closed = False
 
         # possible zarr overlay
         self.zarr_overlay_fp = None
@@ -1261,16 +1281,23 @@ class Series():
     
     def close(self):
         """Clear the hidden directory of the series."""
-        
+
         if self.isWelcomeSeries() or self.leave_open:
+            # closed even so: a series left open for the one replacing it in
+            # the same hidden dir must not go on editing that one's files
+            self.closed = True
             return
-        
+
         if os.path.isdir(self.hidden_dir):
-            
+
             for f in os.listdir(self.hidden_dir):
                 os.remove(os.path.join(self.hidden_dir, f))
-                
+
             os.rmdir(self.hidden_dir)
+
+        # only once its files are gone: a close that raised part-way (a
+        # locked working file) leaves the series in the window, still usable
+        self.closed = True
     
     @staticmethod
     def updateJSON(series_data : dict):
@@ -6006,6 +6033,16 @@ class SeriesIterator():
         if self.sni < len(self.section_numbers):
             if self.show_progress:
                     self.reporter.set_progress(self.sni / len(self.section_numbers) * 100)
+            # the progress update above, or the loop body, ran the event
+            # loop, where another series can open and close this one
+            if self.series.closed:
+                done = self.sni
+                total = len(self.section_numbers)
+                raise SeriesClosedError(
+                    f"Series {self.series.name} was closed while this ran: "
+                    f"{self.message} It stopped part-way, after {done} of "
+                    f"{total} sections."
+                )
             snum = self.section_numbers[self.sni]
             self.section = self.series.loadSection(snum)
             self.sni += 1

@@ -9,7 +9,10 @@ from shiboken6 import isValid
 
 from .main_imports import *
 
-from PyReconstruct.modules.datatypes.series import SeriesOpenError
+from PyReconstruct.modules.datatypes.series import (
+    SeriesClosedError,
+    SeriesOpenError,
+)
 from PyReconstruct.modules.backend.func.window_geometry import (
     default_window_rect,
     window_geometry_is_usable,
@@ -1618,7 +1621,8 @@ class MainWindow(QMainWindow):
         opened next. Found through the children rather than the attributes
         that hold them, so a list from an earlier run of the same clean-up
         closes too. A Delete or Combine already waiting on its confirmation
-        stops itself (MalformedContoursDialog._forOpenSeries).
+        stops itself (MalformedContoursDialog._forOpenSeries), and a pixel-dust
+        or Duplicates scan that a new series opened under opens no list.
         """
         for dialog in self.findChildren(MalformedContoursDialog):
             dialog.close()
@@ -4028,7 +4032,17 @@ class MainWindow(QMainWindow):
         threshold = response[0]
         include_locked = response[1][0][1]
 
-        groups = self.series.findDuplicateTraces(threshold, include_locked)
+        series = self.series
+        try:
+            groups = series.findDuplicateTraces(threshold, include_locked)
+        except SeriesClosedError:
+            # a .jser opened from the Finder at an earlier progress update:
+            # the scan only reads, so stopping it loses nothing
+            return
+        if self.series is not series:
+            # the same at the scan's last progress update: the rows name the
+            # series left (see _closeCleanupLists)
+            return
         if not groups:
             notify("No duplicate traces found at that overlap threshold.")
             return
@@ -4073,7 +4087,17 @@ class MainWindow(QMainWindow):
         # locked objects are always left alone: the review-list delete path
         # (deleteMalformedContours) refuses locked objects, so surfacing them
         # here would be a dead end. Empty-trace removal skips locked the same way.
-        candidates = self.series.findPixelDustTraces(threshold)
+        series = self.series
+        try:
+            candidates = series.findPixelDustTraces(threshold)
+        except SeriesClosedError:
+            # a .jser opened from the Finder at an earlier progress update:
+            # the scan only reads, so stopping it loses nothing
+            return
+        if self.series is not series:
+            # the same at the scan's last progress update: the rows name the
+            # series left (see _closeCleanupLists)
+            return
         if not candidates:
             notify("No pixel-dust traces found at or below that pixel area.")
             return
