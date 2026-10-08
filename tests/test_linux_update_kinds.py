@@ -196,6 +196,15 @@ def test_a_stable_release_with_no_appimage_offers_nothing(running):
     assert info["release"]["tag_name"] == "v1.24.0"
 
 
+def test_a_dev_appimage_takes_a_timed_nightly_over_the_same_days_dated_one(running):
+    """A second nightly the same day carries a 12-digit YYYYMMDDHHMM dev number."""
+    running("1.25.0.dev20261008")
+    feed = [_nightly("1.25.0.dev202610081315"), _nightly("1.25.0.dev20261008")]
+    info = U.check_for_reinstall("prerelease", "appimage", releases=feed)
+    assert (info["status"], info["remote_version"]) == ("newer", "1.25.0.dev202610081315")
+    assert info["command"] == DEV_CMD
+
+
 def test_a_dev_appimage_takes_the_newest_nightly_that_has_one(running):
     running("1.24.0.dev20260901")
     feed = [_nightly("1.25.0.dev20261002", appimage=False), _nightly("1.25.0.dev20261001")]

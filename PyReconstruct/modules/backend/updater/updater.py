@@ -225,9 +225,9 @@ def _tag_version(release):
     """The release's tag parsed as a version, or None if it is not one.
 
     Tags in this project are `vX.Y.Z` for stable releases and
-    `vX.Y.Z.devYYYYMMDD` for nightlies (older test builds were `vX.Y.Z-beta-N`
-    / `-alpha.N` / `rcN`), all of which `packaging` parses once the leading `v`
-    is dropped. A tag that is not a version at all (the retired rolling
+    `vX.Y.Z.devYYYYMMDDHHMM` for nightlies (`vX.Y.Z.devYYYYMMDD` before
+    2026-10-08; older test builds were `vX.Y.Z-beta-N` / `-alpha.N` / `rcN`),
+    all of which `packaging` parses once the leading `v` is dropped. A tag that is not a version at all (the retired rolling
     `prerelease` tag, or anything hand-made) yields None, and the caller
     treats that as "cannot compare" rather than as "older".
     """
@@ -394,7 +394,7 @@ _APPIMAGE_ASSET_RE = re.compile(
     r"PyReconstruct-(?P<ver>[0-9][^/-]*)-linux-x86_64(?P<dev>-Dev)?\.AppImage"
 )
 # The nightly tags install-appimage.sh --dev accepts (its NIGHTLY_RE).
-_NIGHTLY_TAG_RE = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]{8}")
+_NIGHTLY_TAG_RE = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]{8}(?:[0-9]{4})?")
 
 
 def reinstall_command(kind, dev=False, ref=None):
