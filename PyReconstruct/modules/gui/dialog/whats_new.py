@@ -17,13 +17,13 @@ from html import escape
 
 from PySide6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTextBrowser, QCheckBox, QFrame,
+    QTextBrowser, QCheckBox, QFrame, QStyle, QStyleOptionButton,
 )
 from PySide6.QtGui import (
     QColor, QPalette, QTextCursor, QTextCharFormat, QTextBlockFormat,
     QFont, QFontDatabase, QFontMetricsF,
 )
-from PySide6.QtCore import Qt, QSettings, QEvent
+from PySide6.QtCore import Qt, QSettings, QEvent, QRect
 
 from functools import partial
 
@@ -467,11 +467,38 @@ def make_notes_browser(markdown_text, min_height=180):
 
 
 # The dark theme's app stylesheet gives every push button 2 px of padding and
-# no minimum width, so Close drew as a tight box around its word, well short
-# of the light theme's native button. This sheet, set on Close only while the
-# app has a stylesheet, gives it back about the light button's room. Under the
-# light theme the button keeps no sheet at all and draws natively.
-DARK_BUTTON_SHEET = "QPushButton { padding: 3px 12px; min-width: 40px; }"
+# no minimum width, so Close drew as a tight box around its word, a different
+# size from the light theme's native button. While the app has a stylesheet,
+# Close takes this sheet (no padding, so the word fits the shorter box) and a
+# fixed size equal to the box the native button draws in; see
+# ``native_button_box``. Under the light theme the button keeps no sheet and
+# no fixed size, and draws natively.
+DARK_BUTTON_SHEET = "QPushButton { padding: 0px; }"
+
+# Qt's QWIDGETSIZE_MAX, which PySide does not export: the no-limit maximum.
+QWIDGETSIZE_MAX = (1 << 24) - 1
+
+
+def native_button_box(button):
+    """The size of the box the native style draws ``button`` in.
+
+    Mirrors ``QPushButton.sizeHint`` for a text-only button, asked of the
+    application style with no widget. With an app stylesheet set, that style
+    has no widget to match rules against and answers as the native style
+    underneath, so this is the light theme's button whichever theme is on.
+    The visible box can be smaller than the widget: macOS draws a 64 x 32
+    widget as a 64 x 20 bezel, which ``SE_PushButtonLayoutItem`` reports.
+    Styles that draw the whole widget leave that rect empty.
+    """
+    style = QApplication.style()
+    opt = QStyleOptionButton()
+    button.initStyleOption(opt)
+    text = button.fontMetrics().size(Qt.TextShowMnemonic, button.text())
+    opt.rect = QRect(0, 0, text.width(), text.height())
+    hint = style.sizeFromContents(QStyle.CT_PushButton, opt, text, None)
+    opt.rect = QRect(0, 0, hint.width(), hint.height())
+    drawn = style.subElementRect(QStyle.SE_PushButtonLayoutItem, opt, None)
+    return drawn.size() if drawn.isValid() else hint
 
 
 class WhatsNewDialog(QDialog):
@@ -481,9 +508,9 @@ class WhatsNewDialog(QDialog):
                  settings=None):
         super().__init__(parent)
         self._version = version
-        # Where the "Show changelog after each update" checkbox reads and
-        # writes its preference; injectable for headless testing. None means
-        # the real store, built once the footer needs it below.
+        # Where the "Show this changelog window after each update?" checkbox
+        # reads and writes its preference; injectable for headless testing.
+        # None means the real store, built once the footer needs it below.
         self._settings = settings
         if content is None:
             content = whats_new_content(version, last_seen)
@@ -500,10 +527,9 @@ class WhatsNewDialog(QDialog):
             else "What's new in PyReconstruct"
         )
         # 700 minimum width, up from the 540 the dialog opened at when the
-        # byline and the release-notes link stacked. The width does not shape
-        # the footer: the byline breaks into its two lines explicitly (see the
-        # footer below), the same at every width, so the extra room is purely
-        # about how much of a release note line fits unwrapped. The height increase lives on the notes
+        # byline and the release-notes link stacked. At 700 the one-line byline
+        # and the link fit side by side, so the extra room is about how much
+        # of a release note line fits unwrapped. The height increase lives on the notes
         # browser below, the one widget that should absorb extra space; no
         # other geometry is set, so the dialog keeps sizing itself from its
         # contents.
@@ -595,20 +621,14 @@ class WhatsNewDialog(QDialog):
                 f'{before}<a href="{HOMEPAGE_URL}">{name}</a>{after}' if name
                 else before
             )
-            # Rendered as two lines, broken at the comma -- "A fork of
-            # PyReconstruct," over "maintained by Dusten Hubbard." The break
-            # is an explicit <br/> so the shape is the same at every window
-            # width rather than wrap luck. It is a display concern of this
-            # dialog alone, which is why MAINTAINER_BYLINE itself stays one
-            # string: the GitHub release footer renders the same sentence
-            # inline. A byline without a comma-space renders unchanged, on one
-            # line.
-            self._byline = SecondaryLabel(markup.replace(", ", ",<br/>", 1))
+            # One line, never wrapped: the label's minimum width is the whole
+            # sentence, so the footer cannot squeeze it onto a second line.
+            self._byline = SecondaryLabel(markup)
             bf = self._byline.font()
             bf.setItalic(True)
             self._byline.setFont(bf)
             self._byline.setOpenExternalLinks(True)
-            self._byline.setWordWrap(True)
+            self._byline.setWordWrap(False)
             footer.addWidget(self._byline, 1)
         else:
             self._byline = None
@@ -617,24 +637,21 @@ class WhatsNewDialog(QDialog):
         # Same LinkLabel as the byline: this label has always had the same
         # stale-anchor-color behavior on a live theme switch, and fixing one
         # anchor in the dialog while leaving the other stale would show.
-        # AlignTop: the byline renders as two lines (see above), and the link
-        # stays level with the byline's first line rather than floating
-        # mid-row.
         link = LinkLabel(f'<a href="{url}">All release notes on GitHub ↗</a>')
         link.setOpenExternalLinks(True)
-        footer.addWidget(link, 0, Qt.AlignTop)
+        footer.addWidget(link)
         lay.addLayout(footer)
 
-        # The last row: a "Show changelog after each update" checkbox on the
-        # left and one Close button on the right, the default (Enter) button
-        # in the ordinary rightmost spot. The checkbox is the popup preference
+        # The last row: a "Show this changelog window after each update?"
+        # checkbox on the left and one Close button on the right, the default
+        # (Enter) button in the ordinary rightmost spot. The checkbox is the popup preference
         # stated the way round a reader expects (checked means it shows), and
         # it is the inverse of the stored ``WHATSNEW_SUPPRESS_KEY``, the same
         # key the Help menu toggle reads and writes, so either can undo the
         # other. Each toggle writes at once; nothing waits for Close. The box
         # opens on the stored state, so the dialog reads the store here.
         row = QHBoxLayout()
-        self._show_box = QCheckBox("Show changelog after each update")
+        self._show_box = QCheckBox("Show this changelog window after each update?")
         self._show_box.setChecked(not whats_new_suppressed(
             self._store().value(WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT)
         ))
@@ -649,11 +666,16 @@ class WhatsNewDialog(QDialog):
         lay.addLayout(row)
 
     def _fit_buttons(self):
-        """Set or clear Close's dark-theme sheet; see ``DARK_BUTTON_SHEET``."""
+        """Set or clear Close's dark-theme sheet and size; see ``DARK_BUTTON_SHEET``."""
         app = QApplication.instance()
         sheet = DARK_BUTTON_SHEET if app is not None and app.styleSheet() else ""
         if self._close.styleSheet() != sheet:
             self._close.setStyleSheet(sheet)
+        if sheet:
+            self._close.setFixedSize(native_button_box(self._close))
+        else:
+            self._close.setMinimumSize(0, 0)
+            self._close.setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX)
 
     def changeEvent(self, event):
         # The theme switch sets or clears the app stylesheet with this dialog

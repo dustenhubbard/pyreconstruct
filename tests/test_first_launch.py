@@ -317,19 +317,16 @@ def test_whats_new_reads_bundled_file_and_is_offline_safe(monkeypatch, tmp_path)
 # into the release bullets, and it must be present on every framing.
 BYLINE = "A fork of PyReconstruct, maintained by Dusten Hubbard."
 
-# What the dialog's byline label actually shows: the same sentence broken into
-# two lines at the comma. The break is the dialog's
-# display concern (an explicit <br/> in the markup); the constant above stays
-# one string, which is what the GitHub release footer renders inline.
-BYLINE_RENDERED = "A fork of PyReconstruct,\nmaintained by Dusten Hubbard."
+# What the dialog's byline label actually shows: the same sentence, on one line.
+BYLINE_RENDERED = BYLINE
 
 
 def test_maintainer_byline_constant_is_the_approved_text_verbatim():
     # Locked verbatim: it is maintainer-approved and checked to contain no fork
     # tells; a reword could reintroduce one.
     assert F.MAINTAINER_BYLINE == BYLINE
-    # the two-line display form is the same words: only the break differs
-    assert BYLINE_RENDERED.replace("\n", " ") == BYLINE
+    # the dialog shows the sentence as it is, with no break
+    assert BYLINE_RENDERED == BYLINE
 
 
 @pytest.mark.parametrize("kwargs", [
@@ -831,7 +828,7 @@ def test_dialog_renders_the_byline_once_as_its_own_widget(qapp, kwargs, orienter
     try:
         # not in the scroll any more: the browser carries the notes and nothing else
         assert BYLINE not in dlg._notes.toPlainText()
-        # its own label, the sentence on its two lines, exactly once across
+        # its own label, the sentence on one line, exactly once across
         # the whole dialog. The label carries link markup now, so
         # compare what it *renders*.
         assert dlg._byline is not None
@@ -843,37 +840,37 @@ def test_dialog_renders_the_byline_once_as_its_own_widget(qapp, kwargs, orienter
         dlg.deleteLater()
 
 
-def test_dialog_byline_breaks_into_two_lines_at_the_comma(qapp):
-    """The byline renders as two lines, broken at the comma.
+def test_dialog_byline_is_one_line_beside_the_release_notes_link(qapp):
+    """The byline renders on one line, beside the GitHub link, at every width.
 
-    Line one "A fork of PyReconstruct," and line two
-    "maintained by Dusten Hubbard.", at every window width: the break is an
-    explicit ``<br/>`` in the markup rather than word-wrap luck, so widening
-    the dialog cannot flatten it back to one line and narrowing it cannot
-    move the break somewhere else. The break is a display concern of this
-    dialog alone; ``MAINTAINER_BYLINE`` stays one string (pinned verbatim
-    above), which is what the GitHub release footer renders inline.
+    No break in the markup, no word wrap, and at the 700 minimum width the
+    whole sentence fits in its label with the link still to its right, so
+    narrowing the dialog cannot push it onto a second line.
     """
+    from PySide6.QtWidgets import QApplication, QLabel
     from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
 
     content = F.whats_new_content("1.20.3", last_seen="1.20.1", text=WN)
     dlg = WhatsNewDialog(None, "1.20.3", content=content,
                          url="https://example.test/releases")
     try:
-        # the break, right after the comma
-        assert ",<br/>" in dlg._byline.text()
-        first, second = rendered_text(dlg._byline).split("\n")
-        assert first == "A fork of PyReconstruct,"
-        assert second == "maintained by Dusten Hubbard."
+        assert "<br" not in dlg._byline.text()
+        assert dlg._byline.wordWrap() is False
+        assert rendered_text(dlg._byline) == BYLINE
 
-        # rendered as exactly two lines at the default width and much wider
+        link = next(lab for lab in dlg.findChildren(QLabel)
+                    if "All release notes" in lab.text())
         dlg.show()
         line = dlg._byline.fontMetrics().height()
         for width in (700, 1100):
             dlg.resize(width, 620)
-            assert 2 * line <= dlg._byline.height() < 3 * line, (
-                f"byline is not two lines tall at width {width}"
+            QApplication.processEvents()
+            assert dlg._byline.height() < 2 * line, (
+                f"byline is more than one line tall at width {width}"
             )
+            assert dlg._byline.width() >= dlg._byline.sizeHint().width()
+            assert link.geometry().left() > dlg._byline.geometry().right()
+            assert link.geometry().top() < dlg._byline.geometry().bottom()
     finally:
         dlg.deleteLater()
 
@@ -936,10 +933,10 @@ def test_dialog_minimum_size_and_where_extra_space_goes(qapp):
     rather than inherited, and click-tested and approved by Dusten at these
     values:
 
-    * Width 540 -> 700. The byline's two-line shape is an explicit break (see
-      ``test_dialog_byline_breaks_into_two_lines_at_the_comma``), the same at
-      every width, so the width is not what shapes the footer; the extra room
-      is about how much of a release note line fits unwrapped.
+    * Width 540 -> 700. The one-line byline and the release-notes link fit
+      side by side well inside it (see
+      ``test_dialog_byline_is_one_line_beside_the_release_notes_link``); the
+      extra room is about how much of a release note line fits unwrapped.
     * The notes browser's minimum height 260 -> 320, which is the entirety of
       the height increase (about 13% on the whole dialog at the default
       size): the notes are the one part of the dialog worth more room, and
@@ -1161,12 +1158,10 @@ def measure_byline_pixels(dlg):
     )
     dlg._byline.setFont(font)
 
-    # The x-coordinate mapping below reads the byline's FIRST line, which the
-    # explicit two-line break guarantees is "A fork of <PyReconstruct>," at
-    # every width; the second line contributes only plain
-    # ink, which the measurements below already tolerate on either side of the
-    # anchor. 760 just gives the grab a stable, roomy canvas past the 700
-    # minimum.
+    # The x-coordinate mapping below reads the byline's one line, which never
+    # wraps; the words after the name contribute only plain ink, which the
+    # measurements below already tolerate on either side of the anchor. 760
+    # just gives the grab a stable, roomy canvas past the 700 minimum.
     dlg.resize(760, 620)
     dlg.layout().activate()
     pixmap = dlg.grab()
@@ -1457,7 +1452,7 @@ def test_dialog_byline_is_a_link_to_the_home_page(qapp):
         assert markup.count("<a ") == 1
         assert dlg._byline.openExternalLinks() is True
         # the sentence still reads as itself once the markup is resolved,
-        # on its two lines
+        # on one line
         assert rendered_text(dlg._byline) == BYLINE_RENDERED
         # the name occurs once in the byline, so the first-occurrence split is
         # unambiguous; if it ever occurred zero times there would be no anchor
@@ -1486,8 +1481,7 @@ def test_dialog_byline_click_activates_only_on_the_project_name(qapp):
     try:
         # 760 for the same reason measure_byline_pixels resizes to 760: a
         # stable, roomy canvas past the 700 minimum. The click coordinates
-        # below address the byline's FIRST line, which the explicit two-line
-        # break guarantees is "A fork of <PyReconstruct>," at every width.
+        # below address the byline's one line, which never wraps.
         dlg.resize(760, 620)
         dlg.show()
         label = dlg._byline

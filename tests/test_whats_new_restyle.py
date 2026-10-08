@@ -3,9 +3,10 @@
 The notes browser renders each version as a large bold heading with its date
 in the secondary gray, every item as a paragraph that hangs from a dash
 marker, and the body in a palette-derived gray that follows the theme. The
-footer's "Show changelog after each update" checkbox is the stored popup
-preference stated the way round a reader expects: it reads and writes the
-inverse of ``WHATSNEW_SUPPRESS_KEY``, the same key the Help menu toggle uses.
+footer's "Show this changelog window after each update?" checkbox is the
+stored popup preference stated the way round a reader expects: it reads and
+writes the inverse of ``WHATSNEW_SUPPRESS_KEY``, the same key the Help menu
+toggle uses.
 """
 
 import pytest
@@ -103,7 +104,9 @@ def test_show_after_update_box_opens_on_the_inverse_of_the_stored_key(qapp, stor
     dlg = _dialog(settings=settings)
     try:
         assert dlg._show_box.isChecked() is checked
-        assert dlg._show_box.text() == "Show changelog after each update"
+        assert dlg._show_box.text() == (
+            "Show this changelog window after each update?"
+        )
         assert settings.writes == []           # opening the dialog writes nothing
     finally:
         dlg.deleteLater()
@@ -153,7 +156,7 @@ def test_close_is_the_only_button_and_the_default(qapp):
         assert [b.text() for b in buttons] == ["Close"]
         assert buttons[0].isDefault() is True
         assert [c.text() for c in dlg.findChildren(QCheckBox)] == [
-            "Show changelog after each update"
+            "Show this changelog window after each update?"
         ]
         dlg.show()
         buttons[0].click()
@@ -618,47 +621,63 @@ def _dark_sheet():
     return qdarkstyle.load_stylesheet_pyside6() + qdark_addon
 
 
-@pytest.mark.parametrize("theme", ["light", "dark"])
-def test_close_has_room_around_its_word_in_both_themes(qapp, theme):
-    """Close is a full-size button in both themes, not a tight box.
+def _drawn_close_size(close):
+    """The box Close is drawn in: the style's layout item rect when it has
+    one (macOS draws a native button inside its widget), else the widget."""
+    from PySide6.QtWidgets import QStyle, QStyleOptionButton
+    opt = QStyleOptionButton()
+    close.initStyleOption(opt)
+    drawn = close.style().subElementRect(QStyle.SE_PushButtonLayoutItem, opt, close)
+    return drawn.size() if drawn.isValid() else close.size()
 
-    Light keeps the native button, untouched. Dark gives it 3 px above and
-    below and 12 px each side of the word, with a 40 px floor on the word's
-    width, which puts it within a few pixels of the light button.
-    """
-    from PySide6.QtWidgets import QPushButton
+
+def _close_in(theme):
+    """Open the dialog under ``theme`` and return Close's drawn size there."""
     app = QApplication.instance()
-    previous = app.styleSheet()
-    dlg = None
+    app.setStyleSheet(_dark_sheet() if theme == "dark" else "")
+    if theme == "light":
+        app.setPalette(app.style().standardPalette())
+    dlg = _dialog(settings=FakeSettings())
     try:
-        app.setStyleSheet(_dark_sheet() if theme == "dark" else "")
-        if theme == "light":
-            app.setPalette(app.style().standardPalette())
-        dlg = _dialog(settings=FakeSettings())
         dlg.show()
         app.processEvents()
         close = dlg._close
-        word = close.fontMetrics().horizontalAdvance("Close")
-        line = close.fontMetrics().height()
-        if theme == "light":
-            assert close.styleSheet() == ""
-            plain = QPushButton("Close")
-            plain.setDefault(True)
-            assert close.size() == plain.sizeHint()
-            plain.deleteLater()
-        else:
-            assert close.width() >= max(word, 40) + 24
-            assert close.height() >= line + 6
         assert close.font().pointSizeF() == dlg.font().pointSizeF()
+        word = close.fontMetrics().horizontalAdvance("Close")
+        size = _drawn_close_size(close)
+        assert size.width() >= word + 8               # room around the word
+        assert size.height() >= close.fontMetrics().height()
+        return close.styleSheet(), size
     finally:
-        if dlg is not None:
-            dlg.deleteLater()
+        dlg.deleteLater()
+
+
+def test_close_is_the_same_size_in_both_themes(qapp):
+    """Close draws at the same width and height in light and dark.
+
+    Light keeps the native button, untouched. Dark gives it a fixed size
+    equal to the box the native button draws in, which on macOS is smaller
+    than the native widget.
+    """
+    from PyReconstruct.modules.gui.dialog.whats_new import native_button_box
+    app = QApplication.instance()
+    previous = app.styleSheet()
+    try:
+        light_sheet, light = _close_in("light")
+        dark_sheet, dark = _close_in("dark")
+        assert light_sheet == ""
+        assert dark_sheet != ""
+        assert dark == light
+        probe = _dialog(settings=FakeSettings())
+        assert native_button_box(probe._close) == light
+        probe.deleteLater()
+    finally:
         app.setStyleSheet(previous)
         app.setPalette(app.style().standardPalette())
 
 
 def test_close_follows_a_live_theme_switch(qapp):
-    """Switching theme with the dialog open resizes Close both ways."""
+    """Switching theme with the dialog open keeps Close the same size."""
     app = QApplication.instance()
     previous = app.styleSheet()
     dlg = None
@@ -667,15 +686,17 @@ def test_close_follows_a_live_theme_switch(qapp):
         dlg = _dialog(settings=FakeSettings())
         dlg.show()
         app.processEvents()
-        light = dlg._close.size()
+        light_widget = dlg._close.size()
+        light = _drawn_close_size(dlg._close)
         app.setStyleSheet(_dark_sheet())
         app.processEvents()
         assert dlg._close.styleSheet() != ""
-        assert dlg._close.height() >= dlg._close.fontMetrics().height() + 6
+        assert _drawn_close_size(dlg._close) == light
         app.setStyleSheet("")
         app.processEvents()
         assert dlg._close.styleSheet() == ""
-        assert dlg._close.sizeHint() == light
+        assert dlg._close.sizeHint() == light_widget
+        assert _drawn_close_size(dlg._close) == light
     finally:
         if dlg is not None:
             dlg.deleteLater()
