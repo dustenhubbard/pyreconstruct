@@ -5,7 +5,8 @@ process only creates the store, counts progress and validates. Three things
 come with that: a scale group that only a larger image needs is created by
 whichever worker gets there first, a worker that fails must still fail the run,
 and an array cut off partway (its own worker failed, or the Pool terminated it)
-must never be listed, so the next update writes it again.
+must never be listed, so the next update writes it again. A scale_1 array cut
+off that way has no source to write it from, so the update must stop there.
 
 The converter parses ``sys.argv`` and pins thread pools on import, so it runs
 in a subprocess here, as in the other converter tests.
@@ -19,6 +20,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 import zarr
 
 import PyReconstruct
@@ -46,7 +48,7 @@ def _run(cores, *args, env=None):
 #    once the HOLD_ARRAY array (if any) has started writing.
 #  - HOLD_ARRAY: the second chunk write creates FAULT_MARKER and waits until
 #    FAULT_RELEASE exists, so that array is part written in the meantime.
-#  - WRITE_LOG: every path written is appended to this file.
+#  - WRITE_LOG: the path of every store key written is appended to this file.
 FAULTS = textwrap.dedent("""
     import json, os, time
     import zarr.storage
@@ -292,6 +294,65 @@ def test_an_update_writes_into_a_folder_left_without_metadata(tmp_path):
     _assert_every_level(out, sources)
 
 
+def test_an_update_refuses_a_scale_1_image_left_unfinished(tmp_path):
+    """A conversion from images stops partway through scale_1/b.png, after
+    a.png is done. b.png's folder has chunks but no .zarray, so zarr lists
+    only a.png. The update has no source to rebuild b.png from, so it must
+    fail and name it, not finish without it."""
+    imgs = tmp_path / "imgs"
+    imgs.mkdir()
+    cv2.imwrite(str(imgs / "a.png"), np.full((512, 512), 7, np.uint8))
+    cv2.imwrite(
+        str(imgs / "b.png"),
+        np.random.default_rng(0).integers(0, 256, (2048, 2048), np.uint8),
+    )
+    out = tmp_path / "out.zarr"
+
+    # one worker, so a.png is done before b.png starts
+    failed = _run(1, imgs, out, env=_fault_env(tmp_path, FAIL_ARRAY="scale_1/b.png"))
+
+    assert failed.returncode != 0
+    assert "simulated full disk" in failed.stderr
+    assert (out / "scale_1" / "b.png").is_dir()
+    assert list(zarr.open(str(out), "r")["scale_1"]) == ["a.png"]
+
+    update = _run(1, out)
+
+    assert update.returncode != 0
+    assert "Zarr validation complete." not in update.stdout
+    assert "scale_1/b.png" in update.stderr
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a backslash is a separator")
+def test_a_name_with_a_backslash_is_stored_as_zarr_stores_it(tmp_path):
+    """zarr reads a backslash in an array name as a separator, so the image
+    a\\b.png is stored as scale_1/a/b.png. The converter must put its files
+    where zarr looks for them: the same files create_dataset makes."""
+    imgs = tmp_path / "imgs"
+    imgs.mkdir()
+    name = "a\\b.png"
+    arr = np.random.default_rng(0).integers(0, 256, (1024, 1024), np.uint8)
+    cv2.imwrite(str(imgs / name), arr)
+    out = tmp_path / "out.zarr"
+
+    result = _run(1, imgs, out)
+
+    assert result.returncode == 0, result.stderr[-2000:]
+    reference = zarr.group(str(tmp_path / "reference.zarr"))
+    for scale, level in _expected_levels(arr).items():
+        reference.require_group(scale).create_dataset(name, data=level)
+    zg = zarr.open(str(out), "r")
+    for scale, level in _expected_levels(arr).items():
+        assert np.array_equal(zg[scale][name][:], level), scale
+
+    def files(root):
+        return sorted(
+            os.path.relpath(os.path.join(d, f), root)
+            for d, _dirs, fs in os.walk(root) for f in fs
+        )
+    assert files(out) == files(tmp_path / "reference.zarr")
+
+
 def test_two_updates_of_one_zarr_at_once_both_finish(tmp_path):
     """Run B is part way through scale_2/b3.png while run A updates the same
     zarr from start to finish. Neither run may undo the other's work."""
@@ -330,10 +391,11 @@ def test_two_updates_of_one_zarr_at_once_both_finish(tmp_path):
     _assert_every_level(out, sources)
 
 
-def test_writes_go_only_where_the_files_end_up(tmp_path):
-    """Every path the converter writes is a file of the finished zarr, so a
-    path is never longer than the one it ends up at (Windows refuses paths
-    over 260 characters unless long paths are turned on)."""
+def test_the_store_writes_only_files_of_the_finished_zarr(tmp_path):
+    """Every key the converter writes through the store is a file of the
+    finished zarr: nothing is built in another folder and moved in. This
+    sees store keys, not the temporary file zarr writes beside each one
+    before renaming it."""
     imgs = tmp_path / "imgs"
     imgs.mkdir()
     for i, shape in enumerate([(2048, 2048), (1500, 1499)]):

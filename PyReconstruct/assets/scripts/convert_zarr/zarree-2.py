@@ -36,6 +36,7 @@ for _thread_var in (
 
 import cv2
 import zarr
+from zarr.storage import contains_array, contains_group
 
 os.environ["OPENCV_LOG_LEVEL"] = "FATAL"
 os.environ["OPENCV_IO_MAX_IMAGE_PIXELS"] = "18500000000"  # Go big or go home?
@@ -317,13 +318,39 @@ def write_array(zarr_fp, scale_group, filename, arr):
     written last. zarr writes each key to a temporary file and renames it
     into place, so the array is listed only once every chunk is on disk. A
     folder left without .zarray is not an array to zarr; the next update
-    writes into it again.
+    writes into it again, except in scale_1 (see unfinished_arrays).
+
+    zarr turns the name into the array's path as create_dataset does (a
+    backslash is a separator), and makes a group for each folder of that
+    path; any group not in the store yet is written before .zarray.
     """
     meta = {}
-    folder = zarr.DirectoryStore(os.path.join(zarr_fp, scale_group, filename))
+    store = zarr.DirectoryStore(zarr_fp)
     # same call group.create_dataset makes, with the chunks kept apart
-    zarr.array(arr, store=meta, chunk_store=folder)
-    folder[".zarray"] = meta[".zarray"]
+    z = zarr.array(arr, store=meta, chunk_store=store, path=f"{scale_group}/{filename}")
+    zarray = f"{z.path}/.zarray"
+    for key, value in meta.items():
+        if key != zarray and key not in store:
+            store[key] = value
+    store[zarray] = meta[zarray]
+
+
+def unfinished_arrays(zg, scale_group):
+    """Names in the scale group that are folders but not arrays or groups.
+
+    A conversion that stopped partway leaves the image's folder without its
+    .zarray (see write_array), and zarr does not list it. An update can
+    rebuild any other level from scale_1, but not scale_1 itself, so it
+    checks here instead of finishing without the image.
+    """
+    store = zg.store
+    unfinished = []
+    for name in store.listdir(scale_group):
+        path = f"{scale_group}/{name}"
+        if name.startswith(".") or contains_array(store, path) or contains_group(store, path):
+            continue
+        unfinished.append(path)
+    return unfinished
 
 
 def create2D(args):
@@ -398,6 +425,13 @@ if __name__ == "__main__":
     if create_new:
         images = image_filenames(img_dir)
     else:
+        unfinished = unfinished_arrays(zg, "scale_1")
+        if unfinished:
+            raise Exception(
+                "Zarr conversion incomplete:\n" + "\n".join(unfinished)
+                + "\nThese images were not fully converted. Convert the "
+                "original images to zarr again."
+            )
         images = sorted(list(zg["scale_1"]))
         if not images:
             raise Exception(f"No scale_1 images found in {zarr_fp}.")
