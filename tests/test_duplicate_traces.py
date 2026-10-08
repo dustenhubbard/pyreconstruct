@@ -931,6 +931,8 @@ class _StubField:
         from types import SimpleNamespace
         self.series = series
         self.series_states = _states(series)
+        # no section loaded, so the combine has no copy to reload
+        self.section = self.b_section = None
         self.updated = []
         self.reloaded = 0
         self.saved = 0
