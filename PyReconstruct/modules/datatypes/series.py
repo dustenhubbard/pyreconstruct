@@ -3732,9 +3732,11 @@ class Series():
                 section.modified_contours.update(kept_names)
                 section.resyncColumnarStore()
                 section.save()
+                # here, not after the pass: a series opened at a later
+                # progress update closes this one, and asks to save it only
+                # if it is marked modified
+                self.modified = True
 
-        if combined:
-            self.modified = True
         return combined
 
     def editObjectRadius(self, obj_names : list, new_rad : float, series_states=None):

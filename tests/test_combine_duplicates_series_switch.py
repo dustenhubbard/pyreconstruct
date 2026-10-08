@@ -2,27 +2,35 @@
 
 The combine runs under a progress dialog, and the dialog runs the event loop on
 each update, so a .jser opened from the Finder reaches the window there. B
-opens, and A's combine carries on to its end. When it returned, the field
-refreshed the object tables and the canvas and marked the series modified, and
-by then the series open was B. The list's own guard
-(MalformedContoursDialog._forOpenSeries) only stops it pruning rows afterwards.
+opens and A closes. When the combine returned, the field refreshed the object
+tables and the canvas and marked the series modified, and by then the series
+open was B. The list's own guard (MalformedContoursDialog._forOpenSeries) only
+stops it pruning rows afterwards.
 
-B opens here at the last progress update. At an earlier one the pass goes on
-to load a section of A, whose working folder the switch has already deleted.
+B opens at the first, a middle or the last progress update, and is either a
+copy of A or A's own .jser opened again, which unpacks into the working folder
+A used. Before the last update the pass still has a section of A to combine,
+and it stops there with SeriesClosedError: it writes, so it says it stopped
+part-way (see SeriesIterator.__next__).
 
 What is pinned here:
 
   * B is not marked modified
-  * B's traces on the section are unchanged
+  * B's traces are what its .jser holds, on every section of the combine
   * B's object table is not refreshed
+  * the combine says it stopped when there was still a section to combine,
+    and says nothing when B opened at the end
+  * a combine that B opens under asks to save A first: the sections it
+    combined were in A's working folder, and closing A deleted them unasked
+    when A had been saved just before
 """
 import pytest
 
 from tests.test_cleanup_lists_series_switch import (  # noqa: F401  (fixture)
+    SCAN_UPDATES,
     SQUARE,
     _counts,
     _open_copy,
-    _plant,
     confirmed,
     finder,
 )
@@ -30,42 +38,102 @@ from tests.test_cleanup_lists_series_switch import (  # noqa: F401  (fixture)
 pytestmark = pytest.mark.gui
 
 
-def _b_opens_as_the_combine_finishes(window, tmp_path, qtbot):
-    """Open B from the Finder at the last progress update of A's next pass.
+def _plant_on_two_sections(window, name):
+    """Add two copies of one trace to two sections and save the series.
 
-    Returns the progress values A reported.
+    Returns the section numbers.
+    """
+    from PyReconstruct.modules.datatypes.trace import Trace
+    window.saveAllData()
+    snums = sorted(window.series.sections)[:2]
+    for snum in snums:
+        section = window.series.loadSection(snum)
+        for _ in range(2):
+            trace = Trace(name, (255, 0, 0), closed=True)
+            trace.points = list(SQUARE)
+            section.addTrace(trace, log_event=False)
+        section.save()
+    window.field.reload()
+    window.series.saveJser()
+    return snums
+
+
+def _reopen_from_finder(window, qtbot):
+    """Open the current series' own .jser again, as the Finder sends it."""
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QFileOpenEvent
+    from PySide6.QtWidgets import QApplication
+    first = window.series
+    app = QApplication.instance()
+    app.sendEvent(app, QFileOpenEvent(QUrl.fromLocalFile(first.jser_fp)))
+    assert window.series is not first
+    assert window.series.jser_fp == first.jser_fp
+    qtbot.wait(10)
+
+
+OPENS = {
+    "a copy": lambda window, tmp_path, qtbot: _open_copy(
+        window, tmp_path, qtbot, from_finder=True
+    ),
+    "the same file": lambda window, tmp_path, qtbot: _reopen_from_finder(
+        window, qtbot
+    ),
+}
+
+
+def _b_opens_during_the_combine(window, tmp_path, qtbot, update, opens):
+    """Open B from the Finder at one progress update of A's next pass.
+
+    update names the update (see SCAN_UPDATES), opens what B is (see OPENS).
+    Opens it once: saving A on the way out reports progress too. Returns the
+    progress values A reported.
     """
     from PyReconstruct.modules.backend.progress import NullProgressReporter
     reported = []
-    first = window.series
+    due = SCAN_UPDATES[update]
+    opened = []
 
     class OpensB(NullProgressReporter):
         def set_progress(self, percent):
+            if opened:
+                return
             reported.append(percent)
-            if percent >= 100 and window.series is first:
-                _open_copy(window, tmp_path, qtbot, from_finder=True)
+            if due(percent):
+                opened.append(percent)
+                OPENS[opens](window, tmp_path, qtbot)
 
-    first.setProgressReporter(OpensB)
+    window.series.setProgressReporter(OpensB)
     return reported
 
 
-def test_a_combine_b_opens_under_leaves_b_alone(
-    main_window, main_window_dialogs, monkeypatch, tmp_path, qtbot,
-    confirmed, finder,  # noqa: F811
-):
-    from PyReconstruct.modules.backend.table.manager import TableManager
-    window = main_window
-    snum = _plant(window, "SWITCH_DUP", SQUARE, copies=2)
+def _scan(window, main_window_dialogs, name):
+    """Run the Duplicates scan; returns its list, with a row for name."""
     main_window_dialogs.responses = [
         ([0.95, [("check locked traces", False)]], True)
     ]
     window.reviewDuplicateTraces()
     dialog = window.duplicate_traces_dialog
-    assert any(g["names"] == ["SWITCH_DUP"] for g, _keep in dialog.choices())
+    assert sum(g["names"] == [name] for g, _keep in dialog.choices()) == 2
+    return dialog
+
+
+@pytest.mark.parametrize("opens", list(OPENS))
+@pytest.mark.parametrize("update", list(SCAN_UPDATES))
+def test_a_combine_b_opens_under_leaves_b_alone(
+    update, opens, main_window, main_window_dialogs, monkeypatch, tmp_path,
+    qtbot, confirmed, finder,  # noqa: F811
+):
+    from PyReconstruct.modules.backend.table.manager import TableManager
+    from PyReconstruct.modules.datatypes.series import SeriesClosedError
+    window = main_window
+    snums = _plant_on_two_sections(window, "SWITCH_DUP")
+    dialog = _scan(window, main_window_dialogs, "SWITCH_DUP")
     first = window.series
-    saved = _counts(first, snum)
-    assert saved["SWITCH_DUP"] == 2
-    reported = _b_opens_as_the_combine_finishes(window, tmp_path, qtbot)
+    saved = [_counts(first, snum) for snum in snums]
+    assert [counts["SWITCH_DUP"] for counts in saved] == [2, 2]
+    reported = _b_opens_during_the_combine(
+        window, tmp_path, qtbot, update, opens
+    )
     # the field builds a new table manager for B, so watch the class
     refreshed = []
     monkeypatch.setattr(
@@ -73,10 +141,47 @@ def test_a_combine_b_opens_under_leaves_b_alone(
         lambda manager, *a, **k: refreshed.append(manager.series),
     )
 
-    dialog.combineAll()
+    if update == "last":
+        dialog.combineAll()
+    else:
+        with pytest.raises(SeriesClosedError, match="part-way"):
+            dialog.combineAll()
 
-    assert 100 in reported
+    assert any(SCAN_UPDATES[update](p) for p in reported)
     assert window.series is not first
-    assert _counts(window.series, snum) == saved
+    assert [_counts(window.series, snum) for snum in snums] == saved
     assert not window.series.modified
     assert window.series not in refreshed
+
+
+@pytest.mark.parametrize("update", ["middle", "last"])
+def test_a_combine_b_opens_under_asks_to_save_a(
+    update, main_window, main_window_dialogs, tmp_path, qtbot,
+    confirmed, finder,  # noqa: F811
+):
+    from PyReconstruct.modules.backend.progress import NullProgressReporter
+    from PyReconstruct.modules.datatypes.series import Series
+    window = main_window
+    snums = _plant_on_two_sections(window, "SWITCH_DUP")
+    dialog = _scan(window, main_window_dialogs, "SWITCH_DUP")
+    first = window.series
+    # just saved, as File > Save leaves it
+    window.seriesModified(False)
+    _b_opens_during_the_combine(window, tmp_path, qtbot, update, "a copy")
+    main_window_dialogs.save_response = "yes"
+
+    try:
+        dialog.combineAll()
+    except FileNotFoundError:
+        assert update == "middle"
+
+    assert window.series is not first
+    assert main_window_dialogs.save_prompts == 1
+    combined = 1 if update == "middle" else 2
+    a = Series.openJser(first.jser_fp, progress=NullProgressReporter)
+    try:
+        assert [_counts(a, snum)["SWITCH_DUP"] for snum in snums] == (
+            [1] * combined + [2] * (2 - combined)
+        )
+    finally:
+        a.close()
