@@ -101,12 +101,58 @@ def test_dmg_leaves_out_first_launch_help_for_a_signed_app(tmp_path):
     assert "guide" not in call["defines"]
 
 
+@pytest.mark.skipif(sys.platform != "darwin" or not shutil.which("dmgbuild"),
+                    reason="needs macOS, hdiutil and dmgbuild on PATH")
+@pytest.mark.parametrize("readable", [True, False])
+def test_dmg_build_fails_when_the_app_copy_into_the_image_fails(tmp_path, readable):
+    # The real dmgbuild and hdiutil: dmgbuild copies the app with ditto and
+    # ignores its exit status, so make_dmg.sh must catch a short copy itself.
+    packaging = tmp_path / "packaging"
+    shutil.copytree(ROOT / "packaging" / "macos", packaging / "macos")
+    img = tmp_path / "PyReconstruct" / "assets" / "img"
+    img.mkdir(parents=True)
+    shutil.copyfile(ROOT / "PyReconstruct" / "assets" / "img" / "PyReconstruct.png",
+                    img / "PyReconstruct.png")
+    contents = tmp_path / "dist" / "PyReconstruct.app" / "Contents"
+    (contents / "MacOS").mkdir(parents=True)
+    (contents / "MacOS" / "PyReconstruct").write_text("#!/bin/sh\n")
+    (contents / "Frameworks").mkdir()
+    (contents / "Resources").symlink_to("Frameworks")
+    lib = contents / "Frameworks" / "lib.dylib"
+    lib.write_bytes(b"x" * 4096)
+    if not readable:
+        lib.chmod(0)   # ditto cannot read it, so the app in the image lacks it
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    # Retry at once, and leave other disk images on this machine alone.
+    for name in ("sleep", "killall"):
+        (bin_dir / name).write_text("#!/bin/sh\n")
+        (bin_dir / name).chmod(0o755)
+    env = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+               PYR_PUBLIC="1.24.0", ARCH="arm64", TMPDIR=str(tmp_path))
+    try:
+        result = subprocess.run(["bash", "packaging/macos/make_dmg.sh"], cwd=tmp_path,
+                                env=env, capture_output=True, text=True, timeout=600)
+    finally:
+        lib.chmod(0o644)
+    out = tmp_path / "PyReconstruct-1.24.0-macOS-arm64.dmg"
+    if readable:
+        assert result.returncode == 0, result.stderr
+        assert out.is_file()
+    else:
+        assert result.returncode != 0
+        assert "does not match" in result.stderr
+        assert not out.exists()
+
+
 def _fake_dmgbuild(bin_dir):
-    """Put a dmgbuild on PATH that records its arguments and writes the dmg."""
+    """Put a dmgbuild on PATH that records its arguments and writes the dmg,
+    and an hdiutil that mounts the app the fake dmgbuild copied."""
     dmgbuild = bin_dir / "dmgbuild"
     dmgbuild.write_text(f"#!{sys.executable}\n" + '''
 import json
 from pathlib import Path
+import shutil
 import sys
 args = sys.argv[1:]
 settings = args[args.index("-s") + 1]
@@ -116,9 +162,21 @@ assert Path(settings).name == "dmg_settings.py" and Path(settings).is_file()
 assert Path(defines["app"]).is_dir() and Path(defines["background"]).is_file()
 Path("dmgbuild-call.json").write_text(json.dumps(
     {"volume": volume, "out": out, "defines": defines}))
+app = Path(defines["app"])
+shutil.copytree(app, Path(out + ".contents") / app.name, symlinks=True)
 Path(out).touch()
 ''')
     dmgbuild.chmod(0o755)
+    hdiutil = bin_dir / "hdiutil"
+    hdiutil.write_text(f"#!{sys.executable}\n" + '''
+import shutil
+import sys
+args = sys.argv[1:]
+if args[0] == "attach":
+    mount = args[args.index("-mountpoint") + 1]
+    shutil.copytree(args[-1] + ".contents", mount, symlinks=True, dirs_exist_ok=True)
+''')
+    hdiutil.chmod(0o755)
 
 
 def _window(app_name, guide):

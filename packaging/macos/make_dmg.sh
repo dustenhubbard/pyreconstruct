@@ -50,13 +50,52 @@ fi
 # detach, so retry the whole build with cleanup + backoff.
 # The volume name leaves out the version: it is the window's title.
 make_dmg() {
-    dmgbuild -s "$HERE/dmg_settings.py" "${DEFINES[@]}" "$APP_NAME" "$OUT"
+    dmgbuild -s "$HERE/dmg_settings.py" "${DEFINES[@]}" "$APP_NAME" "$OUT" && check_dmg
 }
+
+# Every path in an app bundle, sorted, with its type and a file's size or a
+# link's target.
+app_listing() {
+    "${PYTHON:-python3}" - "$1" <<'PY'
+import os, sys
+root = sys.argv[1]
+rows = []
+for top, dirs, files in os.walk(root):
+    for name in dirs + files:
+        path = os.path.join(top, name)
+        rel = os.path.relpath(path, root)
+        if os.path.islink(path):
+            rows.append(f"link {rel} -> {os.readlink(path)}")
+        elif os.path.isdir(path):
+            rows.append(f"dir {rel}")
+        else:
+            rows.append(f"file {rel} {os.path.getsize(path)}")
+print("\n".join(sorted(rows)))
+PY
+}
+
+# dmgbuild copies the app with ditto but ignores its exit status, so a failed
+# or partial copy still gives an image. Mount the image and check that the app
+# in it has the same files, at the same sizes, as the app it came from.
+check_dmg() {
+    local mnt status=0
+    mnt="$(mktemp -d)"
+    hdiutil attach -readonly -nobrowse -noautoopen -mountpoint "$mnt" "$OUT" >/dev/null \
+        || { rmdir "$mnt"; return 1; }
+    if ! diff <(app_listing "$APP") <(app_listing "$mnt/${APP_NAME}.app") >&2; then
+        echo "error: the app in $OUT does not match $APP" >&2
+        status=1
+    fi
+    hdiutil detach "$mnt" >/dev/null || hdiutil detach -force "$mnt" >/dev/null || true
+    rmdir "$mnt" 2>/dev/null || true
+    return "$status"
+}
+
 for attempt in 1 2 3 4 5; do
     if make_dmg; then break; fi
-    [ "$attempt" -eq 5 ] && { echo "error: dmgbuild failed after 5 attempts" >&2; exit 1; }
-    echo "dmgbuild failed (attempt $attempt; likely 'Resource busy') -- cleaning up and retrying" >&2
     rm -f "$OUT"
+    [ "$attempt" -eq 5 ] && { echo "error: dmgbuild failed after 5 attempts" >&2; exit 1; }
+    echo "dmgbuild failed (attempt $attempt; likely 'Resource busy'). Cleaning up and retrying." >&2
     killall diskimages-helper 2>/dev/null || true   # release a stale helper holding the image
     sleep $((attempt * 5))
 done
