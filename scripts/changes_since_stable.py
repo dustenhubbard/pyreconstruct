@@ -65,6 +65,30 @@ FENCE_RE = re.compile(r"^(`{3,}|~{3,})(.*)$")
 HEADING_RE = re.compile(r"^#{1,6}(?:[ \t]|$)")
 LIST_ITEM_RE = re.compile(r"^( {0,3}(?:[-*+]|\d{1,9}[.)]))(?= |$)( *)(.*)$")
 
+# The seven kinds of HTML block, as CommonMark starts and ends them: what the
+# line that opens one starts with, and what the line that closes it contains
+# (the opening line itself, for the first five). Only the last cannot
+# interrupt a paragraph.
+HTML_BLOCK_TAGS = (
+    "address|article|aside|base|basefont|blockquote|body|caption|center|col|"
+    "colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|"
+    "form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|"
+    "menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|"
+    "summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul"
+)
+HTML_ATTRIBUTE = r"""\s+[a-zA-Z_:][a-zA-Z0-9:._-]*(?:\s*=\s*(?:[^"'=<>`\x00-\x20]+|'[^']*'|"[^"]*"))?"""
+HTML_BLOCKS = [
+    (re.compile(r"^<(?:script|pre|style|textarea)(?=\s|>|$)", re.I),
+     re.compile(r"</(?:script|pre|style|textarea)>", re.I)),
+    (re.compile(r"^<!--"), re.compile(r"-->")),
+    (re.compile(r"^<\?"), re.compile(r"\?>")),
+    (re.compile(r"^<![A-Z]"), re.compile(r">")),
+    (re.compile(r"^<!\[CDATA\["), re.compile(r"\]\]>")),
+    (re.compile(rf"^</?(?:{HTML_BLOCK_TAGS})(?=\s|/?>|$)", re.I), re.compile(r"^$")),
+    (re.compile(rf"^(?:<[A-Za-z][A-Za-z0-9-]*(?:{HTML_ATTRIBUTE})*\s*/?>|</[A-Za-z][A-Za-z0-9-]*\s*>)\s*$"),
+     re.compile(r"^$")),
+]
+
 # A bulleted item with text, at the left margin, which is where every
 # fragment's bullet starts. Nothing above it can hold it as content, since it
 # ends any item or paragraph before it; an empty or numbered item can be a
@@ -141,6 +165,32 @@ def fence_closes(text, fence):
     return run >= length and not text[run:].strip()
 
 
+def html_open(text, after_paragraph):
+    """The pattern that ends the HTML block ``text`` (indentation removed)
+    starts, else None. After a line of paragraph text, a line that is only a
+    tag is more of the paragraph instead."""
+    kinds = HTML_BLOCKS[:-1] if after_paragraph else HTML_BLOCKS
+    return next((end for start, end in kinds if start.match(text)), None)
+
+
+def block_open(text, after_paragraph):
+    """The fence, or the end of the HTML block, that ``text`` (indentation
+    removed) opens and leaves open, else None."""
+    fence = fence_open(text)
+    if fence:
+        return fence
+    end = html_open(text, after_paragraph)
+    return end if end and not end.search(text) else None
+
+
+def block_closes(text, block, depth):
+    """Whether ``text``, ``depth`` columns into its container, closes ``block``
+    (a fence or the end of an HTML block, as ``block_open`` gives it)."""
+    if isinstance(block, tuple):
+        return depth < 4 and fence_closes(text, block)
+    return bool(block.search(text))
+
+
 def list_item(line, after_paragraph):
     """``(column, first)`` if ``line`` (tabs expanded) starts a list item: the
     column its text starts at, and the text on its first line (``""`` if none,
@@ -168,7 +218,8 @@ def starts_block(line, after_paragraph=False):
     text = line.lstrip()
     return bool(
         fence_open(text) or HEADING_RE.match(text) or RULE_RE.match(text)
-        or text.startswith(">") or list_item(line, after_paragraph) is not None
+        or text.startswith(">") or html_open(text, after_paragraph)
+        or list_item(line, after_paragraph) is not None
     )
 
 
@@ -184,25 +235,31 @@ def paragraph_text(text, after_paragraph):
 
 
 def in_margin_code(lines):
-    """Whether each line is part of a fenced code block at the left margin.
+    """Whether each line is part of a fenced code block or an HTML block at the
+    left margin.
 
     Only such a block can hold a line that starts at the margin, so only it can
-    make a ``## [...]`` line look like a release heading when it is a code
-    example. Indented code cannot: four columns in, no line in it starts
-    ``## ``. A fence inside a list item (indented as far as the item's text) is
-    the item's, and ends with it at the first line at the margin, so it is not
-    counted. Telling the two apart means following the list items: a line
+    make a ``## [...]`` line look like a release heading when it is an example.
+    Indented code cannot: four columns in, no line in it starts ``## ``. A
+    fence or HTML block inside a list item (indented as far as the item's text)
+    is the item's, and ends with it at the first line at the margin, so it is
+    not counted. Telling the two apart means following the list items: a line
     belongs to each open item whose text column it is indented to, and a line
     indented less continues them only when it continues a paragraph, which no
-    fence, heading, rule, quote or list item does.
+    fence, heading, rule, quote, HTML block or list item does. A line that is
+    only a tag cannot start an HTML block inside a paragraph; at the margin,
+    after a quote's or a list item's paragraph, it is not inside that one and
+    starts a block (as GitHub reads it).
     """
     flags = []
     fence = None  # the open fence at the margin
+    html = None  # the pattern that ends the open HTML block at the margin
     items = []  # the text columns of the open list items, the first at the margin
     empty = False  # the innermost item has no text yet, so a blank line ends it
-    inner = None  # a fence open in the innermost item
+    inner = None  # a fence or HTML block open in the innermost item
     lazy = False  # the line before is paragraph text the next line can continue
     quote = False  # the same, for a quote's paragraph
+    quoted = None  # a fence or HTML block open in the quote
     for line in lines:
         text = line.expandtabs(4)
         stripped = text.lstrip()
@@ -211,6 +268,11 @@ def in_margin_code(lines):
             flags.append(True)
             if indent < 4 and fence_closes(stripped, fence):
                 fence = None
+            continue
+        if html:
+            flags.append(True)
+            if html.search(stripped):
+                html = None
             continue
         blank = not stripped
         held = len(items) if blank else sum(indent >= column for column in items)
@@ -230,39 +292,58 @@ def in_margin_code(lines):
             inside = text[column:]
             body = inside.lstrip()
             depth = len(inside) - len(body)
-            if blank:
-                lazy = False
-            elif inner:
-                if depth < 4 and fence_closes(body, inner):
+            if inner:
+                if block_closes(body, inner, depth):
                     inner = None
+            elif blank:
+                lazy = False
             elif depth < 4:  # deeper is more of the paragraph, or indented code
                 nested = list_item(inside, lazy)
                 if nested is not None:
                     items.append(column + nested[0])
                     body = nested[1]
                     empty = body == ""
-                inner = fence_open(body) if body else None
-                lazy = bool(body) and paragraph_text(body, lazy and nested is None)
+                after = lazy and nested is None
+                inner = block_open(body, after) if body else None
+                lazy = bool(body) and paragraph_text(body, after)
             flags.append(False)
             continue
+        if indent >= 4 or not stripped.startswith(">"):
+            quoted = None  # the quote, if any, has ended
         fence = fence_open(stripped) if indent < 4 else None
-        flags.append(bool(fence))
-        opened = None if fence or indent >= 4 else list_item(text, lazy)
+        html = None if fence or indent >= 4 else html_open(stripped, lazy)
+        if html and html.search(stripped):
+            html = None  # one that ends on the line it starts
+            flags.append(True)
+            lazy = quote = False
+            continue
+        flags.append(bool(fence or html))
+        opened = None if fence or html or indent >= 4 else list_item(text, lazy)
         if opened is not None:
             column, first = opened
             items = [column]
             empty, quote = first == "", False
-            inner = fence_open(first) if first else None
+            inner = block_open(first, False) if first else None
             lazy = bool(first) and paragraph_text(first, False)
-        elif fence or blank:
+        elif fence or html or blank:
             lazy = quote = False
         elif indent < 4 and stripped.startswith(">"):
             # A quote. A list item may follow its paragraph, which a line at
-            # the margin continues as it would any other.
+            # the margin continues as it would any other; a list item in it is
+            # read from its text, as an item's is.
             inside = stripped[2:] if stripped.startswith("> ") else stripped[1:]
             body = inside.lstrip()
-            if len(inside) - len(body) < 4:
-                quote = bool(body) and paragraph_text(body, quote)
+            depth = len(inside) - len(body)
+            if quoted:
+                if block_closes(body, quoted, depth):
+                    quoted = None
+            elif depth < 4:
+                nested = list_item(body, quote)
+                if nested is not None:
+                    body = nested[1]
+                after = quote and nested is None
+                quoted = block_open(body, after) if body else None
+                quote = bool(body) and paragraph_text(body, after)
             lazy = False
         elif indent < 4 and quote and not starts_block(text):
             lazy = False  # more of the quote's paragraph
@@ -274,8 +355,8 @@ def in_margin_code(lines):
 def sections(changelog_text):
     """``[(version, [body lines]), ...]`` for every ``## [...]`` heading, in file order.
 
-    A heading inside a fenced code block at the margin is an example's, not a
-    release's, and stays part of the section it is written in.
+    A heading inside a fenced code block or an HTML block at the margin is an
+    example's, not a release's, and stays part of the section it is written in.
     """
     found = []
     current = None

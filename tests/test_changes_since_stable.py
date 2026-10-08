@@ -214,6 +214,61 @@ def test_only_a_fence_at_the_margin_hides_a_release_heading(body, versions):
     assert [version for version, _ in cs.sections("## [1.23.0]\n" + body)] == versions
 
 
+@pytest.mark.parametrize("opening,closing", [
+    pytest.param("<!--", "-->", id="comment"),
+    pytest.param("<pre>", "</pre>", id="pre"),
+])
+def test_a_release_heading_in_an_html_block_is_not_a_release(tmp_path, opening, closing):
+    """The same example, hidden in a comment or shown in ``<pre>``: still not a release."""
+    changelog = (
+        "## [Unreleased]\n"
+        "\n"
+        "## [1.23.0] - 2026-09-27\n"
+        "\n"
+        "### Added\n"
+        "- **Already shipped.** An example:\n"
+        "\n"
+        f"{opening}\n"
+        "## [1.24.0]\n"
+        "### Fixed\n"
+        "- **Old example, not a new fix.**\n"
+        f"{closing}\n"
+    )
+    assert section(repo(tmp_path, changelog=changelog)) == ""
+
+
+@pytest.mark.parametrize("body,versions", [
+    pytest.param("<details>\n## [1.24.0]\n</details>\n", ["1.23.0"], id="details-until-a-blank-line"),
+    pytest.param("<details>\n\n## [1.24.0]\n", ["1.23.0", "1.24.0"], id="details-ends-at-a-blank-line"),
+    pytest.param("<script>\n## [1.24.0]\n</script>\n", ["1.23.0"], id="script"),
+    pytest.param("<style>\n## [1.24.0]\n</style>\n", ["1.23.0"], id="style"),
+    pytest.param("<textarea>\n## [1.24.0]\n</textarea>\n", ["1.23.0"], id="textarea"),
+    pytest.param("<?php\n## [1.24.0]\n?>\n", ["1.23.0"], id="processing-instruction"),
+    pytest.param("<!DOCTYPE\n## [1.24.0]\n>\n", ["1.23.0"], id="declaration"),
+    pytest.param("<![CDATA[\n## [1.24.0]\n]]>\n", ["1.23.0"], id="cdata"),
+    pytest.param("<span>\n## [1.24.0]\n", ["1.23.0"], id="a-lone-tag-until-a-blank-line"),
+    pytest.param("text\n<span>\n## [1.24.0]\n", ["1.23.0", "1.24.0"],
+                 id="a-lone-tag-after-a-paragraph-is-the-paragraphs"),
+    pytest.param("text\n<!--\n## [1.24.0]\n", ["1.23.0"], id="a-comment-after-a-paragraph-is-a-block"),
+    pytest.param("<!-- one line -->\n## [1.24.0]\n", ["1.23.0", "1.24.0"], id="a-comment-on-one-line"),
+    pytest.param("    <!--\n## [1.24.0]\n", ["1.23.0", "1.24.0"], id="indented-code-is-not-html"),
+    # HTML as far in as an item's text is the item's, and a line at the margin
+    # ends both; nor is it the item's paragraph for a line at the margin to run on.
+    pytest.param("- **Example.**\n  <!--\n## [1.24.0]\n", ["1.23.0", "1.24.0"], id="html-in-a-bullet-ends-with-it"),
+    pytest.param("- a\n  <div>\n  b\nc\n<span>\n## [1.24.0]\n", ["1.23.0", "1.24.0"],
+                 id="html-in-a-bullet-is-not-its-paragraph"),
+    pytest.param("> <div>\n> text\nmore\n<span>\n## [1.24.0]\n", ["1.23.0", "1.24.0"],
+                 id="html-in-a-quote-is-not-its-paragraph"),
+    # A quote's paragraph does not hold a lone tag at the margin, as GitHub
+    # reads it (markdown-it-py reads both of these as more of the paragraph).
+    pytest.param("> quote\n<span>\n## [1.24.0]\n", ["1.23.0"], id="a-lone-tag-after-a-quote-opens-a-block"),
+    pytest.param("> - q\n===\n<span>\n## [1.24.0]\n", ["1.23.0"], id="a-quoted-items-paragraph-runs-on"),
+])
+def test_only_html_at_the_margin_hides_a_release_heading(body, versions):
+    """Each expectation is what GitHub's parser, cmark-gfm, makes of the same text."""
+    assert [version for version, _ in cs.sections("## [1.23.0]\n" + body)] == versions
+
+
 @pytest.mark.parametrize("below,above", [
     ("1.23.0", "1.24.0"),
     ("1.23.0", "1.23.1"),
