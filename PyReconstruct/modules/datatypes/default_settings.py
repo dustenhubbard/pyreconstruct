@@ -70,6 +70,7 @@ default_settings = {
     "screenshot_res": 300,
     "show_ztraces": True,  # MFO
     "fill_opacity": 0.2,  # MFO
+    "selection_highlight_opacity": 20,  # % opacity of the highlight around a selected trace  # MFO
     "find_zoom": 95.0,  # MFO
     "show_flags": "unresolved",  # MFO
     "display_closest": True,  # MFO
@@ -265,6 +266,10 @@ default_settings = {
     "show_scale_bar_text": True,
     "show_scale_bar_ticks": True,
 }
+
+# The selection highlight opacity slider runs from 0 to this percent. A stored
+# value above it, such as one set by hand, draws and shows as this.
+MAX_SELECTION_HIGHLIGHT_OPACITY = 50
 
 # The range of real-world lengths a micron-pinned scale bar can be pinned to:
 # a picometre to a metre, against specimen sections measured in tens of microns.

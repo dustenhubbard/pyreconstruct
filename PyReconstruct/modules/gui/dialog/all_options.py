@@ -24,7 +24,10 @@ from PyReconstruct.modules.datatypes import Series
 from PyReconstruct.modules.backend.func.utils import (
     zarr_worker_count, MAX_ZARR_WORKERS,
 )
-from PyReconstruct.modules.datatypes.default_settings import validPinnedLength
+from PyReconstruct.modules.datatypes.default_settings import (
+    validPinnedLength,
+    MAX_SELECTION_HIGHLIGHT_OPACITY,
+)
 
 
 def cpuSliderReadout(percent : int) -> str:
@@ -143,6 +146,7 @@ class AllOptionsDialog(QDialog):
                 ["show_ztraces"],
                 ["show_flags"],
                 ["fill_opacity"],
+                ["selection_highlight_opacity"],
                 ["find_zoom"],
                 ["hover_columns"],
                 ["smoothing_3D"]
@@ -451,6 +455,28 @@ class AllOptionsDialog(QDialog):
             self.series.setOption("fill_opacity", response[0])
         self.addOptionWidget("fill_opacity", structure, setOption)
 
+        # selection_highlight_opacity: how see-through the highlight around a
+        # selected trace is. A thin solid line in the trace's color always sits
+        # on top, so at 0% only that line shows. The slider stops at 50%; a
+        # larger stored value shows as 50%, which is also how it draws.
+        highlight = min(
+            self.series.getOption("selection_highlight_opacity", use_defaults),
+            MAX_SELECTION_HIGHLIGHT_OPACITY,
+        )
+        structure = [
+            ["Selected trace highlight opacity:",
+             ("slider", highlight, 10,
+              {"maximum": MAX_SELECTION_HIGHLIGHT_OPACITY, "suffix": "%"})],
+        ]
+        def setOption(response):
+            self.series.setOption("selection_highlight_opacity", response[0])
+        self.addOptionWidget("selection_highlight_opacity", structure, setOption)
+        # the highlight previews on the field as the slider moves
+        # (see _previewHighlight)
+        self.all_widgets["selection_highlight_opacity"].inputs[0].widget.slider.valueChanged.connect(
+            self._previewHighlight
+        )
+
         # find_zoom
         structure = [
             ["Zoom level for finding contours:", (True, "float", self.series.getOption("find_zoom", use_defaults))]
@@ -619,13 +645,59 @@ class AllOptionsDialog(QDialog):
             palette.previewScaleBarWidth(percent)
             self._scale_bar_previewed = True
 
+    def _field(self):
+        """The main window's field, or None when there is no window."""
+        return getattr(self.parent(), "field", None)
+
+    def _highlightLayers(self):
+        """The field and the section layers it draws (two when blending).
+
+        Returns (None, []) when there is no window.
+        """
+        field = self._field()
+        if field is None:
+            return None, []
+        layers = (field.section_layer, getattr(field, "b_section_layer", None))
+        return field, [layer for layer in layers if layer is not None]
+
+    def _previewHighlight(self, percent):
+        """Redraw the field with the selection highlight at `percent`; nothing is stored.
+
+        The right opacity depends on the image under the traces, so it has to
+        be judged on the field while the slider moves. OK stores the option;
+        Cancel redraws with the stored value (_endHighlightPreview).
+        """
+        field, layers = self._highlightLayers()
+        if field is not None:
+            for layer in layers:
+                layer.highlight_opacity_preview = percent
+            field.generateView(generate_image=False)
+            self._highlight_previewed = True
+
+    def _endHighlightPreview(self, redraw : bool):
+        """Hand the highlight back to the stored option.
+
+            Params:
+                redraw (bool): True to redraw the field now
+        """
+        if not getattr(self, "_highlight_previewed", False):
+            return
+        field, layers = self._highlightLayers()
+        if field is not None:
+            for layer in layers:
+                layer.highlight_opacity_preview = None
+            if redraw:
+                field.generateView(generate_image=False)
+        self._highlight_previewed = False
+
     def reject(self):
-        """Overwritten: a previewed scale bar goes back to its stored size."""
+        """Overwritten: previewed views go back to their stored settings."""
         if getattr(self, "_scale_bar_previewed", False):
             palette = self._palette()
             if palette is not None:
                 palette.restoreScaleBar()
             self._scale_bar_previewed = False
+        self._endHighlightPreview(redraw=True)
         super().reject()
 
     def accept(self):
@@ -636,6 +708,8 @@ class AllOptionsDialog(QDialog):
                 return False
         for w in widgets:
             w.set()
+        # the caller redraws the field after OK, now from the stored value
+        self._endHighlightPreview(redraw=False)
         super().accept()
         return True
 
@@ -649,6 +723,11 @@ class AllOptionsDialog(QDialog):
         self.placeWidgets()
         # set the tab
         self.tabs.setCurrentIndex(current_tab)
+        # the new highlight slider starts at the default without a valueChanged,
+        # so show the field at that value too
+        self._previewHighlight(
+            self.all_widgets["selection_highlight_opacity"].inputs[0].widget.slider.value()
+        )
 
 # all widgets used in the options MUST have a accept() and set() method
 # accept is used to check if the response are valid
