@@ -384,6 +384,14 @@ def fake_gh(tmp_path):
     # and a later one the same day follows it
     (("v1.23.0", "v1.24.0.dev20261008", "v1.24.0.dev202610081315"),
      "v1.24.0.dev202610081840", "v1.24.0.dev202610081315"),
+    # a build that finishes, or reruns, after a later nightly is tagged
+    # compares against the one before it, never the later one
+    (("v1.23.0", "v1.24.0.dev20261008", "v1.24.0.dev202610081840"),
+     "v1.24.0.dev202610081315", "v1.24.0.dev20261008"),
+    (("v1.23.0", "v1.24.0.dev20261007", "v1.24.0.dev202610081315"),
+     "v1.24.0.dev20261008", "v1.24.0.dev20261007"),
+    # with only later nightlies, the newest stable
+    (("v1.23.0", "v1.24.0.dev202610081840"), "v1.24.0.dev202610081315", "v1.23.0"),
 ])
 def test_nightly_notes_compare_against_the_previous_release_on_the_channel(
     tmp_path, tags, ref, previous,
@@ -402,4 +410,5 @@ def test_nightly_notes_compare_against_the_previous_release_on_the_channel(
     assert body.startswith("Nightly build of PyReconstruct Dev from main at ")
     assert f"tag_name={ref}" in body
     assert f"target_commitish={sha}" in body
-    assert f"previous_tag_name={previous}" in body
+    # whole words: dev20261008 is a prefix of dev202610081840
+    assert f"previous_tag_name={previous}" in body.split()

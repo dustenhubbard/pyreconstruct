@@ -986,8 +986,10 @@ jobs:
       - name: Build nightly release notes
         # A nightly gets GitHub's auto-generated notes (the merged pull requests
         # and a compare link), measured against the previous release on the
-        # same channel: the newest OTHER nightly by date, or the newest stable
-        # when this is the first nightly. Nobody curates a nightly's notes, and
+        # same channel: the newest nightly older than this one by its dev
+        # number, or the newest stable when there is none. A later nightly is
+        # never the previous one, even when this build finishes or reruns after
+        # it is tagged. Nobody curates a nightly's notes, and
         # the dev audience reads the pull-request list fine. The stable step
         # below is skipped for a nightly and vice versa; both write
         # release_body.md.
@@ -1001,8 +1003,10 @@ jobs:
           set -o pipefail
           NIGHTLY_RE='^v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]{8}([0-9]{4})?$'
           STABLE_RE='^v[0-9]+\.[0-9]+\.[0-9]+$'
-          PREV="$(git tag --list 'v*' | grep -E "$NIGHTLY_RE" | grep -vxF "$GITHUB_REF_NAME" \
-            | awk -F'[.]dev' '{ print $2, $0 }' | sort -k1,1n -k2,2V | tail -n 1 | cut -d' ' -f2 || true)"
+          CUR="${GITHUB_REF_NAME##*.dev}"
+          PREV="$(git tag --list 'v*' | grep -E "$NIGHTLY_RE" \
+            | awk -F'[.]dev' -v cur="$CUR" '$2 + 0 < cur + 0 { print $2, $0 }' \
+            | sort -k1,1n -k2,2V | tail -n 1 | cut -d' ' -f2 || true)"
           if [ -z "$PREV" ]; then
             PREV="$(git tag --list 'v*' | grep -E "$STABLE_RE" | sort -V | tail -n 1 || true)"
           fi
