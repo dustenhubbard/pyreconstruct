@@ -1,8 +1,8 @@
 """Opening a series when a held working file refuses the close of the last one.
 
-Closing a series moves its working folder aside before deleting anything. On
-Windows a working file held open (another program, a sync client) refuses the
-move, and the open stops there. What is pinned here:
+Closing a series moves its working files aside before deleting anything. When
+that move fails (on Windows, a working file held open by another program or a
+sync client can refuse it), the open stops there. What is pinned here:
 
   * the app's error window opens: the failed close is not quiet
   * the window keeps the series it had, with every working file in place,

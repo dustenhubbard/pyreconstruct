@@ -461,6 +461,68 @@ def _sweepStaleSaveTemps(*folders):
             pass  # best-effort cleanup must never prevent opening a series
 
 
+def _closingDir(folder : str) -> str:
+    """A free path beside the folder, to move the folder or its files to.
+
+    The name is short, since the folder's own may already be as long as a
+    folder name can be. It is never the folder itself: a series named
+    "closing-<hex>" has a folder named as this one could be.
+    """
+    while True:
+        closing_dir = os.path.join(
+            os.path.dirname(folder), f".closing-{secrets.token_hex(4)}"
+        )
+        if not os.path.lexists(closing_dir):
+            return closing_dir
+
+
+def _moveFiles(names : list, folder : str, closing_dir : str):
+    """Move the named files from the folder into a new folder, all or none.
+
+    If one of them cannot move, the ones already moved go back and the error
+    is raised. A file that then cannot go back stays in closing_dir; nothing
+    is deleted here.
+    """
+    os.mkdir(closing_dir)
+    moved = []
+    try:
+        for name in names:
+            os.rename(os.path.join(folder, name), os.path.join(closing_dir, name))
+            moved.append(name)
+    except OSError:
+        for name in moved:
+            try:
+                os.rename(os.path.join(closing_dir, name), os.path.join(folder, name))
+            except OSError:
+                pass
+        try:
+            os.rmdir(closing_dir)
+        except OSError:
+            pass  # a file did not go back
+        raise
+
+
+def _clearFiles(folder : str):
+    """Remove the files directly in a folder, then the folder if it is empty.
+
+    Never recursive: a folder in it, and a file that cannot be removed, stay
+    where they are.
+    """
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return
+    for name in names:
+        try:
+            os.remove(os.path.join(folder, name))
+        except OSError:
+            pass  # held open, or a folder
+    try:
+        os.rmdir(folder)
+    except OSError:
+        pass  # still holds something
+
+
 def renamedSeriesFile(filename : str, old_name : str, new_name : str) -> str:
     """The filename with its series-name PREFIX swapped, else unchanged.
 
@@ -1289,23 +1351,29 @@ class Series():
             return
 
         if os.path.isdir(self.hidden_dir):
-            # moved aside in one step before anything is deleted: a working
-            # file held open (common on Windows) refuses the move, and the
-            # close raises with every file in place, so the series left in
-            # the window is still usable. Deleting file by file left it with
-            # some sections gone and the rest still open.
-            # a short name: the series' own may already be as long as a
-            # folder name can be
-            closing_dir = os.path.join(
-                os.path.dirname(self.hidden_dir),
-                f".closing-{secrets.token_hex(4)}",
-            )
-            os.rename(self.hidden_dir, closing_dir)
+            # the series' own files are the ones directly in its folder; a
+            # folder in it (a backup folder set there) is not, and keeps all
+            # it holds
+            with os.scandir(self.hidden_dir) as it:
+                entries = list(it)
+            files = [
+                e.name for e in entries if not e.is_dir(follow_symlinks=False)
+            ]
+            closing_dir = _closingDir(self.hidden_dir)
+            if len(files) == len(entries):
+                # moved aside in one step before anything is deleted: if the
+                # move fails (a working file held open, common on Windows),
+                # the close raises with every file in place
+                os.rename(self.hidden_dir, closing_dir)
+            else:
+                # the folder stays; its files move aside one by one, and are
+                # moved back if one of them cannot go
+                _moveFiles(files, self.hidden_dir, closing_dir)
             # none of its files are where the series reads them now, so it
             # is closed even if some of them cannot be cleared
-            shutil.rmtree(closing_dir, ignore_errors=True)
+            _clearFiles(closing_dir)
 
-        # only once its files are out of place: a close the move refused
+        # only once its files are out of place: a close whose move failed
         # leaves the series in the window, still usable
         self.closed = True
     

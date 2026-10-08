@@ -18,8 +18,13 @@ What is pinned here:
     end without a word; see test_cleanup_lists_series_switch.py)
   * a close that a held working file refuses deletes none of the series'
     files: the series stays open, and a pass over it reads every section
-  * a close that cannot clear a file once the folder is out of place still
+  * a close that cannot clear a file once its files are out of place still
     closes the series, so nothing is left half-deleted under its name
+  * the folder moved aside is never the working folder itself, even for a
+    series whose folder has the name the move would pick
+  * close deletes only the files directly in the working folder: a folder
+    in it (a backup folder set there, or any other) keeps all it holds, and
+    a held file refuses that close with every file in place too
 """
 import pytest
 
@@ -121,12 +126,15 @@ def _locks_a_later_file(series, monkeypatch, holds_folder):
     """Make the working file close removes last refuse to go.
 
     A file held open on Windows (another program, a sync client) cannot be
-    removed, and its folder cannot be renamed while it is held: holds_folder.
-    Without it, only the removal fails.
+    removed, and neither it nor its folder can be renamed while it is held:
+    holds_folder. Without it, only the removal fails.
     """
     import os
     hidden_dir = series.hidden_dir
-    names = os.listdir(hidden_dir)
+    names = [
+        f for f in os.listdir(hidden_dir)
+        if os.path.isfile(os.path.join(hidden_dir, f))
+    ]
     assert len(names) > 2
     locked = names[-1]
     remove, unlink, rename, replace = (
@@ -145,7 +153,10 @@ def _locks_a_later_file(series, monkeypatch, holds_folder):
 
     def move(real):
         def call(src, dst, *args, **kwargs):
-            if holds_folder and os.path.normpath(src) == hidden_dir:
+            if holds_folder and (
+                os.path.normpath(src) == hidden_dir
+                or os.path.basename(src) == locked
+            ):
                 refused(src)
             return real(src, dst, *args, **kwargs)
         return call
@@ -187,3 +198,89 @@ def test_a_close_that_cannot_clear_a_file_still_closes(series, monkeypatch):
     with pytest.raises(SeriesClosedError):
         for _snum, _section in series.enumerateSections(message="Scanning..."):
             pass
+
+
+def test_the_folder_moved_aside_is_never_the_working_folder(
+    series_jser, monkeypatch
+):
+    import os
+    import secrets
+    from PyReconstruct.modules.datatypes.series import Series
+    # a series whose working folder is named as the move would name it
+    jser = series_jser.with_name("closing-deadbeef.jser")
+    series_jser.rename(jser)
+    series = Series.openJser(str(jser), progress=NullProgressReporter)
+    assert os.path.basename(series.hidden_dir) == ".closing-deadbeef"
+    tokens = iter(["deadbeef", "cafef00d"])
+    monkeypatch.setattr(secrets, "token_hex", lambda n: next(tokens))
+    _locks_a_later_file(series, monkeypatch, holds_folder=False)
+
+    series.close()
+    monkeypatch.undo()
+
+    assert series.closed
+    assert not os.path.exists(series.hidden_dir)
+
+
+def _with_folders(series):
+    """Put a backup folder and an unrelated nested folder in the working folder."""
+    import os
+    backups = os.path.join(series.hidden_dir, "series-backups")
+    os.mkdir(backups)
+    with open(os.path.join(backups, "series-snapshot.jser"), "w") as f:
+        f.write("snapshot")
+    nested = os.path.join(series.hidden_dir, "notes", "deeper")
+    os.makedirs(nested)
+    with open(os.path.join(nested, "note.txt"), "w") as f:
+        f.write("note")
+    return {
+        os.path.join(backups, "series-snapshot.jser"): "snapshot",
+        os.path.join(nested, "note.txt"): "note",
+    }
+
+
+def _contents(files):
+    contents = {}
+    for path in files:
+        with open(path) as f:
+            contents[path] = f.read()
+    return contents
+
+
+def test_a_close_keeps_the_folders_in_the_working_folder(series):
+    import os
+    parent = os.path.dirname(series.hidden_dir)
+    others = set(os.listdir(parent))
+    kept = _with_folders(series)
+
+    series.close()
+
+    assert series.closed
+    assert _contents(kept) == kept
+    assert sorted(os.listdir(series.hidden_dir)) == ["notes", "series-backups"]
+    assert set(os.listdir(parent)) == others
+
+
+def test_a_close_a_held_file_refuses_keeps_files_beside_folders(
+    series, monkeypatch
+):
+    import os
+    kept = _with_folders(series)
+    before = sorted(os.listdir(series.hidden_dir))
+    parent = os.path.dirname(series.hidden_dir)
+    others = set(os.listdir(parent))
+    _locks_a_later_file(series, monkeypatch, holds_folder=True)
+
+    with pytest.raises(PermissionError):
+        series.close()
+    monkeypatch.undo()
+
+    assert sorted(os.listdir(series.hidden_dir)) == before
+    assert _contents(kept) == kept
+    assert set(os.listdir(parent)) == others
+    assert not series.closed
+    visited = [
+        snum for snum, _section
+        in series.enumerateSections(message="Scanning...")
+    ]
+    assert visited == sorted(series.sections)
