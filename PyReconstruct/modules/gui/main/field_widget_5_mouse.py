@@ -165,7 +165,8 @@ class FieldWidgetMouse(FieldWidgetData):
 
         if traces_to_merge:
             traces_to_merge.append(new_trace)
-            # the draw's newTrace already saved an undo state; fold the states
+            # the draw already saved an undo state (newTrace, or lineRelease
+            # for a scissors cut, which newTrace does not log); fold the states
             # the merge saves into it so the whole gesture (draw plus
             # auto-merge) is one undo step and one Ctrl+Z restores the section
             # as it was before the draw (upstream issue #137)
@@ -761,6 +762,14 @@ class FieldWidgetMouse(FieldWidgetData):
                 if recreated and log_event and self.is_scissoring:
                     self.series.addLog(self.tracing_trace.name, self.section.n, "Modify trace(s)")
 
+                # A logged draw saves its undo state inside newTrace, and
+                # autoMerge folds the merge into that state. A cut is not
+                # logged there, so it saves its state here, before the merge:
+                # otherwise autoMerge drops the state holding the section from
+                # before the cut, and Undo gives back the merged trace.
+                if recreated and self.is_scissoring:
+                    self.saveState()
+
                 if recreated and closed and len(self.current_trace) > 2:
                     self.autoMerge()
 
@@ -788,9 +797,10 @@ class FieldWidgetMouse(FieldWidgetData):
 
                 ## NOTE: saveState is usually invoked through newTrace; however,
                 ## because this event is not logged through that function,
-                ## saveState must be called here explicitly.
-                
-                self.saveState() 
+                ## saveState must be called explicitly: above for a finished
+                ## cut, here for the original trace put back.
+                if not recreated:
+                    self.saveState()
                 self.generateView()
                 
             else:
