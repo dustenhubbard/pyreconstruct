@@ -23,7 +23,13 @@ What is pinned here:
   * a combine that B opens under asks to save A first: the sections it
     combined were in A's working folder, and closing A deleted them unasked
     when A had been saved just before
+  * answering that prompt, Yes or Cancel, keeps every section the combine
+    wrote combined, also the section shown and the flickered-away one: the
+    save writes the field's loaded copies of those, and copies loaded before
+    the combine put the duplicates back
 """
+import shutil
+
 import pytest
 
 from tests.test_cleanup_lists_series_switch import (  # noqa: F401  (fixture)
@@ -38,14 +44,15 @@ from tests.test_cleanup_lists_series_switch import (  # noqa: F401  (fixture)
 pytestmark = pytest.mark.gui
 
 
-def _plant_on_two_sections(window, name):
+def _plant_on_two_sections(window, name, snums=None):
     """Add two copies of one trace to two sections and save the series.
 
-    Returns the section numbers.
+    snums names the sections, the first two by default. Returns them.
     """
     from PyReconstruct.modules.datatypes.trace import Trace
     window.saveAllData()
-    snums = sorted(window.series.sections)[:2]
+    if snums is None:
+        snums = sorted(window.series.sections)[:2]
     for snum in snums:
         section = window.series.loadSection(snum)
         for _ in range(2):
@@ -84,9 +91,9 @@ OPENS = {
 def _b_opens_during_the_combine(window, tmp_path, qtbot, update, opens):
     """Open B from the Finder at one progress update of A's next pass.
 
-    update names the update (see SCAN_UPDATES), opens what B is (see OPENS).
-    Opens it once: saving A on the way out reports progress too. Returns the
-    progress values A reported.
+    update names the update (see SCAN_UPDATES), opens what B is (see OPENS)
+    or is the function that opens it. Opens it once: saving A on the way out
+    reports progress too. Returns the progress values A reported.
     """
     from PyReconstruct.modules.backend.progress import NullProgressReporter
     reported = []
@@ -100,7 +107,7 @@ def _b_opens_during_the_combine(window, tmp_path, qtbot, update, opens):
             reported.append(percent)
             if due(percent):
                 opened.append(percent)
-                OPENS[opens](window, tmp_path, qtbot)
+                OPENS.get(opens, opens)(window, tmp_path, qtbot)
 
     window.series.setProgressReporter(OpensB)
     return reported
@@ -177,6 +184,87 @@ def test_a_combine_b_opens_under_asks_to_save_a(
 
     assert window.series is not first
     assert main_window_dialogs.save_prompts == 1
+    combined = 1 if update == "middle" else 2
+    a = Series.openJser(first.jser_fp, progress=NullProgressReporter)
+    try:
+        assert [_counts(a, snum)["SWITCH_DUP"] for snum in snums] == (
+            [1] * combined + [2] * (2 - combined)
+        )
+    finally:
+        a.close()
+
+
+def _plant_where_the_field_holds(window, name, held):
+    """Plant duplicates on two sections the field holds loaded copies of.
+
+    held "shown": the first is the section shown. held "flickered": the
+    first is the flickered-away section (b_section) and the second is shown.
+    Returns the section numbers, in the order the combine writes them.
+    """
+    snums = sorted(window.series.sections)
+    shown = window.series.current_section
+    pair = [shown, snums[snums.index(shown) + 1]]
+    _plant_on_two_sections(window, name, pair)
+    if held == "flickered":
+        window.changeSection(pair[1])
+        assert window.field.b_section.n == pair[0]
+    assert window.field.section.n == pair[held == "flickered"]
+    return pair
+
+
+def _offer_copy_from_finder(window, tmp_path, qtbot):
+    """Send a copy of the series from the Finder; the save prompt decides."""
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QFileOpenEvent
+    from PySide6.QtWidgets import QApplication
+    copy_fp = tmp_path / "series_b" / "series_b.jser"
+    copy_fp.parent.mkdir()
+    shutil.copyfile(window.series.jser_fp, copy_fp)
+    app = QApplication.instance()
+    app.sendEvent(app, QFileOpenEvent(QUrl.fromLocalFile(str(copy_fp))))
+    qtbot.wait(10)
+
+
+@pytest.mark.parametrize("unsaved", [False, True], ids=["saved", "unsaved"])
+@pytest.mark.parametrize("answer", ["yes", "cancel"])
+@pytest.mark.parametrize("held", ["shown", "flickered"])
+@pytest.mark.parametrize("update", ["middle", "last"])
+def test_saving_a_at_the_prompt_keeps_what_the_combine_wrote(
+    update, held, answer, unsaved, main_window, main_window_dialogs,
+    tmp_path, qtbot, confirmed, finder,  # noqa: F811
+):
+    from PyReconstruct.modules.backend.progress import NullProgressReporter
+    from PyReconstruct.modules.datatypes.series import (
+        Series,
+        SeriesClosedError,
+    )
+    window = main_window
+    snums = _plant_where_the_field_holds(window, "SWITCH_DUP", held)
+    dialog = _scan(window, main_window_dialogs, "SWITCH_DUP")
+    first = window.series
+    if not unsaved:
+        # just saved, as File > Save leaves it
+        window.seriesModified(False)
+    assert first.modified == unsaved
+    _b_opens_during_the_combine(
+        window, tmp_path, qtbot, update, _offer_copy_from_finder
+    )
+    main_window_dialogs.save_response = answer
+
+    try:
+        dialog.combineAll()
+    except (SeriesClosedError, FileNotFoundError):
+        # Yes closed A with a section still to combine
+        assert answer == "yes" and update == "middle"
+
+    assert main_window_dialogs.save_prompts == 1
+    if answer == "cancel":
+        # A stays open and the combine finishes
+        assert window.series is first
+        assert [_counts(first, snum)["SWITCH_DUP"] for snum in snums] == [1, 1]
+        assert len(window.field.section.contours["SWITCH_DUP"]) == 1
+        return
+    assert window.series is not first
     combined = 1 if update == "middle" else 2
     a = Series.openJser(first.jser_fp, progress=NullProgressReporter)
     try:

@@ -3634,7 +3634,8 @@ class Series():
         return min(candidates, key=lambda m: (-m["points"], m["index"]))
 
     def combineDuplicateTraces(self, choices : list, series_states=None,
-                               log_event=True, ambiguous : list = None) -> list:
+                               log_event=True, ambiguous : list = None,
+                               written=None) -> list:
         """Combine each chosen duplicate group into one trace.
 
         Each choice is a ``(group, keep)`` tuple: ``group`` from
@@ -3666,6 +3667,8 @@ class Series():
                 log_event (bool): True if events should be logged
                 ambiguous (list): optional; receives each member record set
                     aside because more than one trace could be it
+                written (callable): optional; called with each Section as
+                    soon as it is saved, before the next progress update
             Returns:
                 (list): the (group, keep) tuples that were combined
         """
@@ -3736,6 +3739,8 @@ class Series():
                 # progress update closes this one, and asks to save it only
                 # if it is marked modified
                 self.modified = True
+                if written is not None:
+                    written(section)
 
         return combined
 
