@@ -54,16 +54,13 @@ RELEASE_BODY = "## 1.21.0\n\n- Added the shiny new thing.\n- REMOTE-ONLY-SENTINE
 class FakeSettings:
     """A QSettings-shaped dict, so the gate can be driven without Qt I/O.
 
-    Seeds the suppression preference to False: the popup defaults to off, and
-    this file's sequence tests exercise the once-per-version machinery behind
-    that gate. The default itself is tested by
-    test_launch_shows_nothing_while_the_preference_is_unset, which uses the
-    real (redirected) QSettings and clears the key.
+    Nothing is seeded: with the suppression preference unset the gate runs on
+    its default, which is the state a store is in after the one-time reset
+    (test_whats_new_popup_reset.py) and on every install from then on.
     """
 
     def __init__(self, data=None):
-        self._d = {F.WHATSNEW_SUPPRESS_KEY: False}
-        self._d.update(data or {})
+        self._d = dict(data or {})
         self.writes = []
 
     def value(self, key, default=None):
@@ -72,20 +69,6 @@ class FakeSettings:
     def setValue(self, key, val):
         self._d[key] = val
         self.writes.append((key, val))
-
-
-@pytest.fixture(autouse=True)
-def open_the_suppression_gate(qapp):
-    """Open the default's gate before each test in this file.
-
-    The popup defaults to suppressed (WHATSNEW_SUPPRESS_DEFAULT), and almost
-    everything here exercises the once-per-version machinery BEHIND that gate.
-    The tests of the default itself clear or set the key in their own bodies,
-    after this runs, so they stay in control of it.
-    """
-    from PySide6.QtCore import QSettings
-
-    QSettings(W.ORG, W.APP).setValue(F.WHATSNEW_SUPPRESS_KEY, False)
 
 
 @pytest.fixture(autouse=True)
@@ -243,11 +226,16 @@ def test_update_declined_then_taken_later_still_shows_the_notes_once(qapp):
 # ---- sequence 3: a fresh install -------------------------------------------
 
 def test_fresh_install_gets_one_welcome_and_never_a_second(qapp):
-    """A first-time user is welcomed once, not shown an update summary.
+    """A store with no last-seen version is welcomed once, not shown an update summary.
 
     Deliberate: with nothing stored there is no "since" to report, so the
     dialog frames the recent releases as a welcome. It still counts as the one
     showing for that version, so the next launch is silent.
+
+    This is the gate on its own. In PyReconstruct a real fresh install never
+    reaches it in this state: the one-time reset in ``run.py`` records the
+    running version first (test_whats_new_popup_reset.py), so the welcome is
+    what an upgrading store that never showed the popup sees.
     """
     settings = FakeSettings()             # nothing stored: never run before
     calls = []
@@ -459,29 +447,35 @@ def test_the_main_window_fixture_closes_the_gate_before_the_startup_timer(
     assert main_window._whatsnew_dialog is None
 
 
-def test_launch_shows_nothing_while_the_preference_is_unset(qapp):
-    """The default: an unset preference means the popup stays away.
+def test_launch_shows_the_notes_once_while_the_preference_is_unset(qapp):
+    """The default: an unset preference means the popup is on.
 
-    The startup path still runs (the timer is scheduled, the gate is asked);
-    what keeps a launch quiet is WHATSNEW_SUPPRESS_DEFAULT. A user who never
-    touched the Help toggle launches, and nothing appears unasked.
+    A user who never touched the Help toggle updates, launches, and sees the
+    notes once (WHATSNEW_SUPPRESS_DEFAULT is False).
+    The same unset preference on a dev build still shows nothing: that gate
+    is the version's dev marker, and the default does not reach past it.
     """
     from PySide6.QtCore import QSettings
 
-    settings = QSettings(W.ORG, W.APP)    # the suite's redirected store
-    # this test is about the UNSET state, so clear both keys rather than
-    # trusting the order (the file's autouse fixture opens the gate)
-    settings.remove(F.WHATSNEW_SUPPRESS_KEY)
-    settings.remove(F.WHATSNEW_KEY)
+    assert F.WHATSNEW_SUPPRESS_DEFAULT is False
 
-    result = W.maybe_show_whats_new(
-        None, settings=settings, current="9.9.9",
-        show=lambda *a, **k: pytest.fail("popup shown while the preference is unset"),
-    )
-    assert result is False
-    # and the gate declined WITHOUT consuming the version: turning the popup
-    # on later must hand back the ordinary once-per-version rules intact
-    assert settings.value(F.WHATSNEW_KEY) is None
+    settings = QSettings(W.ORG, W.APP)    # the suite's redirected store
+    # this test is about the UNSET state: an upgrade with no stored choice
+    settings.remove(F.WHATSNEW_SUPPRESS_KEY)
+    settings.setValue(F.WHATSNEW_KEY, "9.9.8")
+    calls = []
+
+    assert _shown_once(settings, "9.9.9", calls) is True
+    assert calls == [("9.9.9", "9.9.8")]
+    assert settings.value(F.WHATSNEW_KEY) == "9.9.9"         # recorded as seen
+    assert _shown_once(settings, "9.9.9", calls) is False    # once only
+    assert len(calls) == 1
+
+    # Dev never pops, preference unset or not
+    settings.setValue(F.WHATSNEW_KEY, "9.9.8")
+    assert _shown_once(settings, "9.9.9.dev20261007", calls) is False
+    assert len(calls) == 1
+    assert settings.value(F.WHATSNEW_KEY) == "9.9.8"         # nothing recorded
 
 
 def test_help_toggle_reflects_the_stored_state_when_the_menu_opens(main_window):
@@ -497,7 +491,7 @@ def test_help_toggle_reflects_the_stored_state_when_the_menu_opens(main_window):
     from PySide6.QtCore import QSettings
 
     settings = QSettings(W.ORG, W.APP)    # the suite's redirected store
-    # back to the unset state (the file's autouse fixture opens the gate)
+    # the unset state, whatever an earlier test in the session left behind
     settings.remove(F.WHATSNEW_SUPPRESS_KEY)
     main_window.syncWhatsNewPopupToggle()
 
@@ -505,9 +499,9 @@ def test_help_toggle_reflects_the_stored_state_when_the_menu_opens(main_window):
     # state (his call, 2026-08-26): the checkmark and the stored suppression
     # flag are the same thing.
     #
-    # freshly built with nothing stored: the default is OFF, so the row is ticked
+    # freshly built with nothing stored: the popup is on, so the row is clear
     assert main_window.togglewhatsnew_act.isCheckable() is True
-    assert main_window.togglewhatsnew_act.isChecked() is True
+    assert main_window.togglewhatsnew_act.isChecked() is False
 
     # the dialog's button flips the preference behind the menu's back...
     settings.setValue(F.WHATSNEW_SUPPRESS_KEY, True)
@@ -534,15 +528,12 @@ def test_help_toggle_reenables_the_popup(main_window):
     from PySide6.QtCore import QSettings
 
     settings = QSettings(W.ORG, W.APP)
-    # back to the unset state (the file's autouse fixture opens the gate);
-    # this test is about the toggle's round trip FROM the default
+    # the unset state; this test is about the toggle's round trip FROM the
+    # default, and the sync is what a menubar build does with the store
     settings.remove(F.WHATSNEW_SUPPRESS_KEY)
     main_window.syncWhatsNewPopupToggle()
 
-    # the default: fresh store, row starts ticked; the first click unticks it
-    # and persists suppression=False
-    assert main_window.togglewhatsnew_act.isChecked() is True
-    main_window.togglewhatsnew_act.trigger()
+    # the default: nothing stored, the popup is on, the row starts clear
     assert main_window.togglewhatsnew_act.isChecked() is False
     assert not F.whats_new_suppressed(
         settings.value(F.WHATSNEW_SUPPRESS_KEY, F.WHATSNEW_SUPPRESS_DEFAULT)

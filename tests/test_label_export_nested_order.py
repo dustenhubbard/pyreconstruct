@@ -286,3 +286,50 @@ def test_islands_whose_holes_cut_each_other_keep_the_label(name, a_right, hb_lef
         assert (_pixels(arr, x0, y0, x1, y1) != 0).sum() >= (
             _pixels(main, x0, y0, x1, y1) != 0
         ).sum(), name
+
+
+def _export(traces, scale, mag, draw=None):
+    """Labels for a 100 by 100 pixel export whose transform multiplies series
+    x and y by scale, so one pixel spans scale field units at any mag."""
+    sx, sy = scale
+    section = types.SimpleNamespace(mag=mag, tform=Transform([1, 0, 0, 0, 1, 0]))
+    layer = TraceLayer(section, types.SimpleNamespace(window=None))
+    if draw is not None:
+        layer._drawHoledLabel = types.MethodType(draw, layer)
+    return layer.generateLabelsArray(
+        (SIZE, SIZE), [0, 0, SIZE * sx, SIZE * sy], traces,
+        tform=Transform([sx, 0, 0, 0, sy, 0]),
+    )
+
+
+@pytest.mark.parametrize("scale, mag", [
+    ((1, 1), 1.0),
+    ((4, 4), 1.0),
+    ((0.25, 0.25), 1.0),
+    ((4, 1), 1.0),
+    ((1, 1), 0.004),
+])
+@pytest.mark.parametrize("name, island_top, cut, island_px", [
+    ("a fraction of a pixel from the edge", 60, (60.4, 45, 66, 55), 430),
+    ("under a pixel's diagonal from the corner", 59.6, (60.4, 60.4, 66, 66), 440),
+    ("a pixel from the edge", 60, (61, 45, 66, 55), 441),
+    ("over a pixel from the edge", 60, (61.4, 45, 66, 55), 441),
+    ("over a pixel's diagonal from the corner", 60, (61.1, 61.1, 66, 66), 441),
+])
+def test_negative_near_the_island_clears_what_it_would_with_no_hole(
+    scale, mag, name, island_top, cut, island_px
+):
+    ## a negative that misses the island but rounds onto its edge pixels
+    ## clears them again after the island refills, at every export scale; one
+    ## that rounds clear of the island leaves all of its pixels
+    outer, hole = _square("a", 10, 90), _square("a", 30, 70, negative=True)
+    island = _rect("a", 40, 40, island_top, island_top)
+    cut = _rect("a", *cut, negative=True)
+
+    arr, ids = _export([outer, hole, island, cut], scale, mag)
+    no_hole, _ = _export([outer, island, cut], scale, mag, draw=_twoPassDraw)
+
+    ## the island's pixels: series 40 to 60 or 59.6 round to 40 to 60
+    pixels = _pixels(arr, 40, 40, 60, 60)
+    assert int((pixels == ids["a"]).sum()) == island_px, name
+    np.testing.assert_array_equal(pixels, _pixels(no_hole, 40, 40, 60, 60))

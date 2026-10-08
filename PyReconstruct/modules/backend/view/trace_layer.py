@@ -35,9 +35,9 @@ from PyReconstruct.modules.gui.utils import drawOutlinedText
 # How a selected trace is drawn: (color, pen width in pixels), widest first.
 # None stands for the trace's own color.
 SELECTION_OUTLINE = (
-    ((0, 0, 0), 8),
-    ((255, 255, 255), 6),
-    (None, 3),
+    ((0, 0, 0), 6),
+    ((255, 255, 255), 4),
+    (None, 2),
 )
 
 class TraceLayer():
@@ -701,11 +701,12 @@ class TraceLayer():
 
         The positives fill and then the holes clear. A positive inside a hole
         (an island) is then filled back in, less the pixels of every negative
-        that islandCuts says cuts it, the same way the 3D volume does. The
-        islands come from the traces before they are rounded to pixels, the
-        same points the 3D volume uses, so rounding cannot make a trace an
-        island or stop it being one. The mask covers only the box of the
-        object's positive traces, not the whole array, so a large export
+        that islandCuts says cuts it, the same way the 3D volume does: one
+        that cuts or touches the island, or comes within a pixel's diagonal
+        of it. The islands come from the traces before they are rounded to
+        pixels, the same points the 3D volume uses, so rounding cannot make a
+        trace an island or stop it being one. The mask covers only the box of
+        the object's positive traces, not the whole array, so a large export
         stays fast.
 
             Params:
@@ -741,7 +742,14 @@ class TraceLayer():
                 pts = pix[id(field)]
                 yy, xx = polygon(pts[:, 1] - y0, pts[:, 0] - x0, mask.shape)
                 mask[yy, xx] = fill
-        for island, cuts in islandCuts(positive, holes):
+        # a negative within a pixel's diagonal of an island can round onto
+        # its edge pixels, so it counts as cutting it. islandCuts measures in
+        # field units, and one pixel spans window_w / pixmap_w of them across
+        # and window_h / pixmap_h down at any mag.
+        window_w, window_h = tuple(self.series.window)[2:]
+        pixmap_w, pixmap_h = tuple(self.pixmap_dim)
+        reach = math.hypot(window_w / pixmap_w, window_h / pixmap_h)
+        for island, cuts in islandCuts(positive, holes, reach):
             # fill the island back in over its own box within the mask
             pts = pix[id(island)]
             ix0, iy0 = np.maximum(pts.min(axis=0), (x0, y0))

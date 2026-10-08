@@ -9,7 +9,10 @@ from shiboken6 import isValid
 
 from .main_imports import *
 
-from PyReconstruct.modules.datatypes.series import SeriesOpenError
+from PyReconstruct.modules.datatypes.series import (
+    SeriesClosedError,
+    SeriesOpenError,
+)
 from PyReconstruct.modules.backend.func.window_geometry import (
     default_window_rect,
     window_geometry_is_usable,
@@ -664,7 +667,10 @@ class MainWindow(QMainWindow):
 
         ## Undo/redo
         can_undo_3D, can_undo_2D, _ = self.field.series_states.canUndo(self.field.section.n)
-        self.undo_act.setEnabled(can_undo_3D or can_undo_2D)
+        # an open scissors cut has no undo state yet, but undo() finishes it
+        # and takes it back, so Undo is on for it on a section with no history
+        cut_open = self.field.is_scissoring and self.field.is_line_tracing
+        self.undo_act.setEnabled(can_undo_3D or can_undo_2D or cut_open)
         can_redo_3D, can_redo_2D, _ = self.field.series_states.canUndo(self.field.section.n, redo=True)
         self.redo_act.setEnabled(can_redo_3D or can_redo_2D)
 
@@ -804,8 +810,8 @@ class MainWindow(QMainWindow):
                 self,
                 "Images Not Found",
                 "Images not found.\nWould you like to locate them?",
-                QMessageBox.Yes,
-                QMessageBox.No
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes
             )
             if reply == QMessageBox.No:
                 return
@@ -1618,7 +1624,8 @@ class MainWindow(QMainWindow):
         opened next. Found through the children rather than the attributes
         that hold them, so a list from an earlier run of the same clean-up
         closes too. A Delete or Combine already waiting on its confirmation
-        stops itself (MalformedContoursDialog._forOpenSeries).
+        stops itself (MalformedContoursDialog._forOpenSeries), and a pixel-dust
+        or Duplicates scan that a new series opened under opens no list.
         """
         for dialog in self.findChildren(MalformedContoursDialog):
             dialog.close()
@@ -2631,9 +2638,9 @@ class MainWindow(QMainWindow):
         #     if button.isChecked():
         #         self.series.current_trace = button.trace
 
-        # the b (flickered-away) section can hold unsaved edits: flickering and
-        # moveTo swap sections without saving, so it MUST be written here too --
-        # otherwise a save drops those edits and then marks the series clean
+        # the b (flickered-away) section can hold unsaved edits: flickering
+        # swaps sections without saving, so it MUST be written here too.
+        # Otherwise a save drops those edits and then marks the series clean
         sections = [self.field.section]
         if self.field.b_section:
             sections.append(self.field.b_section)
@@ -2791,8 +2798,18 @@ class MainWindow(QMainWindow):
             (str): "cancel" if the user dismissed the dialog. Nothing was
                 written in that case, and saveToJser relies on hearing about
                 it; None on success (and for the welcome series, which has
-                nothing to save either way).
+                nothing to save either way). Also "cancel" when another save
+                of this series was still running.
         """
+        # A Save As that arrives while a save is running (the progress dialog
+        # lets queued events through) is refused first: before the working
+        # files are rewritten under the save that is reading them, before the
+        # file dialog asks for a place it will not save to, and before the
+        # series moves, which would leave it pointed at a path with no file.
+        if self.series.jserSaveRunning():
+            self.series.refuseNestedSave("")
+            return "cancel"
+
         ## Store series data in hidden files
         self.saveAllData()
 
@@ -2809,13 +2826,6 @@ class MainWindow(QMainWindow):
             file_name=f"{self.series.name}.jser"
         )
         if not new_jser_fp:
-            return "cancel"
-        # A Save As that arrives while a save is running (the progress dialog
-        # lets queued events through) would move the series and then have its
-        # save refused, leaving the series pointed at a path with no file.
-        # Refuse before anything moves.
-        if self.series.jserSaveRunning():
-            self.series.refuseNestedSave(new_jser_fp)
             return "cancel"
         if not self._saveAsTargetFree(new_jser_fp):
             return "cancel"
@@ -4025,7 +4035,17 @@ class MainWindow(QMainWindow):
         threshold = response[0]
         include_locked = response[1][0][1]
 
-        groups = self.series.findDuplicateTraces(threshold, include_locked)
+        series = self.series
+        try:
+            groups = series.findDuplicateTraces(threshold, include_locked)
+        except SeriesClosedError:
+            # a .jser opened from the Finder at an earlier progress update:
+            # the scan only reads, so stopping it loses nothing
+            return
+        if self.series is not series:
+            # the same at the scan's last progress update: the rows name the
+            # series left (see _closeCleanupLists)
+            return
         if not groups:
             notify("No duplicate traces found at that overlap threshold.")
             return
@@ -4070,7 +4090,17 @@ class MainWindow(QMainWindow):
         # locked objects are always left alone: the review-list delete path
         # (deleteMalformedContours) refuses locked objects, so surfacing them
         # here would be a dead end. Empty-trace removal skips locked the same way.
-        candidates = self.series.findPixelDustTraces(threshold)
+        series = self.series
+        try:
+            candidates = series.findPixelDustTraces(threshold)
+        except SeriesClosedError:
+            # a .jser opened from the Finder at an earlier progress update:
+            # the scan only reads, so stopping it loses nothing
+            return
+        if self.series is not series:
+            # the same at the scan's last progress update: the rows name the
+            # series left (see _closeCleanupLists)
+            return
         if not candidates:
             notify("No pixel-dust traces found at or below that pixel area.")
             return
@@ -4097,7 +4127,8 @@ class MainWindow(QMainWindow):
 
         from PyReconstruct.modules.gui.utils import undo_chord
 
-        candidates = self.series.findSelfCrossingTraces()
+        series = self.series
+        candidates = series.findSelfCrossingTraces()
         if not candidates:
             notify("No self-crossing traces found.")
             return
@@ -4118,7 +4149,12 @@ class MainWindow(QMainWindow):
                     f"\n\n{len(looped)} more {skipped_noun} the scissors; "
                     "a review list opens after."
                 )
-            if notifyConfirm(prompt, yn=True):
+            confirmed = notifyConfirm(prompt, yn=True)
+            if self.series is not series:
+                # a .jser opened from the Finder during the confirmation:
+                # the records name the series left (see _closeCleanupLists)
+                return
+            if confirmed:
                 repaired = self.field.repairSelfCrossingContours(safe)
                 if repaired:
                     # a summary window with copy and save-as-CSV, not a
@@ -4158,7 +4194,8 @@ class MainWindow(QMainWindow):
         """
         self.saveAllData()
 
-        candidates = self.series.findEmptyTraces(include_locked=False)
+        series = self.series
+        candidates = series.findEmptyTraces(include_locked=False)
         if not candidates:
             notify("No empty traces found.")
             return
@@ -4171,7 +4208,9 @@ class MainWindow(QMainWindow):
             f"Remove {count} {noun} from the series?\n\n"
             f"This can be undone ({undo_chord()}).",
             yn=True,
-        ):
+        ) or self.series is not series:
+            # a .jser opened from the Finder during the confirmation: the
+            # records name the series left (see _closeCleanupLists)
             return
 
         deleted = self.field.deleteMalformedContours(candidates)
