@@ -462,7 +462,7 @@ def _sweepStaleSaveTemps(*folders):
 
 
 def _closingDir(folder : str) -> str:
-    """A free path beside the folder, to move the folder or its files to.
+    """A free path beside the folder, to move the folder to.
 
     The name is short, since the folder's own may already be as long as a
     folder name can be. It is never the folder itself: a series named
@@ -476,30 +476,28 @@ def _closingDir(folder : str) -> str:
             return closing_dir
 
 
-def _moveFiles(names : list, folder : str, closing_dir : str):
-    """Move the named files from the folder into a new folder, all or none.
+def _putFoldersBack(names : list, closing_dir : str, folder : str) -> list:
+    """Move the named folders from closing_dir into a new folder at folder.
 
-    If one of them cannot move, the ones already moved go back and the error
-    is raised. A file that then cannot go back stays in closing_dir; nothing
-    is deleted here.
+    Returns the paths of the ones that could not go back. They stay whole in
+    closing_dir; nothing is deleted here.
     """
-    os.mkdir(closing_dir)
-    moved = []
+    if not names:
+        return []
     try:
-        for name in names:
-            os.rename(os.path.join(folder, name), os.path.join(closing_dir, name))
-            moved.append(name)
+        os.mkdir(folder)
     except OSError:
-        for name in moved:
-            try:
-                os.rename(os.path.join(closing_dir, name), os.path.join(folder, name))
-            except OSError:
-                pass
+        return [os.path.join(closing_dir, name) for name in names]
+    if os.name == "nt":  # manually hide if windows
+        import subprocess
+        subprocess.call(["attrib", "+H", folder])
+    left = []
+    for name in names:
         try:
-            os.rmdir(closing_dir)
+            os.rename(os.path.join(closing_dir, name), os.path.join(folder, name))
         except OSError:
-            pass  # a file did not go back
-        raise
+            left.append(os.path.join(closing_dir, name))
+    return left
 
 
 def _clearFiles(folder : str):
@@ -848,7 +846,8 @@ class Series():
         # recovery scans (the fast path above and the GUI's unsaved-work
         # prompt) require it, so a cancelled or crashed open can never leave
         # a partial hidden dir that is later mistaken for unsaved work.
-        # On any cancel or exception, remove the partial hidden dir entirely.
+        # On any cancel or exception, remove the files of the partial hidden
+        # dir, then the dir; a folder in it that a close kept stays.
         try:
             # extract JSON section data
             sections = {}
@@ -905,7 +904,7 @@ class Series():
                     f.write(fast_dumps(section_data))
 
                 if reporter.was_canceled():
-                    shutil.rmtree(hidden_dir, ignore_errors=True)
+                    _clearFiles(hidden_dir)
                     return None
                 progress += 1
                 reporter.set_progress(progress/final_value * 100)
@@ -918,7 +917,7 @@ class Series():
             with open(existing_log_fp, "w", encoding="utf-8") as f:
                 f.write(log_str)
             if reporter.was_canceled():
-                shutil.rmtree(hidden_dir, ignore_errors=True)
+                _clearFiles(hidden_dir)
                 return None
             progress += 1
             reporter.set_progress(progress/final_value * 100)
@@ -937,7 +936,7 @@ class Series():
             with open(series_fp, "wb") as f:
                 f.write(fast_dumps(series_data))
             if reporter.was_canceled():
-                shutil.rmtree(hidden_dir, ignore_errors=True)
+                _clearFiles(hidden_dir)
                 return None
             progress += 1
             reporter.set_progress(progress/final_value * 100)
@@ -950,13 +949,13 @@ class Series():
             for snum, section in series.enumerateSections(show_progress=False):
                 series.data.updateSection(section, update_traces=True, log_events=False, read_store=True)
                 if reporter.was_canceled():
-                    shutil.rmtree(hidden_dir, ignore_errors=True)
+                    _clearFiles(hidden_dir)
                     return None
                 progress += 1
                 reporter.set_progress(progress/final_value * 100)
 
         except BaseException:
-            shutil.rmtree(hidden_dir, ignore_errors=True)
+            _clearFiles(hidden_dir)
             raise
         finally:
             # The dialog closes only at 100%, which a failure never reaches:
@@ -1355,23 +1354,34 @@ class Series():
             # folder in it (a backup folder set there) is not, and keeps all
             # it holds
             with os.scandir(self.hidden_dir) as it:
-                entries = list(it)
-            files = [
-                e.name for e in entries if not e.is_dir(follow_symlinks=False)
-            ]
+                folders = [e.name for e in it if e.is_dir(follow_symlinks=False)]
             closing_dir = _closingDir(self.hidden_dir)
-            if len(files) == len(entries):
-                # moved aside in one step before anything is deleted: if the
-                # move fails (a working file held open, common on Windows),
-                # the close raises with every file in place
-                os.rename(self.hidden_dir, closing_dir)
-            else:
-                # the folder stays; its files move aside one by one, and are
-                # moved back if one of them cannot go
-                _moveFiles(files, self.hidden_dir, closing_dir)
+            # the whole folder moves aside in one step before anything is
+            # deleted, so its files are either all in place or all out of
+            # it, never some: if the move fails (a working file held open,
+            # common on Windows), the close raises with every file in place
+            os.rename(self.hidden_dir, closing_dir)
             # none of its files are where the series reads them now, so it
-            # is closed even if some of them cannot be cleared
+            # is closed even if a folder cannot go back or a file cannot be
+            # cleared
+            left = _putFoldersBack(folders, closing_dir, self.hidden_dir)
             _clearFiles(closing_dir)
+            if left:
+                one = len(left) == 1
+                message = (
+                    f"Closing {self.name} could not put "
+                    + ("this folder" if one else "these folders")
+                    + " back in its working folder. Nothing in "
+                    + ("it" if one else "them") + " was deleted. "
+                    + ("It is" if one else "They are")
+                    + " here now:\n\n" + "\n".join(left)
+                )
+                try:
+                    shown = self._notifier().notify(message)
+                except Exception:
+                    shown = False  # the notice must never stop the close
+                if not shown:
+                    print(message)
 
         # only once its files are out of place: a close whose move failed
         # leaves the series in the window, still usable

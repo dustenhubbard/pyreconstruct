@@ -1576,14 +1576,23 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _clearHiddenSeriesDir(hidden_series_dir):
-        """Delete a hidden series dir and the files directly inside it.
+        """Delete the files directly inside a hidden series dir, then the dir.
+
+        A folder inside it (a backup folder set there, which a close keeps)
+        stays with all it holds, and so does the dir.
 
             Params:
                 hidden_series_dir (str): the hidden dir to remove
         """
+        folders = False
         for f in os.listdir(hidden_series_dir):
-            os.remove(os.path.join(hidden_series_dir, f))
-        os.rmdir(hidden_series_dir)
+            fp = os.path.join(hidden_series_dir, f)
+            if os.path.isdir(fp) and not os.path.islink(fp):
+                folders = True
+            else:
+                os.remove(fp)
+        if not folders:
+            os.rmdir(hidden_series_dir)
 
     def _rememberSeriesFolder(self):
         """Point the file explorer at the folder the series was opened from."""

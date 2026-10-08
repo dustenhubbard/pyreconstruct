@@ -2,15 +2,22 @@ import os
 from pathlib import Path
 
 def createHiddenDir(jser_dir, series_name):
-    """Create a hidden folder to contain the individual section and series files."""    
+    """Create a hidden folder to contain the individual section and series files.
+
+    A folder already there loses the files directly in it. A folder inside
+    it (a backup folder set there, which a close keeps) stays with all it
+    holds, and so does the folder itself.
+    """
     hidden_dir = os.path.join(jser_dir, f".{series_name}")
-    # check if the folder exists, delete if it does
+    # check if the folder exists, clear its files if it does
     if os.path.isdir(hidden_dir):
         for f in os.listdir(hidden_dir):
-            os.remove(os.path.join(hidden_dir, f))
-        os.rmdir(hidden_dir)
-    # create the folder
-    os.mkdir(hidden_dir)
+            fp = os.path.join(hidden_dir, f)
+            if not os.path.isdir(fp) or os.path.islink(fp):
+                os.remove(fp)
+    else:
+        # create the folder
+        os.mkdir(hidden_dir)
     if os.name == "nt":  # manually hide if windows
         import subprocess
         subprocess.check_call(["attrib", "+H", hidden_dir])
