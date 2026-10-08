@@ -22,13 +22,14 @@ Two things to know before reading further:
 - **The writer is canonical, and minified by default.** The same series saved twice
   produces the same bytes ([one documented exception](#canonical-ordering)). The normative
   output form is a single line; **structural pretty-printing is available on request** and
-  is off by default, because it costs about 11% of save time and about 27% more transient
-  memory in the save path, while canonical ordering costs nothing. See
+  is off by default, because it costs about 11% of save time, while canonical ordering
+  costs nothing. See
   [Canonical ordering](#canonical-ordering) and [Line structure](#line-structure). Older
   files have neither property; the reader accepts them regardless.
 
 Every factual claim below is anchored to a source location in the
-[References](#10-references) appendix. Anchors were verified against commit `5f16443`.
+[References](#10-references) appendix. Anchors name a file and a function, class or
+constant rather than a line number, and were verified against commit `d9b01c4a`.
 
 ---
 
@@ -52,9 +53,11 @@ Every factual claim below is anchored to a source location in the
 ### One JSON document
 
 A `.jser` is a single JSON object. There is no container, no compression, no
-concatenation, and no trailing newline. The file is written in one shot as bytes and
-replaced over the previous file atomically, so a crash mid-save cannot truncate an
-existing series.
+concatenation, and no trailing newline. The file is streamed into a temporary file in the
+same folder, one section at a time, so a save never holds every section in memory at
+once. The temporary file is flushed and `fsync`ed, then replaced over the previous file
+atomically, so a crash mid-save cannot truncate an existing series. The streamed bytes
+are exactly the bytes `dumps_jser` returns for the same document.
 
 It is written **minified** (one line, no indentation) with
 [canonical ordering](#canonical-ordering) applied. Setting `PYRECON_JSER_PRETTY=1`
@@ -226,7 +229,12 @@ is not worth paying for on every save.
 | canonical ordering | applied | applied |
 | size, 391 MB series | 390,846,078 B | 393,372,829 B (+0.65%) |
 | `saveJser` wall time | baseline | about +11% |
-| save-path transient memory | baseline | +27% (an extra copy of the document) |
+| save-path transient memory | one section at a time | one section at a time |
+
+The size and time rows were measured before the writer streamed. Back then every save
+built the complete document in memory first, and the pretty form cost about 27% more
+transient memory, because it held an extra copy of the document. Both forms now stream
+one section at a time, so neither holds every section at once.
 
 `PYRECON_JSER_PRETTY` is read **on every write**, not once at import, so it can be set,
 changed or cleared in a running process and the next save honors it. `pretty=True` /
@@ -279,7 +287,9 @@ from while you work.
 
 Opening `series.jser` in a directory `D` does the following:
 
-1. Creates a hidden directory `D/.series/`.
+1. Creates a hidden directory `D/.series/`. If `D/.series/` already holds the `.ser` of
+   a different series, it is left alone and the file is unpacked into a new folder
+   (`D/.series-2/`, then `-3`, and so on).
 2. Writes one file per non-empty section, named `series.<section_number>`, containing
    that section's JSON object.
 3. Writes `D/.series/existing_log.csv`, containing the top-level `log` string verbatim.
@@ -299,7 +309,8 @@ Two consequences that matter:
 - **Sections are shuttled as opaque JSON.** Saving reads each `series.<n>` file back
   and drops it into the output array without interpreting it. A section that was never
   loaded and re-saved during the editing session travels from input `.jser` to output
-  `.jser` byte-for-byte identically in content, including keys PyReconstruct does not
+  `.jser` with only the unpack migration's repairs applied (see
+  [section 7](#7-versioning-and-migrations)), including keys PyReconstruct does not
   understand. The `series` object does not work this way: it is always rebuilt from the
   in-memory model on save. See
   [Reader and writer divergences](#9-reader-and-writer-divergences).
@@ -372,8 +383,8 @@ and each subsequent line is one event:
 | --- | --- | --- |
 | Date | `YY-MM-DD` | Two-digit year. |
 | Time | `HH:MM` | 24-hour. No timezone marker. Local or UTC depending on a computer-scoped setting, so a shared series' history can interleave both. |
-| User | string | Username of the editor. |
-| Obj | string | Object name, or a bare `-` for events with no object. |
+| User | string | Username of the editor. Quoted when it needs it; see below. |
+| Obj | string | Object name, or a bare `-` for events with no object. Quoted when it needs it; see below. |
 | Sections | string | Space-separated inclusive ranges. A single section is `12`; a run is `15-19`. A bare `-` means no sections. |
 | Event | string | Free text description. |
 
@@ -381,10 +392,26 @@ Parsing rules that a generator must respect:
 
 - The delimiter is the **two-character sequence `", "`**, comma followed by space. A
   comma not followed by a space never splits a field.
-- **There is no quoting or escaping.** Fields beyond the sixth are re-joined into the
-  Event column, so **a comma is safe in Event and only in Event**. A comma in a username
-  or object name shifts every later field and makes the row unparseable. This is one
-  reason contour names have their commas replaced with underscores.
+- The Event column is the rest of the row, so **a comma is always safe in Event**.
+- **User and Obj are quoted CSV style when they need it**: wrapped in double quotes, with
+  any double quote inside doubled. The writer quotes a value only when it contains
+  `", "` or opens with a double quote, and it always quotes an object literally named
+  `-`, so a bare `-` keeps meaning "no object". Every other row is written unquoted,
+  byte for byte as older builds wrote it. So a user named `Smith, John` is written as
+  `"Smith, John"`.
+- The reader takes a quoted User or Obj field as quoted only when the closing quote is
+  followed by `", "` and the decoded value is one the writer would have quoted. Anything
+  else is read the old way, up to the next `", "`, and a row that does not parse as
+  quoted is parsed again the old way. So a name such as `"alice"` in an older log is still
+  read as the literal text.
+- Rows written by older builds were never quoted. In those, a `", "` in a username or
+  object name shifts every later field and the row does not parse. This is one reason
+  contour names have their commas replaced with underscores.
+- **One row is one line.** The writer replaces a CR, LF or CRLF inside any field with
+  `_`. A reader of older files must still expect a row split across lines by a newline
+  pasted into a name: a row starts only at a line that opens with the `YY-MM-DD, HH:MM, `
+  stamp, and a short row is joined to the lines after it until it has six
+  comma-separated fields, but never to a line that opens with that stamp.
 - Blank lines are skipped.
 - Leading and trailing whitespace in the Event column is stripped.
 - A negative number cannot appear in the Sections column, because `-` is both the null
@@ -447,7 +474,12 @@ A contour name is the shared name of every trace inside it, and it is also the o
 name used across the whole series. Names are normalized on read: leading and trailing
 whitespace is stripped, runs of internal whitespace collapse to a single `_`, and each
 comma becomes `_`. If normalizing two distinct keys produces the same name, their trace
-lists are concatenated.
+lists are concatenated. Before it unpacks anything, PyReconstruct lists those names and
+asks; Cancel leaves the file untouched. A renamed object keeps its `obj_attrs` entry,
+its group memberships and its place in `host_tree`, which follow it to the new name.
+Where several names merge, groups and hosts are combined, and one name's attributes win,
+with any attribute it lacks filled in from the others.
+The `log` is not rewritten, so the history keeps the old name.
 
 So `"my square, big"` on disk becomes the contour `my_square__big` in memory, and that
 is what the next save writes. **A contour name containing a space or a comma is not
@@ -616,7 +648,7 @@ defaulting it on is a decision about other people's files rather than about this
 
 | Index | Field | JSON type | Legal values |
 | --- | --- | --- | --- |
-| 0 | `id` | string | 6 characters drawn from `A-Za-z0-9`. Generated randomly; used to match flags across imports. |
+| 0 | `id` | string | 6 characters drawn from `A-Za-z0-9`. Generated randomly for a new flag; used to match flags across imports. |
 | 1 | `name` | string | Free text. Not normalized. |
 | 2 | `x` | number | Field x, µm. |
 | 3 | `y` | number | Field y, µm. |
@@ -628,11 +660,12 @@ The flag's **section number is not stored**. It is taken from the position of th
 containing section in the `sections` array.
 
 Legacy arities are repaired on read by two consecutive checks, not a branch: a 5-element
-row gains `resolved = false` at the end, and a 6-element row gains a freshly generated
-`id` at the front. Because the checks run in sequence, a 5-element row picks up both
-repairs in one pass and arrives at 7 elements. Note that repairing a legacy flag
-**assigns a new random id on every unpack** until the section is saved, so flag identity
-is not stable across opens for such files.
+row gains `resolved = false` at the end, and a 6-element row gains an `id` at the
+front. Because the checks run in sequence, a 5-element row picks up both
+repairs in one pass and arrives at 7 elements. The repaired `id` is **derived from the
+flag's own content** (its section number and stored fields), in the same alphabet and
+length as a generated one, and never repeats an id already in that section. So a legacy
+flag gets the same id on every open, in every copy of the file, with no save needed.
 
 ### 4.3 Comment rows
 
@@ -680,11 +713,23 @@ which puts its bounding extents between 0.14 and 0.20 µm depending on the shape
 
 `series.palette_index` is a 2-element array `[group_name, slot_index]` naming the
 currently selected palette entry. `group_name` must be a key of `palette_traces`;
-`slot_index` must be a valid index into that group's array. Neither is validated on
-load, so an out-of-range `slot_index` opens without complaint and fails later in the UI.
+`slot_index` must be a valid index into that group's array. Both are repaired on load
+rather than rejected: an unknown `group_name` falls back to the first group, and a
+`slot_index` that is not an integer in range falls back to `0`. A group with no entries
+is dropped on load, and if no group is left, the default palette is added as `palette1`.
 
 The palette array is dense and ordered: slot order is button order. There is no fixed
 palette size.
+
+`series.palette_obj_defaults` is optional. It maps a palette group name to an array
+parallel to that group's `palette_traces` array: slot `i` holds the object defaults for
+entry `i`, or `null` when that entry has none. Object defaults are what a **new** object
+drawn from that entry starts with, as `{"groups": [group names], "user_columns":
+{column name: option string}}`; either key is omitted when empty. A group is written only
+when at least one of its entries carries defaults, and the key is written only when some
+group is. The defaults live beside the trace rows rather than inside them, so the palette
+rows keep the 9-element shape older builds read. An older build ignores the key and drops
+it on save.
 
 ### 4.6 Ztrace points
 
@@ -696,14 +741,15 @@ order, not sorted by section, so a ztrace may revisit or skip sections.
 
 ## 5. The series object
 
-Nineteen keys, listed here in the order the writer emits them. Unlike a section, the
+Twenty-one keys, listed here in the canonical order a `.jser` carries them. Unlike a section, the
 series object is **always rebuilt from the in-memory model on save**, so an unrecognized
 key does not survive a save.
 
-Nineteen is the count in the hidden working directory's `.ser`. **A `.jser` carries
-eighteen of them**: `log_set` is removed on the way out, so the example in
-[section 8](#8-a-minimal-valid-file) has eighteen. It is the only key of the nineteen
-that differs between the two files, and it is marked as such below.
+Two of the twenty-one are not always there. `log_set` lives only in the hidden working
+directory's `.ser`: it is removed on the way out, so **a `.jser` never carries it**.
+`palette_obj_defaults` is written only when some palette entry has object defaults. So a
+`.jser` carries **nineteen keys, or twenty** with `palette_obj_defaults`, and the example
+in [section 8](#8-a-minimal-valid-file) has nineteen. Both keys are marked as such below.
 
 | Key | JSON type | Meaning |
 | --- | --- | --- |
@@ -727,6 +773,7 @@ that differs between the two files, and it is marked as such below.
 | `user_columns` | object | Column name -> array of permitted option strings. See [5.4](#54-user_columns). |
 | `host_tree` | object | Object name -> array of its host names. Object names and host lists are both written **sorted**. See [5.3](#53-groups-hosts-and-attributes). |
 | `tag_sets` | object | Set name -> `{"mode", "tags", "descriptions"}`. The vocabularies offered in the tags dropdown. See [5.5](#55-tag_sets). |
+| `palette_obj_defaults` | object | Optional. Palette group name -> array, parallel to that group's `palette_traces` rows, of object defaults or `null`. Written only when some palette entry has defaults. See [4.5](#45-palette-entries). |
 
 ### 5.1 `src_dir`
 
@@ -776,8 +823,9 @@ Only the keyed form is ever written. Note that the empty-series template still d
 
 **`object_groups` and `ztrace_groups`** map a group name to an array of member names.
 The direction is group to members, not the inverse. In memory the members are a set, so
-**the array order is not stable across processes**. A group is dropped on read if none of
-its members is truthy, so both `[]` and `[""]` remove the group.
+the order carries no meaning; the writer emits group names and members **sorted** (see
+[Canonical ordering](#canonical-ordering)). A group is dropped on read if none of its
+members is truthy, so both `[]` and `[""]` remove the group.
 
 **`host_tree`** maps an object name to an array of its hosts, meaning its parents. An
 object with no hosts is omitted entirely. The inverse index is recomputed on load and is
@@ -788,7 +836,7 @@ never stored. Two notes:
 - **Loading is not an identity operation.** A host that is already a transitive superhost
   of the same object is pruned on load and will not be written back.
 
-**`obj_attrs`** maps an object name to a flat attribute object. Exactly eight attribute
+**`obj_attrs`** maps an object name to a flat attribute object. Exactly ten attribute
 keys exist:
 
 | Attribute | JSON type | Legal values | Default when absent |
@@ -797,10 +845,22 @@ keys exist:
 | `3D_opacity` | number | `0.0` to `1.0` inclusive | `1` |
 | `last_user` | string | username | `""` |
 | `curation` | array of 3 | `[curated, user, date]`; `curated` boolean, `date` as `YY-MM-DD` | absent |
+| `curation_by` | string | username of whoever set the current `curation` status | absent |
 | `comment` | string | free text | `""` |
 | `alignment` | string | an alignment name, overriding the series-wide one for this object | absent |
 | `locked` | boolean | | `false` |
 | `user_columns` | object | column name -> **a single option string** | `{}` |
+| `smooth_window` | integer | positive; the rolling-average window, in points, used to smooth this object's traces | absent: the computer-scoped `roll_window` setting applies |
+
+`curation` keeps its 3-element shape because every shipped build unpacks exactly three
+values from it. `curation_by` sits beside it so an older build never reads it. It is set
+and cleared together with `curation`. For a "needs curation" status, `curation`'s `user`
+is the assignee and `curation_by` is who assigned it. When curation is rebuilt from the
+log, `curation_by` is the author of the log row.
+
+`smooth_window` is left out, not written as the setting's value, when the object follows
+the setting, so a later change to `roll_window` still reaches it. A value that is not a
+positive integer is ignored and the setting applies.
 
 Absent and null are not distinguishable: setting an attribute to `null` deletes the key,
 and an object whose attribute set becomes empty is removed from `obj_attrs` entirely. A
@@ -832,7 +892,7 @@ per-object value that is no longer a valid option.
 from the trace) or `"many"` (pick many: the dialog offers the values and still accepts typed
 text); `tags`, an **array** of value strings in display order; and `descriptions`, an object
 mapping a value to its definition text, shown as a tooltip. Names and values keep their
-spaces.
+inner spaces; leading and trailing whitespace is stripped on load.
 
 A tag set does not change how a tag is stored. A tag remains a plain string in each trace's
 tag array in the section files, so a file written by a build with tag sets opens in any
@@ -869,12 +929,13 @@ general-purpose extension point.
 | `med_dist` | number | `0.1` | Fine 2D alignment nudge step, in field µm. |
 | `big_dist` | number | `1` | Coarse 2D alignment nudge step, in field µm. |
 | `autoseg` | object | `{}` | Dormant. See below. |
+| `hover_columns` | array of `[string, boolean]` | see below | Which object data the field's hover pop-up shows, in display order. |
 
 Column defaults, in order:
 
 - `object_columns`: `Range` on, `Count` off, `Flat area` off, `Volume` off, `Radius` off,
   `Host` on, `Superhosts` off, `Groups` on, `Trace tags` off, `Locked` on, `Last user`
-  on, `Curate` off, `Alignment` off, `Comment` on, `Configuration` off.
+  on, `Curate` off, `Alignment` off, `Comment` on, `Configuration` off, `3D` on.
 - `trace_columns`: `Index` off, `Tags` on, `Hidden` on, `Closed` on, `Length` on,
   `Area` on, `Radius` on, `Centroid` off, `Feret` off.
 - `flag_columns`: `Section` on, `Color` on, `Flag` on, `Resolved` off,
@@ -882,16 +943,19 @@ Column defaults, in order:
 - `section_columns`: `Thickness` on, `Locked` on, `Brightness` on, `Contrast` on,
   `Image Source` on.
 - `ztrace_columns`: `Start` on, `End` on, `Distance` on, `Groups` on, `Alignment` on.
+- `hover_columns`: `Name` off, `Host` on, `Section Range` off, `Comment` on,
+  `Object Alignment` on, `Object Groups` on, `Trace Tags` on.
 
-Columns absent from a stored list are appended from these defaults on first use, so an
-old `.jser` gains new columns without losing the user's ordering.
+For the five list options, columns absent from a stored list are appended from these
+defaults when that list opens, so an old `.jser` gains new columns without losing the
+user's ordering. `hover_columns` is not back-filled this way.
 
-Each `*_columns` value **must be a JSON array**. Nothing validates this at load time: the
-option getter returns a series-scoped value before it reaches the type check that exists
-for computer-scoped options, so a `.jser` carrying `"object_columns": {}` opens without
-complaint and round-trips back to disk unchanged. It fails later, inside the table code,
-with an error that says nothing about the file. Treat the array requirement as normative
-and unenforced.
+Each `*_columns` value **must be a JSON array of `[name, shown]` pairs** with a string
+name. Nothing checks this at load time, so a `.jser` carrying `"object_columns": {}` opens
+and round-trips back to disk unchanged. Every read of the option checks it, though, and
+a malformed value raises an error that names the option, says what is wrong with it, and
+says that deleting the entry under `options` restores the default. So the requirement is
+normative and enforced on use, not on load.
 
 `autoseg` is a dormant placeholder, because the automatic segmentation feature that
 populated it is disabled. A series that never had it populated carries `{}`. Historic
@@ -918,7 +982,7 @@ that arrived complete.
 
 The set of top-level `options` keys also cannot grow at runtime. The setter writes into
 `options` only when the key is already present; an unknown option name is dropped
-silently. So the nine keys above are the complete on-disk set, not merely the ones
+silently. So the ten keys above are the complete on-disk set, not merely the ones
 observed in one file.
 
 ### Series scope versus computer scope
@@ -926,12 +990,15 @@ observed in one file.
 `options` is only one of three places PyReconstruct keeps settings. A setting lookup
 resolves in this order:
 
-1. **`series.options`** in the `.jser`. Travels with the file. The nine keys above.
+1. **`series.options`** in the `.jser`. Travels with the file. The ten keys above.
 2. **Per-series computer settings**, stored in the OS settings store under an
-   application name derived from the series `code` field. Two keys: `autobackup` and
-   `backup_dir`. These are series-specific but **do not travel with the `.jser`**,
-   because the store is local to the machine. A collaborator opening the same file gets
-   their own values.
+   application name derived from the series `code` field. Four keys: `autobackup`,
+   `backup_dir`, `list_layout` (which lists were open, floating, and where), and
+   `backup_use_defaults` (whether the series takes the user's default backup folder and
+   auto-backup instead of its own; read and written directly, never through the option
+   getter). These are series-specific but **do not travel with the `.jser`**, because
+   the store is local to the machine. A collaborator opening the same file gets their
+   own values.
 3. **Global computer settings**, stored in the OS settings store under a single
    application name. Everything else: username, theme, keyboard shortcuts, 3D
    rendering options, mouse tool behavior, update channel, autoseg color palette and
@@ -941,7 +1008,8 @@ An unknown setting name resolves to `null` on read and is dropped on write, in b
 cases without an error.
 
 Reading a computer-scoped setting that has never been set has a side effect: the default
-is written into the store. First read materializes the key.
+is written into the store. First read materializes the key. (`backup_use_defaults` is
+the exception, because it is never read through the option getter.)
 
 This split is the result of a deliberate migration. Options that were once in the
 `.jser` and are now computer-scoped include `autosave` (dropped entirely, no replacement
@@ -1001,8 +1069,8 @@ series object is migrated by one function and each section object by another, bo
 which mutate the parsed dictionary before it is used. There is no separate migration
 pass, no record that a migration ran, and no way to ask what version a file was.
 
-Two additional migrations live in the open path itself, before the per-object functions
-run.
+Three more steps live in the open path itself: two shape migrations and a check run
+before the per-object functions, and one step run after them.
 
 **Top-level shape migrations (in the open path)**
 
@@ -1010,6 +1078,8 @@ run.
 | --- | --- |
 | Root has neither `sections` nor `series` | Treats every root key as a file name. A key whose extension is numeric is that-numbered section; the other key is the series. Builds the `sections` array from the numbers, filling gaps with `null`. This is the original one-key-per-file layout. |
 | Root has no `log` | Inserts the bare CSV header line. |
+| Two distinct contour names, in any sections, normalize to the same name | Lists them and asks before anything is unpacked. Cancel leaves the file untouched and opens nothing. |
+| A section migration renamed a contour | After the series migration, repoints `obj_attrs`, `object_groups` and `host_tree` to the new name. Merged names combine their groups and hosts; one name's attributes win and the others fill only what it lacks. The `log` is left pointing at the old name. |
 
 **Series migrations**
 
@@ -1034,22 +1104,26 @@ run.
 | `obj_attrs[name]["3D_modes"]` present | Splits it into `3D_mode` and `3D_opacity` and deletes the pair form. |
 | `editors` missing | Adds an empty array. |
 | `schema_version` missing, or carrying any other value | Sets it to this build's version. The migration above *is* the conversion to this build's shape, so what is stamped is true of the dict that leaves it; a foreign claim is restated rather than carried forward. Nothing branches on either the old value or the new one. |
+| Always, last | Reorders the series keys and the `options` bag canonically. |
 
 **Section migrations**
 
 | Detects | Action |
 | --- | --- |
 | Any template key missing | Adds it with its default. |
-| `brightness` and `contrast` both present | Clamps an out-of-range brightness to `0`, coerces contrast to an integer, and **replaces the whole `brightness_contrast_profiles` object** with a single `default` entry built from the two scalars. Other named profiles on that section are lost. **The scalar keys are not deleted.** |
-| Trace row is an object | Converts to an 8-element positional row. |
+| `brightness` and `contrast` both present | Resets an out-of-range brightness (beyond ±100) to `0`, coerces contrast to an integer, and **merges** the pair into `brightness_contrast_profiles` as the `default` entry only if the file carried no profiles object or that object has no `default`. A profiles object the file carried wins otherwise, and other named profiles are kept. **The scalar keys are not deleted.** |
+| Trace row is an object | Converts to an 8-element positional row. A row that carried an `id` is written back into the hidden working copy as a keyed row with that id and the fill-mode spelling it arrived with, so the id survives the unpack. |
 | Trace row has 9 elements | Drops the trailing per-trace history element. |
 | Trace row index 6 is not an array | Replaces the fill mode with `["none","none"]`. |
+| Trace row `tags` has more than one entry | Sorts them. |
 | Trace row has fewer than 2 points | Deletes the row. |
+| Trace row has exactly 2 points | Sets `closed` to `false`. |
 | Contour left with no rows | Deletes the contour. |
 | `tforms` contains `no-alignment` | Deletes it. |
 | Flag row has 5 elements | Appends `resolved = false`. Falls through to the next check, so the row ends at 7 elements. |
-| Flag row has 6 elements | Inserts a freshly generated `id` at the front. |
+| Flag row has 6 elements | Inserts an `id` derived from the flag's content at the front, the same on every open. |
 | Contour name is not normalized | Renames it, merging into an existing contour of the normalized name if one exists. |
+| Always, last | Reorders the section's keys and its contour names canonically. |
 
 Several of these are unreachable in combination with each other, and none of them is
 covered by a version check, so a reader cannot distinguish "this file predates the
@@ -1088,9 +1162,9 @@ Until that lands, this page is the specification.
 ## 8. A minimal valid file
 
 The following is a complete, openable two-section series, shown fully indented for
-readability. PyReconstruct writes the same document in its own layout (structure on
-lines, leaves compact; see [Line structure](#line-structure)), so saving this file back
-out produces the same document with different whitespace.
+readability. PyReconstruct writes the same document minified on one line by default, or
+in its line structure with `PYRECON_JSER_PRETTY=1` (see [Line structure](#line-structure)),
+so saving this file back out produces the same document with different whitespace.
 
 Section 0 is deliberately absent, to show a hole. The image filenames are placeholders:
 substitute real files in `src_dir` to see an image behind the traces.
@@ -1178,7 +1252,8 @@ substitute real files in `src_dir` to see an image behind the traces.
       "small_dist": 0.01,
       "med_dist": 0.1,
       "big_dist": 1,
-      "autoseg": {}
+      "autoseg": {},
+      "hover_columns": [["Host", true]]
     },
     "editors": [],
     "code": "",
@@ -1237,33 +1312,40 @@ from its own model differ. Each is confirmed by round-tripping a file through op
 save. They matter most for a canonical v1, because each one is a decision that has to be
 made explicitly rather than inherited.
 
-**Four of them are now fixed** and are kept here, marked, because files written by earlier
-builds still exhibit them and a reader must still cope: divergence 4 (a two-point trace's
-`closed` flag), divergence 5 (`log_set` written into the `.jser`), divergence 6 (unordered
-sets) and divergence 8 (provenance-dependent key order). The last two are what
-[Canonical ordering](#canonical-ordering) describes.
+**Five of them are now fixed, and two more in part.** They are kept here, marked, because
+files written by earlier builds still exhibit them and a reader must still cope:
+divergence 4 (a two-point trace's `closed` flag), divergence 5 (`log_set` written into the
+`.jser`), divergence 6 (unordered sets), divergence 8 (provenance-dependent key order) and
+divergence 10 (legacy flag ids). Divergences 6 and 8 are what
+[Canonical ordering](#canonical-ordering) describes. Divergence 2 (legacy brightness and
+contrast) and divergence 11 (contour-name normalization) are fixed in part.
 
 **1. Sections pass through opaquely; the series object does not.**
 A section that is not loaded and re-saved during a session travels from input to output
-with its content untouched, including keys the application has no concept of. A key
+with only the unpack migration's repairs applied, including keys the application has no
+concept of. A key
 added by hand survives indefinitely. The series object, by contrast, is rebuilt from the
 in-memory model on every save, so an unrecognized series-level key is silently dropped
 on the first save. One file can therefore hold a mixture of section objects in different
 shapes: those the current build re-derived, and those that only ever passed through.
 
-**2. Legacy `brightness` and `contrast` keys are never removed, and they overwrite the
-profiles.**
-When a section carries both scalar `brightness` and `contrast`, the migration does not
-merge them into `brightness_contrast_profiles`. It **replaces the entire profiles object**
-with a single `default` entry built from the scalars. Any other named profile on that
-section is destroyed silently. The scalars themselves are then not deleted, so because of
-divergence 1 they persist in every subsequent save until that section is re-saved through
-the model, and the destruction repeats on every open until then.
+**2. Legacy `brightness` and `contrast` keys are never removed (the profile overwrite is
+FIXED).**
+When a section carries both scalar `brightness` and `contrast`, the migration used to
+**replace the entire profiles object** with a single `default` entry built from the
+scalars, so any other named profile on that section was destroyed silently, on every open.
+It now **merges**: the scalars become the `default` profile only when the file carried no
+profiles object, or one with no `default`. A profiles object the file carried is
+authoritative, and its other named profiles are kept.
 
-Two consequences worth stating plainly. A generator must never emit both forms on the
-same section: the scalars win and the profiles are discarded. And a third-party reader
-that prefers `brightness_contrast_profiles` over the scalars disagrees with
-PyReconstruct, which is the opposite of what the key names suggest.
+The scalars themselves are still not deleted. Because of divergence 1 they persist in
+every subsequent save until that section is re-saved through the model, which never
+writes them. They are why a real section object often has 11 keys.
+
+A generator should still not emit both forms on the same section, because the scalars
+then persist as debris. If it does, a `default` profile it wrote wins over the scalars.
+Files written by older builds may already have lost their extra profiles to the old
+migration; nothing can bring those back.
 
 **3. `align_locked` is forced to `true` when a `.jser` is unpacked.**
 The stored value is read and then discarded, so a `.jser` recording `false` becomes `true`
@@ -1353,14 +1435,21 @@ The migration repairs a zero width and intends to repair a zero height, but the 
 line is a comparison rather than an assignment. A `window` of `[0,0,0,0]` becomes
 `[0,0,1,0]`.
 
-**10. Legacy flags are re-identified on every open.**
-A flag row lacking an `id` receives a freshly generated random one each time the file is
-opened. Until the section is saved, the flag has no stable identity, so imports and
-cross-references keyed on flag `id` cannot match it reliably.
+**10. Legacy flags were re-identified on every open (FIXED).**
+A flag row lacking an `id` used to receive a freshly generated random one each time the
+file was opened, so until the section was saved the flag had no stable identity, and two
+people who each opened the same legacy file held the same flag under two ids. Imports
+match flags by `id` alone, so merging one copy into the other duplicated every legacy
+flag. The id is now derived from the flag's own content, so every open of every copy
+agrees on it with no save needed.
 
-**11. Contour names are normalized on read, silently.**
+**11. Contour names are normalized on read (the warning and the series data are FIXED).**
 Whitespace and commas in a contour name are rewritten to underscores, and two names that
-normalize to the same string have their traces merged. There is no warning. A generator
+normalize to the same string have their traces merged. This used to happen with no
+warning, and a renamed object lost everything the series kept under its old name. Now a
+merge of distinct names is listed and confirmed before the file is unpacked, and a
+renamed object's `obj_attrs`, groups and hosts follow it to the new name. A plain rename
+with no merge still happens without asking, and the `log` keeps the old name. A generator
 must pre-normalize names or accept that its object names will change.
 
 **12. `host_tree` loses redundant edges on read.**
@@ -1386,26 +1475,30 @@ a conforming writer never produces them.
 
 ## 10. References
 
-Anchors verified against commit `5f16443`. If a line number no longer matches the cited
-symbol, treat the corresponding claim in this page as unverified until re-checked.
+Anchors name a file and the function, class, constant or docstring that holds the cited
+code, and were verified against commit `d9b01c4a`. They name symbols rather than line
+numbers so that they do not drift as the code around them changes. If a cited symbol no
+longer says what the claim says, treat the claim in this page as unverified until
+re-checked.
 
 ### Writer and encoding
 
 | Claim | Source |
 | --- | --- |
-| ASCII-only output, `\uXXXX` escaping, surrogate pairs | `PyReconstruct/modules/constants/fast_json.py:53`, `:56`, `:71` |
-| Rationale for ASCII escaping (Windows locale-mode readers) | `PyReconstruct/modules/constants/fast_json.py:17-31` |
-| `orjson` preferred, standard library fallback on raise | `PyReconstruct/modules/constants/fast_json.py:83-103` |
-| Non-string mapping keys coerced | `PyReconstruct/modules/constants/fast_json.py:99` (`OPT_NON_STR_KEYS`) |
-| Non-finite and out-of-range integer caveats | `PyReconstruct/modules/constants/fast_json.py:9-17` |
-| `orjson` is a pinned dependency | `pyproject.toml:38`, `requirements.txt:9` |
-| Atomic replace of the `.jser` | `PyReconstruct/modules/datatypes/series.py:88-115` |
-| Written one section at a time, same bytes as `dumps_jser` | `PyReconstruct/modules/constants/jser_format.py` (`write_jser`), `PyReconstruct/modules/datatypes/series.py` (`Series.saveJser`) |
-| Structural pretty printer (opt-in); `PYRECON_JSER_PRETTY` | `PyReconstruct/modules/constants/jser_format.py` (`dumps_jser`, `pretty_default`) |
-| Canonical key order and unknown-key preservation | `PyReconstruct/modules/constants/jser_format.py` (`canon_keys`, `SECTION_KEYS`, `SERIES_KEYS`) |
+| ASCII-only output, `\uXXXX` escaping, surrogate pairs | `PyReconstruct/modules/constants/fast_json.py` (`_NON_ASCII`, `_ascii_escape`, `_to_ascii`) |
+| Rationale for ASCII escaping (Windows locale-mode readers) | `PyReconstruct/modules/constants/fast_json.py` (module docstring, "ASCII output guarantee") |
+| `orjson` preferred, standard library fallback on raise | `PyReconstruct/modules/constants/fast_json.py` (`fast_dumps`, `fast_loads`) |
+| Non-string mapping keys coerced | `PyReconstruct/modules/constants/fast_json.py` (`orjson_dumps`, `OPT_NON_STR_KEYS`) |
+| Non-finite and out-of-range integer caveats | `PyReconstruct/modules/constants/fast_json.py` (module docstring, "Caveat") |
+| `orjson` is a pinned dependency | `pyproject.toml` (`dependencies`, the `orjson` pin), `requirements.txt` (`orjson`) |
+| Atomic replace of the `.jser`, temporary file `fsync`ed | `PyReconstruct/modules/datatypes/series.py` (`_atomicWrite`) |
+| Written one section at a time, same bytes as `dumps_jser` | `PyReconstruct/modules/constants/jser_format.py` (`write_jser`, `_write_compact`, `_write_pretty`, and the "streaming writer" comment above them), `PyReconstruct/modules/datatypes/series.py` (`Series._saveJser`) |
+| Structural pretty printer (opt-in); `PYRECON_JSER_PRETTY` | `PyReconstruct/modules/constants/jser_format.py` (`dumps_jser`, `pretty_default`, `PRETTY_ENV_VAR`) |
+| Pretty-printing cost table | `PyReconstruct/modules/constants/jser_format.py` (module docstring) |
+| Canonical key order and unknown-key preservation | `PyReconstruct/modules/constants/jser_format.py` (`canon_keys`, `canon_keys_inplace`, `SECTION_KEYS`, `SERIES_KEYS`) |
 | Section key order and contour sort applied | `PyReconstruct/modules/datatypes/section.py` (end of `Section.updateJSON`, `Section.getDict`) |
-| Series key order and options-bag order applied | `PyReconstruct/modules/datatypes/series.py` (end of `Series.updateJSON`) |
-| Trace `tags` sorted | `PyReconstruct/modules/datatypes/trace.py` (`Trace.getList`) |
+| Series key order and options-bag order applied | `PyReconstruct/modules/datatypes/series.py` (end of `Series.updateJSON`, `tail` inside `Series._saveJser`) |
+| Trace `tags` sorted | `PyReconstruct/modules/datatypes/trace.py` (`Trace.getList`), `PyReconstruct/modules/datatypes/section.py` (`Section.updateJSON`) |
 | `editors` sorted | `PyReconstruct/modules/datatypes/series.py` (`Series.getDict`) |
 | Group names and members sorted | `PyReconstruct/modules/datatypes/obj_group_dict.py` (`ObjGroupDict.getGroupDict`) |
 | `host_tree` names and hosts sorted | `PyReconstruct/modules/datatypes/host_tree.py` (`HostTree.getDict`) |
@@ -1415,153 +1508,171 @@ symbol, treat the corresponding claim in this page as unverified until re-checke
 
 | Claim | Source |
 | --- | --- |
-| Hidden directory path and `.ser` sentinel | `PyReconstruct/modules/datatypes/series.py:243-244`, `:334-338`, `:377-384` |
-| Hidden directory short-circuits the `.jser` | `PyReconstruct/modules/datatypes/series.py:245-256` |
-| Per-section files written during open | `PyReconstruct/modules/datatypes/series.py:346-366` |
-| `align_locked` forced true, in the unpack loop only | `PyReconstruct/modules/datatypes/series.py:352` (the recovery path returns earlier, at `:245-256`) |
-| `existing_log.csv` written during open | `PyReconstruct/modules/datatypes/series.py:368-370` |
-| Empty `log_set` injected during open | `PyReconstruct/modules/datatypes/series.py:679-680` |
-| Hidden directory removed on cancel or error | `PyReconstruct/modules/datatypes/series.py:360-362`, `:403-405` |
-| Root structure validation | `PyReconstruct/modules/datatypes/series.py:264-276`, `:305-315` |
-| Legacy one-key-per-file layout migration | `PyReconstruct/modules/datatypes/series.py:279-303` |
-| Missing `log` defaulted to the header line | `PyReconstruct/modules/datatypes/series.py:318-319` |
-| `sections` array length is `max(number)+1` | `PyReconstruct/modules/datatypes/series.py:431-432` |
-| Sections re-read opaquely on save | `PyReconstruct/modules/datatypes/series.py:441-446` |
-| `log_set` removed unconditionally on save (divergence 5) | `PyReconstruct/modules/datatypes/series.py:834-845` |
-| Log assembled from `existing_log.csv` plus `log_set` | `PyReconstruct/modules/datatypes/series.py:846-849`, `:881-888` |
-| Top-level key emission order | `PyReconstruct/modules/datatypes/series.py:431-434` |
-| Section files not `fsync`ed | `PyReconstruct/modules/datatypes/section.py:315-340` |
+| Hidden directory path and `.ser` sentinel | `PyReconstruct/modules/datatypes/series.py` (`Series.openJser`), `PyReconstruct/modules/constants/locations.py` (`createHiddenDir`) |
+| Another series' hidden directory left alone; a new folder used | `PyReconstruct/modules/datatypes/series.py` (`Series.openJser`), `PyReconstruct/modules/constants/locations.py` (`createNewSeriesDir`) |
+| Hidden directory short-circuits the `.jser` | `PyReconstruct/modules/datatypes/series.py` (`Series.openJser`, the hidden-directory check at the top) |
+| Per-section files written during open | `PyReconstruct/modules/datatypes/series.py` (`Series.openJser`) |
+| `align_locked` forced true, in the unpack loop only | `PyReconstruct/modules/datatypes/series.py` (`Series.openJser`; the hidden-directory path returns before the loop) |
+| `existing_log.csv` written during open | `PyReconstruct/modules/datatypes/series.py` (`Series.openJser`) |
+| Empty `log_set` injected during open | `PyReconstruct/modules/datatypes/series.py` (`Series.openJser`) |
+| Hidden directory removed on cancel or error | `PyReconstruct/modules/datatypes/series.py` (`Series.openJser`) |
+| Root structure validation | `PyReconstruct/modules/datatypes/series.py` (`Series._readJserForOpen`) |
+| Legacy one-key-per-file layout migration | `PyReconstruct/modules/datatypes/series.py` (`Series._readJserForOpen`) |
+| Missing `log` defaulted to the header line | `PyReconstruct/modules/datatypes/series.py` (`Series._readJserForOpen`) |
+| Contour-name merges confirmed before unpacking | `PyReconstruct/modules/datatypes/series.py` (`contourNameCollisions`, `contourMergeWarning`, `Series._readJserForOpen`) |
+| Renamed objects keep their attributes, groups and hosts; the log does not follow | `PyReconstruct/modules/datatypes/series.py` (`applyContourRenames`, called from `Series.openJser`) |
+| `sections` array length is `max(number)+1` | `PyReconstruct/modules/datatypes/series.py` (`Series._saveJser`, `slots`) |
+| Sections re-read opaquely on save | `PyReconstruct/modules/datatypes/series.py` (`sections` inside `Series._saveJser`) |
+| `log_set` removed unconditionally on save (divergence 5) | `PyReconstruct/modules/datatypes/series.py` (`tail` inside `Series._saveJser`) |
+| Log assembled from `existing_log.csv` plus `log_set`, blank lines dropped | `PyReconstruct/modules/datatypes/series.py` (`tail` inside `Series._saveJser`) |
+| Top-level key emission order | `PyReconstruct/modules/constants/jser_format.py` (`TOP_LEVEL_KEYS`, `_write_compact`, `_write_pretty`) |
+| Section files not `fsync`ed | `PyReconstruct/modules/datatypes/section.py` (`Section.save`) |
 
 ### Series object
 
 | Claim | Source |
 | --- | --- |
-| Series read path (field by field) | `PyReconstruct/modules/datatypes/series.py:124-212` |
-| Series write path and key order | `PyReconstruct/modules/datatypes/series.py:682-724` |
-| Series defaults template | `PyReconstruct/modules/datatypes/series.py:726-836` |
-| `log_set` optional on read | `PyReconstruct/modules/datatypes/series.py:455-459` |
-| Series rebuilt from the model on save | `PyReconstruct/modules/datatypes/series.py:933-941` |
-| `src_dir` joined to `src` without anchoring | `PyReconstruct/modules/datatypes/section.py:117-130` |
-| `src_dir` Zarr suffix sentinel | `PyReconstruct/modules/datatypes/section.py:117-147`, `PyReconstruct/modules/backend/func/zarr_naming.py:1-30` |
-| `src_dir` blanked deliberately for sharing | `PyReconstruct/assets/scripts/create_ng_zarr/utils.py:32-33` |
-| `window` is field µm, extents not corners | `PyReconstruct/modules/gui/main/field_widget_7_view.py:228-258` |
-| `code` used as CSV field and settings scope | `PyReconstruct/modules/datatypes/objects.py:37-41`, `PyReconstruct/modules/backend/settings_store.py:55` |
-| `code` validation regex | `PyReconstruct/modules/datatypes/default_settings.py:149`, `PyReconstruct/modules/gui/main/main_window.py:3196-3213` |
-| `editors` recomputed from the log when empty | `PyReconstruct/modules/datatypes/series.py:199-201`, `:3117-3128` |
-| Ztrace write path, no rounding | `PyReconstruct/modules/datatypes/ztrace.py:40-49` |
-| Ztrace read path, both keys required | `PyReconstruct/modules/datatypes/ztrace.py:99-106` |
-| Ztrace point layout `(x, y, section)` | `PyReconstruct/modules/datatypes/ztrace.py:13`, `:120-126` |
-| Ztrace color scaled from XML floats | `PyReconstruct/modules/datatypes/ztrace.py:63-65`, `:85` |
-| Group dict shape and set-backed members | `PyReconstruct/modules/datatypes/obj_group_dict.py:5-26`, `:119-125` |
-| Groups with no truthy member dropped on read | `PyReconstruct/modules/datatypes/obj_group_dict.py:19-21` |
-| Host tree shape, hostless objects omitted | `PyReconstruct/modules/datatypes/host_tree.py:134-142` |
-| Host tree accepts a bare string | `PyReconstruct/modules/datatypes/host_tree.py:28-29` |
-| Redundant hosts pruned on read | `PyReconstruct/modules/datatypes/host_tree.py:45-52` |
-| The eight `obj_attrs` keys and their defaults | `PyReconstruct/modules/datatypes/series.py:2677-2712` |
-| Null attribute deletes the key and empties the entry | `PyReconstruct/modules/datatypes/series.py:2714-2733` |
-| `3D_mode` legal values | `PyReconstruct/modules/backend/volume/generate_volumes.py:47-51`, `PyReconstruct/modules/gui/main/field_widget_3_object.py:640` |
-| `3D_opacity` range | `PyReconstruct/modules/gui/main/field_widget_3_object.py:641` |
-| `curation` triple shape | `PyReconstruct/modules/datatypes/series.py:2594-2597`, `PyReconstruct/modules/gui/table/object.py:373` |
-| Groups are not an object attribute | `PyReconstruct/modules/datatypes/objects.py:191-193` |
-| `user_columns` list at series level, scalar at object level | `PyReconstruct/modules/datatypes/series.py:3187-3205`, `:3259`, `:3278-3292` |
+| Series read path (field by field) | `PyReconstruct/modules/datatypes/series.py` (`Series.__init__`) |
+| Series write path and key order | `PyReconstruct/modules/datatypes/series.py` (`Series.getDict`), `PyReconstruct/modules/constants/jser_format.py` (`SERIES_KEYS`) |
+| Series defaults template | `PyReconstruct/modules/datatypes/series.py` (`Series.getEmptyDict`) |
+| `log_set` optional on read | `PyReconstruct/modules/datatypes/series.py` (`Series.__init__`) |
+| Series rebuilt from the model on save | `PyReconstruct/modules/datatypes/series.py` (`Series.save`, called first by `Series._saveJser`) |
+| `src_dir` joined to `src` without anchoring | `PyReconstruct/modules/datatypes/section.py` (`Section.src_fp`) |
+| `src_dir` Zarr suffix sentinel | `PyReconstruct/modules/datatypes/section.py` (`Section.src_fp`, `Section.zarr_scales`), `PyReconstruct/modules/backend/func/zarr_naming.py` (module docstring, `ensure_zarr_suffix`) |
+| `src_dir` blanked deliberately for sharing | `PyReconstruct/assets/scripts/create_ng_zarr/utils.py` (`get_sha1sum`) |
+| `window` is field µm, extents not corners | `PyReconstruct/modules/gui/main/field_widget_7_view.py` (`FieldWidgetView.home`, `FieldWidgetView.moveTo`) |
+| `code` used as CSV field and settings scope | `PyReconstruct/modules/datatypes/objects.py` (`Objects.exportCSV`), `PyReconstruct/modules/backend/settings_store.py` (`QSettingsStore._settings`) |
+| `code` validation regex | `PyReconstruct/modules/datatypes/default_settings.py` (`series_code_pattern` in `default_settings`), `PyReconstruct/modules/gui/main/main_window.py` (`MainWindow.setSeriesCode`) |
+| `editors` recomputed from the log when empty | `PyReconstruct/modules/datatypes/series.py` (`Series.__init__`, `Series.getEditorsFromHistory`) |
+| Ztrace write path, no rounding | `PyReconstruct/modules/datatypes/ztrace.py` (`Ztrace.getDict`) |
+| Ztrace read path, both keys required | `PyReconstruct/modules/datatypes/ztrace.py` (`Ztrace.fromDict`) |
+| Ztrace point layout `(x, y, section)` | `PyReconstruct/modules/datatypes/ztrace.py` (`Ztrace.__init__` docstring, `Ztrace.getSectionData`) |
+| Ztrace color scaled from XML floats | `PyReconstruct/modules/datatypes/ztrace.py` (`Ztrace.dictFromXMLObj`, `Ztrace.getXMLObj`) |
+| Group dict shape and set-backed members | `PyReconstruct/modules/datatypes/obj_group_dict.py` (`ObjGroupDict.__init__`, `ObjGroupDict.getGroupDict`) |
+| Groups with no truthy member dropped on read | `PyReconstruct/modules/datatypes/obj_group_dict.py` (`ObjGroupDict.__init__`) |
+| Host tree shape, hostless objects omitted | `PyReconstruct/modules/datatypes/host_tree.py` (`HostTree.getDict`) |
+| Host tree accepts a bare string | `PyReconstruct/modules/datatypes/host_tree.py` (`HostTree.add`) |
+| Redundant hosts pruned on read | `PyReconstruct/modules/datatypes/host_tree.py` (`HostTree.checkRedundantHosts`) |
+| The ten `obj_attrs` keys and their defaults | `PyReconstruct/modules/datatypes/series.py` (`Series.getAttr`, `Series.getSmoothWindow`) |
+| Null attribute deletes the key and empties the entry | `PyReconstruct/modules/datatypes/series.py` (`Series.setAttr`) |
+| `3D_mode` legal values | `PyReconstruct/modules/backend/volume/generate_volumes.py` (`generateVolumes`), `PyReconstruct/modules/gui/main/field_widget_3_object.py` (`FieldWidgetObject.edit3D`) |
+| `3D_opacity` range | `PyReconstruct/modules/gui/main/field_widget_3_object.py` (`FieldWidgetObject.edit3D`) |
+| `curation` triple shape | `PyReconstruct/modules/datatypes/series.py` (`Series.setCuration`), `PyReconstruct/modules/gui/table/object.py` (`ObjectTableWidget.getItems`) |
+| `curation_by` set and cleared with `curation`, and restored from the log author | `PyReconstruct/modules/datatypes/series.py` (`Series.setCuration`, `Series.updateCurationFromHistory`), `PyReconstruct/modules/gui/table/object.py` (`ObjectTableWidget.getItems`) |
+| `smooth_window` falls back to `roll_window`, and is removed rather than written as the setting's value | `PyReconstruct/modules/datatypes/series.py` (`Series.getSmoothWindow`), `PyReconstruct/modules/gui/main/field_widget_3_object.py` (`FieldWidgetObject.editAttributes`) |
+| Groups are not an object attribute | `PyReconstruct/modules/datatypes/objects.py` (`SeriesObject.groups`) |
+| `user_columns` list at series level, scalar at object level | `PyReconstruct/modules/datatypes/series.py` (`Series.addUserCol`, `Series.editUserCol`, `Series.setUserColAttr`) |
+| `palette_obj_defaults` shape, and written only when some entry has defaults | `PyReconstruct/modules/datatypes/series.py` (`Series.getDict`, `Series.__init__`), `PyReconstruct/modules/datatypes/trace.py` (`copyObjDefaults`, `Trace.__init__`) |
+| Object defaults apply only to a new object | `PyReconstruct/modules/gui/main/field_widget_2_trace.py` (`FieldWidgetTrace.newTrace`, `FieldWidgetTrace.applyObjectDefaults`) |
+| `palette_index` repaired and empty palette groups dropped on load | `PyReconstruct/modules/datatypes/series.py` (`Series.clampPaletteIndex`, `Series.dropEmptyPalettes`, both called from `Series.__init__`) |
+| `tag_sets` lenient loading and whitespace stripping | `PyReconstruct/modules/datatypes/tag_sets.py` (module docstring, `TagSets.__init__`, `TagSets._normalize`, `_cleanTags`) |
 
 ### The log string
 
 | Claim | Source |
 | --- | --- |
-| Header line | `PyReconstruct/modules/datatypes/series.py:319`, `:901` |
-| Row format and `", "` delimiter | `PyReconstruct/modules/datatypes/log.py:41-58` |
-| Section range encoding, inclusive, space separated | `PyReconstruct/modules/datatypes/log.py:47-56`, `:84-94`, `:150` |
-| `-` as the null marker for Obj and Sections | `PyReconstruct/modules/datatypes/log.py:42-45`, `:79-83` |
-| Commas survive only in the Event column | `PyReconstruct/modules/datatypes/log.py:66-71` |
-| Event whitespace stripped on read | `PyReconstruct/modules/datatypes/log.py:96` |
-| Blank lines skipped | `PyReconstruct/modules/datatypes/log.py:294` |
-| Date and time formats, timezone from a setting | `PyReconstruct/modules/constants/getdatetime.py:6-32` |
-| `log_set` is a flat array of row strings | `PyReconstruct/modules/datatypes/log.py:353-368` |
-| Session events appended only to `log_set` | `PyReconstruct/modules/datatypes/series.py:3719-3732` |
-| Full history recombines both halves | `PyReconstruct/modules/datatypes/series.py:3734-3752` |
+| Header line | `PyReconstruct/modules/datatypes/log.py` (`LOG_HEADER`), `PyReconstruct/modules/datatypes/series.py` (`Series._readJserForOpen`, `Series.new`) |
+| Row format and `", "` delimiter | `PyReconstruct/modules/datatypes/log.py` (`Log.__str__`, `splitRow`) |
+| User and Obj quoted when needed, and read back | `PyReconstruct/modules/datatypes/log.py` (`quoteField`, `_readQuoted`, `_onlyQuotedShape`, `splitRow`, `Log.fromStr`) |
+| A newline inside a field is written as `_` | `PyReconstruct/modules/datatypes/log.py` (`Log.__str__`) |
+| A row starts only at the date and time stamp; the join guard | `PyReconstruct/modules/datatypes/log.py` (`ROW_START`, `LogSet.fromList`) |
+| Section range encoding, inclusive, space separated | `PyReconstruct/modules/datatypes/log.py` (`Log.__str__`, `Log._fromStr`, `Log.containsSection`) |
+| `-` as the null marker for Obj and Sections | `PyReconstruct/modules/datatypes/log.py` (`Log.__str__`, `Log._fromStr`) |
+| Commas are safe in the Event column | `PyReconstruct/modules/datatypes/log.py` (`splitRow`) |
+| Event whitespace stripped on read | `PyReconstruct/modules/datatypes/log.py` (`Log._fromStr`) |
+| Blank lines skipped | `PyReconstruct/modules/datatypes/log.py` (`LogSet.fromList`) |
+| Date and time formats, timezone from a setting | `PyReconstruct/modules/constants/getdatetime.py` (`getDateTime`, `utc_p`) |
+| `log_set` is a flat array of row strings | `PyReconstruct/modules/datatypes/log.py` (`LogSet.getList`, `LogSet.fromList`) |
+| Session events appended only to `log_set` | `PyReconstruct/modules/datatypes/series.py` (`Series.addLog`), `PyReconstruct/modules/datatypes/log.py` (`LogSet.addLog`) |
+| Full history recombines both halves | `PyReconstruct/modules/datatypes/series.py` (`Series.getFullHistory`) |
 
 ### Sections
 
 | Claim | Source |
 | --- | --- |
-| Section read path | `PyReconstruct/modules/datatypes/section.py:44-90` |
-| Section write path and key order | `PyReconstruct/modules/datatypes/section.py:239-271` |
-| Section defaults template | `PyReconstruct/modules/datatypes/section.py:274-293` |
-| Two-point trace forced open in memory | `PyReconstruct/modules/datatypes/section.py:72-76` |
-| Empty contours omitted on write | `PyReconstruct/modules/datatypes/section.py:261-265` |
-| `no-alignment` excluded from `tforms` on write | `PyReconstruct/modules/datatypes/section.py:253-255` |
-| `no-alignment` reserved as the identity | `PyReconstruct/modules/datatypes/section.py:1180-1186` |
-| Field-to-pixel conversion | `PyReconstruct/modules/calc/image.py:29-45` |
-| Brightness and contrast clamped to [-100, 100] by the UI | `PyReconstruct/modules/gui/main/field_widget_4_data.py:136-160` |
-| Deleting a section leaves its index unoccupied | `PyReconstruct/modules/datatypes/series.py:3331-3348` |
+| Section read path | `PyReconstruct/modules/datatypes/section.py` (`Section.__init__`) |
+| Section write path and key order | `PyReconstruct/modules/datatypes/section.py` (`Section.getDict`), `PyReconstruct/modules/constants/jser_format.py` (`SECTION_KEYS`) |
+| Section defaults template | `PyReconstruct/modules/datatypes/section.py` (`Section.getEmptyDict`) |
+| Two-point trace forced open in memory | `PyReconstruct/modules/datatypes/section.py` (`Section.__init__`) |
+| Empty contours omitted on write | `PyReconstruct/modules/datatypes/section.py` (`Section.getDict`) |
+| `no-alignment` excluded from `tforms` on write | `PyReconstruct/modules/datatypes/section.py` (`Section.getDict`) |
+| `no-alignment` reserved as the identity | `PyReconstruct/modules/datatypes/section.py` (`TransformsDict`) |
+| Field-to-pixel conversion | `PyReconstruct/modules/calc/image.py` (`point_2_pix`) |
+| Brightness and contrast clamped to [-100, 100] by the UI | `PyReconstruct/modules/gui/main/field_widget_4_data.py` (`FieldWidgetData.setBrightness`, `FieldWidgetData.setContrast`) |
+| Deleting a section leaves its index unoccupied | `PyReconstruct/modules/datatypes/series.py` (`Series.deleteSections`) |
 
 ### Positional rows
 
 | Claim | Source |
 | --- | --- |
-| Trace row layout on write, 7-decimal rounding, tags sorted | `PyReconstruct/modules/datatypes/trace.py`, `Trace.getList` |
-| Trace row layout on read, name-arity rule, and that the row is **not** mutated | `PyReconstruct/modules/datatypes/trace.py`, `Trace.fromList` |
-| Keyed trace row: key set, key order, `fill_mode`-versus-`mode`, `id` omitted when absent | `PyReconstruct/modules/constants/jser_format.py`, `KEYED_TRACE_ROW_KEYS` / `FILL_MODE_ROW_KEYS` |
-| Keyed trace row on write, and the switch that selects it | `PyReconstruct/modules/datatypes/section.py`, `Section.getDict` |
-| Keyed trace row on read (unpack path and undo-baseline path) | `PyReconstruct/modules/constants/jser_format.py`, `keyed_trace_row_to_positional` |
+| Trace row layout on write, 7-decimal rounding, tags sorted | `PyReconstruct/modules/datatypes/trace.py` (`Trace.getList`) |
+| Trace row layout on read, name-arity rule, and that the row is **not** mutated | `PyReconstruct/modules/datatypes/trace.py` (`Trace.fromList`) |
+| Keyed trace row: key set, key order, `fill_mode`-versus-`mode`, `id` omitted when absent | `PyReconstruct/modules/constants/jser_format.py` (`KEYED_TRACE_ROW_KEYS`, `FILL_MODE_ROW_KEYS`) |
+| Keyed trace row on write, and the switch that selects it | `PyReconstruct/modules/datatypes/section.py` (`Section.getDict`), `PyReconstruct/modules/constants/jser_format.py` (`keyed_rows_default`, `KEYED_ROWS_ENV_VAR`) |
+| Keyed trace row on read (unpack path and undo-baseline path) | `PyReconstruct/modules/constants/jser_format.py` (`keyed_trace_row_to_positional`) |
+| Stored id written back into the hidden working copy | `PyReconstruct/modules/datatypes/section.py` (`Section.reattachTraceIDs`), `PyReconstruct/modules/constants/jser_format.py` (`keyed_trace_row_from_positional`), `PyReconstruct/modules/datatypes/series.py` (`Series.openJser`) |
 | `v1.21.0` cannot open a `fill_mode`-spelled keyed row; a `mode`-spelled one opens and loses every id on save | `tests/test_jser_keyed_trace_rows.py` (run against a `git archive` of the tag) |
-| Trace name normalization | `PyReconstruct/modules/datatypes/trace.py:37-51` |
-| Fill mode style and condition value sets | `PyReconstruct/modules/gui/dialog/trace.py:259-284`, `PyReconstruct/modules/backend/view/trace_layer.py:308-338` |
-| Fill mode values and Reconstruct mode conversion | `PyReconstruct/modules/datatypes/trace.py:610-636` |
-| `negative` contributes negative area | `PyReconstruct/modules/datatypes/series_data.py:49` |
-| Flag row layout on write | `PyReconstruct/modules/datatypes/flag.py:52-62` |
-| Flag row layout on read, section number supplied externally | `PyReconstruct/modules/datatypes/flag.py:64-81` |
-| Flag id alphabet and length | `PyReconstruct/modules/datatypes/flag.py:6-10`, `:124-127` |
-| Comment row layout | `PyReconstruct/modules/datatypes/flag.py:159-166` |
-| Transform 6-number layout and Qt conversion | `PyReconstruct/modules/datatypes/transform.py:7-22` |
-| Transform application order | `PyReconstruct/modules/datatypes/transform.py:46-65`, and the convention restated at `:72-79` |
-| Identity transform | `PyReconstruct/modules/datatypes/transform.py:172-173` |
-| Default palette shapes and extents | `PyReconstruct/modules/constants/traces.py:1-112` |
-| Palette group and slot indexing | `PyReconstruct/modules/gui/palette/mouse_palette.py:141-146` |
+| Trace name normalization | `PyReconstruct/modules/datatypes/trace.py` (`normalizeObjectName`, the `Trace.name` setter) |
+| Fill mode style and condition value sets | `PyReconstruct/modules/gui/dialog/trace.py` (`TraceDialog`), `PyReconstruct/modules/backend/view/trace_layer.py` (`TraceLayer._drawTrace`) |
+| Fill mode values and Reconstruct mode conversion | `PyReconstruct/modules/datatypes/trace.py` (`convertMode`) |
+| `negative` contributes negative area | `PyReconstruct/modules/datatypes/series_data.py` (`TraceData.__init__`) |
+| Flag row layout on write | `PyReconstruct/modules/datatypes/flag.py` (`Flag.getList`) |
+| Flag row layout on read, section number supplied externally | `PyReconstruct/modules/datatypes/flag.py` (`Flag.fromList`) |
+| Flag id alphabet and length | `PyReconstruct/modules/datatypes/flag.py` (`possible_chars`, `Flag.generateID`) |
+| Legacy flag id derived from content | `PyReconstruct/modules/datatypes/flag.py` (`Flag.deriveID`), `PyReconstruct/modules/datatypes/section.py` (`Section.updateJSON`) |
+| Comment row layout | `PyReconstruct/modules/datatypes/flag.py` (`Comment.getList`, `Comment.fromList`) |
+| Transform 6-number layout and Qt conversion | `PyReconstruct/modules/datatypes/transform.py` (`Transform.__init__`, `Transform.getQTransform`) |
+| Transform application order | `PyReconstruct/modules/datatypes/transform.py` (`Transform.map`, and the convention restated in `Transform.mapPointsArray`) |
+| Identity transform | `PyReconstruct/modules/datatypes/transform.py` (`Transform.identity`) |
+| Default palette shapes and extents | `PyReconstruct/modules/constants/traces.py` (`default_traces`) |
+| Palette group and slot indexing | `PyReconstruct/modules/gui/palette/mouse_palette.py` (`MousePalette.__init__`) |
 
 ### Options and settings
 
 | Claim | Source |
 | --- | --- |
-| The nine `options` keys and their defaults | `PyReconstruct/modules/datatypes/series.py:750-825` |
-| Missing `options` keys back-filled | `PyReconstruct/modules/datatypes/series.py:585-587` |
-| Unknown `options` keys deleted | `PyReconstruct/modules/datatypes/series.py:588-590` |
-| `options` cannot gain keys at runtime | `PyReconstruct/modules/datatypes/series.py:2986-2988`, `:3002-3003` |
-| Setting resolution order | `PyReconstruct/modules/datatypes/series.py:2911-2976` |
-| `*_columns` must be an array | `PyReconstruct/modules/datatypes/series.py:2972-2974` |
-| First read of a computer-scoped setting writes the default | `PyReconstruct/modules/datatypes/series.py:2960-2962` |
-| Per-series settings scoped by series `code` | `PyReconstruct/modules/backend/settings_store.py:50-56` |
-| Global and per-series computer settings | `PyReconstruct/modules/datatypes/default_settings.py:13-178` |
-| Columns back-filled from defaults on use | `PyReconstruct/modules/gui/table/data_table.py:45-51` |
-| Distance options are alignment nudge steps | `PyReconstruct/modules/gui/main/main_window.py:1850-1871`, `PyReconstruct/modules/gui/dialog/all_options.py:435-444` |
-| `autoseg` unreferenced by live code | `PyReconstruct/modules/gui/main/main_window.py:2245`, `:2254`, `:2344`, `:2401` |
+| The ten `options` keys and their defaults | `PyReconstruct/modules/datatypes/series.py` (`Series.getEmptyDict`) |
+| Missing `options` keys back-filled | `PyReconstruct/modules/datatypes/series.py` (`Series.updateJSON`) |
+| Unknown `options` keys deleted | `PyReconstruct/modules/datatypes/series.py` (`Series.updateJSON`) |
+| `options` cannot gain keys at runtime | `PyReconstruct/modules/datatypes/series.py` (`Series.setOption`) |
+| Setting resolution order | `PyReconstruct/modules/datatypes/series.py` (`Series.getOption`) |
+| `*_columns` must be an array of pairs, checked on every read | `PyReconstruct/modules/datatypes/series.py` (`_checkColumnsOption`, `Series.getOption`) |
+| First read of a computer-scoped setting writes the default | `PyReconstruct/modules/datatypes/series.py` (`Series.getOption`) |
+| Per-series settings scoped by series `code` | `PyReconstruct/modules/backend/settings_store.py` (`QSettingsStore._settings`) |
+| Global and per-series computer settings | `PyReconstruct/modules/datatypes/default_settings.py` (`default_settings`, `default_series_settings`) |
+| `backup_use_defaults` read and written outside the option getter | `PyReconstruct/modules/datatypes/series.py` (`Series.usesBackupDefaults`, `Series.setBackupUsesDefaults`) |
+| List columns back-filled from defaults on use | `PyReconstruct/modules/gui/table/data_table.py` (`DataTable.__init__`) |
+| `hover_columns` not back-filled | `PyReconstruct/modules/gui/dialog/hover_columns.py` (`HoverColumnsOptionWidget.__init__`), `PyReconstruct/modules/gui/main/field_widget_1_base.py` (`FieldWidgetBase.createField`) |
+| Distance options are alignment nudge steps | `PyReconstruct/modules/gui/main/main_window.py` (`MainWindow.translate`), `PyReconstruct/modules/gui/dialog/all_options.py` (`AllOptionsDialog.createWidgets`) |
+| `autoseg` unreferenced by live code | `PyReconstruct/modules/gui/main/main_window.py` (the commented-out block under `# AUTOSEG FUNCTIONS TEMPORARILY REMOVED`), `PyReconstruct/modules/datatypes/series.py` (the `autoseg` comment in `Series.getEmptyDict`) |
 
 ### Migrations
 
 | Claim | Source |
 | --- | --- |
-| Series migration branches | `PyReconstruct/modules/datatypes/series.py:572-680` |
-| Unknown `options` prune | `PyReconstruct/modules/datatypes/series.py:588-590` |
-| Top-level `backup_dir` deleted | `PyReconstruct/modules/datatypes/series.py:592-594` |
-| `ztraces` array to object | `PyReconstruct/modules/datatypes/series.py:596-610` |
-| Palette row object to array, history drop, fill mode repair | `PyReconstruct/modules/datatypes/series.py:611-634` |
-| Single palette to multi-palette | `PyReconstruct/modules/datatypes/series.py:636-640` |
-| `window` width repaired, height not | `PyReconstruct/modules/datatypes/series.py:641-644` |
-| `obj_attrs` consolidation | `PyReconstruct/modules/datatypes/series.py:646-665` |
-| `3D_modes` split into `3D_mode` and `3D_opacity` | `PyReconstruct/modules/datatypes/series.py:672-676` |
-| `editors` back-fill | `PyReconstruct/modules/datatypes/series.py:678-680` |
-| Section migration branches | `PyReconstruct/modules/datatypes/section.py:150-236` |
-| Brightness and contrast folded into profiles, scalars kept | `PyReconstruct/modules/datatypes/section.py:161-172` |
-| Trace row object to array, history drop, fill mode repair | `PyReconstruct/modules/datatypes/section.py:175-198` |
-| Short traces and empty contours removed | `PyReconstruct/modules/datatypes/section.py:199-210` |
-| Legacy flag arity repair | `PyReconstruct/modules/datatypes/section.py:216-221` |
-| Contour name normalization and merge | `PyReconstruct/modules/datatypes/section.py:223-236` |
+| Series migration branches | `PyReconstruct/modules/datatypes/series.py` (`Series.updateJSON`) |
+| Unknown `options` prune | `PyReconstruct/modules/datatypes/series.py` (`Series.updateJSON`) |
+| Top-level `backup_dir` deleted | `PyReconstruct/modules/datatypes/series.py` (`Series.updateJSON`) |
+| `ztraces` array to object | `PyReconstruct/modules/datatypes/series.py` (`Series.updateJSON`) |
+| Palette row object to array, history drop, fill mode repair | `PyReconstruct/modules/datatypes/series.py` (`Series.updateJSON`) |
+| Single palette to multi-palette | `PyReconstruct/modules/datatypes/series.py` (`Series.updateJSON`) |
+| `window` width repaired, height not | `PyReconstruct/modules/datatypes/series.py` (`Series.updateJSON`) |
+| `obj_attrs` consolidation | `PyReconstruct/modules/datatypes/series.py` (`Series.updateJSON`) |
+| `3D_modes` split into `3D_mode` and `3D_opacity` | `PyReconstruct/modules/datatypes/series.py` (`Series.updateJSON`) |
+| `editors` back-fill | `PyReconstruct/modules/datatypes/series.py` (`Series.updateJSON`) |
+| Section migration branches | `PyReconstruct/modules/datatypes/section.py` (`Section.updateJSON`) |
+| Brightness and contrast merged into profiles, scalars kept | `PyReconstruct/modules/datatypes/section.py` (`Section.updateJSON`) |
+| Trace row object to array, history drop, fill mode repair, tag sort, two-point `closed` | `PyReconstruct/modules/datatypes/section.py` (`Section.updateJSON`) |
+| Short traces and empty contours removed | `PyReconstruct/modules/datatypes/section.py` (`Section.updateJSON`) |
+| Legacy flag arity repair | `PyReconstruct/modules/datatypes/section.py` (`Section.updateJSON`), `PyReconstruct/modules/datatypes/flag.py` (`Flag.deriveID`) |
+| Contour name normalization and merge | `PyReconstruct/modules/datatypes/section.py` (`Section.updateJSON`), `PyReconstruct/modules/datatypes/trace.py` (`normalizeObjectName`) |
 
 ### Planned v1
 
+The plan is not on `main`. These links are pinned to the commit that added it.
+
 | Claim | Source |
 | --- | --- |
-| No version field, ~15 migration branches, silent options prune | `dev/REFACTOR_PLAN.md:62-68` |
-| Phase 1c: `schema_version`, canonical v1, keyed rows, single migrator | `dev/REFACTOR_PLAN.md:170-180` |
-| Open question on keyed objects versus positional arrays | `dev/REFACTOR_PLAN.md:289-292` |
+| No version field, ~15 migration branches, silent options prune | [`dev/REFACTOR_PLAN.md`, lines 62 to 68](https://github.com/dustenhubbard/pyreconstruct/blob/ddf23d1c2d70e4fff4e7dd6335413dbf8815442e/dev/REFACTOR_PLAN.md#L62-L68) |
+| Phase 1c: `schema_version`, canonical v1, keyed rows, single migrator | [`dev/REFACTOR_PLAN.md`, lines 170 to 180](https://github.com/dustenhubbard/pyreconstruct/blob/ddf23d1c2d70e4fff4e7dd6335413dbf8815442e/dev/REFACTOR_PLAN.md#L170-L180) |
+| Open question on keyed objects versus positional arrays | [`dev/REFACTOR_PLAN.md`, lines 289 to 292](https://github.com/dustenhubbard/pyreconstruct/blob/ddf23d1c2d70e4fff4e7dd6335413dbf8815442e/dev/REFACTOR_PLAN.md#L289-L292) |
