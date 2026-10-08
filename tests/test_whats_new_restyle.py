@@ -165,9 +165,9 @@ def test_close_is_the_only_button_and_the_default(qapp):
         dlg.deleteLater()
 
 
-def test_box_and_link_sit_above_byline_and_close(qapp):
+def test_box_and_link_sit_above_the_footer_line_and_close(qapp):
     """Two footer rows: link left and checkbox right directly under the notes,
-    then byline left and Close bottom right."""
+    then the footer line left and Close bottom right."""
     from PySide6.QtWidgets import QLabel, QPushButton
     dlg = _dialog(settings=FakeSettings())
     try:
@@ -830,7 +830,6 @@ def test_a_sentence_without_a_combo_or_path_stays_plain(qapp):
 
 def test_a_combo_never_splits_and_a_path_wraps_only_after_an_arrow(qapp):
     """Laid out narrow, no line starts inside a combo or inside a menu label."""
-    from PyReconstruct.modules.gui.dialog.whats_new import KEY_OR_MENU
     dlg = _key_dialog()
     try:
         doc = dlg._notes.document()
@@ -860,16 +859,112 @@ def test_a_combo_never_splits_and_a_path_wraps_only_after_an_arrow(qapp):
         dlg.deleteLater()
 
 
+def _menu_labels():
+    """Every label the app's menu definitions give a row or a submenu.
+
+    Read from the source of every module but whats_new.py, which declares
+    MENU_LABELS: a row is a tuple whose first item names an ``*_act`` action
+    and whose second is its label, and a submenu is a dict's "text". A
+    trailing "..." is dropped, as the notes drop it.
+    """
+    import ast
+    from pathlib import Path
+    import PyReconstruct
+    labels = set()
+    for path in Path(PyReconstruct.__file__).parent.rglob("*.py"):
+        if path.name == "whats_new.py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Tuple) and len(node.elts) >= 2:
+                attr, label = node.elts[:2]
+                if (isinstance(attr, ast.Constant) and isinstance(attr.value, str)
+                        and attr.value.endswith("_act")
+                        and isinstance(label, ast.Constant)
+                        and isinstance(label.value, str)):
+                    labels.add(label.value)
+            elif isinstance(node, ast.Dict):
+                for key, value in zip(node.keys, node.values):
+                    if (isinstance(key, ast.Constant) and key.value == "text"
+                            and isinstance(value, ast.Constant)
+                            and isinstance(value.value, str)):
+                        labels.add(value.value)
+    return {label.removesuffix("...") for label in labels}
+
+
 def test_every_multi_word_menu_label_is_a_real_label():
-    """Each entry of MENU_LABELS is spelled as the app spells it, or as a
-    shipped note names a label since renamed."""
+    """Each entry of MENU_LABELS is a label the menus define, or one a
+    shipped note names in a menu path or in quotes."""
     import re
     from pathlib import Path
     from PyReconstruct.modules.gui.dialog.whats_new import MENU_LABELS
     import PyReconstruct
-    root = Path(PyReconstruct.__file__).parent
-    source = "".join(p.read_text(encoding="utf-8") for p in root.rglob("*.py"))
-    notes = re.sub(r"\s+", " ", (root.parent / "WHATS_NEW.md").read_text(
-        encoding="utf-8"))
+    root = Path(PyReconstruct.__file__).parent.parent
+    notes = re.sub(r"\s+", " ", "".join(
+        (root / name).read_text(encoding="utf-8")
+        for name in ("WHATS_NEW.md", "CHANGELOG.md")))
+    menus = _menu_labels()
+    assert {"Show/Hide lists", "Shortcuts list", "Online resources"} <= menus
     for label in MENU_LABELS:
-        assert f'"{label}' in source or f"\u25b8 {label}" in notes, label
+        assert label in menus or any(
+            f"{lead}{label}" in notes for lead in ("▸ ", "> ", '"')
+        ), label
+
+
+def test_a_misspelled_menu_label_is_not_a_real_label():
+    """The check above catches a typo in the declaration itself."""
+    assert "Show/Hdie lists" not in _menu_labels()
+
+
+# ---- copying -----------------------------------------------------------------
+
+def test_copied_notes_are_the_text_as_written(qapp):
+    """Copying a command or a menu path gives its exact text: the word joiners
+    that keep it on one line stay out of the clipboard."""
+    from PyReconstruct.modules.gui.dialog.whats_new import (
+        ITEM_MARKER, make_notes_browser,
+    )
+    browser = make_notes_browser(
+        "- Run `pyreconstruct /path/to/series.jser`, then View ▸ Show/Hide lists.")
+    try:
+        browser.selectAll()
+        browser.copy()
+        assert QApplication.clipboard().text() == (
+            ITEM_MARKER + "Run pyreconstruct /path/to/series.jser, then "
+            "View ▸ Show/Hide lists.")
+        assert "\u2060" not in browser.createMimeDataFromSelection().html()
+        # the joiners are still in the document, where they keep the wrapping
+        assert "\u2060" in browser.toPlainText()
+    finally:
+        browser.deleteLater()
+
+
+def test_every_code_span_after_a_path_keeps_its_own_text(qapp):
+    """Several code spans in one item, after a path that gains word joiners,
+    are each styled over their own text and nothing else."""
+    from PyReconstruct.modules.gui.dialog.whats_new import (
+        ITEM_MARKER, make_notes_browser,
+    )
+    browser = make_notes_browser(
+        "- Use `/a/b` and `second`, then `c-d` and `last one` here.")
+    try:
+        block = browser.document().begin()
+        code, plain = [], []
+        prev_code = False
+        for fragment in _fragments(block):
+            is_code = fragment.charFormat().fontFixedPitch()
+            text = _shown(fragment.text())
+            if is_code and prev_code:
+                code[-1] += text
+            elif is_code:
+                code.append(text)
+            else:
+                plain.append(text)
+            prev_code = is_code
+        assert code == ["/a/b", "second", "c-d", "last one"]
+        assert plain == [ITEM_MARKER + "Use ", " and ", ", then ", " and ",
+                         " here."]
+        tint = {f.charFormat().background().color().name()
+                for f in _fragments(block) if f.charFormat().fontFixedPitch()}
+        assert len(tint) == 1
+    finally:
+        browser.deleteLater()

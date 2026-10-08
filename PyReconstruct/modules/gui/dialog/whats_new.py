@@ -256,6 +256,11 @@ def code_char_format(base_font, base_pt, weight, color, tint):
     return fmt
 
 
+# U+2060: no width and no break on either side. ``NotesBrowser`` takes it back
+# out of anything copied.
+WORD_JOINER = "\u2060"
+
+
 def restyle_code_runs(cursor, block, base_font, base_pt, color, tint):
     """Restyle every inline code run in ``block``; see ``code_char_format``.
 
@@ -276,11 +281,13 @@ def restyle_code_runs(cursor, block, base_font, base_pt, color, tint):
         else:
             weight = fmt.fontWeight()
         it += 1
-    for start, length, run_weight in runs:
+    # Back to front: the word joiners lengthen a run, which would move every
+    # later run off the position saved for it.
+    for start, length, run_weight in reversed(runs):
         cursor.setPosition(start)
         cursor.setPosition(start + length, QTextCursor.KeepAnchor)
         text = "".join(
-            "\u00a0" if ch == " " else ch + "\u2060" if ch in "/-" else ch
+            "\u00a0" if ch == " " else ch + WORD_JOINER if ch in "/-" else ch
             for ch in cursor.selectedText())
         cursor.insertText(text, code_char_format(
             base_font, base_pt, run_weight, color, tint))
@@ -341,7 +348,7 @@ def unbreakable_key_or_menu(text):
             after_arrow = i > 0 and text[i - 1] == "\u25b8"
             out.append(" " if after_arrow else "\u00a0")
         elif ch in "/-":
-            out.append(ch + "\u2060")
+            out.append(ch + WORD_JOINER)
         else:
             out.append(ch)
     return out
@@ -550,6 +557,21 @@ class NotesBrowser(QTextBrowser):
             self.setPlainText(self._markdown)
         self.verticalScrollBar().setValue(scroll)
 
+    def createMimeDataFromSelection(self):
+        """The selection as copied or dragged, without the word joiners.
+
+        ``restyle_code_runs`` and ``restyle_key_and_menu_runs`` put a word
+        joiner after each "/" and "-" so a run never wraps inside itself. It
+        draws nothing, but left in a copy it would make a copied
+        ``pyreconstruct /path/to/series.jser`` name a different file.
+        """
+        data = super().createMimeDataFromSelection()
+        text, html = data.text(), data.html()
+        data.setText(text.replace(WORD_JOINER, ""))
+        if html:
+            data.setHtml(html.replace(WORD_JOINER, ""))
+        return data
+
     def changeEvent(self, event):
         # getattr: change events can arrive from inside QTextBrowser.__init__,
         # before _markdown is assigned.
@@ -631,13 +653,11 @@ class WhatsNewDialog(QDialog):
             f"What's new in PyReconstruct {version}" if version
             else "What's new in PyReconstruct"
         )
-        # 700 minimum width, up from the 540 the dialog opened at when the
-        # byline and the release-notes link stacked. At 700 the one-line byline
-        # and Close fit side by side, so the extra room is about how much
-        # of a release note line fits unwrapped. The height increase lives on the notes
-        # browser below, the one widget that should absorb extra space; no
-        # other geometry is set, so the dialog keeps sizing itself from its
-        # contents.
+        # 700 minimum width, up from 540: the footer line and Close fit side by
+        # side, and more of a release note line fits unwrapped. The height
+        # increase lives on the notes browser below, the one widget that
+        # should absorb extra space; no other geometry is set, so the dialog
+        # keeps sizing itself from its contents.
         self.setMinimumWidth(700)
         self.setModal(False)  # modeless: does not block the app
 
@@ -656,13 +676,8 @@ class WhatsNewDialog(QDialog):
         self._header.setFont(hf)
         lay.addWidget(self._header)
 
-        # The notes browser renders the release notes and nothing else. The
-        # maintainer provenance line used to be appended to the end of this
-        # markdown, below a rule, which put it inside the scroll: on a release
-        # with more than a screenful of notes -- the normal case -- a reader had
-        # to scroll to the bottom to find out who maintains this build, and most
-        # never did. It now lives in the footer below the browser (see
-        # below), so it is on screen from the moment the dialog opens.
+        # The notes browser renders the release notes and nothing else; the
+        # footer line sits below it, on screen however long the notes are.
         #
         # 320 minimum height, up from 260: the whole of the dialog's height
         # bump (about 13% on the dialog, 451px to 511px at the default size,
@@ -673,51 +688,19 @@ class WhatsNewDialog(QDialog):
         self._notes = make_notes_browser(content["body"], min_height=320)
         lay.addWidget(self._notes)
 
-        # The provenance line itself: italic, in the same secondary style as
-        # the release date above, and a jump link to the project home page. The
-        # italic is the aside register the markdown `_..._` gave it inside the
-        # notes, and it is kept. The color is the shared secondary one rather
-        # than either extreme this line has been at: the disabled-palette
-        # dimming it first landed with reads as switched-off (about 1.6:1
-        # against the dialog background), and the full text color it briefly
-        # took instead made an aside compete with the notes. The derived blend
-        # keeps it clearly secondary while a lab that needs to report an issue
-        # to the right person can still read it comfortably.
-        #
-        # Exactly one word of it is a link: the project name, pointing at the
-        # home page. That word takes the ordinary link styling -- blue and
-        # underlined -- and the rest of the sentence stays plain italic text.
-        # Only the word is a click target; the surrounding words are not.
-        #
-        # The whole line was briefly the anchor, styled to look like ordinary
-        # text so as not to stack two link-colored rows. Linking just the name
-        # gets the same restraint without the deception: one obvious, ordinary
-        # link instead of a whole sentence that was secretly clickable, so it
-        # needs neither a color override nor the pointing-hand cursor and
-        # tooltip that were standing in for the missing affordance. It is also
-        # theme-proof for free -- QPalette::Link is whatever the active theme
-        # says it is, resolved at paint, rather than a color this code samples
-        # at construction and gets wrong under the dark theme.
-        #
-        # `escape()` runs before the split, so the anchor is spliced into
-        # already-escaped text and the sentence can never inject markup. The
-        # split is `partition`, which takes the FIRST occurrence: this byline
-        # contains the name exactly once, and if it ever contained none the
-        # partition yields empty match/tail and the line renders as plain text
-        # with no anchor at all rather than raising.
-        #
-        # The byline comes from the builder as its own field and is the same on
-        # every framing (update, welcome, on-demand, generic fallback);
-        # rendering it here, once, is the only place it appears, so it can never
-        # double up with the notes above it. Some framings carry no byline, and
-        # then no widget is added at all.
-        #
         # The footer is two rows. The upper one, right under the notes, holds
         # the "All release notes" link on the left and the "Show this
-        # changelog window after each update?" checkbox on the right; the lower one
-        # holds the byline on the left and Close on the right, the default
-        # (Enter) button in the ordinary bottom-right spot. When the byline is
-        # absent a stretch keeps Close on the right, where it always is.
+        # changelog window after each update?" checkbox on the right. The
+        # lower one holds the footer line on the left and Close on the right,
+        # the default (Enter) button in the ordinary bottom-right spot. With
+        # no footer line a stretch keeps Close on the right.
+        #
+        # The footer line is italic, in the secondary color of the release
+        # dates, and one word of it, the project name, links to the home page
+        # in the theme's link color. `escape()` runs before the split, so the
+        # anchor is spliced into already-escaped text and can never inject
+        # markup; `partition` takes the first occurrence of the name, and
+        # without one the line is plain text with no anchor.
         #
         # The checkbox is the popup preference stated the way round a reader
         # expects (checked means it shows), and it is the inverse of the
@@ -732,7 +715,7 @@ class WhatsNewDialog(QDialog):
         ))
         self._show_box.toggled.connect(self.setShowAfterUpdate)
 
-        # Same LinkLabel as the byline: this label has always had the same
+        # Same LinkLabel as the footer line: this label has always had the same
         # stale-anchor-color behavior on a live theme switch, and fixing one
         # anchor in the dialog while leaving the other stale would show.
         link = LinkLabel(f'<a href="{url}">All release notes on GitHub ↗</a>')

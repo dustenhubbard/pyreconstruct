@@ -311,13 +311,12 @@ def test_whats_new_reads_bundled_file_and_is_offline_safe(monkeypatch, tmp_path)
 
 
 # ---- the maintainer byline (provenance line on every framing) ---------------
-# The byline names who maintains this build, so a lab that installs it credits it
-# correctly and reports its issues to the right person. It is a distinct field so
-# the dialog can set it off from the notes as a quiet aside rather than mixing it
-# into the release bullets, and it must be present on every framing.
+# The footer line is a distinct field so the dialog can set it off from the
+# notes as a quiet aside rather than mixing it into the release bullets, and it
+# must be present on every framing.
 BYLINE = "A fork of PyReconstruct, maintained by Dusten Hubbard."
 
-# What the dialog's byline label actually shows: the same sentence, on one line.
+# What the dialog's footer label actually shows: the same sentence, on one line.
 BYLINE_RENDERED = BYLINE
 
 
