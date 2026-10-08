@@ -11,12 +11,12 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-WIDTH, HEIGHT = 640, 560          # points; covers the tallest window (with the guide)
-BACKGROUND = (236, 236, 236)
-CHEVRON = (60, 60, 64)
-CENTER = (320, 160)               # between the two icons, at their center line
-HALF_WIDTH, HALF_HEIGHT = 14, 28  # the chevron's arms, in points
-STROKE = 6                        # points
+WIDTH, HEIGHT = 660, 622          # points; covers the tallest window (with the guide)
+BACKGROUND = (241, 241, 246)
+CHEVRON = (47, 47, 48)
+CENTER = (331.25, 180.75)         # between the two icons, a little below their centers
+HALF_WIDTH, HALF_HEIGHT = 8, 17   # the chevron's arms, in points
+STROKE = 6.5                      # points
 
 SUPERSAMPLE = 4                   # drawn large, then scaled down for smooth edges
 
@@ -28,7 +28,7 @@ def draw(scale):
     points = [(cx - HALF_WIDTH * s, cy - HALF_HEIGHT * s),
               (cx + HALF_WIDTH * s, cy),
               (cx - HALF_WIDTH * s, cy + HALF_HEIGHT * s)]
-    width = STROKE * s
+    width = round(STROKE * s)
     pen = ImageDraw.Draw(img)
     pen.line(points, fill=CHEVRON, width=width, joint="curve")
     r = width / 2                 # round caps on both ends

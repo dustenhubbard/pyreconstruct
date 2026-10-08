@@ -1,6 +1,7 @@
 """The staged DMG instructions must name the app shipped beside them."""
 
 import base64
+from collections import Counter
 import html
 import json
 import os
@@ -257,3 +258,27 @@ def test_dmg_window_places_every_item_inside_the_background(app_name, guide):
     for x, y in s["icon_locations"].values():
         assert half <= x <= width - half
         assert y + half + 2 * s["text_size"] * 1.5 <= height - 120
+
+
+@pytest.mark.parametrize("app_name", ["PyReconstruct", "PyReconstruct Dev"])
+def test_dmg_window_matches_the_reference_layout(app_name):
+    # Measured from a Finder capture of a reference drag-to-install window:
+    # 160 point icons centered 180 and 480 points from the left, a 22 x 40
+    # point chevron in (47, 47, 48) between them, on (241, 241, 246).
+    from PIL import Image
+
+    s = _window(app_name, guide=False)
+    assert s["window_rect"][1] == (660, 422)
+    assert s["icon_size"] == 160
+    for name, x in ((f"{app_name}.app", 180), ("Applications", 480)):
+        assert abs(s["icon_locations"][name][0] - x) <= 1
+        assert abs(s["icon_locations"][name][1] - 170) <= 1
+    two = Image.open(ROOT / "packaging" / "macos" / "dmg-background@2x.png").convert("RGB")
+    assert two.getpixel((10, 10)) == (241, 241, 246)
+    dark = [(x, y) for x in range(560, 760) for y in range(240, 480)
+            if sum(two.getpixel((x, y))) < 200]
+    xs, ys = [x for x, _ in dark], [y for _, y in dark]
+    assert abs(min(xs) - 641) <= 1 and abs(max(xs) - 684) <= 1
+    assert abs(min(ys) - 321) <= 1 and abs(max(ys) - 401) <= 1
+    ink = Counter(two.getpixel(p) for p in dark).most_common(1)[0][0]
+    assert ink == (47, 47, 48)

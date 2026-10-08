@@ -21,8 +21,8 @@ symlinks = {"Applications": "/Applications"}
 hide_extensions = [app_name]
 
 background = defines["background"]
-icon_size = 128
-text_size = 13
+icon_size = 160
+text_size = 12
 show_toolbar = False
 show_sidebar = False
 show_status_bar = False
@@ -31,15 +31,15 @@ show_tab_view = False
 default_view = "icon-view"
 
 icon_locations = {
-    app_name: (160, 160),
-    "Applications": (480, 160),
+    app_name: (180, 170),
+    "Applications": (480, 170),
 }
 
 # The guide sits under the chevron, in a taller window, so the two icons and
 # the arrow between them stay where a signed image puts them.
 if guide:
     files.append(guide)
-    icon_locations[os.path.basename(guide)] = (320, 330)
-    window_rect = ((200, 120), (640, 560))
+    icon_locations[os.path.basename(guide)] = (330, 380)
+    window_rect = ((200, 120), (660, 622))
 else:
-    window_rect = ((200, 120), (640, 400))
+    window_rect = ((200, 120), (660, 422))
