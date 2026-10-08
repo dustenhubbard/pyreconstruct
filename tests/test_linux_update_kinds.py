@@ -212,6 +212,23 @@ def test_a_dev_appimage_takes_the_newest_nightly_that_has_one(running):
     assert info["remote_version"] == "1.25.0.dev20261001"
 
 
+def test_a_dev_appimage_takes_the_highest_nightly_whatever_the_feed_order(running):
+    running("1.25.0.dev20261007")
+    feed = [_nightly("1.25.0.dev20261008"), _nightly("1.25.0.dev202610081315"),
+            _nightly("1.25.0.dev202610081840"), _nightly("1.25.0.dev20261007")]
+    info = U.check_for_reinstall("prerelease", "appimage", releases=feed)
+    assert info["remote_version"] == "1.25.0.dev202610081840"
+    assert info["release"]["tag_name"] == "v1.25.0.dev202610081840"
+
+
+def test_a_dev_appimage_skips_the_highest_nightly_when_it_has_none(running):
+    running("1.25.0.dev20261007")
+    feed = [_nightly("1.25.0.dev202610081315"), _nightly("1.25.0.dev20261008"),
+            _nightly("1.25.0.dev202610081840", appimage=False)]
+    info = U.check_for_reinstall("prerelease", "appimage", releases=feed)
+    assert info["remote_version"] == "1.25.0.dev202610081315"
+
+
 def test_an_install_sh_copy_compares_against_the_release_tag(running):
     running("1.23.1.dev4")
     info = U.check_for_reinstall("release", "linux-installer", releases=FEED)

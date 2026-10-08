@@ -299,6 +299,21 @@ list_assets() {
     }'
 }
 
+# True when nightly tag $1 is a higher version than nightly tag $2, or $2 is
+# empty. Both match NIGHTLY_RE, so each is four numbers once "v" and "dev" are
+# dropped; a 12-digit dev number is above any 8-digit one, as in PEP 440. The
+# feed is not in version order (two nightlies cut the same day can be listed
+# either way round), so the newest is found by comparing tags.
+tag_newer() {
+  [ -n "$2" ] || return 0
+  awk -v a="$1" -v b="$2" 'BEGIN {
+    sub(/^v/, "", a); sub(/dev/, "", a); sub(/^v/, "", b); sub(/dev/, "", b)
+    n = split(a, x, "."); split(b, y, ".")
+    for (i = 1; i <= n; i++) if (x[i] + 0 != y[i] + 0) exit !(x[i] + 0 > y[i] + 0)
+    exit 1
+  }'
+}
+
 say "Looking up the newest $APP_NAME release"
 if [ "$FLAVOR" = "dev" ]; then
   API_URL="$API/releases?per_page=100"
@@ -321,9 +336,14 @@ while IFS="$TAB" read -r a_tag a_pre a_draft a_name a_url; do
     [ "$a_pre" = "true" ] || continue
     [ "$a_tag" != "$ROLLING_TAG" ] || continue
     printf '%s\n' "$a_tag" | grep -Eq "$NIGHTLY_RE" || continue
-  else
-    [ "$a_pre" = "false" ] || continue
+    if [ "$a_tag" != "$NEWEST" ] && tag_newer "$a_tag" "$NEWEST"; then NEWEST="$a_tag"; fi
+    if [ "$a_tag" != "$TAG" ] && printf '%s\n' "$a_name" | grep -Eq "$ASSET_RE" &&
+      tag_newer "$a_tag" "$TAG"; then
+      TAG="$a_tag"; ASSET_NAME="$a_name"; ASSET_URL="$a_url"
+    fi
+    continue
   fi
+  [ "$a_pre" = "false" ] || continue
   [ -n "$NEWEST" ] || NEWEST="$a_tag"
   if [ -z "$TAG" ] && printf '%s\n' "$a_name" | grep -Eq "$ASSET_RE"; then
     TAG="$a_tag"; ASSET_NAME="$a_name"; ASSET_URL="$a_url"
