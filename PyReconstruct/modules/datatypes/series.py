@@ -1289,14 +1289,20 @@ class Series():
             return
 
         if os.path.isdir(self.hidden_dir):
+            # moved aside in one step before anything is deleted: a working
+            # file held open (common on Windows) refuses the move, and the
+            # close raises with every file in place, so the series left in
+            # the window is still usable. Deleting file by file left it with
+            # some sections gone and the rest still open.
+            from PyReconstruct.modules.backend.func.atomic_io import replace_with_retry
+            closing_dir = f"{self.hidden_dir}.closing-{secrets.token_hex(3)}"
+            replace_with_retry(self.hidden_dir, closing_dir)
+            # none of its files are where the series reads them now, so it
+            # is closed even if some of them cannot be cleared
+            shutil.rmtree(closing_dir, ignore_errors=True)
 
-            for f in os.listdir(self.hidden_dir):
-                os.remove(os.path.join(self.hidden_dir, f))
-
-            os.rmdir(self.hidden_dir)
-
-        # only once its files are gone: a close that raised part-way (a
-        # locked working file) leaves the series in the window, still usable
+        # only once its files are out of place: a close the move refused
+        # leaves the series in the window, still usable
         self.closed = True
     
     @staticmethod
