@@ -12,15 +12,16 @@ installed, so showing them there meant the same notes appeared twice around
 every update.
 """
 
+import sys
 from html import escape
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextBrowser,
-    QCheckBox, QFrame,
+    QApplication, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QTextBrowser, QCheckBox, QFrame,
 )
 from PySide6.QtGui import (
     QColor, QPalette, QTextCursor, QTextCharFormat, QTextBlockFormat,
-    QFontMetricsF,
+    QFont, QFontDatabase, QFontMetricsF,
 )
 from PySide6.QtCore import Qt, QSettings, QEvent
 
@@ -93,8 +94,8 @@ class LinkLabel(QLabel):
 
 # How far the secondary color steps from the dialog background toward the
 # full text color (0 is the background, invisible; 1 is body text). The
-# release date, "Released" and the footer line are asides, so they stay
-# lighter than the notes, but still clear the 4.5:1 contrast floor in both
+# release date beside each version and the footer line are asides, so they
+# stay lighter than the notes, but still clear the 4.5:1 contrast floor in both
 # themes: 5.2:1 light (#efefef background), 5.0:1 dark (qdark's #19232d).
 SECONDARY_TEXT_BLEND = 0.58
 
@@ -204,6 +205,82 @@ TYPE_GAP = 14
 # largest text on screen.
 VERSION_HEADING_STEP = 4
 
+# Inline code (`.jser`) in the notes: the platform's own monospace, first
+# installed one wins, and the system fixed font after these. Qt's markdown
+# reader sets code in the system fixed font at its own size and normal weight,
+# which next to the body reads too large and too light, more so inside a bold
+# claim. ``restyle_code_runs`` resizes it so its x-height matches the body's
+# and gives it the weight of the text around it.
+CODE_FAMILIES = {
+    "darwin": ("SF Mono", "Menlo", "Monaco"),
+    "win32": ("Consolas", "Cascadia Mono", "Courier New"),
+    "linux": ("DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono"),
+}
+
+# How far the tint behind inline code steps from the background toward the
+# text color: just enough to mark the span in either theme.
+CODE_TINT_BLEND = 0.07
+
+
+def code_font_family():
+    """The monospace family inline code is set in on this platform."""
+    installed = set(QFontDatabase.families())
+    platform = "linux" if sys.platform.startswith("linux") else sys.platform
+    for family in CODE_FAMILIES.get(platform, ()):
+        if family in installed:
+            return family
+    return QFontDatabase.systemFont(QFontDatabase.FixedFont).family()
+
+
+def code_char_format(base_font, base_pt, weight, color, tint):
+    """The character format for one run of inline code in the notes.
+
+    The point size scales ``base_pt`` by the body's x-height over the
+    monospace's, so lowercase letters stand as tall in the code as around it.
+    """
+    family = code_font_family()
+    mono = QFont(family)
+    mono.setPointSizeF(base_pt)
+    mono_x = QFontMetricsF(mono).xHeight()
+    body_x = QFontMetricsF(base_font).xHeight()
+    fmt = QTextCharFormat()
+    fmt.setFontFamilies([family])
+    fmt.setFontFixedPitch(True)
+    fmt.setFontPointSize(base_pt * body_x / mono_x if mono_x > 0 else base_pt)
+    fmt.setFontWeight(weight)
+    fmt.setFontLetterSpacingType(QFont.SpacingType.PercentageSpacing)
+    fmt.setFontLetterSpacing(100)
+    fmt.setForeground(color)
+    fmt.setBackground(tint)
+    return fmt
+
+
+def restyle_code_runs(cursor, block, base_font, base_pt, color, tint):
+    """Restyle every inline code run in ``block``; see ``code_char_format``.
+
+    Each run takes the weight of the text just before it in the block, which
+    is the weight the markdown gave the words it sits among, and its spaces
+    become no-break spaces, so a command such as ``pyreconstruct
+    series.jser`` wraps as one word instead of splitting across two lines.
+    """
+    runs = []
+    weight = 400
+    it = block.begin()
+    while not it.atEnd():
+        fragment = it.fragment()
+        fmt = fragment.charFormat()
+        if fmt.fontFixedPitch():
+            runs.append((fragment.position(), fragment.length(), weight))
+        else:
+            weight = fmt.fontWeight()
+        it += 1
+    for start, length, run_weight in runs:
+        cursor.setPosition(start)
+        cursor.setPosition(start + length, QTextCursor.KeepAnchor)
+        text = cursor.selectedText().replace(" ", "\u00a0")
+        cursor.insertText(text, code_char_format(
+            base_font, base_pt, run_weight, color, tint))
+
 
 def restyle_notes(doc, palette):
     """Restyle a markdown-built notes document in place.
@@ -220,7 +297,10 @@ def restyle_notes(doc, palette):
       first line is pulled back by the same amount, so a wrapped item lines
       up under its own first word, not under the marker;
     * every non-heading paragraph, items included, takes
-      ``NOTES_LINE_HEIGHT`` and paints in ``notes_text_color``.
+      ``NOTES_LINE_HEIGHT`` and paints in ``notes_text_color``;
+    * inline code inside those paragraphs is set by ``restyle_code_runs``:
+      the platform monospace, the body's x-height, color and weight, on a
+      faint tint.
 
     Sizes are relative to the document's default font, which
     ``NotesBrowser`` sets ``NOTES_SIZE_STEP`` above the dialog's own.
@@ -231,6 +311,7 @@ def restyle_notes(doc, palette):
     """
     body = notes_text_color(palette)
     secondary = secondary_text_color(palette)
+    code_tint = blend_toward_text(palette, CODE_TINT_BLEND)
     base_font = doc.defaultFont()
     # a font set in pixels reports no point size; size the headings from the
     # metrics then, so they still grow instead of collapsing to 4pt
@@ -296,6 +377,7 @@ def restyle_notes(doc, palette):
             cursor.setPosition(block.position() + block.length() - 1,
                                QTextCursor.KeepAnchor)
             cursor.mergeCharFormat(body_fmt)
+            restyle_code_runs(cursor, block, base_font, base_pt, body, code_tint)
             cursor.setPosition(block.position())
             text_list = block.textList()
             if text_list is not None:
@@ -384,6 +466,14 @@ def make_notes_browser(markdown_text, min_height=180):
     return browser
 
 
+# The dark theme's app stylesheet gives every push button 2 px of padding and
+# no minimum width, so Close drew as a tight box around its word, well short
+# of the light theme's native button. This sheet, set on Close only while the
+# app has a stylesheet, gives it back about the light button's room. Under the
+# light theme the button keeps no sheet at all and draws natively.
+DARK_BUTTON_SHEET = "QPushButton { padding: 3px 12px; min-width: 40px; }"
+
+
 class WhatsNewDialog(QDialog):
     """A dismissible, modeless summary of what changed since the last-seen version."""
 
@@ -410,48 +500,30 @@ class WhatsNewDialog(QDialog):
             else "What's new in PyReconstruct"
         )
         # 700 minimum width, up from the 540 the dialog opened at when the
-        # footer text and the release-notes link stacked. The width does not
-        # shape the footer: the provenance line is one short line at every
-        # width, so the extra room is purely about how much of a release note
-        # line fits unwrapped. The height increase lives on the notes browser
-        # below, the one widget that should absorb extra space; no other
-        # geometry is set, so the dialog keeps sizing itself from its
+        # byline and the release-notes link stacked. The width does not shape
+        # the footer: the byline breaks into its two lines explicitly (see the
+        # footer below), the same at every width, so the extra room is purely
+        # about how much of a release note line fits unwrapped. The height increase lives on the notes
+        # browser below, the one widget that should absorb extra space; no
+        # other geometry is set, so the dialog keeps sizing itself from its
         # contents.
         self.setMinimumWidth(700)
         self.setModal(False)  # modeless: does not block the app
 
         lay = QVBoxLayout(self)
 
-        # prominent version header, with the release date beneath it -- omitted
-        # when the running version is unknown (never render "None"; the
-        # orienter below then leads the dialog)
-        if content["version"]:
-            title = QLabel(f"PyReconstruct {content['version']}")
-            tf = title.font()
-            tf.setBold(True)
-            tf.setPointSize(18 if tf.pointSize() <= 0 else tf.pointSize() + 6)
-            title.setFont(tf)
-            lay.addWidget(title)
-
-        # The release date is secondary to the version above it: italic, in the
-        # derived secondary color rather than dimmed by `setEnabled(False)` as
-        # it first was. The disabled rendering measured about 1.6:1 against
-        # the dialog background (offscreen/Fusion), and the label stays
-        # enabled so it paints from the Active group like everything else.
-        # Escaped: the date string comes from parsed release notes and this
-        # label renders rich text.
-        if content.get("date"):
-            released = SecondaryLabel(escape(f"Released {content['date']}"))
-            rf = released.font()
-            rf.setItalic(True)
-            released.setFont(rf)
-            lay.addWidget(released)
-
-        orienter = QLabel(content["orienter"])
-        of = orienter.font()
-        of.setItalic(True)
-        orienter.setFont(of)
-        lay.addWidget(orienter)
+        # One header line, the orienter: "What's new since 1.22.1", "Welcome to
+        # PyReconstruct" or "Recent releases". It names no version or date of
+        # its own, because every version listed below carries both in its own
+        # heading. Plain text: the last-seen version comes from the settings
+        # store, not from this code.
+        self._header = QLabel(content["orienter"])
+        self._header.setTextFormat(Qt.PlainText)
+        hf = self._header.font()
+        hf.setBold(True)
+        hf.setPointSize(18 if hf.pointSize() <= 0 else hf.pointSize() + 6)
+        self._header.setFont(hf)
+        lay.addWidget(self._header)
 
         # The notes browser renders the release notes and nothing else. The
         # maintainer provenance line used to be appended to the end of this
@@ -523,10 +595,15 @@ class WhatsNewDialog(QDialog):
                 f'{before}<a href="{HOMEPAGE_URL}">{name}</a>{after}' if name
                 else before
             )
-            # Rendered as it is, on one line: the sentence is short enough to
-            # fit the footer at the dialog's minimum width, so no explicit
-            # break is added.
-            self._byline = SecondaryLabel(markup)
+            # Rendered as two lines, broken at the comma -- "A fork of
+            # PyReconstruct," over "maintained by Dusten Hubbard." The break
+            # is an explicit <br/> so the shape is the same at every window
+            # width rather than wrap luck. It is a display concern of this
+            # dialog alone, which is why MAINTAINER_BYLINE itself stays one
+            # string: the GitHub release footer renders the same sentence
+            # inline. A byline without a comma-space renders unchanged, on one
+            # line.
+            self._byline = SecondaryLabel(markup.replace(", ", ",<br/>", 1))
             bf = self._byline.font()
             bf.setItalic(True)
             self._byline.setFont(bf)
@@ -540,8 +617,9 @@ class WhatsNewDialog(QDialog):
         # Same LinkLabel as the byline: this label has always had the same
         # stale-anchor-color behavior on a live theme switch, and fixing one
         # anchor in the dialog while leaving the other stale would show.
-        # AlignTop: should the provenance line ever wrap, the link stays level
-        # with its first line rather than floating mid-row.
+        # AlignTop: the byline renders as two lines (see above), and the link
+        # stays level with the byline's first line rather than floating
+        # mid-row.
         link = LinkLabel(f'<a href="{url}">All release notes on GitHub ↗</a>')
         link.setOpenExternalLinks(True)
         footer.addWidget(link, 0, Qt.AlignTop)
@@ -563,11 +641,28 @@ class WhatsNewDialog(QDialog):
         self._show_box.toggled.connect(self.setShowAfterUpdate)
         row.addWidget(self._show_box)
         row.addStretch(1)
-        close_btn = QPushButton("Close")
-        close_btn.setDefault(True)
-        close_btn.clicked.connect(self.accept)
-        row.addWidget(close_btn)
+        self._close = QPushButton("Close")
+        self._close.setDefault(True)
+        self._close.clicked.connect(self.accept)
+        self._fit_buttons()
+        row.addWidget(self._close)
         lay.addLayout(row)
+
+    def _fit_buttons(self):
+        """Set or clear Close's dark-theme sheet; see ``DARK_BUTTON_SHEET``."""
+        app = QApplication.instance()
+        sheet = DARK_BUTTON_SHEET if app is not None and app.styleSheet() else ""
+        if self._close.styleSheet() != sheet:
+            self._close.setStyleSheet(sheet)
+
+    def changeEvent(self, event):
+        # The theme switch sets or clears the app stylesheet with this dialog
+        # open; follow it. getattr: change events can arrive from inside
+        # QDialog.__init__, before the button exists.
+        if (event.type() in (QEvent.Type.StyleChange, QEvent.Type.PaletteChange)
+                and getattr(self, "_close", None) is not None):
+            self._fit_buttons()
+        super().changeEvent(event)
 
     def _store(self):
         """The settings store the checkbox reads and writes."""
