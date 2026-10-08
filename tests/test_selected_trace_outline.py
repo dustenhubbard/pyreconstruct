@@ -1,28 +1,36 @@
-"""A selected trace is drawn with a black and white outline (issue #438).
+"""A selected trace is drawn as upstream PyReconstruct draws it.
 
-The old highlight was a wider stroke in the trace's own color at 40% opacity,
-which disappears for a light trace on a light image or a dark trace on a dark
-one. The outline has a black edge and a white band on either side of the trace
-line, so one of the two contrasts with whatever is underneath, and the trace's
-own color stays down the middle. The whole outline is six pixels across: one of
-black, one of white, two of the trace's color, one of white, one of black.
+The trace keeps its normal one pixel line, and the same path is stroked again
+in the trace's own color, eight pixels wide at 40% opacity. That glow goes on
+before the fill, so a fill covers its inner half.
 
-These render a real section headlessly and read the pixels across the top edge
-of an axis-aligned square trace.
+The main check renders a section through the real trace layer and compares it
+pixel for pixel with ``_upstream_render``, a copy of the drawing calls in
+upstream's ``TraceLayer._drawTrace``: one fresh QPainter per trace, line, then
+glow, then fill. The other cases read pixels across the top edge of an
+axis-aligned square trace.
 """
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import numpy as np
 import pytest
 
 W, H = 400, 400
 PPU = 100.0                      # pixels per field unit
 MAGENTA = (255, 0, 255)
-BLACK = (0, 0, 0)
-WHITE = (255, 255, 255)
+FOCUS = (246, 249, 72)           # the focused object's forced color
 EDGE_Y = 100                     # pixel row of the square's top edge
 COLUMN_X = 300                   # a pixel column crossing that edge
+LEFT_EDGE_X = 200                # pixel column of the square's left edge
+MID_Y = 200                      # a pixel row halfway down that edge
+INSIDE = (300, 200)              # a pixel well inside the square
+
+SQUARE = [(2, 3), (4, 3), (4, 1), (2, 1)]   # pixels x 200..400, y 100..300
+OTHER = [(0.5, 3), (1.5, 3), (1.5, 1), (0.5, 1)]  # pixels x 50..150
+# slanted edges and sharp corners, so pen joins and caps show
+STAR = [(1, 3.6), (1.6, 2.2), (3.4, 2.8), (2.2, 1.6), (3, 0.4), (0.6, 1.4)]
 
 
 @pytest.fixture
@@ -31,116 +39,18 @@ def series(shapes1_jser):
     QApplication.instance() or QApplication(["test"])
     from PyReconstruct.modules.datatypes.series import Series
     s = Series.openJser(str(shapes1_jser))
+    # only traces on the layer, so it compares with the upstream trace drawing
+    s.setOption("show_ztraces", False)
+    s.setOption("show_flags", "none")
     yield s
     s.close()
 
 
-def _column(series, selected, fill_mode=("none", "none"), closed=True, focus_on=False):
-    """Render one magenta square and return the opaque RGB pixels across its top edge.
-
-    Returns a dict of pixel row -> (r, g, b) for rows near the edge; rows
-    with nothing drawn are left out.
-    """
-    from PyReconstruct.modules.datatypes.trace import Trace
-    from PyReconstruct.modules.backend.view.section_layer import SectionLayer
-
-    section = series.loadSection(list(series.sections.keys())[0])
-    for contour in section.contours.values():
-        for t in contour.getTraces():
-            t.hidden = True
-
-    window = [0, 0, W / PPU, H / PPU]
-    series.window = window
-    # field y grows upward, so the top edge at pixel row 100 is field y 3
-    corners = [(2, 3), (4, 3), (4, 1), (2, 1)]
-    trace = Trace("outline_probe", MAGENTA, closed=closed)
-    trace.points = [
-        tuple(p) for p in section.tform.mapPointsArray(corners, inverted=True).tolist()
-    ]
-    trace.fill_mode = fill_mode
-    section.addTrace(trace, log_event=False)
-    if selected:
-        section.addSelectedTrace(trace)
-
-    layer = SectionLayer(section, series, load_image_layer=False)
-    image = layer.generateTraceLayer(
-        (W, H), window, window_moved=True, focus_on=focus_on
-    ).toImage()
-
-    column = {}
-    for y in range(EDGE_Y - 8, EDGE_Y + 9):
-        c = image.pixelColor(COLUMN_X, y)
-        if c.alpha() == 255:
-            column[y] = (c.red(), c.green(), c.blue())
-    return column
-
-
-def _bands(column):
-    """The colors met going down the column, with repeats collapsed."""
-    return [color for color, _ in _runs(column)]
-
-
-def _runs(column):
-    """The colors met going down the column, each with how many pixels it spans."""
-    runs = []
-    for y in sorted(column):
-        if runs and runs[-1][0] == column[y]:
-            runs[-1][1] += 1
-        else:
-            runs.append([column[y], 1])
-    return [tuple(run) for run in runs]
-
-
-# one pixel of black, one of white, two of the trace's color, and back out
-OUTLINE_RUNS = [(BLACK, 1), (WHITE, 1), (MAGENTA, 2), (WHITE, 1), (BLACK, 1)]
-
-
-@pytest.mark.parametrize("closed", [True, False], ids=["closed", "open"])
-def test_selected_trace_has_black_and_white_outline(series, closed):
-    column = _column(series, selected=True, closed=closed)
-    # black edge, white band, the trace's own color, white band, black edge
-    assert _bands(column) == [BLACK, WHITE, MAGENTA, WHITE, BLACK], column
-    assert column.get(EDGE_Y) == MAGENTA, column
-
-
-@pytest.mark.parametrize("closed", [True, False], ids=["closed", "open"])
-def test_outline_is_six_pixels_across(series, closed):
-    column = _column(series, selected=True, closed=closed)
-    assert _runs(column) == OUTLINE_RUNS, column
-    assert len(column) == 6, column
-
-
-def test_outline_keeps_a_forced_color_down_the_middle(series):
-    # focus mode forces the focused object's color
-    column = _column(series, selected=True, focus_on="outline_probe")
-    assert column.get(EDGE_Y) == (246, 249, 72), column
-    assert {BLACK, WHITE} <= set(column.values()), column
-
-
-def test_unselected_trace_has_no_outline(series):
-    column = _column(series, selected=False)
-    assert set(column.values()) == {MAGENTA}, column
-
-
-def test_outline_is_drawn_over_a_solid_fill(series):
-    column = _column(series, selected=True, fill_mode=("solid", "always"))
-    inside = {column.get(y) for y in range(EDGE_Y + 1, EDGE_Y + 5)}
-    assert WHITE in inside, f"the fill covered the inner side of the outline: {column}"
-
-
-# --------------------------------------------------------------------------
-# more cases: open ends, painter state between traces, and fills
-# --------------------------------------------------------------------------
-
-LEFT_EDGE_X = 200                # pixel column of the square's left edge
-MID_Y = 200                      # a pixel row halfway down that edge
-INSIDE = (300, 200)              # a pixel well inside the square
-
-
-def _render(series, specs):
-    """Render squares and return the trace layer image.
+def _render(series, specs, focus_on=False):
+    """Render traces through the trace layer.
 
     Each spec is (selected, fill_mode, closed, corners), drawn in that order.
+    Returns the image and the layer.
     """
     from PyReconstruct.modules.datatypes.trace import Trace
     from PyReconstruct.modules.backend.view.section_layer import SectionLayer
@@ -164,20 +74,196 @@ def _render(series, specs):
             section.addSelectedTrace(trace)
 
     layer = SectionLayer(section, series, load_image_layer=False)
-    return layer.generateTraceLayer((W, H), window, window_moved=True).toImage()
+    image = layer.generateTraceLayer(
+        (W, H), window, window_moved=True, focus_on=focus_on
+    ).toImage()
+    return image, layer
 
 
-SQUARE = [(2, 3), (4, 3), (4, 1), (2, 1)]   # pixels x 200..400, y 100..300
-OTHER = [(0.5, 3), (1.5, 3), (1.5, 1), (0.5, 1)]  # pixels x 50..150
+def _upstream_render(layer, focus_on=False):
+    """Draw the traces the layer drew with upstream's drawing calls."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPixmap
+
+    section = layer.section
+    fill_opacity = layer.series.getOption("fill_opacity")
+    pixmap = QPixmap(W, H)
+    pixmap.fill(Qt.transparent)
+    for trace in layer.traces_in_view:
+        color = None
+        if focus_on:
+            color = FOCUS if trace.name == focus_on else (42, 255, 128)
+        draw_color = color if color else trace.color
+        qpoints = layer.traceToPix(trace, qpoints=True)
+        selected = trace in section.selected_traces
+
+        painter = QPainter(pixmap)
+        painter.setPen(QPen(QColor(*draw_color), 1))
+        if trace.closed:
+            painter.drawPolygon(qpoints)
+        else:
+            painter.drawPolyline(qpoints)
+
+        if selected:
+            painter.setPen(QPen(QColor(*draw_color), 8))
+            painter.setOpacity(0.4)
+            if trace.closed:
+                painter.drawPolygon(qpoints)
+            else:
+                painter.drawPolyline(qpoints)
+
+        if (
+            (trace.closed) and
+            (trace.fill_mode[0] != "none") and (
+                (trace.fill_mode[1] == "always") or
+                ((trace.fill_mode[1] == "selected") == selected)
+            )
+        ):
+            fill = True
+        elif trace.closed and color:
+            fill = True
+        else:
+            fill = False
+
+        if fill:
+            painter.setPen(QPen(QColor(*draw_color), 1))
+            painter.setBrush(QBrush(QColor(*draw_color)))
+            if color:
+                painter.setOpacity(0.25)
+            elif trace.fill_mode[0] == "transparent":
+                painter.setOpacity(fill_opacity)
+            elif trace.fill_mode[0] == "solid":
+                painter.setOpacity(1)
+            painter.drawPolygon(qpoints)
+        painter.end()
+    return pixmap.toImage()
+
+
+def _rgba(image):
+    from PySide6.QtGui import QImage
+    image = image.convertToFormat(QImage.Format.Format_RGBA8888)
+    return np.frombuffer(image.constBits(), dtype=np.uint8).reshape(
+        image.height(), image.bytesPerLine() // 4, 4
+    )[:, :image.width()].copy()
+
+
+def _assert_same_pixels(image, expected):
+    got, want = _rgba(image), _rgba(expected)
+    assert got.shape == want.shape
+    differ = np.argwhere((got != want).any(axis=2))
+    assert not len(differ), (
+        f"{len(differ)} pixels differ from upstream, first at (y, x) "
+        f"{tuple(differ[0])}: {tuple(got[tuple(differ[0])])} "
+        f"instead of {tuple(want[tuple(differ[0])])}"
+    )
+
+
+def _column(image, x=COLUMN_X):
+    """Pixel row -> (r, g, b, a) near the square's top edge, drawn pixels only."""
+    column = {}
+    for y in range(EDGE_Y - 8, EDGE_Y + 9):
+        c = image.pixelColor(x, y)
+        if c.alpha():
+            column[y] = (c.red(), c.green(), c.blue(), c.alpha())
+    return column
 
 
 def _drawn(image, x, y):
     return image.pixelColor(x, y).alpha() > 0
 
 
+# --------------------------------------------------------------------------
+# pixel for pixel against upstream
+# --------------------------------------------------------------------------
+
+FILLS = [
+    ("none", "none"),
+    ("transparent", "always"),
+    ("solid", "always"),
+    ("solid", "selected"),
+    ("transparent", "unselected"),
+]
+
+
+@pytest.mark.parametrize("fill_mode", FILLS, ids=["-".join(f) for f in FILLS])
 @pytest.mark.parametrize("closed", [True, False], ids=["closed", "open"])
-def test_a_selected_open_trace_is_not_closed_by_the_outline(series, closed):
-    image = _render(series, [(True, ("none", "none"), closed, SQUARE)])
+@pytest.mark.parametrize("shape", [SQUARE, STAR], ids=["square", "star"])
+def test_a_selected_trace_matches_upstream(series, shape, closed, fill_mode):
+    image, layer = _render(series, [(True, fill_mode, closed, shape)])
+    assert layer.traces_in_view
+    _assert_same_pixels(image, _upstream_render(layer))
+
+
+@pytest.mark.parametrize("closed", [True, False], ids=["closed", "open"])
+def test_a_selected_trace_in_focus_mode_matches_upstream(series, closed):
+    image, layer = _render(
+        series, [(True, ("none", "none"), closed, STAR)], focus_on="outline_probe"
+    )
+    _assert_same_pixels(image, _upstream_render(layer, focus_on="outline_probe"))
+
+
+def test_overlapping_traces_match_upstream(series):
+    # selected and unselected, filled and not, drawn over each other
+    specs = [
+        (True, ("transparent", "always"), True, STAR),
+        (False, ("solid", "always"), True, OTHER),
+        (True, ("none", "none"), False, SQUARE),
+        (False, ("none", "none"), True, STAR),
+        (True, ("solid", "always"), True, OTHER),
+    ]
+    image, layer = _render(series, specs)
+    assert len(layer.traces_in_view) == len(specs)
+    _assert_same_pixels(image, _upstream_render(layer))
+
+
+# --------------------------------------------------------------------------
+# the look itself
+# --------------------------------------------------------------------------
+
+def test_a_selected_trace_glows_in_its_own_color(series):
+    image, _ = _render(series, [(True, ("none", "none"), True, SQUARE)])
+    column = _column(image)
+    # eight pixels across, all the trace's color: the one pixel line at full
+    # opacity and the glow around it at 40%
+    assert len(column) == 8, column
+    assert {rgba[:3] for rgba in column.values()} == {MAGENTA}, column
+    assert column[EDGE_Y][3] == 255, column
+    glow = {rgba[3] for y, rgba in column.items() if y != EDGE_Y}
+    assert glow == {round(0.4 * 255)}, column
+
+
+def test_a_selected_trace_in_focus_mode_glows_in_the_forced_color(series):
+    image, _ = _render(
+        series, [(True, ("none", "none"), False, SQUARE)], focus_on="outline_probe"
+    )
+    column = _column(image)
+    assert len(column) == 8, column
+    for rgba in column.values():
+        # a 40% pixel loses a step to rounding
+        assert rgba[:3] == pytest.approx(FOCUS, abs=1), column
+
+
+def test_an_unselected_trace_is_a_one_pixel_line(series):
+    image, _ = _render(series, [(False, ("none", "none"), True, SQUARE)])
+    assert _column(image) == {EDGE_Y: (*MAGENTA, 255)}
+
+
+def test_a_solid_fill_covers_the_inner_half_of_the_glow(series):
+    image, _ = _render(series, [(True, ("solid", "always"), True, SQUARE)])
+    column = _column(image)
+    outside = [column[y][3] for y in column if y < EDGE_Y]
+    inside = [column[y][3] for y in column if y > EDGE_Y]
+    assert outside and set(outside) == {round(0.4 * 255)}, column
+    assert inside and set(inside) == {255}, column
+
+
+# --------------------------------------------------------------------------
+# open ends, painter state between traces, and fills
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("closed", [True, False], ids=["closed", "open"])
+def test_a_selected_open_trace_is_not_closed_by_the_glow(series, closed):
+    image, _ = _render(series, [(True, ("none", "none"), closed, SQUARE)])
     # the left edge runs from the last point back to the first, so only a
     # closed trace has it
     edge = [_drawn(image, x, MID_Y) for x in range(LEFT_EDGE_X - 6, LEFT_EDGE_X + 7)]
@@ -191,7 +277,7 @@ def test_painter_state_does_not_reach_the_next_trace(series, selected, plain_las
     # lowered opacity or a wide pen on the shared painter if nothing resets them
     first = (selected, ("transparent", "always"), True, OTHER)
     plain = (False, ("none", "none"), True, SQUARE)
-    image = _render(series, [first, plain] if plain_last else [plain, first])
+    image, _ = _render(series, [first, plain] if plain_last else [plain, first])
 
     # the plain square: a one pixel line in its own color, fully opaque,
     # nothing inside and nothing beside the line
@@ -212,26 +298,17 @@ def test_painter_state_does_not_reach_the_next_trace(series, selected, plain_las
     ],
 )
 def test_a_fill_follows_its_condition(series, condition, selected, filled):
-    image = _render(series, [(selected, ("solid", condition), True, SQUARE)])
+    image, _ = _render(series, [(selected, ("solid", condition), True, SQUARE)])
     c = image.pixelColor(*INSIDE)
     assert _drawn(image, *INSIDE) == filled
     if filled:
         assert (c.red(), c.green(), c.blue(), c.alpha()) == (*MAGENTA, 255)
 
 
-def test_a_transparent_fill_under_the_outline(series):
+def test_a_transparent_fill_is_drawn_at_the_fill_opacity(series):
     fill_opacity = series.getOption("fill_opacity")
     assert 0 < fill_opacity < 1, "the test needs a partly transparent fill"
-    image = _render(series, [(True, ("transparent", "always"), True, SQUARE)])
-
+    image, _ = _render(series, [(True, ("transparent", "always"), True, SQUARE)])
     c = image.pixelColor(*INSIDE)
     assert (c.red(), c.green(), c.blue()) == pytest.approx(MAGENTA, abs=2)
     assert c.alpha() == pytest.approx(fill_opacity * 255, abs=2)
-
-    # the outline stays fully opaque over the fill, at its full width
-    column = {}
-    for y in range(EDGE_Y - 8, EDGE_Y + 9):
-        p = image.pixelColor(COLUMN_X, y)
-        if p.alpha() == 255:
-            column[y] = (p.red(), p.green(), p.blue())
-    assert _runs(column) == OUTLINE_RUNS, column
