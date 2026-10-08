@@ -309,8 +309,9 @@ Two consequences that matter:
 - **Sections are shuttled as opaque JSON.** Saving reads each `series.<n>` file back
   and drops it into the output array without interpreting it. A section that was never
   loaded and re-saved during the editing session travels from input `.jser` to output
-  `.jser` with only the unpack migration's repairs applied (see
-  [section 7](#7-versioning-and-migrations)), including keys PyReconstruct does not
+  `.jser` with only the unpack's repairs applied (the section migrations in
+  [section 7](#7-versioning-and-migrations), and `align_locked` forced to `true`),
+  including keys PyReconstruct does not
   understand. The `series` object does not work this way: it is always rebuilt from the
   in-memory model on save. See
   [Reader and writer divergences](#9-reader-and-writer-divergences).
@@ -397,8 +398,8 @@ Parsing rules that a generator must respect:
   any double quote inside doubled. The writer quotes a value only when it contains
   `", "` or opens with a double quote, and it always quotes an object literally named
   `-`, so a bare `-` keeps meaning "no object". Every other row is written unquoted,
-  byte for byte as older builds wrote it. So a user named `Smith, John` is written as
-  `"Smith, John"`.
+  as older builds wrote it, except for the newline rule below. So a user named
+  `Smith, John` is written as `"Smith, John"`.
 - The reader takes a quoted User or Obj field as quoted only when the closing quote is
   followed by `", "` and the decoded value is one the writer would have quoted. Anything
   else is read the old way, up to the next `", "`, and a row that does not parse as
@@ -409,9 +410,13 @@ Parsing rules that a generator must respect:
   contour names have their commas replaced with underscores.
 - **One row is one line.** The writer replaces a CR, LF or CRLF inside any field with
   `_`. A reader of older files must still expect a row split across lines by a newline
-  pasted into a name: a row starts only at a line that opens with the `YY-MM-DD, HH:MM, `
-  stamp, and a short row is joined to the lines after it until it has six
-  comma-separated fields, but never to a line that opens with that stamp.
+  pasted into a name. PyReconstruct starts a row only at a line that opens with the
+  `YY-MM-DD, HH:MM, ` stamp. While the row splits into fewer than six pieces on a bare
+  comma, it is joined to the next line, stripped and with nothing between them, but
+  never to a line that opens with that stamp. The join counts bare commas, while the
+  row is then parsed on `", "`, so the join can stop too early: a first line such as
+  `26-01-01, 10:00, alice, foo,bar,baz` already splits into six pieces, so its
+  continuation line is not joined and the row does not parse.
 - Blank lines are skipped.
 - Leading and trailing whitespace in the Event column is stripped.
 - A negative number cannot appear in the Sections column, because `-` is both the null
@@ -756,7 +761,8 @@ series object is **always rebuilt from the in-memory model on save**, so an unre
 key does not survive a save.
 
 Two of the twenty-one are not always there. `log_set` lives only in the hidden working
-directory's `.ser`: it is removed on the way out, so **a `.jser` never carries it**.
+directory's `.ser`: it is removed on the way out, so **a `.jser` this build writes never
+carries it** (an older build could write it; see divergence 5).
 `palette_obj_defaults` is written only when some palette entry has object defaults. So a
 `.jser` carries **nineteen keys, or twenty** with `palette_obj_defaults`, and the example
 in [section 8](#8-a-minimal-valid-file) has nineteen. Both keys are marked as such below.
@@ -847,8 +853,8 @@ never stored. Two notes:
 - **Loading is not an identity operation.** A host that is already a transitive superhost
   of the same object is pruned on load and will not be written back.
 
-**`obj_attrs`** maps an object name to a flat attribute object. Exactly ten attribute
-keys exist:
+**`obj_attrs`** maps an object name to a flat attribute object. PyReconstruct uses
+exactly ten attribute keys. Any other key in an entry is ignored and kept as it is:
 
 | Attribute | JSON type | Legal values | Default when absent |
 | --- | --- | --- | --- |
@@ -1083,8 +1089,9 @@ series object is migrated by one function and each section object by another, bo
 which mutate the parsed dictionary before it is used. There is no separate migration
 pass, no record that a migration ran, and no way to ask what version a file was.
 
-Three more steps live in the open path itself: two shape migrations and a check run
-before the per-object functions, and one step run after them.
+Four more steps live in the open path itself: two shape migrations and a check run
+before the per-object functions, and one step run after them. (The open path also forces
+`align_locked` to `true`; see divergence 3.)
 
 **Top-level shape migrations (in the open path)**
 
@@ -1336,8 +1343,8 @@ contrast) and divergence 11 (contour-name normalization) are fixed in part.
 
 **1. Sections pass through opaquely; the series object does not.**
 A section that is not loaded and re-saved during a session travels from input to output
-with only the unpack migration's repairs applied, including keys the application has no
-concept of. A key
+with only the unpack's repairs applied (the section migrations, and divergence 3),
+including keys the application has no concept of. A key
 added by hand survives indefinitely. The series object, by contrast, is rebuilt from the
 in-memory model on every save, so an unrecognized series-level key is silently dropped
 on the first save. One file can therefore hold a mixture of section objects in different
@@ -1570,7 +1577,7 @@ re-checked.
 | Host tree shape, hostless objects omitted | `PyReconstruct/modules/datatypes/host_tree.py` (`HostTree.getDict`) |
 | Host tree accepts a bare string | `PyReconstruct/modules/datatypes/host_tree.py` (`HostTree.add`) |
 | Redundant hosts pruned on read | `PyReconstruct/modules/datatypes/host_tree.py` (`HostTree.checkRedundantHosts`) |
-| The ten `obj_attrs` keys and their defaults | `PyReconstruct/modules/datatypes/series.py` (`Series.getAttr`, `Series.getSmoothWindow`) |
+| The ten `obj_attrs` keys and their defaults; other keys kept | `PyReconstruct/modules/datatypes/series.py` (`Series.getAttr`, `Series.getSmoothWindow`; `Series.__init__` and `Series.getDict` pass `obj_attrs` through) |
 | Null attribute deletes the key and empties the entry | `PyReconstruct/modules/datatypes/series.py` (`Series.setAttr`) |
 | `3D_mode` legal values | `PyReconstruct/modules/backend/volume/generate_volumes.py` (`generateVolumes`), `PyReconstruct/modules/gui/main/field_widget_3_object.py` (`FieldWidgetObject.edit3D`) |
 | `3D_opacity` range | `PyReconstruct/modules/gui/main/field_widget_3_object.py` (`FieldWidgetObject.edit3D`) |
@@ -1592,7 +1599,7 @@ re-checked.
 | Row format and `", "` delimiter | `PyReconstruct/modules/datatypes/log.py` (`Log.__str__`, `splitRow`) |
 | User and Obj quoted when needed, and read back | `PyReconstruct/modules/datatypes/log.py` (`quoteField`, `_readQuoted`, `_onlyQuotedShape`, `splitRow`, `Log.fromStr`) |
 | A newline inside a field is written as `_` | `PyReconstruct/modules/datatypes/log.py` (`Log.__str__`) |
-| A row starts only at the date and time stamp; the join guard | `PyReconstruct/modules/datatypes/log.py` (`ROW_START`, `LogSet.fromList`) |
+| A row starts only at the date and time stamp; the join guard and its bare-comma count | `PyReconstruct/modules/datatypes/log.py` (`ROW_START`, `LogSet.fromList`) |
 | Section range encoding, inclusive, space separated | `PyReconstruct/modules/datatypes/log.py` (`Log.__str__`, `Log._fromStr`, `Log.containsSection`) |
 | `-` as the null marker for Obj and Sections | `PyReconstruct/modules/datatypes/log.py` (`Log.__str__`, `Log._fromStr`) |
 | Commas are safe in the Event column | `PyReconstruct/modules/datatypes/log.py` (`splitRow`) |
