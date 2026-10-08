@@ -1139,22 +1139,25 @@ class FieldWidgetTrace(FieldWidgetBase):
                 vscroll = None  # scroll bar if object list
                 data_table = self.table_manager.hasFocus()
 
-                if isinstance(data_table, TraceTableWidget):
-                    selected_traces = data_table.getTraces(data_table.getSelected() or [])
+                # an explicit restrict list (autoMerge) names the traces the
+                # action works on, so it stands in for the selection whichever
+                # widget has focus: the draw's undo state refreshes the Trace
+                # List, and a focused list has lost its selection by now. The
+                # list is not read at all, since getSelected asks to unlock a
+                # locked row there, and that object is not one of the targets
+                restrict = kwargs.get("restrict")
+                if restrict:
+                    selected_traces = list(restrict)
 
-                    vscroll = data_table.table.verticalScrollBar()  # track scroll bar pos
-                    scroll_pos = vscroll.value()
+                elif isinstance(data_table, TraceTableWidget):
+                    selected_traces = data_table.getTraces(data_table.getSelected() or [])
 
                 else:
                     selected_traces = self.section.selected_traces.copy()
 
-                # an explicit restrict list (autoMerge) names the traces the
-                # action works on, so it stands in for the selection whichever
-                # widget has focus: the draw's undo state refreshes the Trace
-                # List, and a focused list has lost its selection by now
-                restrict = kwargs.get("restrict")
-                if restrict:
-                    selected_traces = list(restrict)
+                if isinstance(data_table, TraceTableWidget):
+                    vscroll = data_table.table.verticalScrollBar()  # track scroll bar pos
+                    scroll_pos = vscroll.value()
 
                 ## If no objs selected
                 if not selected_traces:

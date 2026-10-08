@@ -204,3 +204,58 @@ def test_a_cut_that_does_not_merge_is_one_undo_step(main_window, qapp):
 
     main_window.undo(redo=True)
     assert _traces(field) == after
+
+
+LOCKED = "scissors_automerge_locked"
+
+
+def test_a_merging_cut_leaves_a_focused_locked_row_alone(
+    main_window, qapp, local_series_settings, monkeypatch
+):
+    """The merge works on the traces it found, so a locked row of another
+    object, focused in the Trace List, is not read and not offered to unlock."""
+    from PyReconstruct.modules.gui.utils import utils as gui_utils
+
+    local_series_settings(main_window)
+    field = _setup(main_window, SQ_OVERLAP)
+    field.setTracingTrace(Trace(LOCKED, (255, 0, 0), True))
+    field.newTrace(SQ_DISJOINT, field.tracing_trace, closed=True)
+    field.section.selected_traces = []
+    field.series.setAttr(LOCKED, "locked", True)
+    field.generateView()
+
+    prompts = []
+
+    def answer_yes(*args, **kwargs):
+        prompts.append(args)
+        return gui_utils.QMessageBox.Yes
+
+    monkeypatch.setattr(gui_utils.QMessageBox, "question", answer_yes)
+
+    main_window.show()
+    main_window.activateWindow()
+    field.openList(list_type="trace")
+    table = field.table_manager.tables["trace"][0]
+    qapp.processEvents()
+    _pickup(main_window, qapp)
+
+    # click the locked object's row, so the list has focus and selects it
+    row, found = table.table.getRowIndex(LOCKED)
+    assert found
+    rect = table.table.visualItemRect(table.table.item(row, 0))
+    QTest.mouseClick(table.table.viewport(), Qt.LeftButton, Qt.NoModifier, rect.center())
+    qapp.processEvents()
+    assert field.table_manager.hasFocus() is table
+    assert table.selectedRows() == [row]
+    assert field.is_scissoring
+
+    # finish the cut with the Pointer shortcut, the list still focused
+    QTest.keySequence(
+        main_window, QKeySequence(main_window.usepointer_act.shortcut())
+    )
+    qapp.processEvents()
+    _cut_ends(field)
+    assert len(_traces(field)) == 1, "the finished cut did not auto-merge"
+
+    assert prompts == [], "the merge asked to unlock an object it does not touch"
+    assert field.series.getAttr(LOCKED, "locked")
