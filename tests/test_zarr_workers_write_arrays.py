@@ -407,6 +407,55 @@ def test_an_image_inside_another_stops_the_conversion(tmp_path, first):
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="a backslash is a separator")
+@pytest.mark.parametrize("a, b", [
+    ("a\\b.png", "A\\\\b.png"),
+    ("é\\b.png", "é\\\\b.png"),
+])
+def test_two_names_for_one_folder_stop_the_conversion(tmp_path, a, b):
+    """scale_1/a/b.png and scale_1/A/b.png are one folder where names
+    ignore case (macOS and Windows by default), and so are the two ways of
+    writing an accented letter on macOS. The conversion stops before any
+    worker starts and names both images, whatever the output volume."""
+    imgs = tmp_path / "imgs"
+    imgs.mkdir()
+    cv2.imwrite(str(imgs / a), np.full((768, 1024), 7, np.uint8))
+    cv2.imwrite(str(imgs / b), np.full((768, 1024), 199, np.uint8))
+    out = tmp_path / "out.zarr"
+
+    result = _run(2, imgs, out)
+
+    assert result.returncode != 0
+    assert "Zarr validation complete." not in result.stdout
+    assert "@@PROGRESS@@ TOTAL" not in result.stdout
+    assert a in result.stderr
+    assert b in result.stderr
+    for name in (a, b):
+        assert not (out / "scale_1" / name.split("\\")[0]).exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a backslash is a separator")
+def test_an_image_inside_another_by_case_stops_the_conversion(tmp_path):
+    """FOO.png and foo.png\\bar.png are two files, but where names ignore
+    case scale_1/foo.png/bar.png is inside the array of FOO.png. The
+    conversion stops before any worker starts and names both images."""
+    imgs = tmp_path / "imgs"
+    imgs.mkdir()
+    parent, child = "FOO.png", "foo.png\\bar.png"
+    cv2.imwrite(str(imgs / parent), np.full((512, 512), 7, np.uint8))
+    cv2.imwrite(str(imgs / child), np.full((512, 512), 9, np.uint8))
+    out = tmp_path / "out.zarr"
+
+    result = _run(1, imgs, out)
+
+    assert result.returncode != 0
+    assert "Zarr validation complete." not in result.stdout
+    assert "@@PROGRESS@@ TOTAL" not in result.stdout
+    assert parent in result.stderr
+    assert child in result.stderr
+    assert not (out / "scale_1" / parent).exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a backslash is a separator")
 def test_a_name_with_a_backslash_is_stored_as_zarr_stores_it(tmp_path):
     """zarr reads a backslash in an array name as a separator, so the image
     a\\b.png is stored as scale_1/a/b.png. The converter must put its files

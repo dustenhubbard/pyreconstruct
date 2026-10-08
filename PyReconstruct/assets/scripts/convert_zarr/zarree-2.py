@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import shutil
+import unicodedata
 import multiprocessing.spawn
 from multiprocessing import Pool, freeze_support
 
@@ -301,21 +302,35 @@ def check_array_paths(images):
     is stored inside the array of foo.png. Each worker only checks its own
     array, so two workers could write one array, or an array and a group at
     one path. Checking every name here gives each array one image.
+
+    Paths are compared ignoring case and the way an accented letter is
+    written, because macOS and Windows store a/b.png and A/b.png in one
+    folder by default. This is done on every system, not only where the
+    output volume ignores case, so a zarr made on Linux still opens the same
+    once it is copied to a Mac.
     """
     owners = {}
     clashes = []
     for filename in images:
         path = normalize_storage_path(filename)
-        if path in owners:
-            clashes.append(f"{owners[path]} and {filename} are both stored as {path}")
+        key = fold_path(path)
+        if key in owners:
+            other, other_path = owners[key]
+            if other_path == path:
+                clashes.append(f"{other} and {filename} are both stored as {path}")
+            else:
+                clashes.append(
+                    f"{other} and {filename} are stored as {other_path} and "
+                    f"{path}, which a Mac or Windows can store as one folder"
+                )
         else:
-            owners[path] = filename
-    for path, filename in owners.items():
-        parts = path.split("/")
+            owners[key] = (filename, path)
+    for key, (filename, _path) in owners.items():
+        parts = key.split("/")
         for i in range(1, len(parts)):
             parent = "/".join(parts[:i])
             if parent in owners:
-                clashes.append(f"{filename} would be stored inside {owners[parent]}")
+                clashes.append(f"{filename} would be stored inside {owners[parent][0]}")
 
     if clashes:
         raise Exception(
@@ -323,6 +338,11 @@ def check_array_paths(images):
             + "\n".join(clashes)
             + "\nRename the images and convert them again."
         )
+
+
+def fold_path(path):
+    """The path with case and accented letters made uniform, for comparing."""
+    return unicodedata.normalize("NFD", unicodedata.normalize("NFD", path).casefold())
 
 
 def require_scale_group(zg, scale_group):
