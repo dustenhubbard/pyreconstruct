@@ -257,8 +257,14 @@ def test_a_timed_nightly_tag_build_carries_exactly_the_tag_version(tmp_path, job
 @pytest.mark.skipif(os.name == "nt", reason="Linux workflow shell integration")
 @pytest.mark.parametrize("job", BUILD_JOBS)
 def test_a_timed_nightly_build_past_its_tag_is_refused(tmp_path, job):
+    """The timed tag is real and HEAD is one commit past it, so the version is
+    the tag plus a commit hash, and its public part alone matches the tag."""
     (tmp_path / "repo").mkdir()
     repo = _full_clone(tmp_path / "repo", past_nightly=True)
+    _git(repo, "tag", "v1.24.0.dev202610081315")
+    (repo / "a.txt").write_text("4")
+    _git(repo, "commit", "-q", "-am", "four")
+    assert Version(_cli_version(repo)).public == "1.24.0.dev202610081315"
     result, exported = _run_step(tmp_path, repo, job, "v1.24.0.dev202610081315")
     assert result.returncode != 0
     assert "for the tag v1.24.0.dev202610081315" in result.stdout
