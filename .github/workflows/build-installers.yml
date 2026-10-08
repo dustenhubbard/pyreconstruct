@@ -395,6 +395,7 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
         run: |
+          python -m pip install --require-hashes --only-binary :all: -r packaging/macos/dmg-requirements.txt
           mkdir -p dist-assets
           bash packaging/macos/make_dmg.sh
           mv PyReconstruct-*.dmg dist-assets/
