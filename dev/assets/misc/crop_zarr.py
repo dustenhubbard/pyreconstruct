@@ -12,9 +12,10 @@ questions, for example from another program:
 With flags, progress goes to stdout as the same "@@PROGRESS@@" lines the zarr
 converter prints, and errors exit nonzero before anything is written.
 
-A crop that would keep no pixels is an error too, found before anything is
-written: when no section's image name is in the zarr (the series and the zarr
-do not belong together), or when the object is inside no section image.
+A crop that would keep no pixels is an error too, found before the output
+folder is made: when no section's image name is in the zarr (the series and
+the zarr do not belong together), or when the object is inside no section
+image.
 
 The output must be a new path: not one that exists, not a drive or file
 system root, and not the source zarr, inside it, or a folder that holds it.
