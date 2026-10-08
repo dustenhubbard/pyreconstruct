@@ -1294,9 +1294,13 @@ class Series():
             # close raises with every file in place, so the series left in
             # the window is still usable. Deleting file by file left it with
             # some sections gone and the rest still open.
-            from PyReconstruct.modules.backend.func.atomic_io import replace_with_retry
-            closing_dir = f"{self.hidden_dir}.closing-{secrets.token_hex(3)}"
-            replace_with_retry(self.hidden_dir, closing_dir)
+            # a short name: the series' own may already be as long as a
+            # folder name can be
+            closing_dir = os.path.join(
+                os.path.dirname(self.hidden_dir),
+                f".closing-{secrets.token_hex(4)}",
+            )
+            os.rename(self.hidden_dir, closing_dir)
             # none of its files are where the series reads them now, so it
             # is closed even if some of them cannot be cleared
             shutil.rmtree(closing_dir, ignore_errors=True)
