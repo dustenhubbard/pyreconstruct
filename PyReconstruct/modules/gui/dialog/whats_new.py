@@ -260,9 +260,10 @@ def restyle_code_runs(cursor, block, base_font, base_pt, color, tint):
     """Restyle every inline code run in ``block``; see ``code_char_format``.
 
     Each run takes the weight of the text just before it in the block, which
-    is the weight the markdown gave the words it sits among, and its spaces
-    become no-break spaces, so a command such as ``pyreconstruct
-    series.jser`` wraps as one word instead of splitting across two lines.
+    is the weight the markdown gave the words it sits among, and it never
+    breaks: spaces become no-break spaces and a word joiner follows each "/"
+    or "-", so a command such as ``pyreconstruct /path/to/series.jser`` wraps
+    as one word instead of splitting across two lines.
     """
     runs = []
     weight = 400
@@ -278,7 +279,9 @@ def restyle_code_runs(cursor, block, base_font, base_pt, color, tint):
     for start, length, run_weight in runs:
         cursor.setPosition(start)
         cursor.setPosition(start + length, QTextCursor.KeepAnchor)
-        text = cursor.selectedText().replace(" ", "\u00a0")
+        text = "".join(
+            "\u00a0" if ch == " " else ch + "\u2060" if ch in "/-" else ch
+            for ch in cursor.selectedText())
         cursor.insertText(text, code_char_format(
             base_font, base_pt, run_weight, color, tint))
 
@@ -297,12 +300,13 @@ KEY_COMBO = (
 # word cannot be told from the sentence going on ("View picks which data")
 # without one.
 MENU_LABELS = (
-    "Show/hide lists", "Clean up", "Shortcuts list", "Reset window",
+    "Show/Hide lists", "Clean up", "Shortcuts list", "Reset window",
     "Search menus", "What's new?", "What's new", "Recolor all objects from palette",
     "View log file", "Color filter", "Set filter...", "Autoseg import colors",
     "Import alignments", "Online resources", "Turn off What's new pop-up",
-    # the Help menu toggle's name before 1.23; older notes still say it
-    "Show what's new after updates",
+    # the Help menu toggle's name before 1.23, and the View toggle's before
+    # 1.24; older notes still say them
+    "Show what's new after updates", "Show/hide lists",
 )
 
 # Menu paths in the notes: two or more labels joined by " ▸ ". A label is
@@ -329,7 +333,7 @@ def unbreakable_key_or_menu(text):
     Spaces inside a label become no-break spaces, and so does the space before
     each "▸", so a path wraps only after a "▸" and a label never splits. A
     "/" or "-" is followed by a word joiner, since Qt breaks after either
-    ("Show/hide lists" broke at the slash).
+    ("Show/Hide lists" broke at the slash).
     """
     out = []
     for i, ch in enumerate(text):
@@ -709,8 +713,8 @@ class WhatsNewDialog(QDialog):
         # then no widget is added at all.
         #
         # The footer is two rows. The upper one, right under the notes, holds
-        # the "Show this changelog window after each update?" checkbox on the
-        # left and the "All release notes" link on the right; the lower one
+        # the "All release notes" link on the left and the "Show this
+        # changelog window after each update?" checkbox on the right; the lower one
         # holds the byline on the left and Close on the right, the default
         # (Enter) button in the ordinary bottom-right spot. When the byline is
         # absent a stretch keeps Close on the right, where it always is.
@@ -727,8 +731,6 @@ class WhatsNewDialog(QDialog):
             self._store().value(WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT)
         ))
         self._show_box.toggled.connect(self.setShowAfterUpdate)
-        options.addWidget(self._show_box)
-        options.addStretch(1)
 
         # Same LinkLabel as the byline: this label has always had the same
         # stale-anchor-color behavior on a live theme switch, and fixing one
@@ -736,6 +738,8 @@ class WhatsNewDialog(QDialog):
         link = LinkLabel(f'<a href="{url}">All release notes on GitHub ↗</a>')
         link.setOpenExternalLinks(True)
         options.addWidget(link)
+        options.addStretch(1)
+        options.addWidget(self._show_box)
         lay.addLayout(options)
 
         row = QHBoxLayout()

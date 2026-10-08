@@ -1513,16 +1513,15 @@ def test_dialog_byline_click_activates_only_on_the_project_name(qapp):
         dlg.deleteLater()
 
 
-def test_dialog_link_stays_right_when_the_content_has_no_byline(qapp):
-    """No byline still leaves the GitHub link on the right edge of its row.
+def test_dialog_footer_keeps_its_places_when_the_content_has_no_byline(qapp):
+    """No byline leaves the GitHub link on the left and Close on the right.
 
-    The byline is what pushes the link rightward in the footer, and some
-    framings carry no byline at all. Without something taking its place the
-    link would slide to the left edge on exactly those framings, so the footer
-    keeps a stretch where the byline would be and the link stays put whether
-    the provenance line is there or not.
+    Some framings carry no byline at all. The link leads its own row, so it
+    stays on the left edge either way, and the footer keeps a stretch where
+    the byline would be so Close stays in the bottom right whether the
+    provenance line is there or not.
     """
-    from PySide6.QtWidgets import QLabel
+    from PySide6.QtWidgets import QLabel, QPushButton
     from PyReconstruct.modules.gui.dialog.whats_new import WhatsNewDialog
 
     content = {"version": "1.20.3", "date": None, "orienter": "Recent releases",
@@ -1535,8 +1534,11 @@ def test_dialog_link_stays_right_when_the_content_has_no_byline(qapp):
         assert dlg._byline is None
         link = next(lab for lab in dlg.findChildren(QLabel)
                     if "All release notes on GitHub" in lab.text())
-        # right-aligned: the link's whole width sits in the right half
-        assert link.geometry().left() > dlg.width() // 2
+        close = next(b for b in dlg.findChildren(QPushButton)
+                     if b.text() == "Close")
+        # the link's whole width sits in the left half, Close's in the right
+        assert link.geometry().right() < dlg.width() // 2
+        assert close.geometry().left() > dlg.width() // 2
     finally:
         dlg.deleteLater()
 

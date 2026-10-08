@@ -379,7 +379,7 @@ def return_view_menu(self):
         [
             # remappable; also the Lists pill in the status bar. Collapse
             # hides the docked lists, the next toggle brings the same set back.
-            ("togglelists_act", "Show/hide lists", self.series, self.toggleLists),
+            ("togglelists_act", "Show/Hide lists", self.series, self.toggleLists),
             None,
             ("copyscreen_act", "Copy view to clipboard", "", lambda : self.saveFieldView(False)),
             ("savescreen_act", "Save view to file", "", lambda : self.saveFieldView(True)),

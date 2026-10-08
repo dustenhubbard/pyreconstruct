@@ -166,7 +166,7 @@ def test_close_is_the_only_button_and_the_default(qapp):
 
 
 def test_box_and_link_sit_above_byline_and_close(qapp):
-    """Two footer rows: checkbox left and link right directly under the notes,
+    """Two footer rows: link left and checkbox right directly under the notes,
     then byline left and Close bottom right."""
     from PySide6.QtWidgets import QLabel, QPushButton
     dlg = _dialog(settings=FakeSettings())
@@ -185,12 +185,13 @@ def test_box_and_link_sit_above_byline_and_close(qapp):
             return a.top() < b.bottom() and b.top() < a.bottom()
 
         assert box.top() >= notes.bottom()
-        assert same_row(box, link) and box.right() < link.left()
+        assert same_row(box, link) and link.right() < box.left()
         assert same_row(byline, close) and byline.right() < close.left()
         assert byline.top() >= box.bottom() and byline.top() >= link.bottom()
         assert close.top() >= link.bottom()
-        assert close.right() >= link.right() - 1        # bottom right
-        assert box.left() == pytest.approx(byline.left(), abs=1)
+        assert close.right() >= box.right() - 1         # bottom right
+        assert link.left() == pytest.approx(byline.left(), abs=1)
+        assert box.right() == pytest.approx(close.right(), abs=1)
     finally:
         dlg.deleteLater()
 
@@ -538,7 +539,7 @@ def test_header_is_the_first_thing_in_the_dialog(qapp):
 CODE_NOTES = """## [1.21.0] — 2026-07-20
 
 - **Double-click a `.jser` file to open it.** The command line takes the path
-  directly: `pyreconstruct series.jser`.
+  directly: `pyreconstruct /path/to/series.jser`.
 """
 
 
@@ -578,7 +579,8 @@ def test_inline_code_matches_the_body_x_height_color_and_weight(qapp):
         body_x = QFontMetricsF(body_font).xHeight()
         palette = dlg._notes.palette()
         code = [(t, f, p) for t, f, p in _runs(dlg) if f.fontFixedPitch()]
-        assert [t for t, _, _ in code] == [".jser", "pyreconstruct series.jser"]
+        assert [_shown(t) for t, _, _ in code] == [
+            ".jser", "pyreconstruct /path/to/series.jser"]
         platform = "linux" if sys.platform.startswith("linux") else sys.platform
         allowed = set(CODE_FAMILIES.get(platform, ())) | {
             QFontDatabase.systemFont(QFontDatabase.FixedFont).family()}
@@ -595,6 +597,31 @@ def test_inline_code_matches_the_body_x_height_color_and_weight(qapp):
             assert fmt.fontLetterSpacing() in (0, 100)
         assert code[0][1].fontWeight() == 700      # inside the bold claim
         assert code[1][1].fontWeight() == 400      # in the plain sentence
+    finally:
+        dlg.deleteLater()
+
+
+def test_a_command_in_code_never_splits_across_lines(qapp):
+    """Laid out narrow, `pyreconstruct /path/to/series.jser` moves to a new
+    line whole; it splits only when it starts a line and is still too wide."""
+    command = "pyreconstruct /path/to/series.jser"
+    dlg = _code_dialog()
+    try:
+        doc = dlg._notes.document()
+        block = next(b for b in _blocks(dlg) if "series.jser" in b.text())
+        text = block.text()
+        # block offsets of the shown characters; word joiners are not shown
+        shown_at = [i for i, ch in enumerate(text) if ch != "\u2060"]
+        first = _shown(text).index(command)
+        a = shown_at[first]
+        b = shown_at[first + len(command) - 1] + 1
+        for width in range(120, 620, 7):
+            doc.setTextWidth(width)
+            layout = block.layout()
+            starts = [layout.lineAt(i).textStart()
+                      for i in range(layout.lineCount())]
+            if any(a < s < b for s in starts):
+                assert a in starts, (width, starts)
     finally:
         dlg.deleteLater()
 
@@ -722,7 +749,7 @@ KEY_NOTES = """## [1.21.0] — 2026-07-20
 
 - **Hide the lists with Cmd+Option+S (Ctrl+Alt+S on Windows and Linux).** Shift+K
   picks the scissors (Series ▸ Options ▸ View picks the hover), and View ▸
-  Show/hide lists brings them back.
+  Show/Hide lists brings them back.
 - Read Cmd as Ctrl on Windows and Linux, and View the series as you like.
 - In Series ▸ Options ▸ Mouse Tools, uncheck it.
 - Double-click a `.jser` file.
@@ -772,7 +799,7 @@ def test_shortcuts_and_menu_paths_take_the_inline_code_style(qapp):
         runs = [(_shown(t), f) for t, f in _code_runs(dlg)]
         assert [t for t, _ in runs] == [
             "Cmd+Option+S", "Ctrl+Alt+S", "Shift+K",
-            "Series ▸ Options ▸ View", "View ▸ Show/hide lists",
+            "Series ▸ Options ▸ View", "View ▸ Show/Hide lists",
             "Series ▸ Options ▸ Mouse Tools", ".jser",
         ]
         weights = {t: f.fontWeight() for t, f in runs}
@@ -818,7 +845,7 @@ def test_a_combo_never_splits_and_a_path_wraps_only_after_an_arrow(qapp):
                 spans.append((start, start + fragment.length()))
         assert [_shown(text[a:b]) for a, b in spans] == [
             "Cmd+Option+S", "Ctrl+Alt+S", "Shift+K",
-            "Series ▸ Options ▸ View", "View ▸ Show/hide lists"]
+            "Series ▸ Options ▸ View", "View ▸ Show/Hide lists"]
         for width in range(140, 420, 7):
             doc.setTextWidth(width)
             layout = block.layout()

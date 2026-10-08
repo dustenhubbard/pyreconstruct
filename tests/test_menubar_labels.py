@@ -352,7 +352,7 @@ _TOGGLE_UPDATECHECK_ROW = (1, "act", "toggleupdatecheck_act")
 # offers the Dev nightly, Dev offers stable; legacy test-channel users hold a
 # lone Dev install and this is their road back to stable.
 _GET_OTHER_FLAVOR_ROW = (1, "act", "getotherflavor_act")
-# View > Show/hide lists (2026-08-25, his stage 1 of the sidebar): the
+# View > Show/Hide lists (2026-08-25, his stage 1 of the sidebar): the
 # collapse toggle, also the sidebar pill in the status bar. Remappable,
 # default Cmd+Option+S (Ctrl+Alt+S on Windows/Linux).
 _TOGGLE_LISTS_ROW = (1, "act", "togglelists_act")
