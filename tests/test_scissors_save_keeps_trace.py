@@ -542,3 +542,39 @@ def test_an_edit_in_the_middle_of_a_cut_records_the_trace(
 
     main_window.saveAllData()
     assert len(_matching(main_window.series.loadSection(snum), name, points)) == 1
+
+
+def test_undo_is_on_during_a_cut_on_a_section_with_no_history(
+    main_window, qapp
+):
+    """The pickup saves no undo state, so on a section with nothing to undo
+    the menu item and Cmd+Z stayed off for the whole cut, and only Backspace
+    could take it back. Cmd+Z now finishes the cut and takes it back, as on a
+    section with history. Redo has nothing to bring back, and stays off."""
+    from PySide6.QtGui import QKeySequence
+
+    field = main_window.field
+    trace = _pick_trace(field, True)
+    name, points = trace.name, list(trace.points)
+    before = _count(field.section, name)
+    states = field.series_states[field.section.n]
+    main_window.checkActions()
+    assert not states.undo_states and not field.series_states.undos
+    assert not main_window.undo_act.isEnabled()
+
+    main_window.show()
+    _pickup(main_window, qapp, trace)
+    assert main_window.undo_act.isEnabled(), "Undo is off during the cut"
+    assert not main_window.redo_act.isEnabled()
+
+    QTest.keySequence(main_window, QKeySequence(main_window.undo_act.shortcut()))
+    qapp.processEvents()
+
+    assert not field.is_scissoring
+    assert not field.is_line_tracing
+    assert field.mouse_mode == SCISSORS
+    assert _count(field.section, name) == before
+    assert len(_matching(field.section, name, points)) == 1
+    assert not states.undo_states
+    assert not main_window.undo_act.isEnabled()
+    assert main_window.redo_act.isEnabled()

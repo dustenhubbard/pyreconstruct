@@ -667,7 +667,10 @@ class MainWindow(QMainWindow):
 
         ## Undo/redo
         can_undo_3D, can_undo_2D, _ = self.field.series_states.canUndo(self.field.section.n)
-        self.undo_act.setEnabled(can_undo_3D or can_undo_2D)
+        # an open scissors cut has no undo state yet, but undo() finishes it
+        # and takes it back, so Undo is on for it on a section with no history
+        cut_open = self.field.is_scissoring and self.field.is_line_tracing
+        self.undo_act.setEnabled(can_undo_3D or can_undo_2D or cut_open)
         can_redo_3D, can_redo_2D, _ = self.field.series_states.canUndo(self.field.section.n, redo=True)
         self.redo_act.setEnabled(can_redo_3D or can_redo_2D)
 
