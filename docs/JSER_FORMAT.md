@@ -1135,7 +1135,7 @@ before the per-object functions, and one step run after them.
 | Contour left with no rows | Deletes the contour. |
 | `tforms` contains `no-alignment` | Deletes it. |
 | Flag row has 5 elements | Appends `resolved = false`. Falls through to the next check, so the row ends at 7 elements. |
-| Flag row has 6 elements | Inserts an `id` derived from the flag's content at the front, the same on every open. |
+| Flag row has 6 elements | Inserts an `id` derived from the flag's content at the front. The id is the same on every open, up to 1,000 identical legacy flags in one section. Past that it is random. See [4.2](#42-flag-rows). |
 | Contour name is not normalized | Renames it, merging into an existing contour of the normalized name if one exists. |
 | Always, last | Reorders the section's keys and its contour names canonically. |
 
