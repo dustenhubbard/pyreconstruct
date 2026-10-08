@@ -140,6 +140,49 @@ def test_undo_in_the_middle_of_a_cut_that_merges(main_window, qapp):
     assert len(_traces(field)) == 1
 
 
+def test_a_cut_finished_from_a_focused_trace_list_still_merges(
+    main_window, qapp, local_series_settings
+):
+    """The cut's undo state refreshes the Trace List, which drops its row
+    selection; the merge must still run on the overlapping traces it found."""
+    local_series_settings(main_window)
+    field = _setup(main_window, SQ_OVERLAP)
+    before = _traces(field)
+
+    main_window.show()
+    main_window.activateWindow()
+    field.openList(list_type="trace")
+    table = field.table_manager.tables["trace"][0]
+    qapp.processEvents()
+    _pickup(main_window, qapp)
+
+    # click the remaining same-name row, so the list has focus and a selection
+    row, found = table.table.getRowIndex(NAME)
+    assert found
+    rect = table.table.visualItemRect(table.table.item(row, 0))
+    QTest.mouseClick(table.table.viewport(), Qt.LeftButton, Qt.NoModifier, rect.center())
+    qapp.processEvents()
+    assert field.table_manager.hasFocus() is table
+    assert table.getSelected()
+    assert field.is_scissoring
+
+    # finish the cut with the Pointer shortcut, the list still focused
+    QTest.keySequence(
+        main_window, QKeySequence(main_window.usepointer_act.shortcut())
+    )
+    qapp.processEvents()
+    _cut_ends(field)
+    merged = _traces(field)
+    assert len(merged) == 1, (
+        "a cut finished with the Trace List focused did not auto-merge"
+    )
+
+    main_window.undo()
+    assert _traces(field) == before
+    main_window.undo(redo=True)
+    assert _traces(field) == merged
+
+
 def test_a_cut_that_does_not_merge_is_one_undo_step(main_window, qapp):
     """With nothing to merge into, the cut is still one step each way."""
     field = _setup(main_window, SQ_DISJOINT)
