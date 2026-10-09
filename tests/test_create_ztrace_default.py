@@ -41,7 +41,7 @@ def _make_series_stub():
         modified_ztraces=set(),
         alignment="current_align",
     )
-    stub.enumerateSections = lambda message=None: iter(sections)
+    stub.enumerateSections = lambda message=None, writes_after=False: iter(sections)
     stub.getAttr = lambda name, key: "obj_align"
     stub.setAttr = lambda name, key, val, ztrace=False: None
     stub.addLog = lambda *a, **k: None
