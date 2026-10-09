@@ -272,6 +272,7 @@ default_settings = {
 # still has a black line inside its 1 px white edge.
 MIN_SCALE_BAR_THICKNESS = 3
 MAX_SCALE_BAR_THICKNESS = 25
+DEFAULT_SCALE_BAR_THICKNESS = 6  # the one value to tune
 
 
 def clampScaleBarThickness(value) -> int:
@@ -284,7 +285,7 @@ def clampScaleBarThickness(value) -> int:
     try:
         value = int(value)
     except (TypeError, ValueError, OverflowError):
-        return default_settings["scale_bar_thickness"]
+        return DEFAULT_SCALE_BAR_THICKNESS
     return max(MIN_SCALE_BAR_THICKNESS, min(MAX_SCALE_BAR_THICKNESS, value))
 
 
