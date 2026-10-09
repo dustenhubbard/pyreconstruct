@@ -43,6 +43,9 @@ SQUARES = {
 ## nearest section with one: 1 and 3 are both one away, and the earlier wins
 BLANK_SECTION = 2
 FILLED_FROM = {BLANK_SECTION: 1}
+## section 4's square is wholly outside its image, so no window keeps any of
+## its pixels and it keeps its full, uncropped image
+FULL_SECTION = 4
 ## (top, bottom, left, right) rows and columns kept, worked out by hand from
 ## SQUARES, RADIUS and MAG; sections not listed keep nothing
 KEPT = {
@@ -96,14 +99,17 @@ def case(tmp_path):
     return jser, src
 
 
-def _window(scale, snum, fill=True):
-    """The window a section keeps: its own, or with fill its neighbor's."""
+def _window(scale, snum, fill=True, full=True):
+    """The window a section keeps: its own, with fill its neighbor's, and with
+    full the whole image for the section whose own window is empty."""
+    if full and snum == FULL_SECTION:
+        return (0, SCALES[scale][0], 0, SCALES[scale][1])
     if fill and snum in FILLED_FROM:
         snum = FILLED_FROM[snum]
     return KEPT.get((scale, snum))
 
 
-def _expected(src, fill=True):
+def _expected(src, fill=True, full=True):
     """The source images with everything outside each section's window set to zero."""
     source = zarr.open_group(str(src), mode="r")
     expected = {}
@@ -112,7 +118,7 @@ def _expected(src, fill=True):
             name = f"shapes_{snum}.tif"
             image = source[f"scale_{scale}"][name][:]
             want = np.zeros_like(image)
-            window = _window(scale, snum, fill)
+            window = _window(scale, snum, fill, full)
             if window:
                 t, b, l, r = window
                 want[t:b, l:r] = image[t:b, l:r]
@@ -167,9 +173,6 @@ def test_flags_crop_without_prompts(case):
     assert got.keys() == want.keys()
     for key in want:
         np.testing.assert_array_equal(got[key], want[key], err_msg=str(key))
-    ## a square wholly outside the image keeps nothing, at either scale
-    assert not got[(1, "shapes_4.tif")].any()
-    assert not got[(2, "shapes_4.tif")].any()
     assert _tree(src) == source_before
 
     ## nothing left beside the jser, and the default output was not made
@@ -214,7 +217,8 @@ def test_all_zero_chunks_are_not_written(case):
         window = _window(scale, snum)
         want = _touched_chunks(window) if window else []
         assert _stored_chunks(out, scale, name) == want, (scale, name)
-        assert len(want) < array.nchunks
+        if snum != FULL_SECTION:
+            assert len(want) < array.nchunks
 
 
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
@@ -814,6 +818,7 @@ def test_log_records_the_inputs_and_a_clean_run(case):
     data = json.loads(jser.read_text())
     (trace,) = data["sections"][0]["contours"][OBJECT]
     data["sections"][BLANK_SECTION]["contours"][OBJECT] = [trace]
+    data["sections"][FULL_SECTION]["contours"][OBJECT] = [trace]
     jser.write_text(json.dumps(data))
     out = jser.parent.parent / "out.zarr"
     result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
@@ -981,10 +986,10 @@ def test_image_missing_at_one_scale_is_gray_there_only(case, tmp_path):
     assert "\n  2: 3\n" in log
 
 
-def test_no_complete_neighbor_falls_back_to_black(case, tmp_path):
+def test_no_complete_neighbor_falls_back_to_the_full_image(case, tmp_path):
     """No section with the square has its image at every scale level, so there
-    is nothing to borrow: untraced sections stay black, missing images are left
-    out, and the log says why."""
+    is nothing to borrow: an untraced section keeps its full image, missing
+    images are left out, and the log says why."""
     jser, src = case
     part = tmp_path / "part.zarr"
     shutil.copytree(src, part)
@@ -999,8 +1004,115 @@ def test_no_complete_neighbor_falls_back_to_black(case, tmp_path):
     assert sorted(got) == sorted(
         [(1, f"shapes_{n}.tif") for n in range(5)] + [(2, "shapes_2.tif")]
     )
-    assert not got[(1, "shapes_2.tif")].any()
-    assert not got[(2, "shapes_2.tif")].any()
-    reason = f"because no section with {OBJECT} has its image at every scale level."
-    assert f"No {OBJECT} on 1 section (2): left black, {reason}" in result.stdout
-    assert f"No image in the zarr for 4 sections (0-1, 3-4): left out of the crop, {reason}" in result.stdout
+    ## with nothing to borrow, section 2 keeps its full image
+    source = zarr.open_group(str(src), mode="r")
+    for scale in SCALES:
+        np.testing.assert_array_equal(
+            got[(scale, "shapes_2.tif")], source[f"scale_{scale}"]["shapes_2.tif"][:])
+    reason = (f"no section with {OBJECT} has a window that keeps pixels "
+              f"and its image at every scale level")
+    assert "No usable window on 2 sections (2, 4): each keeps its full, uncropped image." in result.stdout
+    assert f"\n  2: {reason}\n" in (out / "crop_log.txt").read_text()
+    assert f"No image in the zarr for 4 sections (0-1, 3-4): left out of the crop, because {reason}." in result.stdout
+
+
+def test_window_outside_the_image_keeps_the_full_image(case):
+    """Section 4's square is wholly outside its image: its full image is kept,
+    at every scale level, and the log says why."""
+    jser, src = case
+    out = jser.parent.parent / "out.zarr"
+    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
+    assert result.returncode == 0, result.stderr
+    source = zarr.open_group(str(src), mode="r")
+    got = _arrays(out)
+    name = f"shapes_{FULL_SECTION}.tif"
+    for scale in SCALES:
+        np.testing.assert_array_equal(got[(scale, name)], source[f"scale_{scale}"][name][:])
+    summary = "No usable window on 1 section (4): each keeps its full, uncropped image."
+    assert summary in result.stdout
+    log = (out / "crop_log.txt").read_text()
+    assert summary in log
+    assert ("Sections that kept the full image (section: why no window kept pixels)\n"
+            "  4: its trace's window is outside its image\n") in log
+    assert f"Cropped around {OBJECT}: 3 of 5 sections." in log
+
+
+def test_blank_failed_leaves_the_section_black(case):
+    jser, src = case
+    out = jser.parent.parent / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out, "--blank-failed",
+    ])
+    assert result.returncode == 0, result.stderr
+    got = _arrays(out)
+    want = _expected(src, full=False)
+    assert got.keys() == want.keys()
+    for key in want:
+        np.testing.assert_array_equal(got[key], want[key], err_msg=str(key))
+    assert not got[(1, f"shapes_{FULL_SECTION}.tif")].any()
+    assert "No usable window on 1 section (4): left black (--blank-failed)." in result.stdout
+
+
+def _set_mag(jser, snum, mag):
+    data = json.loads(jser.read_text())
+    data["sections"][snum]["mag"] = mag
+    jser.write_text(json.dumps(data))
+
+
+def test_borrowed_window_outside_the_image_keeps_the_full_image(case):
+    """Section 2 borrows section 1's window, but at its own (wrong) mag that
+    window rounds to nothing on its image, so it keeps its full image."""
+    jser, src = case
+    _set_mag(jser, BLANK_SECTION, 1000.0)
+    out = jser.parent.parent / "out.zarr"
+    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
+    assert result.returncode == 0, result.stderr
+    source = zarr.open_group(str(src), mode="r")
+    got = _arrays(out)
+    name = f"shapes_{BLANK_SECTION}.tif"
+    for scale in SCALES:
+        np.testing.assert_array_equal(got[(scale, name)], source[f"scale_{scale}"][name][:])
+    assert "No usable window on 2 sections (2, 4): each keeps its full, uncropped image." in result.stdout
+    assert "\n  2: the window of section 1 is outside its image\n" in (out / "crop_log.txt").read_text()
+
+
+def test_zero_mag_keeps_the_full_image(case):
+    """A mag of 0 on a traced section cannot place a window; that section keeps
+    its full image and the rest crop as usual."""
+    jser, src = case
+    _set_mag(jser, 3, 0)
+    out = jser.parent.parent / "out.zarr"
+    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
+    assert result.returncode == 0, result.stderr
+    source = zarr.open_group(str(src), mode="r")
+    got = _arrays(out)
+    for scale in SCALES:
+        np.testing.assert_array_equal(
+            got[(scale, "shapes_3.tif")], source[f"scale_{scale}"]["shapes_3.tif"][:])
+        want = _expected(src)
+        np.testing.assert_array_equal(got[(scale, "shapes_0.tif")], want[(scale, "shapes_0.tif")])
+    assert "No usable window on 2 sections (3-4): each keeps its full, uncropped image." in result.stdout
+    assert ("\n  3: its magnification or trace is not a usable number (a mag of 0, for example)\n"
+            in (out / "crop_log.txt").read_text())
+
+
+def test_neighbor_needs_a_window_that_keeps_pixels(case, tmp_path):
+    """shapes_3.tif is missing. Section 4 is nearer, but its window is outside
+    its image, so the gray uses section 1's window instead."""
+    jser, src = case
+    part = tmp_path / "part.zarr"
+    shutil.copytree(src, part)
+    for scale in SCALES:
+        shutil.rmtree(part / f"scale_{scale}" / "shapes_3.tif")
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", part, "--out", out,
+    ])
+    assert result.returncode == 0, result.stderr
+    got = _arrays(out)
+    for scale, shape in SCALES.items():
+        t, b, l, r = KEPT[(scale, 1)]
+        gray = np.zeros(shape, np.uint8)
+        gray[t:b, l:r] = 128
+        np.testing.assert_array_equal(got[(scale, "shapes_3.tif")], gray, err_msg=str(scale))
+    assert "\n  3 shapes_3.tif: 1\n" in (out / "crop_log.txt").read_text()
