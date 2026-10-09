@@ -657,12 +657,14 @@ def test_launch_never_detaches_after_a_timeout(launch, monkeypatch):
     assert hd.detached == []
 
 
+@pytest.mark.parametrize("candidate", [True, False])
 def test_a_file_open_received_during_the_lookup_stops_the_detach(launch, monkeypatch, qapp,
-                                                                 tmp_path):
+                                                                 tmp_path, candidate):
     # The double-click reaches the app while hdiutil info runs, after the
-    # first processEvents pass: no detach, and the window opens that file.
+    # first processEvents pass: no detach, and the window opens that file,
+    # also when no image qualifies and so nothing is about to be detached.
     jser = str(tmp_path / "Projects" / "cells.jser")
-    hd = FakeHdiutil([image(launch.volume)])
+    hd = FakeHdiutil([image(launch.volume)] if candidate else [])
 
     def file_open_during_info(args, timeout):
         if args[0] == "info":
