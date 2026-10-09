@@ -10,6 +10,7 @@ import os
 import plistlib
 import subprocess
 import sys
+import threading
 import time
 from types import SimpleNamespace
 
@@ -230,32 +231,26 @@ def test_a_volume_holding_a_project_is_left_alone(frozen, tmp_path):
     assert run(installed, hd) == []
 
 
-@pytest.mark.parametrize("rel", [
-    "PyReconstruct.app/Contents/Resources/cells.jser",
-    "PyReconstruct.app/Contents/Resources/images",
-    "PyReconstruct.app/Contents/Resources/images/1.png",
-])
-def test_the_file_to_open_keeps_its_volume(frozen, layout, rel):
+@pytest.mark.parametrize("where", ["on the image", "on the host"])
+def test_a_launch_that_opens_a_file_ejects_nothing(frozen, layout, tmp_path, where, capsys):
+    # A series on the host can keep its images inside the image's app, and
+    # they are not known until it loads, so any file to open skips the eject.
+    installed, volume = layout
+    if where == "on the image":
+        jser = volume / "PyReconstruct.app" / "Contents" / "Resources" / "cells.jser"
+    else:
+        jser = tmp_path / "Projects" / "cells.jser"
+    hd = FakeHdiutil([image(volume)])
+    assert run(installed, hd, open_file=str(jser)) == []
+    assert hd.detached == [] and hd.timeouts == []
+    assert "this launch opens a file" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("open_file", [None, ""])
+def test_no_file_to_open_does_not_block_the_eject(frozen, layout, open_file):
     installed, volume = layout
     hd = FakeHdiutil([image(volume)])
-    assert run(installed, hd, open_paths=[str(volume / rel)]) == []
-    assert hd.detached == []
-
-
-def test_unrelated_open_paths_do_not_block_the_eject(frozen, layout, tmp_path):
-    installed, volume = layout
-    hd = FakeHdiutil([image(volume)])
-    paths = ["", str(tmp_path / "Projects" / "cells.jser")]
-    assert run(installed, hd, open_paths=paths) == [str(volume)]
-
-
-def test_an_open_path_in_other_letter_case_keeps_its_volume(frozen, layout):
-    # HFS+ and default APFS ignore case, so this names the same folder.
-    installed, volume = layout
-    other_case = volume.parent / volume.name.swapcase() / "PyReconstruct.app"
-    hd = FakeHdiutil([image(volume)])
-    assert run(installed, hd, open_paths=[str(other_case)]) == []
-    assert hd.detached == []
+    assert run(installed, hd, open_file=open_file) == [str(volume)]
 
 
 def _case_insensitive(folder):
@@ -380,6 +375,83 @@ def test_a_stray_hidden_root_entry_blocks_the_eject(frozen, layout, name, folder
     assert hd.detached == []
 
 
+# Files on a candidate are read only when they are small regular files.
+
+def finishes_within(seconds, fn, unblock):
+    """Run ``fn`` in a thread; return (finished in time, its result).
+
+    ``unblock`` is called after the wait, so a thread stuck on a FIFO ends.
+    """
+    out = []
+    worker = threading.Thread(target=lambda: out.append(fn()), daemon=True)
+    worker.start()
+    worker.join(seconds)
+    done = not worker.is_alive()
+    unblock()
+    worker.join(5)
+    return done, out[0] if out else None
+
+
+def test_a_fifo_info_plist_on_a_candidate_cannot_block_startup(frozen, layout):
+    installed, volume = layout
+    plist = volume / "PyReconstruct.app" / "Contents" / "Info.plist"
+    plist.unlink()
+    os.mkfifo(plist)
+
+    def unblock():
+        # a writer that opens and closes gives a stuck reader end-of-file
+        try:
+            os.close(os.open(plist, os.O_WRONLY | os.O_NONBLOCK))
+        except OSError:
+            pass                          # no reader waiting
+
+    hd = FakeHdiutil([image(volume)])
+    done, ejected = finishes_within(2, lambda: run(installed, hd), unblock)
+    assert done, "reading the candidate's Info.plist blocked"
+    assert ejected == [] and hd.detached == []
+
+
+@pytest.mark.parametrize("change", [
+    "Info.plist is a symlink",
+    "Contents is a symlink",
+    "Info.plist is too big",
+    "guide is a symlink",
+    "guide is a FIFO",
+])
+def test_only_small_regular_files_on_a_candidate_are_trusted(frozen, tmp_path, change):
+    installed = make_app(tmp_path / "Applications")
+    volume = make_installer(tmp_path / "Volumes" / "PyReconstruct")
+    contents = volume / "PyReconstruct.app" / "Contents"
+    twin = make_app(tmp_path / "Elsewhere").parents[1]   # a matching Contents
+    if change == "Info.plist is a symlink":
+        (contents / "Info.plist").unlink()
+        (contents / "Info.plist").symlink_to(twin / "Info.plist")
+    elif change == "Contents is a symlink":
+        (contents / "Info.plist").unlink()
+        (contents / "MacOS" / "PyReconstruct").unlink()
+        (contents / "MacOS").rmdir()
+        contents.rmdir()
+        contents.symlink_to(twin)
+    elif change == "Info.plist is too big":
+        info = {"CFBundleIdentifier": BID, "PyReconstructVersion": VER,
+                "Padding": "x" * (II._MAX_PLIST + 1)}
+        with open(contents / "Info.plist", "wb") as f:
+            plistlib.dump(info, f)
+    elif change == "guide is a symlink":
+        (tmp_path / "guide.html").write_text("<html></html>")
+        (volume / II.GUIDE).symlink_to(tmp_path / "guide.html")
+    else:
+        os.mkfifo(volume / II.GUIDE)
+    hd = FakeHdiutil([image(volume)])
+    assert run(installed, hd) == []
+    assert hd.detached == []
+
+
+def test_a_small_regular_info_plist_is_read(tmp_path):
+    exe = make_app(tmp_path)
+    assert II._identity(exe.parents[2]) == (BID, VER)
+
+
 # Every hdiutil call shares one time budget.
 
 class Clock:
@@ -443,8 +515,12 @@ def test_a_slow_hdiutil_is_killed_at_its_timeout(tmp_path, monkeypatch):
 # run.py runs the eject once, before the first window.
 
 @pytest.fixture
-def launch(monkeypatch, tmp_path):
-    """runPyReconstruct with stand-ins for Qt, the window and settings."""
+def launch(qapp, monkeypatch, tmp_path):
+    """runPyReconstruct with stand-ins for the app object, the window and settings.
+
+    ``qapp`` is the real QApplication: runPyReconstruct builds a QObject
+    event filter, and the FileOpen test sends it a real QFileOpenEvent.
+    """
     import PyReconstruct.run as run_mod
     from PyReconstruct.modules.backend.func import logging_setup
     from PyReconstruct.modules.backend.updater import updater
@@ -453,16 +529,20 @@ def launch(monkeypatch, tmp_path):
     from PyReconstruct.modules.gui.main import first_launch
 
     events = []
+    file_open = []          # a path macOS sends as a FileOpen event at launch
 
     class App:
         def __init__(self, argv):
-            pass
+            self.filters = []
 
         def installEventFilter(self, f):
-            pass
+            self.filters.append(f)
 
         def processEvents(self):
-            pass
+            from PySide6.QtGui import QFileOpenEvent
+            for path in file_open:
+                for f in self.filters:
+                    f.eventFilter(None, QFileOpenEvent(path))
 
         def setStyle(self, style):
             pass
@@ -497,7 +577,7 @@ def launch(monkeypatch, tmp_path):
     monkeypatch.setattr(II, "sys", SimpleNamespace(platform="darwin",
                                                    executable=str(installed)))
     return SimpleNamespace(run=run_mod.runPyReconstruct, events=events,
-                           volume=volume)
+                           volume=volume, file_open=file_open)
 
 
 def test_launch_ejects_before_the_window_and_not_on_restart(launch, monkeypatch):
@@ -514,13 +594,19 @@ def test_launch_ejects_before_the_window_and_not_on_restart(launch, monkeypatch)
     assert hd.detached == [str(launch.volume)]
 
 
-def test_launch_keeps_the_image_holding_the_file_to_open(launch, monkeypatch):
-    jser = launch.volume / "PyReconstruct.app" / "Contents" / "Resources" / "cells.jser"
+@pytest.mark.parametrize("how", ["argument", "FileOpen event"])
+def test_a_launch_that_opens_a_file_skips_the_eject(launch, monkeypatch, tmp_path, how):
+    # A series on the host whose images sit inside the image's app.
+    jser = str(tmp_path / "Projects" / "cells.jser")
     hd = FakeHdiutil([image(launch.volume)])
     monkeypatch.setattr(II, "_hdiutil", hd)
-    launch.run(str(jser))
-    assert hd.detached == []
-    assert launch.events == [("window", str(jser))] * 2
+    if how == "argument":
+        launch.run(jser)
+    else:
+        launch.file_open.append(jser)
+        launch.run()
+    assert hd.detached == [] and hd.timeouts == []
+    assert launch.events == [("window", jser)] * 2
 
 
 def test_launch_never_detaches_after_a_timeout(launch, monkeypatch):

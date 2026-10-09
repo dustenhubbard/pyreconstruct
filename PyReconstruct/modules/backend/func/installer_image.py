@@ -6,13 +6,14 @@ launch, before the main window exists, it looks for a mounted installer image
 of this same build and detaches it.
 
 Doing it before the window means no series is open and no path can change
-while ``hdiutil`` runs: the only open path is the file the window is about to
-open, which the caller passes in. ``runPyReconstruct`` calls this once, before
+while ``hdiutil`` runs. A launch that opens a file ejects nothing (see
+:func:`eject_installer_image`). ``runPyReconstruct`` calls this once, before
 its window loop, so an in-app restart does not run it again.
 
 An image is ejected only when every one of these holds:
 
 * this is a frozen macOS build, and its own ``Info.plist`` can be read;
+* the launch opens no file;
 * the image is read-only (the release .dmg is UDZO), so a writable image such
   as a Time Machine sparsebundle or a working image is never a candidate;
 * the image has exactly one mounted volume. ``hdiutil detach`` takes every
@@ -25,22 +26,25 @@ An image is ejected only when every one of these holds:
 * that ``.app`` has this app's ``CFBundleIdentifier`` and the same
   ``PyReconstructVersion``. Stable and Dev have different bundle ids. The
   version check means an older copy started while a newer image is open
-  leaves that image alone;
+  leaves that image alone. Its ``Info.plist`` is read only when it is a
+  small regular file (:func:`_read_small`), so a FIFO, device or symlink
+  planted there cannot block startup;
 * no other image qualifies. With two candidates, neither is ejected;
-* neither the running app nor the file about to open is on that volume.
-  Paths are compared by device number, not by text, so a path that names the
-  volume in other letter case still counts. A quarantined app opened straight
-  from the image runs from an App Translocation path, so a translocated app
-  ejects nothing.
+* the running app is not on that volume. Paths are compared by device
+  number, not by text, so a path that names the volume in other letter case
+  still counts. A quarantined app opened straight from the image runs from an
+  App Translocation path, so a translocated app ejects nothing.
 
 Every failure (a busy volume, ``hdiutil`` missing or slow) is logged and
 swallowed. All ``hdiutil`` calls share a budget of :data:`_BUDGET` seconds; a
-call still running when it runs out is killed and the window opens without
-the eject.
+call still running when it runs out is killed and the window opens. Killing
+``hdiutil`` only ends the wait: an unmount macOS has already accepted may
+still finish.
 """
 
 import os
 import plistlib
+import stat
 import subprocess
 import sys
 import time
@@ -50,6 +54,7 @@ from PyReconstruct.modules.constants.frozen import is_frozen
 from PyReconstruct.modules.backend.func.logging_setup import log_note
 
 _BUDGET = 5  # seconds for every hdiutil call together; each takes well under one
+_MAX_PLIST = 1 << 20  # bytes; a real Info.plist is a few kilobytes
 GUIDE = "Read Before First Launch.html"  # make_dmg.sh adds it for unsigned apps
 # Hidden root entries an installer image may hold. dmgbuild writes .DS_Store,
 # .background.tiff (or .background.png for a single image) and, with an icon,
@@ -79,12 +84,53 @@ def own_bundle(executable=None):
     return app if app.suffix == ".app" else None
 
 
-def _identity(app):
-    """(bundle id, PyReconstructVersion) from an app's Info.plist, or None."""
+def _is_kind(path, kind):
+    """Whether ``path`` itself (not a symlink's target) is of ``kind``.
+
+    ``kind`` is ``stat.S_ISREG`` or ``stat.S_ISDIR``. ``lstat`` opens nothing,
+    so it cannot block on a FIFO or a device.
+    """
     try:
-        with open(Path(app) / "Contents" / "Info.plist", "rb") as f:
-            info = plistlib.load(f)
+        return kind(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
+def _read_small(path, limit):
+    """The bytes of ``path`` when it is a regular file of at most ``limit`` bytes.
+
+    Raise OSError otherwise. A symlink is refused (``O_NOFOLLOW``), and a
+    FIFO or device is never waited on (``O_NONBLOCK``) and then refused by the
+    ``fstat`` of what was opened, so reading cannot block startup.
+    """
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > limit:
+            raise OSError(f"not a regular file under {limit} bytes: {path}")
+        with os.fdopen(fd, "rb", closefd=False) as f:
+            data = f.read(limit + 1)
+    finally:
+        os.close(fd)
+    if len(data) > limit:
+        raise OSError(f"over {limit} bytes: {path}")
+    return data
+
+
+def _identity(app):
+    """(bundle id, PyReconstructVersion) from an app's Info.plist, or None.
+
+    The ``.app`` and its ``Contents`` must be real folders, not symlinks, and
+    the plist a small regular file.
+    """
+    contents = Path(app) / "Contents"
+    if not (_is_kind(app, stat.S_ISDIR) and _is_kind(contents, stat.S_ISDIR)):
+        return None
+    try:
+        info = plistlib.loads(_read_small(contents / "Info.plist", _MAX_PLIST))
     except (OSError, plistlib.InvalidFileException, ValueError):
+        return None
+    if not isinstance(info, dict):
         return None
     bid = info.get("CFBundleIdentifier")
     ver = info.get("PyReconstructVersion")
@@ -131,7 +177,7 @@ def _is_installer_volume(mount, identity):
             return False
         if os.readlink(root / "Applications") != "/Applications":
             return False
-        if GUIDE in names and not (root / GUIDE).is_file():
+        if GUIDE in names and not _is_kind(root / GUIDE, stat.S_ISREG):
             return False
     except OSError:
         return False
@@ -161,17 +207,24 @@ def installer_mounts(info, identity, bundle):
     return found
 
 
-def eject_installer_image(*, open_paths=(), platform=None, executable=None,
+def eject_installer_image(*, open_file=None, platform=None, executable=None,
                           hdiutil=None, budget=None, clock=time.monotonic):
     """Detach the mounted installer image of this build; return the mounts ejected.
 
-    Call it before the main window exists. ``open_paths`` are the paths whose
-    volume must stay mounted (the file the window will open). Never raises.
-    The other keyword arguments are for tests.
+    Call it before the main window exists. ``open_file`` is the file the
+    first window will open, if any. Never raises. The other keyword arguments
+    are for tests.
     """
     ejected = []
     try:
         if (platform or sys.platform) != "darwin" or not is_frozen():
+            return ejected
+        # A launch that opens a file (a double-click, a command-line argument
+        # or a FileOpen event) ejects nothing. The series can keep its images
+        # anywhere, the installer image included, and they are not known until
+        # it loads. The next launch with no file ejects the image.
+        if open_file:
+            log_note("installer image: this launch opens a file; ejecting nothing")
             return ejected
         bundle = own_bundle(executable)
         if bundle is None:
@@ -202,9 +255,6 @@ def eject_installer_image(*, open_paths=(), platform=None, executable=None,
         if not mounts:
             return ejected
         mount = mounts[0]
-        if _on_volume(open_paths, mount):
-            log_note(f"installer image: {mount} holds the file to open, leaving it")
-            return ejected
         try:
             hdiutil(["detach", mount], remaining())
             ejected.append(mount)
