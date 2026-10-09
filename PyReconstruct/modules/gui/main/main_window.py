@@ -359,10 +359,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(750, self.showWhatsNewStartup)
 
         ## Eject the installer image this copy was dragged from (frozen macOS)
-        from PyReconstruct.modules.backend.func.installer_image import (
-            eject_installer_image_in_background,
-        )
-        QTimer.singleShot(1000, eject_installer_image_in_background)
+        QTimer.singleShot(1000, self.ejectInstallerImageStartup)
 
     def _restoredGeometryIsUsable(self) -> bool:
         """Whether the just-restored geometry is usable on the current screens.
@@ -4592,6 +4589,30 @@ class MainWindow(QMainWindow):
         # closing then launches the installer (see closeEvent).
         if dialog.exec() and self._pending_installer:
             self.close()
+
+    def ejectInstallerImageStartup(self):
+        """Eject the installer image this copy was dragged from (frozen macOS).
+
+        The open series' files and image folder are read here, on the GUI
+        thread, and an image holding any of them stays mounted. If they
+        cannot be read, nothing is ejected.
+        """
+        from PyReconstruct.modules.backend.func.installer_image import (
+            eject_installer_image_in_background,
+        )
+        from PyReconstruct.modules.backend.func.logging_setup import log_note
+        try:
+            series = self.series
+            paths = [series.jser_fp, series.filepath, series.src_dir,
+                     series.zarr_overlay_fp]
+            section = getattr(getattr(self, "field", None), "section", None)
+            if section is not None:
+                paths.append(section.src_fp)
+            paths = [str(p) for p in paths if p]
+        except Exception as exc:
+            log_note(f"installer image: skipped: {exc!r}")
+            return
+        eject_installer_image_in_background(paths)
 
     def checkForUpdatesStartup(self):
         """Background check on launch; quietly surfaces a genuine upgrade.
