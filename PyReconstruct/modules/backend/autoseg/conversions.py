@@ -939,6 +939,14 @@ def _channelKey(key):
     return (0, *key) if isinstance(key, tuple) else (0, key)
 
 
+class ZarrRefused(ValueError):
+    """A Zarr array PyReconstruct does not read, refused on purpose.
+
+    The message says what to save instead, so the GUI shows it as a notice.
+    Any other error is unexpected and reaches the error report.
+    """
+
+
 def label_volume(labels_array):
     """A labels array as (z, y, x), the way import and the overlay index it.
 
@@ -952,12 +960,12 @@ def label_volume(labels_array):
     if shape is None or len(shape) != 4:
         return labels_array
     if shape[0] != 1:
-        raise ValueError(
+        raise ZarrRefused(
             f"This Zarr label array has {shape[0]} channels. PyReconstruct imports "
             "labels from a single channel, so save them as (z, y, x) or (1, z, y, x)."
         )
     if not np.issubdtype(labels_array.dtype, np.integer):
-        raise ValueError(
+        raise ZarrRefused(
             f"This Zarr label array is {labels_array.dtype}, not an integer type. "
             "PyReconstruct imports label ids, so save a prediction as integer "
             "labels before importing it."
@@ -980,12 +988,12 @@ def raw_volume(raw):
     if len(shape) == 4 and shape[0] == 1:
         return _FirstChannel(raw)
     if len(shape) == 4:
-        raise ValueError(
+        raise ZarrRefused(
             f"This Zarr raw array has {shape[0]} channels. PyReconstruct shows "
             "each section as one grayscale image, so save raw as (z, y, x) or "
             "(1, z, y, x)."
         )
-    raise ValueError(
+    raise ZarrRefused(
         f"This Zarr raw array has {len(shape)} axes. PyReconstruct reads raw "
         "as (z, y, x) or (1, z, y, x)."
     )
