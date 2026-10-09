@@ -607,6 +607,15 @@ class Section():
     ## exist.
     _loaded_trace_ids = None
 
+    ## How many times each section file has been written this session, by
+    ## path, which of those writes was the last one a pass over the section
+    ## files made (Series.enumerateSections), and the count this copy read or
+    ## wrote. A pass loads and writes its own copies, so a copy loaded before
+    ## the pass wrote its file is older than the file (see isOlderThanPass).
+    _file_writes : dict = {}
+    _pass_writes : dict = {}
+    _file_write = 0
+
     def __init__(self, n : int, series):
         """Load the section file.
         
@@ -638,6 +647,7 @@ class Section():
 
         with open(self.filepath, "rb") as f:
             section_data = fast_loads(f.read())
+        self._file_write = Section._file_writes.get(self.filepath, 0)
         
         ## `stored_ids` collects the ids the section file's own keyed rows
         ## assert. Empty for every positional file, which is every file written
@@ -1349,6 +1359,10 @@ class Section():
             except OSError:
                 pass
             raise
+        self._file_write = Section._file_writes.get(self.filepath, 0) + 1
+        Section._file_writes[self.filepath] = self._file_write
+        if self.series.sectionPassRunning():
+            Section._pass_writes[self.filepath] = self._file_write
 
         # The whole-section reconciliation, at the one non-per-frame point that
         # is already O(section). Per-mutation checking is targeted at the row
@@ -1395,6 +1409,11 @@ class Section():
         # `test_a_rebuild_that_cannot_be_built_leaves_the_section_usable`
         # pin the two halves.
         self._rebuildColumnarStoreForSave()
+
+    def isOlderThanPass(self) -> bool:
+        """Return True if a pass over the section files has written this
+        section's file since this copy read or wrote it."""
+        return Section._pass_writes.get(self.filepath, 0) > self._file_write
 
     def tracesAsList(self) -> list[Trace]:
         """Return the trace dictionary as a list. Does NOT copy traces.

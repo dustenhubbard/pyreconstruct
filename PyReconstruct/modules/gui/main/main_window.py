@@ -2646,6 +2646,11 @@ class MainWindow(QMainWindow):
         sections = [self.field.section]
         if self.field.b_section:
             sections.append(self.field.b_section)
+        # a series opened during a pass over the section files (Delete,
+        # Combine, ...) closes this one and saves it here, before the pass
+        # reloads the field: a copy loaded before the pass wrote its section
+        # would put back what the pass changed
+        sections = [s for s in sections if not s.isOlderThanPass()]
 
         # skip rewriting the hidden files when nothing has changed since they
         # were last written (section scrolling is the hottest caller):

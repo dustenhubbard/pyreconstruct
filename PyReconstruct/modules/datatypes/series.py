@@ -1846,10 +1846,16 @@ class Series():
         ## force-quit as the only exit (found 2026-08-28). Abandoning a
         ## generator closes it (GeneratorExit), so the finally runs on every
         ## road out: exhaustion, break, and an exception in the body.
+        self._section_passes = getattr(self, "_section_passes", 0) + 1
         try:
             yield from iterator
         finally:
+            self._section_passes -= 1
             iterator.finishProgress()
+
+    def sectionPassRunning(self) -> bool:
+        """True while enumerateSections is going through this series."""
+        return getattr(self, "_section_passes", 0) > 0
 
     def getObjectSections(self, obj_names) -> set:
         """Return the set of section numbers that contain any of the objects.
