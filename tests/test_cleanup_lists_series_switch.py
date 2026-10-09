@@ -21,9 +21,9 @@ What is pinned here:
     from the Finder leaves B unchanged
   * a notice from a Delete or Combine that B opens under ends the action
     without touching the closed list
-  * a pixel-dust or Duplicates scan of A that B opens under, at its first,
-    a middle or its last progress update, opens no list on B and shows no
-    error
+  * a pixel-dust, Duplicates, self-crossing or empty-trace scan of A that B
+    opens under, at its first, a middle or its last progress update, opens
+    no list on B, asks nothing and shows no error
 """
 import shutil
 
@@ -477,5 +477,66 @@ def test_a_duplicates_scan_b_opens_under_lists_nothing_on_b(
     for dialog in lists:
         dialog.combineAll()
     assert lists == []
+    assert _counts(window.series, snum) == saved
+    assert not window.series.modified
+
+
+# a closed square with a one-point spike doubling back along its top edge
+SPIKED_SQUARE = [
+    (0.0, 0.0), (1.0, 0.0), (1.0, 1.0),
+    (0.5, 1.0), (0.5, 1.05), (0.5, 1.0),
+    (0.0, 1.0),
+]
+# three points in one place: a closed trace with no area
+EMPTY = [(0.5, 0.5), (0.5, 0.5), (0.5, 0.5)]
+
+
+@pytest.mark.parametrize("update", list(SCAN_UPDATES))
+def test_a_self_crossing_scan_b_opens_under_asks_nothing_on_b(
+    update, main_window, main_window_dialogs, finder, monkeypatch,
+    tmp_path, qtbot
+):
+    from PyReconstruct.modules.gui.dialog.malformed_contours import (
+        RepairedCrossingsDialog,
+        SkippedCrossingsDialog,
+    )
+    window = main_window
+    snum = _plant(window, "SWITCH_CROSS", SPIKED_SQUARE)
+    first = window.series
+    saved = _counts(first, snum)
+    reported = _b_opens_during_the_scan(window, tmp_path, qtbot, update)
+    shown = _errors_shown(monkeypatch, tmp_path)
+
+    window.repairselfcrossings_act.trigger()
+
+    assert any(SCAN_UPDATES[update](p) for p in reported)
+    assert window.series is not first
+    assert shown == []
+    assert main_window_dialogs.notices == []
+    assert _open_lists(window, RepairedCrossingsDialog) == []
+    assert _open_lists(window, SkippedCrossingsDialog) == []
+    assert _counts(window.series, snum) == saved
+    assert not window.series.modified
+
+
+@pytest.mark.parametrize("update", list(SCAN_UPDATES))
+def test_an_empty_trace_scan_b_opens_under_asks_nothing_on_b(
+    update, main_window, main_window_dialogs, finder, monkeypatch,
+    tmp_path, qtbot
+):
+    window = main_window
+    snum = _plant(window, "SWITCH_EMPTY", EMPTY)
+    first = window.series
+    saved = _counts(first, snum)
+    assert saved["SWITCH_EMPTY"] == 1
+    reported = _b_opens_during_the_scan(window, tmp_path, qtbot, update)
+    shown = _errors_shown(monkeypatch, tmp_path)
+
+    window.removeempty_act.trigger()
+
+    assert any(SCAN_UPDATES[update](p) for p in reported)
+    assert window.series is not first
+    assert shown == []
+    assert main_window_dialogs.notices == []
     assert _counts(window.series, snum) == saved
     assert not window.series.modified

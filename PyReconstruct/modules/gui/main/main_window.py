@@ -4243,10 +4243,15 @@ class MainWindow(QMainWindow):
         from PyReconstruct.modules.gui.utils import undo_chord
 
         series = self.series
-        candidates = series.findSelfCrossingTraces()
+        try:
+            candidates = series.findSelfCrossingTraces()
+        except SeriesClosedError:
+            # a .jser opened from the Finder at an earlier progress update:
+            # the scan only reads, so stopping it loses nothing
+            return
         if self.series is not series:
-            # a .jser opened from the Finder at the scan's last progress
-            # update: the records name the series left (see _closeCleanupLists)
+            # the same at the scan's last progress update: the records name
+            # the series left (see _closeCleanupLists)
             return
         if not candidates:
             notify("No self-crossing traces found.")
@@ -4317,10 +4322,15 @@ class MainWindow(QMainWindow):
         self.saveAllData()
 
         series = self.series
-        candidates = series.findEmptyTraces(include_locked=False)
+        try:
+            candidates = series.findEmptyTraces(include_locked=False)
+        except SeriesClosedError:
+            # a .jser opened from the Finder at an earlier progress update:
+            # the scan only reads, so stopping it loses nothing
+            return
         if self.series is not series:
-            # a .jser opened from the Finder at the scan's last progress
-            # update: the records name the series left (see _closeCleanupLists)
+            # the same at the scan's last progress update: the records name
+            # the series left (see _closeCleanupLists)
             return
         if not candidates:
             notify("No empty traces found.")
