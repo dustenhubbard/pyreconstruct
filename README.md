@@ -38,7 +38,8 @@ No Python required. Direct downloads for the current stable release, **v1.24.0**
 | Windows (x86_64) | [PyReconstruct-1.24.0-Windows-x86_64-Setup.exe](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-Windows-x86_64-Setup.exe) |
 | macOS (Apple Silicon) | [PyReconstruct-1.24.0-macOS-arm64.dmg](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-macOS-arm64.dmg) |
 | macOS (Intel) | [PyReconstruct-1.24.0-macOS-x86_64.dmg](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-macOS-x86_64.dmg) |
-| Linux (x86_64) | [PyReconstruct-1.24.0-linux-x86_64.AppImage](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-linux-x86_64.AppImage), or the one-line install below |
+| Linux (x86_64) | [PyReconstruct-1.24.0-linux-x86_64.AppImage](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-linux-x86_64.AppImage) |
+| Linux (from source) | [PyReconstruct-1.24.0-Linux-installer.tar.gz](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-Linux-installer.tar.gz) |
 
 All builds, checksums, and past versions are on the
 **[Releases page](https://github.com/dustenhubbard/PyReconstruct/releases/latest)**.
@@ -58,19 +59,21 @@ at runtime rather than at startup.
 
 - **Windows**: builds are unsigned for now; if SmartScreen warns, choose
   **More info → Run anyway**.
-- **macOS**: open the `.dmg` and drag PyReconstruct to Applications. The app
-  and disk image are signed with a Developer ID and notarized by Apple. The
-  first launch asks whether to open an app downloaded from the internet; click
-  **Open**.
-- **Linux**: install with one command, no root and no Python needed:
+- **macOS**: open the `.dmg` and drag PyReconstruct to Applications. PyReconstruct
+  is signed and notarized by Apple, so the first launch only asks whether to open
+  an app downloaded from the internet. Click **Open**.
+- **Linux**: install the AppImage with one command:
   ```
   curl -fsSL https://pyreconstruct.org/install.sh | bash
   ```
-  It downloads the AppImage, checks it against its published checksum, and adds
-  a `pyreconstruct` command and an application-menu entry. Re-run it to update.
-  End it with `bash -s -- --dev` to install PyReconstruct Dev beside it, or
-  `bash -s -- --uninstall` to remove it. The AppImage from the table above also
-  runs on its own after `chmod +x`.
+  It needs no root and no Python. It adds a `pyreconstruct` command and a menu
+  entry. Re-run it to update. For PyReconstruct Dev, end the command with
+  `bash -s -- --dev`. To uninstall, end it with `bash -s -- --uninstall`. You can
+  also download the `.AppImage` from the table and run it directly, or install
+  from source with a system **Python 3.11, 3.12 or 3.13**:
+  ```
+  curl -fsSL https://pyreconstruct.org/install-from-source.sh | bash
+  ```
 
 The Windows and macOS builds update through **Help ▸ Check for updates**. On
 Linux, the same menu item shows the one command that updates your install, with
@@ -79,8 +82,9 @@ a Copy button.
 follows **Nightly** builds (`vX.Y.Z.devYYYYMMDD`, such as
 `v1.24.0.dev20260927`). The two apps install side by side and each updates only
 from its own channel. Use the **Help** menu's download link to install the
-other app. Before installing, PyReconstruct checks each download against the
-release's signed list of SHA-256 checksums and refuses one that does not match.
+other app. On Windows and macOS, the in-app updater checks each download against
+the release's signed list of SHA-256 checksums before installing, and refuses one
+that does not match.
 A once-per-day startup check is on by default; turn it off under
 **Help ▸ Automatically check for updates**.
 

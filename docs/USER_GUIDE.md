@@ -54,8 +54,9 @@ platforms).
 ### One-click installers (Windows, macOS, and Linux)
 
 Download the build for your platform from the current stable release, **v1.24.0**.
-Every build includes Python. Each link below downloads that platform's installer directly; every build,
-its SHA-256 checksum, and past versions are on the
+Windows, macOS, and the Linux AppImage include Python. Each link below downloads
+that platform's installer directly; every build, its SHA-256 checksum, and past
+versions are on the
 **[Releases page](https://github.com/dustenhubbard/PyReconstruct/releases/latest)**.
 
 - **Windows**:
@@ -64,33 +65,45 @@ its SHA-256 checksum, and past versions are on the
   unsigned for now, so Windows SmartScreen may warn that the publisher is
   unknown; choose **More info ▸ Run anyway**. Re-running a newer installer
   upgrades the existing installation in place.
-- **macOS (Apple Silicon or Intel)**:
-  [`PyReconstruct-1.24.0-macOS-arm64.dmg`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-macOS-arm64.dmg) on
-  Apple Silicon, or
-  [`PyReconstruct-1.24.0-macOS-x86_64.dmg`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-macOS-x86_64.dmg) on an Intel Mac. Open
-  the `.dmg` and drag **PyReconstruct** onto the **Applications** shortcut. The app
-  and disk image are signed with a Developer ID and notarized by Apple. The first
-  launch asks whether to open an app downloaded from the internet; click **Open**.
+- **macOS**: open the `.dmg` and drag **PyReconstruct** onto the **Applications**
+  shortcut. PyReconstruct is signed and notarized by Apple, so the first launch
+  shows the usual question for an app downloaded from the internet. Click **Open**.
+
+  Versions before 1.24.0 were not signed. To open one of those, clear the
+  quarantine flag once in Terminal:
+
+  ```
+  xattr -dr com.apple.quarantine /Applications/PyReconstruct.app
+  ```
 
 > 📸 *Screenshot: the macOS `.dmg` window showing the app and the Applications drop target.*
 
-Both macOS builds are native (arm64 and x86_64), and the in-app updater serves each
-Mac its matching architecture.
+Both macOS builds are native:
+[`PyReconstruct-1.24.0-macOS-arm64.dmg`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-macOS-arm64.dmg) for
+Apple Silicon and
+[`PyReconstruct-1.24.0-macOS-x86_64.dmg`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-macOS-x86_64.dmg) for an
+Intel Mac. The in-app updater serves each Mac its matching architecture.
 
-- **Linux (x86_64, glibc 2.28 or newer)**: install with one command. It needs no
-  administrator rights and no Python:
+- **Linux**: install the AppImage with one command:
 
   ```
   curl -fsSL https://pyreconstruct.org/install.sh | bash
   ```
 
-  It downloads
-  [`PyReconstruct-1.24.0-linux-x86_64.AppImage`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-linux-x86_64.AppImage),
-  checks it against its published checksum, and adds a `pyreconstruct` command and
-  an application-menu entry. Re-run it to update; **Help ▸ Check for updates**
-  shows the same command with a Copy button. End it with `bash -s -- --dev` to
-  install PyReconstruct Dev beside it, or `bash -s -- --uninstall` to remove it.
-  The AppImage also runs on its own after `chmod +x`.
+  It needs no root and no Python. It adds a `pyreconstruct` command and a menu
+  entry. Re-run it to update. For PyReconstruct Dev, end the command with
+  `bash -s -- --dev`. To uninstall, end it with `bash -s -- --uninstall`. You can
+  also download
+  [`PyReconstruct-1.24.0-linux-x86_64.AppImage`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-linux-x86_64.AppImage)
+  and run it directly, or install from source with a system
+  **Python 3.11, 3.12 or 3.13**:
+
+  ```
+  curl -fsSL https://pyreconstruct.org/install-from-source.sh | bash
+  ```
+
+  If FUSE is missing, PyReconstruct still starts, only more slowly, and the
+  installer names the package that speeds it up.
 
 ### From source (other platforms and developers)
 
@@ -160,8 +173,8 @@ list.)
 The frozen Windows and macOS one-click builds can update themselves from within the
 app. The updater downloads the new build from GitHub Releases and **verifies it
 against a published SHA-256 checksum before installing**. If the checksum can't be
-reached or doesn't match, nothing is installed. (The Linux `.sh` installer updates
-by re-running `install.sh`; see [Installing PyReconstruct](#1-installing-pyreconstruct).)
+reached or doesn't match, nothing is installed. (On Linux, re-run the install
+command to update; see [Installing PyReconstruct](#1-installing-pyreconstruct).)
 
 ### Update channels
 
