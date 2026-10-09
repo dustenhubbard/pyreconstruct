@@ -3,8 +3,10 @@
 Series exist whose saved names carry a folder: the class series in
 dev/assets/checker stores Cropped Images/d03/000ZGBJY.tif, while the zarr made
 for it holds 000ZGBJY.tif. So a section loads the file name alone. The image
-source edits used to keep a typed folder until the series was opened again,
-so the list and the image showed one name and the next open another.
+source edits reloaded the section, so the image was found by the file name at
+once, but they saved the typed folder and the section list showed it until the
+series was opened again. Now the saved name, the list entry and the image
+lookup agree.
 """
 import os
 import sys

@@ -3,7 +3,7 @@ import sys
 import json
 import math
 from collections import namedtuple
-from typing import Dict, List, Union
+from typing import Any, Dict, List, Union
 
 import numpy as np
 from zarr.util import normalize_storage_path
@@ -820,18 +820,20 @@ class Section():
 
     @staticmethod
     def imageName(src : str) -> str:
-        """The image name a section keeps: the file name alone.
+        """The image name a section keeps: os.path.basename of the name given.
 
-        The series image folder (src_dir) is the one place a folder is kept.
-        Series exist whose names carry the folder the images sat in where the
-        series was made: the class series in dev/assets/checker stores
-        Cropped Images/d03/000ZGBJY.tif, and the zarr made for it holds
-        000ZGBJY.tif. Keeping that folder would look up an array the zarr does
-        not have, so a/b.png is kept as b.png, and a zarr array nested in a
-        folder is not one a section can name.
+        The series image folder (src_dir) is meant to be the one place a
+        folder is kept. Series exist whose names carry the folder the images
+        sat in where the series was made: the class series in
+        dev/assets/checker stores Cropped Images/d03/000ZGBJY.tif, and the
+        zarr made for it holds 000ZGBJY.tif. Keeping that folder would look up
+        an array the zarr does not have, so a/b.png is kept as b.png.
 
-        os.path.basename splits on a backslash only on Windows. On macOS and
-        Linux a\\b.png is one file name and is kept whole (see zarr_key).
+        What counts as a folder is the host's rule. On Windows basename splits
+        on / and \\, so a\\b.png and C:\\scans\\b.png both become b.png. On
+        macOS and Linux it splits on / alone: those two names are kept whole,
+        and since zarr reads a backslash as a slash, a\\b.png there names the
+        nested array a/b.png (see zarr_key).
 
             Params:
                 src (str): the image name as saved or typed
@@ -1248,7 +1250,7 @@ class Section():
         """
         if keyed_rows is None:
             keyed_rows = keyed_rows_default()
-        d = {}
+        d : dict[str, Any] = {}
         d["src"] = self.src
         d["brightness_contrast_profiles"] = self.bc_profiles
         d["mag"] = self.mag
