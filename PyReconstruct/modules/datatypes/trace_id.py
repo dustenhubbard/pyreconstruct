@@ -194,11 +194,10 @@ TRACE_ID_ALPHABET = (
 TRACE_ID_BITS = 64
 TRACE_ID_LENGTH = 11
 
-## How many salts a derivation tries before giving up. `Flag.deriveID` falls
-## back to a *random* id here; this module raises instead, because a random id
-## produced by a migration is the failure `Flag.deriveID`'s own docstring
-## records. Reaching the limit means blake2b collided 1000 times on one input,
-## which is not a case to paper over.
+## How many salts a derivation tries before giving up. `Flag.deriveID` has no
+## cap; this module raises, because a random id produced by a migration is the
+## failure `Flag.deriveID`'s own docstring records. Reaching the limit means
+## blake2b collided 1000 times on one input, which is not a case to paper over.
 DERIVATION_MAX_SALT = 1000
 
 

@@ -1,4 +1,5 @@
 import hashlib
+import itertools
 import json
 import random
 
@@ -172,8 +173,13 @@ class Flag():
         taken = set(taken)
         payload = json.dumps(content, sort_keys=True, default=str)
         # Salted on collision rather than given up on: two legacy flags can
-        # legitimately share a section, a name and a position.
-        for salt in range(1000):
+        # legitimately share a section, a name and a position. Each identical
+        # flag takes the next salt, so the count of identical flags sets how
+        # far this runs, and there is no cap: a cap would end in a random ID,
+        # which is the failure this method exists to avoid. The ID space is
+        # 62**6 (5.7e10) and a section holds far fewer flags, so the loop
+        # always finds a free ID.
+        for salt in itertools.count():
             digest = hashlib.blake2b(
                 f"{salt}\x00{payload}".encode("utf-8"), digest_size=16
             ).digest()
@@ -184,9 +190,6 @@ class Flag():
                 id += possible_chars[i]
             if id not in taken:
                 return id
-        # Unreachable short of a deliberate attack on blake2b; fall back rather
-        # than return a duplicate.
-        return Flag.generateID()
 
     def magScale(self, prev_mag : float, new_mag : float):
         """Adjust the flag position to a new magnification.

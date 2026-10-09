@@ -128,6 +128,16 @@ def test_two_identical_flags_in_one_section_get_distinct_stable_ids():
     assert _migrate([LEGACY6, LEGACY6]) == first
 
 
+def test_identical_flags_past_a_thousand_keep_stable_distinct_ids():
+    """The salt range used to end at 1,000 and fall back to a random ID, so the
+    1,001st identical flag changed on every open and was never checked against
+    the others."""
+    flags = [LEGACY6] * 1005
+    first = _migrate(flags)
+    assert len(set(first)) == 1005
+    assert _migrate(flags) == first
+
+
 def test_a_derived_id_never_displaces_one_already_in_the_file():
     """A hand-edited file can mix migrated and unmigrated flags."""
     reserved = _migrate([LEGACY6])[0]
