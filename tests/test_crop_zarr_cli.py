@@ -234,9 +234,10 @@ def test_negative_zero_survives_in_float_images(case, tmp_path, dtype):
                 f"shapes_{snum}.tif", chunks=(64, 64), data=np.full(shape, -0.0, dtype),
             )
     out = tmp_path / "out.zarr"
+    ## every image is all -0.0, which counts as blank: crop it as it is
     result = _run([
         "--jser", jser, "--object", OBJECT, "--radius", RADIUS,
-        "--zarr", floats, "--out", out,
+        "--zarr", floats, "--out", out, "--keep-blank-images",
     ])
     assert result.returncode == 0, result.stderr
 
@@ -1263,3 +1264,96 @@ def test_missing_image_without_a_mid_gray_is_refused(case, tmp_path, dtype):
 ])
 def test_mid_gray(dtype, gray):
     assert _load_script().midGray(dtype) == gray
+
+
+def _blank_under_square(src, snum):
+    """Zero section snum's images inside its square's window, at every scale,
+    as a zarr that stored no chunks there reads."""
+    root = zarr.open_group(str(src), mode="r+")
+    for scale in SCALES:
+        t, b, l, r = KEPT[(scale, snum)]
+        root[f"scale_{scale}"][f"shapes_{snum}.tif"][t:b, l:r] = 0
+
+
+def test_image_all_zero_under_the_trace_is_gray(case):
+    """Section 1 has the square and an image, but the image is all 0 under it.
+    It is written mid-gray in the nearest other section's window (0, not
+    itself), and section 2 no longer borrows section 1's empty window."""
+    jser, src = case
+    _blank_under_square(src, 1)
+    out = jser.parent.parent / "out.zarr"
+    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
+    assert result.returncode == 0, result.stderr
+    source = zarr.open_group(str(src), mode="r")
+    got = _arrays(out)
+    for scale, shape in SCALES.items():
+        t, b, l, r = KEPT[(scale, 0)]
+        gray = np.zeros(shape, np.uint8)
+        gray[t:b, l:r] = 128
+        np.testing.assert_array_equal(got[(scale, "shapes_1.tif")], gray, err_msg=str(scale))
+        ## section 2 takes section 3's window: 1 is blank, so 3 is its nearest
+        image = source[f"scale_{scale}"]["shapes_2.tif"][:]
+        t, b, l, r = KEPT[(scale, 3)]
+        kept = np.zeros_like(image)
+        kept[t:b, l:r] = image[t:b, l:r]
+        np.testing.assert_array_equal(got[(scale, "shapes_2.tif")], kept, err_msg=str(scale))
+    summary = ("Image all 0 under square on 1 section (1): mid-gray (128) inside the window "
+               "of the nearest other section with square, at that section's image size.")
+    assert summary in result.stdout
+    log = (out / "crop_log.txt").read_text()
+    assert "\n  1 shapes_1.tif: 0\n" in log
+    assert "\n  2: 3\n" in log
+    assert f"Cropped around {OBJECT}: 2 of 5 sections." in log
+
+
+def test_keep_blank_images_crops_them_as_they_are(case):
+    jser, src = case
+    _blank_under_square(src, 1)
+    out = jser.parent.parent / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out, "--keep-blank-images",
+    ])
+    assert result.returncode == 0, result.stderr
+    got = _arrays(out)
+    want = _expected(src)
+    for key in want:
+        np.testing.assert_array_equal(got[key], want[key], err_msg=str(key))
+    assert not got[(1, "shapes_1.tif")].any()
+    assert "Image all 0" not in result.stdout
+
+
+def test_every_traced_image_all_zero_is_refused(case, tmp_path):
+    jser, src = case
+    for snum in (0, 1, 3):
+        _blank_under_square(src, snum)
+    out = tmp_path / "out.zarr"
+    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
+    _assert_refused_before_writing(
+        result, out, jser,
+        "The crop would be empty: the image under 'square' is all 0 on every section with it "
+        "(0-1, 3). Use --keep-blank-images to crop it anyway.")
+
+
+def test_blank_under_reads_only_the_window():
+    """A nonzero pixel just outside the window does not count."""
+    module = _load_script()
+    group = zarr.group()
+    image = group.create_dataset("a", shape=(200, 200), chunks=(64, 64), dtype=np.uint8, fill_value=0)
+    image[0:10, 0:10] = 5
+    assert module.blankUnder(image, (10, 150, 10, 150))
+    image[149, 149] = 1
+    assert not module.blankUnder(image, (10, 150, 10, 150))
+
+
+def test_blank_image_with_skip_missing_is_cropped_as_it_is(case):
+    """With gray stand-ins off, a blank section is cropped as it is, and the
+    log says so."""
+    jser, src = case
+    _blank_under_square(src, 1)
+    out = jser.parent.parent / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out, "--skip-missing",
+    ])
+    assert result.returncode == 0, result.stderr
+    assert not _arrays(out)[(1, "shapes_1.tif")].any()
+    assert "Image all 0 under square on 1 section (1): cropped as it is (--skip-missing)." in result.stdout

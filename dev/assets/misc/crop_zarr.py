@@ -12,7 +12,7 @@ questions, for example from another program:
 With flags, progress goes to stdout as the same "@@PROGRESS@@" lines the zarr
 converter prints, and errors exit nonzero before anything is written.
 
-Four gaps in the data are handled, each on by default with a flag to turn
+Five gaps in the data are handled, each on by default with a flag to turn
 it off:
 - A section without the object keeps its image inside the window of the
   nearest section with the object (ties go to the earlier section), instead
@@ -24,6 +24,10 @@ it off:
   16-bit. Signed, float and bool images have no fixed black and white, so a
   missing image there stops the crop before it writes anything.
   --skip-missing writes no image for it instead.
+- A section with the object whose image is all 0 under it at the first scale
+  level (the zarr stored no data there) is written like a missing image:
+  mid-gray in the nearest other section's window. It never lends its window
+  to other sections. --keep-blank-images crops it as it is.
 - When no image name in the series is in the zarr, each section is matched
   to the zarr image with the same number as the section's own image name,
   taking the first or the last number in the names (matchByNumber). Only
@@ -467,6 +471,23 @@ def usableWindow(bounds : tuple, radius : float, mag : float, shape : tuple):
     return (t, b, l, r) if b > t and r > l else None
 
 
+def blankUnder(image, window : tuple):
+    """True if every pixel of image inside window is 0.
+
+    A zarr stores no chunk a converter left empty, and a missing chunk reads
+    as 0, so an image can exist while nothing under the trace was ever
+    written. Reads one chunk at a time and stops at the first nonzero one, so
+    an ordinary image costs about one chunk.
+    """
+    t, b, l, r = window
+    rows, cols = image.chunks[0], image.chunks[1]
+    for top in range(t - t % rows, b, rows):
+        for left in range(l - l % cols, r, cols):
+            if image[max(top, t):min(top + rows, b), max(left, l):min(left + cols, r)].any():
+                return False
+    return True
+
+
 def checkPixelsKept(obj_name : str, radius : float, scales : list, groups : list, names : dict, traced : dict):
     """Return the sections whose own window keeps pixels; raise if there are none.
 
@@ -517,6 +538,9 @@ class CropPlan:
             gray (bool): write gray images for missing ones
             full (bool): keep the whole image of a failed section
             grays (list): the mid-gray values the missing images' stand-ins use
+            blank (list): sections with the object whose image is all 0 under
+                it at the first scale level
+            grayed (list): the blank sections written as gray stand-ins
     """
 
     def __init__(self, **attributes):
@@ -532,9 +556,11 @@ def planCrop(
         fill_untraced : bool = True,
         gray_missing : bool = True,
         match_by_number : bool = True,
-        full_on_fail : bool = True):
+        full_on_fail : bool = True,
+        check_blank : bool = True):
     """Match the image names and choose each section's window; raise a
-    CropError when the crop cannot be made. Reads only array shapes."""
+    CropError when the crop cannot be made. Reads array shapes, and with
+    check_blank the pixels under each trace at the first scale level."""
     groups = [src_group[f"scale_{scale}"] for scale in scales]
     names, match = matchImageNames(series, scales, groups, match_by_number)
 
@@ -556,12 +582,30 @@ def planCrop(
         snum for snum in snums
         if snum not in traced and len(missing.get(snum, ())) < len(scales)
     ]
-    whole = [snum for snum in sorted(usable) if snum not in missing]
+    # a section whose image is all 0 under its trace shows nothing; it is
+    # written like a missing image and never lends its window
+    blank = []
+    for snum in sorted(usable) if check_blank else ():
+        if names[snum] not in groups[0]:
+            continue
+        image = groups[0][names[snum]]
+        bounds, mag = traced[snum]
+        window = usableWindow(bounds, radius, mag * scales[0], image.shape)
+        if window is not None and blankUnder(image, window):
+            blank.append(snum)
+    if blank and not set(usable) - set(blank):
+        raise CropError(
+            f"The crop would be empty: the image under {obj_name!r} is all 0 on every "
+            f"section with it ({spans(blank, 4)}). Use --keep-blank-images to crop it anyway."
+        )
+    whole = [snum for snum in sorted(usable) if snum not in missing and snum not in blank]
     neighbor = {
         snum: min(whole, key=lambda k: (abs(k - snum), k)) if whole else None
         for snum in snums
-        if snum not in traced or snum in missing
+        if snum not in traced or snum in missing or snum in blank
     }
+    # blank sections become gray only when gray stand-ins are on
+    grayed = [snum for snum in blank if gray_missing and neighbor[snum] is not None]
 
     windows, failed = {}, {}
     for snum in snums:
@@ -594,7 +638,9 @@ def planCrop(
 
     # a stand-in takes its neighbor's image type, which must have a mid-gray
     grays = set()
-    for snum, absent in sorted(missing.items()) if gray_missing else ():
+    stand_ins = {snum: absent for snum, absent in missing.items() if gray_missing}
+    stand_ins.update({snum: scales for snum in grayed})
+    for snum, absent in sorted(stand_ins.items()):
         nearest = neighbor[snum]
         if nearest is None:
             continue
@@ -603,16 +649,21 @@ def planCrop(
                 continue
             dtype = group[names[nearest]].dtype
             if midGray(dtype) is None:
+                problem = ("has no image in the zarr" if snum in missing
+                           else f"has an image that is all 0 under {obj_name}")
+                fix = ("--skip-missing to leave it out" if snum in missing
+                       else "--keep-blank-images to crop it as it is")
                 raise CropError(
-                    f"Section {snum} has no image in the zarr, and a stand-in would be "
+                    f"Section {snum} {problem}, and a stand-in would be "
                     f"{dtype} like the zarr's images, which has no fixed mid-gray. "
-                    f"Use --skip-missing to leave it out."
+                    f"Use {fix}."
                 )
             grays.add(midGray(dtype))
     return CropPlan(
         names=names, match=match, traced=traced, missing=missing,
         untraced=untraced, neighbor=neighbor, windows=windows, failed=failed,
         fill=fill_untraced, gray=gray_missing, full=full_on_fail, grays=sorted(grays),
+        blank=blank, grayed=grayed,
     )
 
 
@@ -626,7 +677,10 @@ def describeCrop(plan : CropPlan, series : Series, obj_name : str, radius : floa
     nearest = f"the nearest section with {obj_name}"
     no_reference = (f"no section with {obj_name} has a window that keeps pixels "
                     f"and its image at every scale level")
-    cropped = [snum for snum in plan.traced if snum not in plan.missing and snum not in plan.failed]
+    cropped = [
+        snum for snum in plan.traced
+        if snum not in plan.missing and snum not in plan.failed and snum not in plan.grayed
+    ]
     summary = [f"Cropped around {obj_name}: {len(cropped)} of {plural(len(sections), 'section')}."]
     details = []
 
@@ -667,6 +721,20 @@ def describeCrop(plan : CropPlan, series : Series, obj_name : str, radius : floa
             summary.append(f"{head}: left black (--blank-failed).")
             details += ["", "Sections left black with no usable window (section: why)"]
         details += [f"  {snum}: {reason}" for snum, reason in sorted(plan.failed.items())]
+
+    if plan.blank:
+        head = (f"Image all 0 under {obj_name} on {plural(len(plan.blank), 'section')} "
+                f"({spans(plan.blank)})")
+        if not plan.grayed:
+            summary.append(f"{head}: cropped as it is (--skip-missing).")
+        else:
+            summary.append(
+                f"{head}: mid-gray ({', '.join(str(gray) for gray in plan.grays)}) inside the "
+                f"window of the nearest other section with {obj_name}, at that section's image size."
+            )
+            details += ["", f"Sections whose image is all 0 under {obj_name} "
+                            "(section, series image name: the section whose window and size it used)"]
+            details += [f"  {snum} {sections[snum]['src']}: {plan.neighbor[snum]}" for snum in plan.grayed]
 
     if plan.missing:
         head = f"No image in the zarr for {plural(len(plan.missing), 'section')} ({spans(plan.missing)})"
@@ -736,13 +804,14 @@ def cropSections(
         gray_missing : bool = True,
         match_by_number : bool = True,
         full_on_fail : bool = True,
+        check_blank : bool = True,
         jser_fp : str = ""):
     """Write the cropped images for every section, and the log, into new_zarr_fp.
 
         Params:
             report (bool): print progress lines to stdout for a wrapper program
-            fill_untraced, gray_missing, match_by_number, full_on_fail (bool):
-                see planCrop
+            fill_untraced, gray_missing, match_by_number, full_on_fail,
+                check_blank (bool): see planCrop
             jser_fp (str): the series file named in the log
         Returns:
             (str): the log's path
@@ -755,7 +824,7 @@ def cropSections(
     if os.path.lexists(new_zarr_fp):
         raise outputExists(new_zarr_fp)
     plan = planCrop(series, obj_name, radius, src_group, scales,
-                    fill_untraced, gray_missing, match_by_number, full_on_fail)
+                    fill_untraced, gray_missing, match_by_number, full_on_fail, check_blank)
     new_zarr_fp = os.path.realpath(new_zarr_fp)
     parent = os.path.dirname(new_zarr_fp)
     os.makedirs(parent, exist_ok=True)
@@ -780,7 +849,7 @@ def cropSections(
         for scale in scales:
             scale_grp = f"scale_{scale}"
             group = src_group[scale_grp]
-            if name in group:
+            if name in group and snum not in plan.grayed:
                 image = group[name]
                 if snum in plan.failed and plan.full:
                     # no window keeps any pixels here: keep the whole image
@@ -831,7 +900,8 @@ def cropZarr(
         fill_untraced : bool = True,
         gray_missing : bool = True,
         match_by_number : bool = True,
-        full_on_fail : bool = True):
+        full_on_fail : bool = True,
+        check_blank : bool = True):
     """Crop the zarr file for a series.
 
         Params:
@@ -844,8 +914,9 @@ def cropZarr(
                 names), just at a different location.
             out_fp (str): optional output zarr path; if blank,
                 <stem>_<obj>_crop<sep>zarr next to the source
-            fill_untraced, gray_missing, match_by_number, full_on_fail
-                (bool): see the module docstring; each is on unless turned off
+            fill_untraced, gray_missing, match_by_number, full_on_fail,
+                check_blank (bool): see the module docstring; each is on
+                unless turned off
         Returns:
             (str): the output zarr path
     """
@@ -859,6 +930,7 @@ def cropZarr(
             series, obj_name, radius, src_group, scales, out_fp,
             fill_untraced=fill_untraced, gray_missing=gray_missing,
             match_by_number=match_by_number, full_on_fail=full_on_fail,
+            check_blank=check_blank,
             jser_fp=os.path.realpath(series_fp),
         )
     finally:
@@ -902,6 +974,9 @@ def parseArgs(argv : list):
     parser.add_argument("--blank-failed", action="store_true",
                         help="leave a section black when no window keeps any of its pixels, "
                         "instead of keeping its full, uncropped image")
+    parser.add_argument("--keep-blank-images", action="store_true",
+                        help="crop a section whose image is all 0 under the object as it is, "
+                        "instead of a mid-gray stand-in like a missing image")
     args = parser.parse_args(argv)
 
     missing = [
@@ -951,6 +1026,7 @@ def runCli(args):
             gray_missing=not args.skip_missing,
             match_by_number=not args.exact_names,
             full_on_fail=not args.blank_failed,
+            check_blank=not args.keep_blank_images,
             jser_fp=os.path.realpath(args.jser),
         )
     finally:
