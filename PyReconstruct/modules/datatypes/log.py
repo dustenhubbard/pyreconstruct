@@ -6,6 +6,7 @@ from datetime import datetime
 from PyReconstruct.modules.constants import getDateTime, remove_days_from_today
 
 from .filters import passesFilters
+from .trace import normalizeObjectName
 
 
 ## What a row of the log begins with, and the only thing about the format that
@@ -134,6 +135,94 @@ def splitRow(s : str, decode : bool = True):
         fields[4][0],
         s[pos:],
     )
+
+
+def _leavesQuoteOpen(s : str) -> bool:
+    """Whether a user or object field in s opens a quote that s never closes.
+
+    splitRow reads such a field the old way, up to the next ", ", so a row
+    whose quoted name an older build split with a line break can look whole
+    before its closing quote has been read.
+    """
+    pos = 0
+    for i in range(4):
+        if i in (2, 3) and s.startswith('"', pos):
+            quoted = _readQuoted(s, pos)
+            if quoted is None:
+                return True
+            if (
+                s.startswith(", ", quoted[1])
+                and _onlyQuotedShape(quoted[0], i == 3)
+            ):
+                pos = quoted[1] + 2
+                continue
+        k = s.find(", ", pos)
+        if k == -1:
+            return False
+        pos = k + 2
+    return False
+
+
+def _isWholeRow(s : str) -> bool:
+    """Whether splitRow reads s as a whole row, quoting included."""
+    try:
+        splitRow(s)
+    except ValueError:
+        return False
+    return not _leavesQuoteOpen(s)
+
+
+def _dropLineEnding(s : str) -> str:
+    """s without the one line ending it may close with."""
+    for end in ("\r\n", "\n", "\r"):
+        if s.endswith(end):
+            return s[:-len(end)]
+    return s
+
+
+## The events older versions wrote about a trace object and never about a
+## z-trace. Only an older version split a row across lines (Log.__str__ keeps
+## one on one line), so the list is closed. Left out on purpose: the z-trace
+## events ("Modify ztrace" and the rest) and the four that both kinds write,
+## "Add to group '...'", "Remove from group '...'", "Remove from all object
+## groups" and "Edit default alignment", whose row cannot say which kind it
+## names.
+TRACE_EVENT = re.compile(
+    r"Create (new )?(trace\(s\)|object)"  # LogSet.addLog folds trace(s) into object
+    r"|Create copy "
+    r"|Delete (trace\(s\)|object|duplicate trace)"
+    r"|Combine duplicate traces"
+    r"|Rename (object )?to "
+    r"|Modify (trace\(s\)|radius|shape|object)"
+    r"|Remove trace\(s\) during import"
+    r"|Remove all trace tags"
+    r"|Smooth .* traces$"
+    r"|Smoothed trace\(s\)"
+    r"|Split into individual objects per trace"
+    r"|Reapply (custom color palette|autoseg colors|palette colors)"
+    r"|(Hide|Unhide) object"
+    r"|Restore previous visibility"
+    r"|Mark as (curated|needs curation)"
+    r"|Edit object comment"
+    r"|Set user column "
+    r"|Set attributes from palette",
+    re.S,
+)
+
+
+def _repairJoinedName(log : "Log"):
+    """Name a rejoined row's object as that object is named on open.
+
+    A trace name passes through normalizeObjectName when a section loads, so
+    "foo\nbar" is the trace "foo_bar" and "spine1\n" is "spine1". A
+    z-trace keeps its name as written, line break included. So only the name
+    in a trace event is normalized; any other row keeps its name as written,
+    since that name may be a z-trace's. Only a name that holds a line break is
+    touched: a break elsewhere in the row says nothing about the name.
+    """
+    name = log.obj_name
+    if name and "\n" in name and TRACE_EVENT.match(log.event):
+        log.obj_name = normalizeObjectName(name)
 
 
 class Log():
@@ -485,10 +574,10 @@ class LogSet():
         two separate changes and is worth stating as one claim because earlier
         versions of this docstring had to qualify it.
 
-        A row holding FEWER than six comma fields is first joined to the lines
-        after it by the continuation loop below, because a name or event
-        carrying a literal newline reaches us split across the physical lines
-        it was written to. That join used to be unguarded, so it took whatever
+        A row that does not parse and holds FEWER than the six fields splitRow
+        reads is first joined to the lines after it by the continuation loop
+        below, because a name or event carrying a literal newline reaches us
+        split across the physical lines it was written to. That join used to be unguarded, so it took whatever
         followed -- including a well-formed row belonging to somebody else --
         and the two outcomes had to be described separately:
 
@@ -564,7 +653,11 @@ class LogSet():
                     # before the loop can advance onto it. Only a fragment
                     # whose head already failed arrives as a start, and that
                     # fragment is exactly what must not be trusted.
-                    if not ROW_START.match(log_str.strip()):
+                    #
+                    # The stamp ends in ", ", so a line is matched with only
+                    # its leading space taken off: a row whose user begins
+                    # with a break has a head line that is the stamp alone.
+                    if not ROW_START.match(log_str.lstrip()):
                         raise ValueError(
                             "log row does not begin with a date and time: "
                             f"{log_str.strip()[:60]!r}"
@@ -574,7 +667,53 @@ class LogSet():
                     # newline -- the "return key in name" this loop was written
                     # for -- reaches us split across the physical lines it was
                     # written to, so a short row is joined to the line after it
-                    # until it has six comma fields.
+                    # until it parses.
+                    #
+                    # A row that Log.fromStr reads, either way it reads, is
+                    # whole and takes no more lines. That includes an older
+                    # row that only reads the old way, such as one whose user
+                    # is the literal text '"alice, axon"': joining it to the
+                    # next line would read a different row. A row that does
+                    # not parse is joined only while splitRow, quoting
+                    # included, finds fewer than six fields in it, or while a
+                    # quoted user or object name in it has not closed: read
+                    # the old way, the head of a name such as
+                    # "a,b, c, d, e, <Return>f" already holds six. A row with
+                    # six and no open quote that still does not parse is
+                    # broken some other way, and another line cannot mend it.
+                    #
+                    # The six fields are splitRow's count, not a count of bare
+                    # commas, which can only run ahead of it: a field holding
+                    # commas without spaces ("foo,bar,baz"), or a quoted name
+                    # holding ", ", made a partial row look whole, so the join
+                    # stopped early and the row raised.
+                    #
+                    # Each break goes back as the "\n" the older build wrote
+                    # there. Every piece loses its own line ending and nothing
+                    # else, so the joined row is the text that build wrote,
+                    # with a "\r\n" or "\r" break read as "\n" the way a file
+                    # opened in text mode reads it. That holds whether a line
+                    # arrives with its ending or without: an empty line is an
+                    # empty piece, so "foo", "", "bar" joins as "foo\n\nbar".
+                    # splitRow then finds the fields that build meant, quotes
+                    # included, with no guess about where a break fell. The
+                    # join used to add nothing: the first break survived as
+                    # the head line's own "\n" and every later one was
+                    # stripped, gluing "foo" and "bar" into "foobar".
+                    #
+                    # A break in the event, the last field, leaves a head that
+                    # parses, so the row ends there and each line after it is
+                    # refused by the start anchor: the rest of the event is a
+                    # loss the caller sees, not text glued onto the row.
+                    #
+                    # What the object is called is then up to its kind (see
+                    # _repairJoinedName): a name with a break in it, in an
+                    # event only a trace writes, is normalized as a section
+                    # normalizes it on open, so a name typed as "spine1" and a
+                    # Return reads as the trace "spine1"; a name in any other
+                    # event stays as written, since it may be a z-trace's.
+                    # Every other field keeps its "\n", and Log.__str__ writes
+                    # it as "_".
                     #
                     # The join is anchored too, and this is the second place.
                     # It refuses to absorb a line
@@ -654,18 +793,27 @@ class LogSet():
                     # this protects what is already on disk, plus hand-edited
                     # files and any route a future writer opens by accident.
                     #
-                    while len(log_str.split(",")) < 6:
-                        nxt = log_list[i+1]
-                        if ROW_START.match(nxt.strip()):
-                            # A row, not a continuation. Stop rather than eat
-                            # it: log_str is still short of six fields, so
-                            # Log.fromStr below raises ValueError, the handler
-                            # records this line alone, and the scan resumes at
-                            # nxt so it gets read as the row it is.
+                    pieces = [_dropLineEnding(log_str)]
+                    while True:
+                        try:
+                            log = Log.fromStr(log_str)
                             break
-                        log_str += nxt.strip()
+                        except ValueError:
+                            if _isWholeRow(log_str):
+                                raise
+                            nxt = log_list[i+1]
+                            if ROW_START.match(nxt.lstrip()):
+                                # A row, not a continuation. Stop rather than
+                                # eat it: the ValueError goes to the handler
+                                # below, which records this line alone, and
+                                # the scan resumes at nxt so it gets read as
+                                # the row it is.
+                                raise
+                        pieces.append(_dropLineEnding(nxt))
+                        log_str = "\n".join(pieces)
                         i += 1
-                    log = Log.fromStr(log_str)
+                    if i > start:
+                        _repairJoinedName(log)
                 except (ValueError, IndexError):
                     # ValueError: the row does not have six fields, or the
                     # section range does not read as one -- what a legacy
