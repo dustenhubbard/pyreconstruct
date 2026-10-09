@@ -1264,6 +1264,11 @@ class MainWindow(QMainWindow):
                 self.series.leave_open = True
             self.series.close()
 
+        # the 3D scene keeps the outgoing series' objects, and reads the host
+        # tree it had last, not the one kept when they were added
+        if self.series and self.viewer and not self.viewer.is_closed:
+            self.viewer.seriesClosing(self.series)
+
         # set new series
         self.series = new_series
 
