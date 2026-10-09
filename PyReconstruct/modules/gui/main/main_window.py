@@ -162,6 +162,15 @@ def _probeEntries(folder):
 ## FS_IOC_GETFLAGS, which is _IOR('f', 1, long)
 _FS_CASEFOLD_FL = 0x40000000
 _FS_IOC_GETFLAGS = (2 << 30) | (struct.calcsize("l") << 16) | (ord("f") << 8) | 1
+## Linux: statfs f_type of the filesystems that fold case only in a folder
+## carrying +F, so a folder without it keeps case. Others can fold case
+## without the flag (vfat, exfat, ntfs3, a mounted share, xfs made with
+## ascii-ci), so the flag says nothing there.
+_LINUX_CASE_BY_FLAG_ONLY = {
+    0xEF53,       # ext2, ext3, ext4
+    0x9123683E,   # btrfs, which never folds case
+    0x01021994,   # tmpfs
+}
 ## macOS: pathconf name for _PC_CASE_SENSITIVE; os.pathconf_names lacks it
 _PC_CASE_SENSITIVE = 11
 ## Windows: FileCaseSensitiveInfo and its FILE_CS_FLAG_CASE_SENSITIVE_DIR
@@ -186,27 +195,45 @@ def _askFolderCase(folder):
             sensitive = os.pathconf(folder, _PC_CASE_SENSITIVE)
             return {0: True, 1: False}.get(sensitive)
         if sys.platform.startswith("linux"):
-            import fcntl
-            fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NONBLOCK)
-            try:
-                buf = bytearray(8)
-                fcntl.ioctl(fd, _FS_IOC_GETFLAGS, buf, True)
-            finally:
-                os.close(fd)
-            if int.from_bytes(buf[:4], sys.byteorder) & _FS_CASEFOLD_FL:
+            if _linuxFolderFlags(folder) & _FS_CASEFOLD_FL:
                 return True
-            # without the flag the folder can still ignore case, on a
-            # volume that always does (vfat, exfat, a mounted share)
+            if _linuxFsType(folder) in _LINUX_CASE_BY_FLAG_ONLY:
+                return False
             return None
         if sys.platform == "win32":
-            return _askWindowsFolderCase(folder)
+            flags = _windowsFolderCaseFlags(folder)
+            if flags is None:
+                return None
+            return not flags & _FILE_CS_FLAG_CASE_SENSITIVE_DIR
     except (OSError, ValueError, TypeError, AttributeError):
         return None
     return None
 
 
-def _askWindowsFolderCase(folder):
-    """_askFolderCase on Windows: the folder's own case flag, read on NTFS.
+def _linuxFolderFlags(folder):
+    """The folder's inode flags (FS_IOC_GETFLAGS); OSError if it has none."""
+    import fcntl
+    fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NONBLOCK)
+    try:
+        buf = bytearray(8)
+        fcntl.ioctl(fd, _FS_IOC_GETFLAGS, buf, True)
+    finally:
+        os.close(fd)
+    return int.from_bytes(buf[:4], sys.byteorder)
+
+
+def _linuxFsType(folder):
+    """The statfs f_type of the folder's filesystem, or None."""
+    import ctypes
+    libc = ctypes.CDLL(None, use_errno=True)
+    buf = ctypes.create_string_buffer(256)  # struct statfs; f_type is first
+    if libc.statfs(os.fsencode(folder), buf) != 0:
+        return None
+    return ctypes.c_ulong.from_buffer(buf).value & 0xFFFFFFFF
+
+
+def _windowsFolderCaseFlags(folder):
+    """The folder's FileCaseSensitiveInfo flags on Windows, or None.
 
     A volume that keeps no flag (FAT, exFAT, most shares) refuses the call,
     which gives None.
@@ -246,7 +273,7 @@ def _askWindowsFolderCase(folder):
             return None
     finally:
         kernel32.CloseHandle(handle)
-    return not flags.value & _FILE_CS_FLAG_CASE_SENSITIVE_DIR
+    return flags.value
 
 
 def _caseInsensitive(folder):
@@ -283,8 +310,9 @@ def _samePath(a, b):
         return False
     if _sameDir(a, b):
         return True
-    norm = lambda p: os.path.normcase(os.path.realpath(p))
-    if norm(a) == norm(b):
+    # exact, not normcase: on Windows that lowercases, and a folder there
+    # can be case-sensitive; names differing in case are judged below
+    if os.path.realpath(a) == os.path.realpath(b):
         return True
     a_dir, a_rest = _existingAncestor(a)
     b_dir, b_rest = _existingAncestor(b)
