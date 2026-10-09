@@ -814,5 +814,5 @@ def test_a_bar_moved_to_the_left_drags_from_where_it_shows(
     shown = palette.sb.x()
     palette.moveButton(-20, 0, "sb")
     palette.placeSB()
-    # within the pixel any palette group loses to its saved fraction
+    # saving the position as a fraction of the field rounds it by up to one pixel
     assert palette.sb.x() == pytest.approx(shown - 20, abs=1)
