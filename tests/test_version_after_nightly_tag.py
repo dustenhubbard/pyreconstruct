@@ -48,8 +48,20 @@ GIT_ENV = dict(
     GIT_CONFIG_NOSYSTEM="1",
 )
 # An override in the developer's shell would mask the scheme under test.
-for _k in [k for k in GIT_ENV if k.startswith("SETUPTOOLS_SCM_PRETEND_VERSION")]:
+PRETEND = "SETUPTOOLS_SCM_PRETEND_VERSION"
+for _k in [k for k in GIT_ENV if k.startswith(PRETEND)]:
     del GIT_ENV[_k]
+
+
+def _scm_version(**kwargs):
+    """setuptools_scm.get_version, blind to an override in the shell.
+
+    The call runs in this process, so it reads os.environ, not GIT_ENV.
+    """
+    with pytest.MonkeyPatch.context() as mp:
+        for k in [k for k in os.environ if k.startswith(PRETEND)]:
+            mp.delenv(k)
+        return setuptools_scm.get_version(**kwargs)
 
 
 def _scm_config():
@@ -115,7 +127,7 @@ def _full_clone(tmp_path, past_nightly=True):
 def test_one_commit_past_a_tag_resolves(tmp_path, tag, public):
     repo = _repo(tmp_path, tag)
     cfg = _scm_config()
-    v = setuptools_scm.get_version(
+    v = _scm_version(
         root=str(repo),
         version_scheme=cfg["version_scheme"],
         local_scheme="node-and-date",
@@ -129,7 +141,7 @@ def test_on_the_tag_itself_the_version_is_the_tag(tmp_path):
     repo = _repo(tmp_path, "v9.9.9")
     _git(repo, "tag", "v1.24.0.dev20260928")
     cfg = _scm_config()
-    assert setuptools_scm.get_version(
+    assert _scm_version(
         root=str(repo), version_scheme=cfg["version_scheme"]) == "1.24.0.dev20260928"
 
 
@@ -137,7 +149,16 @@ def test_the_default_scheme_is_the_one_that_fails(tmp_path):
     """The premise, pinned: guess-next-dev raises one commit past a nightly."""
     repo = _repo(tmp_path, "v1.24.0.dev20260927")
     with pytest.raises(Exception, match="devX"):
-        setuptools_scm.get_version(root=str(repo), version_scheme="guess-next-dev")
+        _scm_version(root=str(repo), version_scheme="guess-next-dev")
+
+
+def test_an_override_in_the_shell_does_not_mask_the_scheme(tmp_path, monkeypatch):
+    monkeypatch.setenv(PRETEND, "0.0.1")
+    repo = _repo(tmp_path, "v9.9.9")
+    _git(repo, "tag", "v1.24.0.dev20260928")
+    assert _scm_version(
+        root=str(repo), version_scheme=_scm_config()["version_scheme"]
+    ) == "1.24.0.dev20260928"
 
 
 def _cli_version(repo):
