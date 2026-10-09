@@ -12,10 +12,29 @@ questions, for example from another program:
 With flags, progress goes to stdout as the same "@@PROGRESS@@" lines the zarr
 converter prints, and errors exit nonzero before anything is written.
 
+Three gaps in the data are handled, each on by default with a flag to turn
+it off:
+- A section without the object keeps its image inside the window of the
+  nearest section with the object (ties go to the earlier section), instead
+  of coming out black. --blank-untraced leaves it black.
+- A section whose image is not in the zarr gets an image the size of the
+  nearest section with the object, 128 gray inside that section's window and
+  0 outside it, so the crop has an image for every section. --skip-missing
+  writes no image for it.
+- When no image name in the series is in the zarr, each section is matched
+  to the zarr image whose name starts with its section number, only if every
+  zarr image name starts with a number and those numbers are exactly the
+  series' section numbers, one image each. The crop names its images as the
+  series does. --exact-names turns the matching off.
+
+Every run writes crop_log.txt inside the output zarr: the inputs, a summary,
+and each section that was filled, made gray or matched by number. The
+summary is printed too.
+
 A crop that would keep no pixels is an error too, found before the output
-folder is made: when no section's image name is in the zarr (the series and
-the zarr do not belong together), or when the object is inside no section
-image.
+folder is made: when no section's image name is in the zarr and the names
+cannot be matched by section number (the series and the zarr do not belong
+together), or when the object is inside no section image.
 
 The output must be a new path: not one that exists, not a drive or file
 system root, and not the source zarr, inside it, or a folder that holds it.
@@ -26,6 +45,7 @@ its name. That includes the partial output a stopped run leaves behind.
 """
 
 import argparse
+import datetime
 import difflib
 import math
 import os
@@ -42,6 +62,12 @@ import numpy as np
 sys.path.append(os.path.join(os.getcwd(), "..", ".."))
 from PyReconstruct.modules.datatypes import Series
 from PyReconstruct.modules.backend.progress import NullProgressReporter
+
+
+## the log's file name, inside the output zarr
+LOG_NAME = "crop_log.txt"
+## the value written inside the window for a section whose image is missing
+GRAY = 128
 
 
 class CropError(Exception):
@@ -231,45 +257,273 @@ def someNames(names : list, limit : int = 3):
     return shown + ", ..." if len(names) > limit else shown
 
 
-def checkPixelsKept(series : Series, obj_name : str, radius : float, src_group, scales : list):
+def spans(numbers, limit : int = 0):
+    """Section numbers as runs, e.g. "0-24, 220, 289-317"; with a limit, the first few."""
+    runs = []
+    for number in sorted(numbers):
+        if runs and number == runs[-1][1] + 1:
+            runs[-1][1] = number
+        else:
+            runs.append([number, number])
+    text = [f"{first}-{last}" if last > first else f"{first}" for first, last in runs]
+    if limit and len(text) > limit:
+        return ", ".join(text[:limit]) + ", ..."
+    return ", ".join(text)
+
+
+def plural(count : int, word : str):
+    return f"{count} {word}" if count == 1 else f"{count} {word}s"
+
+
+def matchByNumber(sections : dict, scales : list, groups : list):
+    """Match each section to the zarr image whose name starts with its number.
+
+    Some zarrs name their images "000_<code>_grid000.tif" while the series
+    names them "<code>_000.tif". The match is a guess about how the zarr was
+    named, so it is made only when nothing about it is ambiguous: every scale
+    group holds the same names, every name starts with a number, no two names
+    start with the same number, those numbers are exactly the series' section
+    numbers (so an offset, a missing image or an extra one is refused), and no
+    two sections use the same image name, since the crop names its images as
+    the series does.
+
+        Returns:
+            (tuple): ({section number: zarr image name}, "") or (None, the reason
+                there is no match)
+    """
+    names = sorted(groups[0].array_keys())
+    for scale, group in zip(scales[1:], groups[1:]):
+        if sorted(group.array_keys()) != names:
+            return None, f"scale_{scale} holds other image names than scale_{scales[0]}"
+    by_number = {}
+    for name in names:
+        match = re.match(r"\d+", name)
+        if not match:
+            return None, f"{name!r} does not start with a number"
+        number = int(match.group())
+        if number in by_number:
+            return None, f"{by_number[number]!r} and {name!r} start with the same number"
+        by_number[number] = name
+    if set(by_number) != set(sections):
+        return None, (
+            f"the zarr's {plural(len(by_number), 'image')} start with "
+            f"{spans(by_number, 4) or 'no numbers'}, and the series' "
+            f"{plural(len(sections), 'section')} are {spans(sections, 4)}"
+        )
+    seen = set()
+    for data in sections.values():
+        if data["src"] in seen:
+            return None, f"two sections in the series use the image name {data['src']!r}"
+        seen.add(data["src"])
+    return {snum: by_number[snum] for snum in sections}, ""
+
+
+def matchImageNames(series : Series, scales : list, groups : list, by_number : bool = True):
+    """Return ({section number: its image's name in the zarr}, matched by number).
+
+    The series' own names are used when any of them is in the zarr; a section
+    whose name is not there is then a missing image. Otherwise the names come
+    from matchByNumber, and with no match the crop would keep nothing, so it
+    is an error.
+    """
+    sections = series.data["sections"]
+    if any(data["src"] in group for data in sections.values() for group in groups):
+        return {snum: data["src"] for snum, data in sections.items()}, False
+    reason = "--exact-names is set"
+    if by_number:
+        names, reason = matchByNumber(sections, scales, groups)
+        if names:
+            return names, True
+    series_names = [sections[snum]["src"] for snum in sorted(sections)]
+    zarr_names = sorted(groups[0].array_keys())
+    raise CropError(
+        f"No section image in this series is in the zarr. "
+        f"The series names {someNames(series_names)}; "
+        f"the zarr's scale_{scales[0]} has {someNames(zarr_names) or 'no images'}. "
+        f"They cannot be matched by section number: {reason}. "
+        f"Check that the zarr was made for this series."
+    )
+
+
+def checkPixelsKept(obj_name : str, radius : float, scales : list, groups : list, names : dict, traced : dict):
     """Raise if the crop would keep no pixels on any section.
 
-    cropSections skips a section whose image name is not in a scale group, so
-    a zarr made for other images (or named differently) would give an output
-    with no arrays at all. A section keeps pixels when its image is in the
-    zarr, the object is on it, and the object's window is not empty at some
-    scale level. Reads only array shapes, never pixels.
+    A section keeps pixels when the object is on it, its image is in the zarr,
+    and the object's window is not empty at some scale level. Filled and gray
+    sections borrow those windows, so they are not counted. Reads only array
+    shapes, never pixels.
     """
-    groups = [src_group[f"scale_{scale}"] for scale in scales]
-    sections = series.data["sections"]
-    with_image = {
-        snum for snum, data in sections.items()
-        if any(data["src"] in group for group in groups)
-    }
-    if not with_image:
-        series_names = [sections[snum]["src"] for snum in sorted(sections)]
-        zarr_names = sorted(groups[0].array_keys())
-        raise CropError(
-            f"No section image in this series is in the zarr. "
-            f"The series names {someNames(series_names)}; "
-            f"the zarr's scale_{scales[0]} has {someNames(zarr_names) or 'no images'}. "
-            f"Check that the zarr was made for this series."
-        )
-
-    snums = sorted(with_image & series.getObjectSections([obj_name]))
-    for snum, section in series.enumerateSections(show_progress=False, section_numbers=snums):
-        if obj_name not in section.contours:
-            continue
-        bounds = section.contours[obj_name].getBounds()
+    for snum, (bounds, mag) in traced.items():
         for scale, group in zip(scales, groups):
-            if section.src not in group:
+            if names[snum] not in group:
                 continue
-            mag = section.mag * scale
-            t, b, l, r = pixelWindow(bounds, radius, mag, group[section.src].shape)
+            t, b, l, r = pixelWindow(bounds, radius, mag * scale, group[names[snum]].shape)
             if b > t and r > l:
                 return
     raise CropError(
         f"The crop would be empty: {obj_name!r} is inside no section image in the zarr."
+    )
+
+
+class CropPlan:
+    """What cropSections writes for each section, worked out before it writes.
+
+        Attributes:
+            names (dict): section number: its image's name in the zarr
+            by_number (bool): True if names were matched by section number
+            traced (dict): section number: (bounds, mag) of the object, for
+                every section with the object
+            missing (dict): section number: the scale factors whose group
+                lacks its image, for every section missing one
+            untraced (list): sections without the object that have an image
+                at some scale level
+            neighbor (dict): section number: the nearest section with the
+                object and its image at every scale level (ties go to the
+                earlier one), for every section without the object or missing
+                an image; None when no section qualifies
+            fill (bool): fill sections without the object
+            gray (bool): write gray images for missing ones
+    """
+
+    def __init__(self, names, by_number, traced, missing, untraced, neighbor, fill, gray):
+        self.names = names
+        self.by_number = by_number
+        self.traced = traced
+        self.missing = missing
+        self.untraced = untraced
+        self.neighbor = neighbor
+        self.fill = fill
+        self.gray = gray
+
+
+def planCrop(
+        series : Series,
+        obj_name : str,
+        radius : float,
+        src_group,
+        scales : list,
+        fill_untraced : bool = True,
+        gray_missing : bool = True,
+        match_by_number : bool = True):
+    """Match the image names and choose each section's window; raise a
+    CropError when the crop cannot be made. Reads only array shapes."""
+    groups = [src_group[f"scale_{scale}"] for scale in scales]
+    names, by_number = matchImageNames(series, scales, groups, match_by_number)
+
+    traced = {}
+    snums = sorted(series.getObjectSections([obj_name]))
+    for snum, section in series.enumerateSections(show_progress=False, section_numbers=snums):
+        if obj_name in section.contours:
+            traced[snum] = (section.contours[obj_name].getBounds(), section.mag)
+    checkPixelsKept(obj_name, radius, scales, groups, names, traced)
+
+    snums = sorted(series.data["sections"])
+    missing = {}
+    for snum in snums:
+        absent = [scale for scale, group in zip(scales, groups) if names[snum] not in group]
+        if absent:
+            missing[snum] = absent
+    untraced = [
+        snum for snum in snums
+        if snum not in traced and len(missing.get(snum, ())) < len(scales)
+    ]
+    whole = [snum for snum in sorted(traced) if snum not in missing]
+    neighbor = {
+        snum: min(whole, key=lambda k: (abs(k - snum), k)) if whole else None
+        for snum in snums
+        if snum not in traced or snum in missing
+    }
+    return CropPlan(names, by_number, traced, missing, untraced, neighbor,
+                    fill_untraced, gray_missing)
+
+
+def describeCrop(plan : CropPlan, series : Series, obj_name : str, radius : float, scales : list, about : list):
+    """Return (the summary lines, the whole log text).
+
+        Params:
+            about (list): (label, value) pairs for the log's header
+    """
+    sections = series.data["sections"]
+    nearest = f"the nearest section with {obj_name}"
+    no_reference = f"no section with {obj_name} has its image at every scale level"
+    cropped = [snum for snum in plan.traced if snum not in plan.missing]
+    summary = [f"Cropped around {obj_name}: {len(cropped)} of {plural(len(sections), 'section')}."]
+    details = []
+
+    if plan.by_number:
+        first = min(sections)
+        summary.append(
+            f"Image names: no series name is in the zarr, so each section uses the "
+            f"zarr image whose name starts with its section number ({plan.names[first]!r} "
+            f"is section {first}). The crop uses the series' names ({sections[first]['src']!r}, ...)."
+        )
+        details += ["", "Image names (section: zarr image -> crop image)"]
+        details += [
+            f"  {snum}: {plan.names[snum]} -> {sections[snum]['src']}" for snum in sorted(sections)
+        ]
+
+    if plan.untraced:
+        head = f"No {obj_name} on {plural(len(plan.untraced), 'section')} ({spans(plan.untraced)})"
+        if not plan.fill:
+            summary.append(f"{head}: left black (--blank-untraced).")
+        elif plan.neighbor[plan.untraced[0]] is None:
+            summary.append(f"{head}: left black, because {no_reference}.")
+        else:
+            summary.append(f"{head}: each keeps its image inside the window of {nearest}.")
+            details += ["", f"Sections without {obj_name} (section: the section whose window it kept)"]
+            details += [f"  {snum}: {plan.neighbor[snum]}" for snum in plan.untraced]
+
+    if plan.missing:
+        head = f"No image in the zarr for {plural(len(plan.missing), 'section')} ({spans(plan.missing)})"
+        if not plan.gray:
+            summary.append(f"{head}: left out of the crop (--skip-missing).")
+        elif plan.neighbor[min(plan.missing)] is None:
+            summary.append(f"{head}: left out of the crop, because {no_reference}.")
+        else:
+            summary.append(
+                f"{head}: {GRAY} gray inside the window of {nearest}, at that section's image size."
+            )
+            details += ["", "Sections with no image in the zarr "
+                            "(section, series image name: the section whose window and size it used)"]
+            for snum, absent in sorted(plan.missing.items()):
+                only = ""
+                if len(absent) < len(scales):
+                    only = " (" + ", ".join(f"scale_{scale}" for scale in absent) + " only)"
+                details.append(f"  {snum} {sections[snum]['src']}: {plan.neighbor[snum]}{only}")
+
+    if len(summary) == 1:
+        summary.append(f"Every section has {obj_name} and its image in the zarr.")
+
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    header = [
+        f"crop_zarr.py log, written {stamp}",
+        "",
+        *(f"{label}: {value}" for label, value in about),
+        f"Object: {obj_name}",
+        f"Radius: {radius:g} microns",
+        "Scale levels: " + ", ".join(str(scale) for scale in scales),
+        "",
+        "Summary",
+    ]
+    return summary, "\n".join(header + summary + details) + "\n"
+
+
+def writeImage(new_group, scale_grp : str, name : str, data, like):
+    """Write one output image with the chunks and type of the zarr image like."""
+    # Same shape as the source, so traces line up with the full zarr.
+    # For integer and bool images, chunks that are all zero are not
+    # stored. A missing chunk reads as fill_value 0, so the pixels are
+    # the same and a mostly black crop writes far fewer files. Float
+    # images store every chunk: zarr counts a chunk of -0.0 as equal
+    # to the fill value, and skipping it would read back as +0.0.
+    new_group.require_group(scale_grp).create_dataset(
+        name,
+        data=data,
+        chunks=like.chunks,
+        dtype=like.dtype,
+        fill_value=0,
+        write_empty_chunks=like.dtype.kind not in "biu",
+        overwrite=True,
     )
 
 
@@ -281,11 +535,19 @@ def cropSections(
         scales : list,
         new_zarr_fp : str,
         show_progress : bool = True,
-        report : bool = False):
-    """Write the cropped images for every section into new_zarr_fp.
+        report : bool = False,
+        fill_untraced : bool = True,
+        gray_missing : bool = True,
+        match_by_number : bool = True,
+        jser_fp : str = ""):
+    """Write the cropped images for every section, and the log, into new_zarr_fp.
 
         Params:
             report (bool): print progress lines to stdout for a wrapper program
+            fill_untraced, gray_missing, match_by_number (bool): see planCrop
+            jser_fp (str): the series file named in the log
+        Returns:
+            (str): the log's path
     """
     # Make the output folder in one step that fails if the path exists, so
     # an output another program made after resolvePaths checked is never
@@ -294,7 +556,8 @@ def cropSections(
     checkPlainPath(new_zarr_fp, "output")
     if os.path.lexists(new_zarr_fp):
         raise outputExists(new_zarr_fp)
-    checkPixelsKept(series, obj_name, radius, src_group, scales)
+    plan = planCrop(series, obj_name, radius, src_group, scales,
+                    fill_untraced, gray_missing, match_by_number)
     new_zarr_fp = os.path.realpath(new_zarr_fp)
     parent = os.path.dirname(new_zarr_fp)
     os.makedirs(parent, exist_ok=True)
@@ -312,49 +575,64 @@ def cropSections(
     for done, (snum, section) in enumerate(series.enumerateSections(
         show_progress=show_progress, message="Cropping images..."
     ), start=1):
-        # the section bounds are in microns; section.mag is the scale_1 resolution
-        if obj_name in section.contours:
-            bounds = section.contours[obj_name].getBounds()
-        else:
-            bounds = None  # blank image on this section
+        name = plan.names[snum]
+        nearest = plan.neighbor.get(snum)
 
-        # crop the image at every scale level
+        # crop the image at every scale level; the output keeps the series' name
         for scale in scales:
             scale_grp = f"scale_{scale}"
-            if section.src not in src_group[scale_grp]:
-                continue
-            image = src_group[scale_grp][section.src]
-            cropped = np.zeros(image.shape, dtype=image.dtype)
-
-            if bounds is not None:
-                # resolution of this scale level (scale_1 mag scaled by factor)
-                mag = section.mag * scale
-                t, b, l, r = pixelWindow(bounds, radius, mag, image.shape)
-                cropped[t:b, l:r] = image[t:b, l:r]
-
-            # Same shape as the source, so traces line up with the full zarr.
-            # For integer and bool images, chunks that are all zero are not
-            # stored. A missing chunk reads as fill_value 0, so the pixels are
-            # the same and a mostly black crop writes far fewer files. Float
-            # images store every chunk: zarr counts a chunk of -0.0 as equal
-            # to the fill value, and skipping it would read back as +0.0.
-            out = new_group.require_group(scale_grp)
-            out.create_dataset(
-                section.src,
-                data=cropped,
-                chunks=image.chunks,
-                dtype=image.dtype,
-                fill_value=0,
-                write_empty_chunks=image.dtype.kind not in "biu",
-                overwrite=True,
-            )
+            group = src_group[scale_grp]
+            if name in group:
+                image = group[name]
+                cropped = np.zeros(image.shape, dtype=image.dtype)
+                # the window of the object here, or else of the nearest section with it
+                if snum in plan.traced:
+                    bounds = plan.traced[snum][0]
+                elif plan.fill and nearest is not None:
+                    bounds = plan.traced[nearest][0]
+                else:
+                    bounds = None
+                if bounds is not None:
+                    # bounds are in microns; section.mag is the scale_1 resolution
+                    t, b, l, r = pixelWindow(bounds, radius, section.mag * scale, image.shape)
+                    cropped[t:b, l:r] = image[t:b, l:r]
+                writeImage(new_group, scale_grp, section.src, cropped, image)
+            elif plan.gray and nearest is not None:
+                # no image: gray in the nearest section's window, at its size
+                like = group[plan.names[nearest]]
+                bounds, mag = plan.traced[nearest]
+                t, b, l, r = pixelWindow(bounds, radius, mag * scale, like.shape)
+                gray = np.zeros(like.shape, dtype=like.dtype)
+                gray[t:b, l:r] = GRAY
+                writeImage(new_group, scale_grp, section.src, gray, like)
 
         if report:
             print(f"Cropped section {snum}", flush=True)
             print(f"@@PROGRESS@@ STEP {done} {total}", flush=True)
 
+    # written last, so a log in the output means the crop finished
+    about = [("Series", jser_fp or series.jser_fp),
+             ("Source zarr", getattr(src_group.store, "path", "")),
+             ("Output zarr", new_zarr_fp)]
+    summary, text = describeCrop(plan, series, obj_name, radius, scales, about)
+    log_fp = os.path.join(new_zarr_fp, LOG_NAME)
+    with open(log_fp, "w", encoding="utf-8") as log:
+        log.write(text)
+    for line in summary:
+        print(line, flush=True)
+    print(f"Log: {log_fp}", flush=True)
+    return log_fp
 
-def cropZarr(series_fp : str, obj_name : str, radius : float, src_dir : str = "", out_fp : str = ""):
+
+def cropZarr(
+        series_fp : str,
+        obj_name : str,
+        radius : float,
+        src_dir : str = "",
+        out_fp : str = "",
+        fill_untraced : bool = True,
+        gray_missing : bool = True,
+        match_by_number : bool = True):
     """Crop the zarr file for a series.
 
         Params:
@@ -367,6 +645,8 @@ def cropZarr(series_fp : str, obj_name : str, radius : float, src_dir : str = ""
                 names), just at a different location.
             out_fp (str): optional output zarr path; if blank,
                 <stem>_<obj>_crop<sep>zarr next to the source
+            fill_untraced, gray_missing, match_by_number (bool): see the
+                module docstring; each is on unless turned off
         Returns:
             (str): the output zarr path
     """
@@ -376,7 +656,11 @@ def cropZarr(series_fp : str, obj_name : str, radius : float, src_dir : str = ""
     try:
         checkObject(series, obj_name)
         out_fp, src_group, scales = resolvePaths(series, obj_name, src_dir, out_fp)
-        cropSections(series, obj_name, radius, src_group, scales, out_fp)
+        cropSections(
+            series, obj_name, radius, src_group, scales, out_fp,
+            fill_untraced=fill_untraced, gray_missing=gray_missing,
+            match_by_number=match_by_number, jser_fp=os.path.realpath(series_fp),
+        )
     finally:
         series.close()
     return out_fp
@@ -406,6 +690,15 @@ def parseArgs(argv : list):
                         help="the source zarr (default: the location stored in the series)")
     parser.add_argument("--out", default="",
                         help="the output zarr (default: <stem>_<object>_crop.zarr, -zarr or _zarr beside the source, matching it)")
+    parser.add_argument("--blank-untraced", action="store_true",
+                        help="leave sections without the object black, instead of keeping "
+                        "their image inside the nearest traced section's window")
+    parser.add_argument("--skip-missing", action="store_true",
+                        help="write no image for a section whose image is not in the zarr, "
+                        f"instead of {GRAY} gray in the nearest traced section's window")
+    parser.add_argument("--exact-names", action="store_true",
+                        help="when no image name in the series is in the zarr, stop, instead "
+                        "of matching images by the section number their zarr names start with")
     args = parser.parse_args(argv)
 
     missing = [
@@ -451,6 +744,10 @@ def runCli(args):
         cropSections(
             series, args.object, args.radius, src_group, scales, out_fp,
             show_progress=False, report=True,
+            fill_untraced=not args.blank_untraced,
+            gray_missing=not args.skip_missing,
+            match_by_number=not args.exact_names,
+            jser_fp=os.path.realpath(args.jser),
         )
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
