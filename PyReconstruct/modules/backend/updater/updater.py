@@ -114,21 +114,15 @@ def other_flavor_url(timeout=6):
     * From the Dev build the answer is GitHub's own ``releases/latest``
       redirect, which always lands on the newest stable release. No API call.
     * From the stable build there is no such redirect for pre-releases, so the
-      newest nightly is looked up through the same release list the updater
-      reads (drafts and the rolling tag excluded, exactly as ``pick_release``
-      does). Any failure -- offline, rate-limited, no nightly published yet --
+      newest nightly is picked by ``pick_release`` from the same release list
+      the updater reads. Any failure -- offline, rate-limited, no nightly published yet --
       falls back to the releases index, which lists everything.
     """
     base = f"https://github.com/{GITHUB_REPO}/releases"
     if pinned_channel() == "prerelease":
         return f"{base}/latest"
     try:
-        rels = [r for r in (fetch_releases(timeout=timeout) or []) if not r.get("draft")]
-        newest_pre = next(
-            (r for r in rels
-             if r.get("prerelease") and r.get("tag_name") != ROLLING_TAG),
-            None,
-        )
+        newest_pre = pick_release(fetch_releases(timeout=timeout), "prerelease")
         if newest_pre and newest_pre.get("html_url"):
             return newest_pre["html_url"]
     except Exception:
@@ -187,8 +181,9 @@ def pick_release(releases, channel):
     """Pick the release for a channel. Strict: nothing crosses channels.
 
     release    -> newest non-prerelease, non-draft release. Never a pre-release.
-    prerelease -> newest release flagged ``prerelease`` (drafts excluded),
-                  EXCLUDING any release under ``ROLLING_TAG``. Never a stable
+    prerelease -> the release flagged ``prerelease`` (drafts excluded) whose
+                  tag is the highest version, EXCLUDING any release under
+                  ``ROLLING_TAG``. Never a stable
                   release, even when the stable one is newer: the Dev app is the
                   only build on this channel, and a stable installer offered to
                   it installs a second app beside it instead of updating it.
@@ -196,8 +191,10 @@ def pick_release(releases, channel):
                   caller reads that as "no update", not as an error.
 
     The nightly pipeline publishes PEP 440 dev versions
-    (``v1.24.0.dev20260928``), each flagged ``prerelease=true`` by CI, so the
-    newest such release is the current nightly. Older test builds were
+    (``v1.24.0.dev202610081840``), each flagged ``prerelease=true`` by CI, so the
+    highest such version is the current nightly. It is found by comparing
+    tags, not by taking the first in the feed: GitHub's order is not version
+    order, and two nightlies cut the same day can be listed either way round. Older test builds were
     ``vX.Y.Z-beta-N``; they parse the same way and sort below any dev version
     of the next release. The rolling Developer build that once used
     ``ROLLING_TAG`` is gone, but the exclusion stays as defense in depth:
@@ -212,13 +209,27 @@ def pick_release(releases, channel):
     channel = normalize_channel(channel)
     rels = [r for r in (releases or []) if not r.get("draft")]
     if channel == "prerelease":
-        return next(
-            (r for r in rels
-             if r.get("prerelease") and r.get("tag_name") != ROLLING_TAG),
-            None,
+        return _highest_tag(
+            r for r in rels
+            if r.get("prerelease") and r.get("tag_name") != ROLLING_TAG
         )
     # release (stable)
     return next((r for r in rels if not r.get("prerelease")), None)
+
+
+def _highest_tag(releases):
+    """The release whose tag is the highest version, or None if there is none.
+
+    A tag that does not parse ranks below every tag that does. Among those,
+    and between equal versions, the one listed first wins, so a feed with no
+    parseable tag keeps GitHub's order.
+    """
+    best, best_v = None, None
+    for r in releases:
+        v = _tag_version(r)
+        if best is None or (v is not None and (best_v is None or v > best_v)):
+            best, best_v = r, v
+    return best
 
 
 def _tag_version(release):
@@ -426,22 +437,22 @@ def _appimage_release(releases, channel):
     """The release install-appimage.sh would install, and its AppImage.
 
     Stable takes the newest stable release only, and nothing when it has no
-    AppImage, as the script does. Nightly takes the newest nightly that has
-    one. Returns ``(release, asset)``; ``release`` is the channel's newest
-    even when ``asset`` is None, so the log can name it.
+    AppImage, as the script does. Nightly takes the highest nightly version
+    that has one. Returns ``(release, asset)``; ``release`` is the channel's
+    newest even when ``asset`` is None, so the log can name it.
     """
     dev = channel == "prerelease"
     newest = pick_release(releases, channel)
     if not dev:
         return newest, _appimage_asset(newest, dev=False)
-    for r in releases or []:
-        if r.get("draft") or not r.get("prerelease") or r.get("tag_name") == ROLLING_TAG:
-            continue
-        if not _NIGHTLY_TAG_RE.fullmatch(r.get("tag_name") or ""):
-            continue
-        asset = _appimage_asset(r, dev=True)
-        if asset:
-            return r, asset
+    nightly = _highest_tag(
+        r for r in releases or []
+        if not r.get("draft") and r.get("prerelease") and r.get("tag_name") != ROLLING_TAG
+        and _NIGHTLY_TAG_RE.fullmatch(r.get("tag_name") or "")
+        and _appimage_asset(r, dev=True)
+    )
+    if nightly:
+        return nightly, _appimage_asset(nightly, dev=True)
     return newest, None
 
 
