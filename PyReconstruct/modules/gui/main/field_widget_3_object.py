@@ -432,12 +432,16 @@ class FieldWidgetObject(FieldWidgetTrace):
 
         self.mainwindow.saveAllData()
 
+        series = self.series
         ambiguous = []
-        repaired = self.series.repairSelfCrossingTraces(
+        repaired = series.repairSelfCrossingTraces(
             records,
             series_states=self.series_states,
             ambiguous=ambiguous,
         )
+        if self.series is not series:
+            # opened at the last progress update (see combineDuplicateTraces)
+            return []
 
         if repaired:
             self.table_manager.updateObjects({r["name"] for r in repaired})
@@ -472,12 +476,16 @@ class FieldWidgetObject(FieldWidgetTrace):
         # persist field edits to section data before reloading sections
         self.mainwindow.saveAllData()
 
+        series = self.series
         ambiguous = []
-        deleted = self.series.deleteMalformedTraces(
+        deleted = series.deleteMalformedTraces(
             records,
             series_states=self.series_states,
             ambiguous=ambiguous,
         )
+        if self.series is not series:
+            # opened at the last progress update (see combineDuplicateTraces)
+            return []
 
         if deleted:
             self.table_manager.updateObjects({r["name"] for r in deleted})
@@ -488,6 +496,9 @@ class FieldWidgetObject(FieldWidgetTrace):
             (r["name"], r["section"], r.get("index"), r["match"])
             for r in ambiguous
         ])
+        if self.series is not series:
+            # opened under the notice: the next one names the series left
+            return []
 
         missed = len(records) - len(deleted) - len(ambiguous)
         if missed:
@@ -604,11 +615,16 @@ class FieldWidgetObject(FieldWidgetTrace):
                 "\n\n" + "\n".join(f"  {n}" for n in sorted(locked_names))
                 + "\n\n" + advice
             )
+            if self.series is not series:
+                # opened under the notice: the rest name the series left
+                return []
 
         notifyAmbiguousTraces([
             (m["name"], m["section"], m.get("index"), m["match"])
             for m in ambiguous
         ], verb="combine")
+        if self.series is not series:
+            return []
 
         # a row can go uncombined for its lock (said above), for identical
         # traces it cannot tell apart (said just above), or because a trace

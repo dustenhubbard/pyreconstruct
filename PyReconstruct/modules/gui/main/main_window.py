@@ -4244,6 +4244,10 @@ class MainWindow(QMainWindow):
 
         series = self.series
         candidates = series.findSelfCrossingTraces()
+        if self.series is not series:
+            # a .jser opened from the Finder at the scan's last progress
+            # update: the records name the series left (see _closeCleanupLists)
+            return
         if not candidates:
             notify("No self-crossing traces found.")
             return
@@ -4271,6 +4275,9 @@ class MainWindow(QMainWindow):
                 return
             if confirmed:
                 repaired = self.field.repairSelfCrossingContours(safe)
+                if self.series is not series:
+                    # the same at the repair's last progress update
+                    return
                 if repaired:
                     # a summary window with copy and save-as-CSV, not a
                     # message (his ask, 2026-08-26): a lab keeps a record of
@@ -4311,6 +4318,10 @@ class MainWindow(QMainWindow):
 
         series = self.series
         candidates = series.findEmptyTraces(include_locked=False)
+        if self.series is not series:
+            # a .jser opened from the Finder at the scan's last progress
+            # update: the records name the series left (see _closeCleanupLists)
+            return
         if not candidates:
             notify("No empty traces found.")
             return
