@@ -262,9 +262,31 @@ default_settings = {
     "scale_bar_mode": "screen_fraction",  # "screen_fraction" | "micron_pinned"  # MFO
     "scale_bar_width": 25,  # displayed as this percentage of the screen (min should be 20)
     "scale_bar_length_um": 5.0,  # microns; used in "micron_pinned" mode  # MFO
+    "scale_bar_thickness": 6,  # pixels, the bar alone; see clampScaleBarThickness  # MFO
     "show_scale_bar_text": True,
     "show_scale_bar_ticks": True,
 }
+
+# The scale bar's thickness in pixels.  25 is the bar as it was drawn before the
+# option existed (the lower half of a 50 px widget); 3 is the thinnest that
+# still has a black line inside its 1 px white edge.
+MIN_SCALE_BAR_THICKNESS = 3
+MAX_SCALE_BAR_THICKNESS = 25
+
+
+def clampScaleBarThickness(value) -> int:
+    """A stored thickness the bar can draw: an int inside the slider's range.
+
+    The options dialog can only store a value inside the range, but the key is
+    global and a store can be edited by hand, so the bar clamps what it reads
+    rather than trusting it.  Anything that is not a number gets the default.
+    """
+    try:
+        value = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default_settings["scale_bar_thickness"]
+    return max(MIN_SCALE_BAR_THICKNESS, min(MAX_SCALE_BAR_THICKNESS, value))
+
 
 # The range of real-world lengths a micron-pinned scale bar can be pinned to:
 # a picometre to a metre, against specimen sections measured in tens of microns.

@@ -52,7 +52,11 @@ def test_every_group_offers_its_own_hide(qapp, main_window, gui_dialogs):
     for widget, label in cases:
         menu = _menu_for(palette, widget)
         assert menu is not None, f"no hide menu on {label}"
-        assert [a.text() for a in menu.actions()] == [label]
+        texts = [a.text() for a in menu.actions() if not a.isSeparator()]
+        # the hide item is last; the scale bar lists its own items above it
+        assert texts[-1] == label
+        if widget is not palette.sb:
+            assert texts == [label]
         menu.hide()
 
 
@@ -60,7 +64,7 @@ def test_the_hide_action_actually_hides_that_group(qapp, main_window, gui_dialog
     palette = main_window.mouse_palette
     assert not palette.sb_hidden
     menu = _menu_for(palette, palette.sb)
-    menu.actions()[0].trigger()
+    menu.actions()[-1].trigger()
     qapp.processEvents()
     assert palette.sb_hidden
     assert palette.sb.isHidden()
@@ -80,7 +84,7 @@ def test_arming_is_idempotent_across_rebuilds(qapp, main_window, gui_dialogs):
 
     menu = _menu_for(palette, palette.sb)
     assert menu is not None
-    assert len(menu.actions()) == 1
+    assert [a.text() for a in menu.actions()].count("Hide the scale bar") == 1
     menu.hide()
 
 
@@ -92,7 +96,7 @@ def test_view_checkmarks_follow_a_right_click_hide(qapp, main_window, gui_dialog
     assert main_window.togglesb_act.isChecked()
 
     menu = _menu_for(palette, palette.sb)
-    menu.actions()[0].trigger()          # "Hide the scale bar"
+    menu.actions()[-1].trigger()          # "Hide the scale bar"
     qapp.processEvents()
     assert palette.sb_hidden
 

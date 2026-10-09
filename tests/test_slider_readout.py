@@ -64,12 +64,14 @@ def _series(tmp_path):
     return series
 
 
-def _slider(dlg, widget_name):
-    """The one SliderWidget inside a named option widget, via the real dialog."""
+def _slider(dlg, widget_name, index=0):
+    """A SliderWidget inside a named option widget, via the real dialog. The
+    scale bar page has two: the size (index 0) and the thickness (index 1)."""
     w = dlg.all_widgets[widget_name]
     sliders = [f.widget for f in w.inputs if f.type == "slider"]
-    assert len(sliders) == 1, (widget_name, sliders)
-    return sliders[0]
+    assert len(sliders) == (2 if widget_name == "scale_bar" else 1), (
+        widget_name, sliders)
+    return sliders[index]
 
 
 # --- the widget itself -------------------------------------------------------
@@ -388,6 +390,6 @@ def test_every_options_slider_has_ticks_and_a_readout(qapp, tmp_path):
                 assert s.slider.tickPosition() == QSlider.TicksBelow, name
                 assert s.slider.tickInterval() > 0, name
                 assert s.text(), name
-        assert found == 3, found     # 3D detail, scale bar, CPU usage
+        assert found == 4, found     # 3D detail, scale bar size and thickness, CPU usage
     finally:
         dlg.deleteLater()
