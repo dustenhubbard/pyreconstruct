@@ -11,10 +11,10 @@ ladder went to 1, 2, 5 per decade, the bar's thickness became an option (6 px
 here, the default), and the ticks and their labels moved below the bar and
 became outlined so that they read on a light image as well as a dark one.
 
-What goes into the digest is everything about the drawn bar that does not
-depend on the font: the widget's size, every `drawRect` (the bar, its inner
-fill and the tick marks), every `drawLine`, the label string, and the tick
-label strings. Glyph positions are computed from `QFontMetrics.boundingRect`,
+The digest holds everything about the drawn bar that does not depend on the
+font.  That is the widget's size, every `drawRect` (the bar, its inner fill
+and the tick marks), every `drawLine`, the label string, and the tick label
+strings. Glyph positions are computed from `QFontMetrics.boundingRect`,
 so they would make the digest depend on which fonts the machine has; the
 strings themselves do not. Which tick labels are printed does depend on the
 font, because labels too close to fit are thinned out by their measured width,

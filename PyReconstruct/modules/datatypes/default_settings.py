@@ -276,12 +276,11 @@ DEFAULT_SCALE_BAR_THICKNESS = 6  # pixels
 
 
 def clampScaleBarThickness(value) -> int:
-    """A stored thickness the bar can draw: an int inside the slider's range.
+    """A stored thickness the bar can draw, as an int inside the slider's range.
 
-    The options dialog can only store a value inside the range, but the key is
-    global and a store can be edited outside PyReconstruct, so the bar clamps
-    what it reads rather than trusting it.  Anything that is not a number gets
-    the default.
+    The options dialog can only store a value inside the range.  The key is
+    global, and a store can be edited outside PyReconstruct.  So the bar clamps
+    the value it reads.  Anything that is not a number gets the default.
     """
     try:
         value = int(value)

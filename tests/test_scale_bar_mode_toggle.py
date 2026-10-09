@@ -723,9 +723,9 @@ def test_the_palette_builds_a_pinned_bar_when_asked(
     collected = _install_spies(monkeypatch)
     pix_width = main_window.field.pixmap_dim[0]
     seen = []
-    # the window widths whose zoom keeps a 5 µm bar inside its legible range:
-    # the default 25 % of a 560 px field is 140 px of room, and with a 40 px
-    # floor that puts the window at 20 to 70 µm
+    # the window widths whose zoom keeps a 5 µm bar inside its legible range.
+    # The default 25 % of a 560 px field is 140 px of room.  With a 40 px
+    # floor, that puts the window at 20 to 70 µm
     for window_um in (20.0, 30.0, 50.0, 60.0):
         series.window[2] = window_um
         palette.setScale()

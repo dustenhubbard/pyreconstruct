@@ -1,14 +1,14 @@
 """The scale bar as the zoom changes: its size cap, live follow, and a typed length.
 
-Three behaviors, each tested through the palette and bar widgets:
+The palette and bar widgets are used to test three behaviors.
 
 * **The cap.** In both modes the drawn bar is never wider than the "Scale bar
   size" share of the field. A micron-pinned bar used to be allowed the full
   field width, so a 5 µm bar could stretch nearly edge to edge before it
   stepped down a decade.
 * **Live follow.** A pinch, Ctrl+scroll or right-drag zoom stretches a copy of
-  the field and only redraws on release. `panzoomMove` now tells the bar the
-  scale of the stretched view, without a field redraw.
+  the field and only redraws on release. `panzoomMove` now sends the scale of
+  the stretched view to the bar, without a field redraw.
 * **A length you type.** The bar's right-click menu can set a length for a
   figure. It is not stored, it may grow past the size option up to the field
   width, and the label always matches what the bar measures.
@@ -83,9 +83,10 @@ def _set_window(main_window, microns_per_px):
 
 @pytest.mark.parametrize("micron_length", [5.0, 2.0, 0.5, 3.7, 12.0])
 def test_a_pinned_bar_stays_inside_its_size_and_keeps_its_number(micron_length):
-    """Over eight decades of zoom, with the default 25 % of the field as room:
-    never wider than the room, never a different mantissa, and the user's own
-    length wherever it fits between the 40 px floor and the room."""
+    """Over eight decades of zoom, the default 25 % of the field is the room.
+    The bar is never wider than the room and never has a different mantissa.
+    It is the user's own length wherever that fits between the 40 px floor and
+    the room."""
     for scale in _zoom_sweep():
         real_len, pix_len = pinnedLength(micron_length, scale, CAP)
         assert 0 < pix_len <= CAP, (micron_length, scale, pix_len)
@@ -222,8 +223,9 @@ def _answer(monkeypatch, *responses):
 
 
 def _stored(series):
-    """Everything a setting can be written to: the settings store (both
-    scopes), the series' own options, and whether the series needs saving."""
+    """Everything a setting can be written to.  That is the settings store
+    (both scopes), the series' own options, and whether the series needs
+    saving."""
     flat = {("store", scope, key): value
             for scope, values in series._settings_store._data.items()
             for key, value in values.items()}
@@ -322,8 +324,9 @@ def test_a_typed_length_lasts_until_another_series_opens(
     main_window, local_series_settings, monkeypatch, tmp_path
 ):
     """The length is kept through Save, `Series > Options...` with OK or Cancel,
-    and a thickness change in it, as the dialog and the changelog say. Only
-    opening another series ends it."""
+    and a thickness change in it, as the dialog and the changelog say. Opening
+    another series ends it. Choosing `Size the scale bar automatically` also
+    ends it."""
     import shutil
 
     from PySide6.QtWidgets import QDialog
@@ -758,8 +761,8 @@ def test_no_dialog_when_no_length_can_be_drawn(
 def test_the_whole_bar_stays_on_the_field_wherever_it_was_left(
     main_window, local_series_settings, monkeypatch, sb_x, bar
 ):
-    """A bar saved near the right edge used to run off it: a 560 px bar typed
-    in at x=544 of a 560 px field showed 16 px. It now moves left as far
+    """A bar saved near the right edge used to extend past it. A 560 px bar
+    typed in at x=544 of a 560 px field showed 16 px. It now moves left as far
     as it must, and the position the user left it at is kept, so a shorter
     bar goes back there."""
     series = local_series_settings(main_window)

@@ -17,10 +17,11 @@ from .buttons import MoveableButton
 #
 # Each entry is (mantissa, subdivisions) and repeats once per decade, so 2.0
 # covers 0.2 µm, 2 µm, 20 µm and so on.  The subdivisions are chosen per entry
-# so every tick label is round as well: 2 µm in 4 gives 0.5 µm ticks, where the
-# historic fixed 5 would give 0.4 µm.  Where more than one divisor qualifies,
-# the one nearest the historic 5 is used.  A micron-pinned bar can be any of these
-# lengths, which is why the table is wider than the ladder below.
+# so every tick label is round as well.  For example, 2 µm in 4 gives 0.5 µm
+# ticks, where the historic fixed 5 would give 0.4 µm.  Where more than one
+# divisor qualifies, the one nearest the historic 5 is used.  A micron-pinned
+# bar can be any of these lengths, which is why the table is wider than the
+# ladder below.
 TICK_SUBDIVISIONS = (
     (1.0, 5),    # ticks every 0.2
     (1.5, 3),    # ticks every 0.5
@@ -38,13 +39,13 @@ TICK_SUBDIVISIONS = (
 
 # The ladder of lengths the screen-fraction bar is allowed to be.
 #
-# The bar is never drawn at the widget's full width: it is cut back to the
-# longest "nice" length that still fits, so that the number printed under it is
+# The bar is never drawn at the widget's full width.  It is cut back to the
+# longest "nice" length that still fits.  The number printed under it is then
 # a round value a reader can trust on a figure.  The ladder is 1, 2, 5 per
-# decade, the steps a map's scale bar takes.  Consecutive rungs are at most
+# decade, the same steps a map's scale bar uses.  Consecutive rungs are at most
 # 2.5x apart, so the drawn bar always fills between 40 % and 100 % of its
-# widget: as the zoom changes the bar's width follows it, and when the bar
-# would outgrow the widget the label steps to the next rung down.
+# widget.  As the zoom changes, the bar's width changes with it.  When the bar
+# would be wider than the widget, the label changes to the next rung down.
 NICE_LENGTHS = tuple(
     rung for rung in TICK_SUBDIVISIONS if rung[0] in (1.0, 2.0, 5.0, 10.0)
 )
@@ -96,9 +97,9 @@ MIN_PINNED_PIXELS = 40
 # How far a bar's width may fall outside `min_pix` to `max_pix`, as a fraction
 # of the bound, and still count as inside.
 #
-# A length typed from the range the dialog shows can land slightly outside it in
-# floating point: 0.011 µm at 0.000275 µm/px is 39.99999999999999 px, not 40.
-# `pinnedLength` tests widths through `tooNarrow` and `tooWide`, and
+# A length typed from the range the dialog shows can fall slightly outside it in
+# floating point.  For example, 0.011 µm at 0.000275 µm/px is 39.99999999999999
+# px, not 40.  `pinnedLength` tests widths with `tooNarrow` and `tooWide`, and
 # `drawableLengths` widens its ends by this same tolerance, so every length the
 # range offers draws at that length.
 PIXEL_TOLERANCE = 1e-9
@@ -135,8 +136,8 @@ def pinnedLength(micron_length, scale, max_pix, min_pix=MIN_PINNED_PIXELS):
 
     This deliberately does not reuse `NICE_LENGTHS`.  That ladder exists to snap
     a screen-fraction bar down to a round number, which is a different job: it
-    would replace the user's chosen length rather than rescale it.  What the two
-    modes share is the cap: `max_pix` is the "Scale bar size" share of the
+    would replace the user's chosen length rather than rescale it.  The two
+    modes share one cap.  `max_pix` is the "Scale bar size" share of the
     field, the same limit a screen-fraction bar has.
 
         Params:
@@ -196,12 +197,12 @@ def drawableLengths(scale, max_pix, min_pix=MIN_PINNED_PIXELS):
     """The shortest and longest lengths `pinnedLength` draws exactly.
 
     Exactly means unshifted. The bar is the length asked for, so its label is
-    that length too.  That takes two conditions: a width between `min_pix` and
-    `max_pix` at this zoom, and a length that `validPinnedLength` accepts.
-    The range is the overlap of the two.  Both ends are rounded inward to
-    three figures, so either can be typed back and still fall inside.  Inside
-    means what `pinnedLength` takes it to mean: `tooNarrow` and `tooWide`,
-    whose tolerance the rounding starts from.
+    that length too.  That needs two conditions.  The width is between
+    `min_pix` and `max_pix` at this zoom.  The length is one that
+    `validPinnedLength` accepts.  The range is the overlap of the two.  Both
+    ends are rounded inward to three figures, so either can be typed back and
+    still fall inside.  Inside is decided by `tooNarrow` and `tooWide`, the
+    same tests `pinnedLength` uses.  The rounding starts from their tolerance.
 
         Params:
             scale (float): real-world units per screen pixel
@@ -210,9 +211,9 @@ def drawableLengths(scale, max_pix, min_pix=MIN_PINNED_PIXELS):
         Returns:
             (float, float): the range in real-world units.  The first is
                             larger than the second when there is no length
-                            to draw: a field narrower than `min_pix`, or a
-                            zoom so far out or in that the field has no
-                            length a bar may be.
+                            to draw.  This happens when the field is narrower
+                            than `min_pix`, or when the zoom is so far out or
+                            in that the field has no length a bar may be.
     """
     if not (scale > 0 and max_pix > 0):
         return math.inf, 0.0
@@ -277,12 +278,12 @@ def formatLength(value):
     return text
 
 
-# The widget is stacked top to bottom: the label, the bar, the tick marks, the
-# tick labels.  Only the bar's own thickness is an option; the rest is the room
-# the text needs, in pixels, and is left out when its text or ticks are off so
-# that no empty grab area covers part of the field.
+# The widget is stacked top to bottom.  The parts are the label, the bar, the
+# tick marks and the tick labels.  Only the bar's own thickness is an option.
+# The rest is the room the text needs, in pixels.  It is left out when its text
+# or ticks are off, so that no empty grab area covers part of the field.
 LABEL_ROOM = 22       # the 12 pt bold label, centered in this band
-TICK_LENGTH = 5       # how far a tick mark hangs below the bar
+TICK_LENGTH = 5       # how far a tick mark extends below the bar
 TICK_LABEL_ROOM = 18  # the small tick labels, centered in this band
 LABEL_SIZE = 12       # the label's font size
 TICK_LABEL_SIZE = 10  # the tick labels' font size
@@ -331,7 +332,7 @@ class ScaleBar(MoveableButton):
         self._fitPinned()
 
     def _layout(self):
-        """The vertical positions: (bar top, tick label top, height)."""
+        """The vertical positions, as (bar top, tick label top, height)."""
         series = self.manager.series
         draw_text = series.getOption("show_scale_bar_text")
         draw_ticks = series.getOption("show_scale_bar_ticks")
@@ -405,7 +406,7 @@ class ScaleBar(MoveableButton):
     def currentLength(self):
         """The length the bar draws at the current zoom, and its tick count."""
         if self._pinned():
-            # a fixed real-world length: the pixels follow the zoom
+            # a fixed real-world length, so the pixel width follows the zoom
             real_len, _pix_len, subdivs = self.pinnedRender()
         else:
             # the longest nice length that fits the widget, and how finely to tick it
@@ -449,12 +450,12 @@ class ScaleBar(MoveableButton):
 
         white, black = QColor(255, 255, 255), QColor(0, 0, 0)
         painter = QPainter(self)
-        # no pen: the outline is the white rectangle's own edge, so the bar
+        # no pen.  The outline is the white rectangle's own edge, so the bar
         # looks the same whatever the theme's text color is
         painter.setPen(Qt.NoPen)
 
-        # draw the scale bar: a black fill inside a 1 px white edge, which
-        # reads on a light image and a dark one alike
+        # draw the scale bar as a black fill inside a 1 px white edge, which
+        # can be seen on a light image and on a dark one
         r_x = 0
         r_y = bar_top
         r_w = pix_len
@@ -480,14 +481,15 @@ class ScaleBar(MoveableButton):
                 outlined=True
             )
 
-        # draw ticks if requested: each hangs below the bar, black with a
-        # white edge like the bar, and its label is outlined like the main one
+        # draw ticks if requested.  Each one extends below the bar, black
+        # with a white edge like the bar, and its label is outlined like the
+        # main one
         if draw_ticks:
             small_font = QFont("Courier New")  # used for ticks
             small_font.setPixelSize(TICK_LABEL_SIZE)
             small_font.setBold(True)
-            # on a short bar the tick labels would run into each other, so
-            # only every `step`-th tick is labeled, as few as keep them apart
+            # on a short bar the tick labels would overlap, so only every
+            # `step`-th tick is labeled, as few as keep them apart
             step = 1
             if draw_text and subdivs > 1:
                 metrics = QFontMetrics(outlinedFont(TICK_LABEL_SIZE))

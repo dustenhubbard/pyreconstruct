@@ -1207,10 +1207,10 @@ class MousePalette():
         """Place the scale bar.
 
         The bar can be wider than the room to the right of where it was
-        left: a long length you typed, a pinned bar the zoom has grown, or
-        a size near 100 percent. It is then drawn as far left as it must be
-        to fit in the field. The saved position is kept, so a shorter bar goes back
-        to it.
+        left. This happens with a long length you typed, a pinned bar the zoom
+        has grown, or a size near 100 percent. It is then drawn as far left
+        as it must be to fit in the field. The saved position is kept, so a
+        shorter bar goes back to it.
         """
         x, y = self.getButtonCoords("sb")
         field = self.mainwindow.field
