@@ -480,8 +480,10 @@ name used across the whole series. Names are normalized on read: leading and tra
 whitespace is stripped, runs of internal whitespace collapse to a single `_`, and each
 comma becomes `_`. If normalizing two distinct keys produces the same name, their trace
 lists are concatenated. Before it unpacks anything, PyReconstruct lists those names and
-asks; Cancel leaves the file untouched. A renamed object keeps its `obj_attrs` entry,
-its group memberships and its place in `host_tree`, which follow it to the new name.
+asks; Cancel leaves the file untouched. A renamed object keeps its group memberships,
+its place in `host_tree`, and its `obj_attrs` entry when that entry holds at least one
+attribute; each follows it to the new name. An empty entry is dropped, so renaming
+`{"obj_attrs": {"my object": {}}}` gives `{"obj_attrs": {}}`.
 Where several names merge, groups and hosts are combined, and one name's attributes win,
 with any attribute it lacks filled in from the others.
 A `host_tree` entry stored as a bare string (see
@@ -677,8 +679,9 @@ length as a generated one. The reader tries content-derived candidates in a fixe
 order and takes the first candidate no flag in that section holds yet, so legacy flags
 with identical content in one section get distinct ids in a fixed order. There is no
 cap on how many it tries: however many identical legacy flags a section holds, each
-gets the same id on every open, in every copy of the file, with no save needed, and no
-two flags in the section share an id.
+gets the same id on every open, in every copy of the file, with no save needed, and
+never an id another flag in the section already holds. Ids already stored are not
+repaired: two 7-element rows that share an id keep it.
 
 ### 4.3 Comment rows
 
