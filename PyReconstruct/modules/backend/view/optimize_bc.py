@@ -150,7 +150,7 @@ def optimizeSectionBC(section : Section, desired_mean=128, desired_std=60, windo
                 fp = os.path.join(
                     section.series.src_dir,
                     scale_zg,
-                    section.src
+                    section.zarr_key
                 )
                 image = zarr.open(fp, "r")[:]
             cv2.resize(image, (1024, 1024))

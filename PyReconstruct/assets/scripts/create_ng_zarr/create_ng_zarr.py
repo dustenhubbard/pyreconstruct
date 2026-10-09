@@ -96,9 +96,8 @@ def image_size(section):
     ## TODO: Validate Zarr container more appropriately
     if series.src_dir.endswith("zarr"):
 
-        img_scale_1 = os.path.join(series.src_dir, "scale_1", section.src)
         try:
-            h, w = zarr.open(img_scale_1, "r").shape
+            h, w = zarr.open(section.src_fp, "r").shape
         except (KeyError, ValueError, AttributeError):
             return None
         return w, h
