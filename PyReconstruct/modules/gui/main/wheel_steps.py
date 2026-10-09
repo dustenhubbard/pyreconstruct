@@ -192,6 +192,13 @@ class WheelSteps:
             self.reset()
         return steps
 
+    def follow(self, event) -> float:
+        """Feed an event that moves no section; a lift still drops the leftover."""
+        units = self.feed(event)
+        if self.lifted:
+            self.reset()
+        return units
+
     def zoom(self, event) -> float:
         """The zoom factor for one wheel event, in proportion to its scroll."""
-        return zoom_factor(self.feed(event))
+        return zoom_factor(self.follow(event))

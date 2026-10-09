@@ -2725,8 +2725,9 @@ class MainWindow(QMainWindow):
             mouse_pos = event.point(0).pos()
             field_geom = self.field.geometry()
             if not field_geom.contains(mouse_pos.x(), mouse_pos.y()):
-                # follow the swipe, but scroll here neither moves nor uses up travel
-                self.wheel_steps.feed(event)
+                # follow the swipe: scroll here neither moves nor uses up travel,
+                # but a lift here drops the leftover, as over the field
+                self.wheel_steps.follow(event)
                 return
             # one section per notch, or per stretch of trackpad travel
             steps = self.wheel_steps.step(event)
@@ -2738,7 +2739,7 @@ class MainWindow(QMainWindow):
         
         else:
             # follow the swipe so it is read right once the modifier lifts
-            self.wheel_steps.feed(event)
+            self.wheel_steps.follow(event)
     
     def changeEvent(self, event):
         """Overwritten: a window that is no longer active drops pending scroll."""

@@ -108,6 +108,20 @@ def outside(window, phase, pixel, angle):
     return window.series.current_section
 
 
+def over_status_bar(window, events):
+    """Send wheel events with the pointer over the status bar, outside the field."""
+    bar = window.statusBar()
+    pos = QPointF(bar.mapTo(window, bar.rect().center()))
+    assert not window.field.geometry().contains(pos.toPoint())
+    sections = []
+    deliver(
+        window.windowHandle(), pos, events,
+        after=lambda _: sections.append(window.series.current_section),
+        native=window.native,
+    )
+    return sections
+
+
 def swipe(drag, momentum=(), busy=True):
     return qt_events(native_swipe(drag, momentum), busy)
 
@@ -317,6 +331,25 @@ def test_trackpad_travel_outside_the_field_keeps_the_leftover(window):
     assert outside(window, P.ScrollUpdate, 12, 24) == START
     # without the guard first, the 12 points outside would have used up the step
     assert scroll(window, rest) == [START + 1] * 3
+
+
+@pytest.mark.parametrize("lift", ["end", "momentum"])
+@pytest.mark.parametrize("reader", ["window", "phases"])
+def test_a_lift_outside_the_field_drops_the_leftover(request, reader, lift):
+    window = request.getfixturevalue(reader)
+    if lift == "end":
+        # a finger End with no delta
+        events = swipe([12, 12])
+        lift = last_finger(events)
+    else:
+        # the momentum start, in the busy order, with no finger End before it
+        events = swipe([12, 12], momentum=[30], busy=True)
+        lift = last_finger(events) + 1
+    # 24 points: 0.9 of the way to the first section
+    assert scroll(window, events[:lift])[-1] == START
+    assert over_status_bar(window, events[lift:]) == [START] * len(events[lift:])
+    # what was left of the swipe went with the lift, as it does over the field
+    assert scroll(window, [(P.NoScrollPhase, 0, 12)]) == [START]
 
 
 # --- the reader as it ships ---------------------------------------------------
