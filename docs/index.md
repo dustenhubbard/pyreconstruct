@@ -111,7 +111,7 @@ macOS 12 or later
 [Apple Silicon :material-arrow-down:](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-macOS-arm64.dmg){ .md-button }
 [Intel :material-arrow-down:](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-macOS-x86_64.dmg){ .md-button }
 
-Includes Python. See the [first-launch instructions](USER_GUIDE.md#1-installing-pyreconstruct).
+Includes Python. Signed and notarized by Apple.
 { .pr-small }
 
 </div>
