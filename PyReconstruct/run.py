@@ -122,10 +122,19 @@ def runPyReconstruct(filename=None):
     # frozen macOS: eject the installer disk image of this build. Here, before
     # the first window, no series is open and no path can change while
     # hdiutil runs. A launch that opens a file skips it, since that series may
-    # keep images on the image; the next plain launch ejects. Once per
+    # keep images on the image; the next plain launch ejects. A FileOpen
+    # received while hdiutil looks for the image also stops it: one more
+    # processEvents pass right before the detach collects it. Once per
     # process, so an in-app restart below does not run it again.
+    def no_file_pending():
+        app.processEvents()
+        return file_open_watcher.pending is None
+
     from PyReconstruct.modules.backend.func.installer_image import eject_installer_image
-    eject_installer_image(open_file=filename)
+    eject_installer_image(open_file=filename, before_detach=no_file_pending)
+    if filename is None and file_open_watcher.pending is not None:
+        filename = file_open_watcher.pending
+        file_open_watcher.pending = None
 
     # push menu shortcut keybinds clear of their labels (the native style packs
     # them within a few pixels of the widest label). A QProxyStyle survives the

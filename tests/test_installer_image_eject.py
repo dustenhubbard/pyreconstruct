@@ -253,6 +253,23 @@ def test_no_file_to_open_does_not_block_the_eject(frozen, layout, open_file):
     assert run(installed, hd, open_file=open_file) == [str(volume)]
 
 
+@pytest.mark.parametrize("go", [True, False])
+def test_before_detach_is_asked_after_the_lookup(frozen, layout, go, capsys):
+    installed, volume = layout
+    hd = FakeHdiutil([image(volume)])
+    asked = []
+
+    def before_detach():
+        asked.append(len(hd.timeouts))   # hdiutil calls made so far
+        return go
+
+    ejected = run(installed, hd, before_detach=before_detach)
+    assert asked == [1]                  # once, after info and before detach
+    assert ejected == hd.detached == ([str(volume)] if go else [])
+    if not go:
+        assert "a file to open arrived" in capsys.readouterr().err
+
+
 def _case_insensitive(folder):
     probe = folder / "CaseProbe"
     probe.write_text("")
@@ -341,35 +358,40 @@ def test_hdiutil_failure_is_logged_not_raised(frozen, layout, capsys):
     assert "installer image: skipped" in capsys.readouterr().err
 
 
-# The hidden root entries an installer image may hold.
+# The hidden root files an installer image may hold.
 
 @pytest.mark.parametrize("name", [
     ".DS_Store", ".background.tiff", ".background.png", ".VolumeIcon.icns",
-    ".fseventsd", ".Trashes", ".Spotlight-V100",
 ])
-def test_hidden_entries_dmgbuild_and_macos_write_are_allowed(frozen, layout, name):
+def test_hidden_files_dmgbuild_writes_are_allowed(frozen, layout, name):
     installed, volume = layout
     entry = volume / name
-    if name in (".fseventsd", ".Trashes", ".Spotlight-V100"):
-        entry.mkdir()
-    elif not entry.exists():
+    if not entry.exists():
         entry.write_bytes(b"")
     hd = FakeHdiutil([image(volume)])
     assert run(installed, hd) == [str(volume)]
 
 
-@pytest.mark.parametrize("name,folder", [
-    (".cells", True),         # the hidden folder a series keeps beside its .jser
-    (".images", True),
-    (".notes.txt", False),
+@pytest.mark.parametrize("path", [
+    ".cells/1.png",           # the hidden folder a series keeps beside its .jser
+    ".images/1.png",
+    ".notes.txt",
+    ".Trashes/source.png",    # a folder macOS makes can hold a user's files
+    ".fseventsd/",            # no hidden folder at all, even an empty one
+    ".DS_Store/source.png",   # an allowed name that is a folder
 ])
-def test_a_stray_hidden_root_entry_blocks_the_eject(frozen, layout, name, folder):
+def test_a_stray_hidden_root_entry_blocks_the_eject(frozen, layout, path):
     installed, volume = layout
-    if folder:
-        (volume / name).mkdir()
-        (volume / name / "1.png").write_bytes(b"")
+    top, slash, inner = path.partition("/")
+    entry = volume / top
+    if entry.exists():
+        entry.unlink()        # .DS_Store: make_installer wrote it as a file
+    if slash:
+        entry.mkdir()
+        if inner:
+            (entry / inner).write_bytes(b"")
     else:
-        (volume / name).write_text("x")
+        entry.write_text("x")
     hd = FakeHdiutil([image(volume)])
     assert run(installed, hd) == []
     assert hd.detached == []
@@ -518,8 +540,9 @@ def test_a_slow_hdiutil_is_killed_at_its_timeout(tmp_path, monkeypatch):
 def launch(qapp, monkeypatch, tmp_path):
     """runPyReconstruct with stand-ins for the app object, the window and settings.
 
-    ``qapp`` is the real QApplication: runPyReconstruct builds a QObject
-    event filter, and the FileOpen test sends it a real QFileOpenEvent.
+    ``qapp`` is the real QApplication. The stand-in app installs the event
+    filter on it and pumps its events, so a QFileOpenEvent a test posts to it
+    reaches runPyReconstruct's filter the way macOS's would.
     """
     import PyReconstruct.run as run_mod
     from PyReconstruct.modules.backend.func import logging_setup
@@ -529,20 +552,18 @@ def launch(qapp, monkeypatch, tmp_path):
     from PyReconstruct.modules.gui.main import first_launch
 
     events = []
-    file_open = []          # a path macOS sends as a FileOpen event at launch
+    filters = []
 
     class App:
         def __init__(self, argv):
-            self.filters = []
+            pass
 
         def installEventFilter(self, f):
-            self.filters.append(f)
+            filters.append(f)
+            qapp.installEventFilter(f)
 
         def processEvents(self):
-            from PySide6.QtGui import QFileOpenEvent
-            for path in file_open:
-                for f in self.filters:
-                    f.eventFilter(None, QFileOpenEvent(path))
+            qapp.processEvents()
 
         def setStyle(self, style):
             pass
@@ -576,8 +597,17 @@ def launch(qapp, monkeypatch, tmp_path):
     monkeypatch.setenv("PYRECON_FORCE_FROZEN", "1")
     monkeypatch.setattr(II, "sys", SimpleNamespace(platform="darwin",
                                                    executable=str(installed)))
-    return SimpleNamespace(run=run_mod.runPyReconstruct, events=events,
-                           volume=volume, file_open=file_open)
+    yield SimpleNamespace(run=run_mod.runPyReconstruct, events=events,
+                          volume=volume)
+    for f in filters:
+        qapp.removeEventFilter(f)
+    qapp.processEvents()    # drop a FileOpen a failed test left queued
+
+
+def post_file_open(qapp, path):
+    """Queue a FileOpen on the app, as macOS does for a double-clicked file."""
+    from PySide6.QtGui import QFileOpenEvent
+    qapp.postEvent(qapp, QFileOpenEvent(path))
 
 
 def test_launch_ejects_before_the_window_and_not_on_restart(launch, monkeypatch):
@@ -595,7 +625,7 @@ def test_launch_ejects_before_the_window_and_not_on_restart(launch, monkeypatch)
 
 
 @pytest.mark.parametrize("how", ["argument", "FileOpen event"])
-def test_a_launch_that_opens_a_file_skips_the_eject(launch, monkeypatch, tmp_path, how):
+def test_a_launch_that_opens_a_file_skips_the_eject(launch, monkeypatch, qapp, tmp_path, how):
     # A series on the host whose images sit inside the image's app.
     jser = str(tmp_path / "Projects" / "cells.jser")
     hd = FakeHdiutil([image(launch.volume)])
@@ -603,7 +633,7 @@ def test_a_launch_that_opens_a_file_skips_the_eject(launch, monkeypatch, tmp_pat
     if how == "argument":
         launch.run(jser)
     else:
-        launch.file_open.append(jser)
+        post_file_open(qapp, jser)
         launch.run()
     assert hd.detached == [] and hd.timeouts == []
     assert launch.events == [("window", jser)] * 2
@@ -625,3 +655,21 @@ def test_launch_never_detaches_after_a_timeout(launch, monkeypatch):
     time.sleep(0.3)
     assert launch.events == [("hdiutil", "info"), ("window", None), ("window", None)]
     assert hd.detached == []
+
+
+def test_a_file_open_received_during_the_lookup_stops_the_detach(launch, monkeypatch, qapp,
+                                                                 tmp_path):
+    # The double-click reaches the app while hdiutil info runs, after the
+    # first processEvents pass: no detach, and the window opens that file.
+    jser = str(tmp_path / "Projects" / "cells.jser")
+    hd = FakeHdiutil([image(launch.volume)])
+
+    def file_open_during_info(args, timeout):
+        if args[0] == "info":
+            post_file_open(qapp, jser)
+        return hd(args, timeout)
+
+    monkeypatch.setattr(II, "_hdiutil", file_open_during_info)
+    launch.run()
+    assert hd.detached == []
+    assert launch.events == [("window", jser)] * 2

@@ -13,14 +13,16 @@ its window loop, so an in-app restart does not run it again.
 An image is ejected only when every one of these holds:
 
 * this is a frozen macOS build, and its own ``Info.plist`` can be read;
-* the launch opens no file;
+* the launch opens no file. The caller checks again right before the detach
+  (``before_detach``), so a file request received while ``hdiutil`` looks
+  still stops it. A request that arrives after the detach begins is too late;
 * the image is read-only (the release .dmg is UDZO), so a writable image such
   as a Time Machine sparsebundle or a working image is never a candidate;
 * the image has exactly one mounted volume. ``hdiutil detach`` takes every
   volume of an image, and the release image has one;
 * the volume's root is the installer layout and nothing else: one ``.app``,
   the ``Applications`` link to ``/Applications``, optionally the first-launch
-  guide (see ``packaging/macos/make_dmg.sh``), and only the hidden entries in
+  guide (see ``packaging/macos/make_dmg.sh``), and only the hidden files in
   :data:`HIDDEN`. A backup image or a data volume holds other files, so it
   never matches;
 * that ``.app`` has this app's ``CFBundleIdentifier`` and the same
@@ -56,12 +58,13 @@ from PyReconstruct.modules.backend.func.logging_setup import log_note
 _BUDGET = 5  # seconds for every hdiutil call together; each takes well under one
 _MAX_PLIST = 1 << 20  # bytes; a real Info.plist is a few kilobytes
 GUIDE = "Read Before First Launch.html"  # make_dmg.sh adds it for unsigned apps
-# Hidden root entries an installer image may hold. dmgbuild writes .DS_Store,
+# Hidden root files an installer image may hold. dmgbuild writes .DS_Store,
 # .background.tiff (or .background.png for a single image) and, with an icon,
-# .VolumeIcon.icns; macOS can add .fseventsd, .Trashes and .Spotlight-V100
-# while dmgbuild has the image mounted read-write.
-HIDDEN = {".DS_Store", ".background.tiff", ".background.png", ".VolumeIcon.icns",
-          ".fseventsd", ".Trashes", ".Spotlight-V100"}
+# .VolumeIcon.icns. Each must be a regular file: a folder could hold a user's
+# files. No hidden folder is allowed: dmgbuild mounts its working image with
+# -nobrowse and deletes .Trashes, and the release image holds only .DS_Store
+# and .background.tiff.
+HIDDEN = {".DS_Store", ".background.tiff", ".background.png", ".VolumeIcon.icns"}
 
 
 def _hdiutil(args, timeout):
@@ -169,7 +172,8 @@ def _is_installer_volume(mount, identity):
     root = Path(mount)
     try:
         entries = set(os.listdir(root))
-        if {n for n in entries if n.startswith(".")} - HIDDEN:
+        hidden = {n for n in entries if n.startswith(".")}
+        if hidden - HIDDEN or not all(_is_kind(root / n, stat.S_ISREG) for n in hidden):
             return False
         names = {n for n in entries if not n.startswith(".")}
         apps = [n for n in names if n.endswith(".app")]
@@ -207,13 +211,16 @@ def installer_mounts(info, identity, bundle):
     return found
 
 
-def eject_installer_image(*, open_file=None, platform=None, executable=None,
-                          hdiutil=None, budget=None, clock=time.monotonic):
+def eject_installer_image(*, open_file=None, before_detach=None, platform=None,
+                          executable=None, hdiutil=None, budget=None,
+                          clock=time.monotonic):
     """Detach the mounted installer image of this build; return the mounts ejected.
 
     Call it before the main window exists. ``open_file`` is the file the
-    first window will open, if any. Never raises. The other keyword arguments
-    are for tests.
+    first window will open, if any. ``before_detach``, if given, is called
+    right before the detach and returns False to stop it (a file to open
+    arrived meanwhile). Never raises. The other keyword arguments are for
+    tests.
     """
     ejected = []
     try:
@@ -255,6 +262,9 @@ def eject_installer_image(*, open_file=None, platform=None, executable=None,
         if not mounts:
             return ejected
         mount = mounts[0]
+        if before_detach is not None and not before_detach():
+            log_note("installer image: a file to open arrived; ejecting nothing")
+            return ejected
         try:
             hdiutil(["detach", mount], remaining())
             ejected.append(mount)
