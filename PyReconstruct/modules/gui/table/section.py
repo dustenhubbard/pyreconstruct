@@ -20,7 +20,7 @@ from PyReconstruct.modules.gui.utils import (
     notify,
 )
 from PyReconstruct.modules.gui.dialog import QuickDialog
-from PyReconstruct.modules.datatypes import Series
+from PyReconstruct.modules.datatypes import Series, Section
 
 class SectionTableWidget(DataTable):
 
@@ -449,6 +449,8 @@ class SectionTableWidget(DataTable):
         )
         if not confirmed:
             return
+        # the name the section will load with
+        new_src = Section.imageName(new_src)
         
         self.mainwindow.saveAllData()
 
@@ -577,7 +579,7 @@ class SectionTableWidget(DataTable):
             writes_after=True,
         ):
             section_src = s[0] + str(snum).zfill(max_digits) + s[1]
-            section.src = section_src
+            section.src = Section.imageName(section_src)
             section.save()
     
         if log_event:
