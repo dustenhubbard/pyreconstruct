@@ -653,7 +653,11 @@ class LogSet():
                     # before the loop can advance onto it. Only a fragment
                     # whose head already failed arrives as a start, and that
                     # fragment is exactly what must not be trusted.
-                    if not ROW_START.match(log_str.strip()):
+                    #
+                    # The stamp ends in ", ", so a line is matched with only
+                    # its leading space taken off: a row whose user begins
+                    # with a break has a head line that is the stamp alone.
+                    if not ROW_START.match(log_str.lstrip()):
                         raise ValueError(
                             "log row does not begin with a date and time: "
                             f"{log_str.strip()[:60]!r}"
@@ -688,12 +692,19 @@ class LogSet():
                     # there. Every piece loses its own line ending and nothing
                     # else, so the joined row is the text that build wrote,
                     # with a "\r\n" or "\r" break read as "\n" the way a file
-                    # opened in text mode reads it. splitRow then finds the
-                    # fields that build meant, quotes included, with no guess
-                    # about where a break fell. The join used to add nothing:
-                    # the first break survived as the head line's own "\n"
-                    # and every later one was stripped, gluing "foo" and "bar"
-                    # into "foobar".
+                    # opened in text mode reads it. That holds whether a line
+                    # arrives with its ending or without: an empty line is an
+                    # empty piece, so "foo", "", "bar" joins as "foo\n\nbar".
+                    # splitRow then finds the fields that build meant, quotes
+                    # included, with no guess about where a break fell. The
+                    # join used to add nothing: the first break survived as
+                    # the head line's own "\n" and every later one was
+                    # stripped, gluing "foo" and "bar" into "foobar".
+                    #
+                    # A break in the event, the last field, leaves a head that
+                    # parses, so the row ends there and each line after it is
+                    # refused by the start anchor: the rest of the event is a
+                    # loss the caller sees, not text glued onto the row.
                     #
                     # What the object is called is then up to its kind (see
                     # _repairJoinedName): a name with a break in it, in an
@@ -782,6 +793,7 @@ class LogSet():
                     # this protects what is already on disk, plus hand-edited
                     # files and any route a future writer opens by accident.
                     #
+                    pieces = [_dropLineEnding(log_str)]
                     while True:
                         try:
                             log = Log.fromStr(log_str)
@@ -790,14 +802,15 @@ class LogSet():
                             if _isWholeRow(log_str):
                                 raise
                             nxt = log_list[i+1]
-                            if ROW_START.match(nxt.strip()):
+                            if ROW_START.match(nxt.lstrip()):
                                 # A row, not a continuation. Stop rather than
                                 # eat it: the ValueError goes to the handler
                                 # below, which records this line alone, and
                                 # the scan resumes at nxt so it gets read as
                                 # the row it is.
                                 raise
-                        log_str = _dropLineEnding(log_str) + "\n" + nxt
+                        pieces.append(_dropLineEnding(nxt))
+                        log_str = "\n".join(pieces)
                         i += 1
                     if i > start:
                         _repairJoinedName(log)
