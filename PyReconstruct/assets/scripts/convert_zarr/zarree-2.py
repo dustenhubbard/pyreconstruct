@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import shutil
+import unicodedata
 import multiprocessing.spawn
 from multiprocessing import Pool, freeze_support
 
@@ -36,6 +37,8 @@ for _thread_var in (
 
 import cv2
 import zarr
+from zarr.storage import contains_array, contains_group
+from zarr.util import normalize_storage_path
 
 os.environ["OPENCV_LOG_LEVEL"] = "FATAL"
 os.environ["OPENCV_IO_MAX_IMAGE_PIXELS"] = "18500000000"  # Go big or go home?
@@ -44,8 +47,8 @@ os.environ["OPENCV_IO_MAX_IMAGE_PIXELS"] = "18500000000"  # Go big or go home?
 def _limit_worker_threads():
     """Pin this process's runtime thread pools to a single thread.
 
-    Each conversion worker runs OpenCV (``cv2.imread``/``cv2.resize``) and the
-    main process compresses with blosc when it writes each array to the zarr.
+    Each conversion worker runs OpenCV (``cv2.imread``/``cv2.resize``) and
+    compresses with blosc when it writes its arrays to the zarr.
     By default BOTH libraries spawn one thread per CPU core, so a Pool of N
     workers would fan out to roughly N x (all cores) threads and peg every CPU
     no matter how few workers the user selected in Settings -- the historical
@@ -81,7 +84,7 @@ def _limit_worker_threads():
         pass
 
 
-# apply to this (main / writer) process, and -- under fork -- to inherited workers
+# apply to this (main) process, and -- under fork -- to inherited workers
 _limit_worker_threads()
 
 IMAGE_EXTENSIONS = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
@@ -291,19 +294,144 @@ def validate_zarr(zg, images):
         raise Exception(f"Zarr conversion incomplete:\n{preview}")
 
 
-def create2D(args):
-    """Worker: read one image and return its resized levels.
+def check_array_paths(images):
+    """Stop before any worker starts if two images need one place in the zarr.
 
-    Workers never write to the zarr store -- they only read/compute and hand
-    the arrays back to the main process, which is the sole writer. This keeps
-    the conversion free of cross-process write races and makes a failure
-    (e.g. a full disk) surface once, in the main process.
+    zarr turns each name into a path (a backslash is a separator), so
+    a\\b.png and a\\\\b.png are both stored as a/b.png, and foo.png\\bar.png
+    is stored inside the array of foo.png. Each worker only checks its own
+    array, so two workers could write one array, or an array and a group at
+    one path. Checking every name here gives each array one image.
+
+    Paths are compared ignoring case and the way an accented letter is
+    written, because macOS and Windows store a/b.png and A/b.png in one
+    folder by default. This is done on every system, not only where the
+    output volume ignores case, so a zarr made on Linux still opens the same
+    once it is copied to a Mac.
+    """
+    owners = {}
+    clashes = []
+    for filename in images:
+        path = normalize_storage_path(filename)
+        key = fold_path(path)
+        if key in owners:
+            other, other_path = owners[key]
+            if other_path == path:
+                clashes.append(f"{other} and {filename} are both stored as {path}")
+            else:
+                clashes.append(
+                    f"{other} and {filename} are stored as {other_path} and "
+                    f"{path}, which a Mac or Windows can store as one folder"
+                )
+        else:
+            owners[key] = (filename, path)
+    for key, (filename, _path) in owners.items():
+        parts = key.split("/")
+        for i in range(1, len(parts)):
+            parent = "/".join(parts[:i])
+            if parent in owners:
+                clashes.append(f"{filename} would be stored inside {owners[parent][0]}")
+
+    if clashes:
+        raise Exception(
+            "These image names cannot all be stored in one zarr:\n"
+            + "\n".join(clashes)
+            + "\nRename the images and convert them again."
+        )
+
+
+def fold_path(path):
+    """The path with case and accented letters made uniform, for comparing."""
+    return unicodedata.normalize("NFD", unicodedata.normalize("NFD", path).casefold())
+
+
+def require_scale_group(zg, scale_group):
+    """Return the scale group, creating it if it does not exist yet.
+
+    The main process makes the groups the first image needs before the Pool
+    starts. A larger image can need one more, and two workers can try to make
+    it at the same time; the one that loses gets ContainsGroupError and opens
+    the group the other one made.
+    """
+    try:
+        return zg.require_group(scale_group)
+    except zarr.errors.ContainsGroupError:
+        return zg[scale_group]
+
+
+def write_array(zarr_fp, scale_group, filename, arr):
+    """Write one array so that it only appears in the zarr once complete.
+
+    zarr normally writes an array's .zarray before its chunks, so an array
+    is listed as soon as it is started. If the run stops partway (a worker
+    fails and the Pool terminates the others, or the processes are killed),
+    that half-written array would look finished: an update skips arrays that
+    exist and validate_zarr only checks names. So the chunks go straight to
+    the array's folder while the metadata is held in memory, and .zarray is
+    written last. zarr writes each key to a temporary file and renames it
+    into place, so the array is listed only once every chunk is on disk. A
+    folder left without .zarray is not an array to zarr; the next update
+    writes into it again, except in scale_1 (see unfinished_arrays).
+
+    zarr turns the name into the array's path as create_dataset does (a
+    backslash is a separator), and makes a group for each folder of that
+    path; any group not in the store yet is written before .zarray.
+    """
+    meta = {}
+    store = zarr.DirectoryStore(zarr_fp)
+    # same call group.create_dataset makes, with the chunks kept apart
+    z = zarr.array(arr, store=meta, chunk_store=store, path=f"{scale_group}/{filename}")
+    zarray = f"{z.path}/.zarray"
+    for key, value in meta.items():
+        if key != zarray and key not in store:
+            store[key] = value
+    store[zarray] = meta[zarray]
+
+
+def unfinished_arrays(zg, scale_group):
+    """Folders in the scale group that are not arrays or groups.
+
+    A conversion that stopped partway leaves the image's folder without its
+    .zarray (see write_array), and zarr does not list it. An update can
+    rebuild any other level from scale_1, but not scale_1 itself, so it
+    checks here instead of finishing without the image. Files, such as
+    .zgroup or a Thumbs.db, are not images; a folder is, even one whose
+    name starts with a dot.
+    """
+    store = zg.store
+    unfinished = []
+    for name in store.listdir(scale_group):
+        path = f"{scale_group}/{name}"
+        if not os.path.isdir(store.dir_path(path)):
+            continue
+        if contains_array(store, path) or contains_group(store, path):
+            continue
+        unfinished.append(path)
+    return unfinished
+
+
+def create2D(args):
+    """Worker: read one image, resize it and write its levels to the zarr.
+
+    Each worker opens the store and writes its own arrays, so the compression
+    and the disk writes run in parallel across the Pool. No two workers write
+    the same file: every array is its own directory in the DirectoryStore,
+    each image goes to exactly one worker, and check_array_paths gives each
+    image its own array path. The only shared writes are the
+    scale groups, handled by require_scale_group. write_array lists each
+    array only once it is complete.
+
+    Only the filename and the time taken go back to the main process. An
+    exception here (e.g. a full disk) is raised again in the main process by
+    Pool.imap and fails the run.
     """
     filename, create_new, img_dir, zarr_fp = args
 
     print(f"Working on {filename}...", flush=True)
 
     t_start = time.perf_counter()
+
+    zg = open_zarr_with_retry(zarr_fp, mode="a")
 
     scales = {}
 
@@ -312,12 +440,9 @@ def create2D(args):
         cvim = cv2.imread(img_fp, cv2.IMREAD_GRAYSCALE)
         if cvim is None:
             raise Exception(f"{filename} is not an image file.")
-        # full-resolution level is written by the main process too
         scales["scale_1"] = cvim
     else:
-        # read-only handle: concurrent reads are safe and need no disk space
-        src = open_zarr_with_retry(zarr_fp, mode="r")
-        cvim = src["scale_1"][filename][:]
+        cvim = zg["scale_1"][filename][:]
 
     # keep downsampling by 2 until below MIN_DOWNSAMPLED_PIXELS
     h, w = cvim.shape
@@ -328,7 +453,14 @@ def create2D(args):
         exp += 1
         scales[f"scale_{2**exp}"] = cv2.resize(cvim, (w, h))
 
-    return filename, scales, time.perf_counter() - t_start
+    for scale_group, arr in scales.items():
+        group = require_scale_group(zg, scale_group)
+        # an array already there is left alone: when updating scales,
+        # scale_1 is the source and any existing level is kept
+        if filename not in group:
+            write_array(zarr_fp, scale_group, filename, arr)
+
+    return filename, time.perf_counter() - t_start
 
 
 if __name__ == "__main__":
@@ -351,32 +483,29 @@ if __name__ == "__main__":
     if create_new:
         images = image_filenames(img_dir)
     else:
+        unfinished = unfinished_arrays(zg, "scale_1")
+        if unfinished:
+            raise Exception(
+                "Zarr conversion incomplete:\n" + "\n".join(unfinished)
+                + "\nThese images were not fully converted. Convert the "
+                "original images to zarr again."
+            )
         images = sorted(list(zg["scale_1"]))
         if not images:
             raise Exception(f"No scale_1 images found in {zarr_fp}.")
 
+    # no two images may share an array path (see check_array_paths)
+    check_array_paths(images)
+
     # fail fast if the target volume cannot hold the new scales
     check_disk_space(images)
 
-    # make the scale groups the first image needs; the write loop below adds
-    # any group a larger image needs
+    # make the scale groups the first image needs; a worker adds any group a
+    # larger image needs (see require_scale_group)
     ensure_scale_groups(zg, images)
 
     processes = max(1, min(cores, MAX_WORKERS))
     print(f"Converting with {processes} worker process(es)...", flush=True)
-
-    # This process is the sole zarr writer: it blosc-compresses every array as
-    # the workers hand it back. That compression is serial with respect to the
-    # imap loop, so pinning it to one thread (the import-time default) would make
-    # it the bottleneck on capable hardware. Give the writer up to `processes`
-    # blosc threads so it keeps pace with the workers. Workers stay single
-    # threaded -- the Pool initializer re-pins them -- so total CPU still tracks
-    # the chosen worker count rather than exploding to (workers x all cores).
-    try:
-        from numcodecs import blosc
-        blosc.set_nthreads(processes)
-    except Exception:
-        pass
 
     total = len(images)
     # machine-readable progress markers consumed by the converter window
@@ -396,17 +525,9 @@ if __name__ == "__main__":
     # spawn start method (Windows/macOS) is covered as well as fork.
     with Pool(processes, initializer=_limit_worker_threads) as p:
 
-        # imap (ordered) + main-as-sole-writer => deterministic, race-free writes
-        for filename, scales, duration in p.imap(create2D, args):
-
-            for scale_group, arr in scales.items():
-                # the up-front groups come from the first image only, so a
-                # larger image can need a scale none of the others had
-                if scale_group not in zg:
-                    zg.create_group(scale_group)
-                if filename not in zg[scale_group]:
-                    zg[scale_group].create_dataset(filename, data=arr)
-
+        # workers write their own arrays; imap (ordered) reports them here in
+        # input order and re-raises a worker's exception
+        for filename, duration in p.imap(create2D, args):
             done += 1
             print(f"Time for conversion {filename}: {round(duration, 2)} s", flush=True)
             print(f"@@PROGRESS@@ STEP {done} {total}", flush=True)
