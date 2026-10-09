@@ -20,7 +20,7 @@ from PyReconstruct.modules.backend.func.window_geometry import (
     window_geometry_is_usable,
 )
 from .status_readout import FieldStatusReadout, StatusSegment
-from .wheel_steps import WheelSteps
+from .wheel_steps import WheelSteps, zoom_factor
 from PyReconstruct.modules.constants.settings_domain import (
     domain_for, fold_series_settings_once,
 )
@@ -2694,53 +2694,51 @@ class MainWindow(QMainWindow):
     
     def wheelEvent(self, event):
         """Called when mouse scroll is used."""
-        # do nothing if middle button is clicked
-        if self.field.mclick:
-            return
-        
-        modifiers = QApplication.keyboardModifiers()
+        # every event is read first, so the swipe is followed wherever it goes;
+        # however this returns, a lift drops the leftover scroll on the way out
+        with self.wheel_steps.reading(event) as units:
 
-        # if zooming
-        if modifiers == Qt.ControlModifier:
-            # in proportion to the scroll; nothing after a trackpad swipe lifts
-            factor = self.wheel_steps.zoom(event)
-            if factor == 1.0 and not self.is_zooming:
-                return  # no scroll, such as momentum, starts no zoom
-            self.activateWindow()
-            field_cursor = self.field.cursor()
-            p = self.field.mapFromGlobal(field_cursor.pos())
-            x, y = p.x(), p.y()
-            if not self.is_zooming:
-                # check if user just started zooming in
-                self.field.panzoomPress(x, y)
-                self.zoom_factor = 1
-                self.is_zooming = True
+            # do nothing if middle button is clicked
+            if self.field.mclick:
+                return
 
-            self.zoom_factor *= factor
-            self.field.panzoomMove(zoom_factor=self.zoom_factor)
-        
-        # if changing sections
-        elif modifiers == Qt.NoModifier:
-            # check for the position of the mouse
-            mouse_pos = event.point(0).pos()
-            field_geom = self.field.geometry()
-            if not field_geom.contains(mouse_pos.x(), mouse_pos.y()):
-                # follow the swipe: scroll here neither moves nor uses up travel,
-                # but a lift here drops the leftover, as over the field
-                self.wheel_steps.follow(event)
-                return
-            # one section per notch, or per stretch of trackpad travel
-            steps = self.wheel_steps.step(event)
-            if not steps:
-                return
-            # change the section, keeping the scroll left over
-            with self.wheel_steps.moving():
-                self.incrementSection(down=steps < 0, count=abs(steps))
-        
-        else:
-            # follow the swipe so it is read right once the modifier lifts
-            self.wheel_steps.follow(event)
-    
+            modifiers = QApplication.keyboardModifiers()
+
+            # if zooming
+            if modifiers == Qt.ControlModifier:
+                # in proportion to the scroll; nothing after a trackpad swipe lifts
+                factor = zoom_factor(units)
+                if factor == 1.0 and not self.is_zooming:
+                    return  # no scroll, such as momentum, starts no zoom
+                self.activateWindow()
+                field_cursor = self.field.cursor()
+                p = self.field.mapFromGlobal(field_cursor.pos())
+                x, y = p.x(), p.y()
+                if not self.is_zooming:
+                    # check if user just started zooming in
+                    self.field.panzoomPress(x, y)
+                    self.zoom_factor = 1
+                    self.is_zooming = True
+
+                self.zoom_factor *= factor
+                self.field.panzoomMove(zoom_factor=self.zoom_factor)
+
+            # if changing sections
+            elif modifiers == Qt.NoModifier:
+                # check for the position of the mouse; scroll outside the
+                # field neither moves nor uses up travel
+                mouse_pos = event.point(0).pos()
+                field_geom = self.field.geometry()
+                if not field_geom.contains(mouse_pos.x(), mouse_pos.y()):
+                    return
+                # one section per notch, or per stretch of trackpad travel
+                steps = self.wheel_steps.take(event, units)
+                if not steps:
+                    return
+                # change the section, keeping the scroll left over
+                with self.wheel_steps.moving():
+                    self.incrementSection(down=steps < 0, count=abs(steps))
+
     def changeEvent(self, event):
         """Overwritten: a window that is no longer active drops pending scroll."""
         # the app going to the back, or another window or dialog in front,

@@ -18,6 +18,8 @@ that part, and the `phases` window has no NSEvent, as on Wayland.
 first momentum event counts as after, whatever Qt calls it.
 """
 
+from contextlib import contextmanager
+
 import pytest
 from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QWheelEvent
@@ -349,6 +351,94 @@ def test_a_lift_outside_the_field_drops_the_leftover(request, reader, lift):
     assert scroll(window, events[:lift])[-1] == START
     assert over_status_bar(window, events[lift:]) == [START] * len(events[lift:])
     # what was left of the swipe went with the lift, as it does over the field
+    assert scroll(window, [(P.NoScrollPhase, 0, 12)]) == [START]
+
+
+# --- a lift wherever wheelEvent stops early ------------------------------------
+
+
+@contextmanager
+def middle_button_held(window):
+    """Hold the middle button down on the field, as for a middle-drag pan."""
+    center = window.field.rect().center()
+    QTest.mousePress(window.field, Qt.MiddleButton, Qt.NoModifier, center)
+    assert window.field.mclick
+    try:
+        yield
+    finally:
+        QTest.mouseRelease(window.field, Qt.MiddleButton, Qt.NoModifier, center)
+    assert not window.field.mclick
+
+
+def swipe_to_lift(lift):
+    """24 points of swipe, and the index of the event that shows the lift."""
+    if lift == "end":
+        # a finger End with no delta
+        events = swipe([12, 12])
+        return events, last_finger(events)
+    # the momentum start, in the busy order, with no finger End before it; it
+    # is small, as Qt's phases alone count it toward a section
+    events = swipe([12, 12], momentum=[5], busy=True)
+    return events, last_finger(events) + 1
+
+
+@pytest.mark.parametrize("lift", ["end", "momentum"])
+@pytest.mark.parametrize("reader", ["window", "phases"])
+def test_a_lift_with_the_middle_button_held_drops_the_leftover(request, reader, lift):
+    window = request.getfixturevalue(reader)
+    events, lift = swipe_to_lift(lift)
+    # 24 points: 0.9 of the way to the first section
+    assert scroll(window, events[:lift])[-1] == START
+    with middle_button_held(window):
+        assert over_status_bar(window, events[lift:]) == [START] * len(events[lift:])
+    # what was left of the swipe went with the lift
+    assert scroll(window, [(P.NoScrollPhase, 0, 12)]) == [START]
+
+
+def lift_with_middle_button(window, events):
+    with middle_button_held(window):
+        scroll(window, events)
+
+
+def lift_outside_the_field(window, events):
+    over_status_bar(window, events)
+
+
+def lift_while_zooming(window, events):
+    scroll(window, events, Qt.ControlModifier)
+    QTest.keyRelease(window, Qt.Key_Control)
+
+
+def lift_with_another_modifier(window, events):
+    scroll(window, events, Qt.ShiftModifier)
+
+
+def lift_with_no_section_to_move(window, events):
+    scroll(window, events)
+
+
+EARLY_EXITS = [
+    lift_with_middle_button,
+    lift_outside_the_field,
+    lift_while_zooming,
+    lift_with_another_modifier,
+    lift_with_no_section_to_move,
+]
+
+
+@pytest.mark.parametrize("lift", ["end", "momentum"])
+@pytest.mark.parametrize("reader", ["window", "phases"])
+@pytest.mark.parametrize("path", EARLY_EXITS, ids=lambda f: f.__name__)
+def test_a_lift_on_every_path_that_moves_no_section_drops_the_leftover(
+    request, path, reader, lift,
+):
+    window = request.getfixturevalue(reader)
+    events, lift = swipe_to_lift(lift)
+    assert scroll(window, events[:lift])[-1] == START
+    assert window.wheel_steps.total == pytest.approx(0.9)
+    path(window, events[lift:])
+    assert window.series.current_section == START
+    assert window.wheel_steps.total == 0
     assert scroll(window, [(P.NoScrollPhase, 0, 12)]) == [START]
 
 

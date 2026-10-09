@@ -166,9 +166,22 @@ class WheelSteps:
             self._lift()
         return scroll_units(event)
 
-    def step(self, event) -> int:
-        """Sections to move for one wheel event: positive up, negative down."""
+    @contextmanager
+    def reading(self, event):
+        """Feed one wheel event; yields its scroll in notches.
+
+        Whatever the caller does with it, or if it returns early, a lift
+        drops the leftover on the way out, after any step it took.
+        """
         units = self.feed(event)
+        try:
+            yield units
+        finally:
+            if self.lifted:
+                self.reset()
+
+    def take(self, event, units) -> int:
+        """Whole sections in `units`, the scroll `reading` gave for `event`."""
         if units:
             direction = 1 if units > 0 else -1
             if event.phase() == P.NoScrollPhase:
@@ -188,17 +201,9 @@ class WheelSteps:
             # one section at most, as before: untagged touchpad inertia on
             # Windows can come as one large event
             steps = max(-1, min(steps, 1))
-        if self.lifted:
-            self.reset()
         return steps
 
-    def follow(self, event) -> float:
-        """Feed an event that moves no section; a lift still drops the leftover."""
-        units = self.feed(event)
-        if self.lifted:
-            self.reset()
-        return units
-
-    def zoom(self, event) -> float:
-        """The zoom factor for one wheel event, in proportion to its scroll."""
-        return zoom_factor(self.follow(event))
+    def step(self, event) -> int:
+        """Sections to move for one wheel event: positive up, negative down."""
+        with self.reading(event) as units:
+            return self.take(event, units)
