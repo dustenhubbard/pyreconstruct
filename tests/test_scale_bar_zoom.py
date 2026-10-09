@@ -567,3 +567,29 @@ def test_a_hand_edited_thickness_is_clamped_not_trusted(qapp):
         assert bar.thickness == MAX_SCALE_BAR_THICKNESS
     finally:
         bar.deleteLater()
+
+
+def test_a_bar_shorter_than_its_label_keeps_the_label_whole(qapp):
+    """A pinned 0.5 µm bar can be about 33 px, narrower than "0.5 µm". The
+    widget widens to the label and the label starts inside it, so neither end
+    of the text is cut off; the bar itself stays its true length."""
+    from PySide6.QtGui import QFontMetrics
+
+    from PyReconstruct.modules.gui.palette.scale_bar import (
+        LABEL_SIZE,
+        outlinedFont,
+    )
+
+    bar = ScaleBar(None, _StubManager(), 275, 6, 5.0 / 330,
+                   micron_length=5.0, max_pixel_length=275)
+    try:
+        rects, texts = _drawn(bar)
+        label_x, _y, label = texts[0]
+        assert label == "0.5 µm"
+        assert rects[0][2] == 33                     # the bar measures 0.5 µm
+        width = QFontMetrics(outlinedFont(LABEL_SIZE)).horizontalAdvance(label)
+        assert width > 33
+        assert bar.width() >= width
+        assert 0 <= label_x and label_x + width <= bar.width()
+    finally:
+        bar.deleteLater()
