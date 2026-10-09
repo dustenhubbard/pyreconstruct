@@ -331,6 +331,13 @@ def test_startup_keeps_a_fresh_stable_install_quiet(redirected_store, monkeypatc
     monkeypatch.delenv("PYRECON_APP_NAME", raising=False)
     from PySide6.QtCore import QSettings
 
+    # Cleared again here as well as during setup. Events run between setup
+    # and this point, and a window from an earlier test is only queued for
+    # deletion, so its 750 ms What's-new timer can still be pending. If it
+    # fires then, it finds no last-seen version and records the running one
+    # (a stable version on a shallow checkout), and the reset below reads an
+    # upgrade. No code after this line processes events.
+    _clear(redirected_store)
     had_username = redirected_store.value("username")
     redirected_store.remove("username")
     redirected_store.remove("update_check_on_startup_default_applied")
