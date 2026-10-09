@@ -227,14 +227,14 @@ is not worth paying for on every save.
 | --- | --- | --- |
 | layout | one line | one section block / trace / flag / transform per line |
 | canonical ordering | applied | applied |
-| size, 391 MB series | 390,846,078 B | 393,372,829 B (+0.65%) |
-| `saveJser` wall time | baseline | about +11% |
+| size, 391 MB series | 390,846,255 B | 393,373,016 B (+0.65%) |
+| `saveJser` wall time | baseline | about +13% |
 | save-path transient memory | one section at a time | one section at a time |
 
-The size and time rows were measured before the writer streamed. Back then every save
-built the complete document in memory first, and the pretty form cost about 27% more
-transient memory, because it held an extra copy of the document. Both forms now stream
-one section at a time, so neither holds every section at once.
+The size and time rows were measured in October 2026, on the streamed writer. Before it
+streamed, every save built the complete document in memory first, and the pretty form
+cost about 27% more transient memory, because it held an extra copy of the document. Both
+forms now stream one section at a time, so neither holds every section at once.
 
 `PYRECON_JSER_PRETTY` is read **on every write**, not once at import, so it can be set,
 changed or cleared in a running process and the next save honors it. `pretty=True` /
