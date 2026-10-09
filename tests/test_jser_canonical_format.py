@@ -2,8 +2,8 @@
 
 The writer's normative output is **minified with canonical ordering**. Pretty
 printing is available behind ``PYRECON_JSER_PRETTY=1`` and is off by default,
-because ordering is free while the whitespace costs about 11% of save time and
-about 27% more transient memory in the save path.
+because ordering is free while the whitespace costs save time. The measured
+costs are in the table in the ``jser_format`` module docstring.
 
 Four properties, none of which changes the schema:
 
@@ -869,9 +869,9 @@ def test_truncated_minified_file_is_still_recoverable_without_line_anchors(
         tmp_path, monkeypatch):
     """The honest control: non-anchored patterns recover the same content.
 
-    This is why pretty-printing is not worth +11% wall time and double the
-    save-path memory on every save: the salvage argument for it was measured with
-    a line-anchored method against a file with no lines.
+    This is why pretty-printing is not worth its save-time cost on every save
+    (see the table in the ``jser_format`` module docstring): the salvage argument
+    for it was measured with a line-anchored method against a file with no lines.
     """
     monkeypatch.delenv("PYRECON_JSER_PRETTY", raising=False)
     series = _open_fixture(tmp_path)
