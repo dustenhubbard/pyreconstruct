@@ -1867,7 +1867,7 @@ class Series():
     ## The passes enumerateSections is running on this series, innermost
     ## last, and the callable told of each section file one of them writes
     ## (see setPassWriteHook).
-    _running_passes = ()
+    _running_passes: tuple["SeriesIterator", ...] = ()
     _pass_write_hook = None
 
     def sectionPassRunning(self) -> bool:
