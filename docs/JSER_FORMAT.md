@@ -484,11 +484,10 @@ asks; Cancel leaves the file untouched. A renamed object keeps its `obj_attrs` e
 its group memberships and its place in `host_tree`, which follow it to the new name.
 Where several names merge, groups and hosts are combined, and one name's attributes win,
 with any attribute it lacks filled in from the others.
-The `host_tree` part holds only for host lists stored as arrays, which is all the writer
-emits. An entry whose value is a bare string (see
-[5.3](#53-groups-hosts-and-attributes)) is left exactly as stored, so neither its object
-name nor its host follows the rename: `{"my object": "host", "child": "my object"}`
-still names `my object` after the contour has become `my_object`.
+A `host_tree` entry stored as a bare string (see
+[5.3](#53-groups-hosts-and-attributes)) follows the rename too: it is read as a
+one-host array and written back as one, so `{"my object": "host", "child": "my object"}`
+becomes `{"my_object": ["host"], "child": ["my_object"]}`.
 The `log` is not rewritten, so the history keeps the old name.
 
 So `"my square, big"` on disk becomes the contour `my_square__big` in memory, and that
@@ -674,13 +673,12 @@ row gains `resolved = false` at the end, and a 6-element row gains an `id` at th
 front. Because the checks run in sequence, a 5-element row picks up both
 repairs in one pass and arrives at 7 elements. The repaired `id` is **derived from the
 flag's own content** (its section number and stored fields), in the same alphabet and
-length as a generated one. The reader tries up to 1,000 content-derived candidates and
-takes the first that no flag in that section holds yet, so legacy flags with identical
-content in one section get distinct ids in a fixed order. Within that limit a legacy
-flag gets the same id on every open, in every copy of the file, with no save needed.
-Past it, once one section holds more than 1,000 legacy flags with identical content,
-each extra flag falls back to a random id: that id differs between opens and is not
-checked against the ids already in the section.
+length as a generated one. The reader tries content-derived candidates in a fixed
+order and takes the first candidate no flag in that section holds yet, so legacy flags
+with identical content in one section get distinct ids in a fixed order. There is no
+cap on how many it tries: however many identical legacy flags a section holds, each
+gets the same id on every open, in every copy of the file, with no save needed, and no
+two flags in the section share an id.
 
 ### 4.3 Comment rows
 
@@ -848,8 +846,8 @@ object with no hosts is omitted entirely. The inverse index is recomputed on loa
 never stored. Two notes:
 
 - The reader accepts a bare string where the writer only ever emits an array, so
-  `{"obj": "host"}` loads as `{"obj": ["host"]}`. A bare-string entry is not repointed
-  when a contour name is normalized; see [Contour names](#contour-names).
+  `{"obj": "host"}` loads as `{"obj": ["host"]}`. A bare-string entry is repointed
+  like an array when a contour name is normalized; see [Contour names](#contour-names).
 - **Loading is not an identity operation.** A host that is already a transitive superhost
   of the same object is pruned on load and will not be written back.
 
@@ -1100,7 +1098,7 @@ before the per-object functions, and one step run after them. (The open path als
 | Root has neither `sections` nor `series` | Treats every root key as a file name. A key whose extension is numeric is that-numbered section; the other key is the series. Builds the `sections` array from the numbers, filling gaps with `null`. This is the original one-key-per-file layout. |
 | Root has no `log` | Inserts the bare CSV header line. |
 | Two distinct contour names, in any sections, normalize to the same name | Lists them and asks before anything is unpacked. Cancel leaves the file untouched and opens nothing. |
-| A section migration renamed a contour | After the series migration, repoints `obj_attrs`, `object_groups` and the array-valued entries of `host_tree` to the new name; a bare-string `host_tree` entry keeps the old name. Merged names combine their groups and hosts; one name's attributes win and the others fill only what it lacks. The `log` is left pointing at the old name. |
+| A section migration renamed a contour | After the series migration, repoints `obj_attrs`, `object_groups` and `host_tree` to the new name; a bare-string `host_tree` entry is written back as a one-element array. Merged names combine their groups and hosts; one name's attributes win and the others fill only what it lacks. The `log` is left pointing at the old name. |
 
 **Series migrations**
 
@@ -1142,7 +1140,7 @@ before the per-object functions, and one step run after them. (The open path als
 | Contour left with no rows | Deletes the contour. |
 | `tforms` contains `no-alignment` | Deletes it. |
 | Flag row has 5 elements | Appends `resolved = false`. Falls through to the next check, so the row ends at 7 elements. |
-| Flag row has 6 elements | Inserts an `id` derived from the flag's content at the front. The id is the same on every open, up to 1,000 identical legacy flags in one section. Past that it is random. See [4.2](#42-flag-rows). |
+| Flag row has 6 elements | Inserts an `id` derived from the flag's content at the front. The id is the same on every open, for any number of identical legacy flags in one section. See [4.2](#42-flag-rows). |
 | Contour name is not normalized | Renames it, merging into an existing contour of the normalized name if one exists. |
 | Always, last | Reorders the section's keys and its contour names canonically. |
 
@@ -1462,17 +1460,16 @@ file was opened, so until the section was saved the flag had no stable identity,
 people who each opened the same legacy file held the same flag under two ids. Imports
 match flags by `id` alone, so merging one copy into the other duplicated every legacy
 flag. The id is now derived from the flag's own content, so every open of every copy
-agrees on it with no save needed. The fix has a limit: past 1,000 legacy flags with
-identical content in one section, each extra flag gets a random id again (see
-[4.2](#42-flag-rows)).
+agrees on it with no save needed, however many legacy flags with identical content one
+section holds (see [4.2](#42-flag-rows)).
 
-**11. Contour names are normalized on read (the warning and most of the series data are FIXED).**
+**11. Contour names are normalized on read (the warning and the series data are FIXED).**
 Whitespace and commas in a contour name are rewritten to underscores, and two names that
 normalize to the same string have their traces merged. This used to happen with no
 warning, and a renamed object lost everything the series kept under its old name. Now a
 merge of distinct names is listed and confirmed before the file is unpacked, and a
-renamed object's `obj_attrs`, groups and hosts follow it to the new name. A `host_tree`
-entry stored as a bare string rather than an array is still not repointed. A plain rename
+renamed object's `obj_attrs`, groups and hosts follow it to the new name, including a
+`host_tree` entry stored as a bare string rather than an array. A plain rename
 with no merge still happens without asking, and the `log` keeps the old name. A generator
 must pre-normalize names or accept that its object names will change.
 
@@ -1544,7 +1541,7 @@ re-checked.
 | Legacy one-key-per-file layout migration | `PyReconstruct/modules/datatypes/series.py` (`Series._readJserForOpen`) |
 | Missing `log` defaulted to the header line | `PyReconstruct/modules/datatypes/series.py` (`Series._readJserForOpen`) |
 | Contour-name merges confirmed before unpacking | `PyReconstruct/modules/datatypes/series.py` (`contourNameCollisions`, `contourMergeWarning`, `Series._readJserForOpen`) |
-| Renamed objects keep their attributes, groups and array-valued hosts; bare-string hosts and the log do not follow | `PyReconstruct/modules/datatypes/series.py` (`applyContourRenames`, called from `Series.openJser`) |
+| Renamed objects keep their attributes, groups and hosts, bare-string hosts included; the log does not follow | `PyReconstruct/modules/datatypes/series.py` (`applyContourRenames`, called from `Series.openJser`) |
 | `sections` array length is `max(number)+1` | `PyReconstruct/modules/datatypes/series.py` (`Series._saveJser`, `slots`) |
 | Sections re-read opaquely on save | `PyReconstruct/modules/datatypes/series.py` (`sections` inside `Series._saveJser`) |
 | `log_set` removed unconditionally on save (divergence 5) | `PyReconstruct/modules/datatypes/series.py` (`tail` inside `Series._saveJser`) |
@@ -1643,7 +1640,7 @@ re-checked.
 | Flag row layout on write | `PyReconstruct/modules/datatypes/flag.py` (`Flag.getList`) |
 | Flag row layout on read, section number supplied externally | `PyReconstruct/modules/datatypes/flag.py` (`Flag.fromList`) |
 | Flag id alphabet and length | `PyReconstruct/modules/datatypes/flag.py` (`possible_chars`, `Flag.generateID`) |
-| Legacy flag id derived from content, random past 1,000 identical flags in a section | `PyReconstruct/modules/datatypes/flag.py` (`Flag.deriveID`), `PyReconstruct/modules/datatypes/section.py` (`Section.updateJSON`) |
+| Legacy flag id derived from content, stable for any number of identical flags in a section | `PyReconstruct/modules/datatypes/flag.py` (`Flag.deriveID`), `PyReconstruct/modules/datatypes/section.py` (`Section.updateJSON`) |
 | Comment row layout | `PyReconstruct/modules/datatypes/flag.py` (`Comment.getList`, `Comment.fromList`) |
 | Transform 6-number layout and Qt conversion | `PyReconstruct/modules/datatypes/transform.py` (`Transform.__init__`, `Transform.getQTransform`) |
 | Transform application order | `PyReconstruct/modules/datatypes/transform.py` (`Transform.map`, and the convention restated in `Transform.mapPointsArray`) |
