@@ -98,8 +98,9 @@ MIN_PINNED_PIXELS = 40
 #
 # A length typed from the range the dialog shows can land a hair outside it in
 # floating point: 0.011 µm at 0.000275 µm/px is 39.99999999999999 px, not 40.
-# `drawableLengths` and `pinnedLength` both test widths through `tooNarrow`
-# and `tooWide`, so every length the range offers draws at that length.
+# `pinnedLength` tests widths through `tooNarrow` and `tooWide`, and
+# `drawableLengths` widens its ends by this same tolerance, so every length the
+# range offers draws at that length.
 PIXEL_TOLERANCE = 1e-9
 
 
@@ -235,7 +236,7 @@ def pinnedSubdivisions(real_len, rungs=None):
     has a subdivision count that cuts it into round numbers.  A pinned bar is
     whatever the user typed, so it is looked up in the wider `TICK_SUBDIVISIONS`
     table, and it may not be there: 3.7 µm has no division into two to seven
-    parts that prints roundly.  Rather than print ticks labelled 0.74 and 1.48,
+    parts that prints roundly.  Rather than print ticks labeled 0.74 and 1.48,
     a length that is not in the table gets no interior ticks at all -- 1, which
     `paintEvent`'s `range(1, subdivs)` draws as none.
 
@@ -486,7 +487,7 @@ class ScaleBar(MoveableButton):
             small_font.setPixelSize(TICK_LABEL_SIZE)
             small_font.setBold(True)
             # on a short bar the tick labels would run into each other, so
-            # only every `step`-th tick is labelled, as few as keep them apart
+            # only every `step`-th tick is labeled, as few as keep them apart
             step = 1
             if draw_text and subdivs > 1:
                 metrics = QFontMetrics(outlinedFont(TICK_LABEL_SIZE))

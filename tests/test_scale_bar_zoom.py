@@ -708,7 +708,7 @@ def test_both_ends_of_the_range_draw_their_own_length(
 
 def test_each_end_of_the_range_draws_at_that_length_at_any_zoom():
     """The range the dialog shows and the length the bar draws are worked out
-    by two functions. Over every three-figure scale from 1e-8 to 9.99e3
+    by two functions. Over every three-figure scale from 1e-6 to 9.99e5
     µm/px, in three field widths, each end of the range draws unshifted."""
     from PyReconstruct.modules.gui.palette.scale_bar import drawableLengths
 

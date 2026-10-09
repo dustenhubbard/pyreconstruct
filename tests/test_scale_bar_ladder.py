@@ -165,7 +165,7 @@ def test_the_ladder_is_one_two_five():
 
 @pytest.mark.parametrize("pct", (20, 25, 60, 100))
 def test_every_label_is_one_two_or_five(app, monkeypatch, pct):
-    """Over eight decades of zoom, the printed length is always 1, 2 or 5
+    """Over about four decades of zoom, the printed length is always 1, 2 or 5
     times a power of ten."""
     for scale in _zoom_steps():
         bar = _make_bar(pct, scale)
@@ -176,7 +176,7 @@ def test_every_label_is_one_two_or_five(app, monkeypatch, pct):
 
 
 def test_the_twelve_rung_ladder_printed_other_numbers(app, monkeypatch):
-    """The check above has teeth: the previous ladder fails it."""
+    """The check above can fail: the previous ladder fails it."""
     with monkeypatch.context() as m:
         m.setattr(sb_mod, "NICE_LENGTHS", TWELVE_RUNGS)
         labels = set()
