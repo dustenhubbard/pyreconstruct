@@ -350,7 +350,8 @@ def matchByNumber(series_names : dict, zarr_names : list):
     its first or last number (numberKeys). The number sets must be equal,
     so an offset, a missing image or an extra one is refused. When the first
     and the last number both fit and pair the images differently, the match
-    is ambiguous and refused.
+    is ambiguous and refused. When they give the same pairing, the reading
+    with the fewest sections numbered unlike their image is returned.
 
         Params:
             series_names (dict): section number: the series' image name
@@ -375,7 +376,10 @@ def matchByNumber(series_names : dict, zarr_names : list):
         for zarr_position, zarr_key in zarr_keys.items():
             if set(series_key) == set(zarr_key):
                 names = {section_of[name]: zarr_key[number] for number, name in series_key.items()}
-                pairings.setdefault(tuple(sorted(names.items())), (series_position, zarr_position, names))
+                # every reading that gives this pairing is kept, so the
+                # section-number check below can use the one that fits
+                pairings.setdefault(tuple(sorted(names.items())), []).append(
+                    (series_position, zarr_position, names))
     if not pairings:
         zarr_key = next(iter(zarr_keys.values()))
         series_key = next(iter(series_keys.values()))
@@ -389,13 +393,17 @@ def matchByNumber(series_names : dict, zarr_names : list):
             "the first and the last number in the names both fit and pair the images "
             "differently, so which one is meant is not clear"
         )
-    ((series_position, zarr_position, names),) = pairings.values()
-    renumbered = sorted(
-        section_of[name] for number, name in series_keys[series_position].items()
-        if section_of[name] != number
-    )
-    return {"names": names, "series": series_position, "zarr": zarr_position,
-            "renumbered": renumbered}, ""
+    (readings,) = pairings.values()
+    matches = []
+    for series_position, zarr_position, names in readings:
+        renumbered = sorted(
+            section_of[name] for number, name in series_keys[series_position].items()
+            if section_of[name] != number
+        )
+        matches.append({"names": names, "series": series_position, "zarr": zarr_position,
+                        "renumbered": renumbered})
+    # the same pairing read another way may number every section as its own
+    return min(matches, key=lambda match: len(match["renumbered"])), ""
 
 
 def matchImageNames(series : Series, scales : list, groups : list, by_number : bool = True):
@@ -725,8 +733,10 @@ def describeCrop(plan : CropPlan, series : Series, obj_name : str, radius : floa
     if plan.blank:
         head = (f"Image all 0 under {obj_name} on {plural(len(plan.blank), 'section')} "
                 f"({spans(plan.blank)})")
-        if not plan.grayed:
+        if not plan.gray:
             summary.append(f"{head}: cropped as it is (--skip-missing).")
+        elif not plan.grayed:
+            summary.append(f"{head}: cropped as it is, because {no_reference}.")
         else:
             summary.append(
                 f"{head}: mid-gray ({', '.join(str(gray) for gray in plan.grays)}) inside the "

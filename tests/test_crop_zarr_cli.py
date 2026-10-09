@@ -1357,3 +1357,48 @@ def test_blank_image_with_skip_missing_is_cropped_as_it_is(case):
     assert result.returncode == 0, result.stderr
     assert not _arrays(out)[(1, "shapes_1.tif")].any()
     assert "Image all 0 under square on 1 section (1): cropped as it is (--skip-missing)." in result.stdout
+
+
+def test_same_pairing_read_by_last_number_is_not_refused(case, tmp_path):
+    """A_10_0.tif ... A_14_4.tif against B_10_0.tif ... B_14_4.tif pair the same
+    way by the first number or the last. Only the last numbers the sections as
+    they are, so the crop uses that reading instead of refusing the series as
+    reordered."""
+    jser, src = case
+    data = json.loads(jser.read_text())
+    for n, section in enumerate(data["sections"]):
+        section["src"] = f"A_1{n}_{n}.tif"
+    jser.write_text(json.dumps(data))
+    other = _renamed_copy(src, tmp_path / "other.zarr", [f"B_1{n}_{n}.tif" for n in range(5)])
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", other, "--out", out,
+    ])
+    assert result.returncode == 0, result.stderr
+    got = _arrays(out)
+    for (scale, name), want in _expected(src).items():
+        n = int(name.split("_")[1].split(".")[0])
+        np.testing.assert_array_equal(got[(scale, f"A_1{n}_{n}.tif")], want, err_msg=name)
+    assert "by the last number in the zarr's names and the last in the series'" in result.stdout
+
+
+def test_blank_image_with_no_donor_says_why(case, tmp_path):
+    """Section 1 is all 0 under the square, and no other section with the square
+    has its image at every scale level, so nothing can lend a window. The log
+    gives that reason, not a flag that was never set."""
+    jser, src = case
+    part = tmp_path / "part.zarr"
+    shutil.copytree(src, part)
+    _blank_under_square(part, 1)
+    for n in (0, 3, 4):
+        shutil.rmtree(part / "scale_2" / f"shapes_{n}.tif")
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", part, "--out", out,
+    ])
+    assert result.returncode == 0, result.stderr
+    line = ("Image all 0 under square on 1 section (1): cropped as it is, because no section "
+            "with square has a window that keeps pixels and its image at every scale level.")
+    assert line in result.stdout
+    assert line in (out / "crop_log.txt").read_text()
+    assert "--skip-missing" not in result.stdout
