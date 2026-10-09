@@ -93,9 +93,9 @@ jobs:
           git checkout -b "$BRANCH"
           git add "${FILES[@]}"
           git commit -m "docs: point the download links at v${VERSION}" \
-            -m "Opened once the release published, so the README, the User Guide, and the website never trail a stable release."
+            -m "The README, the User Guide, and the website now link to the v${VERSION} downloads."
           git push -f origin "$BRANCH"
           gh pr create --base main --head "$BRANCH" \
             --title "docs: point the download links at v${VERSION}" \
-            --body "The v${VERSION} release is published; this points the download links in the README, the User Guide, and the website at it. Label and merge as usual." \
+            --body "The v${VERSION} release is published; this points the download links in the README, the User Guide, and the website at it." \
             || echo "PR already open for $BRANCH"
