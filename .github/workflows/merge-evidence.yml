@@ -14,13 +14,11 @@
 # event and race the label runs for "latest" -- complexity that buys nothing the label
 # does not already give.
 #
-# Moving to main's copy, step one of two. On `pull_request_target`, GitHub runs the copy
-# of this file on main, not the PR head's, so a PR that edits this file cannot weaken
-# that run. Its check lands on the PR head commit under the same `merge-evidence` name.
-# For now `pull_request` stays too (see `on:`), so the head copy reports a check of the
-# same name as well, and both copies require the label. Branch protection does not say
-# which of the two it reads. Main's copy decides alone only once a later change drops
-# `pull_request`.
+# Main's copy only. On `pull_request_target`, GitHub runs the copy of this file on main,
+# not the PR head's, so a PR that edits this file cannot weaken the check. Its check
+# lands on the PR head commit under the `merge-evidence` name. There is no `pull_request`
+# trigger, so the head copy reports nothing. A change to this file takes effect for
+# other PRs only after it is on main.
 #
 # No checkout, no code execution, and it must stay that way: `pull_request_target` hands
 # the job a token for this repository, which is safe only because no step checks out or
@@ -29,18 +27,16 @@
 #
 # Limit: branch protection matches a required check by name alone, so a PR that adds its
 # own `pull_request` workflow with a job named `merge-evidence` reports a second check of
-# that name. Dropping `pull_request` here does not close that; only a GitHub ruleset
-# does, and none is set up. Read any change under .github/workflows/ with that in mind.
+# that name. Running only from main's copy here does not close that; only a GitHub
+# ruleset does, and none is set up. Read any change under .github/workflows/ with that
+# in mind.
 
 name: merge-evidence
 
 on:
+  # The only trigger. A `pull_request` trigger would run the PR head's copy, which the
+  # PR itself can edit, under the same check name.
   pull_request_target:
-    types: [opened, reopened, synchronize, labeled, unlabeled]
-  # Switch-over only. GitHub reads a `pull_request_target` trigger from main's copy, so
-  # until this file is on main with that trigger, only the head copy can report the
-  # check. Drop `pull_request` in the next change to this file.
-  pull_request:
     types: [opened, reopened, synchronize, labeled, unlabeled]
 
 # pull-requests: read lets the steps list the PR's commits through the API.
