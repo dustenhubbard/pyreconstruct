@@ -1841,7 +1841,13 @@ class MainWindow(QMainWindow):
         name = response[0]
         label_groups = [g for g in response[1] if g in groups]
 
-        series = zarrToNewSeries(zarr_fp, label_groups, name)
+        # a raw or label array PyReconstruct cannot read is refused with a
+        # message saying what to save instead
+        try:
+            series = zarrToNewSeries(zarr_fp, label_groups, name)
+        except ValueError as e:
+            notify(str(e))
+            return
 
         if not series:
             return
