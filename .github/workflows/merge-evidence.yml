@@ -14,21 +14,33 @@
 # event and race the label runs for "latest" -- complexity that buys nothing the label
 # does not already give.
 #
-# No checkout, no code execution: the decision is read from the event payload alone, so a
-# malicious PR head cannot influence this check's result.
+# Main's copy decides. This runs on `pull_request_target`, so GitHub uses the copy of
+# this file on main, not the PR head's: a PR that edits this file cannot weaken the check
+# that gates it, and a branch cut before a change here is checked by the new rules
+# without a merge from main. The check run still lands on the PR head commit, under the
+# same `merge-evidence` name branch protection requires.
 #
-# Caveat (same mechanics as #209's docs-trigger note): `pull_request` workflows run from
-# the PR HEAD, so a branch cut before this file landed on main never runs it, and a
-# required-but-never-reported check blocks that PR as "expected". The queue was empty when
-# this landed; any older branch just needs a rebase or a merge from main.
+# No checkout, no code execution, and it must stay that way: `pull_request_target` hands
+# the job a token for this repository, which is safe only because no step checks out or
+# runs code from the PR head. Every step reads the event payload or the GitHub API, and
+# every value reaches the shell through `env:`, never spliced into a script.
+#
+# Limit: branch protection matches a required check by name alone, so a PR that adds its
+# own `pull_request` workflow with a job named `merge-evidence` reports a second check of
+# that name. Read any change under .github/workflows/ with that in mind.
 
 name: merge-evidence
 
 on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+  # Switch-over only. GitHub reads a `pull_request_target` trigger from main's copy, so
+  # until this file is on main with that trigger, only the head copy can report the
+  # check. Drop `pull_request` in the next change to this file.
   pull_request:
     types: [opened, reopened, synchronize, labeled, unlabeled]
 
-# pull-requests: read lets the commit message step list the PR's commits through the API.
+# pull-requests: read lets the steps list the PR's commits through the API.
 permissions:
   pull-requests: read
 
@@ -36,30 +48,64 @@ jobs:
   merge-evidence:
     runs-on: ubuntu-latest
     steps:
+      - name: read the dependabot update type
+        # Dependabot's own action, pinned as in dependabot-auto.yml. It reads the PR's
+        # first commit through the API and reports no update type unless that commit is
+        # by dependabot[bot] and carries GitHub's verified signature, so a PR head cannot
+        # forge it. If it fails, the type stays empty and the label is required.
+        id: meta
+        if: github.event.pull_request.user.login == 'dependabot[bot]'
+        continue-on-error: true
+        uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a  # v2.5.0
+        with:
+          github-token: ${{ github.token }}
+
       - name: routine dependency PRs are vouched for by the suite
         # The one exception to label-only evidence, added 2026-08-24: a
         # dependabot patch or minor bump merges on green checks alone (see
-        # dependabot-auto.yml for the policy and the reason). Read from the
-        # event payload, so a PR head cannot forge it.
+        # dependabot-auto.yml for the policy and the reason). A major bump, an
+        # unknown update type, or a dependabot branch with a commit from anyone
+        # else needs the label like any other PR.
         id: dep
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
         run: |
-          if [ "${{ github.event.pull_request.user.login }}" = "dependabot[bot]" ]; then
-            echo "dependabot PR -- the test suite is the evidence"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+          skip=false
+          if [ "$AUTHOR" != "dependabot[bot]" ]; then
+            echo "not a dependabot PR"
+          elif [ "$UPDATE_TYPE" != version-update:semver-patch ] \
+               && [ "$UPDATE_TYPE" != version-update:semver-minor ]; then
+            echo "dependabot update type '${UPDATE_TYPE:-unknown}' -- the label is required"
           else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            others=$(gh api "repos/$REPO/pulls/$PR/commits" --paginate \
+              --jq '.[] | select(.author.login != "dependabot[bot]") | .sha[0:8]')
+            if [ -n "$others" ]; then
+              echo "commits not by dependabot -- the label is required:"
+              echo "$others"
+            else
+              echo "dependabot $UPDATE_TYPE -- the test suite is the evidence"
+              skip=true
+            fi
           fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
 
       - name: require the `reviewed` label
         if: steps.dep.outputs.skip != 'true'
         env:
-          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
-          case ",$LABELS," in
-            *,reviewed,*) echo "reviewed label present -- evidence recorded" ;;
-            *) echo "::error::No 'reviewed' label. A merge to main needs it."; \
-               exit 1 ;;
-          esac
+          # An exact, case-sensitive match on each label name. A pattern over the joined
+          # names would let a label such as "x,reviewed,y" pass.
+          if jq -e 'any(.[]; . == "reviewed")' <<<"$LABELS" >/dev/null; then
+            echo "reviewed label present -- evidence recorded"
+          else
+            echo "::error::No 'reviewed' label. A merge to main needs it."
+            exit 1
+          fi
 
       - name: check PR commit messages
         # Refuse a PR whose commit messages carry a trailer line this repo does not
