@@ -17,7 +17,7 @@ the same, and only one of them is free:
 ============================  ===================  ============================
 bytes on a 391 MB series      0 (exactly)          +0.65%
 ``saveJser`` wall time        within noise         +13%
-save-path transient memory    unchanged            none (28 MB peak either way)
+save-path transient memory    unchanged            no increase seen (28 MB)
 fixes byte reproducibility    yes                  no
 ============================  ===================  ============================
 
@@ -26,8 +26,12 @@ on a copy of the 391 MB series (318 sections), compact and pretty saves
 alternated in one process, eight of each for size and time on a busy shared
 machine, and memory taken as the ``tracemalloc`` peak during the save (the
 high-water RSS of the save agrees: about 11 MB over the pre-save RSS for both).
-Both forms hold one section at a time, so pretty-printing no longer costs
-memory. Before the writer streamed (measured 2026-07-27) it held an extra copy
+Both forms hold one section at a time, and no increase in peak memory was
+observed on that series. That is not a promise of none: the pretty form joins
+the ``log`` member into one more buffer, so it can still cost about one extra
+copy of the log text. A small series with a 1.24 MB log (20,000 events) peaked
+at 18.02 MB compact and 19.28 MB pretty in ``write_jser``, measured the same
+day. Before the writer streamed (measured 2026-07-27) it held an extra copy
 of the document and cost about 27% more. The ordering column dates from
 2026-07-27, when ordering was introduced; its 0 bytes holds by construction.
 

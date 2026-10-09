@@ -22,7 +22,7 @@ Two things to know before reading further:
 - **The writer is canonical, and minified by default.** The same series saved twice
   produces the same bytes ([one documented exception](#canonical-ordering)). The normative
   output form is a single line; **structural pretty-printing is available on request** and
-  is off by default, because it costs about 11% of save time, while canonical ordering
+  is off by default, because it costs about 13% of save time, while canonical ordering
   costs nothing. See
   [Canonical ordering](#canonical-ordering) and [Line structure](#line-structure). Older
   files have neither property; the reader accepts them regardless.
@@ -234,7 +234,10 @@ is not worth paying for on every save.
 The size and time rows were measured in October 2026, on the streamed writer. Before it
 streamed, every save built the complete document in memory first, and the pretty form
 cost about 27% more transient memory, because it held an extra copy of the document. Both
-forms now stream one section at a time, so neither holds every section at once.
+forms now stream one section at a time, so neither holds every section at once, and no
+increase in peak memory was observed on the 391 MB series. The pretty form can still cost
+about one extra copy of the log text, because it joins the `log` member into one more
+buffer: a small series with a 1.24 MB log peaked at 18.02 MB compact and 19.28 MB pretty.
 
 `PYRECON_JSER_PRETTY` is read **on every write**, not once at import, so it can be set,
 changed or cleared in a running process and the next save honors it. `pretty=True` /
