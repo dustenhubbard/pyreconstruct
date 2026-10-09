@@ -331,12 +331,12 @@ def test_startup_keeps_a_fresh_stable_install_quiet(redirected_store, monkeypatc
     monkeypatch.delenv("PYRECON_APP_NAME", raising=False)
     from PySide6.QtCore import QSettings
 
-    # Cleared again here, not only in the fixture. pytest-qt processes events
-    # between setup and the test body, and a window an earlier test closed is
-    # only queued for deletion, so its 750 ms What's-new timer can still be
-    # pending. Fired there, it finds no last-seen version and records the
-    # running one (a stable version on a shallow checkout), and the reset below
-    # reads an upgrade. Nothing from here on processes events.
+    # Cleared again here, not only in the fixture. The test harness processes
+    # events between setup and the test body, and a window an earlier test
+    # closed is only queued for deletion, so its 750 ms What's-new timer can
+    # still be pending. Fired there, it finds no last-seen version and records
+    # the running one (a stable version on a shallow checkout), and the reset
+    # below reads an upgrade. Nothing from here on processes events.
     _clear(redirected_store)
     had_username = redirected_store.value("username")
     redirected_store.remove("username")
