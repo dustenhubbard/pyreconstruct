@@ -1852,16 +1852,61 @@ class Series():
         ## force-quit as the only exit (found 2026-08-28). Abandoning a
         ## generator closes it (GeneratorExit), so the finally runs on every
         ## road out: exhaustion, break, and an exception in the body.
-        self._section_passes = getattr(self, "_section_passes", 0) + 1
+        self._running_passes = self._running_passes + (iterator,)
         try:
             yield from iterator
         finally:
-            self._section_passes -= 1
-            iterator.finishProgress()
+            self._running_passes = tuple(
+                p for p in self._running_passes if p is not iterator
+            )
+            try:
+                iterator.recordWritten()
+            finally:
+                iterator.finishProgress()
+
+    ## The passes enumerateSections is running on this series, innermost
+    ## last, and the callable told of each section file one of them writes
+    ## (see setPassWriteHook).
+    _running_passes = ()
+    _pass_write_hook = None
 
     def sectionPassRunning(self) -> bool:
         """True while enumerateSections is going through this series."""
-        return getattr(self, "_section_passes", 0) > 0
+        return bool(self._running_passes)
+
+    def setPassWriteHook(self, hook):
+        """Call hook(section) after a pass over the section files writes one.
+
+        A pass loads and writes its own copies of the sections. The field
+        keeps the copies it loaded before, of the section shown and the
+        flickered-away one, and every save writes those back
+        (MainWindow.saveAllData). A save during the pass, or after a pass
+        that stopped part-way, would put back what the pass changed, so the
+        field refreshes its copies from each file as it is written. A .jser
+        opened from the Finder at a progress update saves this series that
+        way, before the pass ends.
+
+            Params:
+                hook (callable): called with the Section just written, or
+                    None to stop
+        """
+        self._pass_write_hook = hook
+
+    def passWroteSection(self, section):
+        """Tell the running pass, and the hook, that a section was written.
+
+        Called by Section.save after every write; does nothing outside a
+        pass. If the hook raises, the pass stops there, and the section's
+        change is still added to the undo history (see enumerateSections).
+
+            Params:
+                section (Section): the section just written
+        """
+        if not self._running_passes:
+            return
+        self._running_passes[-1].sectionWritten(section)
+        if self._pass_write_hook is not None:
+            self._pass_write_hook(section)
 
     def getObjectSections(self, obj_names) -> set:
         """Return the set of section numbers that contain any of the objects.
@@ -3649,8 +3694,7 @@ class Series():
         return min(candidates, key=lambda m: (-m["points"], m["index"]))
 
     def combineDuplicateTraces(self, choices : list, series_states=None,
-                               log_event=True, ambiguous : list = None,
-                               written=None) -> list:
+                               log_event=True, ambiguous : list = None) -> list:
         """Combine each chosen duplicate group into one trace.
 
         Each choice is a ``(group, keep)`` tuple: ``group`` from
@@ -3682,8 +3726,6 @@ class Series():
                 log_event (bool): True if events should be logged
                 ambiguous (list): optional; receives each member record set
                     aside because more than one trace could be it
-                written (callable): optional; called with each Section as
-                    soon as it is saved, before the next progress update
             Returns:
                 (list): the (group, keep) tuples that were combined
         """
@@ -3749,21 +3791,12 @@ class Series():
                 ## told about the new tags (see Section.resyncColumnarStore)
                 section.modified_contours.update(kept_names)
                 section.resyncColumnarStore()
-                section.save()
                 # here, not after the pass: a series opened at a later
                 # progress update closes this one, and asks to save it only
-                # if it is marked modified
+                # if it is marked modified. Before the save, which can stop
+                # the pass (see Series.passWroteSection)
                 self.modified = True
-                if written is not None:
-                    try:
-                        written(section)
-                    except BaseException:
-                        # the pass ends here, so SeriesIterator.__next__
-                        # never adds this section's undo state: add it here
-                        if series_states is not None:
-                            series_states[snum].addState(section, self)
-                            series_states.addSectionUndo(snum)
-                        raise
+                section.save()
 
         return combined
 
@@ -6023,6 +6056,8 @@ class SeriesIterator():
         """
         self.series = series
         self.section = None
+        # True once the loop body saves the section it was given
+        self.written = False
         self.show_progress = show_progress
         self.message = message
         self.series_states = series_states
@@ -6059,15 +6094,7 @@ class SeriesIterator():
     def __next__(self):
         """Return the next section."""
         # update the series states of the previous section if requested
-        if self.series_states and self.section and (
-            self.section.getAllModifiedNames() or 
-            self.section.tformsModified() or
-            self.section.flags_modified
-        ):
-            self.series_states[self.section.n].addState(
-                self.section, self.series
-            )
-            self.series_states.addSectionUndo(self.section.n)
+        self._recordSection()
 
         if self.sni < len(self.section_numbers):
             if self.show_progress:
@@ -6109,6 +6136,33 @@ class SeriesIterator():
                     "sections and before the series data that goes with them."
                 )
             raise StopIteration
+
+    def _recordSection(self):
+        """Add the last section's change to the undo history, once."""
+        section, self.section = self.section, None
+        self.written = False
+        if self.series_states and section and (
+            section.getAllModifiedNames() or
+            section.tformsModified() or
+            section.flags_modified
+        ):
+            self.series_states[section.n].addState(section, self.series)
+            self.series_states.addSectionUndo(section.n)
+
+    def sectionWritten(self, section):
+        """Note that the loop body saved the section it was given."""
+        if section is self.section:
+            self.written = True
+
+    def recordWritten(self):
+        """Add the undo state of a section the pass wrote and stopped on.
+
+        A loop body that raised or broke out after saving its section never
+        reaches the __next__ that adds it. A change that was not written is
+        left out: undo would put back a state the file never had.
+        """
+        if self.written:
+            self._recordSection()
 
     def finishProgress(self):
         """Close the progress dialog, however the iteration ended.

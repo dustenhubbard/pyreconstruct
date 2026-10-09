@@ -547,26 +547,11 @@ class FieldWidgetObject(FieldWidgetTrace):
         self.mainwindow.saveAllData()
 
         series = self.series
-
-        def reloadLoaded(written):
-            # a .jser opened at the next progress update saves this series
-            # first, and that writes the field's copies of the shown and
-            # flickered-away sections (MainWindow.saveAllData): copies loaded
-            # before the combine wrote the section put the duplicates back
-            if self.section is not None and self.section.n == written.n:
-                self.section = series.loadSection(written.n)
-                self.section_layer.section = self.section
-                self.table_manager.changeSection(self.section)
-            if self.b_section is not None and self.b_section.n == written.n:
-                self.b_section = series.loadSection(written.n)
-                self.b_section_layer.section = self.b_section
-
         ambiguous = []
         applied = series.combineDuplicateTraces(
             valid,
             series_states=self.series_states,
             ambiguous=ambiguous,
-            written=reloadLoaded,
         )
         if self.series is not series:
             # a .jser opened from the Finder during the combine's progress
