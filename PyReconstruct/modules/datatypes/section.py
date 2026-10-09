@@ -648,7 +648,7 @@ class Section():
             section_data, n, stored_ids=stored_ids
         )
 
-        self.src = os.path.basename(section_data["src"])
+        self.src = Section.imageName(section_data["src"])
         self.bc_profiles = section_data["brightness_contrast_profiles"]
         self.mag = section_data["mag"]
         self.align_locked = section_data["align_locked"]
@@ -817,6 +817,28 @@ class Section():
             return normalize_storage_path(self.src)
         except ValueError:
             return None
+
+    @staticmethod
+    def imageName(src : str) -> str:
+        """The image name a section keeps: the file name alone.
+
+        The series image folder (src_dir) is the one place a folder is kept.
+        Series exist whose names carry the folder the images sat in where the
+        series was made: the class series in dev/assets/checker stores
+        Cropped Images/d03/000ZGBJY.tif, and the zarr made for it holds
+        000ZGBJY.tif. Keeping that folder would look up an array the zarr does
+        not have, so a/b.png is kept as b.png, and a zarr array nested in a
+        folder is not one a section can name.
+
+        os.path.basename splits on a backslash only on Windows. On macOS and
+        Linux a\\b.png is one file name and is kept whole (see zarr_key).
+
+            Params:
+                src (str): the image name as saved or typed
+            Returns:
+                (str): the name the section looks the image up by
+        """
+        return os.path.basename(src)
 
     @property
     def src_fp(self):
