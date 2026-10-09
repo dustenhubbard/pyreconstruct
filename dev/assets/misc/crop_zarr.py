@@ -18,14 +18,19 @@ it off:
   nearest section with the object (ties go to the earlier section), instead
   of coming out black. --blank-untraced leaves it black.
 - A section whose image is not in the zarr gets an image the size of the
-  nearest section with the object, 128 gray inside that section's window and
-  0 outside it, so the crop has an image for every section. --skip-missing
-  writes no image for it.
+  nearest section with the object, mid-gray inside that section's window and
+  0 outside it, so the crop has an image for every section. Mid-gray is half
+  the range of an unsigned image type: 128 for 8-bit images, 32768 for
+  16-bit. Signed, float and bool images have no fixed black and white, so a
+  missing image there stops the crop before it writes anything.
+  --skip-missing writes no image for it instead.
 - When no image name in the series is in the zarr, each section is matched
-  to the zarr image whose name starts with its section number, only if every
-  zarr image name starts with a number and those numbers are exactly the
-  series' section numbers, one image each. The crop names its images as the
-  series does. --exact-names turns the matching off.
+  to the zarr image with the same number as the section's own image name,
+  taking the first or the last number in the names (matchByNumber). Only
+  an exact match is used: one image per section, no number twice, the same
+  names at every scale level, and every image name numbered as its section
+  (a reordered series is refused). The crop names its images as the series
+  does. --exact-names turns the matching off.
 - A section that has an image but where no window keeps any of its pixels
   keeps its full, uncropped image instead of coming out black. That is when
   the object's window is outside the image, the borrowed window of the
@@ -40,7 +45,7 @@ number. The summary is printed too.
 
 A crop that would keep no pixels is an error too, found before the output
 folder is made: when no section's image name is in the zarr and the names
-cannot be matched by section number (the series and the zarr do not belong
+cannot be matched by number (the series and the zarr do not belong
 together), or when the object is inside no section image.
 
 The output must be a new path: not one that exists, not a drive or file
@@ -73,8 +78,16 @@ from PyReconstruct.modules.backend.progress import NullProgressReporter
 
 ## the log's file name, inside the output zarr
 LOG_NAME = "crop_log.txt"
-## the value written inside the window for a section whose image is missing
-GRAY = 128
+
+
+def midGray(dtype):
+    """The gray for a missing image's stand-in: half the range of an unsigned
+    integer type (128 for uint8), or None for a type with no fixed black and
+    white (signed, float, bool), where any value would be a guess."""
+    dtype = np.dtype(dtype)
+    if dtype.kind != "u":
+        return None
+    return (int(np.iinfo(dtype).max) + 1) // 2
 
 
 class CropError(Exception):
@@ -282,74 +295,163 @@ def plural(count : int, word : str):
     return f"{count} {word}" if count == 1 else f"{count} {word}s"
 
 
-def matchByNumber(sections : dict, scales : list, groups : list):
-    """Match each section to the zarr image whose name starts with its number.
+def nameNumbers(name : str):
+    """Every run of digits in an image name, as integers, left to right.
 
-    Some zarrs name their images "000_<code>_grid000.tif" while the series
-    names them "<code>_000.tif". The match is a guess about how the zarr was
-    named, so it is made only when nothing about it is ambiguous: every scale
-    group holds the same names, every name starts with a number, no two names
-    start with the same number, those numbers are exactly the series' section
-    numbers (so an offset, a missing image or an extra one is refused), and no
-    two sections use the same image name, since the crop names its images as
-    the series does.
+    A file extension is left out (".jp2" is not a number), but only one with
+    a letter in it, so the "000" of "CODE.000" stays.
+    """
+    stem, extension = os.path.splitext(name)
+    if not re.search(r"[A-Za-z]", extension):
+        stem = name
+    return [int(run) for run in re.findall(r"[0-9]+", stem)]
+
+
+def numberKeys(names : list):
+    """The ways a list of image names can be keyed by one number per name.
+
+    The first number in each name is a key when every name has one and no two
+    are the same integer; so is the last. Zero padding does not count:
+    "001_a.tif" and "1_b.tif" share the number 1.
 
         Returns:
-            (tuple): ({section number: zarr image name}, "") or (None, the reason
-                there is no match)
+            (tuple): ({"first" and/or "last": {number: name}}, "") or ({}, the
+                reason neither is a key)
     """
-    names = sorted(groups[0].array_keys())
-    for scale, group in zip(scales[1:], groups[1:]):
-        if sorted(group.array_keys()) != names:
-            return None, f"scale_{scale} holds other image names than scale_{scales[0]}"
-    by_number = {}
-    for name in names:
-        match = re.match(r"\d+", name)
-        if not match:
-            return None, f"{name!r} does not start with a number"
-        number = int(match.group())
-        if number in by_number:
-            return None, f"{by_number[number]!r} and {name!r} start with the same number"
-        by_number[number] = name
-    if set(by_number) != set(sections):
+    keys, reason = {}, ""
+    for position, index in (("first", 0), ("last", -1)):
+        key = {}
+        for name in names:
+            numbers = nameNumbers(name)
+            if not numbers:
+                return {}, f"{name!r} has no number"
+            if numbers[index] in key:
+                reason = reason or (
+                    f"{key[numbers[index]]!r} and {name!r} both have the number {numbers[index]}"
+                )
+                break
+            key[numbers[index]] = name
+        else:
+            keys[position] = key
+    return keys, "" if keys else reason
+
+
+def matchByNumber(series_names : dict, zarr_names : list):
+    """Pair each section with the zarr image that has its image name's number.
+
+    A pure function of the names, so it can move to the PyReconstruct package
+    later. The key is the number in the series' own image name, which is the
+    image the traces were drawn over, not the section number: after sections
+    are inserted, removed or reordered the two differ. Each side is keyed by
+    its first or last number (numberKeys). The number sets must be equal,
+    so an offset, a missing image or an extra one is refused. When the first
+    and the last number both fit and pair the images differently, the match
+    is ambiguous and refused.
+
+        Params:
+            series_names (dict): section number: the series' image name
+            zarr_names (list): the zarr's image names
+        Returns:
+            (tuple): (match, "") or (None, the reason there is no match), where
+                match is a dict with "names" (section number: zarr image name),
+                "series" and "zarr" (the position, "first" or "last", of the
+                number used in each side's names), and "renumbered" (the
+                sections whose image name's number is not their section number)
+    """
+    zarr_keys, reason = numberKeys(zarr_names)
+    if not zarr_keys:
+        return None, f"no number tells the zarr's images apart: {reason}"
+    series_keys, reason = numberKeys(list(series_names.values()))
+    if not series_keys:
+        return None, f"no number tells the series' image names apart: {reason}"
+
+    section_of = {name: snum for snum, name in series_names.items()}
+    pairings = {}
+    for series_position, series_key in series_keys.items():
+        for zarr_position, zarr_key in zarr_keys.items():
+            if set(series_key) == set(zarr_key):
+                names = {section_of[name]: zarr_key[number] for number, name in series_key.items()}
+                pairings.setdefault(tuple(sorted(names.items())), (series_position, zarr_position, names))
+    if not pairings:
+        zarr_key = next(iter(zarr_keys.values()))
+        series_key = next(iter(series_keys.values()))
         return None, (
-            f"the zarr's {plural(len(by_number), 'image')} start with "
-            f"{spans(by_number, 4) or 'no numbers'}, and the series' "
-            f"{plural(len(sections), 'section')} are {spans(sections, 4)}"
+            f"the zarr's {plural(len(zarr_key), 'image')} are numbered "
+            f"{spans(zarr_key, 4) or 'nothing'}, and the series' "
+            f"{plural(len(series_key), 'image name')} {spans(series_key, 4)}"
         )
-    seen = set()
-    for data in sections.values():
-        if data["src"] in seen:
-            return None, f"two sections in the series use the image name {data['src']!r}"
-        seen.add(data["src"])
-    return {snum: by_number[snum] for snum in sections}, ""
+    if len(pairings) > 1:
+        return None, (
+            "the first and the last number in the names both fit and pair the images "
+            "differently, so which one is meant is not clear"
+        )
+    ((series_position, zarr_position, names),) = pairings.values()
+    renumbered = sorted(
+        section_of[name] for number, name in series_keys[series_position].items()
+        if section_of[name] != number
+    )
+    return {"names": names, "series": series_position, "zarr": zarr_position,
+            "renumbered": renumbered}, ""
 
 
 def matchImageNames(series : Series, scales : list, groups : list, by_number : bool = True):
-    """Return ({section number: its image's name in the zarr}, matched by number).
+    """Return ({section number: its image's name in the zarr}, the number match or None).
 
     The series' own names are used when any of them is in the zarr; a section
     whose name is not there is then a missing image. Otherwise the names come
-    from matchByNumber, and with no match the crop would keep nothing, so it
-    is an error.
+    from matchByNumber, held to the crop's stricter rules, since no one looks
+    at the pictures: every scale group holds the same names, no two sections
+    share an image name (the crop is written under them), and every section's
+    image name has its section number, so a reordered series is refused
+    rather than cropped over the wrong images. With no match the crop would
+    keep nothing, so it is an error.
     """
     sections = series.data["sections"]
     if any(data["src"] in group for data in sections.values() for group in groups):
-        return {snum: data["src"] for snum, data in sections.items()}, False
+        return {snum: data["src"] for snum, data in sections.items()}, None
     reason = "--exact-names is set"
     if by_number:
-        names, reason = matchByNumber(sections, scales, groups)
-        if names:
-            return names, True
+        match, reason = sameNamesAtEveryScale(scales, groups)
+        seen = set()
+        for data in sections.values():
+            if match and data["src"] in seen:
+                match, reason = None, f"two sections in the series use the image name {data['src']!r}"
+            seen.add(data["src"])
+        if match:
+            match, reason = matchByNumber(
+                {snum: data["src"] for snum, data in sections.items()},
+                sorted(groups[0].array_keys()),
+            )
+        if match and match["renumbered"]:
+            first = match["renumbered"][0]
+            reason = (
+                f"the numbers in the series' image names differ from the section numbers on "
+                f"{plural(len(match['renumbered']), 'section')} "
+                f"({spans(match['renumbered'], 4)}; section {first} uses "
+                f"{sections[first]['src']!r}), so the series may have been reordered"
+            )
+            match = None
+        if match:
+            return match["names"], match
     series_names = [sections[snum]["src"] for snum in sorted(sections)]
     zarr_names = sorted(groups[0].array_keys())
     raise CropError(
         f"No section image in this series is in the zarr. "
         f"The series names {someNames(series_names)}; "
         f"the zarr's scale_{scales[0]} has {someNames(zarr_names) or 'no images'}. "
-        f"They cannot be matched by section number: {reason}. "
+        f"They cannot be matched by number: {reason}. "
         f"Check that the zarr was made for this series."
     )
+
+
+def sameNamesAtEveryScale(scales : list, groups : list):
+    """Return (True, "") if every scale group holds the same image names, else
+    (False, the first group that differs)."""
+    names = sorted(groups[0].array_keys())
+    for scale, group in zip(scales[1:], groups[1:]):
+        if sorted(group.array_keys()) != names:
+            return False, f"scale_{scale} holds other image names than scale_{scales[0]}"
+    return True, ""
 
 
 def usableWindow(bounds : tuple, radius : float, mag : float, shape : tuple):
@@ -393,7 +495,8 @@ class CropPlan:
 
         Attributes:
             names (dict): section number: its image's name in the zarr
-            by_number (bool): True if names were matched by section number
+            match (dict): the number match from matchByNumber, or None when
+                the series' own names are in the zarr
             traced (dict): section number: (bounds, mag) of the object, for
                 every section with the object
             missing (dict): section number: the scale factors whose group
@@ -413,6 +516,7 @@ class CropPlan:
             fill (bool): fill sections without the object
             gray (bool): write gray images for missing ones
             full (bool): keep the whole image of a failed section
+            grays (list): the mid-gray values the missing images' stand-ins use
     """
 
     def __init__(self, **attributes):
@@ -432,7 +536,7 @@ def planCrop(
     """Match the image names and choose each section's window; raise a
     CropError when the crop cannot be made. Reads only array shapes."""
     groups = [src_group[f"scale_{scale}"] for scale in scales]
-    names, by_number = matchImageNames(series, scales, groups, match_by_number)
+    names, match = matchImageNames(series, scales, groups, match_by_number)
 
     traced = {}
     snums = sorted(series.getObjectSections([obj_name]))
@@ -487,10 +591,28 @@ def planCrop(
         }
         if not any(windows[snum].values()):
             failed[snum] = reason
+
+    # a stand-in takes its neighbor's image type, which must have a mid-gray
+    grays = set()
+    for snum, absent in sorted(missing.items()) if gray_missing else ():
+        nearest = neighbor[snum]
+        if nearest is None:
+            continue
+        for scale, group in zip(scales, groups):
+            if scale not in absent:
+                continue
+            dtype = group[names[nearest]].dtype
+            if midGray(dtype) is None:
+                raise CropError(
+                    f"Section {snum} has no image in the zarr, and a stand-in would be "
+                    f"{dtype} like the zarr's images, which has no fixed mid-gray. "
+                    f"Use --skip-missing to leave it out."
+                )
+            grays.add(midGray(dtype))
     return CropPlan(
-        names=names, by_number=by_number, traced=traced, missing=missing,
+        names=names, match=match, traced=traced, missing=missing,
         untraced=untraced, neighbor=neighbor, windows=windows, failed=failed,
-        fill=fill_untraced, gray=gray_missing, full=full_on_fail,
+        fill=fill_untraced, gray=gray_missing, full=full_on_fail, grays=sorted(grays),
     )
 
 
@@ -508,12 +630,13 @@ def describeCrop(plan : CropPlan, series : Series, obj_name : str, radius : floa
     summary = [f"Cropped around {obj_name}: {len(cropped)} of {plural(len(sections), 'section')}."]
     details = []
 
-    if plan.by_number:
+    if plan.match:
         first = min(sections)
         summary.append(
-            f"Image names: no series name is in the zarr, so each section uses the "
-            f"zarr image whose name starts with its section number ({plan.names[first]!r} "
-            f"is section {first}). The crop uses the series' names ({sections[first]['src']!r}, ...)."
+            f"Image names: no series name is in the zarr, so each section uses the zarr "
+            f"image with the same number as its own image ({plan.names[first]!r} for "
+            f"{sections[first]['src']!r}), by the {plan.match['zarr']} number in the zarr's "
+            f"names and the {plan.match['series']} in the series'. The crop uses the series' names."
         )
         details += ["", "Image names (section: zarr image -> crop image)"]
         details += [
@@ -553,7 +676,8 @@ def describeCrop(plan : CropPlan, series : Series, obj_name : str, radius : floa
             summary.append(f"{head}: left out of the crop, because {no_reference}.")
         else:
             summary.append(
-                f"{head}: {GRAY} gray inside the window of {nearest}, at that section's image size."
+                f"{head}: mid-gray ({', '.join(str(gray) for gray in plan.grays)}) inside the "
+                f"window of {nearest}, at that section's image size."
             )
             details += ["", "Sections with no image in the zarr "
                             "(section, series image name: the section whose window and size it used)"]
@@ -677,7 +801,7 @@ def cropSections(
                 window = usableWindow(bounds, radius, mag * scale, like.shape)
                 if window is not None:
                     t, b, l, r = window
-                    gray[t:b, l:r] = GRAY
+                    gray[t:b, l:r] = midGray(like.dtype)
                 writeImage(new_group, scale_grp, section.src, gray, like)
 
         if report:
@@ -771,10 +895,10 @@ def parseArgs(argv : list):
                         "their image inside the nearest traced section's window")
     parser.add_argument("--skip-missing", action="store_true",
                         help="write no image for a section whose image is not in the zarr, "
-                        f"instead of {GRAY} gray in the nearest traced section's window")
+                        "instead of mid-gray in the nearest traced section's window")
     parser.add_argument("--exact-names", action="store_true",
                         help="when no image name in the series is in the zarr, stop, instead "
-                        "of matching images by the section number their zarr names start with")
+                        "of matching images by the number in their names")
     parser.add_argument("--blank-failed", action="store_true",
                         help="leave a section black when no window keeps any of its pixels, "
                         "instead of keeping its full, uncropped image")

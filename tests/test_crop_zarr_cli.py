@@ -684,14 +684,15 @@ def _assert_refused_before_writing(result, out, jser, fragment):
 
 
 def test_zarr_with_other_image_names_is_refused(case, tmp_path):
-    """No section's image name is in the zarr and none starts with a number:
-    stop, naming both sides, and write nothing.
+    """No section's image name is in the zarr and no number tells the zarr's
+    images apart: stop, naming both sides, and write nothing.
 
     Before this check every section was skipped and the run printed
     "Crop complete" over an output holding only .zgroup.
     """
     jser, src = case
-    other = _zarr_of(tmp_path / "other.zarr", [f"grid0{n}_00{n}.tif" for n in range(5)])
+    other = _zarr_of(tmp_path / "other.zarr",
+                     ["grid0_a.tif", "grid0_b.tif", "grid1_a.tif", "grid1_b.tif", "grid2_a.tif"])
     out = tmp_path / "out.zarr"
     result = _run([
         "--jser", jser, "--object", OBJECT, "--radius", RADIUS,
@@ -699,8 +700,9 @@ def test_zarr_with_other_image_names_is_refused(case, tmp_path):
     ])
     _assert_refused_before_writing(result, out, jser, "No section image in this series is in the zarr")
     assert "'shapes_0.tif'" in result.stderr
-    assert "'grid00_000.tif'" in result.stderr
-    assert "'grid00_000.tif' does not start with a number" in result.stderr
+    assert "'grid0_a.tif'" in result.stderr
+    assert ("no number tells the zarr's images apart: "
+            "'grid0_a.tif' and 'grid0_b.tif' both have the number 0") in result.stderr
 
 
 @pytest.mark.parametrize("where", ["outside every image", "only on sections without an image"])
@@ -729,7 +731,7 @@ def test_missing_images_are_gray_in_the_nearest_window(case, tmp_path):
     ])
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines()[-1] == f"Crop complete: {out}"
-    assert ("No image in the zarr for 4 sections (1-4): 128 gray inside the window of "
+    assert ("No image in the zarr for 4 sections (1-4): mid-gray (128) inside the window of "
             f"the nearest section with {OBJECT}") in result.stdout
     got = _arrays(out)
     assert sorted(got) == [(scale, f"shapes_{n}.tif") for scale in SCALES for n in range(5)]
@@ -855,9 +857,10 @@ def _renamed_copy(src, folder, names):
     return folder
 
 
-def test_names_are_matched_by_section_number(case, tmp_path):
-    """No series name is in the zarr, but every zarr name starts with a section
-    number, one each: crop as if the names matched, under the series' names."""
+def test_names_are_matched_by_number(case, tmp_path):
+    """No series name is in the zarr, but the first number in each zarr name is
+    the number in one series name, one each: crop as if the names matched,
+    under the series' names."""
     jser, src = case
     grid = _renamed_copy(src, tmp_path / "grid.zarr", GRID_NAMES)
     out = tmp_path / "out.zarr"
@@ -871,8 +874,9 @@ def test_names_are_matched_by_section_number(case, tmp_path):
     for key in want:
         np.testing.assert_array_equal(got[key], want[key], err_msg=str(key))
     assert ("Image names: no series name is in the zarr, so each section uses the zarr image "
-            "whose name starts with its section number ('000_shapes_grid000.tif' is section 0). "
-            "The crop uses the series' names ('shapes_0.tif', ...).") in result.stdout
+            "with the same number as its own image ('000_shapes_grid000.tif' for 'shapes_0.tif'), "
+            "by the first number in the zarr's names and the first in the series'. "
+            "The crop uses the series' names.") in result.stdout
     log = (out / "crop_log.txt").read_text()
     assert "Image names (section: zarr image -> crop image)\n" in log
     for n, name in enumerate(GRID_NAMES):
@@ -880,12 +884,15 @@ def test_names_are_matched_by_section_number(case, tmp_path):
 
 
 @pytest.mark.parametrize("names, reason", [
-    (GRID_NAMES[:4], "the zarr's 4 images start with 0-3, and the series' 5 sections are 0-4"),
+    (GRID_NAMES[:4], "the zarr's 4 images are numbered 0-3, and the series' 5 image names 0-4"),
     ([f"00{n + 1}_grid.tif" for n in range(5)],
-     "the zarr's 5 images start with 1-5, and the series' 5 sections are 0-4"),
+     "the zarr's 5 images are numbered 1-5, and the series' 5 image names 0-4"),
     (GRID_NAMES[:4] + ["0003_extra.tif"],
-     "'0003_extra.tif' and '003_shapes_grid02_sec01.tif' start with the same number"),
-    (GRID_NAMES[:4] + ["grid_4.tif"], "'grid_4.tif' does not start with a number"),
+     "no number tells the zarr's images apart: "
+     "'0003_extra.tif' and '003_shapes_grid02_sec01.tif' both have the number 3"),
+    (GRID_NAMES[:4] + ["grid.tif"], "no number tells the zarr's images apart: 'grid.tif' has no number"),
+    ([f"s{n}_g{4 - n}.tif" for n in range(5)],
+     "the first and the last number in the names both fit and pair the images differently"),
 ])
 def test_unclear_number_matches_are_refused(case, tmp_path, names, reason):
     """A match by number is made only when it is one image per section, exactly."""
@@ -896,7 +903,7 @@ def test_unclear_number_matches_are_refused(case, tmp_path, names, reason):
         "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", other, "--out", out,
     ])
     _assert_refused_before_writing(result, out, jser, "No section image in this series is in the zarr")
-    assert f"They cannot be matched by section number: {reason}." in result.stderr
+    assert f"They cannot be matched by number: {reason}" in result.stderr
 
 
 def test_number_match_needs_the_same_names_at_every_scale(case, tmp_path):
@@ -934,7 +941,7 @@ def test_exact_names_turns_number_matching_off(case, tmp_path):
         "--exact-names",
     ])
     _assert_refused_before_writing(
-        result, out, jser, "They cannot be matched by section number: --exact-names is set.")
+        result, out, jser, "They cannot be matched by number: --exact-names is set.")
 
 
 def test_prompts_refuse_an_empty_crop(case, tmp_path):
@@ -1116,3 +1123,143 @@ def test_neighbor_needs_a_window_that_keeps_pixels(case, tmp_path):
         gray[t:b, l:r] = 128
         np.testing.assert_array_equal(got[(scale, "shapes_3.tif")], gray, err_msg=str(scale))
     assert "\n  3 shapes_3.tif: 1\n" in (out / "crop_log.txt").read_text()
+
+
+@pytest.mark.parametrize("names", [
+    [f"W2Q_00{n}.tif" for n in range(5)],  # the first number repeats; the last is the key
+    [f"s1{n}_00{n}.tif" for n in range(5)],  # both fit; only the last has the series' numbers
+    [f"W2Q.00{n}" for n in range(5)],  # no file extension: ".004" is the number
+])
+def test_trailing_numbers_are_matched(case, tmp_path, names):
+    """The lab's CODE_000.tif and CODE.000 names carry the number at the end."""
+    jser, src = case
+    other = _renamed_copy(src, tmp_path / "other.zarr", names)
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", other, "--out", out,
+    ])
+    assert result.returncode == 0, result.stderr
+    got = _arrays(out)
+    want = _expected(src)
+    assert got.keys() == want.keys()
+    for key in want:
+        np.testing.assert_array_equal(got[key], want[key], err_msg=str(key))
+    assert "by the last number in the zarr's names" in result.stdout
+
+
+def _swap_sources(jser, a, b):
+    """Swap two sections' image names, as reordering sections does."""
+    data = json.loads(jser.read_text())
+    sections = data["sections"]
+    sections[a]["src"], sections[b]["src"] = sections[b]["src"], sections[a]["src"]
+    jser.write_text(json.dumps(data))
+
+
+def test_reordered_series_is_refused(case, tmp_path):
+    """Sections 0 and 1 hold each other's images. The number sets still agree,
+    so matching by section number would put each image under the other
+    section's traces; the crop refuses instead."""
+    jser, src = case
+    _swap_sources(jser, 0, 1)
+    grid = _renamed_copy(src, tmp_path / "grid.zarr", GRID_NAMES)
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", grid, "--out", out,
+    ])
+    _assert_refused_before_writing(
+        result, out, jser,
+        "the numbers in the series' image names differ from the section numbers on 2 sections "
+        "(0-1; section 0 uses 'shapes_1.tif'), so the series may have been reordered")
+
+
+def test_match_keys_on_the_series_image_name():
+    """The pure matcher pairs by the number in the series' own image name, and
+    reports the sections whose section number says otherwise."""
+    module = _load_script()
+    series_names = {0: "shapes_1.tif", 1: "shapes_0.tif", 2: "shapes_2.tif"}
+    match, reason = module.matchByNumber(series_names, GRID_NAMES[:3])
+    assert reason == ""
+    assert match["names"] == {
+        0: "001_shapes_grid01_sec01.tif", 1: "000_shapes_grid000.tif", 2: "002_shapes_grid01_sec02.tif",
+    }
+    assert match["renumbered"] == [0, 1]
+    assert (match["series"], match["zarr"]) == ("first", "first")
+
+
+@pytest.mark.parametrize("name, numbers", [
+    ("RHNGV_000.tif", [0]),
+    ("CSYSR.012.tif", [12]),
+    ("CODE.007", [7]),
+    ("000ZGBJY.tif", [0]),
+    ("001_RHNGV_grid01_sec01.tif", [1, 1, 1]),
+    ("img_5.jp2", [5]),
+    ("plain.tif", []),
+])
+def test_name_numbers(name, numbers):
+    assert _load_script().nameNumbers(name) == numbers
+
+
+def test_number_keys_ignore_padding():
+    keys, reason = _load_script().numberKeys(["001_a.tif", "1_b.tif"])
+    assert keys == {}
+    assert reason == "'001_a.tif' and '1_b.tif' both have the number 1"
+
+
+def _typed_zarr(folder, dtype, names):
+    """A two-scale zarr of the given image type holding only the named images."""
+    root = zarr.open_group(str(folder), mode="w")
+    for scale, shape in SCALES.items():
+        grp = root.create_group(f"scale_{scale}")
+        for name in names:
+            grp.create_dataset(name, chunks=(64, 64), data=np.ones(shape, dtype))
+    return folder
+
+
+def test_missing_image_in_a_16_bit_zarr_is_mid_gray(case, tmp_path):
+    """Mid-gray is half the type's range: 32768 for uint16, not 128."""
+    jser, src = case
+    part = _typed_zarr(tmp_path / "part.zarr", np.uint16, ["shapes_0.tif"])
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", part, "--out", out,
+    ])
+    assert result.returncode == 0, result.stderr
+    got = _arrays(out)
+    for scale, shape in SCALES.items():
+        t, b, l, r = KEPT[(scale, 0)]
+        gray = np.zeros(shape, np.uint16)
+        gray[t:b, l:r] = 32768
+        assert got[(scale, "shapes_1.tif")].dtype == np.uint16
+        np.testing.assert_array_equal(got[(scale, "shapes_1.tif")], gray)
+    assert "No image in the zarr for 4 sections (1-4): mid-gray (32768) inside" in result.stdout
+
+
+@pytest.mark.parametrize("dtype", [np.int8, np.bool_, np.float32])
+def test_missing_image_without_a_mid_gray_is_refused(case, tmp_path, dtype):
+    """Signed, bool and float images have no fixed mid-gray: 128 would be -128
+    in int8 and True in bool. Stop before writing, and point at --skip-missing."""
+    jser, src = case
+    part = _typed_zarr(tmp_path / "part.zarr", dtype, ["shapes_0.tif"])
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", part, "--out", out,
+    ])
+    _assert_refused_before_writing(
+        result, out, jser,
+        f"Section 1 has no image in the zarr, and a stand-in would be {np.dtype(dtype)} like "
+        "the zarr's images, which has no fixed mid-gray. Use --skip-missing to leave it out.")
+
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", part, "--out", out,
+        "--skip-missing",
+    ])
+    assert result.returncode == 0, result.stderr
+    assert sorted(_arrays(out)) == [(1, "shapes_0.tif"), (2, "shapes_0.tif")]
+
+
+@pytest.mark.parametrize("dtype, gray", [
+    (np.uint8, 128), (np.uint16, 32768), (np.uint32, 2 ** 31),
+    (np.int8, None), (np.int16, None), (np.bool_, None), (np.float32, None),
+])
+def test_mid_gray(dtype, gray):
+    assert _load_script().midGray(dtype) == gray
