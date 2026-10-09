@@ -428,10 +428,10 @@ def test_every_value_a_stored_row_can_hold_is_still_accepted():
 def test_an_exhausted_salt_range_raises_rather_than_going_random():
     """The deliberate deviation from the flag precedent.
 
-    `Flag.deriveID` falls back to `generateID()` -- a random id -- when salting
-    is exhausted. A random id produced by a migration is precisely the failure
-    that docstring records, so this raises instead. Forced by shrinking the salt
-    range to zero, which is the only way to reach the branch.
+    `Flag.deriveID` keeps salting with no cap. A random id produced by a
+    migration is precisely the failure that docstring records, so this raises
+    when its salts run out. Forced by shrinking the salt range to zero, which
+    is the only way to reach the branch.
     """
     import PyReconstruct.modules.datatypes.trace_id as trace_id_module
 
