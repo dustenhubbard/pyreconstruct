@@ -22,7 +22,7 @@ from PyReconstruct.modules.backend.func.window_geometry import (
 from .status_readout import FieldStatusReadout, StatusSegment
 from .wheel_steps import WheelSteps, zoom_factor
 from PyReconstruct.modules.constants.settings_domain import (
-    domain_for, fold_series_settings_once,
+    copy_legacy_series_settings_once, domain_for, fold_series_settings_once,
 )
 from PyReconstruct.modules.datatypes.series_owner import app_display_name
 
@@ -37,7 +37,7 @@ def windowGeometrySettings():
 
     One place rather than three inline constructors, so a test can redirect the
     geometry read/write to a scratch file without going near the developer's
-    real `KHLab/PyReconstruct` domain. Per app: the two flavors run side by
+    real `PyReconstruct/PyReconstruct` domain. Per app: the two flavors run side by
     side, and a shared blob would put one window exactly over the other.
     """
     return QSettings(*domain_for("window/geometry"))
@@ -1765,18 +1765,23 @@ class MainWindow(QMainWindow):
                 self.srcToZarr(create_new=False)
 
     def _foldSeriesSettings(self):
-        """Fold this series' old Dev per-series settings into the shared store.
+        """Carry this series' older per-series settings into the current store.
 
-        The Dev flavor used to keep ``PyReconstruct Dev-<code>`` for
-        ``autobackup``, ``backup_dir`` and ``list_layout``; both apps now read
+        First the ``KHLab`` per-series stores are copied to ``PyReconstruct``
+        (once per store, left in place). Then the Dev fold: the Dev flavor
+        used to keep ``PyReconstruct Dev-<code>`` for ``autobackup``,
+        ``backup_dir`` and ``list_layout``; both apps now read
         ``PyReconstruct-<code>``. Runs after the code is settled and before the
-        first per-series read (``_restoreListLayout``), so what the Dev app
-        stored is what it sees. A no-op in the stable app and once folded.
-        Never raises: a settings carry-over must not stop a series opening.
+        first per-series read (``_restoreListLayout``), so what was stored is
+        what the app sees. The fold waits while a copy still needs a retry,
+        the same rule as at startup. Never raises: a settings carry-over must
+        not stop a series opening.
         """
         try:
             if not self.series.isWelcomeSeries():
-                fold_series_settings_once(self.series.code)
+                copy = copy_legacy_series_settings_once(self.series.code)
+                if copy.complete:
+                    fold_series_settings_once(self.series.code)
         except Exception:
             pass
 

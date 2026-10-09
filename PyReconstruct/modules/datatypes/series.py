@@ -346,7 +346,7 @@ def _default_settings_store():
     a second cache of its own. That matters for more than tidiness: this
     function is what `Series.getOption`/`setOption` fall back on, so while it
     cached separately, `set_default_settings_store()` -- the sanctioned way to
-    redirect settings away from the real `KHLab/PyReconstruct` QSettings
+    redirect settings away from the real `PyReconstruct/PyReconstruct` QSettings
     domain -- closed only the store that `constants.getdatetime` uses and left
     every `getOption` call resolving the real one. A caller that redirected
     settings the documented way still got a half-open seam, and the half that
@@ -5273,7 +5273,11 @@ class Series():
                 option = json.loads(option)
         else:
             option = Series._fromDefaults(defaults, option_name)
-            self.setOption(option_name, option)
+            # saved so the stored file lists every option, unless the store
+            # still owes a copy from the old KHLab settings: a default saved
+            # now would win over the value that copy brings
+            if store.may_save_defaults(scope_code):
+                self.setOption(option_name, option)
         
         ## CHECKS FOR UPDATES
 

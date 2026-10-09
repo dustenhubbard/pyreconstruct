@@ -7,9 +7,12 @@ behavior is identical to the previous direct `QSettings` usage; headless
 callers and tests can inject `DictSettingsStore` (pure Python, no Qt).
 
 Two scopes are preserved exactly, matching the prior `QSettings` usage:
-  - per-series settings, keyed by the series ``code`` (org ``"KHLab"``, app
-    ``"PyReconstruct-{code}"``)
-  - global settings (org ``"KHLab"``, app ``"PyReconstruct"``)
+  - per-series settings, keyed by the series ``code`` (org ``"PyReconstruct"``,
+    app ``"PyReconstruct-{code}"``)
+  - global settings (org ``"PyReconstruct"``, app ``"PyReconstruct"``)
+
+The organization was ``"KHLab"`` until 2026-10-03; the startup copy in
+`constants/settings_domain.py` carries those stores across once.
 
 Both scopes are the SHARED domain (`constants/settings_domain.py`): the
 stable app and the Dev app read and write the same store, so a preference
@@ -42,6 +45,15 @@ class SettingsStore(ABC):
     @abstractmethod
     def set_value(self, code: Optional[str], key: str, value) -> None:
         """Store ``value`` under ``key`` in the given scope."""
+
+    def may_save_defaults(self, code: Optional[str]) -> bool:
+        """Whether a default read on a miss may be written into the scope.
+
+        True unless the scope is waiting on a settings copy that has not
+        finished (``QSettingsStore``); a default saved then would block the
+        value the copy is meant to bring.
+        """
+        return True
 
 
 class QSettingsStore(SettingsStore):
@@ -78,6 +90,13 @@ class QSettingsStore(SettingsStore):
 
     def set_value(self, code, key, value):
         self._settings(code).setValue(key, value)
+
+    def may_save_defaults(self, code):
+        from PyReconstruct.modules.constants.settings_domain import (
+            legacy_copy_pending,
+        )
+        app = self.APP if code is None else f"{self.APP}-{code}"
+        return not legacy_copy_pending(app)
 
 
 class DictSettingsStore(SettingsStore):
