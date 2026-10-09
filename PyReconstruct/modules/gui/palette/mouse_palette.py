@@ -96,7 +96,7 @@ def clear_palette_positions(settings : QSettings) -> None:
 
 
 from .buttons import PaletteButton, ModeButton, MoveableButton
-from .scale_bar import ScaleBar, MIN_PINNED_PIXELS, formatLength
+from .scale_bar import ScaleBar, drawableLengths, formatLength
 from .outlined_label import OutlinedLabel
 from .help import palette_help
 
@@ -677,6 +677,11 @@ class MousePalette():
         """
         x1, x2, y1, y2 = self.getBounds()[group]
         current_x, current_y = self.getButtonCoords(group)
+        if group == "sb" and self.sb.x() < int(current_x):
+            # the bar shows left of its saved spot (see placeSB): drag it
+            # from where it is, or it would not move until the saved spot
+            # came back on screen
+            current_x = self.sb.x()
         new_x = ((current_x + dx) - x1) / (x2 - x1)
         if new_x < 0: new_x = 0
         elif new_x > 1: new_x = 1
@@ -1053,6 +1058,7 @@ class MousePalette():
     def setScale(self):
         if "sb" in dir(self):
             self.sb.setScale(self.getScale())
+            self.placeSB()   # a pinned bar's width follows the zoom
 
     def followZoom(self, zoom_factor):
         """Show the scale of a zoom that is still in progress.
@@ -1068,6 +1074,7 @@ class MousePalette():
         scale = self.getScale() / zoom_factor
         if scale != self.sb.scale:
             self.sb.setScale(scale)
+            self.placeSB()
     
     def getPinnedLength(self):
         """The real-world length the scale bar is pinned to, or None.
@@ -1133,18 +1140,10 @@ class MousePalette():
         return actions
 
     def sbLengthRange(self):
-        """The shortest and longest lengths, in µm, the bar can draw exactly
-        at the current zoom: from the legibility floor to the field width,
-        rounded inward to three figures so both ends can be typed back."""
-        def sig(value, up):
-            exponent = math.floor(math.log10(value)) - 2
-            digits = (math.ceil if up else math.floor)(value / 10.0 ** exponent)
-            # through text, so 715e-3 is the same float as a typed 0.715
-            return float(f"{digits}e{exponent}")
-
-        scale = self.sb.scale
-        return (sig(MIN_PINNED_PIXELS * scale, True),
-                sig(self.mainwindow.field.width() * scale, False))
+        """The shortest and longest lengths, in µm, a bar set by hand can
+        draw exactly at the current zoom, with the field width as its room.
+        The first is larger when there is none (see drawableLengths)."""
+        return drawableLengths(self.sb.scale, self.mainwindow.field.width())
 
     def setSBLength(self):
         """Ask for a length and draw the bar at it until told otherwise.
@@ -1154,6 +1153,13 @@ class MousePalette():
         "Size the scale bar automatically", brings the automatic bar back.
         """
         lo, hi = self.sbLengthRange()
+        if lo > hi:
+            notify(
+                "At this zoom and window width there is no scale bar length "
+                "that can be drawn. Zoom in or out, or widen the window, then "
+                "try again."
+            )
+            return
         length = self.sb.currentLength()[0]
         while True:
             structure = [
@@ -1198,8 +1204,17 @@ class MousePalette():
         self.previewScaleBarThickness(self.series.getOption("scale_bar_thickness"))
 
     def placeSB(self):
-        """Place the scale bar."""
+        """Place the scale bar.
+
+        The bar can be wider than the room to the right of where it was
+        left: a long length set by hand, a pinned bar the zoom has grown, or
+        a size near 100 percent. It then shows moved left as far as it must
+        to be whole. The saved position is kept, so a shorter bar goes back
+        to it.
+        """
         x, y = self.getButtonCoords("sb")
+        field = self.mainwindow.field
+        x = max(field.x(), min(x, field.x() + field.width() - self.sb.width()))
         self.sb.move(x, y)
         
     def resize(self):
@@ -1225,8 +1240,16 @@ class MousePalette():
     def reset(self):
         """Reset the mouse palette when opening a new series."""
         mode = self.mainwindow.field.mouse_mode
+        # a length set by hand lasts until another series opens; Options OK
+        # and a palette import rebuild the palette on the same series
+        override = None
+        if self.mainwindow.series is self.series:
+            override = self.sb.override_length
         self.close()
         self.__init__(self.mainwindow)
+        if override:
+            self.sb.setOverride(override, self.mainwindow.field.width())
+            self.placeSB()
         # the new buttons start on Pointer, but the field keeps its mode
         for name, (button, mouse_mode, _) in self.mode_buttons.items():
             button.setChecked(mouse_mode == mode)

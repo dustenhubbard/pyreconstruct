@@ -4,6 +4,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QPainter, QColor, QFontMetrics, QFont
 
 from PyReconstruct.modules.datatypes.default_settings import (
+    MAX_PINNED_UM,
+    MIN_PINNED_UM,
     clampScaleBarThickness,
     validPinnedLength,
 )
@@ -169,6 +171,39 @@ def pinnedLength(micron_length, scale, max_pix, min_pix=MIN_PINNED_PIXELS):
     return real_len, pix_len
 
 
+def drawableLengths(scale, max_pix, min_pix=MIN_PINNED_PIXELS):
+    """The shortest and longest lengths `pinnedLength` draws exactly.
+
+    Exactly means unshifted: the bar is the length asked for, so its label is
+    that length too.  That takes two things at once -- between `min_pix` and
+    `max_pix` wide at this zoom, and a length `validPinnedLength` accepts --
+    so the range is the overlap of the two.  Both ends are rounded inward to
+    three figures, so either can be typed back and still fall inside.
+
+        Params:
+            scale (float): real-world units per screen pixel
+            max_pix (int): the widest the bar may be drawn, in pixels
+            min_pix (int): the narrowest bar still worth drawing, in pixels
+        Returns:
+            (float, float): the range in real-world units.  The first is
+                            larger than the second when there is no length
+                            to draw: a field narrower than `min_pix`, or a
+                            zoom so far out or in that the field holds no
+                            length a bar may be.
+    """
+    if not (scale > 0 and max_pix > 0):
+        return math.inf, 0.0
+
+    def sig(value, up):
+        exponent = math.floor(math.log10(value)) - 2
+        digits = (math.ceil if up else math.floor)(value / 10.0 ** exponent)
+        # through text, so 715e-3 is the same float as a typed 0.715
+        return float(f"{digits}e{exponent}")
+
+    return (max(sig(min_pix * scale, True), MIN_PINNED_UM),
+            min(sig(max_pix * scale, False), MAX_PINNED_UM))
+
+
 def pinnedSubdivisions(real_len, rungs=None):
     """How finely to tick a micron-pinned bar of this length.
 
@@ -262,7 +297,8 @@ class ScaleBar(MoveableButton):
         self.micron_length = micron_length
         self.max_pixel_length = length if max_pixel_length is None else max_pixel_length
         # a length set by hand from the bar's right-click menu, and the room it
-        # may grow into; never stored, so it ends with this widget
+        # may grow into; never stored (MousePalette.reset carries it over a
+        # rebuild on the same series)
         self.override_length = None
         self.override_room = 0
         self.thickness = clampScaleBarThickness(thickness)

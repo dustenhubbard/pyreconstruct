@@ -318,16 +318,51 @@ def test_going_back_to_automatic_restores_the_stored_bar(
 
 
 @pytest.mark.gui
-def test_a_new_series_ends_the_length_set_by_hand(
-    main_window, local_series_settings, monkeypatch
+def test_the_length_set_by_hand_lasts_until_another_series_opens(
+    main_window, local_series_settings, monkeypatch, tmp_path
 ):
-    local_series_settings(main_window)
+    """What the dialog and the changelog promise: Save, `Series > Options...`
+    with OK or Cancel, and a thickness change in it all keep the length; only
+    opening another series ends it."""
+    import shutil
+
+    from PySide6.QtWidgets import QDialog
+
+    series = local_series_settings(main_window)
     palette = main_window.mouse_palette
     palette.reset()
     _set_window(main_window, 0.01)
     _answer(monkeypatch, ([3.0], True))
     palette.setSBLength()
-    palette.reset()                            # what opening a series runs
+    assert _render(palette.sb) == (300, "3 µm")
+
+    main_window.saveToJser()
+    assert main_window.mouse_palette.sb.override_length == 3.0
+
+    def run_options(accept, thickness=None):
+        def exec_(dlg):
+            if thickness is not None:
+                _thickness_slider(dlg).setValue(thickness)
+            if accept:
+                return QDialog.Accepted if dlg.accept() else QDialog.Rejected
+            dlg.reject()
+            return QDialog.Rejected
+        monkeypatch.setattr(AllOptionsDialog, "exec", exec_)
+        main_window.allOptions()
+
+    run_options(accept=False, thickness=15)
+    assert main_window.mouse_palette.sb.override_length == 3.0
+    run_options(accept=True, thickness=12)
+    sb = main_window.mouse_palette.sb
+    assert sb.thickness == 12
+    assert sb.override_length == 3.0
+    assert _render(sb) == (300, "3 µm")
+
+    copy_fp = tmp_path / "series_b" / "series_b.jser"
+    copy_fp.parent.mkdir()
+    shutil.copyfile(series.jser_fp, copy_fp)
+    main_window.openSeries(jser_fp=str(copy_fp), query_prev=False)
+    assert main_window.series is not series
     assert main_window.mouse_palette.sb.override_length is None
 
 
@@ -593,3 +628,147 @@ def test_a_bar_shorter_than_its_label_keeps_the_label_whole(qapp):
         assert 0 <= label_x and label_x + width <= bar.width()
     finally:
         bar.deleteLater()
+
+
+# ------------------------------------- what the dialog accepts, it draws whole
+
+def _field_edges(main_window):
+    field = main_window.field
+    return field.x(), field.x() + field.width()
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("scale", [1e-8, 0.01, 1.0, 1e4])
+def test_every_length_the_dialog_accepts_draws_with_its_own_label(
+    main_window, local_series_settings, monkeypatch, scale
+):
+    """The dialog's range is the intersection of what fits the field and what
+    a pinned length may be (1e-6 to 1e6 µm). At 1e4 µm/px the field alone
+    would offer 400000 to 5600000 µm, and 2000000 µm then drew nothing.
+    Both ends and a length between draw, at that length, with that label."""
+    from PyReconstruct.modules.datatypes.default_settings import (
+        MAX_PINNED_UM,
+        MIN_PINNED_UM,
+    )
+    from PyReconstruct.modules.gui.palette.scale_bar import formatLength
+
+    local_series_settings(main_window)
+    palette = main_window.mouse_palette
+    palette.reset()
+    _set_window(main_window, scale)
+    lo, hi = palette.sbLengthRange()
+    assert MIN_PINNED_UM <= lo <= hi <= MAX_PINNED_UM, (lo, hi)
+    for length in (lo, math.sqrt(lo * hi), hi):
+        asked, told = _answer(monkeypatch, ([length], True))
+        palette.setSBLength()
+        assert told == [], (length, told)
+        pix, label = _render(palette.sb)
+        assert pix and pix > 0, (scale, length)
+        assert label == formatLength(length) + " µm", (scale, length, label)
+        assert palette.sb.currentLength()[0] == length
+
+
+@pytest.mark.gui
+def test_a_length_past_what_a_bar_can_be_is_refused(
+    main_window, local_series_settings, monkeypatch
+):
+    """The review's case: 2000000 µm fits a 560 px field at 1e4 µm/px but is
+    longer than any bar may be, so it is refused with the range that can."""
+    local_series_settings(main_window)
+    palette = main_window.mouse_palette
+    palette.reset()
+    _set_window(main_window, 1e4)
+    asked, told = _answer(monkeypatch, ([2e6], True), (None, False))
+    palette.setSBLength()
+    assert told == ["Please enter a length from 400000 to 1000000 µm, or zoom "
+                    "first to draw a longer or shorter bar."]
+    assert palette.sb.override_length is None
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("narrow", [True, False])
+def test_no_dialog_when_no_length_can_be_drawn(
+    main_window, local_series_settings, monkeypatch, narrow
+):
+    """A 30 px field is narrower than the 40 px shortest bar, and at 1e-9
+    µm/px the field holds less than the shortest length a bar may be. Either
+    way there is no length to offer, so the user is told why instead of
+    being shown a range that runs backward."""
+    local_series_settings(main_window)
+    palette = main_window.mouse_palette
+    palette.reset()
+    if narrow:
+        _set_window(main_window, 0.01)
+        main_window.field.resize(30, main_window.field.height())
+    else:
+        _set_window(main_window, 1e-9)
+    lo, hi = palette.sbLengthRange()
+    assert lo > hi
+    asked, told = _answer(monkeypatch)
+    palette.setSBLength()
+    assert asked == []
+    assert len(told) == 1 and "no scale bar length" in told[0]
+    assert palette.sb.override_length is None
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("sb_x", [0.0, 0.01, 0.99, 1.0])
+@pytest.mark.parametrize("bar", ["set by hand", "pinned", "full size"])
+def test_the_whole_bar_stays_on_the_field_wherever_it_was_left(
+    main_window, local_series_settings, monkeypatch, sb_x, bar
+):
+    """A bar saved near the right edge used to run off it: a 560 px bar set
+    by hand at x=544 of a 560 px field showed 16 px. It now moves left as far
+    as it must, and the position the user left it at is kept, so a shorter
+    bar goes back there."""
+    series = local_series_settings(main_window)
+    if bar == "pinned":
+        series.setOption("scale_bar_mode", "micron_pinned")
+        series.setOption("scale_bar_length_um", 1.4)   # 140 px, the full cap
+    if bar == "full size":
+        series.setOption("scale_bar_width", 100)
+    palette = main_window.mouse_palette
+    palette.reset()
+    palette.sb_x = sb_x
+    _set_window(main_window, 0.01)
+    if bar == "set by hand":
+        _answer(monkeypatch, ([5.6], True))
+        palette.setSBLength()
+    palette.placeSB()
+    left, right = _field_edges(main_window)
+    sb = palette.sb
+    assert sb.width() > 100
+    assert left <= sb.x() and sb.x() + sb.width() <= right, (sb.x(), sb.width())
+    assert palette.sb_x == sb_x
+
+    # a bar short enough to fit sits exactly where it was left
+    palette.clearSBLength()
+    series.setOption("scale_bar_mode", "screen_fraction")
+    series.setOption("scale_bar_width", 20)
+    palette.resize()
+    saved_x, _y = palette.getButtonCoords("sb")
+    if saved_x + sb.width() <= right:
+        assert sb.x() == int(saved_x)
+    else:
+        assert sb.x() + sb.width() == right
+    assert palette.sb_x == sb_x
+
+
+@pytest.mark.gui
+def test_a_bar_moved_to_the_left_drags_from_where_it_shows(
+    main_window, local_series_settings, monkeypatch
+):
+    """A drag starts from the bar on screen, not the saved spot off to its
+    right, so the bar moves with the first pixel of the drag."""
+    local_series_settings(main_window)
+    palette = main_window.mouse_palette
+    palette.reset()
+    palette.sb_x = 0.99
+    _set_window(main_window, 0.01)
+    _answer(monkeypatch, ([4.0], True))
+    palette.setSBLength()
+    shown = palette.sb.x()
+    palette.moveButton(-20, 0, "sb")
+    palette.placeSB()
+    # within the pixel any palette group loses to its saved fraction
+    assert palette.sb.x() == pytest.approx(shown - 20, abs=1)
