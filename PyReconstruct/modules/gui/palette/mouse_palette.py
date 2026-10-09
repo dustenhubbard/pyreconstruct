@@ -1140,8 +1140,8 @@ class MousePalette():
         return actions
 
     def sbLengthRange(self):
-        """The shortest and longest lengths, in µm, a bar set by hand can
-        draw exactly at the current zoom, with the field width as its room.
+        """The shortest and longest lengths, in µm, you can type for a bar
+        drawn exactly at the current zoom, with the field width as its room.
         The first is larger when there is none (see drawableLengths)."""
         return drawableLengths(self.sb.scale, self.mainwindow.field.width())
 
@@ -1207,7 +1207,7 @@ class MousePalette():
         """Place the scale bar.
 
         The bar can be wider than the room to the right of where it was
-        left: a long length set by hand, a pinned bar the zoom has grown, or
+        left: a long length you typed, a pinned bar the zoom has grown, or
         a size near 100 percent. It then shows moved left as far as it must
         to be whole. The saved position is kept, so a shorter bar goes back
         to it.
@@ -1231,7 +1231,7 @@ class MousePalette():
         self.placeIncrementButtons()
         self.placeBCButtons()
         # the field may have changed width, and the bar's room is a share of
-        # it (all of it for a length set by hand); a no-op when unchanged
+        # it (all of it for a length you typed); a no-op when unchanged
         self.sb.setMaxPixelLength(self.sbWidth())
         if self.sb.override_length:
             self.sb.setOverride(self.sb.override_length, self.mainwindow.field.width())
@@ -1240,7 +1240,7 @@ class MousePalette():
     def reset(self):
         """Reset the mouse palette when opening a new series."""
         mode = self.mainwindow.field.mouse_mode
-        # a length set by hand lasts until another series opens; Options OK
+        # a length you type lasts until another series opens; Options OK
         # and a palette import rebuild the palette on the same series
         override = None
         if self.mainwindow.series is self.series:

@@ -93,6 +93,25 @@ def niceLength(max_len, rungs=None):
 # 12 pt bold Courier the label uses.
 MIN_PINNED_PIXELS = 40
 
+# How far a bar's width may fall outside `min_pix` to `max_pix`, as a fraction
+# of the bound, and still count as inside.
+#
+# A length typed from the range the dialog shows can land a hair outside it in
+# floating point: 0.011 µm at 0.000275 µm/px is 39.99999999999999 px, not 40.
+# `drawableLengths` and `pinnedLength` both test widths through `tooNarrow`
+# and `tooWide`, so every length the range offers draws at that length.
+PIXEL_TOLERANCE = 1e-9
+
+
+def tooNarrow(pixels, min_pix):
+    """Whether a bar `pixels` wide is shorter than `min_pix`."""
+    return pixels < min_pix * (1 - PIXEL_TOLERANCE)
+
+
+def tooWide(pixels, max_pix):
+    """Whether a bar `pixels` wide is longer than `max_pix`."""
+    return pixels > max_pix * (1 + PIXEL_TOLERANCE)
+
 
 def pinnedLength(micron_length, scale, max_pix, min_pix=MIN_PINNED_PIXELS):
     """Return the length a micron-pinned bar should actually draw.
@@ -144,23 +163,24 @@ def pinnedLength(micron_length, scale, max_pix, min_pix=MIN_PINNED_PIXELS):
     # boundary on its own decade rather than one step past it, the same job the
     # tolerance does in niceLength.
     exponent = 0
-    if pixels(0) > max_pix:
+    if tooWide(pixels(0), max_pix):
         exponent = math.floor(math.log10(max_pix * scale / micron_length) + 1e-9)
-    elif pixels(0) < min_pix:
+    elif tooNarrow(pixels(0), min_pix):
         exponent = math.ceil(math.log10(min_pix * scale / micron_length) - 1e-9)
 
     # then correct it by measurement, because the guess is a float computation
     # and the invariant below is the thing that actually has to hold.  Both
     # loops are bounded: each step multiplies or divides the width by ten.
     steps = 0
-    while pixels(exponent) > max_pix and steps < 400:
+    while tooWide(pixels(exponent), max_pix) and steps < 400:
         exponent -= 1
         steps += 1
     # growing is only allowed while it still fits; on a field too narrow to hold
     # one whole decade there may be no exponent that satisfies both bounds, and
     # fitting wins -- a bar that overruns the field is clipped and lies about its
     # length, a bar that is too short is merely hard to read.
-    while pixels(exponent) < min_pix and pixels(exponent + 1) <= max_pix and steps < 400:
+    while (tooNarrow(pixels(exponent), min_pix)
+           and not tooWide(pixels(exponent + 1), max_pix) and steps < 400):
         exponent += 1
         steps += 1
 
@@ -178,7 +198,9 @@ def drawableLengths(scale, max_pix, min_pix=MIN_PINNED_PIXELS):
     that length too.  That takes two things at once -- between `min_pix` and
     `max_pix` wide at this zoom, and a length `validPinnedLength` accepts --
     so the range is the overlap of the two.  Both ends are rounded inward to
-    three figures, so either can be typed back and still fall inside.
+    three figures, so either can be typed back and still fall inside.  Inside
+    means what `pinnedLength` takes it to mean: `tooNarrow` and `tooWide`,
+    whose tolerance the rounding starts from.
 
         Params:
             scale (float): real-world units per screen pixel
@@ -200,8 +222,10 @@ def drawableLengths(scale, max_pix, min_pix=MIN_PINNED_PIXELS):
         # through text, so 715e-3 is the same float as a typed 0.715
         return float(f"{digits}e{exponent}")
 
-    return (max(sig(min_pix * scale, True), MIN_PINNED_UM),
-            min(sig(max_pix * scale, False), MAX_PINNED_UM))
+    shortest = min_pix * (1 - PIXEL_TOLERANCE) * scale
+    longest = max_pix * (1 + PIXEL_TOLERANCE) * scale
+    return (max(sig(shortest, True), MIN_PINNED_UM),
+            min(sig(longest, False), MAX_PINNED_UM))
 
 
 def pinnedSubdivisions(real_len, rungs=None):
@@ -296,7 +320,7 @@ class ScaleBar(MoveableButton):
         self.scale = scale
         self.micron_length = micron_length
         self.max_pixel_length = length if max_pixel_length is None else max_pixel_length
-        # a length set by hand from the bar's right-click menu, and the room it
+        # a length set from the bar's right-click menu, and the room it
         # may grow into; never stored (MousePalette.reset carries it over a
         # rebuild on the same series)
         self.override_length = None

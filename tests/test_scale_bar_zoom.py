@@ -1,4 +1,4 @@
-"""The scale bar as the zoom changes: held to its size, live, and set by hand.
+"""The scale bar as the zoom changes: held to its size, live, and set to a length you type.
 
 Three things, each driven through the real widgets:
 
@@ -9,7 +9,7 @@ Three things, each driven through the real widgets:
 * **Live follow.** A pinch, Ctrl+scroll or right-drag zoom stretches a copy of
   the field and only redraws on release. `panzoomMove` now tells the bar the
   scale of the stretched view, without a field redraw.
-* **A length set by hand.** The bar's right-click menu can set a length for a
+* **A length you type.** The bar's right-click menu can set a length for a
   figure. It is not stored, it may grow past the size option up to the field
   width, and the label always matches what the bar measures.
 """
@@ -99,7 +99,7 @@ def test_a_pinned_bar_stays_inside_its_size_and_keeps_its_number(micron_length):
 def test_the_pinned_palette_bar_steps_down_before_it_outgrows_its_size(
     main_window, local_series_settings
 ):
-    """The report: a 5 µm bar at a zoom where 5 µm is 500 px wide drew 500 px
+    """A 5 µm bar at a zoom where 5 µm is 500 px wide used to draw 500 px
     of a 560 px field. With 25 % of the field as its size it draws 0.5 µm."""
     series = local_series_settings(main_window)
     series.setOption("scale_bar_mode", "micron_pinned")
@@ -195,7 +195,7 @@ def test_a_pan_leaves_the_bar_alone(main_window, local_series_settings):
     assert palette.sb.scale == before
 
 
-# --------------------------------------------------- a length set by hand
+# ------------------------------------------------------ a length you type
 
 def _menu_texts(palette):
     palette._hide_menu = None
@@ -265,7 +265,7 @@ def test_the_menu_offers_a_length_and_automatic_only_while_one_is_set(
 
 @pytest.mark.gui
 @pytest.mark.parametrize("mode", ["screen_fraction", "micron_pinned"])
-def test_a_length_set_by_hand_draws_exactly_and_follows_the_zoom(
+def test_a_typed_length_draws_exactly_and_follows_the_zoom(
     main_window, local_series_settings, monkeypatch, mode
 ):
     """3 µm is not a 1-2-5 length and not the pinned 5 µm. It draws at 3 µm in
@@ -318,7 +318,7 @@ def test_going_back_to_automatic_restores_the_stored_bar(
 
 
 @pytest.mark.gui
-def test_the_length_set_by_hand_lasts_until_another_series_opens(
+def test_a_typed_length_lasts_until_another_series_opens(
     main_window, local_series_settings, monkeypatch, tmp_path
 ):
     """What the dialog and the changelog promise: Save, `Series > Options...`
@@ -672,8 +672,8 @@ def test_every_length_the_dialog_accepts_draws_with_its_own_label(
 def test_a_length_past_what_a_bar_can_be_is_refused(
     main_window, local_series_settings, monkeypatch
 ):
-    """The review's case: 2000000 µm fits a 560 px field at 1e4 µm/px but is
-    longer than any bar may be, so it is refused with the range that can."""
+    """2000000 µm fits a 560 px field at 1e4 µm/px but is longer than any bar
+    may be, so it is refused with the range that can."""
     local_series_settings(main_window)
     palette = main_window.mouse_palette
     palette.reset()
@@ -683,6 +683,47 @@ def test_a_length_past_what_a_bar_can_be_is_refused(
     assert told == ["Please enter a length from 400000 to 1000000 µm, or zoom "
                     "first to draw a longer or shorter bar."]
     assert palette.sb.override_length is None
+
+
+@pytest.mark.gui
+def test_both_ends_of_the_range_draw_their_own_length(
+    main_window, local_series_settings, monkeypatch
+):
+    """At 0.000275 µm/px in a 560 px field the dialog offers 0.011 to 0.154
+    µm. 0.011 / 0.000275 is 39.99999999999999 in floating point, a hair under
+    the 40 px shortest bar, and the bar used to step up a decade to 0.11 µm.
+    Each end now draws at its own length."""
+    local_series_settings(main_window)
+    palette = main_window.mouse_palette
+    palette.reset()
+    _set_window(main_window, 0.000275)
+    lo, hi = palette.sbLengthRange()
+    assert (lo, hi) == (0.011, 0.154)
+    for length, label in ((lo, "0.011 µm"), (hi, "0.154 µm")):
+        _answer(monkeypatch, ([length], True))
+        palette.setSBLength()
+        assert palette.sb.currentLength()[0] == length
+        assert _render(palette.sb)[1] == label
+
+
+def test_each_end_of_the_range_draws_at_that_length_at_any_zoom():
+    """The range the dialog shows and the length the bar draws are worked out
+    by two functions. Over every three-figure scale from 1e-8 to 9.99e3
+    µm/px, in three field widths, each end of the range draws unshifted."""
+    from PyReconstruct.modules.gui.palette.scale_bar import drawableLengths
+
+    shifted = []
+    for width in (140, FIELD_W, 1366):
+        for exponent in range(-8, 4):
+            for digits in range(100, 1000):
+                scale = float(f"{digits}e{exponent}")
+                lo, hi = drawableLengths(scale, width)
+                if lo > hi:
+                    continue
+                for length in (lo, hi):
+                    if pinnedLength(length, scale, width)[0] != length:
+                        shifted.append((scale, width, length))
+    assert shifted == []
 
 
 @pytest.mark.gui
@@ -713,12 +754,12 @@ def test_no_dialog_when_no_length_can_be_drawn(
 
 @pytest.mark.gui
 @pytest.mark.parametrize("sb_x", [0.0, 0.01, 0.99, 1.0])
-@pytest.mark.parametrize("bar", ["set by hand", "pinned", "full size"])
+@pytest.mark.parametrize("bar", ["typed", "pinned", "full size"])
 def test_the_whole_bar_stays_on_the_field_wherever_it_was_left(
     main_window, local_series_settings, monkeypatch, sb_x, bar
 ):
-    """A bar saved near the right edge used to run off it: a 560 px bar set
-    by hand at x=544 of a 560 px field showed 16 px. It now moves left as far
+    """A bar saved near the right edge used to run off it: a 560 px bar typed
+    in at x=544 of a 560 px field showed 16 px. It now moves left as far
     as it must, and the position the user left it at is kept, so a shorter
     bar goes back there."""
     series = local_series_settings(main_window)
@@ -731,7 +772,7 @@ def test_the_whole_bar_stays_on_the_field_wherever_it_was_left(
     palette.reset()
     palette.sb_x = sb_x
     _set_window(main_window, 0.01)
-    if bar == "set by hand":
+    if bar == "typed":
         _answer(monkeypatch, ([5.6], True))
         palette.setSBLength()
     palette.placeSB()
