@@ -13,6 +13,7 @@ platform, so `VPlotter` is an instance of the real class made without
 `__init__`, carrying the attributes `selectHostGroup` reads, with its
 `series` property resolving the window's series as it does in the app.
 """
+import shutil
 import types
 
 import pytest
@@ -111,7 +112,7 @@ def test_organize_scene_after_undo_moves_the_host_group_together(
 def test_object_from_another_series_reads_the_tree_kept_at_add(main_window):
     """The scene can hold objects from a series that is no longer open (one
     loaded with a saved scene, or the series open before `File` > `Open
-    series`). Those still read the tree kept when they were added."""
+    series`). Those read the tree the scene kept for them."""
     window = main_window
     plt = _plotter(window)
     other = types.SimpleNamespace(
@@ -123,3 +124,71 @@ def test_object_from_another_series_reads_the_tree_kept_at_add(main_window):
     other.host_tree = HostTree({}, None)  # not what the scene kept
 
     assert _host_group(plt, t_obj) == ["other_h", "other_t"]
+
+
+def test_host_group_after_undo_and_a_series_switch(
+    main_window, series_jser, tmp_path, monkeypatch
+):
+    """An undo in the first series, then `File` > `Open series` with the 3D
+    window still up: the first series' objects stay in the scene and read the
+    tree it had when it was closed, the one the undo put back."""
+    from PyReconstruct.modules.gui.popup import custom_plotter as cp
+
+    window = main_window
+    first = window.series
+    host, traveler = sorted(first.data["objects"])[:2]
+    first.setObjHosts([traveler], [host])
+
+    plt = _plotter(window)
+    viewer = cp.CustomPlotter.__new__(cp.CustomPlotter)
+    viewer.__dict__.update(
+        plt=plt, mainwindow=window, is_closed=False, close=lambda: None
+    )
+    monkeypatch.setattr(window, "viewer", viewer)
+    plt.objs.add(_mesh(), first, host, "object", (255, 0, 0), 1)
+    t_obj = plt.objs.add(_mesh(), first, traveler, "object", (0, 255, 0), 1)
+
+    _select_in_list(window, monkeypatch, [traveler]).clearHosts()
+    window.undo()
+    assert first.getObjHosts(traveler) == [host]
+
+    other_jser = tmp_path / "other" / "other.jser"
+    other_jser.parent.mkdir()
+    shutil.copy(series_jser, other_jser)
+    window.openSeries(jser_fp=str(other_jser), query_prev=False)
+    assert window.series is not first
+
+    assert _host_group(plt, t_obj) == sorted([host, traveler])
+
+
+def test_tree_kept_at_a_series_switch_is_a_detached_copy(
+    main_window, series_jser, tmp_path, monkeypatch
+):
+    """The scene keeps a copy of the closed series' hosts: a later change to
+    that series' tree does not change the scene's host groups, and the copy
+    holds no reference to the closed series."""
+    from PyReconstruct.modules.gui.popup import custom_plotter as cp
+
+    window = main_window
+    first = window.series
+    host, traveler = sorted(first.data["objects"])[:2]
+    first.setObjHosts([traveler], [host])
+
+    plt = _plotter(window)
+    viewer = cp.CustomPlotter.__new__(cp.CustomPlotter)
+    viewer.__dict__.update(
+        plt=plt, mainwindow=window, is_closed=False, close=lambda: None
+    )
+    monkeypatch.setattr(window, "viewer", viewer)
+    plt.objs.add(_mesh(), first, host, "object", (255, 0, 0), 1)
+    t_obj = plt.objs.add(_mesh(), first, traveler, "object", (0, 255, 0), 1)
+
+    other_jser = tmp_path / "other" / "other.jser"
+    other_jser.parent.mkdir()
+    shutil.copy(series_jser, other_jser)
+    window.openSeries(jser_fp=str(other_jser), query_prev=False)
+    assert window.series is not first
+
+    first.host_tree.clearHosts(traveler)
+    assert _host_group(plt, t_obj) == sorted([host, traveler])
+    assert plt.objs.host_trees[first.jser_fp].series is None
