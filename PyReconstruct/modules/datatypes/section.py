@@ -3,7 +3,7 @@ import sys
 import json
 import math
 from collections import namedtuple
-from typing import Dict, List, Union
+from typing import Any, Dict, List, Union
 
 import numpy as np
 from zarr.util import normalize_storage_path
@@ -648,7 +648,7 @@ class Section():
             section_data, n, stored_ids=stored_ids
         )
 
-        self.src = os.path.basename(section_data["src"])
+        self.src = Section.imageName(section_data["src"])
         self.bc_profiles = section_data["brightness_contrast_profiles"]
         self.mag = section_data["mag"]
         self.align_locked = section_data["align_locked"]
@@ -817,6 +817,30 @@ class Section():
             return normalize_storage_path(self.src)
         except ValueError:
             return None
+
+    @staticmethod
+    def imageName(src : str) -> str:
+        """The image name a section keeps: os.path.basename of the name given.
+
+        The series image folder (src_dir) is meant to be the one place a
+        folder is kept. Series exist whose names carry the folder the images
+        sat in where the series was made: the class series in
+        dev/assets/checker stores Cropped Images/d03/000ZGBJY.tif, and the
+        zarr made for it holds 000ZGBJY.tif. Keeping that folder would look up
+        an array the zarr does not have, so a/b.png is kept as b.png.
+
+        What counts as a folder is the host's rule. On Windows basename splits
+        on / and \\, so a\\b.png and C:\\scans\\b.png both become b.png. On
+        macOS and Linux it splits on / alone: those two names are kept whole,
+        and since zarr reads a backslash as a slash, a\\b.png there names the
+        nested array a/b.png (see zarr_key).
+
+            Params:
+                src (str): the image name as saved or typed
+            Returns:
+                (str): the name the section looks the image up by
+        """
+        return os.path.basename(src)
 
     @property
     def src_fp(self):
@@ -1226,7 +1250,7 @@ class Section():
         """
         if keyed_rows is None:
             keyed_rows = keyed_rows_default()
-        d = {}
+        d : dict[str, Any] = {}
         d["src"] = self.src
         d["brightness_contrast_profiles"] = self.bc_profiles
         d["mag"] = self.mag
