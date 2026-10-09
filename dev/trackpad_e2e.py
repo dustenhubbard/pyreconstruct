@@ -5,17 +5,25 @@ posts CGEvent scroll events with the trackpad phase fields set, so they go
 through AppKit and Qt's cocoa plugin like a real two-finger swipe. Prints one
 row per gesture: finger travel in points, sections moved, sections a
 finger-only replay of the same swipe gives, the order Qt delivered the first
-momentum event in, and how many sections moved after the fingers lifted.
+momentum event in, how many sections moved after the last event the fingers
+made (the first momentum event counts as after, whatever Qt calls it), and how
+many delivered events `native_scroll` matched to their NSEvent.
 
 Not shipped and not run by the suite. pyobjc is not a dependency; run with:
 
     uv run --frozen --no-default-groups --extra test \\
-        --with pyobjc-framework-Quartz python dev/trackpad_e2e.py [tap|burst|direct]
+        --with pyobjc-framework-Quartz python dev/trackpad_e2e.py [mode] [repeats]
 
     tap     post through the session event tap, 8 ms apart while the fingers
             move and 16 ms apart after (default). Moves the real pointer.
     burst   the same, back to back, so the system coalesces events.
-    direct  call scrollWheel: on the window's view; always Qt's idle order.
+    direct  call scrollWheel: on the window's view; always Qt's idle order,
+            and no NSEvent to read, so Qt's phases alone.
+    tap-phases, burst-phases
+            tap or burst with the NSEvent reading turned off in the window,
+            to measure what Qt's phases alone let through.
+
+`repeats` runs the gesture list that many times (default 1).
 
 Settings go to a throwaway location (tests/qsettings_isolation.py).
 """
@@ -45,8 +53,12 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from trackpad_replay import (  # noqa: E402
     BEGAN, CHANGED, ENDED, MAY_BEGIN, NONE, native_swipe, qt_events,
 )
+from PyReconstruct.modules.gui.main import native_scroll  # noqa: E402
 
 MODE = sys.argv[1] if len(sys.argv) > 1 else "tap"
+PHASES_ONLY = MODE.endswith("-phases")
+MODE = MODE.removesuffix("-phases")
+REPEATS = int(sys.argv[2]) if len(sys.argv) > 2 else 1
 START = 100
 FIXTURE = ROOT / "dev" / "assets" / "checker" / "files" / "class_series.jser"
 
@@ -90,13 +102,33 @@ def finger_only(drag):
     """Sections the stepper gives for the finger part alone, no window."""
     from PyReconstruct.modules.gui.main.wheel_steps import WheelSteps
 
-    steps = WheelSteps()
+    current = None
+    steps = WheelSteps(read_native=lambda event: current)
     moved = 0
-    for phase, pixel, angle in qt_events(native_swipe(drag), busy=False):
+    for phase, pixel, angle, current in qt_events(native_swipe(drag), busy=False):
         moved += steps.step(QWheelEvent(
             QPointF(), QPointF(), QPoint(0, pixel), QPoint(0, angle),
             Qt.NoButton, Qt.NoModifier, phase, False))
     return moved
+
+
+def last_finger(log):
+    """The index of the last delivered event the fingers made.
+
+    With the NSEvent read, the first event with a momentum phase is after the
+    lift. Without it (direct mode, always Qt's idle order), the first
+    ScrollMomentum or ScrollBegin with a delta is.
+    """
+    for i, row in enumerate(log):
+        native = row[5]
+        if native is not None:
+            after = native.momentum != 0
+        else:
+            after = row[0] == Qt.ScrollPhase.ScrollMomentum or (
+                row[0] == Qt.ScrollPhase.ScrollBegin and row[1])
+        if after:
+            return i - 1
+    return len(log) - 1
 
 
 def order_seen(log):
@@ -137,11 +169,12 @@ def main():
     original = MainWindow.wheelEvent
 
     def logged(self, event):
+        native = native_scroll.read(event)  # the reading the window gets
         original(self, event)
         if os.environ.get("TRACKPAD_E2E_DEBUG"):
             print(event.phase().name, event.pixelDelta().y(), event.angleDelta().y(), event.position(), self.field.geometry(), QApplication.keyboardModifiers())
         log.append((event.phase(), event.pixelDelta().y(), event.angleDelta().y(),
-                    self.series.current_section, event.timestamp()))
+                    self.series.current_section, event.timestamp(), native))
 
     MainWindow.wheelEvent = logged
 
@@ -149,6 +182,8 @@ def main():
     QSettings(ORG, APP).setValue(WHATSNEW_KEY, current_version_str())
     mw = MainWindow(str(jser))
     mw._captureListLayout = lambda: None
+    if PHASES_ONLY:
+        mw.wheel_steps.read_native = lambda event: None
     mw.show()
     mw.raise_()
     mw.activateWindow()
@@ -156,8 +191,9 @@ def main():
 
     rows = []
     queue = []
-    for name, drag, momentum in GESTURES:
-        queue.append(("swipe", name, drag, momentum))
+    for _ in range(REPEATS):
+        for name, drag, momentum in GESTURES:
+            queue.append(("swipe", name, drag, momentum))
     queue.append(("notch", "mouse wheel, 3 notches up", None, None))
 
     def field_center_global():
@@ -179,9 +215,14 @@ def main():
             return e
 
         if MODE == "direct":
+            # an NSEvent with no window has no usable location; with a NaN one
+            # Qt reads the pointer, which is over the field
             view = objc.objc_object(c_void_p=int(mw.winId()))
+            nowhere = Quartz.CGPointMake(float("nan"), float("nan"))
             for ev in events:
-                view.scrollWheel_(AppKit.NSEvent.eventWithCGEvent_(located(ev)))
+                e = ev()
+                Quartz.CGEventSetLocation(e, nowhere)
+                view.scrollWheel_(AppKit.NSEvent.eventWithCGEvent_(e))
             return None
 
         def run():
@@ -217,24 +258,29 @@ def main():
 
         def finish():
             moved = mw.series.current_section - START
+            matched = f"{sum(r[5] is not None for r in log)}/{len(log)}"
             if kind == "notch":
-                rows.append((name, "", moved, 3, "", ""))
+                rows.append((name, "", moved, 3, "", "", matched))
             else:
-                lift = next((i for i, r in enumerate(log)
-                             if r[0] in (Qt.ScrollPhase.ScrollMomentum, Qt.ScrollPhase.ScrollEnd)),
-                            None)
-                after = (mw.series.current_section - log[lift][3]) if lift is not None else 0
+                lift = last_finger(log)
+                after = mw.series.current_section - (log[lift][3] if lift >= 0 else START)
                 rows.append((name, sum(abs(d) for d in drag), moved, finger_only(drag),
-                             order_seen(log), after))
+                             order_seen(log), after, matched))
             QTimer.singleShot(400, next_gesture)
 
         QTimer.singleShot(1500, finish)
 
     def report():
-        print(f"mode: {MODE}")
-        print(f"{'gesture':28} {'travel pt':>9} {'moved':>6} {'fingers':>8} {'order':>6} {'after lift':>10}")
-        for name, travel, moved, ideal, order, after in rows:
-            print(f"{name:28} {travel!s:>9} {moved:>6} {ideal:>8} {order:>6} {after!s:>10}")
+        print(f"mode: {MODE}{' (phases only)' if PHASES_ONLY else ''}, repeats: {REPEATS}")
+        print(f"{'gesture':28} {'travel pt':>9} {'moved':>6} {'fingers':>8} {'order':>6}"
+              f" {'after lift':>10} {'NSEvent':>8}")
+        for name, travel, moved, ideal, order, after, matched in rows:
+            print(f"{name:28} {travel!s:>9} {moved:>6} {ideal:>8} {order:>6} {after!s:>10}"
+                  f" {matched:>8}")
+        swipes = [r for r in rows if r[1] != ""]
+        print(f"swipes: {len(swipes)}, moved after the lift: "
+              f"{sum(1 for r in swipes if r[5])}, off the finger-only count: "
+              f"{sum(1 for r in swipes if r[2] != r[3])}")
         mw.series.modified = False
         mw.close()
         app.quit()

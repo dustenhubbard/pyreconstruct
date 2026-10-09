@@ -7,6 +7,7 @@ import struct
 import traceback
 
 from shiboken6 import isValid
+from PySide6.QtCore import QEvent
 
 from .main_imports import *
 
@@ -2703,6 +2704,8 @@ class MainWindow(QMainWindow):
         if modifiers == Qt.ControlModifier:
             # in proportion to the scroll; nothing after a trackpad swipe lifts
             factor = self.wheel_steps.zoom(event)
+            if factor == 1.0 and not self.is_zooming:
+                return  # no scroll, such as momentum, starts no zoom
             self.activateWindow()
             field_cursor = self.field.cursor()
             p = self.field.mapFromGlobal(field_cursor.pos())
@@ -2734,6 +2737,14 @@ class MainWindow(QMainWindow):
         else:
             # follow the swipe so it is read right once the modifier lifts
             self.wheel_steps.feed(event)
+    
+    def changeEvent(self, event):
+        """Overwritten: a window that is no longer active drops pending scroll."""
+        # the app going to the back, or another window or dialog in front,
+        # both arrive here
+        if event.type() == QEvent.ActivationChange and not self.isActiveWindow():
+            self.wheel_steps.cancel()
+        super().changeEvent(event)
     
     def keyReleaseEvent(self, event):
         """Overwritten: checks for Ctrl+Zoom."""

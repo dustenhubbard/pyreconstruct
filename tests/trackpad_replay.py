@@ -15,11 +15,15 @@ phase, scrollingDeltaY in points). `qt_events` turns them into the
     becomes ScrollEnd.
   * pixelDelta is the points, angleDelta twice that.
 
-`deliver` sends them with `QTest.wheelEvent`, which goes through
-`QWindowSystemInterface::handleWheelEvent` like a real event: a ScrollUpdate
-with no delta is dropped, and a ScrollBegin or ScrollEnd with no delta
-arrives twice.
+Each event also keeps the NSEvent it came from, as `native_scroll` reads it
+from `[NSApp currentEvent]` on a Mac. `deliver` sends them with
+`QTest.wheelEvent`, which goes through `QWindowSystemInterface::handleWheelEvent`
+like a real event: a ScrollUpdate with no delta is dropped, and a ScrollBegin
+or ScrollEnd with no delta arrives twice. While it does, `NativeEvents` stands
+in for `[NSApp currentEvent]`.
 """
+
+from typing import NamedTuple
 
 from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtTest import QTest
@@ -30,6 +34,25 @@ P = Qt.ScrollPhase
 NONE, MAY_BEGIN, BEGAN, CHANGED, ENDED, CANCELLED = (
     "none", "mayBegin", "began", "changed", "ended", "cancelled",
 )
+# their NSEventPhase bits, as `phase` and `momentumPhase` return them
+NS_PHASE = {NONE: 0, BEGAN: 1, CHANGED: 4, ENDED: 8, CANCELLED: 16, MAY_BEGIN: 32}
+
+
+class Native(NamedTuple):
+    """The NSEvent behind a wheel event, shaped like `native_scroll.NativeScroll`."""
+    phase: int
+    momentum: int
+    delta_y: float
+
+
+class NativeEvents:
+    """Stands in for `native_scroll.read`: the NSEvent of the event being sent."""
+
+    def __init__(self):
+        self.current = None
+
+    def __call__(self, event):
+        return self.current
 
 
 def native_swipe(drag, momentum=()):
@@ -48,7 +71,7 @@ def native_swipe(drag, momentum=()):
 
 
 def qt_events(native, busy):
-    """(phase, pixelDelta.y, angleDelta.y) for each native event Qt passes on.
+    """(phase, pixelDelta.y, angleDelta.y, Native) for each native event Qt passes on.
 
     `busy` says whether the momentum Began event was already queued when Qt
     looked behind the finger Ended event.
@@ -76,22 +99,38 @@ def qt_events(native, busy):
             qt_phase = P.ScrollEnd
             scrolling = False
             dy = 0 if phase == CANCELLED else dy
-        out.append((qt_phase, int(dy), int(dy * 2)))
+        ns = Native(NS_PHASE[phase], NS_PHASE[momentum], dy)
+        out.append((qt_phase, int(dy), int(dy * 2), ns))
     return out
 
 
-def deliver(window, pos, events, modifiers=Qt.NoModifier, after=None):
-    """Send (phase, pixel, angle) events to a QWindow at `pos`.
+def is_finger(event):
+    """The fingers made this event: it has a native phase and no momentum."""
+    return len(event) > 3 and event[3].momentum == 0
 
-    `after(phase)` runs after each event is sent.
+
+def last_finger(events):
+    """The index of the last event the fingers made; what comes after is after the lift."""
+    return max(i for i, e in enumerate(events) if is_finger(e))
+
+
+def deliver(window, pos, events, modifiers=Qt.NoModifier, after=None, native=None):
+    """Send (phase, pixel, angle[, Native]) events to a QWindow at `pos`.
+
+    `native`, a `NativeEvents`, is set to each event's Native while it is
+    sent. `after(phase)` runs after each event is sent.
     """
-    for phase, pixel, angle in events:
+    for phase, pixel, angle, *ns in events:
+        if native is not None:
+            native.current = ns[0] if ns else None
         QTest.wheelEvent(
             window, QPointF(pos), QPoint(0, angle), QPoint(0, pixel),
             modifiers, phase,
         )
         if after is not None:
             after(phase)
+    if native is not None:
+        native.current = None
 
 
 def notch(count=1, pixel=0):
