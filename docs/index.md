@@ -111,7 +111,7 @@ macOS 12 or later
 [Apple Silicon :material-arrow-down:](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-macOS-arm64.dmg){ .md-button }
 [Intel :material-arrow-down:](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-macOS-x86_64.dmg){ .md-button }
 
-Includes Python. See the [first-launch instructions](USER_GUIDE.md#1-installing-pyreconstruct).
+Includes Python. Signed and notarized by Apple.
 { .pr-small }
 
 </div>
@@ -124,9 +124,9 @@ Includes Python. See the [first-launch instructions](USER_GUIDE.md#1-installing-
 
 64-bit · glibc 2.28 or later
 
-[Download for Linux :material-arrow-down:](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-Linux-installer.tar.gz){ .md-button }
+[Download AppImage :material-arrow-down:](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-linux-x86_64.AppImage){ .md-button }
 
-Requires Python 3.11. Extract and run `bash install.sh`.
+Includes Python. Or install with `curl -fsSL https://pyreconstruct.org/install.sh | bash`.
 { .pr-small }
 
 </div>
