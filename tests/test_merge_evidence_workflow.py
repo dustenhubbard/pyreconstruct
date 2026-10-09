@@ -1,11 +1,13 @@
-"""The `merge-evidence` check: main's copy decides, on exact label names.
+"""The `merge-evidence` check: main's copy runs it too, on exact label names.
 
 `.github/workflows/merge-evidence.yml` reports the required `merge-evidence`
-check. It runs on `pull_request_target`, so the copy on main judges a PR even
-when the PR edits the file, and it must never check out or run the PR head.
+check. It runs on `pull_request_target`, so the copy on main also judges a PR
+that edits the file, and it must never check out or run the PR head. Until a
+later change drops `pull_request`, the head copy reports the check as well.
 Only a label named exactly `reviewed` passes it. The one exception is a
-dependabot patch or minor bump whose commits are all dependabot's; a major bump
-needs the label like any other PR.
+dependabot patch or minor bump whose commits are all dependabot's own: authored
+by dependabot[bot], committed by GitHub and signed. A major bump needs the
+label like any other PR.
 
 The decision steps run here as the workflow's own shell, with `gh` stubbed out
 to list a chosen set of PR commits through the real `jq` filter.
@@ -41,7 +43,7 @@ def source(filename=WORKFLOW):
 
 
 # ---- the workflow file ------------------------------------------------------
-def test_runs_from_mains_copy_on_every_label_change():
+def test_runs_from_mains_copy_too_on_every_label_change():
     triggers = source().split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
     target = triggers.split("  pull_request_target:\n", 1)[1].split("\n  pull", 1)[0]
     for event in ("opened", "reopened", "synchronize", "labeled", "unlabeled"):
@@ -76,11 +78,23 @@ def test_no_expression_is_spliced_into_a_script():
 
 
 # ---- the label step ---------------------------------------------------------
+def labels_env(labels):
+    """`LABELS` as GitHub renders the step's own `env:` expression for `labels`."""
+    step = source().split(f"- name: {LABEL}\n", 1)[1]
+    expression = re.search(r"LABELS: \$\{\{ (.*) \}\}", step)[1]
+    names = "github.event.pull_request.labels.*.name"
+    if expression == f"toJSON({names})":
+        return json.dumps(labels)
+    if expression == f"join({names}, ',')":
+        return ",".join(labels)
+    raise AssertionError(f"teach labels_env to render {expression}")
+
+
 def run_label_step(labels):
     return subprocess.run(
         ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c",
          workflow_script(WORKFLOW, LABEL)],
-        env=dict(os.environ, LABELS=json.dumps(labels)),
+        env=dict(os.environ, LABELS=labels_env(labels)),
         capture_output=True, text=True,
     )
 
@@ -117,8 +131,14 @@ sys.exit(subprocess.run(["jq", "-r", jq_filter], input=os.environ["FAKE_COMMITS"
 '''
 
 
-def commit(sha, login):
-    return {"sha": sha * 40, "author": {"login": login} if login else None}
+def commit(sha, login, committer="web-flow", verified=True):
+    """One entry of the PR commits API, shaped as GitHub returns it."""
+    return {
+        "sha": sha * 40,
+        "author": {"login": login} if login else None,
+        "committer": {"login": committer} if committer else None,
+        "commit": {"verification": {"verified": verified}},
+    }
 
 
 def run_dep_step(tmp_path, *, author, update_type="", commits=()):
@@ -180,3 +200,40 @@ def test_anyone_else_needs_the_label(tmp_path):
                            update_type="version-update:semver-patch",
                            commits=[commit("a", "someone")])
     assert skip == "skip=false"
+
+
+PATCH = "version-update:semver-patch"
+
+
+@shell_only
+def test_a_dependabot_rebase_stays_eligible(tmp_path):
+    # A rebase replaces the commits with new ones of the same authentic shape.
+    skip, _ = run_dep_step(tmp_path, author=BOT, update_type=PATCH,
+                           commits=[commit("d", BOT)])
+    assert skip == "skip=true"
+
+
+@shell_only
+@pytest.mark.parametrize("later", [
+    commit("e", BOT, committer="someone", verified=False),
+    commit("e", BOT, committer="someone", verified=True),
+    commit("e", BOT, committer="web-flow", verified=False),
+    commit("e", BOT, committer=None, verified=True),
+], ids=["unsigned-human-committer", "signed-human-committer",
+        "unsigned-web-flow", "unknown-committer"])
+def test_a_commit_only_attributed_to_dependabot_needs_the_label(tmp_path, later):
+    # The author is only the commit's email: anyone who can push to the branch
+    # can set it. Dependabot's own commits are committed and signed by GitHub.
+    skip, stdout = run_dep_step(tmp_path, author=BOT, update_type=PATCH,
+                                commits=[commit("a", BOT), later])
+    assert skip == "skip=false"
+    assert "eeeeeeee" in stdout
+
+
+@shell_only
+def test_a_merge_from_main_by_a_person_needs_the_label(tmp_path):
+    # The `Update branch` button: authored by a person, committed and signed by GitHub.
+    skip, stdout = run_dep_step(tmp_path, author=BOT, update_type=PATCH,
+                                commits=[commit("a", BOT), commit("f", "someone")])
+    assert skip == "skip=false"
+    assert "ffffffff" in stdout

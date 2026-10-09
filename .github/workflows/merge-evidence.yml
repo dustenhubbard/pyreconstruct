@@ -14,11 +14,13 @@
 # event and race the label runs for "latest" -- complexity that buys nothing the label
 # does not already give.
 #
-# Main's copy decides. This runs on `pull_request_target`, so GitHub uses the copy of
-# this file on main, not the PR head's: a PR that edits this file cannot weaken the check
-# that gates it, and a branch cut before a change here is checked by the new rules
-# without a merge from main. The check run still lands on the PR head commit, under the
-# same `merge-evidence` name branch protection requires.
+# Moving to main's copy, step one of two. On `pull_request_target`, GitHub runs the copy
+# of this file on main, not the PR head's, so a PR that edits this file cannot weaken
+# that run. Its check lands on the PR head commit under the same `merge-evidence` name.
+# For now `pull_request` stays too (see `on:`), so the head copy reports a check of the
+# same name as well, and both copies require the label. Branch protection does not say
+# which of the two it reads. Main's copy decides alone only once a later change drops
+# `pull_request`.
 #
 # No checkout, no code execution, and it must stay that way: `pull_request_target` hands
 # the job a token for this repository, which is safe only because no step checks out or
@@ -27,7 +29,8 @@
 #
 # Limit: branch protection matches a required check by name alone, so a PR that adds its
 # own `pull_request` workflow with a job named `merge-evidence` reports a second check of
-# that name. Read any change under .github/workflows/ with that in mind.
+# that name. Dropping `pull_request` here does not close that; only a GitHub ruleset
+# does, and none is set up. Read any change under .github/workflows/ with that in mind.
 
 name: merge-evidence
 
@@ -51,8 +54,9 @@ jobs:
       - name: read the dependabot update type
         # Dependabot's own action, pinned as in dependabot-auto.yml. It reads the PR's
         # first commit through the API and reports no update type unless that commit is
-        # by dependabot[bot] and carries GitHub's verified signature, so a PR head cannot
-        # forge it. If it fails, the type stays empty and the label is required.
+        # by dependabot[bot] and carries GitHub's verified signature. It does not look
+        # at later commits; the next step does. If it fails, the type stays empty and
+        # the label is required.
         id: meta
         if: github.event.pull_request.user.login == 'dependabot[bot]'
         continue-on-error: true
@@ -64,8 +68,11 @@ jobs:
         # The one exception to label-only evidence, added 2026-08-24: a
         # dependabot patch or minor bump merges on green checks alone (see
         # dependabot-auto.yml for the policy and the reason). A major bump, an
-        # unknown update type, or a dependabot branch with a commit from anyone
-        # else needs the label like any other PR.
+        # unknown update type, or a dependabot branch with any other commit needs
+        # the label like any other PR. The author on a commit is only an email
+        # that anyone who can push to the branch can set, so every commit must
+        # also be committed by GitHub (web-flow) with a signature GitHub verified,
+        # as Dependabot's own commits are.
         id: dep
         env:
           GH_TOKEN: ${{ github.token }}
@@ -82,9 +89,11 @@ jobs:
             echo "dependabot update type '${UPDATE_TYPE:-unknown}' -- the label is required"
           else
             others=$(gh api "repos/$REPO/pulls/$PR/commits" --paginate \
-              --jq '.[] | select(.author.login != "dependabot[bot]") | .sha[0:8]')
+              --jq '.[] | select(.author.login != "dependabot[bot]"
+                                 or .committer.login != "web-flow"
+                                 or .commit.verification.verified != true) | .sha[0:8]')
             if [ -n "$others" ]; then
-              echo "commits not by dependabot -- the label is required:"
+              echo "commits not authored, committed and signed as dependabot's -- the label is required:"
               echo "$others"
             else
               echo "dependabot $UPDATE_TYPE -- the test suite is the evidence"
