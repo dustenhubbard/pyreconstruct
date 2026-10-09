@@ -358,6 +358,12 @@ class MainWindow(QMainWindow):
         ## First-launch / post-update "What's new" (once per version, dismissible)
         QTimer.singleShot(750, self.showWhatsNewStartup)
 
+        ## Eject the installer image this copy was dragged from (frozen macOS)
+        from PyReconstruct.modules.backend.func.installer_image import (
+            eject_installer_image_in_background,
+        )
+        QTimer.singleShot(1000, eject_installer_image_in_background)
+
     def _restoredGeometryIsUsable(self) -> bool:
         """Whether the just-restored geometry is usable on the current screens.
 
