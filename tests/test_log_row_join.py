@@ -19,7 +19,7 @@ events are written for z-traces too.
 
 import pytest
 
-from PyReconstruct.modules.datatypes.log import Log, LogSet
+from PyReconstruct.modules.datatypes.log import Log, LogSet, quoteField
 from PyReconstruct.modules.datatypes.trace import Trace
 from PyReconstruct.modules.datatypes.ztrace import Ztrace
 
@@ -29,13 +29,22 @@ def _readlines(text):
     return text.splitlines(keepends=True)
 
 
+def _bare(text):
+    """Lines with no endings at all."""
+    return text.split("\n")
+
+
+def _crlf(text):
+    """The file as readlines, written with CRLF endings."""
+    return text.replace("\n", "\r\n").splitlines(keepends=True)
+
+
+LINE_FORMS = {"readlines": _readlines, "bare": _bare, "crlf": _crlf}
+
+
 def _line_forms(text):
     """The same file as readlines, as bare lines, and with CRLF endings."""
-    return (
-        _readlines(text),
-        text.split("\n"),
-        text.replace("\n", "\r\n").splitlines(keepends=True),
-    )
+    return tuple(form(text) for form in LINE_FORMS.values())
 
 
 def _older_build_row(user, obj_name, section, event):
@@ -121,6 +130,7 @@ def test_a_split_trace_name_reads_as_the_trace_is_named(obj_name):
     "foo\nbar",
     "\nfoo",
     "foo\n bar",
+    "foo\n\nbar",
 ])
 def test_a_split_ztrace_name_reads_as_the_ztrace_is_named(obj_name):
     text = _older_build_row("alice", obj_name, "-", "Modify ztrace")
@@ -140,7 +150,7 @@ def test_a_split_ztrace_name_reads_as_the_ztrace_is_named(obj_name):
     "Remove from all object groups",
     "Edit default alignment",
 ])
-@pytest.mark.parametrize("obj_name", ["foo\n", "foo\nbar"])
+@pytest.mark.parametrize("obj_name", ["foo\n", "foo\nbar", "foo\n\nbar"])
 def test_a_name_in_an_event_ztraces_share_stays_as_written(event, obj_name):
     # Written for a trace object and for a z-trace alike, so the row cannot
     # say which kind it names, and a z-trace keeps its name as written.
@@ -235,3 +245,83 @@ def test_a_short_final_row_still_runs_off_the_end():
     log_set = LogSet.fromList(lines, skip_corrupt=True)
     assert log_set.skipped_rows == [lines[1]]
     assert [log.user for log in log_set.all_logs] == ["bob"]
+
+
+## Every way an older build could split a row, read every way a reader hands
+## the lines over. A row is (user, object, sections, event); FIELDS says which
+## of them the break goes into, BREAKS where in it, LINE_FORMS how the lines
+## arrive. A trace's name is the only one normalized on open. A break in the
+## event leaves a head that parses, so text after it is not joined: it is a
+## loss the reader reports, as tests/test_editors_from_corrupt_history.py pins
+## for a line that follows a whole row.
+
+# (plain value, value holding the ", " quoteField quotes) -> value with breaks
+BREAKS = {
+    "inside": lambda plain, quoted: plain[:2] + "\n" + plain[2:],
+    "at-start": lambda plain, quoted: "\n" + plain,
+    "at-end": lambda plain, quoted: plain + "\n",
+    "inside-quoted": lambda plain, quoted: quoted.replace(", ", ", \n", 1),
+    "empty-line": lambda plain, quoted: plain[:2] + "\n\n" + plain[2:],
+    "two-empty-lines": lambda plain, quoted: plain[:2] + "\n\n\n" + plain[2:],
+    "empty-line-at-start": lambda plain, quoted: "\n\n" + plain,
+    "empty-line-at-end": lambda plain, quoted: plain + "\n\n",
+    "empty-line-quoted": lambda plain, quoted: quoted.replace(", ", ", \n\n", 1),
+    "several": lambda plain, quoted: plain[:1] + "\n" + plain[1:3] + "\n\n" + plain[3:],
+}
+
+TRACE_ROW = ("alice", "foo", "1", "Modify trace(s)")
+ZTRACE_ROW = ("alice", "foo", "-", "Modify ztrace")
+SHARED_ROW = ("alice", "foo", "-", "Add to group 'g'")
+
+# field -> (row, index of the field in it, value holding ", ")
+FIELDS = {
+    "user": (TRACE_ROW, 0, "smith, jo"),
+    "trace-object": (TRACE_ROW, 1, "dendrite 1, spine a"),
+    "ztrace-object": (ZTRACE_ROW, 1, "dendrite 1, spine a"),
+    "shared-object": (SHARED_ROW, 1, "dendrite 1, spine a"),
+    "event": (
+        ("alice", "foo", "1", "Rename object to spine"),
+        3,
+        "Add to group 'dendrite 1, spine a'",
+    ),
+}
+
+
+@pytest.mark.parametrize("form", LINE_FORMS)
+@pytest.mark.parametrize("where", BREAKS)
+@pytest.mark.parametrize("field", FIELDS)
+def test_every_split_row_reads_as_the_older_build_meant(field, where, form):
+    row, index, quoted = FIELDS[field]
+    fields = list(row)
+    fields[index] = BREAKS[where](row[index], quoted)
+    user, obj_name, section, event = fields
+    text = (
+        f"26-01-01, 10:00, {quoteField(user)}, {quoteField(obj_name)}, "
+        f"{section}, {event}\n"
+    )
+    assert text.count("\n") > 1, "the older row really is split"
+
+    lines = LINE_FORMS[form](text)
+    log_set = LogSet.fromList(lines, skip_corrupt=True)
+
+    if field == "trace-object":
+        obj_name = _trace_named(obj_name)
+    event_head, _, event_tail = event.partition("\n")
+    if event_tail.strip():
+        with pytest.raises(ValueError):
+            LogSet.fromList(lines)
+        assert [row.strip() for row in log_set.skipped_rows] == [
+            line for line in event_tail.split("\n") if line
+        ]
+        event = event_head
+    else:
+        assert log_set.skipped_rows == []
+    meant = Log(
+        "26-01-01", "10:00", user, obj_name,
+        None if section == "-" else int(section), event.strip(),
+    )
+    assert len(log_set.all_logs) == 1
+    log = log_set.all_logs[0]
+    assert (log.user, log.obj_name, log.section_ranges, log.event) == (
+        meant.user, meant.obj_name, meant.section_ranges, meant.event,
+    )
