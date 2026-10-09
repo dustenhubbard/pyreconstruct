@@ -49,8 +49,12 @@ class ImageLayer():
         if self.is_zarr_file:
             if os.path.isdir(self.series.src_dir):
                 self.zg = zarr.open(self.series.src_dir)
-                # special expection: zarr is in previous format
-                if self.section.src in self.zg:
+                # special expection: zarr is in previous format. zarr raises
+                # on a name it refuses, which has no image either way.
+                if (
+                    self.section.zarr_key is not None and
+                    self.section.src in self.zg
+                ):
                     # reorganize the zarr file (move images into scale_1 folder)
                     self.zg.create_group("scale_1", overwrite=True)
                     for g in self.zg:
