@@ -1040,8 +1040,10 @@ class Section():
         # Series.importFlags deduplicated on an identity that did not survive
         # the trip and duplicated every legacy flag it was asked to merge.
         # See Flag.deriveID. One LegacyFlagIDs for the whole section keeps each
-        # repeated flag's salt progress, so n identical flags cost n hashes
-        # rather than n**2 / 2, with the same IDs.
+        # repeated flag's salt progress, so a repeated flag no longer searches
+        # again from salt zero. Each flag costs one hash plus one per collision
+        # with an ID already taken, rather than n**2 / 2 for n identical flags,
+        # with the same IDs.
         legacy_ids = LegacyFlagIDs(
             flag[0] for flag in section_data["flags"]
             if len(flag) == 7 and isinstance(flag[0], str)

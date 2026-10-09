@@ -1,5 +1,4 @@
 import hashlib
-import itertools
 import json
 import random
 
@@ -222,7 +221,8 @@ class LegacyFlagIDs():
         # random ID, which is the failure ``Flag.deriveID`` exists to avoid.
         # The ID space is 62**6 (5.7e10) and a section holds far fewer flags,
         # so the loop always finds a free ID.
-        for salt in itertools.count(self.next_salt.get(payload, 0)):
+        salt = self.next_salt.get(payload, 0)
+        while True:
             digest = hashlib.blake2b(
                 f"{salt}\x00{payload}".encode("utf-8"), digest_size=16
             ).digest()
@@ -235,6 +235,7 @@ class LegacyFlagIDs():
                 self.taken.add(id)
                 self.next_salt[payload] = salt + 1
                 return id
+            salt += 1
 
 class Comment():
 

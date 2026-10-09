@@ -214,25 +214,41 @@ def test_the_migration_matches_deriving_one_flag_at_a_time():
     assert _migrate(_mixed_section(), snum=3) == expected
 
 
-def test_identical_flags_cost_one_hash_each(monkeypatch):
-    """Every identical flag used to restart at salt zero and rehash every salt
-    the earlier copies took, so n copies cost about n**2 / 2 hashes: 12.5
-    million for 5,000, on every open. Counted at the hash call, not timed."""
-    calls = 0
+def _count_hashes(monkeypatch):
+    """Count calls to the hash the derivation uses. Returns a one-item list."""
+    calls = [0]
 
     def counting_blake2b(*args, **kwargs):
-        nonlocal calls
-        calls += 1
+        calls[0] += 1
         return hashlib.blake2b(*args, **kwargs)
 
     monkeypatch.setattr(
         flag_module, "hashlib", types.SimpleNamespace(blake2b=counting_blake2b)
     )
+    return calls
+
+
+def test_identical_flags_no_longer_repeat_the_search(monkeypatch):
+    """Every identical flag used to restart at salt zero and rehash every salt
+    the earlier copies took, so n copies cost about n**2 / 2 hashes: 12.5
+    million for 5,000, on every open. Counted at the hash call, not timed.
+    With no stored IDs and no collision among these candidates, each copy
+    costs exactly one hash."""
+    calls = _count_hashes(monkeypatch)
     n = 5000
     ids = _migrate([LEGACY6] * n)
     assert len(set(ids)) == n
-    # a rare collision with an earlier copy's ID can cost one extra hash
-    assert n <= calls < n + 10, f"{n} identical flags took {calls} hashes"
+    assert calls[0] == n, f"{n} identical flags took {calls[0]} hashes"
+
+
+def test_a_collision_costs_one_more_hash(monkeypatch):
+    """A flag whose salt-zero ID is already stored in the file takes the next
+    salt, so it costs two hashes, not one."""
+    salt_zero = _migrate([LEGACY6], snum=3)[0]
+    calls = _count_hashes(monkeypatch)
+    ids = _migrate([[salt_zero] + LEGACY6, LEGACY6], snum=3)
+    assert ids[0] == salt_zero and ids[1] != salt_zero
+    assert calls[0] == 2
 
 
 # --------------------------------------------------------------------------
