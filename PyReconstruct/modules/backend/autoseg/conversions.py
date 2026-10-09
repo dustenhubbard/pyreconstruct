@@ -778,7 +778,8 @@ def exterior_to_points(ext: list[np.ndarray], offset, resolution, raw, window, t
 
     ext[:,1] += offset[1] / resolution[1]  # y
     ext[:,1] *= -1
-    ext[:,1] += raw.shape[1] * (raw_resolution[1] / resolution[1])
+    ## y is second to last in (z, y, x) and in channel first (1, z, y, x)
+    ext[:,1] += raw.shape[-2] * (raw_resolution[1] / resolution[1])
 
     ## Convert to coordinates
     ext *= mag
@@ -938,6 +939,14 @@ def _channelKey(key):
     return (0, *key) if isinstance(key, tuple) else (0, key)
 
 
+class ZarrRefused(ValueError):
+    """A Zarr array PyReconstruct does not read, refused on purpose.
+
+    The message says what to save instead, so the GUI shows it as a notice.
+    Any other error is unexpected and reaches the error report.
+    """
+
+
 def label_volume(labels_array):
     """A labels array as (z, y, x), the way import and the overlay index it.
 
@@ -951,17 +960,43 @@ def label_volume(labels_array):
     if shape is None or len(shape) != 4:
         return labels_array
     if shape[0] != 1:
-        raise ValueError(
+        raise ZarrRefused(
             f"This Zarr label array has {shape[0]} channels. PyReconstruct imports "
             "labels from a single channel, so save them as (z, y, x) or (1, z, y, x)."
         )
     if not np.issubdtype(labels_array.dtype, np.integer):
-        raise ValueError(
+        raise ZarrRefused(
             f"This Zarr label array is {labels_array.dtype}, not an integer type. "
             "PyReconstruct imports label ids, so save a prediction as integer "
             "labels before importing it."
         )
     return _FirstChannel(labels_array)
+
+
+def raw_volume(raw):
+    """A raw image array as (z, y, x), one grayscale image per section.
+
+    A 4D array is channel first, as its four-entry ``voxel_size`` is read,
+    and one channel is the images. Each section is stored and drawn as a
+    single grayscale image, so several channels are refused rather than
+    read as sections.
+    """
+
+    shape = raw.shape
+    if len(shape) == 3:
+        return raw
+    if len(shape) == 4 and shape[0] == 1:
+        return _FirstChannel(raw)
+    if len(shape) == 4:
+        raise ZarrRefused(
+            f"This Zarr raw array has {shape[0]} channels. PyReconstruct shows "
+            "each section as one grayscale image, so save raw as (z, y, x) or "
+            "(1, z, y, x)."
+        )
+    raise ZarrRefused(
+        f"This Zarr raw array has {len(shape)} axes. PyReconstruct reads raw "
+        "as (z, y, x) or (1, z, y, x)."
+    )
 
 
 def is_label_array(array):
@@ -1144,12 +1179,15 @@ def zarrToNewSeries(zarr_fp : str, label_groups : list, name : str):
     ## are worked out here and passed to it, not stored on the source.
     ng_zarr = zarr.open(zarr_fp, "r")
     raw = get_zarr_array(ng_zarr, "raw")  # assume "raw" exists as zarr path
+    ## by section, before anything is written: a (1, z, y, x) raw is its one
+    ## channel, and several channels are refused
+    volume = raw_volume(raw)
 
     ## Get true mag
     true_mag = get_true_mag(raw)
 
     ## Set window
-    z, y, x = raw.shape
+    z, y, x = volume.shape
     window = [0, 0, x * true_mag, y * true_mag]
 
     ## Set the sections
@@ -1193,7 +1231,7 @@ def zarrToNewSeries(zarr_fp : str, label_groups : list, name : str):
             src = f"section{snum:0{n_digits}d}"
             print(f"Working on {src}...")
 
-            images.create_dataset(src, data=raw[i])
+            images.create_dataset(src, data=volume[i])
 
             img_loc = os.path.join(images_dir, "scale_1", src)
             image_locations.append(img_loc)
