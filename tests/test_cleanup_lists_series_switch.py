@@ -21,9 +21,9 @@ What is pinned here:
     from the Finder leaves B unchanged
   * a notice from a Delete or Combine that B opens under ends the action
     without touching the closed list
-  * a pixel-dust, Duplicates, self-crossing or empty-trace scan of A that B
-    opens under, at its first, a middle or its last progress update, opens
-    no list on B, asks nothing and shows no error
+  * a pixel-dust or Duplicates scan of A that B opens under, at its first,
+    a middle or its last progress update, opens no list on B and shows no
+    error
 """
 import shutil
 
