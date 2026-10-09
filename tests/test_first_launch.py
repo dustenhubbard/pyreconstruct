@@ -321,8 +321,8 @@ BYLINE_RENDERED = BYLINE
 
 
 def test_maintainer_byline_constant_is_the_approved_text_verbatim():
-    # Locked verbatim: it is maintainer-approved and checked to contain no fork
-    # tells; a reword could reintroduce one.
+    # Pinned verbatim: the exact sentence is what every framing must show, so a
+    # reword would change the footer text.
     assert F.MAINTAINER_BYLINE == BYLINE
     # the dialog shows the sentence as it is, with no break
     assert BYLINE_RENDERED == BYLINE
@@ -925,9 +925,8 @@ def test_dialog_byline_shares_the_bottom_row_with_close(qapp):
 def test_dialog_minimum_size_and_where_extra_space_goes(qapp):
     """Minimum width 700, notes browser at least 320 tall, growth goes to notes.
 
-    The numbers are the review record for the 2026-08-12 size bump, chosen
-    rather than inherited, and click-tested and approved by Dusten at these
-    values:
+    The numbers are the 2026-08-12 size bump, chosen rather than inherited,
+    and the test pins these values:
 
     * Width 540 -> 700. The one-line footer and the release-notes link fit
       side by side well inside it (see
