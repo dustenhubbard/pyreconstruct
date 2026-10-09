@@ -447,8 +447,8 @@ def test_case_probe_trusts_a_case_sensitive_folder_below(tmp_path, monkeypatch):
         assert not _same_both_ways(str(data / "B.jser"), str(data / "b.jser"))
 
 
-def test_case_probe_walks_up_from_an_empty_numeric_folder(tmp_path):
-    """An empty 2026 folder has no letters to probe, so the folder above decides."""
+def test_case_probe_judges_an_empty_numeric_folder(tmp_path):
+    """An empty 2026 folder has no entry to probe, and still ignores case here."""
     from PyReconstruct.modules.gui.main.main_window import _samePath
 
     year = tmp_path / "2026"
@@ -460,23 +460,210 @@ def test_case_probe_walks_up_from_an_empty_numeric_folder(tmp_path):
     assert not _samePath(str(year / "B.jser"), str(year / "C.jser"))
 
 
-def test_case_probe_walk_up_trusts_a_case_sensitive_parent(tmp_path, monkeypatch):
-    """Walking up from 2026 to a case-sensitive folder keeps case."""
+def _system_says(monkeypatch, answer):
+    """Make the system's answer about any folder's case `answer`.
+
+    True: names ignore case (chattr +F on Linux). False: names keep case
+    (per-folder case sensitivity on NTFS). None: no answer.
+    """
+    from PyReconstruct.modules.gui.main import main_window
+    monkeypatch.setattr(main_window, "_askFolderCase", lambda folder: answer)
+
+
+@pytest.mark.parametrize(
+    "answer, same", [(True, True), (None, True), (False, False)],
+    ids=["folds-case", "cannot-tell", "minds-case"],
+)
+@pytest.mark.parametrize("below", ["Data", "2026"])
+def test_case_probe_does_not_judge_an_empty_folder_by_a_case_sensitive_parent(
+    below, answer, same, tmp_path, monkeypatch
+):
+    """An empty folder keeps its own rule under a folder that minds case.
+
+    On Linux an empty folder can fold case inside one that does not. When
+    the folder's rule is unknown, names differing in case match, which can
+    only refuse a save.
+    """
     import os
-
     case = tmp_path / "Case"
-    year = case / "2026"
-    year.mkdir(parents=True)
-    exact = str(case)
-
-    def reject(p):  # Case and everything in it must match its exact spelling
-        head = p[:len(exact)]
-        return head != exact and head.casefold() == exact.casefold()
+    folder = case / below
+    folder.mkdir(parents=True)
+    a, b, c = (str(folder / n) for n in ("B.jser", "b.jser", "C.jser"))
 
     with monkeypatch.context() as m:
-        _fake_case_rules(m, reject)
-        assert not _same_both_ways(str(year / "B.jser"), str(year / "b.jser"))
-    assert os.listdir(year) == []
+        _folder_minds_case_of(m, folder)
+        _folder_minds_case_of(m, case)
+        _system_says(m, answer)
+        assert _same_both_ways(a, b) == same
+        assert not _same_both_ways(a, c)
+    assert os.listdir(folder) == []
+
+
+@pytest.mark.parametrize(
+    "answer, same", [(False, False), (None, True), (True, True)],
+    ids=["minds-case", "cannot-tell", "folds-case"],
+)
+def test_case_probe_does_not_judge_an_empty_folder_by_a_case_insensitive_parent(
+    answer, same, tmp_path, monkeypatch
+):
+    """An empty folder that minds case keeps it under a folder that does not.
+
+    On Windows an empty folder can be case-sensitive inside one that is not,
+    and then B.jser and b.jser are two files.
+    """
+    case = tmp_path / "Case"
+    folder = case / "Data"
+    folder.mkdir(parents=True)
+    if not _volume_ignores_case(case):
+        pytest.skip("this volume is case-sensitive")
+    a, b = str(folder / "B.jser"), str(folder / "b.jser")
+
+    with monkeypatch.context() as m:
+        _system_says(m, answer)
+        assert _same_both_ways(a, b) == same
+
+
+def test_system_case_answer_matches_the_folder(tmp_path):
+    """Where the system answers for an empty folder, it agrees with a probe file."""
+    import os
+    import sys
+    from PyReconstruct.modules.gui.main.main_window import _askFolderCase
+
+    folder = tmp_path / "Empty"
+    folder.mkdir()
+    answer = _askFolderCase(str(folder))
+    if sys.platform == "darwin":
+        assert answer is not None
+    if sys.platform.startswith("linux"):
+        from PyReconstruct.modules.gui.main.main_window import (
+            _LINUX_CASE_BY_FLAG_ONLY, _linuxFsType,
+        )
+        if _linuxFsType(str(folder)) in _LINUX_CASE_BY_FLAG_ONLY:
+            assert answer is not None  # ext4, btrfs, tmpfs
+    if answer is not None:
+        assert answer == _volume_ignores_case(folder)
+    assert os.listdir(folder) == []
+
+
+@pytest.mark.parametrize("platform, command, answer", [
+    ("linux", ["chattr", "+F"], True),
+    ("win32", ["fsutil.exe", "file", "setCaseSensitiveInfo"], False),
+], ids=["linux-casefold", "windows-case-sensitive"])
+def test_system_reports_a_folder_set_apart_from_its_parent(
+    platform, command, answer, tmp_path
+):
+    """A folder given its own case rule is reported by that rule, not its parent's."""
+    import subprocess
+    import sys
+
+    if not sys.platform.startswith(platform):
+        pytest.skip(f"needs {platform}")
+    from PyReconstruct.modules.gui.main.main_window import (
+        _askFolderCase, _samePath,
+    )
+    folder = tmp_path / "Data"
+    folder.mkdir()
+    argv = command + [str(folder)]
+    if platform == "win32":
+        argv.append("enable")
+    try:
+        done = subprocess.run(argv, capture_output=True)
+    except OSError as e:
+        pytest.skip(f"cannot run {command[0]}: {e}")
+    if done.returncode != 0:
+        pytest.skip(f"this volume has no per-folder case rule: {done.stderr!r}")
+
+    assert _askFolderCase(str(folder)) is answer
+    assert _samePath(str(folder / "B.jser"), str(folder / "b.jser")) is answer
+    # and the folder holding it keeps the other rule
+    assert _askFolderCase(str(tmp_path)) is (not answer)
+
+
+_EXT4, _BTRFS, _TMPFS, _VFAT = 0xEF53, 0x9123683E, 0x01021994, 0x4D44
+_EXTENTS_FL, _CASEFOLD_FL = 0x80000, 0x40000000
+
+
+def _linux_system(monkeypatch, flags, fs_type):
+    """Run as on Linux, with the folder's inode flags and statfs f_type given.
+
+    `flags` may be an OSError, raised as the ioctl would. The decision made
+    from the two is the real one.
+    """
+    from PyReconstruct.modules.gui.main import main_window
+
+    def read_flags(folder):
+        if isinstance(flags, OSError):
+            raise flags
+        return flags
+
+    monkeypatch.setattr(main_window.sys, "platform", "linux")
+    monkeypatch.setattr(main_window, "_linuxFolderFlags", read_flags)
+    monkeypatch.setattr(main_window, "_linuxFsType", lambda folder: fs_type)
+
+
+@pytest.mark.parametrize("flags, fs_type, answer", [
+    (_EXTENTS_FL, _EXT4, False),
+    (_EXTENTS_FL | _CASEFOLD_FL, _EXT4, True),
+    (0, _BTRFS, False),
+    (0, _TMPFS, False),
+    (_CASEFOLD_FL, _TMPFS, True),
+    (0, _VFAT, None),
+    (0, None, None),
+    (OSError(25, "Inappropriate ioctl for device"), _EXT4, None),
+], ids=[
+    "ext4", "ext4-casefold", "btrfs", "tmpfs", "tmpfs-casefold",
+    "vfat", "no-statfs", "no-flags",
+])
+def test_linux_folder_case_comes_from_its_flags_and_filesystem(
+    flags, fs_type, answer, tmp_path, monkeypatch
+):
+    """An empty folder without +F keeps case only where +F is the sole way to fold it.
+
+    ext4, btrfs and tmpfs fold case only in a folder marked +F. vfat folds
+    case with no flag, so there the flags say nothing, and names differing
+    in case match, which can only refuse a save.
+    """
+    import os
+    from PyReconstruct.modules.gui.main.main_window import _askFolderCase
+
+    folder = tmp_path / "Empty"
+    folder.mkdir()
+    a, b, c = (str(folder / n) for n in ("B.jser", "b.jser", "C.jser"))
+
+    with monkeypatch.context() as m:
+        _linux_system(m, flags, fs_type)
+        assert _askFolderCase(str(folder)) is answer
+        assert _same_both_ways(a, b) is (answer is not False)
+        assert not _same_both_ways(a, c)
+    assert os.listdir(folder) == []
+
+
+@pytest.mark.parametrize("flags, same", [
+    (1, False), (0, True), (None, True),
+], ids=["case-sensitive-folder", "ordinary-folder", "no-flag"])
+def test_windows_case_sensitive_folder_keeps_names_apart(
+    flags, same, tmp_path, monkeypatch
+):
+    """Windows compares paths without case, but a case-sensitive folder keeps B.jser and b.jser apart.
+
+    An ordinary Windows folder still ignores case, and a folder the system
+    says nothing about counts names differing in case as one.
+    """
+    import ntpath
+    import os
+    from PyReconstruct.modules.gui.main import main_window
+
+    folder = tmp_path / "Data"
+    folder.mkdir()
+    a, b, c = (str(folder / n) for n in ("B.jser", "b.jser", "C.jser"))
+
+    with monkeypatch.context() as m:
+        m.setattr(main_window.sys, "platform", "win32")
+        m.setattr(main_window, "_windowsFolderCaseFlags", lambda f: flags)
+        m.setattr(main_window.os.path, "normcase", ntpath.normcase)
+        assert _same_both_ways(a, b) is same
+        assert not _same_both_ways(a, c)
+    assert os.listdir(folder) == []
 
 
 def test_case_probe_follows_a_folder_symlink_in_either_order(tmp_path, monkeypatch):
@@ -575,8 +762,7 @@ def test_case_probe_does_not_judge_an_empty_mount_by_the_folder_above(
 
     with monkeypatch.context() as m:
         _folder_minds_case_of(m, mount)
-        # on one volume, the folder above still decides
-        assert not _same_both_ways(a, b)
+        _system_says(m, None)
         _fake_mount(m, mount)
         assert _same_both_ways(a, b)
         assert not _same_both_ways(a, c)
@@ -600,6 +786,7 @@ def test_save_as_refuses_a_scene_series_in_other_case_on_an_empty_mount(
 
     with monkeypatch.context() as m:
         _folder_minds_case_of(m, mount)
+        _system_says(m, None)
         _fake_mount(m, mount)
         main_window_dialogs.file_responses.append(chosen)
         result = window.saveAsToJser()
@@ -611,3 +798,51 @@ def test_save_as_refuses_a_scene_series_in_other_case_on_an_empty_mount(
     assert any(
         "3D scene" in text for _title, text in main_window_dialogs.message_boxes
     )
+
+
+@pytest.mark.parametrize(
+    "answer, refused", [(True, True), (None, True), (False, False)],
+    ids=["folds-case", "cannot-tell", "minds-case"],
+)
+def test_save_as_judges_an_empty_folder_by_its_own_case_rule(
+    answer, refused, main_window, main_window_dialogs, tmp_path, series_jser,
+    monkeypatch,
+):
+    """The other series' .jser is gone, and its folder's rule decides, not the folder above.
+
+    The folder above minds case. If the empty folder folds case, or cannot
+    tell, OTHER.jser is the scene series' name and Save As refuses it. If
+    the folder minds case too, OTHER.jser is another file and Save As goes
+    ahead.
+    """
+    import os
+    window = main_window
+    _viewer_, _mine, theirs, other_fp = _scene_with_other_series(
+        window, tmp_path, series_jser, monkeypatch
+    )
+    os.remove(other_fp)
+    folder = os.path.dirname(other_fp)
+    assert os.listdir(folder) == []
+    own_fp = window.series.jser_fp
+    chosen = os.path.join(folder, "OTHER.jser")
+
+    with monkeypatch.context() as m:
+        _folder_minds_case_of(m, folder)
+        _system_says(m, answer)
+        main_window_dialogs.file_responses.append(chosen)
+        result = window.saveAsToJser()
+
+    assert theirs.series_fp == other_fp
+    in_scene = [
+        text for _title, text in main_window_dialogs.message_boxes
+        if "3D scene" in text
+    ]
+    if refused:
+        assert result == "cancel"
+        assert window.series.jser_fp == own_fp
+        assert os.listdir(folder) == []
+        assert in_scene
+    else:
+        assert result is None
+        assert window.series.jser_fp == chosen
+        assert in_scene == []
