@@ -24,12 +24,15 @@ What is pinned here:
     its series file) stops there the same way, while a pass that has nothing
     left to write ends as it was
   * so do the passes that only log after their sections, the z-trace made
-    from an object, a rename of an object with no traces, and a series undo
-    (its series attributes): a log or attribute written then is lost with
-    the closed series, and the pass would end as if it had finished
+    from an object, and a rename of an object with no traces: a log or
+    attribute written then is lost with the closed series, and the pass
+    would end as if it had finished
   * Calibrate and Edit all image sources write through the window after
     their pass, and the window then holds the series opened in its place:
-    stopped, they leave that series alone
+    stopped, they leave that series alone, with logging off too
+  * a series undo is all or nothing, so it does not stop there: it
+    finishes on the series it began on, and the window leaves the series
+    opened in its place alone
 """
 import pytest
 
@@ -457,10 +460,19 @@ class _Field:
         self.table_manager = type(
             "Tables", (), {"recreateTables": lambda *a, **k: None}
         )()
+        from PyReconstruct.modules.gui.main.field_widget_1_base import (
+            FieldWidgetBase,
+        )
+        self.mainwindow = type(
+            "Window", (), {"createContextMenus": lambda *a, **k: None}
+        )()
         self.setMag = FieldWidgetData.setMag.__get__(self)
+        self.seriesUndo = FieldWidgetBase.seriesUndo.__get__(self)
 
     def reload(self, clear_states=False):
         self.reloaded = True
+        # as the window's seriesModified(True) at the end of a real reload
+        self.series.modified = True
 
 
 def test_a_calibration_closed_at_the_last_update_leaves_the_next_series_alone(
@@ -517,18 +529,73 @@ def test_edit_all_image_sources_closed_at_the_last_update_leaves_the_next_series
     assert _events(series) == logged
 
 
-def test_a_series_undo_closed_at_the_last_update_is_not_a_success(series):
-    """The undo's series attributes come after its sections, so it stops
-    there with an error and its step stays where it was."""
+def test_a_calibration_with_logging_off_leaves_the_next_series_alone(
+    series, tmp_path
+):
+    """With nothing to log, the z-traces, reload and tables after the pass
+    still go through self.series, which is now the series opened in its
+    place, so the pass stops there all the same."""
     from PyReconstruct.modules.datatypes.series import SeriesClosedError
+    from PyReconstruct.modules.datatypes.ztrace import Ztrace
     field = _Field(series)
-    field.setMag(series.loadSection(min(series.sections)).mag * 1.5)
+    other = _open_other(tmp_path)
+    try:
+        other.ztraces["other_only"] = Ztrace("other_only", (255, 0, 0), [])
+        other.modified = False
+        mag = series.loadSection(min(series.sections)).mag
+        _closes_at_the_end(series, then=lambda: setattr(field, "series", other))
+
+        with pytest.raises(SeriesClosedError, match="part-way"):
+            field.setMag(mag * 1.5, log_event=False)
+
+        # the old series' calibration states never get the new one's z-trace
+        for snum in series.sections:
+            for state in field.series_states[snum].undo_states + [
+                field.series_states[snum].current_state
+            ]:
+                assert "other_only" not in (getattr(state, "ztraces", None) or {})
+        assert not other.modified
+        assert not field.reloaded
+    finally:
+        other.close()
+
+
+def test_a_series_undo_closed_at_the_last_update_finishes_on_the_closed_series(
+    series, tmp_path
+):
+    """An undo is all or nothing. Its sections are saved before the last
+    update, so it goes on to put back the series attributes and move its
+    step to the redo stack, on the series it began on. The field then holds
+    the series opened in its place, and leaves that one alone."""
+    field = _Field(series)
+    snums = sorted(series.sections)
+    mag = series.loadSection(snums[0]).mag
+    comment = series.getAttr(OBJ, "comment")
+    field.setMag(mag * 1.5)
+    series.setAttr(OBJ, "comment", "after action")
     states = field.series_states
     assert states.canUndo()[0]
-    undos = list(states.undos)
-    _closes_at_the_end(series)
+    section_undos = {n: len(states[n].undo_states) for n in snums}
+    other = _open_other(tmp_path)
+    try:
+        other.modified = False
+        field.reloaded = False
+        # keep the working files, so the restored sections can be read back
+        series.leave_open = True
+        seen = _closes_at_the_end(
+            series, then=lambda: setattr(field, "series", other)
+        )
 
-    with pytest.raises(SeriesClosedError, match="part-way"):
-        states.undoState()
+        field.seriesUndo()
 
-    assert states.undos == undos and not states.redos
+        assert seen["switched"] and series.closed
+        assert all(series.loadSection(n).mag == mag for n in snums)
+        assert series.getAttr(OBJ, "comment") == comment
+        assert not states.undos and len(states.redos) == 1
+        for n in snums:
+            assert len(states[n].undo_states) == section_undos[n] - 1
+            assert len(states[n].redo_states) == 1
+        assert not other.modified
+        assert not field.reloaded
+    finally:
+        other.close()

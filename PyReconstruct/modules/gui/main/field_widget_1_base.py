@@ -536,7 +536,13 @@ class FieldWidgetBase:
         alignments_before = set(self.series.alignments)
         groups_before = set(self.series.object_groups.getGroupList())
 
+        series = self.series
         self.series_states.undoState(redo)
+        # another series can open at the undo's last progress update. The
+        # undo still finished on the series it began on, and the field now
+        # holds the new one, which a reload would mark modified
+        if self.series is not series:
+            return
         self.reload()
         self.table_manager.recreateTables()
         # a series undo can change palette buttons' object defaults (a custom

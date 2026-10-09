@@ -1400,12 +1400,8 @@ class SeriesStates():
         # so records here instead (bc_profiles).
         sections = set(state.undo_lens.keys()) | set(state.bc_profiles.keys())
         if sections:
-            # writes_after: the series attributes below are the other half
-            # of this step, so a series closed at the last update stops it
-            # with an error rather than ending it as done
             for snum, section in self.series.enumerateSections(
-                message=("Re" if redo else "Un") + "doing action...",
-                writes_after=True,
+                message=("Re" if redo else "Un") + "doing action..."
             ):
                 if snum not in sections:
                     continue

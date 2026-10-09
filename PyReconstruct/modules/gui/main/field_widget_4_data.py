@@ -520,11 +520,12 @@ class FieldWidgetData(FieldWidgetObject):
         # while the rest of the series stays at the new one
         self.series_states.addState(breakable=False)
         mag_states = []
-        # writes_after: the log below goes to self.series, which is the
-        # series opened in its place if one opened at the last update
+        # writes_after: the z-traces, log, reload and tables below go through
+        # self.series, which is the series opened in its place if one opened
+        # at the last update
         for snum, section in self.series.enumerateSections(
             message="Changing series magnification...",
-            writes_after=log_event,
+            writes_after=True,
         ):
             # the state before the change, read from the section's file
             section_states = self.series_states[section]
