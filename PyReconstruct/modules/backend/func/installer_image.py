@@ -1,8 +1,14 @@
 """Eject the macOS installer disk image once the app runs from outside it (Qt-free).
 
 After an install from the .dmg, the image stays mounted until the user ejects
-it. The image cannot run code, so the installed app does it instead: on launch
-it looks for a mounted installer image of this same build and detaches it.
+it. The image cannot run code, so the installed app does it instead: at
+launch, before the main window exists, it looks for a mounted installer image
+of this same build and detaches it.
+
+Doing it before the window means no series is open and no path can change
+while ``hdiutil`` runs: the only open path is the file the window is about to
+open, which the caller passes in. ``runPyReconstruct`` calls this once, before
+its window loop, so an in-app restart does not run it again.
 
 An image is ejected only when every one of these holds:
 
@@ -12,45 +18,54 @@ An image is ejected only when every one of these holds:
 * the image has exactly one mounted volume. ``hdiutil detach`` takes every
   volume of an image, and the release image has one;
 * the volume's root is the installer layout and nothing else: one ``.app``,
-  the ``Applications`` link to ``/Applications``, and optionally the
-  first-launch guide (see ``packaging/macos/make_dmg.sh``). Hidden files such
-  as ``.DS_Store`` and ``.background.tiff`` are ignored. A backup image or a
-  data volume holds other files, so it never matches;
+  the ``Applications`` link to ``/Applications``, optionally the first-launch
+  guide (see ``packaging/macos/make_dmg.sh``), and only the hidden entries in
+  :data:`HIDDEN`. A backup image or a data volume holds other files, so it
+  never matches;
 * that ``.app`` has this app's ``CFBundleIdentifier`` and the same
   ``PyReconstructVersion``. Stable and Dev have different bundle ids. The
   version check means an older copy started while a newer image is open
   leaves that image alone;
 * no other image qualifies. With two candidates, neither is ejected;
-* neither the running app nor any open path (the series and its images) is on
-  that volume. Paths are compared by device number, not by text, so a path
-  that names the volume in other letter case still counts. The open paths are
-  read again right before the detach (see :func:`eject_installer_image`). A
-  quarantined app opened straight from the image runs from an App
-  Translocation path, so a translocated app ejects nothing.
+* neither the running app nor the file about to open is on that volume.
+  Paths are compared by device number, not by text, so a path that names the
+  volume in other letter case still counts. A quarantined app opened straight
+  from the image runs from an App Translocation path, so a translocated app
+  ejects nothing.
 
 Every failure (a busy volume, ``hdiutil`` missing or slow) is logged and
-swallowed. The work runs off the GUI thread, so a slow ``hdiutil`` never
-holds up the window.
+swallowed. All ``hdiutil`` calls share a budget of :data:`_BUDGET` seconds; a
+call still running when it runs out is killed and the window opens without
+the eject.
 """
 
 import os
 import plistlib
 import subprocess
 import sys
-import threading
+import time
 from pathlib import Path
 
 from PyReconstruct.modules.constants.frozen import is_frozen
 from PyReconstruct.modules.backend.func.logging_setup import log_note
 
-_TIMEOUT = 30  # seconds; hdiutil answers in well under one
+_BUDGET = 5  # seconds for every hdiutil call together; each takes well under one
 GUIDE = "Read Before First Launch.html"  # make_dmg.sh adds it for unsigned apps
+# Hidden root entries an installer image may hold. dmgbuild writes .DS_Store,
+# .background.tiff (or .background.png for a single image) and, with an icon,
+# .VolumeIcon.icns; macOS can add .fseventsd, .Trashes and .Spotlight-V100
+# while dmgbuild has the image mounted read-write.
+HIDDEN = {".DS_Store", ".background.tiff", ".background.png", ".VolumeIcon.icns",
+          ".fseventsd", ".Trashes", ".Spotlight-V100"}
 
 
-def _hdiutil(args):
-    """Run ``hdiutil`` and return its stdout as bytes; raise on any failure."""
+def _hdiutil(args, timeout):
+    """Run ``hdiutil`` and return its stdout as bytes; raise on any failure.
+
+    On timeout ``subprocess.run`` kills the child it started and waits for it.
+    """
     return subprocess.run(
-        ["hdiutil", *args], capture_output=True, check=True, timeout=_TIMEOUT,
+        ["hdiutil", *args], capture_output=True, check=True, timeout=timeout,
     ).stdout
 
 
@@ -107,7 +122,10 @@ def _is_installer_volume(mount, identity):
     """Whether ``mount`` holds the installer layout for ``identity``, and nothing else."""
     root = Path(mount)
     try:
-        names = {n for n in os.listdir(root) if not n.startswith(".")}
+        entries = set(os.listdir(root))
+        if {n for n in entries if n.startswith(".")} - HIDDEN:
+            return False
+        names = {n for n in entries if not n.startswith(".")}
         apps = [n for n in names if n.endswith(".app")]
         if len(apps) != 1 or names - {apps[0], GUIDE} != {"Applications"}:
             return False
@@ -143,15 +161,13 @@ def installer_mounts(info, identity, bundle):
     return found
 
 
-def eject_installer_image(*, open_paths=lambda: (), platform=None,
-                          executable=None, hdiutil=_hdiutil):
+def eject_installer_image(*, open_paths=(), platform=None, executable=None,
+                          hdiutil=None, budget=None, clock=time.monotonic):
     """Detach the mounted installer image of this build; return the mounts ejected.
 
-    ``open_paths`` returns the paths whose volume must stay mounted, or None
-    if they cannot be read, in which case nothing is ejected. It is called
-    once, after the image is found and right before the detach, so a series
-    or image folder opened while ``hdiutil info`` ran is still seen. Never
-    raises. The other keyword arguments are for tests.
+    Call it before the main window exists. ``open_paths`` are the paths whose
+    volume must stay mounted (the file the window will open). Never raises.
+    The other keyword arguments are for tests.
     """
     ejected = []
     try:
@@ -167,7 +183,17 @@ def eject_installer_image(*, open_paths=lambda: (), platform=None,
         identity = _identity(bundle)
         if identity is None:
             return ejected
-        info = plistlib.loads(hdiutil(["info", "-plist"]))
+        hdiutil = hdiutil or _hdiutil
+        budget = _BUDGET if budget is None else budget
+        deadline = clock() + budget
+
+        def remaining():
+            left = deadline - clock()
+            if left <= 0:
+                raise TimeoutError(f"hdiutil took over {budget} s")
+            return left
+
+        info = plistlib.loads(hdiutil(["info", "-plist"], remaining()))
         mounts = installer_mounts(info, identity, bundle)
         if len(mounts) > 1:
             log_note(f"installer image: {len(mounts)} candidates, ejecting none: "
@@ -176,19 +202,11 @@ def eject_installer_image(*, open_paths=lambda: (), platform=None,
         if not mounts:
             return ejected
         mount = mounts[0]
-        paths = open_paths()
-        if paths is None:
-            log_note("installer image: open paths unknown, ejecting nothing")
+        if _on_volume(open_paths, mount):
+            log_note(f"installer image: {mount} holds the file to open, leaving it")
             return ejected
-        if _on_volume(paths, mount):
-            log_note(f"installer image: {mount} holds an open path, leaving it")
-            return ejected
-        # A path changed onto the volume while the detach itself runs is not
-        # seen. On a volume laid out as the installer, the only place for
-        # such a path is inside the read-only app bundle, and the worst case
-        # is that images there stop loading, as after a manual eject.
         try:
-            hdiutil(["detach", mount])
+            hdiutil(["detach", mount], remaining())
             ejected.append(mount)
             log_note(f"installer image: ejected {mount}")
         except Exception as exc:
@@ -197,15 +215,3 @@ def eject_installer_image(*, open_paths=lambda: (), platform=None,
     except Exception as exc:
         log_note(f"installer image: skipped: {exc!r}")
     return ejected
-
-
-def eject_installer_image_in_background(open_paths):
-    """Start :func:`eject_installer_image` on a daemon thread.
-
-    ``open_paths`` is called on the worker thread. The caller makes it read
-    the series on the GUI thread, so the worker never touches the series.
-    """
-    if sys.platform != "darwin" or not is_frozen():
-        return
-    threading.Thread(target=eject_installer_image, name="eject-installer-image",
-                     kwargs={"open_paths": open_paths}, daemon=True).start()

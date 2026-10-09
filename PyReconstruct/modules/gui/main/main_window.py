@@ -4,10 +4,8 @@
 import math
 import shutil
 import struct
-import threading
 import traceback
 
-from PySide6.QtCore import Signal
 from shiboken6 import isValid
 
 from .main_imports import *
@@ -337,9 +335,6 @@ _SERIES_LOCK_HEARTBEAT = 7
 
 class MainWindow(QMainWindow):
 
-    # runs a callable from a worker thread on the GUI thread
-    _guiCall = Signal(object)
-
     def __init__(self, filename):
         """Constructs a skeleton for an empty main window."""
         super().__init__() # initialize QMainWindow
@@ -464,10 +459,6 @@ class MainWindow(QMainWindow):
 
         ## First-launch / post-update "What's new" (once per version, dismissible)
         QTimer.singleShot(750, self.showWhatsNewStartup)
-
-        ## Eject the installer image once this copy runs from outside it (frozen macOS)
-        self._guiCall.connect(self._runGuiCall, Qt.QueuedConnection)
-        QTimer.singleShot(1000, self.ejectInstallerImageStartup)
 
     def _restoredGeometryIsUsable(self) -> bool:
         """Whether the just-restored geometry is usable on the current screens.
@@ -4703,51 +4694,6 @@ class MainWindow(QMainWindow):
         # closing then launches the installer (see closeEvent).
         if dialog.exec() and self._pending_installer:
             self.close()
-
-    def ejectInstallerImageStartup(self):
-        """Eject the installer image once this copy runs from outside it (frozen macOS).
-
-        The worker asks for the open paths right before it detaches, and
-        they are read on the GUI thread, so a series or image folder opened
-        while the worker looked for the image is still seen.
-        """
-        from PyReconstruct.modules.backend.func.installer_image import (
-            eject_installer_image_in_background,
-        )
-        eject_installer_image_in_background(self.openPathsForWorker)
-
-    def _runGuiCall(self, fn):
-        fn()
-
-    def openPathsForWorker(self, timeout=10):
-        """:meth:`openPaths`, called from a worker thread and read on the GUI thread.
-
-        None if the window does not answer within ``timeout`` seconds.
-        """
-        done = threading.Event()
-        box = []
-
-        def read():
-            box.append(self.openPaths())
-            done.set()
-
-        self._guiCall.emit(read)
-        return box[0] if done.wait(timeout) else None
-
-    def openPaths(self):
-        """The open series' files and image paths, or None if they cannot be read."""
-        from PyReconstruct.modules.backend.func.logging_setup import log_note
-        try:
-            series = self.series
-            paths = [series.jser_fp, series.filepath, series.src_dir,
-                     series.zarr_overlay_fp]
-            section = getattr(getattr(self, "field", None), "section", None)
-            if section is not None:
-                paths.append(section.src_fp)
-            return [str(p) for p in paths if p]
-        except Exception as exc:
-            log_note(f"open paths: unreadable: {exc!r}")
-            return None
 
     def checkForUpdatesStartup(self):
         """Background check on launch; quietly surfaces a genuine upgrade.

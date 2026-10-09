@@ -10,7 +10,6 @@ import os
 import plistlib
 import subprocess
 import sys
-import threading
 import time
 from types import SimpleNamespace
 
@@ -54,8 +53,10 @@ class FakeHdiutil:
         self.detach_error = detach_error
         self.info_error = info_error
         self.detached = []
+        self.timeouts = []
 
-    def __call__(self, args):
+    def __call__(self, args, timeout):
+        self.timeouts.append(timeout)
         if args == ["info", "-plist"]:
             if self.info_error:
                 raise self.info_error
@@ -234,10 +235,10 @@ def test_a_volume_holding_a_project_is_left_alone(frozen, tmp_path):
     "PyReconstruct.app/Contents/Resources/images",
     "PyReconstruct.app/Contents/Resources/images/1.png",
 ])
-def test_an_open_series_or_image_folder_keeps_its_volume(frozen, layout, rel):
+def test_the_file_to_open_keeps_its_volume(frozen, layout, rel):
     installed, volume = layout
     hd = FakeHdiutil([image(volume)])
-    assert run(installed, hd, open_paths=lambda: [str(volume / rel)]) == []
+    assert run(installed, hd, open_paths=[str(volume / rel)]) == []
     assert hd.detached == []
 
 
@@ -245,31 +246,7 @@ def test_unrelated_open_paths_do_not_block_the_eject(frozen, layout, tmp_path):
     installed, volume = layout
     hd = FakeHdiutil([image(volume)])
     paths = ["", str(tmp_path / "Projects" / "cells.jser")]
-    assert run(installed, hd, open_paths=lambda: paths) == [str(volume)]
-
-
-def test_unknown_open_paths_eject_nothing(frozen, layout):
-    installed, volume = layout
-    hd = FakeHdiutil([image(volume)])
-    assert run(installed, hd, open_paths=lambda: None) == []
-    assert hd.detached == []
-
-
-def test_open_paths_are_read_after_the_image_is_found(frozen, layout):
-    installed, volume = layout
-    order = []
-
-    class Recording(FakeHdiutil):
-        def __call__(self, args):
-            order.append(args[0])
-            return super().__call__(args)
-
-    def open_paths():
-        order.append("open paths")
-        return []
-
-    assert run(installed, Recording([image(volume)]), open_paths=open_paths) == [str(volume)]
-    assert order == ["info", "open paths", "detach"]
+    assert run(installed, hd, open_paths=paths) == [str(volume)]
 
 
 def test_an_open_path_in_other_letter_case_keeps_its_volume(frozen, layout):
@@ -277,7 +254,7 @@ def test_an_open_path_in_other_letter_case_keeps_its_volume(frozen, layout):
     installed, volume = layout
     other_case = volume.parent / volume.name.swapcase() / "PyReconstruct.app"
     hd = FakeHdiutil([image(volume)])
-    assert run(installed, hd, open_paths=lambda: [str(other_case)]) == []
+    assert run(installed, hd, open_paths=[str(other_case)]) == []
     assert hd.detached == []
 
 
@@ -320,123 +297,6 @@ def test_an_unreadable_mount_keeps_the_image(frozen, layout, monkeypatch):
     hd = FakeHdiutil([image(volume)])
     assert run(installed, hd) == []
     assert hd.detached == []
-
-
-def test_open_paths_lists_the_series_files_and_images():
-    from PyReconstruct.modules.gui.main import main_window as MW
-
-    series = SimpleNamespace(jser_fp="/V/cells.jser", filepath="/V/.cells/cells.ser",
-                             src_dir="/V/images", zarr_overlay_fp=None)
-    window = SimpleNamespace(series=series,
-                             field=SimpleNamespace(section=SimpleNamespace(src_fp="/V/images/1.png")))
-    assert MW.MainWindow.openPaths(window) == [
-        "/V/cells.jser", "/V/.cells/cells.ser", "/V/images", "/V/images/1.png"]
-
-
-def test_open_paths_is_none_when_the_series_cannot_be_read():
-    from PyReconstruct.modules.gui.main import main_window as MW
-
-    assert MW.MainWindow.openPaths(SimpleNamespace(series=None)) is None
-
-
-# The tests below run the eject against a real MainWindow. The worker is the
-# real background thread; only hdiutil, the platform and the app's location
-# are stand-ins, so the window's own startup handler drives it.
-
-class HeldHdiutil(FakeHdiutil):
-    """A fake hdiutil whose ``info`` waits until the test releases it."""
-
-    def __init__(self, images):
-        super().__init__(images)
-        self.listing = threading.Event()
-        self.release = threading.Event()
-
-    def __call__(self, args):
-        if args[0] == "info":
-            self.listing.set()
-            assert self.release.wait(10)
-        return super().__call__(args)
-
-
-@pytest.fixture
-def held(monkeypatch, tmp_path, main_window):
-    """A mounted installer image whose discovery the test holds open."""
-    from PySide6.QtCore import QCoreApplication, QEvent
-
-    # A window from an earlier test still has its startup timer until it is
-    # deleted, and it would start a second worker here.
-    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
-    installed = make_app(tmp_path / "Applications")
-    volume = make_installer(tmp_path / "Volumes" / "PyReconstruct")
-    hd = HeldHdiutil([image(volume)])
-    real = II.eject_installer_image
-    calls = []
-
-    def eject_once(**kw):
-        # this window's startup timer may call too; one worker is enough
-        calls.append(kw)
-        if len(calls) > 1:
-            return []
-        return real(platform="darwin", executable=str(installed), hdiutil=hd, **kw)
-
-    monkeypatch.setattr(II, "eject_installer_image", eject_once)
-    monkeypatch.setattr(II, "is_frozen", lambda: True)
-    monkeypatch.setattr(II, "sys", SimpleNamespace(platform="darwin",
-                                                   executable=sys.executable))
-    return SimpleNamespace(volume=volume, hd=hd)
-
-
-def _finish(qapp, held):
-    """Release discovery and run the GUI thread until the worker ends."""
-    held.hd.release.set()
-    deadline = time.monotonic() + 20
-    while any(t.name == "eject-installer-image" for t in threading.enumerate()):
-        assert time.monotonic() < deadline, "eject worker did not finish"
-        qapp.processEvents()
-        time.sleep(0.01)
-
-
-@pytest.mark.gui
-def test_window_ejects_the_installer_image(held, qapp, main_window):
-    main_window.ejectInstallerImageStartup()
-    assert held.hd.listing.wait(10)
-    _finish(qapp, held)
-    assert held.hd.detached == [str(held.volume)]
-
-
-@pytest.mark.gui
-def test_image_folder_changed_onto_the_image_during_discovery_keeps_it(
-        held, qapp, main_window):
-    images = held.volume / "PyReconstruct.app" / "Contents" / "Resources" / "images"
-    images.mkdir(parents=True)
-    main_window.ejectInstallerImageStartup()
-    assert held.hd.listing.wait(10)
-    main_window.changeSrcDir(str(images))
-    _finish(qapp, held)
-    assert held.hd.detached == []
-
-
-@pytest.mark.gui
-def test_image_folder_on_the_image_in_other_letter_case_keeps_it(
-        held, qapp, main_window):
-    images = (held.volume.parent / held.volume.name.swapcase()
-              / "PyReconstruct.app" / "Contents" / "Resources" / "images")
-    main_window.changeSrcDir(str(images))
-    main_window.ejectInstallerImageStartup()
-    assert held.hd.listing.wait(10)
-    _finish(qapp, held)
-    assert held.hd.detached == []
-
-
-@pytest.mark.gui
-def test_a_window_that_does_not_answer_ejects_nothing(main_window):
-    # the GUI thread is busy in this test, so the queued read never runs
-    box = []
-    worker = threading.Thread(
-        target=lambda: box.append(main_window.openPathsForWorker(timeout=0.2)))
-    worker.start()
-    worker.join(5)
-    assert box == [None]
 
 
 @pytest.mark.parametrize("missing", ["candidate", "running app"])
@@ -484,3 +344,193 @@ def test_hdiutil_failure_is_logged_not_raised(frozen, layout, capsys):
     hd = FakeHdiutil([], info_error=FileNotFoundError("hdiutil"))
     assert run(installed, hd) == []
     assert "installer image: skipped" in capsys.readouterr().err
+
+
+# The hidden root entries an installer image may hold.
+
+@pytest.mark.parametrize("name", sorted(II.HIDDEN))
+def test_hidden_entries_dmgbuild_and_macos_write_are_allowed(frozen, layout, name):
+    installed, volume = layout
+    entry = volume / name
+    if not entry.exists():
+        entry.mkdir() if "." not in name[1:] else entry.write_bytes(b"")
+    hd = FakeHdiutil([image(volume)])
+    assert run(installed, hd) == [str(volume)]
+
+
+@pytest.mark.parametrize("name,folder", [
+    (".cells", True),         # the hidden folder a series keeps beside its .jser
+    (".images", True),
+    (".notes.txt", False),
+])
+def test_a_stray_hidden_root_entry_blocks_the_eject(frozen, layout, name, folder):
+    installed, volume = layout
+    if folder:
+        (volume / name).mkdir()
+        (volume / name / "1.png").write_bytes(b"")
+    else:
+        (volume / name).write_text("x")
+    hd = FakeHdiutil([image(volume)])
+    assert run(installed, hd) == []
+    assert hd.detached == []
+
+
+# Every hdiutil call shares one time budget.
+
+class Clock:
+    def __init__(self):
+        self.now = 100.0
+
+    def __call__(self):
+        return self.now
+
+
+def test_each_call_gets_what_is_left_of_the_budget(frozen, layout):
+    installed, volume = layout
+    clock = Clock()
+
+    class Slow(FakeHdiutil):
+        def __call__(self, args, timeout):
+            clock.now += 1.5
+            return super().__call__(args, timeout)
+
+    hd = Slow([image(volume)])
+    assert run(installed, hd, budget=4, clock=clock) == [str(volume)]
+    assert hd.timeouts == [4, 2.5]
+
+
+def test_no_detach_once_the_budget_is_spent(frozen, layout, capsys):
+    installed, volume = layout
+    clock = Clock()
+
+    class Slow(FakeHdiutil):
+        def __call__(self, args, timeout):
+            clock.now += timeout          # info used all of it
+            return super().__call__(args, timeout)
+
+    hd = Slow([image(volume)])
+    assert run(installed, hd, budget=4, clock=clock) == []
+    assert hd.detached == []
+    assert hd.timeouts == [4]
+    assert f"could not eject {volume}" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="needs a shell script on PATH")
+def test_a_slow_hdiutil_is_killed_at_its_timeout(tmp_path, monkeypatch):
+    # A stand-in hdiutil that never answers. It records its own process id,
+    # so the test can check that the child it started is gone.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    pid_file = tmp_path / "pid"
+    fake = bin_dir / "hdiutil"
+    fake.write_text(f'#!/bin/sh\necho $$ > "{pid_file}"\nexec sleep 30\n')
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    start = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        II._hdiutil(["info", "-plist"], 0.5)
+    assert time.monotonic() - start < 10
+    pid = int(pid_file.read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+# run.py runs the eject once, before the first window.
+
+@pytest.fixture
+def launch(monkeypatch, tmp_path):
+    """runPyReconstruct with stand-ins for Qt, the window and settings."""
+    import PyReconstruct.run as run_mod
+    from PyReconstruct.modules.backend.func import logging_setup
+    from PyReconstruct.modules.backend.updater import updater
+    from PyReconstruct.modules.constants import settings_domain
+    from PyReconstruct.modules.gui import utils
+    from PyReconstruct.modules.gui.main import first_launch
+
+    events = []
+
+    class App:
+        def __init__(self, argv):
+            pass
+
+        def installEventFilter(self, f):
+            pass
+
+        def processEvents(self):
+            pass
+
+        def setStyle(self, style):
+            pass
+
+        def exec(self):
+            return 0
+
+    class Window:
+        restarts = 1
+
+        def __init__(self, filename):
+            events.append(("window", filename))
+            self.restart_mainwindow = Window.restarts > 0
+            Window.restarts -= 1
+            self.series = SimpleNamespace(isWelcomeSeries=lambda: True)
+
+    for module, name, value in [
+        (logging_setup, "install_file_logging", lambda: None),
+        (settings_domain, "fold_flavor_settings_once", lambda: None),
+        (first_launch, "reset_whats_new_popup_startup", lambda: None),
+        (utils, "MenuShortcutSpacingStyle", lambda: None),
+        (updater, "report_update_started", lambda: None),
+        (run_mod, "QApplication", App),
+        (run_mod.main, "MainWindow", Window),
+        (run_mod, "importlib", SimpleNamespace(reload=lambda m: m)),
+    ]:
+        monkeypatch.setattr(module, name, value)
+
+    installed = make_app(tmp_path / "Applications")
+    volume = make_installer(tmp_path / "Volumes" / "PyReconstruct")
+    monkeypatch.setenv("PYRECON_FORCE_FROZEN", "1")
+    monkeypatch.setattr(II, "sys", SimpleNamespace(platform="darwin",
+                                                   executable=str(installed)))
+    return SimpleNamespace(run=run_mod.runPyReconstruct, events=events,
+                           volume=volume)
+
+
+def test_launch_ejects_before_the_window_and_not_on_restart(launch, monkeypatch):
+    hd = FakeHdiutil([image(launch.volume)])
+
+    def recording(args, timeout):
+        launch.events.append(("hdiutil", args[0]))
+        return hd(args, timeout)
+
+    monkeypatch.setattr(II, "_hdiutil", recording)
+    launch.run()
+    assert launch.events == [("hdiutil", "info"), ("hdiutil", "detach"),
+                             ("window", None), ("window", None)]
+    assert hd.detached == [str(launch.volume)]
+
+
+def test_launch_keeps_the_image_holding_the_file_to_open(launch, monkeypatch):
+    jser = launch.volume / "PyReconstruct.app" / "Contents" / "Resources" / "cells.jser"
+    hd = FakeHdiutil([image(launch.volume)])
+    monkeypatch.setattr(II, "_hdiutil", hd)
+    launch.run(str(jser))
+    assert hd.detached == []
+    assert launch.events == [("window", str(jser))] * 2
+
+
+def test_launch_never_detaches_after_a_timeout(launch, monkeypatch):
+    # hdiutil info outlasts the whole budget; the window opens and no detach
+    # is ever asked for, then or later.
+    hd = FakeHdiutil([image(launch.volume)])
+
+    def slow(args, timeout):
+        launch.events.append(("hdiutil", args[0]))
+        time.sleep(timeout + 0.05)
+        return hd(args, timeout)
+
+    monkeypatch.setattr(II, "_hdiutil", slow)
+    monkeypatch.setattr(II, "_BUDGET", 0.2)
+    launch.run()
+    time.sleep(0.3)
+    assert launch.events == [("hdiutil", "info"), ("window", None), ("window", None)]
+    assert hd.detached == []

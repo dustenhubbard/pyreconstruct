@@ -119,6 +119,13 @@ def runPyReconstruct(filename=None):
         filename = file_open_watcher.pending
         file_open_watcher.pending = None
 
+    # frozen macOS: eject the installer disk image of this build. Here, before
+    # the first window, no series is open and no path can change while
+    # hdiutil runs; the only path to keep is the file about to open. Once per
+    # process, so an in-app restart below does not run it again.
+    from PyReconstruct.modules.backend.func.installer_image import eject_installer_image
+    eject_installer_image(open_paths=[filename])
+
     # push menu shortcut keybinds clear of their labels (the native style packs
     # them within a few pixels of the widest label). A QProxyStyle survives the
     # setTheme stylesheet swaps, so it is installed once, here.
