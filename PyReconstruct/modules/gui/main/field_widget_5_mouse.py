@@ -526,6 +526,9 @@ class FieldWidgetMouse(FieldWidgetData):
         painter = QPainter(new_field)
         painter.drawPixmap(move_x + x, move_y + y, w, h, field)
         self.field_pixmap = new_field
+        # the scale bar follows the stretched view, not the one before the zoom
+        if self.mainwindow.mouse_palette:
+            self.mainwindow.mouse_palette.followZoom(zoom_factor)
         self.update()
 
     def mousePanzoomMove(self, event):

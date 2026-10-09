@@ -93,6 +93,7 @@
     "save_act": "str",
     "scale_bar_length_um": "float",
     "scale_bar_mode": "str",
+    "scale_bar_thickness": "int",
     "scale_bar_width": "int",
     "screenshot_res": "int",
     "searchmenus_act": "str",
