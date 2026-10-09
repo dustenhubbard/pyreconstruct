@@ -1,9 +1,8 @@
 """Eject the macOS installer disk image once the app runs from outside it (Qt-free).
 
-A user drags the app from the mounted .dmg to Applications, and the image
-stays mounted until they eject it by hand. The image cannot run code at drag
-time, so the app does it instead: on launch it looks for a mounted installer
-image of this same build and detaches it.
+After an install from the .dmg, the image stays mounted until the user ejects
+it. The image cannot run code, so the installed app does it instead: on launch
+it looks for a mounted installer image of this same build and detaches it.
 
 An image is ejected only when every one of these holds:
 
@@ -19,13 +18,15 @@ An image is ejected only when every one of these holds:
   data volume holds other files, so it never matches;
 * that ``.app`` has this app's ``CFBundleIdentifier`` and the same
   ``PyReconstructVersion``. Stable and Dev have different bundle ids. The
-  version check means an older copy started while a newer image is open (the
-  user is about to drag it over) leaves that image alone;
-* neither the running app nor any path the caller passes in (the open series
-  and its images) is on that volume. A quarantined app opened straight from
-  the image runs from an App Translocation path, so a translocated app ejects
-  nothing;
-* no other image qualifies. With two candidates, neither is ejected.
+  version check means an older copy started while a newer image is open
+  leaves that image alone;
+* no other image qualifies. With two candidates, neither is ejected;
+* neither the running app nor any open path (the series and its images) is on
+  that volume. Paths are compared by device number, not by text, so a path
+  that names the volume in other letter case still counts. The open paths are
+  read again right before the detach (see :func:`eject_installer_image`). A
+  quarantined app opened straight from the image runs from an App
+  Translocation path, so a translocated app ejects nothing.
 
 Every failure (a busy volume, ``hdiutil`` missing or slow) is logged and
 swallowed. The work runs off the GUI thread, so a slow ``hdiutil`` never
@@ -77,12 +78,29 @@ def _identity(app):
     return bid, ver
 
 
-def _inside(path, root):
+def _st_dev(path):
+    """Device number of ``path``, or of its nearest existing parent."""
+    path = os.path.abspath(path)
+    while True:
+        try:
+            return os.stat(path).st_dev
+        except (FileNotFoundError, NotADirectoryError):
+            parent = os.path.dirname(path)
+            if parent == path:
+                raise
+            path = parent
+
+
+def _on_volume(paths, mount):
+    """Whether any of ``paths`` is on the volume mounted at ``mount``.
+
+    True when a device number cannot be read, so the volume stays mounted.
+    """
     try:
-        Path(path).resolve().relative_to(Path(root).resolve())
+        dev = _st_dev(mount)
+        return any(_st_dev(p) == dev for p in paths if p)
+    except OSError:
         return True
-    except (OSError, ValueError):
-        return False
 
 
 def _is_installer_volume(mount, identity):
@@ -102,15 +120,13 @@ def _is_installer_volume(mount, identity):
     return _identity(root / apps[0]) == identity
 
 
-def installer_mounts(info, identity, bundle, protected=()):
+def installer_mounts(info, identity, bundle):
     """Mount points in ``hdiutil info -plist`` output that hold our installer.
 
     ``info`` is the parsed plist; ``identity`` is this app's (bundle id,
-    version); ``bundle`` is the running ``.app``; ``protected`` are paths
-    whose volume must stay mounted. Pure apart from reading each candidate
-    volume's root, so tests can drive it with temp folders.
+    version); ``bundle`` is the running ``.app``. Pure apart from reading each
+    candidate volume, so tests can drive it with temp folders.
     """
-    keep = [p for p in (bundle, *protected) if p]
     found = []
     for image in info.get("images") or []:
         if image.get("writeable", True):
@@ -120,19 +136,22 @@ def installer_mounts(info, identity, bundle, protected=()):
         if len(mounts) != 1:
             continue
         mount = mounts[0]
-        if any(_inside(p, mount) for p in keep):
+        if _on_volume([bundle], mount):
             continue
         if _is_installer_volume(mount, identity):
             found.append(mount)
     return found
 
 
-def eject_installer_image(*, protected=(), platform=None, executable=None,
-                          hdiutil=_hdiutil):
+def eject_installer_image(*, open_paths=lambda: (), platform=None,
+                          executable=None, hdiutil=_hdiutil):
     """Detach the mounted installer image of this build; return the mounts ejected.
 
-    ``protected`` are paths whose volume must stay mounted. Never raises. The
-    other keyword arguments are for tests.
+    ``open_paths`` returns the paths whose volume must stay mounted, or None
+    if they cannot be read, in which case nothing is ejected. It is called
+    once, after the image is found and right before the detach, so a series
+    or image folder opened while ``hdiutil info`` ran is still seen. Never
+    raises. The other keyword arguments are for tests.
     """
     ejected = []
     try:
@@ -149,31 +168,44 @@ def eject_installer_image(*, protected=(), platform=None, executable=None,
         if identity is None:
             return ejected
         info = plistlib.loads(hdiutil(["info", "-plist"]))
-        mounts = installer_mounts(info, identity, bundle, protected)
+        mounts = installer_mounts(info, identity, bundle)
         if len(mounts) > 1:
             log_note(f"installer image: {len(mounts)} candidates, ejecting none: "
                      + ", ".join(mounts))
             return ejected
-        for mount in mounts:
-            try:
-                hdiutil(["detach", mount])
-                ejected.append(mount)
-                log_note(f"installer image: ejected {mount}")
-            except Exception as exc:
-                why = (getattr(exc, "stderr", None) or b"").decode(errors="replace").strip()
-                log_note(f"installer image: could not eject {mount}: {exc!r} {why}".rstrip())
+        if not mounts:
+            return ejected
+        mount = mounts[0]
+        paths = open_paths()
+        if paths is None:
+            log_note("installer image: open paths unknown, ejecting nothing")
+            return ejected
+        if _on_volume(paths, mount):
+            log_note(f"installer image: {mount} holds an open path, leaving it")
+            return ejected
+        # A path changed onto the volume while the detach itself runs is not
+        # seen. On a volume laid out as the installer, the only place for
+        # such a path is inside the read-only app bundle, and the worst case
+        # is that images there stop loading, as after a manual eject.
+        try:
+            hdiutil(["detach", mount])
+            ejected.append(mount)
+            log_note(f"installer image: ejected {mount}")
+        except Exception as exc:
+            why = (getattr(exc, "stderr", None) or b"").decode(errors="replace").strip()
+            log_note(f"installer image: could not eject {mount}: {exc!r} {why}".rstrip())
     except Exception as exc:
         log_note(f"installer image: skipped: {exc!r}")
     return ejected
 
 
-def eject_installer_image_in_background(protected=()):
+def eject_installer_image_in_background(open_paths):
     """Start :func:`eject_installer_image` on a daemon thread.
 
-    ``protected`` is read by the caller on the GUI thread and passed as a
-    list of strings, so the worker never touches the series.
+    ``open_paths`` is called on the worker thread. The caller makes it read
+    the series on the GUI thread, so the worker never touches the series.
     """
     if sys.platform != "darwin" or not is_frozen():
         return
     threading.Thread(target=eject_installer_image, name="eject-installer-image",
-                     kwargs={"protected": list(protected)}, daemon=True).start()
+                     kwargs={"open_paths": open_paths}, daemon=True).start()
