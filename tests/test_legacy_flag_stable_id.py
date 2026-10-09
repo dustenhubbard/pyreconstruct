@@ -30,15 +30,18 @@ non-reproducible, which is what ``tests/test_jser_canonical_format.py`` pins for
 everything else. That file's fixture uses fully-migrated 7-field flags precisely
 because the migration was random; the derivation is what would let it stop.
 """
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
+import types
 
 import pytest
 
-from PyReconstruct.modules.datatypes.flag import possible_chars
+import PyReconstruct.modules.datatypes.flag as flag_module
+from PyReconstruct.modules.datatypes.flag import Flag, possible_chars
 from PyReconstruct.modules.datatypes.section import Section
 from PyReconstruct.modules.datatypes.series import Series
 
@@ -144,6 +147,108 @@ def test_a_derived_id_never_displaces_one_already_in_the_file():
     mixed = _migrate([[reserved] + LEGACY5 + [False], LEGACY6])
     assert mixed[0] == reserved
     assert mixed[1] != reserved
+
+
+# --------------------------------------------------------------------------
+# the IDs files already got, and what they cost
+# --------------------------------------------------------------------------
+
+# a second repeated flag, to interleave with LEGACY6
+OTHER6 = ["look here", 3.0, 4.0, [0, 255, 0], [], True]
+
+
+def _mixed_section():
+    """Two repeated flags interleaved past 1,000, some distinct ones, a 5-field
+    copy of LEGACY6, and a stored ID equal to the one LEGACY6's second copy
+    derives on section 3."""
+    flags = [["6AwcGS"] + LEGACY6]
+    for i in range(1200):
+        flags.append(LEGACY6 if i % 2 == 0 else OTHER6)
+        if i % 100 == 0:
+            flags.append([f"distinct {i}", float(i), 0.0, [1, 2, 3], [], False])
+    flags.append(LEGACY5)
+    return flags
+
+
+def _digest(ids):
+    return hashlib.sha256("\n".join(ids).encode("utf-8")).hexdigest()
+
+
+def test_migrated_ids_match_the_ids_files_already_got():
+    """Pinned against the IDs the migration produced before it kept salt
+    progress. A file opened then and opened now must agree on every ID, or
+    importing one into the other duplicates the flags again."""
+    assert _migrate([LEGACY6] * 3, snum=3)[1] == "6AwcGS"
+
+    same = _migrate([LEGACY6] * 1005)
+    assert same[:3] == ["WUU3ie", "iphtw8", "edPPO5"]
+    assert same[-2:] == ["vevIZI", "KOYks4"]
+    assert _digest(same) == (
+        "56a66ea0d5fdce998ac998593758d0d09a2ae6ae7365cfdf7325faaf2da2cff2"
+    )
+
+    mixed = _migrate(_mixed_section(), snum=3)
+    assert len(mixed) == len(set(mixed)) == 1214
+    assert mixed[0] == "6AwcGS"
+    assert _digest(mixed) == (
+        "42f814faa8e6aa5ee804df51e0c4e81d6cac9f71883ab3f30e4738b98528d56f"
+    )
+
+
+def test_the_migration_matches_deriving_one_flag_at_a_time():
+    """``LegacyFlagIDs`` resumes each repeated flag's salt where it stopped.
+    That must give the same IDs as ``Flag.deriveID`` from salt zero for every
+    flag, with each result taken before the next."""
+    flags = json.loads(json.dumps(_mixed_section()))
+    taken = {f[0] for f in flags if len(f) == 7}
+    expected = []
+    for f in flags:
+        if len(f) == 7:
+            expected.append(f[0])
+            continue
+        if len(f) == 5:
+            f = f + [False]
+        flag_id = Flag.deriveID([3] + f, taken)
+        taken.add(flag_id)
+        expected.append(flag_id)
+    assert _migrate(_mixed_section(), snum=3) == expected
+
+
+def _count_hashes(monkeypatch):
+    """Count calls to the hash the derivation uses. Returns a one-item list."""
+    calls = [0]
+
+    def counting_blake2b(*args, **kwargs):
+        calls[0] += 1
+        return hashlib.blake2b(*args, **kwargs)
+
+    monkeypatch.setattr(
+        flag_module, "hashlib", types.SimpleNamespace(blake2b=counting_blake2b)
+    )
+    return calls
+
+
+def test_identical_flags_no_longer_repeat_the_search(monkeypatch):
+    """Every identical flag used to restart at salt zero and rehash every salt
+    the earlier copies took, so n copies cost about n**2 / 2 hashes: 12.5
+    million for 5,000, on every open. Counted at the hash call, not timed.
+    With no stored IDs and no collision among these candidates, each copy
+    costs exactly one hash."""
+    calls = _count_hashes(monkeypatch)
+    n = 5000
+    ids = _migrate([LEGACY6] * n)
+    assert len(set(ids)) == n
+    assert calls[0] == n, f"{n} identical flags took {calls[0]} hashes"
+
+
+def test_a_collision_costs_one_more_hash(monkeypatch):
+    """A flag whose salt-zero ID is already stored in the file takes the next
+    salt, so it costs two hashes, not one."""
+    salt_zero = _migrate([LEGACY6], snum=3)[0]
+    calls = _count_hashes(monkeypatch)
+    ids = _migrate([[salt_zero] + LEGACY6, LEGACY6], snum=3)
+    assert ids[0] == salt_zero and ids[1] != salt_zero
+    assert calls[0] == 2
 
 
 # --------------------------------------------------------------------------
