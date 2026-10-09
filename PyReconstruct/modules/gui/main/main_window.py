@@ -7,6 +7,7 @@ import struct
 import traceback
 
 from shiboken6 import isValid
+from PySide6.QtCore import QEvent
 
 from .main_imports import *
 
@@ -19,6 +20,7 @@ from PyReconstruct.modules.backend.func.window_geometry import (
     window_geometry_is_usable,
 )
 from .status_readout import FieldStatusReadout, StatusSegment
+from .wheel_steps import WheelSteps, zoom_factor
 from PyReconstruct.modules.constants.settings_domain import (
     domain_for, fold_series_settings_once,
 )
@@ -371,6 +373,7 @@ class MainWindow(QMainWindow):
         self.viewer                 =  None
         self.shortcuts_widget       =  None
         self.is_zooming             =  False
+        self.wheel_steps            =  WheelSteps()
         self.restart_mainwindow     =  False
         self._updater_pool          =  None   # in-flight update guard
         self._pending_installer     =  None   # launched on the accepted close
@@ -2338,6 +2341,8 @@ class MainWindow(QMainWindow):
         
         # end the field pending events
         self.field.endPendingEvents()
+        # scroll left over from before the change does not carry past it
+        self.wheel_steps.navigated()
         # save data
         if save:
             self.saveAllData()
@@ -2676,59 +2681,76 @@ class MainWindow(QMainWindow):
             f"{project_dir}"
         )
 
-    def incrementSection(self, down=False):
-        """Increment the section number by one.
+    def incrementSection(self, down=False, count=1):
+        """Increment the section number by one, or by count.
         
             Params:
                 down (bool): the direction to move
+                count (int): the number of sections to move, stopping at the ends
         """
         section_numbers = sorted(list(self.series.sections.keys()))  # get list of section numbers
         section_number_i = section_numbers.index(self.series.current_section)  # get current section index
         if down:
-            if section_number_i > 0:
-                self.changeSection(section_numbers[section_number_i - 1])  
-        else:   
-            if section_number_i < len(section_numbers) - 1:
-                self.changeSection(section_numbers[section_number_i + 1])       
+            target_i = max(section_number_i - count, 0)
+        else:
+            target_i = min(section_number_i + count, len(section_numbers) - 1)
+        if target_i != section_number_i:
+            self.changeSection(section_numbers[target_i])
     
     def wheelEvent(self, event):
         """Called when mouse scroll is used."""
-        # do nothing if middle button is clicked
-        if self.field.mclick:
-            return
-        
-        modifiers = QApplication.keyboardModifiers()
+        # every event is read first, so the swipe is followed wherever it goes;
+        # however this returns, a lift drops the leftover scroll on the way out
+        with self.wheel_steps.reading(event) as units:
 
-        # if zooming
-        if modifiers == Qt.ControlModifier:
-            self.activateWindow()
-            field_cursor = self.field.cursor()
-            p = self.field.mapFromGlobal(field_cursor.pos())
-            x, y = p.x(), p.y()
-            if not self.is_zooming:
-                # check if user just started zooming in
-                self.field.panzoomPress(x, y)
-                self.zoom_factor = 1
-                self.is_zooming = True
-
-            if event.angleDelta().y() > 0:  # if scroll up
-                self.zoom_factor *= 1.1
-            elif event.angleDelta().y() < 0:  # if scroll down
-                self.zoom_factor *= 0.9
-            self.field.panzoomMove(zoom_factor=self.zoom_factor)
-        
-        # if changing sections
-        elif modifiers == Qt.NoModifier:
-            # check for the position of the mouse
-            mouse_pos = event.point(0).pos()
-            field_geom = self.field.geometry()
-            if not field_geom.contains(mouse_pos.x(), mouse_pos.y()):
+            # do nothing if middle button is clicked
+            if self.field.mclick:
                 return
-            # change the section
-            if event.angleDelta().y() > 0:  # if scroll up
-                self.incrementSection()
-            elif event.angleDelta().y() < 0:  # if scroll down
-                self.incrementSection(down=True)
+
+            modifiers = QApplication.keyboardModifiers()
+
+            # if zooming
+            if modifiers == Qt.ControlModifier:
+                # in proportion to the scroll; nothing after a trackpad swipe lifts
+                factor = zoom_factor(units)
+                if factor == 1.0 and not self.is_zooming:
+                    return  # no scroll, such as momentum, starts no zoom
+                self.activateWindow()
+                field_cursor = self.field.cursor()
+                p = self.field.mapFromGlobal(field_cursor.pos())
+                x, y = p.x(), p.y()
+                if not self.is_zooming:
+                    # check if user just started zooming in
+                    self.field.panzoomPress(x, y)
+                    self.zoom_factor = 1
+                    self.is_zooming = True
+
+                self.zoom_factor *= factor
+                self.field.panzoomMove(zoom_factor=self.zoom_factor)
+
+            # if changing sections
+            elif modifiers == Qt.NoModifier:
+                # check for the position of the mouse; scroll outside the
+                # field neither moves nor uses up travel
+                mouse_pos = event.point(0).pos()
+                field_geom = self.field.geometry()
+                if not field_geom.contains(mouse_pos.x(), mouse_pos.y()):
+                    return
+                # one section per notch, or per stretch of trackpad travel
+                steps = self.wheel_steps.take(event, units)
+                if not steps:
+                    return
+                # change the section, keeping the scroll left over
+                with self.wheel_steps.moving():
+                    self.incrementSection(down=steps < 0, count=abs(steps))
+
+    def changeEvent(self, event):
+        """Overwritten: a window that is no longer active drops pending scroll."""
+        # the app going to the back, or another window or dialog in front,
+        # both arrive here
+        if event.type() == QEvent.ActivationChange and not self.isActiveWindow():
+            self.wheel_steps.cancel()
+        super().changeEvent(event)
     
     def keyReleaseEvent(self, event):
         """Overwritten: checks for Ctrl+Zoom."""
