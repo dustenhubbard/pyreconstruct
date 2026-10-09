@@ -16,6 +16,7 @@ from PySide6.QtCore import Qt, QEvent
 from PyReconstruct.modules.gui.dialog import QuickDialog, FileDialog
 from PyReconstruct.modules.backend.threading import ThreadPoolProgBar
 from PyReconstruct.modules.datatypes import Series
+from PyReconstruct.modules.datatypes.host_tree import HostTree
 from PyReconstruct.modules.backend.volume import (
     generateVolumes,
     convert_vedo_to_tm,
@@ -1360,6 +1361,14 @@ class CustomPlotter(QVTKRenderWindowInteractor):
             else:
                 series_fps[new_fp] = moved
 
+    def seriesClosing(self, series : Series):
+        """Keep what the scene needs from a series the window is replacing.
+
+            Params:
+                series (Series): the series leaving the main window
+        """
+        self.plt.objs.keepHostTree(series)
+
     def seriesPaths(self):
         """The series paths the scene and its undo and redo states hold.
 
@@ -1883,6 +1892,24 @@ class SceneObjectList():
         if old_fp in self.section_maps:
             self.section_maps[new_fp] = self.section_maps.pop(old_fp)
 
+    def keepHostTree(self, series : Series):
+        """Keep a series' host tree as it is now, for its objects to read once
+        it is no longer open.
+
+        A series undo or redo replaces series.host_tree with a stored copy, so
+        the tree kept at add time can be one the series no longer uses. The
+        tree is in memory and a closed series' working folder is not read.
+        The scene keeps a copy with no series, so a later change to the
+        series' tree does not reach it and the series is not kept alive.
+
+            Params:
+                series (Series): the series leaving the main window
+        """
+        if series.jser_fp in self.host_trees:
+            self.host_trees[series.jser_fp] = HostTree(
+                series.host_tree.getDict(), None
+            )
+
     def markStale(self, obj_names=None, ztrace_names=None, series_fp=None):
         """Mark scene objects as stale: their 2D data changed after their mesh
         was generated, so the mesh no longer reflects the series.
@@ -1994,7 +2021,7 @@ class SceneObjectList():
                     objects read its host tree at the time of the call; a
                     series undo or redo replaces that tree, so the one kept
                     at add time can be out of date. Objects from any other
-                    series read the tree kept when they were added.
+                    series read the tree kept for it (keepHostTree).
         """
         if not scene_obj.type == "object":
             return
