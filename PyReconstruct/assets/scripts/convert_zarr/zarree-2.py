@@ -381,11 +381,37 @@ def write_array(zarr_fp, scale_group, filename, arr):
     store = zarr.DirectoryStore(zarr_fp)
     # same call group.create_dataset makes, with the chunks kept apart
     z = zarr.array(arr, store=meta, chunk_store=store, path=f"{scale_group}/{filename}")
+    remove_temporary_files(store.dir_path(z.path))
     zarray = f"{z.path}/.zarray"
     for key, value in meta.items():
         if key != zarray and key not in store:
             store[key] = value
     store[zarray] = meta[zarray]
+
+
+def remove_temporary_files(folder):
+    """Remove the temporary files a stopped write left in an array's folder.
+
+    zarr writes each key to <key>.<random>.partial and then renames it. A
+    worker stopped between the two (the Pool terminated it) leaves that file
+    beside the chunks, and zarr counts any file whose name starts with a
+    digit as a chunk. Run before .zarray is written, so the array is never
+    listed with one. Chunks are left alone: this write has just written
+    every one of them. If another update of the same zarr is writing this
+    array at the same moment, its rename can fail here; that update stops
+    with an error, and the array this write lists is still whole.
+    """
+    try:
+        names = os.listdir(folder)
+    except FileNotFoundError:
+        # no chunk was written
+        return
+    for name in names:
+        if name.endswith(".partial"):
+            try:
+                os.remove(os.path.join(folder, name))
+            except FileNotFoundError:
+                pass
 
 
 def unfinished_arrays(zg, scale_group):

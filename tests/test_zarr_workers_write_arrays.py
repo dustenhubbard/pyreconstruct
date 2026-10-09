@@ -11,6 +11,7 @@ off that way has no source to write it from, so the update must stop there.
 The converter parses ``sys.argv`` and pins thread pools on import, so it runs
 in a subprocess here, as in the other converter tests.
 """
+import itertools
 import os
 import subprocess
 import sys
@@ -45,14 +46,16 @@ def _run(cores, *args, env=None):
 # already beside the chunk (an array built somewhere else before it is moved
 # into place), and counts that array's chunk writes.
 #  - FAIL_ARRAY: the second chunk write raises OSError, like a full disk,
-#    once the HOLD_ARRAY array (if any) has started writing.
+#    once the HOLD_ARRAY array (if any) has started writing. With
+#    FAIL_LEAVES_PARTIAL set, it first leaves the temporary file zarr writes
+#    before renaming a chunk, as when the process is killed in between.
 #  - HOLD_ARRAY: the second chunk write creates FAULT_MARKER and waits until
 #    FAULT_RELEASE exists, so that array is part written in the meantime.
 #  - WRITE_LOG: the path of every store key written is appended to this file.
 #  - WAIT_KEY: a check for this store key, e.g. "scale_1/a.png/.zarray",
 #    first waits until WAIT_FOR exists.
 FAULTS = textwrap.dedent("""
-    import json, os, time
+    import json, os, time, uuid
     import zarr.storage
 
     _orig = zarr.storage.DirectoryStore.__setitem__
@@ -96,6 +99,9 @@ FAULTS = textwrap.dedent("""
                 else:
                     if os.environ.get("HOLD_ARRAY"):
                         _wait_for(os.environ["FAULT_MARKER"], 15)
+                    if os.environ.get("FAIL_LEAVES_PARTIAL"):
+                        with open(f"{path}.{uuid.uuid4().hex}.partial", "wb") as f:
+                            f.write(b"cut short")
                     raise OSError("simulated full disk")
         return _orig(self, key, value)
 
@@ -211,13 +217,19 @@ def _expected_levels(arr):
 
 
 def _assert_only_whole_arrays(out, sources):
-    """Every array the zarr lists holds exactly the pixels it should."""
+    """Every array the zarr lists holds exactly the pixels it should, and
+    its folder holds its .zarray and chunks and nothing else."""
     zg = zarr.open(str(out), "r")
     for scale in zg.group_keys():
         for name in zg[scale].array_keys():
             stored = zg[scale][name]
             expected = _expected_levels(sources[name])[scale]
-            assert stored.nchunks_initialized == stored.nchunks, f"{scale}/{name}"
+            chunks = [
+                ".".join(map(str, index))
+                for index in itertools.product(*map(range, stored.cdata_shape))
+            ]
+            files = sorted(os.listdir(Path(out) / stored.path))
+            assert files == sorted([".zarray", *chunks]), f"{scale}/{name}"
             assert stored.dtype == np.uint8, f"{scale}/{name}"
             assert np.array_equal(stored[:], expected), f"{scale}/{name}"
 
@@ -283,6 +295,30 @@ def test_a_write_cut_short_is_redone_by_the_next_update(tmp_path):
     assert retried.returncode == 0, retried.stderr[-2000:]
     assert "Zarr validation complete." in retried.stdout
     _assert_every_level(out, sources)
+
+
+def test_a_redone_write_leaves_no_temporary_chunk_file(tmp_path):
+    """zarr writes each chunk to 0.0.<random>.partial and renames it. When
+    the Pool terminates a worker between the two, that file is left in the
+    array's folder, and zarr counts it as a chunk because its name starts
+    with a digit. The update that writes the array again must remove it."""
+    out = tmp_path / "out.zarr"
+    sources = _scale_1_only(out)
+    env = _fault_env(tmp_path, FAIL_ARRAY="scale_2/b3.png", FAIL_LEAVES_PARTIAL=1)
+
+    failed = _run(5, out, env=env)
+
+    assert failed.returncode != 0
+    assert "simulated full disk" in failed.stderr
+    assert list((out / "scale_2" / "b3.png").glob("*.partial"))
+
+    retried = _run(5, out)
+
+    assert retried.returncode == 0, retried.stderr[-2000:]
+    assert "Zarr validation complete." in retried.stdout
+    _assert_every_level(out, sources)
+    b3 = zarr.open(str(out), "r")["scale_2"]["b3.png"]
+    assert b3.nchunks_initialized == b3.nchunks
 
 
 def test_an_update_writes_into_a_folder_left_without_metadata(tmp_path):
