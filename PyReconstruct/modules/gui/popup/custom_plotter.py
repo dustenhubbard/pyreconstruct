@@ -16,6 +16,7 @@ from PySide6.QtCore import Qt, QEvent
 from PyReconstruct.modules.gui.dialog import QuickDialog, FileDialog
 from PyReconstruct.modules.backend.threading import ThreadPoolProgBar
 from PyReconstruct.modules.datatypes import Series
+from PyReconstruct.modules.datatypes.host_tree import HostTree
 from PyReconstruct.modules.backend.volume import (
     generateVolumes,
     convert_vedo_to_tm,
@@ -1898,12 +1899,16 @@ class SceneObjectList():
         A series undo or redo replaces series.host_tree with a stored copy, so
         the tree kept at add time can be one the series no longer uses. The
         tree is in memory and a closed series' working folder is not read.
+        The scene keeps a copy with no series, so a later change to the
+        series' tree does not reach it and the series is not kept alive.
 
             Params:
                 series (Series): the series leaving the main window
         """
         if series.jser_fp in self.host_trees:
-            self.host_trees[series.jser_fp] = series.host_tree
+            self.host_trees[series.jser_fp] = HostTree(
+                series.host_tree.getDict(), None
+            )
 
     def markStale(self, obj_names=None, ztrace_names=None, series_fp=None):
         """Mark scene objects as stale: their 2D data changed after their mesh
