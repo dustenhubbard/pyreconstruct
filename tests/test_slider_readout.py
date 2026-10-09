@@ -65,7 +65,7 @@ def _series(tmp_path):
 
 
 def _slider(dlg, widget_name, index=0):
-    """A SliderWidget inside a named option widget, via the real dialog. The
+    """A SliderWidget inside a named option widget, via the dialog itself. The
     scale bar page has two: the size (index 0) and the thickness (index 1)."""
     w = dlg.all_widgets[widget_name]
     sliders = [f.widget for f in w.inputs if f.type == "slider"]

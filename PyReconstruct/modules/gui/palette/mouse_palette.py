@@ -678,9 +678,9 @@ class MousePalette():
         x1, x2, y1, y2 = self.getBounds()[group]
         current_x, current_y = self.getButtonCoords(group)
         if group == "sb" and self.sb.x() < int(current_x):
-            # the bar shows left of its saved spot (see placeSB): drag it
-            # from where it is, or it would not move until the saved spot
-            # came back on screen
+            # the bar is drawn left of its saved spot (see placeSB), so a drag
+            # starts from the drawn position; from the saved spot the bar would
+            # not move until that spot was on screen again
             current_x = self.sb.x()
         new_x = ((current_x + dx) - x1) / (x2 - x1)
         if new_x < 0: new_x = 0
@@ -776,8 +776,8 @@ class MousePalette():
             ("bc", [w for pair in self.bc_widgets for w in pair], self.toggleBC),
             ("sb", [self.sb], self.toggleSB),
         )
-        # the scale bar's own items share its one menu; a second menu on the
-        # same widget is the fight described above
+        # the scale bar's own items go in its one menu; a second menu on the
+        # same widget would open two menus on one click
         extras = {"sb": self.sbMenuActions}
         for key, widgets, toggle in groups:
             for widget in widgets:
@@ -1065,7 +1065,7 @@ class MousePalette():
 
         A pinch, Ctrl+scroll or right-drag zoom stretches a copy of the field
         and only redraws it on release, so the series window, and with it
-        getScale, still holds the scale from before the zoom. The stretched
+        getScale, still has the scale from before the zoom. The stretched
         view is zoom_factor times larger, so it shows getScale() / zoom_factor
         units per pixel. Only the bar repaints; nothing here touches the field.
         """
@@ -1096,7 +1096,7 @@ class MousePalette():
     def sbWidth(self, percent=None):
         """The widest the scale bar may be drawn, in pixels.
 
-        Both modes are held inside the "Scale bar size" share of the field: the
+        Both modes are limited to the "Scale bar size" share of the field. The
         screen-fraction bar fills between 40 and 100 percent of it, and a pinned
         bar steps a decade before it would outgrow it.
         """
@@ -1148,7 +1148,7 @@ class MousePalette():
     def setSBLength(self):
         """Ask for a length and draw the bar at it until told otherwise.
 
-        For figures: the length set here is not stored anywhere, so the
+        For figures. The length set here is not stored anywhere, so the
         stored mode and size are untouched and a new series, or picking
         "Size the scale bar automatically", brings the automatic bar back.
         """
@@ -1208,8 +1208,8 @@ class MousePalette():
 
         The bar can be wider than the room to the right of where it was
         left: a long length you typed, a pinned bar the zoom has grown, or
-        a size near 100 percent. It then shows moved left as far as it must
-        to be whole. The saved position is kept, so a shorter bar goes back
+        a size near 100 percent. It is then drawn as far left as it must be
+        to fit in the field. The saved position is kept, so a shorter bar goes back
         to it.
         """
         x, y = self.getButtonCoords("sb")

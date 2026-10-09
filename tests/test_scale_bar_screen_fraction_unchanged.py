@@ -1,13 +1,12 @@
 """The screen-fraction scale bar renders exactly as recorded.
 
-The scale bar has two sizing models (`scale_bar_mode`), and anyone who does not
-opt into the pinned one must see no change from anything else. This module is
-the proof: one digest over every screen-fraction bar the size option can
-produce, across a wide zoom range and both display preferences.
+The scale bar has two sizing models (`scale_bar_mode`). This module pins the
+screen-fraction model with one digest over every screen-fraction bar the size
+option can produce, across a wide zoom range and both display preferences.
 
 `BASELINE_DIGEST` is a golden value and changes only on purpose. It was first
-recorded on `origin/main` at `e09d21c5`, before the mode toggle, and held
-through it. It was recorded again when the bar became thin and map-like: the
+recorded at `e09d21c5`, before the mode toggle, and was unchanged by it.
+It was recorded again when the bar became thin and map-like. The
 ladder went to 1, 2, 5 per decade, the bar's thickness became an option (6 px
 here, the default), and the ticks and their labels moved below the bar and
 became outlined so that they read on a light image as well as a dark one.

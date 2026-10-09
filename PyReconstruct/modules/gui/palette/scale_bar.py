@@ -19,7 +19,7 @@ from .buttons import MoveableButton
 # covers 0.2 µm, 2 µm, 20 µm and so on.  The subdivisions are chosen per entry
 # so every tick label is round as well: 2 µm in 4 gives 0.5 µm ticks, where the
 # historic fixed 5 would give 0.4 µm.  Where more than one divisor qualifies,
-# the one nearest the historic 5 wins.  A micron-pinned bar can be any of these
+# the one nearest the historic 5 is used.  A micron-pinned bar can be any of these
 # lengths, which is why the table is wider than the ladder below.
 TICK_SUBDIVISIONS = (
     (1.0, 5),    # ticks every 0.2
@@ -96,7 +96,7 @@ MIN_PINNED_PIXELS = 40
 # How far a bar's width may fall outside `min_pix` to `max_pix`, as a fraction
 # of the bound, and still count as inside.
 #
-# A length typed from the range the dialog shows can land a hair outside it in
+# A length typed from the range the dialog shows can land slightly outside it in
 # floating point: 0.011 µm at 0.000275 µm/px is 39.99999999999999 px, not 40.
 # `pinnedLength` tests widths through `tooNarrow` and `tooWide`, and
 # `drawableLengths` widens its ends by this same tolerance, so every length the
@@ -137,14 +137,14 @@ def pinnedLength(micron_length, scale, max_pix, min_pix=MIN_PINNED_PIXELS):
     a screen-fraction bar down to a round number, which is a different job: it
     would replace the user's chosen length rather than rescale it.  What the two
     modes share is the cap: `max_pix` is the "Scale bar size" share of the
-    field, the same width a screen-fraction bar is held inside.
+    field, the same limit a screen-fraction bar has.
 
         Params:
             micron_length (float): the length the user pinned the bar to, in
                                    real-world units
             scale (float): real-world units per screen pixel (the current zoom)
             max_pix (int): the widest the bar is allowed to be drawn, in pixels
-                           -- the scale bar size option's share of the field
+                           (the scale bar size option's share of the field)
             min_pix (int): the narrowest bar still worth drawing, in pixels
         Returns:
             (float, int): the bar's length in real-world units, and that length
@@ -195,10 +195,10 @@ def pinnedLength(micron_length, scale, max_pix, min_pix=MIN_PINNED_PIXELS):
 def drawableLengths(scale, max_pix, min_pix=MIN_PINNED_PIXELS):
     """The shortest and longest lengths `pinnedLength` draws exactly.
 
-    Exactly means unshifted: the bar is the length asked for, so its label is
-    that length too.  That takes two things at once -- between `min_pix` and
-    `max_pix` wide at this zoom, and a length `validPinnedLength` accepts --
-    so the range is the overlap of the two.  Both ends are rounded inward to
+    Exactly means unshifted. The bar is the length asked for, so its label is
+    that length too.  That takes two conditions: a width between `min_pix` and
+    `max_pix` at this zoom, and a length that `validPinnedLength` accepts.
+    The range is the overlap of the two.  Both ends are rounded inward to
     three figures, so either can be typed back and still fall inside.  Inside
     means what `pinnedLength` takes it to mean: `tooNarrow` and `tooWide`,
     whose tolerance the rounding starts from.
@@ -206,12 +206,12 @@ def drawableLengths(scale, max_pix, min_pix=MIN_PINNED_PIXELS):
         Params:
             scale (float): real-world units per screen pixel
             max_pix (int): the widest the bar may be drawn, in pixels
-            min_pix (int): the narrowest bar still worth drawing, in pixels
+            min_pix (int): the narrowest bar allowed, in pixels
         Returns:
             (float, float): the range in real-world units.  The first is
                             larger than the second when there is no length
                             to draw: a field narrower than `min_pix`, or a
-                            zoom so far out or in that the field holds no
+                            zoom so far out or in that the field has no
                             length a bar may be.
     """
     if not (scale > 0 and max_pix > 0):
@@ -235,9 +235,9 @@ def pinnedSubdivisions(real_len, rungs=None):
     The screen-fraction bar always lands on a `NICE_LENGTHS` rung, so it always
     has a subdivision count that cuts it into round numbers.  A pinned bar is
     whatever the user typed, so it is looked up in the wider `TICK_SUBDIVISIONS`
-    table, and it may not be there: 3.7 µm has no division into two to seven
+    table, and it may not be there. 3.7 µm has no division into two to seven
     parts that prints roundly.  Rather than print ticks labeled 0.74 and 1.48,
-    a length that is not in the table gets no interior ticks at all -- 1, which
+    a length that is not in the table gets no interior ticks. Its count is 1, which
     `paintEvent`'s `range(1, subdivs)` draws as none.
 
         Params:
@@ -280,7 +280,7 @@ def formatLength(value):
 # The widget is stacked top to bottom: the label, the bar, the tick marks, the
 # tick labels.  Only the bar's own thickness is an option; the rest is the room
 # the text needs, in pixels, and is left out when its text or ticks are off so
-# that no empty grab area sits over the field.
+# that no empty grab area covers part of the field.
 LABEL_ROOM = 22       # the 12 pt bold label, centered in this band
 TICK_LENGTH = 5       # how far a tick mark hangs below the bar
 TICK_LABEL_ROOM = 18  # the small tick labels, centered in this band
@@ -290,7 +290,7 @@ TICK_LABEL_SIZE = 10  # the tick labels' font size
 
 def outlinedFont(size):
     """The font `drawOutlinedText` draws in for a painter font of pixel size
-    `size`: it reads the pixel size back as a point size.  Text is measured in
+    `size`. It reads the pixel size back as a point size.  Text is measured in
     this, so a width worked out here is the width that is drawn."""
     return QFont("Courier New", size, QFont.Bold)
 
@@ -322,7 +322,7 @@ class ScaleBar(MoveableButton):
         self.micron_length = micron_length
         self.max_pixel_length = length if max_pixel_length is None else max_pixel_length
         # a length set from the bar's right-click menu, and the room it
-        # may grow into; never stored (MousePalette.reset carries it over a
+        # may grow into; never stored (MousePalette.reset keeps it across a
         # rebuild on the same series)
         self.override_length = None
         self.override_room = 0
@@ -331,7 +331,7 @@ class ScaleBar(MoveableButton):
         self._fitPinned()
 
     def _layout(self):
-        """Where the bar and its ticks sit: (bar top, tick label top, height)."""
+        """The vertical positions: (bar top, tick label top, height)."""
         series = self.manager.series
         draw_text = series.getOption("show_scale_bar_text")
         draw_ticks = series.getOption("show_scale_bar_ticks")
@@ -376,9 +376,9 @@ class ScaleBar(MoveableButton):
 
         Someone exporting a figure may want a length the automatic sizing
         would not pick, so `room` is the field width rather than the scale bar
-        size: the user asked for this length, so the size option does not cap
-        it. Out of that room the bar steps a decade, the same as a pinned bar,
-        so its label still matches what it measures.
+        size. The user asked for this length, so the size option does not cap
+        it. If the length does not fit that room, the bar steps a decade, as
+        a pinned bar does, so its label still matches what it measures.
         """
         self.override_length = length
         self.override_room = room
@@ -388,7 +388,7 @@ class ScaleBar(MoveableButton):
         self.update()
 
     def _pinned(self):
-        """The length the bar is held to and the widest it may grow, or None
+        """The length the bar is pinned to and the widest it may grow, or None
         for the screen-fraction bar."""
         if self.override_length:
             return self.override_length, self.override_room

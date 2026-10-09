@@ -1,9 +1,9 @@
-"""The scale bar as the zoom changes: held to its size, live, and set to a length you type.
+"""The scale bar as the zoom changes: its size cap, live follow, and a typed length.
 
-Three things, each driven through the real widgets:
+Three behaviors, each tested through the palette and bar widgets:
 
 * **The cap.** In both modes the drawn bar is never wider than the "Scale bar
-  size" share of the field. A micron-pinned bar used to be allowed the whole
+  size" share of the field. A micron-pinned bar used to be allowed the full
   field width, so a 5 µm bar could stretch nearly edge to edge before it
   stepped down a decade.
 * **Live follow.** A pinch, Ctrl+scroll or right-drag zoom stretches a copy of
@@ -31,7 +31,7 @@ from PyReconstruct.modules.gui.palette.scale_bar import (
     pinnedLength,
 )
 
-FIELD_W = 560                  # the width the suite's real MainWindow field reports
+FIELD_W = 560                  # the field width the suite's MainWindow reports
 CAP = int(25 / 100 * FIELD_W)  # the default "Scale bar size", 25 %
 
 
@@ -47,7 +47,7 @@ def _zoom_sweep(lo=1e-5, hi=1e3, step=1.07):
 
 
 def _render(bar):
-    """Paint for real; return (bar length in px, label)."""
+    """Paint the widget; return (bar length in px, label)."""
     rects, labels = [], []
     real_rect = QPainter.drawRect
     real_outlined = sb_mod.drawOutlinedText
@@ -150,7 +150,7 @@ def _count_redraws(main_window, monkeypatch):
 def test_the_bar_follows_a_zoom_while_it_happens(
     main_window, local_series_settings, monkeypatch, mode
 ):
-    """panzoomMove is the one road the pinch, Ctrl+scroll and right-drag zooms
+    """panzoomMove is the function the pinch, Ctrl+scroll and right-drag zooms
     share. Each call now sets the bar to the scale of the stretched view, and
     the field is not redrawn to do it."""
     series = local_series_settings(main_window)
@@ -176,7 +176,7 @@ def test_the_bar_follows_a_zoom_while_it_happens(
     assert redraws == [], "the field was redrawn during the zoom"
     assert series.window == window_before
 
-    # the release lands on the scale the bar was already showing
+    # on release the field takes the scale the bar was already showing
     field.panzoomMove(zoom_factor=1.6)
     live = palette.sb.scale
     field.panzoomRelease(zoom_factor=1.6)
@@ -270,7 +270,7 @@ def test_a_typed_length_draws_exactly_and_follows_the_zoom(
 ):
     """3 µm is not a 1-2-5 length and not the pinned 5 µm. It draws at 3 µm in
     both modes, and past the 140 px size option, because the user asked for
-    it; the pixels follow the zoom and the label does not move."""
+    it; the pixels follow the zoom and the label does not change."""
     series = local_series_settings(main_window)
     series.setOption("scale_bar_mode", mode)
     series.setOption("scale_bar_length_um", 5.0)
@@ -321,8 +321,8 @@ def test_going_back_to_automatic_restores_the_stored_bar(
 def test_a_typed_length_lasts_until_another_series_opens(
     main_window, local_series_settings, monkeypatch, tmp_path
 ):
-    """What the dialog and the changelog promise: Save, `Series > Options...`
-    with OK or Cancel, and a thickness change in it all keep the length; only
+    """The length is kept through Save, `Series > Options...` with OK or Cancel,
+    and a thickness change in it, as the dialog and the changelog say. Only
     opening another series ends it."""
     import shutil
 
@@ -436,7 +436,7 @@ class _StubManager:
 
 
 def test_the_thickness_default_and_range():
-    """Thinner than the 25 px bar it replaces; 25 stays reachable."""
+    """Thinner than the 25 px bar it replaces; 25 can still be set."""
     assert default_settings["scale_bar_thickness"] == 6
     assert isinstance(default_settings["scale_bar_thickness"], int)
     assert (MIN_SCALE_BAR_THICKNESS, MAX_SCALE_BAR_THICKNESS) == (3, 25)
@@ -454,7 +454,7 @@ def test_the_thickness_default_and_range():
     (False, False, 1 + 1),
 ])
 def test_the_widget_is_as_tall_as_the_bar_and_its_text(qapp, text, ticks, extra):
-    """No empty grab area: the widget is the bar plus the room its label and
+    """The widget has no empty grab area. It is the bar plus the room its label and
     ticks need, and the room for anything switched off is left out."""
     for thickness in (3, 6, 25):
         bar = ScaleBar(None, _StubManager(text=text, ticks=ticks), 140, thickness, 0.02)
@@ -468,7 +468,7 @@ def test_the_widget_is_as_tall_as_the_bar_and_its_text(qapp, text, ticks, extra)
 
 
 def _drawn(bar):
-    """Every rectangle and every outlined string a real paint draws."""
+    """Every rectangle and every outlined string a paint draws."""
     rects, texts = [], []
     real_rect = QPainter.drawRect
     real_outlined = sb_mod.drawOutlinedText
@@ -498,7 +498,7 @@ def _drawn(bar):
 def test_every_thickness_draws_its_outline_ticks_and_labels_inside_the_widget(
     qapp, thickness
 ):
-    """At 0.004 µm/px a 140 px widget holds a 0.5 µm bar of 125 px, ticked in
+    """At 0.004 µm/px a 140 px widget fits a 0.5 µm bar of 125 px, ticked in
     five; its labels are spaced out enough to print every other one."""
     bar = ScaleBar(None, _StubManager(), 140, thickness, 0.004)
     try:
@@ -524,10 +524,10 @@ def test_every_thickness_draws_its_outline_ticks_and_labels_inside_the_widget(
 
 
 def test_crowded_tick_labels_are_thinned_not_overlapped(qapp):
-    """A 1 µm bar 100 px long ticks at 20 px: too close for "0.2 0.4 0.6
+    """A 1 µm bar 100 px long ticks every 20 px, too close for "0.2 0.4 0.6
     0.8" side by side, so only some are printed, and those do not touch.
     Measured in whatever font this machine has; the marks themselves all
-    stay."""
+    remain."""
     from PySide6.QtGui import QFont, QFontMetrics
 
     bar = ScaleBar(None, _StubManager(), 100, 6, 0.01)
@@ -607,7 +607,7 @@ def test_a_hand_edited_thickness_is_clamped_not_trusted(qapp):
 def test_a_bar_shorter_than_its_label_keeps_the_label_whole(qapp):
     """A pinned 0.5 µm bar can be about 33 px, narrower than "0.5 µm". The
     widget widens to the label and the label starts inside it, so neither end
-    of the text is cut off; the bar itself stays its true length."""
+    of the text is cut off; the bar itself keeps its length."""
     from PySide6.QtGui import QFontMetrics
 
     from PyReconstruct.modules.gui.palette.scale_bar import (
@@ -630,7 +630,7 @@ def test_a_bar_shorter_than_its_label_keeps_the_label_whole(qapp):
         bar.deleteLater()
 
 
-# ------------------------------------- what the dialog accepts, it draws whole
+# ------------------------------- what the dialog accepts is drawn at that length
 
 def _field_edges(main_window):
     field = main_window.field
@@ -690,7 +690,7 @@ def test_both_ends_of_the_range_draw_their_own_length(
     main_window, local_series_settings, monkeypatch
 ):
     """At 0.000275 µm/px in a 560 px field the dialog offers 0.011 to 0.154
-    µm. 0.011 / 0.000275 is 39.99999999999999 in floating point, a hair under
+    µm. 0.011 / 0.000275 is 39.99999999999999 in floating point, slightly under
     the 40 px shortest bar, and the bar used to step up a decade to 0.11 µm.
     Each end now draws at its own length."""
     local_series_settings(main_window)
@@ -732,9 +732,9 @@ def test_no_dialog_when_no_length_can_be_drawn(
     main_window, local_series_settings, monkeypatch, narrow
 ):
     """A 30 px field is narrower than the 40 px shortest bar, and at 1e-9
-    µm/px the field holds less than the shortest length a bar may be. Either
+    µm/px the field spans less than the shortest length a bar may be. Either
     way there is no length to offer, so the user is told why instead of
-    being shown a range that runs backward."""
+    being shown a range with its ends reversed."""
     local_series_settings(main_window)
     palette = main_window.mouse_palette
     palette.reset()
@@ -782,7 +782,7 @@ def test_the_whole_bar_stays_on_the_field_wherever_it_was_left(
     assert left <= sb.x() and sb.x() + sb.width() <= right, (sb.x(), sb.width())
     assert palette.sb_x == sb_x
 
-    # a bar short enough to fit sits exactly where it was left
+    # a bar short enough to fit is drawn exactly where it was left
     palette.clearSBLength()
     series.setOption("scale_bar_mode", "screen_fraction")
     series.setOption("scale_bar_width", 20)

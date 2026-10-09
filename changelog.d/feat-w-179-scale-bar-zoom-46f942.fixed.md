@@ -1,3 +1,3 @@
-- **A scale bar left near the right edge now shows whole.** A long bar moves
-  left as far as it must, and goes back to where you left it when it is
-  shorter again.
+- **A scale bar near the right edge is no longer cut off.** A long bar moves
+  left until it fits, and goes back to where you left it when it is shorter
+  again.

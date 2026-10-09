@@ -3,11 +3,11 @@
 The screen-fraction bar never draws itself at the width the user asked for. It
 cuts the bar back to the longest "nice" length that fits, so the number under it
 is a round value. The ladder is 1, 2, 5 per decade, the steps a map's scale bar
-takes: as the zoom changes the bar's width follows it, between 40 % and 100 % of
+takes. As the zoom changes the bar's width follows it, between 40 % and 100 % of
 its widget, and when it would outgrow the widget the label steps to the next
 rung. It used to be a twelve-rung ladder (1, 1.5, 2, 2.5 ... 10), kept here as
 `TWELVE_RUNGS` and monkeypatched back in where a test needs to show that the
-1-2-5 ladder is doing the work.
+result comes from the 1-2-5 ladder.
 
 Every test here goes through a real `paintEvent`: the widget is rendered into a
 QPixmap with `QPainter.drawRect`, `QPainter.drawText` and the module's
@@ -75,7 +75,7 @@ def _make_bar(stored_width_pct, scale, **opts):
 
 
 def _probe(bar, monkeypatch):
-    """Render for real; return (bar length in px, label, tick labels).
+    """Paint the widget; return (bar length in px, label, tick labels).
 
     The label and the tick labels are both outlined text, label first.
     """
@@ -176,7 +176,7 @@ def test_every_label_is_one_two_or_five(app, monkeypatch, pct):
 
 
 def test_the_twelve_rung_ladder_printed_other_numbers(app, monkeypatch):
-    """The check above can fail: the previous ladder fails it."""
+    """The previous ladder fails the check above."""
     with monkeypatch.context() as m:
         m.setattr(sb_mod, "NICE_LENGTHS", TWELVE_RUNGS)
         labels = set()
@@ -198,12 +198,12 @@ def test_the_bar_fills_between_two_fifths_and_all_of_its_size(
         assert 0.4 * bar.width() - 1 <= bar_px <= bar.width(), (pct, scale, bar_px)
         widths.append(bar_px / bar.width())
         bar.deleteLater()
-    # and it does use that whole band as the zoom moves
+    # and it uses that full band as the zoom changes
     assert min(widths) < 0.45 and max(widths) > 0.97
 
 
 def test_zooming_in_grows_the_bar_until_the_label_steps_down(app, monkeypatch):
-    """Zooming in a little at a time: the label holds while the bar widens,
+    """Zooming in a little at a time, the label does not change while the bar widens,
     then drops one rung (2.5x or 2x shorter) when it would outgrow its size."""
     seen = []
     scale = 0.2
