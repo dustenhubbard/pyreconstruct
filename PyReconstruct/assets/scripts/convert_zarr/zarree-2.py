@@ -396,7 +396,8 @@ def unfinished_arrays(zg, scale_group):
     rebuild any other level from scale_1, but not scale_1 itself, so it
     checks here instead of finishing without the image. Files, such as
     .zgroup or a Thumbs.db, are not images; a folder is, even one whose
-    name starts with a dot.
+    name starts with a dot. An image named a\\b.png is the array b.png in the group a (see
+    scale_1_images), so each group is checked the same way.
     """
     store = zg.store
     unfinished = []
@@ -404,10 +405,31 @@ def unfinished_arrays(zg, scale_group):
         path = f"{scale_group}/{name}"
         if not os.path.isdir(store.dir_path(path)):
             continue
-        if contains_array(store, path) or contains_group(store, path):
+        if contains_array(store, path):
+            continue
+        if contains_group(store, path):
+            unfinished += unfinished_arrays(zg, path)
             continue
         unfinished.append(path)
     return unfinished
+
+
+def scale_1_images(zg):
+    """The path in scale_1 of every image, the source of an update.
+
+    zarr stores an image named a\\b.png as the array b.png in the group a,
+    so listing scale_1 gives the group a, not the image. This goes into
+    each group and names the image a/b.png, which zarr reads as the same
+    array as a\\b.png, so every level is written where the image is read.
+    """
+    images = []
+
+    def add(path, item):
+        if isinstance(item, zarr.Array):
+            images.append(path)
+
+    zg["scale_1"].visititems(add)
+    return sorted(images)
 
 
 def create2D(args):
@@ -490,7 +512,7 @@ if __name__ == "__main__":
                 + "\nThese images were not fully converted. Convert the "
                 "original images to zarr again."
             )
-        images = sorted(list(zg["scale_1"]))
+        images = scale_1_images(zg)
         if not images:
             raise Exception(f"No scale_1 images found in {zarr_fp}.")
 

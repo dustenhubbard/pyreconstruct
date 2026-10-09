@@ -485,6 +485,47 @@ def test_a_name_with_a_backslash_is_stored_as_zarr_stores_it(tmp_path):
     assert files(out) == files(tmp_path / "reference.zarr")
 
 
+def test_an_update_writes_every_level_of_a_nested_image(tmp_path):
+    """The image a\\b.png is the array b.png in the group scale_1/a. The
+    update must take it as an image, not take the group a for one, and write
+    each level where PyReconstruct reads the section image a\\b.png."""
+    out = tmp_path / "out.zarr"
+    sources = {
+        "a\\b.png": np.random.default_rng(0).integers(0, 256, (2048, 2048), np.uint8),
+        "c.png": np.random.default_rng(1).integers(0, 256, (2048, 2048), np.uint8),
+    }
+    scale_1 = zarr.group(str(out)).create_group("scale_1")
+    for name, arr in sources.items():
+        scale_1.create_dataset(name, data=arr)
+
+    result = _run(2, out)
+
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert "Zarr validation complete." in result.stdout
+    zg = zarr.open(str(out), "r")
+    for name, arr in sources.items():
+        for scale, level in _expected_levels(arr).items():
+            assert np.array_equal(zg[scale][name][:], level), f"{scale}/{name}"
+    assert (out / "scale_4" / "a" / "b.png" / ".zarray").is_file()
+
+
+def test_an_update_refuses_a_nested_scale_1_image_left_unfinished(tmp_path):
+    """scale_1/a holds the finished image a\\c.png and the folder of a\\b.png,
+    cut off before its .zarray. The update must name a\\b.png and stop, as it
+    does for an image directly in scale_1."""
+    out = tmp_path / "out.zarr"
+    scale_1 = zarr.group(str(out)).create_group("scale_1")
+    for name in ("a\\b.png", "a\\c.png"):
+        scale_1.create_dataset(name, data=np.full((2048, 2048), 7, np.uint8))
+    (out / "scale_1" / "a" / "b.png" / ".zarray").unlink()
+
+    result = _run(1, out)
+
+    assert result.returncode != 0
+    assert "Zarr validation complete." not in result.stdout
+    assert "scale_1/a/b.png" in result.stderr
+
+
 def test_two_updates_of_one_zarr_at_once_both_finish(tmp_path):
     """Run B is part way through scale_2/b3.png while run A updates the same
     zarr from start to finish. Neither run may undo the other's work."""
