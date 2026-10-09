@@ -434,7 +434,7 @@ def test_only_small_regular_files_on_a_candidate_are_trusted(frozen, tmp_path, c
         contents.symlink_to(twin)
     elif change == "Info.plist is too big":
         info = {"CFBundleIdentifier": BID, "PyReconstructVersion": VER,
-                "Padding": "x" * (II._MAX_PLIST + 1)}
+                "Padding": "x" * (2 << 20)}   # 2 MiB, over the cap
         with open(contents / "Info.plist", "wb") as f:
             plistlib.dump(info, f)
     elif change == "guide is a symlink":
