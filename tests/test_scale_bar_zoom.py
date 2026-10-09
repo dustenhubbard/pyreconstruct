@@ -1,4 +1,4 @@
-"""The scale bar as the zoom changes: its size cap, live follow, and a typed length.
+"""The size cap, live follow and typed length of the scale bar as the zoom changes.
 
 The palette and bar widgets are used to test three behaviors.
 
