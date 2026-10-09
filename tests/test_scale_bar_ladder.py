@@ -1,24 +1,18 @@
 """What the scale bar is allowed to render, pinned by painting it for real.
 
-The scale bar never draws itself at the width the user asked for. It cuts the
-bar back to the longest "nice" length that fits, so the number under it is a
-round value. That ladder used to be 1 / 2.5 / 5 / 10 per decade -- four rungs,
-against a width option with 81 positions (20..100 %) -- so most of the option's
-travel changed nothing on screen. Measured on d0eb01a9 by rendering the real
-widget: 3 to 4 of the 81 positions produced a different bar, with runs of up to
-51 consecutive positions that rendered byte-identically. Two of those "4"
-were the same bar printed two different ways (see the label tests below).
+The screen-fraction bar never draws itself at the width the user asked for. It
+cuts the bar back to the longest "nice" length that fits, so the number under it
+is a round value. The ladder is 1, 2, 5 per decade, the steps a map's scale bar
+takes. As the zoom changes the bar's width follows it, between 40 % and 100 % of
+its widget, and when it would outgrow the widget the label steps to the next
+rung. It used to be a twelve-rung ladder (1, 1.5, 2, 2.5 ... 10), kept here as
+`TWELVE_RUNGS` and monkeypatched back in where a test needs to show that the
+result comes from the 1-2-5 ladder.
 
 Every test here goes through a real `paintEvent`: the widget is rendered into a
 QPixmap with `QPainter.drawRect`, `QPainter.drawText` and the module's
 `drawOutlinedText` intercepted, so the assertions are about pixels and strings
 that a user would actually see, not about the arithmetic that produced them.
-`_probe` is the same interception the measurement script uses
-(pyrecon-hub scripts/scale_bar_ladder_candidates.py), so a number here can be
-compared directly with a number in the PR's ladder table.
-
-The old ladder is kept as `OLD_LADDER` and monkeypatched back in where a test
-needs to show that the new one is doing the work.
 """
 import os
 
@@ -34,19 +28,20 @@ from PySide6.QtGui import QPainter, QPixmap
 from PyReconstruct.modules.gui.palette import scale_bar as sb_mod
 from PyReconstruct.modules.gui.palette.scale_bar import (
     NICE_LENGTHS,
+    TICK_SUBDIVISIONS,
     ScaleBar,
     formatLength,
     niceLength,
 )
 
 
-# the ladder that shipped before this change: four rungs, all ticked in five
-OLD_LADDER = ((1.0, 5), (2.5, 5), (5.0, 5), (10.0, 5))
+# the ladder the screen-fraction bar used before it took the 1-2-5 steps
+TWELVE_RUNGS = TICK_SUBDIVISIONS
 
 FIELD_W = 1000                    # field widget width, held constant
 SLIDER_POSITIONS = range(20, 101)  # scale_bar_width's full range, 81 positions
 # zoom levels in microns per screen pixel, from a dense EM view out to a
-# whole-section view; the same six the d0eb01a9 measurement used
+# whole-section view
 SCALES = (0.004, 0.01, 0.02, 0.04, 0.08, 0.16)
 
 
@@ -74,13 +69,16 @@ class _StubManager:
 def _make_bar(stored_width_pct, scale, **opts):
     """Build a ScaleBar exactly the way MousePalette.createSB does."""
     sb_w = int(stored_width_pct / 100 * FIELD_W)
-    bar = ScaleBar(None, _StubManager(**opts), sb_w, 50, 1)
+    bar = ScaleBar(None, _StubManager(**opts), sb_w, 6, 1)
     bar.setScale(scale)
     return bar
 
 
 def _probe(bar, monkeypatch):
-    """Render for real; return (bar length in px, label, tick labels)."""
+    """Paint the widget; return (bar length in px, label, tick labels).
+
+    The label and the tick labels are both outlined text, label first.
+    """
     rects, outlined, plain = [], [], []
 
     real_rect = QPainter.drawRect
@@ -111,7 +109,7 @@ def _probe(bar, monkeypatch):
 
     return (rects[0][2] if rects else None,
             outlined[0] if outlined else None,
-            tuple(plain))
+            tuple(outlined[1:]) + tuple(plain))
 
 
 def _sweep(monkeypatch, scale):
@@ -146,64 +144,95 @@ def _is_round(text):
     return abs(mantissa * 2 - round(mantissa * 2)) < 1e-6
 
 
-# --------------------------------------------------------------- the dead zone
+def _is_one_two_five(text):
+    value = float(text)
+    mantissa = value / 10.0 ** math.floor(math.log10(value))
+    return any(abs(mantissa - m) < 1e-6 for m in (1.0, 2.0, 5.0))
 
-@pytest.mark.parametrize("scale", SCALES)
-def test_the_width_option_now_moves_the_bar_at_every_zoom(app, monkeypatch, scale):
-    """The headline: how many of the 81 positions render a different bar."""
+
+def _zoom_steps(lo=0.0005, hi=4.0, step=1.03):
+    scale = lo
+    while scale < hi:
+        yield scale
+        scale *= step
+
+
+# ------------------------------------------------------------ the 1-2-5 steps
+
+def test_the_ladder_is_one_two_five():
+    assert [m for m, _ in NICE_LENGTHS] == [1.0, 2.0, 5.0, 10.0]
+
+
+@pytest.mark.parametrize("pct", (20, 25, 60, 100))
+def test_every_label_is_one_two_or_five(app, monkeypatch, pct):
+    """Over about four decades of zoom, the printed length is always 1, 2 or 5
+    times a power of ten."""
+    for scale in _zoom_steps():
+        bar = _make_bar(pct, scale)
+        _, label, _ = _probe(bar, monkeypatch)
+        assert label.endswith(" µm")
+        assert _is_one_two_five(label.split()[0]), (pct, scale, label)
+        bar.deleteLater()
+
+
+def test_the_twelve_rung_ladder_printed_other_numbers(app, monkeypatch):
+    """The previous ladder fails the check above."""
     with monkeypatch.context() as m:
-        m.setattr(sb_mod, "NICE_LENGTHS", OLD_LADDER)
-        before = _sweep(m, scale)
-    after = _sweep(monkeypatch, scale)
-
-    assert len(set(before)) <= 4, "the old ladder was not as coarse as recorded"
-    assert len(set(after)) >= 8
-    assert len(set(after)) > len(set(before))
-    assert _longest_no_op_run(after) < _longest_no_op_run(before)
+        m.setattr(sb_mod, "NICE_LENGTHS", TWELVE_RUNGS)
+        labels = set()
+        for scale in _zoom_steps(0.01, 0.1):
+            labels.add(_probe(_make_bar(25, scale), m)[1].split()[0])
+    assert not all(_is_one_two_five(label) for label in labels), labels
 
 
-def test_the_two_widths_from_the_report_no_longer_render_the_same_bar(
-    app, monkeypatch
+@pytest.mark.parametrize("pct", (20, 25, 60, 100))
+def test_the_bar_fills_between_two_fifths_and_all_of_its_size(
+    app, monkeypatch, pct
 ):
-    """25 % and 40 % at 0.02 µm/px drew byte-identical 250 px bars on d0eb01a9."""
-    with monkeypatch.context() as m:
-        m.setattr(sb_mod, "NICE_LENGTHS", OLD_LADDER)
-        old_25 = _probe(_make_bar(25, 0.02), m)
-        old_40 = _probe(_make_bar(40, 0.02), m)
-    assert old_25[:2] == old_40[:2] == (250, "5 µm")
+    """1 to 2 and 5 to 10 are factors of two, 2 to 5 is 2.5, so the drawn bar
+    is never under 40 % of the room it was given and never over it."""
+    widths = []
+    for scale in _zoom_steps():
+        bar = _make_bar(pct, scale)
+        bar_px, _, _ = _probe(bar, monkeypatch)
+        assert 0.4 * bar.width() - 1 <= bar_px <= bar.width(), (pct, scale, bar_px)
+        widths.append(bar_px / bar.width())
+        bar.deleteLater()
+    # and it uses that full band as the zoom changes
+    assert min(widths) < 0.45 and max(widths) > 0.97
 
-    new_25 = _probe(_make_bar(25, 0.02), monkeypatch)
-    new_40 = _probe(_make_bar(40, 0.02), monkeypatch)
-    assert new_25[:2] != new_40[:2]
-    assert new_40[:2] == (400, "8 µm")
+
+def test_zooming_in_grows_the_bar_until_the_label_steps_down(app, monkeypatch):
+    """Zooming in a little at a time, the label does not change while the bar widens,
+    then drops one rung (2.5x or 2x shorter) when it would outgrow its size."""
+    seen = []
+    scale = 0.2
+    while scale > 0.002:
+        bar = _make_bar(25, scale)
+        seen.append(_probe(bar, monkeypatch)[:2])
+        bar.deleteLater()
+        scale /= 1.01
+    for (px_a, label_a), (px_b, label_b) in zip(seen, seen[1:]):
+        if label_a == label_b:
+            assert px_b >= px_a, "the bar narrowed while zooming in"
+        else:
+            ratio = float(label_a.split()[0]) / float(label_b.split()[0])
+            assert ratio == pytest.approx(2.0) or ratio == pytest.approx(2.5)
+            assert px_b < px_a
+    assert len({label for _px, label in seen}) >= 6
 
 
 # ------------------------------------------------- conservative where it counts
 
 @pytest.mark.parametrize("pct, scale, expected_px, expected_label", [
     (25, 0.004, 250, "1 µm"),      # l = 1 µm exactly
-    (25, 0.01, 250, "2.5 µm"),     # l = 2.5 µm exactly
+    (25, 0.01, 200, "2 µm"),       # l = 2.5 µm, cut back to 2 µm
     (25, 0.02, 250, "5 µm"),       # l = 5 µm exactly
     (100, 0.01, 1000, "10 µm"),    # l = 10 µm exactly
 ])
-def test_a_width_that_already_landed_on_a_rung_is_untouched(
+def test_a_width_on_a_rung_draws_it_and_one_between_is_cut_back(
     app, monkeypatch, pct, scale, expected_px, expected_label
 ):
-    """The four rungs the two ladders share still render the lengths they did.
-
-    1, 2.5, 5 and 10 are the whole of the old ladder, and all four survive into
-    the new one, so a width that already landed on one draws the same number of
-    pixels it drew on d0eb01a9. The pixel figures are the ones the d0eb01a9
-    probe recorded. What moves is spelling: the bar label loses a trailing zero
-    where it had one ("1.0 µm" -> "1 µm", and "2.5 µm" is unchanged because it
-    never had one), and the tick labels lose theirs too ("1.0" -> "1"). Both are
-    the formatting fix below.
-
-    Widths that landed between the old rungs are a different matter and are not
-    pinned here: 50 % at 0.04 µm/px drew a 250 px "10 µm" bar on d0eb01a9 and
-    draws a 500 px "20 µm" bar now, because 2.0 is a rung of the new ladder and
-    was not one of the old. That is what the finer ladder is for.
-    """
     bar_px, label, _ = _probe(_make_bar(pct, scale), monkeypatch)
     assert (bar_px, label) == (expected_px, expected_label)
 
@@ -221,19 +250,21 @@ def test_the_bar_never_overruns_the_widget(app, monkeypatch):
 # ------------------------------------------------------------- round-ness rules
 
 def test_every_rung_is_a_round_number():
-    for mantissa, _ in NICE_LENGTHS:
+    for mantissa, _ in TICK_SUBDIVISIONS:
         assert 1.0 <= mantissa <= 10.0
         assert _is_round(f"{mantissa:g}")
-    assert list(NICE_LENGTHS) == sorted(NICE_LENGTHS)
+    assert list(TICK_SUBDIVISIONS) == sorted(TICK_SUBDIVISIONS)
+    assert set(NICE_LENGTHS) <= set(TICK_SUBDIVISIONS)
 
 
 def test_every_rung_is_ticked_into_round_numbers():
     """The subdivision count is per rung precisely so this holds.
 
-    A fixed five subdivisions -- what the code did before -- turns the 3 µm rung
-    into 0.6 / 1.2 / 1.8 / 2.4 µm ticks.
+    A fixed five subdivisions turns the 3 µm entry into 0.6 / 1.2 / 1.8 /
+    2.4 µm ticks. The screen-fraction bar only uses 1, 2 and 5 now, but a
+    pinned bar can be any length in the table.
     """
-    for mantissa, subdivs in NICE_LENGTHS:
+    for mantissa, subdivs in TICK_SUBDIVISIONS:
         assert 2 <= subdivs <= 7, "more than six tick labels will not fit"
         for i in range(1, subdivs):
             assert _is_round(formatLength(mantissa * i / subdivs)), (
@@ -269,8 +300,7 @@ def test_one_length_has_one_spelling(app, monkeypatch):
 
     `n * 10 ** (-p)` returned an int on one side of a decade and a float on the
     other, and the label was `str()` of that. So the same bar, at the same
-    length, printed two ways -- which also inflated the dead-zone count, because
-    two of the four "distinct" renders at 0.02 µm/px were one bar spelled twice.
+    length, printed two ways.
     """
     spellings = {}
     scale = 0.0005
@@ -310,17 +340,20 @@ def test_tick_labels_use_the_same_formatter(app, monkeypatch):
 # ------------------------------------------------------------------ the corners
 
 def test_a_length_that_is_exactly_a_rung_lands_on_it():
-    """0.3 is 2.9999999999999996 decades of 0.1, and must still pick the 3 rung."""
-    assert niceLength(0.3)[0] == pytest.approx(0.3)
-    assert niceLength(3.0)[0] == pytest.approx(3.0)
-    assert niceLength(30.0)[0] == pytest.approx(30.0)
-    assert niceLength(7.0)[0] == pytest.approx(7.0)
-    assert niceLength(0.07)[0] == pytest.approx(0.07)
+    """A length that is a rung must pick that rung, whatever the float error
+    in dividing it by its decade."""
+    assert niceLength(0.2)[0] == pytest.approx(0.2)
+    assert niceLength(2.0)[0] == pytest.approx(2.0)
+    assert niceLength(50.0)[0] == pytest.approx(50.0)
+    assert niceLength(0.05)[0] == pytest.approx(0.05)
+    assert niceLength(0.6 / 3)[0] == pytest.approx(0.2)    # 1.9999999999999998 decades of 0.1
+    assert niceLength(0.7 / 7 * 5)[0] == pytest.approx(0.5)  # 4.999999999999999 of 0.1
 
 
 def test_a_length_just_under_a_rung_takes_the_one_below():
-    assert niceLength(2.999)[0] == pytest.approx(2.5)
-    assert niceLength(0.99)[0] == pytest.approx(0.9)
+    assert niceLength(1.999)[0] == pytest.approx(1.0)
+    assert niceLength(4.999)[0] == pytest.approx(2.0)
+    assert niceLength(0.99)[0] == pytest.approx(0.5)
 
 
 def test_nothing_to_draw_is_not_an_error(app, monkeypatch):

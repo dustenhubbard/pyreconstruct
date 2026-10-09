@@ -91,6 +91,7 @@ SLIDERS = [
     ("3D_xy_res", "smoothing_3D", 0, 73, _identity),
     ("cpu_max", "computation", 0, 90, _identity),
     ("scale_bar_width", "scale_bar", 2, 60, _identity),
+    ("scale_bar_thickness", "scale_bar", 4, 20, _identity),
 ]
 
 
