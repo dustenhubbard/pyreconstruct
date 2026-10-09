@@ -51,6 +51,8 @@ def _run(cores, *args, env=None):
 #    before renaming a chunk, as when the process is killed in between.
 #  - HOLD_ARRAY: the second chunk write creates FAULT_MARKER and waits until
 #    FAULT_RELEASE exists, so that array is part written in the meantime.
+#  - HOLD_TEMP_ARRAY: as HOLD_ARRAY, but the wait comes once zarr has
+#    written the chunk's temporary file and before it renames it.
 #  - WRITE_LOG: the path of every store key written is appended to this file.
 #  - WAIT_KEY: a check for this store key, e.g. "scale_1/a.png/.zarray",
 #    first waits until WAIT_FOR exists.
@@ -59,7 +61,9 @@ FAULTS = textwrap.dedent("""
     import zarr.storage
 
     _orig = zarr.storage.DirectoryStore.__setitem__
+    _orig_tofile = zarr.storage.DirectoryStore._tofile
     _count = {}
+    _hold_temp = []
 
     def _wait_for(path, seconds):
         deadline = time.time() + seconds
@@ -82,7 +86,7 @@ FAULTS = textwrap.dedent("""
                 f.write(path + "\\n")
         array, name = path.rsplit("/", 1)
         if not name.startswith("."):
-            for role in ("FAIL_ARRAY", "HOLD_ARRAY"):
+            for role in ("FAIL_ARRAY", "HOLD_ARRAY", "HOLD_TEMP_ARRAY"):
                 target = os.environ.get(role)
                 shape = os.environ.get(role + "_SHAPE")
                 if not (
@@ -96,6 +100,8 @@ FAULTS = textwrap.dedent("""
                 if role == "HOLD_ARRAY":
                     open(os.environ["FAULT_MARKER"], "w").close()
                     _wait_for(os.environ.get("FAULT_RELEASE"), 120)
+                elif role == "HOLD_TEMP_ARRAY":
+                    _hold_temp.append(path)
                 else:
                     if os.environ.get("HOLD_ARRAY"):
                         _wait_for(os.environ["FAULT_MARKER"], 15)
@@ -106,6 +112,15 @@ FAULTS = textwrap.dedent("""
         return _orig(self, key, value)
 
     zarr.storage.DirectoryStore.__setitem__ = _setitem
+
+    def _tofile(a, fn):
+        _orig_tofile(a, fn)
+        if _hold_temp:
+            _hold_temp.clear()
+            open(os.environ["FAULT_MARKER"], "w").close()
+            _wait_for(os.environ.get("FAULT_RELEASE"), 120)
+
+    zarr.storage.DirectoryStore._tofile = staticmethod(_tofile)
 
     _orig_contains = zarr.storage.DirectoryStore.__contains__
 
@@ -218,7 +233,13 @@ def _expected_levels(arr):
 
 def _assert_only_whole_arrays(out, sources):
     """Every array the zarr lists holds exactly the pixels it should, and
-    its folder holds its .zarray and chunks and nothing else."""
+    its folder holds its .zarray and chunks and nothing else.
+
+    zarr writes each key to <key>.<random>.partial and then renames it, so a
+    worker stopped between the two leaves that file. It is not counted here,
+    since the converter leaves it: another update of the same zarr may be
+    about to rename it. zarr's nchunks_initialized does count it (any name
+    that starts with a digit), so it is not used here either."""
     zg = zarr.open(str(out), "r")
     for scale in zg.group_keys():
         for name in zg[scale].array_keys():
@@ -228,7 +249,10 @@ def _assert_only_whole_arrays(out, sources):
                 ".".join(map(str, index))
                 for index in itertools.product(*map(range, stored.cdata_shape))
             ]
-            files = sorted(os.listdir(Path(out) / stored.path))
+            files = sorted(
+                f for f in os.listdir(Path(out) / stored.path)
+                if not f.endswith(".partial")
+            )
             assert files == sorted([".zarray", *chunks]), f"{scale}/{name}"
             assert stored.dtype == np.uint8, f"{scale}/{name}"
             assert np.array_equal(stored[:], expected), f"{scale}/{name}"
@@ -297,11 +321,12 @@ def test_a_write_cut_short_is_redone_by_the_next_update(tmp_path):
     _assert_every_level(out, sources)
 
 
-def test_a_redone_write_leaves_no_temporary_chunk_file(tmp_path):
+def test_a_temporary_chunk_file_does_not_stop_the_redo(tmp_path):
     """zarr writes each chunk to 0.0.<random>.partial and renames it. When
     the Pool terminates a worker between the two, that file is left in the
-    array's folder, and zarr counts it as a chunk because its name starts
-    with a digit. The update that writes the array again must remove it."""
+    array's folder, and zarr's nchunks_initialized counts it as a chunk
+    because its name starts with a digit. The update that writes the array
+    again must finish with every chunk in place, and leave that file."""
     out = tmp_path / "out.zarr"
     sources = _scale_1_only(out)
     env = _fault_env(tmp_path, FAIL_ARRAY="scale_2/b3.png", FAIL_LEAVES_PARTIAL=1)
@@ -310,15 +335,15 @@ def test_a_redone_write_leaves_no_temporary_chunk_file(tmp_path):
 
     assert failed.returncode != 0
     assert "simulated full disk" in failed.stderr
-    assert list((out / "scale_2" / "b3.png").glob("*.partial"))
+    left = list((out / "scale_2" / "b3.png").glob("*.partial"))
+    assert left
 
     retried = _run(5, out)
 
     assert retried.returncode == 0, retried.stderr[-2000:]
     assert "Zarr validation complete." in retried.stdout
     _assert_every_level(out, sources)
-    b3 = zarr.open(str(out), "r")["scale_2"]["b3.png"]
-    assert b3.nchunks_initialized == b3.nchunks
+    assert list((out / "scale_2" / "b3.png").glob("*.partial")) == left
 
 
 def test_an_update_writes_into_a_folder_left_without_metadata(tmp_path):
@@ -562,15 +587,18 @@ def test_an_update_refuses_a_nested_scale_1_image_left_unfinished(tmp_path):
     assert "scale_1/a/b.png" in result.stderr
 
 
-def test_two_updates_of_one_zarr_at_once_both_finish(tmp_path):
+@pytest.mark.parametrize("hold", ["HOLD_ARRAY", "HOLD_TEMP_ARRAY"])
+def test_two_updates_of_one_zarr_at_once_both_finish(tmp_path, hold):
     """Run B is part way through scale_2/b3.png while run A updates the same
-    zarr from start to finish. Neither run may undo the other's work."""
+    zarr from start to finish. Neither run may undo the other's work. B
+    waits before a chunk write, or with the chunk's temporary file written
+    and not yet renamed, so A must leave that file where it is."""
     out = tmp_path / "out.zarr"
     sources = _scale_1_only(out, {"b3.png": (2048, 1536)})
     marker = tmp_path / "b-is-writing"
     release = tmp_path / "release-b"
     env = _fault_env(
-        tmp_path, HOLD_ARRAY="scale_2/b3.png", HOLD_ARRAY_SHAPE="1024,768",
+        tmp_path, **{hold: "scale_2/b3.png", f"{hold}_SHAPE": "1024,768"},
         FAULT_MARKER=marker, FAULT_RELEASE=release,
     )
     run_b = subprocess.Popen(
@@ -583,6 +611,8 @@ def test_two_updates_of_one_zarr_at_once_both_finish(tmp_path):
             assert run_b.poll() is None, run_b.communicate()
             time.sleep(0.05)
         assert marker.exists(), "run B never reached scale_2/b3.png"
+        if hold == "HOLD_TEMP_ARRAY":
+            assert list((out / "scale_2" / "b3.png").glob("*.partial"))
 
         run_a = _run(5, out)
         release.touch()
