@@ -1420,6 +1420,10 @@ class Section():
         # pin the two halves.
         self._rebuildColumnarStoreForSave()
 
+        # inside a pass over the section files, the field refreshes its own
+        # copies of this section from the file now (Series.passWroteSection)
+        self.series.passWroteSection(self)
+
     def tracesAsList(self) -> list[Trace]:
         """Return the trace dictionary as a list. Does NOT copy traces.
         
