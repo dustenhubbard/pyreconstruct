@@ -809,13 +809,14 @@ class Section():
         """This section's image name as zarr stores it inside a scale.
 
         zarr turns a backslash into a slash, so an image named a\\b.png is
-        kept at scale_N/a/b.png. A name zarr refuses (a "." or ".." part)
-        is left as it is: zarr holds no array under it.
+        kept at scale_N/a/b.png. None for a name zarr refuses (a "." or ".."
+        part): zarr holds no array under it, and the folder path that name
+        spells can lead to a different image.
         """
         try:
             return normalize_storage_path(self.src)
         except ValueError:
-            return self.src
+            return None
 
     @property
     def src_fp(self):
@@ -824,10 +825,15 @@ class Section():
             # its pixels into field units with mag. A coarser scale is never
             # substituted, since its size is rounded and coordinates made from
             # it would be off; without a usable scale_1, readers get an error.
+            key = self.zarr_key
+            if key is None:
+                raise FileNotFoundError(
+                    f"zarr cannot hold an image named {self.src!r}"
+                )
             return os.path.join(
                 self.series.src_dir,
                 "scale_1",
-                self.zarr_key
+                key
             )
         else:
             return os.path.join(
@@ -845,10 +851,13 @@ class Section():
 
         A conversion that stops partway can write a scale's chunks without its
         .zarray, and zarr cannot open that array, so the scale is left out.
-        Empty when no scale has one; None when the images are not in a zarr.
+        Empty when no scale has one or zarr refuses the name; None when the
+        images are not in a zarr.
         """
         if self.series.src_dir.endswith("zarr"):
             key = self.zarr_key
+            if key is None:
+                return []
             return [
                 int(s.split("_")[1])
                 for s in os.listdir(self.series.src_dir)

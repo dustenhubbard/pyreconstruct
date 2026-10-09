@@ -116,8 +116,12 @@ def test_optimize_bc_reads_a_backslash_name(qapp, real_series, tmp_path):
     assert (section.brightness, section.contrast) != (0, 0)
 
 
-def test_neuroglancer_export_sizes_a_backslash_name(monkeypatch, qapp, tmp_path):
-    """The all-tissue window comes from each image's size in scale_1."""
+def _ng_window(monkeypatch, tmp_path, names, arrays):
+    """The all-tissue window `To Neuroglancer (Zarr)...` gives sections 1-2.
+
+    names maps each section number to its image name; arrays maps each
+    scale_1 array name to its (height, width).
+    """
     import runpy
     import sys
 
@@ -147,16 +151,16 @@ def test_neuroglancer_export_sizes_a_backslash_name(monkeypatch, qapp, tmp_path)
         images.append(str(fp))
     fp = str(tmp_path / "images.zarr")
     group = zarr.open_group(fp, mode="w")
+    for name, shape in arrays.items():
+        group.require_group("scale_1").create_dataset(
+            name, data=np.full(shape, 40, np.uint8)
+        )
     series = Series.new(images, "nested", MAG, 0.05)
     try:
         series.src_dir = fp
         for snum in sorted(series.sections):
-            name = f"a\\img{snum}.png"
-            group.require_group("scale_1").create_dataset(
-                name, data=np.full((IH, IW), 40, np.uint8)
-            )
             section = series.loadSection(snum)
-            section.src = name
+            section.src = names[snum]
             section.save()
         series.save()
         jser = tmp_path / "nested.jser"
@@ -177,8 +181,37 @@ def test_neuroglancer_export_sizes_a_backslash_name(monkeypatch, qapp, tmp_path)
         run_name="__main__",
     )
 
-    raw = zarr.open(str(out), "r")["raw"]
-    assert raw.attrs["window"] == pytest.approx([0, 0, IW * MAG, IH * MAG])
+    return zarr.open(str(out), "r")["raw"].attrs["window"]
+
+
+def test_neuroglancer_export_sizes_a_backslash_name(monkeypatch, qapp, tmp_path):
+    """The all-tissue window comes from each image's size in scale_1."""
+    names = {snum: f"a\\img{snum}.png" for snum in range(3)}
+    arrays = {name: (IH, IW) for name in names.values()}
+
+    window = _ng_window(monkeypatch, tmp_path, names, arrays)
+
+    assert window == pytest.approx([0, 0, IW * MAG, IH * MAG])
+
+
+def test_neuroglancer_export_skips_a_name_zarr_refuses(
+    monkeypatch, qapp, tmp_path
+):
+    """Section 1's name spells the path of big.png, which is twice the size.
+
+    A section loaded from a file keeps only the last part of a slash name, so
+    the script only ever sees the backslash form of a name zarr refuses.
+    """
+    names = {0: "a\\img0.png", 1: "a\\..\\big.png", 2: "a\\img2.png"}
+    arrays = {
+        "a\\img0.png": (IH, IW),
+        "a\\img2.png": (IH, IW),
+        "big.png": (2 * IH, 2 * IW),
+    }
+
+    window = _ng_window(monkeypatch, tmp_path, names, arrays)
+
+    assert window == pytest.approx([0, 0, IW * MAG, IH * MAG])
 
 
 def test_a_name_zarr_cannot_store_finds_no_scales(qapp, real_series, tmp_path):
@@ -187,3 +220,88 @@ def test_a_name_zarr_cannot_store_finds_no_scales(qapp, real_series, tmp_path):
     section = _section(real_series, fp, "a\\..\\img.png")
 
     assert section.zarr_scales == []
+
+
+# --- a name zarr refuses is not another image ---------------------------------
+#
+# zarr refuses a "." or ".." part in an array name. The folder path such a name
+# spells can still lead somewhere: scale_N/a/../img.png is scale_N/img.png once
+# scale_N/a/ exists, and zarr itself tidies ./img.png to img.png. So without a
+# check the section reads that other image's scales and size.
+
+REFUSED = ["a/../img.png", "./img.png"]
+
+
+def _write_other_images(tmp_path):
+    """img.png in two scales, and a/b.png so that the folder a/ exists."""
+    import zarr
+
+    fp = str(tmp_path / "images.zarr")
+    group = zarr.open_group(fp, mode="w")
+    for k in (1, 2):
+        scale = group.require_group(f"scale_{k}")
+        scale.create_dataset(
+            "img.png", data=np.full((IH // k, IW // k), 90, np.uint8)
+        )
+        scale.create_dataset("a/b.png", data=np.full((8, 8), 90, np.uint8))
+    assert os.path.isdir(os.path.join(fp, "scale_1", "a"))
+    return fp
+
+
+@pytest.mark.parametrize("name", REFUSED)
+def test_a_name_zarr_refuses_has_no_scales(qapp, real_series, tmp_path, name):
+    fp = _write_other_images(tmp_path)
+    section = _section(real_series, fp, name)
+
+    assert section.zarr_key is None
+    assert section.zarr_scales == []
+
+
+@pytest.mark.parametrize("name", REFUSED)
+def test_a_name_zarr_refuses_has_no_size(qapp, real_series, tmp_path, name):
+    fp = _write_other_images(tmp_path)
+    section = _section(real_series, fp, name)
+
+    with pytest.raises(FileNotFoundError, match="zarr cannot hold"):
+        section.src_fp
+    with pytest.raises(FileNotFoundError, match="zarr cannot hold"):
+        section.img_dims
+
+
+@pytest.mark.parametrize("name", REFUSED)
+def test_a_name_zarr_refuses_shows_no_image(qapp, real_series, tmp_path, name):
+    from PyReconstruct.modules.backend.view.image_layer import ImageLayer
+
+    fp = _write_other_images(tmp_path)
+    section = _section(real_series, fp, name)
+
+    layer = ImageLayer(section, real_series)
+
+    assert not layer.image_found
+
+
+@pytest.mark.parametrize("name", REFUSED)
+def test_optimize_bc_skips_a_name_zarr_refuses(
+    qapp, real_series, tmp_path, name
+):
+    from PyReconstruct.modules.backend.view.optimize_bc import optimizeSectionBC
+
+    fp = _write_other_images(tmp_path)
+    section = _section(real_series, fp, name)
+    section.brightness, section.contrast = 0, 0
+
+    optimizeSectionBC(section, desired_mean=200, desired_std=10)
+
+    assert (section.brightness, section.contrast) == (0, 0)
+
+
+def test_save_field_view_with_a_name_zarr_refuses(main_window, tmp_path):
+    from PySide6.QtWidgets import QApplication
+
+    main_window.series.src_dir = _write_other_images(tmp_path)
+    main_window.field.section.src = "a/../img.png"
+    QApplication.clipboard().clear()
+
+    main_window.saveFieldView(False)
+
+    assert not QApplication.clipboard().image().isNull()

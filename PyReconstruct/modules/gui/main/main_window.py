@@ -5362,13 +5362,18 @@ class MainWindow(QMainWindow):
         exported_image.fill(Qt.transparent)
 
         ## Draw base image
+        try:
+            base_image = QImage(self.field.section.src_fp)
+        except FileNotFoundError:  # a name zarr cannot hold has no image
+            base_image = QImage()
+
         with QPainter(exported_image) as painter:
 
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
 
             painter.drawImage(
                 exported_image.rect(),
-                QImage(self.field.section.src_fp),
+                base_image,
                 self.rect()
             )
 

@@ -98,7 +98,8 @@ def image_size(section):
 
         try:
             h, w = zarr.open(section.src_fp, "r").shape
-        except (KeyError, ValueError, AttributeError):
+        # FileNotFoundError: a name zarr cannot hold
+        except (KeyError, ValueError, AttributeError, FileNotFoundError):
             return None
         return w, h
 
