@@ -96,7 +96,7 @@ jobs:
                                  or .committer.login != "web-flow"
                                  or .commit.verification.verified != true) | .sha[0:8]')
             if [ -n "$others" ]; then
-              echo "commits not authored, committed and signed as dependabot's -- the label is required:"
+              echo "commits missing Dependabot attribution, a web-flow committer, or a verified signature; the label is required:"
               echo "$others"
             else
               echo "dependabot $UPDATE_TYPE -- the test suite is the evidence"
