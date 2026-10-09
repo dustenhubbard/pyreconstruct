@@ -1,9 +1,9 @@
-"""The `merge-evidence` check: main's copy runs it too, on exact label names.
+"""The `merge-evidence` check: only main's copy runs it, on exact label names.
 
 `.github/workflows/merge-evidence.yml` reports the required `merge-evidence`
-check. It runs on `pull_request_target`, so the copy on main also judges a PR
-that edits the file, and it must never check out or run the PR head. Until a
-later change drops `pull_request`, the head copy reports the check as well.
+check. It runs on `pull_request_target` alone, so the copy on main judges a PR
+that edits the file, and it must never check out or run the PR head. It has no
+`pull_request` trigger, so the head copy reports nothing.
 Only a label named exactly `reviewed` passes it. The one exception is a
 dependabot patch or minor bump. Every commit must have Dependabot author
 attribution, web-flow as committer, and a verified signature. These checks
@@ -44,11 +44,20 @@ def source(filename=WORKFLOW):
 
 
 # ---- the workflow file ------------------------------------------------------
-def test_runs_from_mains_copy_too_on_every_label_change():
-    triggers = source().split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
-    target = triggers.split("  pull_request_target:\n", 1)[1].split("\n  pull", 1)[0]
+def triggers():
+    return source().split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
+
+
+def test_runs_from_mains_copy_on_every_label_change():
+    target = triggers().split("  pull_request_target:\n", 1)[1].split("\n  pull", 1)[0]
     for event in ("opened", "reopened", "synchronize", "labeled", "unlabeled"):
         assert event in target, event
+
+
+def test_only_mains_copy_reports_the_check():
+    # A `pull_request` trigger runs the PR head's copy, which the PR can edit.
+    events = re.findall(r"^  (\w+):", triggers(), re.M)
+    assert events == ["pull_request_target"]
 
 
 def test_keeps_the_required_check_name():
