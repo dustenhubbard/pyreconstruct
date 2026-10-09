@@ -38,6 +38,13 @@ class FieldWidgetMouse(FieldWidgetData):
                 mode (int): number corresponding to mouse mode
         """
         self.endPendingEvents()  # end pending mouse events
+
+        # A real tool change ends a lasso. The pointer shortcut pressed
+        # mid-lasso is not one: it calls this with the pointer already the
+        # tool, and that lasso keeps going.
+        if mode != self.mouse_mode:
+            self.cancelLasso()
+
         self.mouse_mode = mode
 
         ## Set cursor icon
@@ -336,6 +343,77 @@ class FieldWidgetMouse(FieldWidgetData):
         )
 
         return True
+
+    def cancelLasso(self) -> bool:
+        """Drop a lasso in progress without selecting anything.
+
+        Only ``pointerRelease`` ends a lasso, and only the release of the
+        lasso's own press, in pointer mode and outside a pinch, reaches it. A
+        tool change, a pinch, or a right press that opened the context menu
+        left the lasso flag, its points and the edge-pan timer behind: the
+        points stayed on screen in the new tool's pen, and the timer kept
+        panning the view whenever the cursor came near an edge.
+
+        Dropped rather than committed: a selection made by a tool change, a
+        pinch or a menu is one nobody asked for. Nothing is lost, so there is
+        no notice.
+
+        The press goes with it (``dropPress``). The button is usually still
+        down, and the tool that inherits it must not act on a press it never
+        saw. Otherwise a rectangle trace indexed the emptied
+        ``current_trace``, a pencil or stamp drew, the knife cut, and the
+        pointer, after the pinch or a switch back, started a second lasso and
+        its timer.
+
+            Returns:
+                (bool): True if a lasso was in progress and was dropped
+        """
+        if not self.is_selecting_traces:
+            return False
+
+        self.is_selecting_traces = False
+        self.current_trace = []
+        self.deactivateMouseBoundaryTimer()
+        self.dropPress()
+        self.update()
+
+        return True
+
+    def dropPress(self):
+        """Drop the press under way, so no tool acts on it again.
+
+        What owns a gesture, and for how long:
+
+        * The press that starts a gesture owns it until every button is up.
+          The click flags (``lclick``, ``mclick``, ``rclick``) are that press;
+          the tools read them, not the buttons.
+        * A secondary press comes while the owning press is held: a second
+          mouse button, or a tablet's barrel button with the tip down.
+          ``mousePressEvent`` decides what it does. A middle press made with
+          another button is ignored, the knife ignores one mid-cut, and a
+          right press takes over from the left one. Where that opens the
+          context menu, the menu takes the press and ends a lasso under way.
+        * A press made during a pinch is dropped as it arrives. Every mouse
+          event is ignored while gesturing, so no tool sees it, and its click
+          flags used to outlast the pinch: the moves after it acted on a
+          press no tool had started.
+        * Dropping the press clears the click flags and the pointer's recorded
+          press, and marks what is still held as dropped. A press that reports
+          another button down as well joins the dropped one and is ignored.
+          ``mousePressEvent`` reads the held buttons afresh, so otherwise the
+          dropped button came back with it, for a tool that never saw it
+          pressed.
+        * The dropped press is over when every button is up: at the release
+          that leaves none down, which finishes nothing, or a move that
+          reports none. A press of one button alone, outside a pinch, starts
+          afresh as well. Either the dropped button is up and its release
+          never reached the field, or the device stopped reporting it (a
+          barrel press can arrive alone), and a press cannot hand back a
+          button it does not report.
+        """
+        self.lclick, self.rclick, self.mclick = False, False, False
+        self.pointer_press_recorded = False
+        self.press_dropped = True
 
     def pointerRelease(self, event):
         """Called when mouse is released in pointer mode."""

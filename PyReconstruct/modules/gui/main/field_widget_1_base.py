@@ -108,6 +108,7 @@ class FieldWidgetBase:
         self.lclick : bool                  = False
         self.rclick : bool                  = False
         self.mclick : bool                  = False
+        self.press_dropped : bool           = False  # see dropPress
 
         self.mouse_boundary_timer : QTimer  = None
         self.hover_display_timer : QTimer   = None
@@ -209,6 +210,7 @@ class FieldWidgetBase:
         self.lclick               = False
         self.rclick               = False
         self.mclick               = False
+        self.press_dropped        = False
 
         ## Mouse tool defaults
         self.is_panzooming        = False
