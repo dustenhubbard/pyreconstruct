@@ -1927,7 +1927,7 @@ class Series():
                 snums.update(obj_data.traces.keys())
         return snums
 
-    def _forEachObjectSection(self, obj_names, message, edit, series_states=None, eta=True):
+    def _forEachObjectSection(self, obj_names, message, edit, series_states=None, eta=True, writes_after=False):
         """Run an edit on every section a set of objects appears on.
 
         The loop the bulk object operations all need: visit only the sections
@@ -1949,12 +1949,15 @@ class Series():
                 edit (callable): called with each Section; returns True if
                     that section was modified and should be saved
                 series_states (dict): optional dict for GUI undo states
+                writes_after (bool): True if the caller logs after the loop
+                    (see enumerateSections)
         """
         for snum, section in self.enumerateSections(
             message=message,
             series_states=series_states,
             section_numbers=self.getObjectSections(obj_names),
             eta=eta,
+            writes_after=writes_after,
         ):
             if edit(section):
                 section.save()
@@ -2024,7 +2027,8 @@ class Series():
         for snum, section in self.enumerateSections(
             message="Modifying alignments...",
             series_states=series_states,
-            breakable=False
+            breakable=False,
+            writes_after=log_event,
         ):
             old_tforms = section.tforms.copy()
             new_tforms = {}
@@ -2065,7 +2069,8 @@ class Series():
         for snum, section in self.enumerateSections(
             message="Modifying brightness/contrast profiles...",
             series_states=series_states,
-            breakable=False
+            breakable=False,
+            writes_after=log_event,
         ):
             old_profiles = section.bc_profiles.copy()
             # SeriesIterator records a per-section undo only when a section
@@ -2169,7 +2174,8 @@ class Series():
             if cross_sectioned:
 
                 for snum, section in self.enumerateSections(
-                    message="Creating ztrace..."
+                    message="Creating ztrace...",
+                    writes_after=True,
                 ):
 
                     if obj_name in section.contours:
@@ -2185,7 +2191,8 @@ class Series():
             else:
 
                 for snum, section in self.enumerateSections(
-                    message="Creating ztrace..."
+                    message="Creating ztrace...",
+                    writes_after=True,
                 ):
 
                     if obj_name in section.contours:
@@ -2646,10 +2653,15 @@ class Series():
 
         ## Modify object on every section
         attrs_migrated = False
+        section_numbers = self.getObjectSections(obj_names)
         for snum, section in self.enumerateSections(
             message="Modifying object(s)...",
             series_states=series_states,
-            section_numbers=self.getObjectSections(obj_names)
+            section_numbers=section_numbers,
+            # an object with no traces has its attrs moved after the loop
+            writes_after=bool(name) and not any(
+                n in self.sections for n in section_numbers
+            ),
         ):
 
             ## Move object attrs
@@ -3883,7 +3895,8 @@ class Series():
             return True
 
         self._forEachObjectSection(
-            obj_names, "Removing trace tags...", edit, series_states
+            obj_names, "Removing trace tags...", edit, series_states,
+            writes_after=log_event,
         )
 
         if log_event:
@@ -3952,6 +3965,7 @@ class Series():
         self._forEachObjectSection(
             obj_names, "Reapplying custom color palette...", edit, series_states,
             eta=True,   # the first bar with a time estimate (2026-09-14); every operation bar has one since fork #421
+            writes_after=log_event,
         )
 
         if log_event:
@@ -3993,6 +4007,7 @@ class Series():
             "Hiding object(s)..." if hide else "Unhiding object(s)...",
             edit,
             series_states,
+            writes_after=log_event,
         )
 
         if log_event:
@@ -4073,7 +4088,8 @@ class Series():
         for snum, section in self.enumerateSections(
             message="Restoring visibility...",
             series_states=series_states,
-            section_numbers=section_numbers
+            section_numbers=section_numbers,
+            writes_after=log_event,
         ):
             modified = False
             for name, by_section in snapshot.items():
@@ -4114,7 +4130,8 @@ class Series():
         """
         for snum, section in self.enumerateSections(
             message="Hiding traces..." if hidden else "Unhiding traces...",
-            series_states=series_states
+            series_states=series_states,
+            writes_after=log_event,
         ):
             for trace in section.tracesAsList():
                 trace.setHidden(hidden)
@@ -4592,7 +4609,8 @@ class Series():
         """
         for snum, section in self.enumerateSections(
             message="Importing flags...",
-            series_states=series_states
+            series_states=series_states,
+            writes_after=log_event,
         ):
             if snum not in other.sections:  # skip if section does not exist in other series
                 continue

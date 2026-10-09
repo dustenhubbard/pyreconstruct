@@ -23,6 +23,16 @@ What is pinned here:
     split's object attributes, an import's groups, hosts and alignment, and
     its series file) stops there the same way, while a pass that has nothing
     left to write ends as it was
+  * so do the passes that only log after their sections, the z-trace made
+    from an object, and a rename of an object with no traces: a log or
+    attribute written then is lost with the closed series, and the pass
+    would end as if it had finished
+  * Calibrate and Edit all image sources write through the window after
+    their pass, and the window then holds the series opened in its place:
+    stopped, they leave that series alone, with logging off too
+  * a series undo is all or nothing, so it does not stop there: it
+    finishes on the series it began on, and the window leaves the series
+    opened in its place alone
 """
 import pytest
 
@@ -142,12 +152,13 @@ def test_a_failed_close_leaves_the_series_usable(series, monkeypatch):
     assert visited == sorted(series.sections)
 
 
-def _closes_at_the_end(series, save_first=False):
+def _closes_at_the_end(series, save_first=False, then=None):
     """Close the series at the last progress update of its next pass.
 
     The last update is the only one at 100%: the others report the share of
     sections done before the next one loads. save_first saves the .jser at
-    the switch, as answering Yes to the save prompt does.
+    the switch, as answering Yes to the save prompt does. then runs after the
+    close, as the rest of opening another series does.
     """
     seen = {"reported": [], "switched": False}
 
@@ -160,6 +171,8 @@ def _closes_at_the_end(series, save_first=False):
                 if save_first:
                     series.saveJser()
                 series.close()
+                if then is not None:
+                    then()
 
     series.setProgressReporter(Closes)
     return seen
@@ -303,3 +316,286 @@ def test_a_pass_with_nothing_left_to_write_ends_at_the_last_update(series):
 
     assert visited == sorted(series.sections)
     assert seen["switched"] and series.closed
+
+
+OBJ = "d03p14"
+
+
+def _events(series):
+    return [log.event for log in series.log_set.all_logs]
+
+
+def _remove_tags(series, tmp_path):
+    return series.removeAllTraceTags([OBJ])
+
+
+def _recolor(series, tmp_path):
+    return series.reapplyAutosegColors([OBJ])
+
+
+def _hide(series, tmp_path):
+    return series.hideObjects([OBJ])
+
+
+def _restore_visibility(series, tmp_path):
+    snapshot = series.snapshotObjectVisibility([OBJ])
+    flipped = {
+        name: {snum: [not h for h in flags] for snum, flags in by.items()}
+        for name, by in snapshot.items()
+    }
+    return series.restoreObjectVisibility(flipped)
+
+
+def _hide_all(series, tmp_path):
+    return series.hideAllTraces()
+
+
+def _modify_alignments(series, tmp_path):
+    alignments = {a: a for a in series.alignments}
+    alignments["renamed"] = sorted(series.alignments)[0]
+    return series.modifyAlignments(alignments)
+
+
+def _modify_bc(series, tmp_path):
+    profiles = {p: p for p in series.bc_profiles}
+    profiles["renamed"] = sorted(series.bc_profiles)[0]
+    return series.modifyBCProfiles(profiles)
+
+
+def _import_flags(series, tmp_path):
+    other = _open_other(tmp_path)
+    try:
+        return series.importFlags(other, (min(other.sections), max(other.sections) + 1))
+    finally:
+        other.close()
+
+
+def _ztrace_midpoints(series, tmp_path):
+    return series.createZtrace(OBJ, cross_sectioned=True)
+
+
+def _ztrace_per_trace(series, tmp_path):
+    return series.createZtrace(OBJ, cross_sectioned=False)
+
+
+def _rename_traceless(series, tmp_path):
+    series.setAttr("traceless", "comment", "kept")
+    # its log comes before the pass; the attributes move after it
+    return series.editObjectAttributes(
+        ["traceless"], name="renamed", log_event=False
+    )
+
+
+LOGS_OR_WRITES_AFTER = {
+    "remove trace tags": _remove_tags,
+    "reapply colors": _recolor,
+    "hide objects": _hide,
+    "restore visibility": _restore_visibility,
+    "hide all traces": _hide_all,
+    "modify alignments": _modify_alignments,
+    "modify brightness profiles": _modify_bc,
+    "import flags": _import_flags,
+    "ztrace from midpoints": _ztrace_midpoints,
+    "ztrace from every trace": _ztrace_per_trace,
+    "rename an object with no traces": _rename_traceless,
+}
+
+
+@pytest.mark.parametrize("leave_open", [False, True])
+@pytest.mark.parametrize("run", list(LOGS_OR_WRITES_AFTER.values()),
+                         ids=list(LOGS_OR_WRITES_AFTER))
+def test_a_pass_that_logs_after_its_sections_stops_at_the_last_update(
+    series, tmp_path, run, leave_open
+):
+    from PyReconstruct.modules.datatypes.series import SeriesClosedError
+    series.leave_open = leave_open
+    logged = _events(series)
+    ztraces = set(series.ztraces)
+    seen = _closes_at_the_end(series)
+
+    with pytest.raises(SeriesClosedError, match="part-way"):
+        run(series, tmp_path)
+
+    assert seen["switched"] and series.closed
+    # nothing went into the closed series after its last section
+    assert _events(series) == logged
+    assert set(series.ztraces) == ztraces
+    assert "renamed" not in series.obj_attrs
+
+
+def test_a_pass_with_logging_off_ends_at_the_last_update(series):
+    seen = _closes_at_the_end(series)
+
+    series.hideAllTraces(log_event=False)
+
+    assert seen["switched"] and series.closed
+
+
+def test_a_rename_with_traces_ends_at_the_last_update(series):
+    """The rename moves the object's attributes on the first section, so
+    nothing is left to write after the last one."""
+    seen = _closes_at_the_end(series)
+
+    series.editObjectAttributes([OBJ], name="renamed")
+
+    assert seen["switched"] and series.closed
+    assert "renamed" in series.obj_attrs
+
+
+class _Field:
+    """The parts of the field that setMag touches. The window reuses its
+    field for the series it opens next, so self.series changes under a
+    pass."""
+
+    def __init__(self, series):
+        from PyReconstruct.modules.backend.func.state_manager import (
+            SeriesStates,
+        )
+        from PyReconstruct.modules.gui.main.field_widget_4_data import (
+            FieldWidgetData,
+        )
+        self.series = series
+        self.series_states = SeriesStates(series)
+        self.reloaded = False
+        self.table_manager = type(
+            "Tables", (), {"recreateTables": lambda *a, **k: None}
+        )()
+        from PyReconstruct.modules.gui.main.field_widget_1_base import (
+            FieldWidgetBase,
+        )
+        self.mainwindow = type(
+            "Window", (), {"createContextMenus": lambda *a, **k: None}
+        )()
+        self.setMag = FieldWidgetData.setMag.__get__(self)
+        self.seriesUndo = FieldWidgetBase.seriesUndo.__get__(self)
+
+    def reload(self, clear_states=False):
+        self.reloaded = True
+        # as the window's seriesModified(True) at the end of a real reload
+        self.series.modified = True
+
+
+def test_a_calibration_closed_at_the_last_update_leaves_the_next_series_alone(
+    series, tmp_path
+):
+    from PyReconstruct.modules.datatypes.series import SeriesClosedError
+    field = _Field(series)
+    other = _open_other(tmp_path)
+    try:
+        logged = _events(other)
+        mag = series.loadSection(min(series.sections)).mag
+        _closes_at_the_end(series, then=lambda: setattr(field, "series", other))
+
+        with pytest.raises(SeriesClosedError, match="part-way"):
+            field.setMag(mag * 1.5)
+
+        assert _events(other) == logged
+        assert not field.reloaded
+    finally:
+        other.close()
+
+
+def test_edit_all_image_sources_closed_at_the_last_update_leaves_the_next_series_alone(
+    series, tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+    from PyReconstruct.modules.datatypes.series import SeriesClosedError
+    from PyReconstruct.modules.gui.table import section as section_mod
+    from PyReconstruct.modules.gui.table.section import SectionTableWidget
+    for snum in series.sections:
+        series.data["sections"][snum]["locked"] = False
+    monkeypatch.setattr(
+        section_mod.QInputDialog, "getText",
+        staticmethod(lambda *a, **k: ("img_#.tif", True)),
+    )
+    marked = []
+    window = SimpleNamespace(
+        saveAllData=lambda: None,
+        seriesModified=marked.append,
+        field=SimpleNamespace(reload=lambda: None, reloadImage=lambda: None),
+    )
+    table = SimpleNamespace(
+        series=series, mainwindow=window,
+        manager=SimpleNamespace(updateSections=lambda snums: None),
+    )
+    logged = _events(series)
+    _closes_at_the_end(series)
+
+    with pytest.raises(SeriesClosedError, match="part-way"):
+        SectionTableWidget.modifyAllSrc(table)
+
+    # marking the window modified would mark the series opened in its place
+    assert marked == []
+    assert _events(series) == logged
+
+
+def test_a_calibration_with_logging_off_leaves_the_next_series_alone(
+    series, tmp_path
+):
+    """With nothing to log, the z-traces, reload and tables after the pass
+    still go through self.series, which is now the series opened in its
+    place, so the pass stops there all the same."""
+    from PyReconstruct.modules.datatypes.series import SeriesClosedError
+    from PyReconstruct.modules.datatypes.ztrace import Ztrace
+    field = _Field(series)
+    other = _open_other(tmp_path)
+    try:
+        other.ztraces["other_only"] = Ztrace("other_only", (255, 0, 0), [])
+        other.modified = False
+        mag = series.loadSection(min(series.sections)).mag
+        _closes_at_the_end(series, then=lambda: setattr(field, "series", other))
+
+        with pytest.raises(SeriesClosedError, match="part-way"):
+            field.setMag(mag * 1.5, log_event=False)
+
+        # the old series' calibration states never get the new one's z-trace
+        for snum in series.sections:
+            for state in field.series_states[snum].undo_states + [
+                field.series_states[snum].current_state
+            ]:
+                assert "other_only" not in (getattr(state, "ztraces", None) or {})
+        assert not other.modified
+        assert not field.reloaded
+    finally:
+        other.close()
+
+
+def test_a_series_undo_closed_at_the_last_update_finishes_on_the_closed_series(
+    series, tmp_path
+):
+    """An undo is all or nothing. Its sections are saved before the last
+    update, so it goes on to put back the series attributes and move its
+    step to the redo stack, on the series it began on. The field then holds
+    the series opened in its place, and leaves that one alone."""
+    field = _Field(series)
+    snums = sorted(series.sections)
+    mag = series.loadSection(snums[0]).mag
+    comment = series.getAttr(OBJ, "comment")
+    field.setMag(mag * 1.5)
+    series.setAttr(OBJ, "comment", "after action")
+    states = field.series_states
+    assert states.canUndo()[0]
+    section_undos = {n: len(states[n].undo_states) for n in snums}
+    other = _open_other(tmp_path)
+    try:
+        other.modified = False
+        field.reloaded = False
+        # keep the working files, so the restored sections can be read back
+        series.leave_open = True
+        seen = _closes_at_the_end(
+            series, then=lambda: setattr(field, "series", other)
+        )
+
+        field.seriesUndo()
+
+        assert seen["switched"] and series.closed
+        assert all(series.loadSection(n).mag == mag for n in snums)
+        assert series.getAttr(OBJ, "comment") == comment
+        assert not states.undos and len(states.redos) == 1
+        for n in snums:
+            assert len(states[n].undo_states) == section_undos[n] - 1
+            assert len(states[n].redo_states) == 1
+        assert not other.modified
+        assert not field.reloaded
+    finally:
+        other.close()
