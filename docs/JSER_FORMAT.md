@@ -406,8 +406,11 @@ Parsing rules that a generator must respect:
   quoted is parsed again the old way. So a name such as `"alice"` in an older log is still
   read as the literal text.
 - Rows written by older builds were never quoted. In those, a `", "` in a username or
-  object name shifts every later field and the row does not parse. This is one reason
-  contour names have their commas replaced with underscores.
+  object name shifts every later field. The row then either does not parse or loads
+  silently with the wrong values in its fields: the row
+  `26-01-01, 10:00, Smith, John, 1, 2, Modified trace(s)` loads as user `Smith`, object
+  `John`, section `1` and event `2, Modified trace(s)`. This is one reason contour names
+  have their commas replaced with underscores.
 - **One row is one line.** The writer replaces a CR, LF or CRLF inside any field with
   `_`. A reader of older files must still expect a row split across lines by a newline
   pasted into a name. PyReconstruct starts a row only at a line that opens with the
