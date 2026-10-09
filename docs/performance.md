@@ -1,9 +1,10 @@
 # Performance
 
-This distribution opens and loads large series about **3x faster** than the
-upstream PyReconstruct it tracks: **3.23x** on a real 427 MB autosegmented series
-opened for the first time, and **2.97x** when reopening it. Both versions build
-the same traces from the same file, so the speedup is not from skipped work.
+This distribution opens large series about **3x faster** than the upstream
+PyReconstruct it tracks: **3.34x** on a real 427 MB autosegmented series opened
+for the first time, and **2.86x** when reopening it. Both versions load every
+trace from the same file. This distribution defers Feret-diameter computation
+until a Feret value is needed.
 
 The wins are algorithmic and single-threaded (NumPy-vectorized trace geometry,
 deferred Feret-diameter computation, NumPy point mapping, orjson-backed `.jser`
@@ -12,26 +13,36 @@ large autosegmented series. Small series gain much less.
 
 ## Opening large series
 
-Open is `Series.openJser`. Load is `SeriesData.refresh()`, which builds every
-trace's geometry and is what PyReconstruct does right after an open. "First open"
-parses the whole `.jser`; "reopen" uses the unpacked copy PyReconstruct keeps
-beside it. Each figure is the median of 3 runs, each in a fresh process. Both
-versions run in one shared Python environment, so only the code differs.
+Open is `Series.openJser`, which reads the series and builds every trace's
+geometry: what PyReconstruct does when you open a series. "First open" parses
+the whole `.jser`; "reopen" uses the unpacked copy PyReconstruct keeps beside
+it. The benchmark then runs one extra full `SeriesData.refresh()`, the same
+pass PyReconstruct repeats after some edits; the second table includes it.
 
-Measured October 9, 2026 at fork commit `d021a9ec` against upstream commit
+I measured on October 9, 2026 at fork commit `d021a9ec` against upstream commit
 `af3f8176` (they share `5f324e2b`; upstream has 56 commits since that are not in
-this fork), on an AMD EPYC 7352 (96 threads, 504 GB) with Python 3.11. The
-1-minute load average was 4.56-18.43. Times are upstream -> this fork.
+this fork), on an AMD EPYC 7352 (96 threads, 504 GiB) with Python 3.11. Both
+versions ran in one shared Python environment, so only the code differs. Each
+figure is the median of 3 runs, each in a fresh process. The 1-minute load
+average was 4.56-18.43. Times are upstream -> this fork.
 
-| Series | Size | Traces | Open, first time | First open + load | Speedup | Reopen + load | Speedup |
-|---|--:|--:|---|---|--:|---|--:|
-| class_series (small example) | 0.6 MB | 232 | 0.21 s -> 0.17 s | 0.32 s -> 0.24 s | **1.34x** | 0.25 s -> 0.22 s | **1.16x** |
-| WVHJM (autosegmented) | 427 MB | 161,767 | 132.77 s -> 39.76 s | 219.42 s -> 67.89 s | **3.23x** | 175.79 s -> 59.13 s | **2.97x** |
+| Series | Size | Traces | First open | Speedup | Reopen | Speedup |
+|---|--:|--:|---|--:|---|--:|
+| class_series (small example) | 0.6 MB | 232 | 0.21 s -> 0.17 s | **1.25x** | 0.14 s -> 0.14 s | **0.95x** |
+| WVHJM (autosegmented) | 427 MB | 161,767 | 132.77 s -> 39.76 s | **3.34x** | 87.15 s -> 30.51 s | **2.86x** |
 
-| Series | Peak memory, first open + load | Peak memory, reopen + load |
+With the extra refresh, each time below is the open median plus the refresh
+median:
+
+| Series | First open + extra refresh | Speedup | Reopen + extra refresh | Speedup |
+|---|---|--:|---|--:|
+| class_series (small example) | 0.32 s -> 0.24 s | **1.34x** | 0.25 s -> 0.22 s | **1.16x** |
+| WVHJM (autosegmented) | 219.42 s -> 67.89 s | **3.23x** | 175.79 s -> 59.13 s | **2.97x** |
+
+| Series | Peak memory, first open + extra refresh | Peak memory, reopen + extra refresh |
 |---|---|---|
-| class_series (small example) | 145 MB -> 115 MB | 142 MB -> 113 MB |
-| WVHJM (autosegmented) | 2,010 MB -> 2,937 MB | 434 MB -> 873 MB |
+| class_series (small example) | 145 MiB -> 115 MiB | 142 MiB -> 113 MiB |
+| WVHJM (autosegmented) | 2,010 MiB -> 2,937 MiB | 434 MiB -> 873 MiB |
 
 Peak memory is higher here than upstream: about 1.5x on a first open of the large
 series and 2x on a reopen.
