@@ -51,7 +51,8 @@ def importTransforms(series : Series, tforms_fp : str, series_states=None, log_e
         for section_num, section in series.enumerateSections(
             message="Importing transforms...",
             series_states=series_states,
-            breakable=False
+            breakable=False,
+            writes_after=True,
         ):
             if section_num in tforms:
                 tform = tforms[section_num]

@@ -68,7 +68,9 @@ class SeriesClosedError(FileNotFoundError):
     that one handles this the same.
 
     Not quiet: a pass that writes may have saved some sections and not the
-    rest, so the app's exception hook reports it like any other error. Only
+    rest, so the app's exception hook reports it like any other error. A
+    pass with series data to write after its last section (writes_after)
+    stops at the last update too, after every section is done. Only
     a caller that loses nothing by stopping (the read-only pixel-dust and
     Duplicates scans in MainWindow) catches it and ends without a word.
     """
@@ -1814,7 +1816,7 @@ class Series():
         section = Section(section_num, self)
         return section
     
-    def enumerateSections(self, show_progress : bool = True, message : str = "Loading series data...", series_states=None, breakable=True, section_numbers=None, eta=True):
+    def enumerateSections(self, show_progress : bool = True, message : str = "Loading series data...", series_states=None, breakable=True, section_numbers=None, eta=True, writes_after=False):
         """Allow iteration through the sections.
 
         Proper use in a for loop: for snum, section in series.enumerateSections():
@@ -1831,12 +1833,16 @@ class Series():
                     of the pass has run to make one (fork #421: every
                     operation's bar carries one; the series-open pass in
                     SeriesData.refresh opts out, his call of 2026-09-14)
+                writes_after (bool): True if the caller writes series data
+                    after the last section (object attributes, the series
+                    file): a series closed at the last progress update then
+                    stops the pass with SeriesClosedError, as at the others
             Returns:
                 (generator): yielding (section number, Section) pairs
         """
         iterator = SeriesIterator(
             self, show_progress, message, series_states, breakable,
-            section_numbers, eta=eta,
+            section_numbers, eta=eta, writes_after=writes_after,
         )
         ## A generator around the iterator, for the finally alone. The
         ## iterator's window-modal progress dialog has no cancel button and
@@ -2380,7 +2386,8 @@ class Series():
         for snum, section in self.enumerateSections(
                 message="Copying object(s)...",
                 series_states=series_states,
-                section_numbers=self.getObjectSections(obj_names)
+                section_numbers=self.getObjectSections(obj_names),
+                writes_after=True,
         ):
 
             modified = False
@@ -4289,7 +4296,8 @@ class Series():
         try:
             for snum, section in self.enumerateSections(
                 message="Importing traces...",
-                series_states=series_states
+                series_states=series_states,
+                writes_after=True,
             ):
                 ## Skip if section not requested or does not exist in other series
                 in_srange = srange is None or snum in range(*srange)
@@ -4450,7 +4458,8 @@ class Series():
         for s_snum, s_section in self.enumerateSections(
             message="Importing alignments...",
             series_states=series_states,
-            breakable=False
+            breakable=False,
+            writes_after=True,
         ):
             if s_snum in other.sections:
                 o_section = other.loadSection(s_snum)
@@ -4493,7 +4502,10 @@ class Series():
                 import_as (list): the list of (profile to import, name for profile in current series)
                 log_event (bool): True if the event should be logged
         """
-        for s_snum, s_section in self.enumerateSections(message="Importing brightness/contrast profiles..."):
+        for s_snum, s_section in self.enumerateSections(
+            message="Importing brightness/contrast profiles...",
+            writes_after=True,
+        ):
             if s_snum in other.sections:
                 o_section = other.loadSection(s_snum)
                 for profile, new_name in import_as:
@@ -5865,7 +5877,8 @@ class Series():
         for snum, section in self.enumerateSections(
             message="Splitting object...",
             series_states=series_states,
-            section_numbers=self.getObjectSections([name])
+            section_numbers=self.getObjectSections([name]),
+            writes_after=True,
         ):
             if name in section.contours:
                 traces = section.contours[name].getTraces()
@@ -5994,7 +6007,7 @@ class Series():
     
 class SeriesIterator():
 
-    def __init__(self, series : Series, show_progress : bool, message : str, series_states, breakable=True, section_numbers=None, eta=True):
+    def __init__(self, series : Series, show_progress : bool, message : str, series_states, breakable=True, section_numbers=None, eta=True, writes_after=False):
         """Create the series iterator object.
 
             Params:
@@ -6005,6 +6018,8 @@ class SeriesIterator():
                 breakable (bool): True if series state is breakable
                 section_numbers (iterable): if given, restrict iteration to
                     these section numbers
+                writes_after (bool): stop at the last progress update too
+                    if the series closed (see Series.enumerateSections)
         """
         self.series = series
         self.section = None
@@ -6013,6 +6028,7 @@ class SeriesIterator():
         self.series_states = series_states
         self.section_subset = None if section_numbers is None else set(section_numbers)
         self.eta = eta
+        self.writes_after = writes_after
         if self.series_states is not None:
             self.series_states.addState(breakable)
 
@@ -6082,6 +6098,16 @@ class SeriesIterator():
                 # is always 1 -- except for an empty subset (e.g. every
                 # requested section was invalid), where it would be 0/0
                 self.reporter.set_progress(100)
+            # the last update, or the last section's loop body, ran the event
+            # loop too. A pass that writes series data after its sections
+            # would write it to a closed series and end as if it finished
+            if self.writes_after and self.series.closed:
+                total = len(self.section_numbers)
+                raise SeriesClosedError(
+                    f"Series {self.series.name} was closed while this ran: "
+                    f"{self.message} It stopped part-way, after all {total} "
+                    "sections and before the series data that goes with them."
+                )
             raise StopIteration
 
     def finishProgress(self):
