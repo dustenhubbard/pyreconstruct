@@ -275,6 +275,8 @@ def applyContourRenames(series_data : dict, renames : dict, collisions : dict):
     if isinstance(host_tree, dict):
         rebuilt = {}
         for obj_name, hosts in host_tree.items():
+            if isinstance(hosts, str):
+                hosts = [hosts]  # one host as a bare string, as HostTree.add reads it
             if not isinstance(hosts, list):
                 rebuilt[obj_name] = hosts  # shape this code does not know: keep
                 continue
