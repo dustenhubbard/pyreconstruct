@@ -55,7 +55,7 @@ class FakeHdiutil:
         self.detached = []
         self.timeouts = []
 
-    def __call__(self, args, timeout):
+    def __call__(self, args, timeout=None):
         self.timeouts.append(timeout)
         if args == ["info", "-plist"]:
             if self.info_error:
@@ -348,12 +348,17 @@ def test_hdiutil_failure_is_logged_not_raised(frozen, layout, capsys):
 
 # The hidden root entries an installer image may hold.
 
-@pytest.mark.parametrize("name", sorted(II.HIDDEN))
+@pytest.mark.parametrize("name", [
+    ".DS_Store", ".background.tiff", ".background.png", ".VolumeIcon.icns",
+    ".fseventsd", ".Trashes", ".Spotlight-V100",
+])
 def test_hidden_entries_dmgbuild_and_macos_write_are_allowed(frozen, layout, name):
     installed, volume = layout
     entry = volume / name
-    if not entry.exists():
-        entry.mkdir() if "." not in name[1:] else entry.write_bytes(b"")
+    if name in (".fseventsd", ".Trashes", ".Spotlight-V100"):
+        entry.mkdir()
+    elif not entry.exists():
+        entry.write_bytes(b"")
     hd = FakeHdiutil([image(volume)])
     assert run(installed, hd) == [str(volume)]
 
