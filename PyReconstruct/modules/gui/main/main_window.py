@@ -3,6 +3,7 @@
 
 import math
 import shutil
+import struct
 import traceback
 
 from shiboken6 import isValid
@@ -158,42 +159,142 @@ def _probeEntries(folder):
     return None
 
 
-def _sameVolume(a, b):
-    """True if two existing paths are on the same volume."""
+## Linux: the inode flag a case-folding folder carries (chattr +F), read with
+## FS_IOC_GETFLAGS, which is _IOR('f', 1, long)
+_FS_CASEFOLD_FL = 0x40000000
+_FS_IOC_GETFLAGS = (2 << 30) | (struct.calcsize("l") << 16) | (ord("f") << 8) | 1
+## Linux: statfs f_type of the filesystems that fold case only in a folder
+## carrying +F, so a folder without it keeps case. Others can fold case
+## without the flag (vfat, exfat, ntfs3, a mounted share, xfs made with
+## ascii-ci), so the flag says nothing there.
+_LINUX_CASE_BY_FLAG_ONLY = {
+    0xEF53,       # ext2, ext3, ext4
+    0x9123683E,   # btrfs, which never folds case
+    0x01021994,   # tmpfs
+}
+## macOS: pathconf name for _PC_CASE_SENSITIVE; os.pathconf_names lacks it
+_PC_CASE_SENSITIVE = 11
+## Windows: FileCaseSensitiveInfo and its FILE_CS_FLAG_CASE_SENSITIVE_DIR
+_FILE_CASE_SENSITIVE_INFO = 23
+_FILE_CS_FLAG_CASE_SENSITIVE_DIR = 0x1
+
+
+def _askFolderCase(folder):
+    """Whether names inside a folder ignore case, as the system reports it.
+
+    Asks about the folder itself, never the one above it: Linux (chattr +F)
+    and Windows (per-folder case sensitivity on NTFS) set case per folder,
+    so an empty folder can fold case under a parent that does not, or the
+    reverse. Nothing is written to the folder.
+
+        Returns:
+            (bool or None): None if the system gives no answer
+    """
     try:
-        return os.stat(a).st_dev == os.stat(b).st_dev
-    except (OSError, TypeError, ValueError):
-        return False
+        if sys.platform == "darwin":
+            # case is set per volume, and this names the folder's volume
+            sensitive = os.pathconf(folder, _PC_CASE_SENSITIVE)
+            return {0: True, 1: False}.get(sensitive)
+        if sys.platform.startswith("linux"):
+            if _linuxFolderFlags(folder) & _FS_CASEFOLD_FL:
+                return True
+            if _linuxFsType(folder) in _LINUX_CASE_BY_FLAG_ONLY:
+                return False
+            return None
+        if sys.platform == "win32":
+            flags = _windowsFolderCaseFlags(folder)
+            if flags is None:
+                return None
+            return not flags & _FILE_CS_FLAG_CASE_SENSITIVE_DIR
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+    return None
+
+
+def _linuxFolderFlags(folder):
+    """The folder's inode flags (FS_IOC_GETFLAGS); OSError if it has none."""
+    import fcntl
+    fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NONBLOCK)
+    try:
+        buf = bytearray(8)
+        fcntl.ioctl(fd, _FS_IOC_GETFLAGS, buf, True)
+    finally:
+        os.close(fd)
+    return int.from_bytes(buf[:4], sys.byteorder)
+
+
+def _linuxFsType(folder):
+    """The statfs f_type of the folder's filesystem, or None."""
+    import ctypes
+    libc = ctypes.CDLL(None, use_errno=True)
+    buf = ctypes.create_string_buffer(256)  # struct statfs; f_type is first
+    if libc.statfs(os.fsencode(folder), buf) != 0:
+        return None
+    return ctypes.c_ulong.from_buffer(buf).value & 0xFFFFFFFF
+
+
+def _windowsFolderCaseFlags(folder):
+    """The folder's FileCaseSensitiveInfo flags on Windows, or None.
+
+    A volume that keeps no flag (FAT, exFAT, most shares) refuses the call,
+    which gives None.
+    """
+    import ctypes
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create = kernel32.CreateFileW
+    create.restype = wintypes.HANDLE
+    create.argtypes = (
+        wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+        wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+    )
+    get_info = kernel32.GetFileInformationByHandleEx
+    get_info.restype = wintypes.BOOL
+    get_info.argtypes = (
+        wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD,
+    )
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    handle = create(
+        folder,
+        0x80,          # FILE_READ_ATTRIBUTES
+        0x7,           # share read, write and delete
+        None,
+        3,             # OPEN_EXISTING
+        0x02000000,    # FILE_FLAG_BACKUP_SEMANTICS, needed to open a folder
+        None,
+    )
+    if handle in (None, wintypes.HANDLE(-1).value):
+        return None
+    try:
+        flags = wintypes.DWORD(0)
+        if not get_info(
+            handle, _FILE_CASE_SENSITIVE_INFO,
+            ctypes.byref(flags), ctypes.sizeof(flags),
+        ):
+            return None
+    finally:
+        kernel32.CloseHandle(handle)
+    return flags.value
 
 
 def _caseInsensitive(folder):
     """True if names inside a folder ignore case.
 
-    Probes inside the folder first, since folders above it can sit on
-    another volume. With no entry to probe, it looks the folder's own name
-    up in its parent in the other case, which tests the parent's volume,
-    so it only does that when the parent is on the folder's volume. A
-    mount point is not: an empty drive mounted at /mnt/Data says nothing
-    about itself through /mnt. A name with no letters (2026) says nothing
-    either, so it walks up one folder at a time and asks the same of each,
-    stopping at the top of the folder's volume.
+    Probes inside the folder first. With no entry to probe, it asks the
+    system about the folder itself. It never judges the folder by the one
+    above: a mounted drive sits on another volume, and on Linux and Windows
+    one folder can fold case while the folder holding it does not.
     """
     folder = os.path.realpath(folder)
-    while True:
-        found = _probeEntries(folder)
-        if found is not None:
-            return found
-        parent, name = os.path.split(folder)
-        if not name or parent == folder or not _sameVolume(folder, parent):
-            # Nothing on this volume could tell. Say case-insensitive: the
-            # caller then treats names differing only in case as one file,
-            # which can only refuse a save, never allow one over a series
-            # in the 3D scene.
-            return True
-        swapped = name.swapcase()
-        if swapped != name:
-            return _sameDir(folder, os.path.join(parent, swapped))
-        folder = parent
+    found = _probeEntries(folder)
+    if found is None:
+        found = _askFolderCase(folder)
+    if found is None:
+        # Nothing could tell. Say case-insensitive: the caller then treats
+        # names differing only in case as one file, which can only refuse a
+        # save, never allow one over a series in the 3D scene.
+        return True
+    return found
 
 
 def _samePath(a, b):
@@ -204,14 +305,15 @@ def _samePath(a, b):
     whose file is gone still matches itself under another spelling of its
     folder (/tmp and /private/tmp on macOS). Failing that, it compares the
     nearest folders that exist, and the names below them, ignoring case when
-    that folder's volume does (Data/B.jser and data/b.jser on macOS).
+    that folder does (Data/B.jser and data/b.jser on macOS).
     """
     if not a or not b:
         return False
     if _sameDir(a, b):
         return True
-    norm = lambda p: os.path.normcase(os.path.realpath(p))
-    if norm(a) == norm(b):
+    # exact, not normcase: on Windows that lowercases, and a folder there
+    # can be case-sensitive; names differing in case are judged below
+    if os.path.realpath(a) == os.path.realpath(b):
         return True
     a_dir, a_rest = _existingAncestor(a)
     b_dir, b_rest = _existingAncestor(b)
@@ -1843,7 +1945,13 @@ class MainWindow(QMainWindow):
         name = response[0]
         label_groups = [g for g in response[1] if g in groups]
 
-        series = zarrToNewSeries(zarr_fp, label_groups, name)
+        # a raw or label array PyReconstruct cannot read is refused with a
+        # message saying what to save instead; any other error is reported
+        try:
+            series = zarrToNewSeries(zarr_fp, label_groups, name)
+        except ZarrRefused as e:
+            notify(str(e))
+            return
 
         if not series:
             return
@@ -5372,13 +5480,18 @@ class MainWindow(QMainWindow):
         exported_image.fill(Qt.transparent)
 
         ## Draw base image
+        try:
+            base_image = QImage(self.field.section.src_fp)
+        except FileNotFoundError:  # a name zarr cannot hold has no image
+            base_image = QImage()
+
         with QPainter(exported_image) as painter:
 
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
 
             painter.drawImage(
                 exported_image.rect(),
-                QImage(self.field.section.src_fp),
+                base_image,
                 self.rect()
             )
 

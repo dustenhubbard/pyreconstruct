@@ -138,7 +138,8 @@ from PyReconstruct.modules.backend.view import (
 
 from PyReconstruct.modules.backend.autoseg import (
     zarrToNewSeries,
-    labelsToObjects
+    labelsToObjects,
+    ZarrRefused,
 )
 
 # 3D mesh export (export3DObjects/export3DData) pulls trimesh + networkx; it is
