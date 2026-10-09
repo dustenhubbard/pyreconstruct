@@ -570,7 +570,12 @@ class SectionTableWidget(DataTable):
         # flickered sections must be written first or they are lost
         self.mainwindow.saveAllData()
 
-        for snum, section in self.series.enumerateSections(message="Modifying section image sources..."):
+        # writes_after: the window goes on to mark the series modified, and
+        # after a switch that is the series opened in its place
+        for snum, section in self.series.enumerateSections(
+            message="Modifying section image sources...",
+            writes_after=True,
+        ):
             section_src = s[0] + str(snum).zfill(max_digits) + s[1]
             section.src = section_src
             section.save()
