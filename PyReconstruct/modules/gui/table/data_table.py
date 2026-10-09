@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt, QItemSelection, QItemSelectionModel
 from .copy_table_widget import CopyTableWidget
 
 from PyReconstruct.modules.datatypes import Series
+from PyReconstruct.modules.datatypes.series import addMissingColumns
 from PyReconstruct.modules.gui.dialog import (
     FileDialog,
     TableColumnsDialog
@@ -118,12 +119,11 @@ class DataTable(QDockWidget):
         # set defaults
         if "static_columns" not in dir(self): self.static_columns = []
         self.columns = self.series.getOption(f"{self.name}_columns")
-        # check for missing default columns
+        # check for missing default columns (the load already added them;
+        # this covers a value set since then)
         defaults = self.series.getOption(f"{self.name}_columns", get_default=True)
-        for col_name, b in defaults:
-            if col_name not in dict(self.columns):
-                self.columns.append((col_name, b))
-                self.series.setOption(f"{self.name}_columns", self.columns)
+        if addMissingColumns(self.columns, defaults):
+            self.series.setOption(f"{self.name}_columns", self.columns)
         self.table = None
         self.process_check_event = False
         self.horizontal_headers = self.getHeaders()
