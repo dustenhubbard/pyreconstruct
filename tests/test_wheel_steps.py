@@ -24,6 +24,7 @@ from PySide6.QtGui import QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QWidget
 
+from PyReconstruct.modules.gui.main import native_scroll
 from PyReconstruct.modules.gui.main.wheel_steps import WheelSteps
 from trackpad_replay import (
     BEGAN, ENDED, MAY_BEGIN, NONE, NativeEvents, deliver, last_finger,
@@ -55,6 +56,35 @@ def phases(window):
     return window
 
 
+class Replayed:
+    """Stands in for the Objective-C runtime: the replayed NSEvent, by timestamp."""
+
+    def __init__(self, native):
+        self.native = native
+        self.timestamps = []
+
+    def read(self, timestamp):
+        self.timestamps.append(timestamp)
+        return self.native.current
+
+
+@pytest.fixture
+def production(main_window, qtbot, monkeypatch):
+    """A window that reads through `native_scroll.read`, as it ships.
+
+    Only the Objective-C runtime under it is replayed: a wheel event made in
+    Python has no NSEvent behind it.
+    """
+    main_window.show()
+    qtbot.waitExposed(main_window)
+    assert main_window.wheel_steps.read_native is native_scroll.read
+    main_window.native = NativeEvents()
+    main_window.runtime = Replayed(main_window.native)
+    monkeypatch.setattr(native_scroll, "_failed", False)
+    monkeypatch.setattr(native_scroll, "_runtime", main_window.runtime)
+    return main_window
+
+
 def scroll(window, events, modifiers=Qt.NoModifier):
     """Send wheel events over the field; the section after each one."""
     sections = []
@@ -65,6 +95,17 @@ def scroll(window, events, modifiers=Qt.NoModifier):
         native=window.native,
     )
     return sections
+
+
+def outside(window, phase, pixel, angle):
+    """Send one wheel event with the pointer outside the field; the section after."""
+    pos = QPointF(-5, -5)
+    assert not window.field.geometry().contains(pos.toPoint())
+    window.wheelEvent(QWheelEvent(
+        pos, QPointF(window.mapToGlobal(pos)), QPoint(0, pixel), QPoint(0, angle),
+        Qt.NoButton, Qt.NoModifier, phase, False,
+    ))
+    return window.series.current_section
 
 
 def swipe(drag, momentum=(), busy=True):
@@ -94,9 +135,21 @@ def test_one_mouse_notch_is_one_section(window):
     assert scroll(window, [notch(1, pixel=20)] * 4) == [49, 50, 51, 52]
 
 
-def test_one_event_of_two_notches_moves_two_sections(window):
-    assert scroll(window, [notch(2)]) == [START + 2]
-    assert scroll(window, [notch(-3)]) == [START - 1]
+def test_an_event_with_no_phase_moves_at_most_one_section(window):
+    # two notches Windows sent as one event, or a large untagged touchpad
+    # inertia event: one section, as before
+    assert scroll(window, [notch(2)]) == [START + 1]
+    assert scroll(window, [notch(-3)]) == [START]
+    assert scroll(window, [notch(2)] * 3) == [START + 1, START + 2, START + 3]
+    # and a plain notch is still one
+    assert scroll(window, [notch(-1)]) == [START + 2]
+    assert window.wheel_steps.total == pytest.approx(0)
+
+
+def test_one_big_trackpad_event_moves_several_sections(window):
+    # 150 points the system merged into one event: 30 for the first section,
+    # then 60 each
+    assert scroll(window, swipe([150]))[-1] == START + 3
 
 
 def test_fine_wheel_steps_add_up_to_one_section_per_notch(window):
@@ -222,6 +275,84 @@ def test_a_window_put_behind_drops_the_pending_swipe(window, qtbot):
     # without the drop, 12 more points would move one section
     assert scroll(window, events[4:5]) == [START]
     assert scroll(window, events[5:])[-1] == START
+
+
+@pytest.mark.parametrize("reader", ["window", "phases"])
+def test_a_window_put_behind_ignores_the_rest_of_that_swipe(request, qtbot, reader):
+    window = request.getfixturevalue(reader)
+    events = swipe([12] * 10)
+    # 24 points: 0.9 of the way to the first section
+    assert scroll(window, events[:3])[-1] == START
+    deactivate(window, qtbot)
+    window.activateWindow()
+    qtbot.waitUntil(window.isActiveWindow)
+    # 96 more points of the same swipe move nothing
+    assert scroll(window, events[3:])[-1] == START
+    # the next swipe, or a mouse wheel, moves as usual
+    assert scroll(window, swipe([12] * 5))[-1] == START + 1
+    assert scroll(window, [notch(1)]) == [START + 2]
+
+
+def test_a_mouse_wheel_after_a_window_switch_moves(window, qtbot):
+    deactivate(window, qtbot)
+    window.activateWindow()
+    qtbot.waitUntil(window.isActiveWindow)
+    assert scroll(window, [notch(1)]) == [START + 1]
+
+
+# --- the pointer outside the field --------------------------------------------
+
+
+def test_scroll_outside_the_field_moves_nothing_and_keeps_the_leftover(window):
+    assert scroll(window, [(P.NoScrollPhase, 0, 100)]) == [START]
+    # 20 more would cross a notch; outside the field it neither moves nor uses up
+    assert outside(window, P.NoScrollPhase, 0, 20) == START
+    assert scroll(window, [(P.NoScrollPhase, 0, 20)]) == [START + 1]
+
+
+def test_trackpad_travel_outside_the_field_keeps_the_leftover(window):
+    begin, first, second, *rest = swipe([12] * 4, busy=False)
+    # 24 points: 0.9 of the way to the first section
+    assert scroll(window, [begin, first, second]) == [START] * 3
+    assert outside(window, P.ScrollUpdate, 12, 24) == START
+    # without the guard first, the 12 points outside would have used up the step
+    assert scroll(window, rest) == [START + 1] * 3
+
+
+# --- the reader as it ships ---------------------------------------------------
+
+
+@ORDERS
+def test_the_window_reads_momentum_through_native_scroll(production, busy):
+    # the busy order is where Qt's phases alone let the first momentum event through
+    events = swipe([12] * 9, momentum=[50, 16, 12, 8, 4, 2, 1], busy=busy)
+    sections = scroll(production, events)
+    assert sections[-1] == START + 2
+    assert after_lift(events, sections) == 0
+    assert production.runtime.timestamps
+
+
+def test_a_reader_that_finds_no_event_falls_back_on_qt_phases(production):
+    production.runtime.read = lambda timestamp: None
+    events = swipe([12] * 9, momentum=[20, 16, 12, 8, 4, 2, 1], busy=False)
+    sections = scroll(production, events)
+    assert sections[-1] == START + 2
+    assert after_lift(events, sections) == 0
+    assert not native_scroll._failed
+
+
+def test_a_reader_that_fails_turns_itself_off_and_scrolling_still_works(production):
+    calls = []
+
+    def broken(timestamp):
+        calls.append(timestamp)
+        raise OSError("AppKit is not loaded")
+
+    production.runtime.read = broken
+    sections = scroll(production, swipe([12] * 9, momentum=[20, 16, 12], busy=False))
+    assert native_scroll._failed
+    assert len(calls) == 1  # never asked again
+    assert sections[-1] == START + 2
 
 
 # --- Qt's phases alone (Wayland, or a Mac whose NSEvent cannot be read) ------------

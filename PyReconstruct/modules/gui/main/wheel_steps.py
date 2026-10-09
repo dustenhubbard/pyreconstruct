@@ -9,14 +9,16 @@ two-finger swipe run through dozens of sections.
 `WheelSteps` adds the scroll up and moves one section per notch, or per
 `STEP_PX` pixels of finger travel on a trackpad. The first section of a swipe
 comes at half that, so a short flick moves one. Nothing moves after the
-fingers lift.
+fingers lift. An event with no phase moves one section at most, as it always
+did: Windows sends touchpad inertia with no phase, as if from a wheel.
 
 Qt does not tag the first momentum event (qnsview_mouse.mm, `scrollWheel:`);
 it comes as a ScrollUpdate, or as a ScrollBegin with a delta. On macOS the
 NSEvent behind each wheel event says which it is (`native_scroll`). Where that
 cannot be read, Qt's phases are all there is: momentum and a ScrollBegin's
 delta give nothing, so only a first momentum event that Qt sends as a
-ScrollUpdate can count.
+ScrollUpdate can count. Nothing in Qt's event tells that one from the
+fingers' last update.
 """
 
 import math
@@ -27,6 +29,8 @@ from PySide6.QtCore import Qt
 from . import native_scroll
 
 P = Qt.ScrollPhase
+# native phases that start a gesture
+BEGINS = native_scroll.MAY_BEGIN | native_scroll.BEGAN
 
 # angleDelta units per mouse wheel notch, and per section
 NOTCH = 120
@@ -75,6 +79,7 @@ class WheelSteps:
         self.direction = 0  # which way this swipe goes: 1 up, -1 down, 0 not yet
         self.fingers_down = False
         self.lifted = False  # the event just fed ended the finger part of a gesture
+        self.ignoring = False  # the rest of a cancelled gesture gives nothing
         self._moving = False
 
     def reset(self):
@@ -83,9 +88,13 @@ class WheelSteps:
         self.direction = 0
 
     def cancel(self):
-        """Drop everything pending; the rest of this gesture moves nothing."""
+        """Drop everything pending; the rest of this gesture moves nothing.
+
+        The next gesture starts with a ScrollBegin, or is a wheel.
+        """
         self.reset()
         self.fingers_down = False
+        self.ignoring = True
 
     def navigated(self):
         """A section change from elsewhere drops the leftover scroll."""
@@ -104,6 +113,7 @@ class WheelSteps:
     def _begin(self):
         self.reset()
         self.fingers_down = True
+        self.ignoring = False
 
     def _lift(self):
         if self.fingers_down:
@@ -119,6 +129,7 @@ class WheelSteps:
         phase = event.phase()
         self.lifted = False
         if phase == P.NoScrollPhase:
+            self.ignoring = False
             return scroll_units(event)
 
         native = self.read_native(event)
@@ -126,8 +137,11 @@ class WheelSteps:
             if native.momentum:
                 self._lift()
                 return 0.0
-            if phase == P.ScrollBegin:
+            # fingers that touch during momentum come as a ScrollUpdate
+            if phase == P.ScrollBegin or native.phase & BEGINS:
                 self._begin()
+            if self.ignoring:
+                return 0.0
             units = 0.0
             # Qt sends an event with no delta twice; count the native delta once
             if event.pixelDelta().y() or event.angleDelta().y():
@@ -140,6 +154,8 @@ class WheelSteps:
             # a new gesture; in Qt's idle order the first momentum event comes
             # as a ScrollBegin with a delta, so a ScrollBegin's delta is not used
             self._begin()
+            return 0.0
+        if self.ignoring:
             return 0.0
         if phase == P.ScrollMomentum:
             self._lift()
@@ -168,6 +184,10 @@ class WheelSteps:
         # whole notches, toward zero; the nudge keeps ten 0.1s from being 0.999...
         steps = int(self.total + math.copysign(1e-9, self.total))
         self.total -= steps
+        if event.phase() == P.NoScrollPhase:
+            # one section at most, as before: untagged touchpad inertia on
+            # Windows can come as one large event
+            steps = max(-1, min(steps, 1))
         if self.lifted:
             self.reset()
         return steps

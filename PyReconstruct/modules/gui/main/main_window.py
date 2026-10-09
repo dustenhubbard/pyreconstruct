@@ -2721,14 +2721,16 @@ class MainWindow(QMainWindow):
         
         # if changing sections
         elif modifiers == Qt.NoModifier:
-            # one section per notch, or per stretch of trackpad travel
-            steps = self.wheel_steps.step(event)
-            if not steps:
-                return
             # check for the position of the mouse
             mouse_pos = event.point(0).pos()
             field_geom = self.field.geometry()
             if not field_geom.contains(mouse_pos.x(), mouse_pos.y()):
+                # follow the swipe, but scroll here neither moves nor uses up travel
+                self.wheel_steps.feed(event)
+                return
+            # one section per notch, or per stretch of trackpad travel
+            steps = self.wheel_steps.step(event)
+            if not steps:
                 return
             # change the section, keeping the scroll left over
             with self.wheel_steps.moving():
