@@ -3,7 +3,7 @@
 Background: the "CPU usage" slider (series option ``cpu_max``) is a percentage
 of cores that becomes the number of ``multiprocessing`` workers in the
 image-to-zarr converter (``assets/scripts/convert_zarr/zarree-2.py``). Each
-worker runs OpenCV (``cv2.resize``) and the main process compresses with blosc;
+worker runs OpenCV (``cv2.resize``) and compresses its arrays with blosc;
 both libraries default to one thread PER CORE, so historically N workers fanned
 out to N x (all cores) threads and pegged every CPU regardless of the slider.
 
