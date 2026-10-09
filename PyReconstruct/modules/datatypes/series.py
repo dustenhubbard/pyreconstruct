@@ -126,6 +126,43 @@ def _checkColumnsOption(option_name : str, value):
                 f"entry {i} has a {type(pair[0]).__name__} where the column "
                 f"name should be"
             )
+
+
+#: The data lists whose column choices are stored in the series, one option
+#: each. A column added to one of their defaults reaches an older series
+#: through `addMissingColumns`, which `Series.updateJSON` runs on load.
+LIST_COLUMN_OPTIONS = (
+    "object_columns",
+    "trace_columns",
+    "section_columns",
+    "ztrace_columns",
+    "flag_columns",
+)
+
+
+def addMissingColumns(columns : list, defaults : list) -> bool:
+    """Append each default column that `columns` lacks, in place.
+
+    The one rule for a list-column option written before a default existed:
+    the missing column goes at the end with its default shown value, and
+    every stored column keeps its place and its shown/hidden choice. Names
+    already present are left alone, so running it again adds nothing, and a
+    column that is not a default (an object list's own user column) stays.
+
+        Params:
+            columns (list): the stored (name, shown) pairs, updated in place
+            defaults (list): the option's default (name, shown) pairs
+        Returns:
+            (bool): True if a column was added
+    """
+    present = {name for name, _ in columns}
+    added = False
+    for name, shown in defaults:
+        if name not in present:
+            columns.append((name, shown))
+            present.add(name)
+            added = True
+    return added
 def contourNameCollisions(jser_data : dict) -> dict:
     """Find the object names a load would fold together, without loading.
 
@@ -1322,7 +1359,18 @@ class Series():
         for key in list(series_data["options"].keys()):
             if key not in empty_series["options"]:
                 del series_data["options"][key]
-        
+
+        # backfill list columns added since the file was written, so the
+        # settings dialog and the lists agree before any list opens. A
+        # malformed value is left for getOption to report by name.
+        for key in LIST_COLUMN_OPTIONS:
+            columns = series_data["options"][key]
+            try:
+                _checkColumnsOption(key, columns)
+            except SeriesOptionError:
+                continue
+            addMissingColumns(columns, empty_series["options"][key])
+
         # check for backup_dir key
         if "backup_dir" in series_data:
             del series_data["backup_dir"]
