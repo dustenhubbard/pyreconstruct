@@ -1,9 +1,12 @@
 """Object ids under random section edits, with no refresh in between.
 
 Draws, erases, undos and redos on random sections, mixed with section
-deletes, inserts and reorders. After every step the registry must hold
-exactly the (section, name) pairs that have traces, its live counts must
-match its placements, and a name with no live id must get a fresh one.
+deletes, inserts and reorders, whole-object deletes, and host links set and
+cleared. After every step the registry must hold exactly the (section, name)
+pairs that have traces, its live counts must match its placements, and a name
+with no live id must get a fresh one. The host links must be the ones a
+separate record of links by object id says are visible: a link follows the
+objects it was made between, through deletes, undos and reused names.
 """
 import random
 
@@ -13,7 +16,9 @@ from PyReconstruct.modules.backend.func.state_manager import SectionStates
 from PyReconstruct.modules.backend.progress import NullProgressReporter
 from PyReconstruct.modules.datatypes import Series, Trace
 
-NAMES = ["rnd_a", "rnd_b", "square"]
+TRAVELERS = ["rnd_t1", "rnd_t2"]
+HOSTS = ["rnd_h1", "rnd_h2"]
+NAMES = TRAVELERS + HOSTS + ["square"]
 STEPS = 80
 
 
@@ -30,6 +35,9 @@ class Run:
         self.series = series
         self.rng = rng
         self.states = {}
+        # (traveler id, host id) for every link made and not cleared;
+        # travelers never host, so no link is refused or trimmed
+        self.links = set()
 
     @property
     def ids(self):
@@ -65,6 +73,8 @@ class Run:
         snum = self.rng.choice(sorted(self.series.sections))
         name = self.rng.choice(NAMES)
         had = self.ids.live(name)
+        reserved = self.ids.unplaced.get(name)
+        parked = set(self.ids.parked.get(name, ()))
         issued = set(self.ids.name_of)
         placed = self.ids.peek(snum, name)
 
@@ -79,6 +89,10 @@ class Run:
             assert oid == placed
         elif had:
             assert oid == max(had)
+        elif reserved is not None:
+            assert oid == reserved
+        elif parked:
+            assert oid == max(parked)
         else:
             assert oid not in issued, "a name with no live id reused an old one"
 
@@ -106,6 +120,41 @@ class Run:
 
     def redo(self):
         self.undo(redo=True)
+
+    def link(self):
+        # objects with traces now (the series data is stale between
+        # section edits here, since nothing refreshes it)
+        travelers = [n for n in TRAVELERS if self.ids.live(n)]
+        hosts = [n for n in HOSTS if self.ids.live(n)]
+        if not travelers or not hosts:
+            return
+        traveler, host = self.rng.choice(travelers), self.rng.choice(hosts)
+        assert self.series.host_tree.add(traveler, [host]) == []
+        self.links |= {
+            (t, h)
+            for t in self.ids.visibleIds(traveler)
+            for h in self.ids.visibleIds(host)
+        }
+
+    def unlink(self):
+        traveler = self.rng.choice(TRAVELERS)
+        self.series.clearObjHosts([traveler])
+        ids = self.ids
+        self.links = {
+            (t, h) for t, h in self.links
+            if not (t in ids.visibleIds(traveler) and ids.visible(h))
+        }
+
+    def delete_object(self):
+        name = self.rng.choice(NAMES)
+        for snum in sorted(self.series.sections):
+            section = self.series.loadSection(snum)
+            if len(section.contours.get(name, ())):
+                def edit(section):
+                    for trace in list(section.contours[name]):
+                        section.removeTrace(trace)
+                self.act(snum, edit)
+        assert self.ids.live(name) == set()
 
     def delete(self):
         series = self.series
@@ -152,6 +201,26 @@ class Run:
             per_name = counts.setdefault(name, {})
             per_name[oid] = per_name.get(oid, 0) + 1
         assert ids._live == counts, f"{label}: an id outlived its traces"
+        for name, held in ids.parked.items():
+            assert held and not held & set(counts.get(name, ())), label
+
+        tree = series.host_tree
+        expected = {
+            (ids.name_of[t], ids.name_of[h])
+            for t, h in self.links
+            if ids.visible(t) and ids.visible(h)
+        }
+        shown = {
+            (t, h)
+            for t in TRAVELERS
+            for h in tree.getHosts(t)
+            if h in HOSTS
+        }
+        assert shown == expected, f"{label}: links did not follow their objects"
+        saved = tree.getDict()
+        assert {
+            (t, h) for t in TRAVELERS for h in saved.get(t, []) if h in HOSTS
+        } == expected, label
 
 
 @pytest.mark.parametrize("seed", range(16))
@@ -163,7 +232,8 @@ def test_random_section_edits_keep_the_ids_exact(shapes1_jser, seed):
         run = Run(series, rng)
         run.check("open")
         ops = (
-            ["draw"] * 5 + ["erase"] * 4 + ["undo"] * 4 + ["redo"] * 2
+            ["draw"] * 6 + ["erase"] * 3 + ["undo"] * 5 + ["redo"] * 2
+            + ["link"] * 3 + ["unlink", "delete_object"]
             + ["delete", "insert", "reorder"]
         )
         history = []

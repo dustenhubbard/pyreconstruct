@@ -1,5 +1,6 @@
 """Collect data to pass to table manager."""
 
+import contextlib
 from typing import Union
 
 
@@ -341,29 +342,44 @@ class SeriesData():
                         del(self.data["objects"][name])
                         removed_objects.add(name)
 
-            ## Keep the object ids in step (object_ids.py)
+            ## Keep the object ids in step (object_ids.py). An object emptied
+            ## here is deleted (removeObjAttrs below) only when events are
+            ## logged; otherwise (an import) its id is parked and keeps its
+            ## links, as the object keeps its attributes.
             ids = self.object_ids
-            for name in trace_names:
-                obj_data = self.data["objects"].get(name)
-                if obj_data is not None and section.n in obj_data.traces:
-                    ids.ensure(section.n, name)
-                else:
-                    ids.drop(section.n, name)
-            
-            ## Log newly created/destroyed objects
-            if log_events and not self.supress_logging:
-                
-                for obj_name in added_objects:
-                    
-                    self.series.addLog(obj_name, None, "Create object")
-                    ## Set the fixed alignment of the object to creation
-                    self.series.setAttr(obj_name, "alignment", self.series.alignment)
-                    
-                for obj_name in removed_objects:
-                    
-                    self.series.addLog(obj_name, None, "Delete object")
-                    ## Remove object from object attributes dicts
-                    self.series.removeObjAttrs(obj_name)
+            park = not (log_events and not self.supress_logging)
+            ## an unlogged update (a refresh, opening a series) is no
+            ## undoable step, so what it parks is no step's to undo
+            outside = ids.outside() if not log_events else contextlib.nullcontext()
+            ids.context_snum = section.n
+            try:
+                with outside:
+                    for name in trace_names:
+                        obj_data = self.data["objects"].get(name)
+                        if obj_data is not None and section.n in obj_data.traces:
+                            ids.ensure(section.n, name)
+                        else:
+                            ids.drop(section.n, name, park=park)
+
+                    ## Log newly created/destroyed objects
+                    if log_events and not self.supress_logging:
+
+                        for obj_name in added_objects:
+
+                            self.series.addLog(obj_name, None, "Create object")
+                            ## Set the fixed alignment of the object to creation
+                            self.series.setAttr(obj_name, "alignment", self.series.alignment)
+
+                        for obj_name in removed_objects:
+
+                            self.series.addLog(obj_name, None, "Delete object")
+                            ## Remove object from object attributes dicts
+                            self.series.removeObjAttrs(obj_name)
+            finally:
+                ids.context_snum = None
+
+            ## a section undo ends once its section's data has caught up
+            ids.finishUndo(on_save=True)
     
     def addTrace(self, trace : Trace, section : Section, points=None):
         """Add trace data to the existing object.

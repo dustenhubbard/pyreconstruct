@@ -441,8 +441,9 @@ def test_reordering_right_after_a_delete_lets_the_id_die(series):
 @pytest.mark.parametrize("where", ["top", "past the end"])
 def test_a_new_section_under_a_deleted_number_starts_clean(series, where):
     """H only on the last section; delete it and, with no refresh, insert a
-    section, which reuses the deleted number. H drawn on the new section is
-    a new object."""
+    section, which reuses the deleted number. Nothing is placed on the new
+    section, and H drawn there takes back the id the section delete parked
+    (the object was not deleted, so it keeps its links)."""
     last = max(series.sections)
     section = series.loadSection(last)
     _draw(series, section, H)
@@ -451,16 +452,19 @@ def test_a_new_section_under_a_deleted_number_starts_clean(series, where):
 
     series.deleteSections([last])
     assert _ids(series).live(H) == set()
+    assert _ids(series).parked == {H: {old}}
     index = min(series.sections) if where == "top" else last + 5
     renumbered = series.insertSection(index, "no-image", 0.00254, 0.05)
     assert last not in renumbered and index in series.sections
+    assert _ids(series).peek(index, H) is None
 
     section = series.loadSection(index)
     assert H not in section.contours
     _draw(series, section, H)
     section.save()
-    assert _ids(series).peek(index, H) not in (None, old)
-    assert _ids(series).live(H) == {_ids(series).peek(index, H)}
+    assert _ids(series).peek(index, H) == old
+    assert _ids(series).live(H) == {old}
+    assert H not in _ids(series).parked
 
 
 def test_ids_are_not_saved(series, tmp_path):
