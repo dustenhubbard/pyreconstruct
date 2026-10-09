@@ -223,7 +223,16 @@ def formatLength(value):
 # that no empty grab area sits over the field.
 LABEL_ROOM = 22       # the 12 pt bold label, centered in this band
 TICK_LENGTH = 5       # how far a tick mark hangs below the bar
-TICK_LABEL_ROOM = 14  # the small tick labels, centered in this band
+TICK_LABEL_ROOM = 18  # the small tick labels, centered in this band
+LABEL_SIZE = 12       # the label's font size
+TICK_LABEL_SIZE = 10  # the tick labels' font size
+
+
+def outlinedFont(size):
+    """The font `drawOutlinedText` draws in for a painter font of pixel size
+    `size`: it reads the pixel size back as a point size.  Text is measured in
+    this, so a width worked out here is the width that is drawn."""
+    return QFont("Courier New", size, QFont.Bold)
 
 
 class ScaleBar(MoveableButton):
@@ -353,9 +362,18 @@ class ScaleBar(MoveableButton):
         """
         if not self._pinned():
             return
-        _real_len, pix_len, _subdivs = self.pinnedRender()
-        if pix_len > 0 and pix_len != self.width():
-            self.resize(pix_len, self.height())
+        real_len, pix_len, _subdivs = self.pinnedRender()
+        # never narrower than the label, which would be cut off at the sides
+        width = max(pix_len, self.labelWidth(real_len) + 2)
+        if pix_len > 0 and width != self.width():
+            self.resize(width, self.height())
+
+    def labelWidth(self, real_len):
+        """How wide the label over a bar of `real_len` µm is drawn, or 0."""
+        if not self.manager.series.getOption("show_scale_bar_text"):
+            return 0
+        metrics = QFontMetrics(outlinedFont(LABEL_SIZE))
+        return metrics.horizontalAdvance(formatLength(real_len) + " µm")
 
     def paintEvent(self, event):
         real_len, subdivs = self.currentLength()
@@ -387,13 +405,15 @@ class ScaleBar(MoveableButton):
 
         # draw text
         if draw_text:
-            font = QFont("Courier New", 12)
+            font = QFont("Courier New")
+            font.setPixelSize(LABEL_SIZE)
             font.setBold(True)
             l_text = formatLength(real_len) + " µm"
             painter.setFont(font)
+            # over the bar's middle, unless the bar is shorter than its label
             drawCenteredText(
                 painter,
-                r_x + r_w/2,
+                max(r_x + r_w/2, self.labelWidth(real_len) / 2 + 1),
                 bar_top / 2,
                 l_text,
                 outlined=True
@@ -403,17 +423,13 @@ class ScaleBar(MoveableButton):
         # white edge like the bar, and its label is outlined like the main one
         if draw_ticks:
             small_font = QFont("Courier New")  # used for ticks
-            small_font.setPixelSize(10)
+            small_font.setPixelSize(TICK_LABEL_SIZE)
             small_font.setBold(True)
             # on a short bar the tick labels would run into each other, so
             # only every `step`-th tick is labelled, as few as keep them apart
             step = 1
             if draw_text and subdivs > 1:
-                # measured in the font drawOutlinedText builds from the
-                # painter's pixel size, which it reads as a point size
-                metrics = QFontMetrics(
-                    QFont("Courier New", small_font.pixelSize(), QFont.Bold)
-                )
+                metrics = QFontMetrics(outlinedFont(TICK_LABEL_SIZE))
                 widest = max(
                     metrics.horizontalAdvance(formatLength(real_len * i/subdivs))
                     for i in range(1, subdivs)
@@ -439,7 +455,10 @@ class ScaleBar(MoveableButton):
         painter.end()
 
 def drawCenteredText(painter, x, y, text, outlined=False):
-    font_metrics = QFontMetrics(painter.font())
+    font = painter.font()
+    if outlined and font.pixelSize() > 0:
+        font = outlinedFont(font.pixelSize())  # what drawOutlinedText draws in
+    font_metrics = QFontMetrics(font)
     text_rect = font_metrics.boundingRect(text)
     adjusted_x = x - text_rect.width() / 2
     adjusted_y = y + text_rect.height() / 2

@@ -45,7 +45,7 @@ SCALES = (0.0007, 0.004, 0.01, 0.02, 0.04, 0.08, 0.16, 0.3, 1.0)
 TEXT_AND_TICKS = ((True, True), (True, False), (False, True), (False, False))
 
 # recorded with the 1-2-5 ladder and the 6 px bar; see the module docstring
-BASELINE_DIGEST = "ce888256b1b526ccaf3e6aa1f9fe8e825a45b6508d597350c0786e9c7a3f80ef"
+BASELINE_DIGEST = "c562c05257a56f8d2ec9776a52c59c384765e5e3c1b92245b907191dcaca8d9b"
 
 
 @pytest.fixture(scope="module")
