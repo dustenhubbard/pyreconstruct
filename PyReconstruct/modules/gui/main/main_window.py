@@ -18,6 +18,7 @@ from PyReconstruct.modules.backend.func.window_geometry import (
     window_geometry_is_usable,
 )
 from .status_readout import FieldStatusReadout, StatusSegment
+from .wheel_steps import WheelSteps, is_momentum, zoom_step
 from PyReconstruct.modules.constants.settings_domain import (
     domain_for, fold_series_settings_once,
 )
@@ -269,6 +270,7 @@ class MainWindow(QMainWindow):
         self.viewer                 =  None
         self.shortcuts_widget       =  None
         self.is_zooming             =  False
+        self.wheel_steps            =  WheelSteps()
         self.restart_mainwindow     =  False
         self._updater_pool          =  None   # in-flight update guard
         self._pending_installer     =  None   # launched on the accepted close
@@ -2583,6 +2585,9 @@ class MainWindow(QMainWindow):
         # do nothing if middle button is clicked
         if self.field.mclick:
             return
+        # macOS trackpad inertia after the fingers lift moves nothing
+        if is_momentum(event):
+            return
         
         modifiers = QApplication.keyboardModifiers()
 
@@ -2598,10 +2603,7 @@ class MainWindow(QMainWindow):
                 self.zoom_factor = 1
                 self.is_zooming = True
 
-            if event.angleDelta().y() > 0:  # if scroll up
-                self.zoom_factor *= 1.1
-            elif event.angleDelta().y() < 0:  # if scroll down
-                self.zoom_factor *= 0.9
+            self.zoom_factor *= zoom_step(event)
             self.field.panzoomMove(zoom_factor=self.zoom_factor)
         
         # if changing sections
@@ -2611,11 +2613,11 @@ class MainWindow(QMainWindow):
             field_geom = self.field.geometry()
             if not field_geom.contains(mouse_pos.x(), mouse_pos.y()):
                 return
-            # change the section
-            if event.angleDelta().y() > 0:  # if scroll up
-                self.incrementSection()
-            elif event.angleDelta().y() < 0:  # if scroll down
-                self.incrementSection(down=True)
+            # change the section once enough scroll has added up
+            steps = self.wheel_steps.step(event, self.series.current_section)
+            if steps:
+                self.incrementSection(down=steps < 0)
+                self.wheel_steps.section = self.series.current_section
     
     def keyReleaseEvent(self, event):
         """Overwritten: checks for Ctrl+Zoom."""
