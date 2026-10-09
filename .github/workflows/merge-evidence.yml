@@ -70,9 +70,12 @@ jobs:
         # dependabot-auto.yml for the policy and the reason). A major bump, an
         # unknown update type, or a dependabot branch with any other commit needs
         # the label like any other PR. The author on a commit is only an email
-        # that anyone who can push to the branch can set, so every commit must
-        # also be committed by GitHub (web-flow) with a signature GitHub verified,
-        # as Dependabot's own commits are.
+        # that anyone who can push to the branch can set. Every commit must have
+        # Dependabot author attribution, web-flow as committer, and a verified
+        # signature. These checks reject unsigned commits and other committers.
+        # They do not prove that Dependabot produced the changes.
+        # A Dependabot commit that is not verified needs the `reviewed` label
+        # like any other PR.
         id: dep
         env:
           GH_TOKEN: ${{ github.token }}

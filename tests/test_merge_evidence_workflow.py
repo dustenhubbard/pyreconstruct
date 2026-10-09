@@ -5,9 +5,10 @@ check. It runs on `pull_request_target`, so the copy on main also judges a PR
 that edits the file, and it must never check out or run the PR head. Until a
 later change drops `pull_request`, the head copy reports the check as well.
 Only a label named exactly `reviewed` passes it. The one exception is a
-dependabot patch or minor bump whose commits are all dependabot's own: authored
-by dependabot[bot], committed by GitHub and signed. A major bump needs the
-label like any other PR.
+dependabot patch or minor bump. Every commit must have Dependabot author
+attribution, web-flow as committer, and a verified signature. These checks
+reject unsigned commits and other committers. They do not prove that Dependabot
+produced the changes. A major bump needs the label like any other PR.
 
 The decision steps run here as the workflow's own shell, with `gh` stubbed out
 to list a chosen set of PR commits through the real `jq` filter.
@@ -223,7 +224,8 @@ def test_a_dependabot_rebase_stays_eligible(tmp_path):
         "unsigned-web-flow", "unknown-committer"])
 def test_a_commit_only_attributed_to_dependabot_needs_the_label(tmp_path, later):
     # The author is only the commit's email: anyone who can push to the branch
-    # can set it. Dependabot's own commits are committed and signed by GitHub.
+    # can set it. The committer and the signature must also match: these checks
+    # reject unsigned commits and other committers.
     skip, stdout = run_dep_step(tmp_path, author=BOT, update_type=PATCH,
                                 commits=[commit("a", BOT), later])
     assert skip == "skip=false"
