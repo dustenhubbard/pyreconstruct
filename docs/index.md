@@ -124,9 +124,9 @@ Includes Python. See the [first-launch instructions](USER_GUIDE.md#1-installing-
 
 64-bit · glibc 2.28 or later
 
-[Download for Linux :material-arrow-down:](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-Linux-installer.tar.gz){ .md-button }
+[Download AppImage :material-arrow-down:](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-linux-x86_64.AppImage){ .md-button }
 
-Requires Python 3.11. Extract and run `bash install.sh`.
+Includes Python. Or install with `curl -fsSL https://pyreconstruct.org/install.sh | bash`.
 { .pr-small }
 
 </div>

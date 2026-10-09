@@ -38,7 +38,7 @@ No Python required. Direct downloads for the current stable release, **v1.24.0**
 | Windows (x86_64) | [PyReconstruct-1.24.0-Windows-x86_64-Setup.exe](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-Windows-x86_64-Setup.exe) |
 | macOS (Apple Silicon) | [PyReconstruct-1.24.0-macOS-arm64.dmg](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-macOS-arm64.dmg) |
 | macOS (Intel) | [PyReconstruct-1.24.0-macOS-x86_64.dmg](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-macOS-x86_64.dmg) |
-| Linux (x86_64) | [PyReconstruct-1.24.0-Linux-installer.tar.gz](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-Linux-installer.tar.gz) |
+| Linux (x86_64) | [PyReconstruct-1.24.0-linux-x86_64.AppImage](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-linux-x86_64.AppImage), or the one-line install below |
 
 All builds, checksums, and past versions are on the
 **[Releases page](https://github.com/dustenhubbard/PyReconstruct/releases/latest)**.
@@ -58,25 +58,30 @@ at runtime rather than at startup.
 
 - **Windows**: builds are unsigned for now; if SmartScreen warns, choose
   **More info → Run anyway**.
-- **macOS**: open the `.dmg` and drag PyReconstruct to Applications. Builds are
-  unsigned for now, so the first launch is blocked by Gatekeeper. Clear the
-  quarantine flag once in Terminal:
+- **macOS**: open the `.dmg` and drag PyReconstruct to Applications. The app
+  and disk image are signed with a Developer ID and notarized by Apple. The
+  first launch asks whether to open an app downloaded from the internet; click
+  **Open**.
+- **Linux**: install with one command, no root and no Python needed:
   ```
-  xattr -dr com.apple.quarantine /Applications/PyReconstruct.app
+  curl -fsSL https://pyreconstruct.org/install.sh | bash
   ```
-- **Linux**: extract the tarball and run `bash install.sh`; it builds an isolated
-  virtual environment, drops a `pyreconstruct` launcher on your PATH, and adds an
-  application-menu entry. It needs a system **Python 3.11** (`python3.11` +
-  `venv`) and targets x86_64. To update, re-run `install.sh` (the in-app updater
-  below is for the frozen Windows/macOS builds).
+  It downloads the AppImage, checks it against its published checksum, and adds
+  a `pyreconstruct` command and an application-menu entry. Re-run it to update.
+  End it with `bash -s -- --dev` to install PyReconstruct Dev beside it, or
+  `bash -s -- --uninstall` to remove it. The AppImage from the table above also
+  runs on its own after `chmod +x`.
 
-The frozen Windows and macOS builds update through **Help ▸ Check for updates**.
+The Windows and macOS builds update through **Help ▸ Check for updates**. On
+Linux, the same menu item shows the one command that updates your install, with
+a Copy button.
 **PyReconstruct** follows **Stable** releases (`vX.Y.Z`). **PyReconstruct Dev**
 follows **Nightly** builds (`vX.Y.Z.devYYYYMMDD`, such as
 `v1.24.0.dev20260927`). The two apps install side by side and each updates only
 from its own channel. Use the **Help** menu's download link to install the
-other app. Downloads are verified against a published SHA-256 checksum before
-installation. A once-per-day startup check is on by default; turn it off under
+other app. Before installing, PyReconstruct checks each download against the
+release's signed list of SHA-256 checksums and refuses one that does not match.
+A once-per-day startup check is on by default; turn it off under
 **Help ▸ Automatically check for updates**.
 
 ### From source (developers)
@@ -179,10 +184,12 @@ upstream they were forked from.
 What this distribution adds over upstream, all in the current stable release:
 
 - **One-click installers for every platform.** Windows, macOS (native Apple
-  Silicon *and* Intel builds, on an updated 3D stack: vtk 9.4.2 + vedo 2025.5.4),
-  and Linux, built in CI.
-- **In-app updater** that updates the frozen Windows/macOS builds from GitHub
-  Releases, on the Stable or Nightly channel and verified by checksum (see
+  Silicon *and* Intel builds, signed and notarized, on an updated 3D stack: vtk
+  9.4.2 + vedo 2025.5.4), and a Linux AppImage with a one-line install, built in
+  CI.
+- **In-app updater** that updates the Windows/macOS builds from GitHub
+  Releases, on the Stable or Nightly channel, checking each download against a
+  signed checksum list (see
   [Install](#install)).
 - **3–4× faster large-series open & refresh**: the performance work above, with
   verified geometry equivalence.

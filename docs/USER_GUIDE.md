@@ -54,8 +54,7 @@ platforms).
 ### One-click installers (Windows, macOS, and Linux)
 
 Download the build for your platform from the current stable release, **v1.24.0**.
-Windows and macOS builds include Python; the Linux installer requires Python
-3.11. Each link below downloads that platform's installer directly; every build,
+Every build includes Python. Each link below downloads that platform's installer directly; every build,
 its SHA-256 checksum, and past versions are on the
 **[Releases page](https://github.com/dustenhubbard/PyReconstruct/releases/latest)**.
 
@@ -69,31 +68,31 @@ its SHA-256 checksum, and past versions are on the
   [`PyReconstruct-1.24.0-macOS-arm64.dmg`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-macOS-arm64.dmg) on
   Apple Silicon, or
   [`PyReconstruct-1.24.0-macOS-x86_64.dmg`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-macOS-x86_64.dmg) on an Intel Mac. Open
-  the `.dmg` and drag **PyReconstruct** onto the **Applications** shortcut. Builds are
-  unsigned for now, so the first launch of a browser-downloaded copy is blocked by
-  Gatekeeper. Clear the quarantine flag once in Terminal:
-
-  ```
-  xattr -dr com.apple.quarantine /Applications/PyReconstruct.app
-  ```
-
-  Alternatively, the first time macOS shows the "could not verify" dialog, open
-  **System Settings ▸ Privacy & Security** and click **Open Anyway**.
+  the `.dmg` and drag **PyReconstruct** onto the **Applications** shortcut. The app
+  and disk image are signed with a Developer ID and notarized by Apple. The first
+  launch asks whether to open an app downloaded from the internet; click **Open**.
 
 > 📸 *Screenshot: the macOS `.dmg` window showing the app and the Applications drop target.*
 
 Both macOS builds are native (arm64 and x86_64), and the in-app updater serves each
 Mac its matching architecture.
 
-- **Linux**:
-  [`PyReconstruct-1.24.0-Linux-installer.tar.gz`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-Linux-installer.tar.gz).
-  Extract it and run `bash install.sh`, a no-root `.sh` installer that builds an
-  isolated virtual environment, puts a `pyreconstruct` launcher on your PATH, and
-  adds an application-menu entry. It needs a system **Python 3.11** (`python3.11` + `venv`;
-  on Debian/Ubuntu, `sudo apt install python3.11 python3.11-venv`) and targets
-  x86_64. To update, re-run `install.sh`.
+- **Linux (x86_64, glibc 2.28 or newer)**: install with one command. It needs no
+  administrator rights and no Python:
 
-### From source (Linux, other platforms, and developers)
+  ```
+  curl -fsSL https://pyreconstruct.org/install.sh | bash
+  ```
+
+  It downloads
+  [`PyReconstruct-1.24.0-linux-x86_64.AppImage`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-linux-x86_64.AppImage),
+  checks it against its published checksum, and adds a `pyreconstruct` command and
+  an application-menu entry. Re-run it to update; **Help ▸ Check for updates**
+  shows the same command with a Copy button. End it with `bash -s -- --dev` to
+  install PyReconstruct Dev beside it, or `bash -s -- --uninstall` to remove it.
+  The AppImage also runs on its own after `chmod +x`.
+
+### From source (other platforms and developers)
 
 PyReconstruct requires **Python 3.11, 3.12 or 3.13**. Its native dependencies are
 tested on those versions (the project pins `>=3.11,<3.14`). Your
