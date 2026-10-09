@@ -58,12 +58,37 @@ KEPT = {
 }
 
 
+def _env(**extra):
+    """The environment for a subprocess, with this tree first on the path.
+
+    The script's own folder heads its path and it appends its import root
+    after site-packages, so without this the interpreter's installed
+    PyReconstruct answers the import, which from a worktree sharing another
+    checkout's editable venv is that checkout's code.
+    """
+    path = os.pathsep.join(filter(None, [str(REPO_ROOT), os.environ.get("PYTHONPATH")]))
+    return {**os.environ, "PYTHONPATH": path, **extra}
+
+
 def _run(args, stdin=None, cwd=None):
     return subprocess.run(
         [sys.executable, str(SCRIPT), *map(str, args)],
         input=stdin, capture_output=True, text=True, timeout=300,
-        cwd=str(cwd or REPO_ROOT), env=dict(os.environ),
+        cwd=str(cwd or REPO_ROOT), env=_env(),
     )
+
+
+def test_subprocesses_import_this_tree(tmp_path):
+    """A script outside the repo, run the way _run runs one, imports this tree."""
+    probe = tmp_path / "probe.py"
+    probe.write_text("import PyReconstruct\nprint(PyReconstruct.__file__)\n")
+    result = subprocess.run(
+        [sys.executable, str(probe)], capture_output=True, text=True, timeout=120,
+        cwd=str(tmp_path), env=_env(),
+    )
+    assert result.returncode == 0, result.stderr
+    imported = Path(result.stdout.strip()).resolve()
+    assert imported.is_relative_to(REPO_ROOT), f"imported {imported}, not this tree"
 
 
 @pytest.fixture
@@ -630,7 +655,7 @@ def test_sigterm_removes_the_temp_copy(case, tmp_path):
     ])
     result = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, timeout=120,
-        cwd=str(REPO_ROOT), env={**os.environ, "TMPDIR": str(temp_root)},
+        cwd=str(REPO_ROOT), env=_env(TMPDIR=str(temp_root)),
     )
     assert result.returncode == 128 + 15, result.stderr
     assert "'crop_zarr_" in result.stdout
