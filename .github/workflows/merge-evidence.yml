@@ -30,6 +30,10 @@
 # that name. Running only from main's copy here does not close that; only a GitHub
 # ruleset does, and none is set up. Read any change under .github/workflows/ with that
 # in mind.
+#
+# Limit: GitHub may skip `pull_request_target` for a branch whose name looks like a
+# commit SHA. Such a PR gets no `merge-evidence` report and cannot merge until its
+# branch is renamed. It fails closed, so no unreviewed change can merge that way.
 
 name: merge-evidence
 
