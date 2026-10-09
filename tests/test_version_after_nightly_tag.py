@@ -16,7 +16,11 @@ test extra lists it too; before that these tests skipped in CI.
 The last group runs the "Compute version" step of build-installers.yml against
 such a repository. Tag builds keep taking their version from setuptools_scm,
 and that step fails the build unless the version equals the tag, so a nightly
-or stable installer carries exactly the tag's version.
+or stable installer carries exactly the tag's version. Those repositories
+carry annotated tags, as nightly.yml and the stable recipe in
+docs/RELEASE_CHANNELS.md make them. git describe prefers an annotated tag on
+the same commit, so a lightweight stable tag on a nightly's commit builds as
+the nightly; the last tests pin that and the recipe's `git tag -a`.
 """
 import os
 from pathlib import Path
@@ -33,6 +37,7 @@ from packaging.version import Version
 ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 WORKFLOW = ROOT / ".github" / "workflows" / "build-installers.yml"
+RELEASE_DOC = ROOT / "docs" / "RELEASE_CHANNELS.md"
 STEP = "Compute version"
 BUILD_JOBS = ("build", "build-linux")
 
@@ -72,8 +77,14 @@ def _repo(tmp_path, tag):
     return tmp_path
 
 
+def _annotated_tag(cwd, tag):
+    _git(cwd, "tag", "-a", tag, "-m", tag)
+
+
 def _full_clone(tmp_path, past_nightly=True):
     """A stable tag, a later nightly tag, and optionally a commit past it.
+
+    Both tags are annotated, as the real ones are.
 
     The repository carries the real [tool.setuptools_scm] table, so the
     version comes from the same settings a clone of main builds with.
@@ -87,10 +98,10 @@ def _full_clone(tmp_path, past_nightly=True):
     _git(tmp_path, "init", "-q", "-b", "main")
     _git(tmp_path, "add", "-A")
     _git(tmp_path, "commit", "-q", "-m", "one")
-    _git(tmp_path, "tag", "v1.23.0")
+    _annotated_tag(tmp_path, "v1.23.0")
     (tmp_path / "a.txt").write_text("2")
     _git(tmp_path, "commit", "-q", "-am", "two")
-    _git(tmp_path, "tag", "v1.24.0.dev20260929")
+    _annotated_tag(tmp_path, "v1.24.0.dev20260929")
     if past_nightly:
         (tmp_path / "a.txt").write_text("3")
         _git(tmp_path, "commit", "-q", "-am", "three")
@@ -209,7 +220,7 @@ def test_a_tag_build_carries_exactly_the_tag_version(
 def test_a_stable_tag_build_carries_exactly_the_stable_version(tmp_path, job):
     (tmp_path / "repo").mkdir()
     repo = _full_clone(tmp_path / "repo", past_nightly=False)
-    _git(repo, "tag", "v1.24.0")                 # the stable cut on the same commit
+    _annotated_tag(repo, "v1.24.0")              # the stable cut on the same commit
     result, exported = _run_step(tmp_path, repo, job, "v1.24.0")
     assert result.returncode == 0, result.stdout + result.stderr
     assert exported == {"PYR_VERSION": "1.24.0", "PYR_PUBLIC": "1.24.0"}
@@ -269,3 +280,24 @@ def test_a_timed_nightly_build_past_its_tag_is_refused(tmp_path, job):
     assert result.returncode != 0
     assert "for the tag v1.24.0.dev202610081315" in result.stdout
     assert exported == {}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Linux workflow shell integration")
+@pytest.mark.parametrize("job", BUILD_JOBS)
+def test_a_lightweight_stable_tag_on_a_nightly_commit_is_refused(tmp_path, job):
+    """git describe picks the annotated nightly over the lightweight stable tag,
+    so the version is the nightly's and the step refuses the stable build."""
+    (tmp_path / "repo").mkdir()
+    repo = _full_clone(tmp_path / "repo", past_nightly=False)
+    _git(repo, "tag", "v1.24.0")
+    assert _cli_version(repo) == "1.24.0.dev20260929"
+    result, exported = _run_step(tmp_path, repo, job, "v1.24.0")
+    assert result.returncode != 0
+    assert "produced 1.24.0.dev20260929 for the tag v1.24.0" in result.stdout
+    assert exported == {}
+
+
+def test_the_stable_recipe_makes_an_annotated_tag():
+    recipe = RELEASE_DOC.read_text().split("## Stable releases", 1)[1]
+    tags = re.findall(r"^git tag .*$", recipe, re.MULTILINE)
+    assert tags and all(re.match(r"git tag -a v\d+\.\d+\.\d+ -m ", t) for t in tags), tags
