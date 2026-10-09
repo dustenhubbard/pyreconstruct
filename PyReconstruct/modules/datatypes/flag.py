@@ -163,6 +163,9 @@ class Flag():
         uses, so a migrated ID is indistinguishable from a generated one and
         nothing downstream needs to know which it got.
 
+        One flag at a time. A migration deriving a whole section's flags uses
+        ``LegacyFlagIDs``, which gives the same IDs in linear time.
+
             Params:
                 content: the flag's stored content, any JSON-serializable value
                 taken (iterable): IDs already spoken for in this section, so a
@@ -170,26 +173,7 @@ class Flag():
             Returns:
                 (str): the derived six-character ID
         """
-        taken = set(taken)
-        payload = json.dumps(content, sort_keys=True, default=str)
-        # Salted on collision rather than given up on: two legacy flags can
-        # legitimately share a section, a name and a position. Each identical
-        # flag takes the next salt, so the count of identical flags sets how
-        # far this runs, and there is no cap: a cap would end in a random ID,
-        # which is the failure this method exists to avoid. The ID space is
-        # 62**6 (5.7e10) and a section holds far fewer flags, so the loop
-        # always finds a free ID.
-        for salt in itertools.count():
-            digest = hashlib.blake2b(
-                f"{salt}\x00{payload}".encode("utf-8"), digest_size=16
-            ).digest()
-            n = int.from_bytes(digest, "big")
-            id = ""
-            for _ in range(6):
-                n, i = divmod(n, len(possible_chars))
-                id += possible_chars[i]
-            if id not in taken:
-                return id
+        return LegacyFlagIDs(taken).derive(content)
 
     def magScale(self, prev_mag : float, new_mag : float):
         """Adjust the flag position to a new magnification.
@@ -200,6 +184,57 @@ class Flag():
         """
         self.x *= new_mag / prev_mag
         self.y *= new_mag / prev_mag
+
+class LegacyFlagIDs():
+
+    def __init__(self, taken=()):
+        """Derive IDs for one section's legacy flags, in file order.
+
+        Gives exactly the IDs that calling ``Flag.deriveID`` once per flag
+        gives, with each result added to ``taken`` before the next call, but
+        does not start every flag at salt zero. ``deriveID`` on its own walks
+        every salt the earlier identical flags already used, so n identical
+        flags cost about n**2 / 2 hashes, and the migration runs on every open.
+
+        Resuming is safe because ``taken`` only grows: every salt up to and
+        including the one a payload last took gave an ID that was taken by
+        then, so it still is, and the first free salt is never earlier than
+        the one after it.
+
+            Params:
+                taken (iterable): IDs already spoken for in this section
+        """
+        self.taken = set(taken)
+        self.next_salt = {}
+
+    def derive(self, content) -> str:
+        """Derive the next flag's ID and mark it taken.
+
+            Params:
+                content: the flag's stored content, any JSON-serializable value
+            Returns:
+                (str): the derived six-character ID
+        """
+        payload = json.dumps(content, sort_keys=True, default=str)
+        # Salted on collision rather than given up on: two legacy flags can
+        # legitimately share a section, a name and a position. Each identical
+        # flag takes the next salt, and there is no cap: a cap would end in a
+        # random ID, which is the failure ``Flag.deriveID`` exists to avoid.
+        # The ID space is 62**6 (5.7e10) and a section holds far fewer flags,
+        # so the loop always finds a free ID.
+        for salt in itertools.count(self.next_salt.get(payload, 0)):
+            digest = hashlib.blake2b(
+                f"{salt}\x00{payload}".encode("utf-8"), digest_size=16
+            ).digest()
+            n = int.from_bytes(digest, "big")
+            id = ""
+            for _ in range(6):
+                n, i = divmod(n, len(possible_chars))
+                id += possible_chars[i]
+            if id not in self.taken:
+                self.taken.add(id)
+                self.next_salt[payload] = salt + 1
+                return id
 
 class Comment():
 
