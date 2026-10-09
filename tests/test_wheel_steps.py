@@ -1,156 +1,172 @@
 """Wheel scrolling moves sections by scroll distance, not by event count.
 
-A macOS trackpad sends many small `angleDelta` events per swipe (2 units per
-pixel, ScrollBegin/ScrollUpdate/ScrollEnd) and then ScrollMomentum events after
-the fingers lift. `MainWindow.wheelEvent` used to move one section per event,
-so one swipe ran through dozens of sections. A mouse wheel sends one 120-unit
-event per notch with NoScrollPhase, and that must still be one section.
+A macOS trackpad sends many small events per swipe and then momentum events
+after the fingers lift. `MainWindow.wheelEvent` used to move one section per
+event, so one swipe ran through dozens of sections. Now a section takes one
+mouse wheel notch (120 units of `angleDelta`) or 60 points of trackpad travel,
+nothing moves after the fingers lift, and a short flick moves one section.
 
-No real trackpad is used here: the events are built by hand with the deltas
-and phases Qt's cocoa plugin produces (qnsview_mouse.mm, `scrollWheel:`).
+No real trackpad is used here. `trackpad_replay` builds each swipe from the
+native events AppKit sends and maps them the way Qt 6.9.3's cocoa plugin does,
+in both orders Qt can deliver the first momentum event, then sends them through
+`QTest.wheelEvent` into a live window on the fixture series.
 """
 
-import types
-
 import pytest
-from PySide6.QtCore import QPoint, QPointF, QRect, Qt
+from PySide6.QtCore import QPoint, QPointF, Qt
 from PySide6.QtGui import QWheelEvent
+from PySide6.QtTest import QTest
 
-from PyReconstruct.modules.gui.main import main_window as mw_module
-from PyReconstruct.modules.gui.main.main_window import MainWindow
-from PyReconstruct.modules.gui.main.wheel_steps import WheelSteps, zoom_step
+from PyReconstruct.modules.gui.main.wheel_steps import WheelSteps
+from trackpad_replay import deliver, native_swipe, notch, qt_events
 
 pytestmark = pytest.mark.gui
 
-NOTCH = 120
 P = Qt.ScrollPhase
-
-
-def wheel(dy, phase=P.NoScrollPhase, pixels=None):
-    """A vertical wheel event; trackpad events carry pixels = dy / 2."""
-    if pixels is None:
-        pixels = 0 if phase == P.NoScrollPhase else dy // 2
-    return QWheelEvent(
-        QPointF(10, 10), QPointF(10, 10),
-        QPoint(0, pixels), QPoint(0, dy),
-        Qt.NoButton, Qt.NoModifier, phase, False,
-    )
-
-
-def swipe(dy_per_event, count, momentum=0, momentum_dy=None):
-    """One trackpad swipe: begin, updates, momentum after lift, end."""
-    events = [wheel(0, P.ScrollBegin)]
-    events += [wheel(dy_per_event, P.ScrollUpdate) for _ in range(count)]
-    events += [wheel(momentum_dy or dy_per_event, P.ScrollMomentum) for _ in range(momentum)]
-    events.append(wheel(0, P.ScrollEnd))
-    return events
-
-
-def run(stepper, events, section=1):
-    return [stepper.step(e, section) for e in events]
-
-
-# --- the stepper alone ----------------------------------------------------
-
-
-def test_one_mouse_notch_is_one_section(qapp):
-    s = WheelSteps()
-    assert run(s, [wheel(NOTCH)]) == [1]
-    assert run(s, [wheel(-NOTCH)]) == [-1]
-    assert run(s, [wheel(NOTCH)] * 5) == [1] * 5
-
-
-def test_small_trackpad_deltas_summing_to_one_notch_are_one_section(qapp):
-    s = WheelSteps()
-    steps = run(s, swipe(12, 10))
-    assert sum(steps) == 1
-    assert steps[10] == 1  # the tenth update is where it reaches 120
-
-
-def test_momentum_events_move_nothing(qapp):
-    s = WheelSteps()
-    steps = run(s, swipe(12, 10, momentum=50, momentum_dy=40))
-    assert sum(steps) == 1
-
-
-def test_direction_reversal_drops_the_leftover(qapp):
-    s = WheelSteps()
-    # 100 up, then 120 down: one section down, not a net 20 down
-    assert run(s, [wheel(100), wheel(-30), wheel(-90)]) == [0, 0, -1]
-
-
-def test_scroll_end_drops_the_leftover(qapp):
-    s = WheelSteps()
-    assert sum(run(s, swipe(50, 2))) == 0
-    assert sum(run(s, swipe(30, 1))) == 0  # 100 + 30 would have been a step
-
-
-def test_section_change_from_elsewhere_drops_the_leftover(qapp):
-    s = WheelSteps()
-    assert s.step(wheel(100), section=5) == 0
-    assert s.step(wheel(30), section=9) == 0
-
-
-def test_zoom_is_proportional_to_scroll(qapp):
-    assert zoom_step(wheel(NOTCH)) == 1.1
-    assert zoom_step(wheel(-NOTCH)) == 0.9
-    factor = 1.0
-    for _ in range(10):
-        factor *= zoom_step(wheel(12, P.ScrollUpdate))
-    assert factor == pytest.approx(1.1)
-
-
-# --- through MainWindow.wheelEvent ------------------------------------------
+START = 52  # the fixture series opens here, with sections 0 to 197
+ORDERS = pytest.mark.parametrize("busy", [True, False], ids=["busy", "idle"])
 
 
 @pytest.fixture
-def window(monkeypatch):
-    """A stand-in for the main window with just what wheelEvent reads."""
-    mods = {"value": Qt.NoModifier}
-    monkeypatch.setattr(
-        mw_module, "QApplication",
-        types.SimpleNamespace(keyboardModifiers=lambda: mods["value"]),
+def window(main_window, qtbot):
+    main_window.show()
+    qtbot.waitExposed(main_window)
+    assert main_window.series.current_section == START
+    return main_window
+
+
+def scroll(window, events, modifiers=Qt.NoModifier):
+    """Send wheel events over the field; the section after each one."""
+    sections = []
+    deliver(
+        window.windowHandle(), QPointF(window.field.geometry().center()),
+        events, modifiers,
+        after=lambda _: sections.append(window.series.current_section),
     )
-    w = types.SimpleNamespace()
-    w.mods = mods
-    w.moves = []
-    w.series = types.SimpleNamespace(current_section=50)
-    w.field = types.SimpleNamespace(
-        mclick=False,
-        geometry=lambda: QRect(0, 0, 1000, 1000),
-        cursor=lambda: types.SimpleNamespace(pos=lambda: QPoint(5, 5)),
-        mapFromGlobal=lambda p: p,
-        panzoomPress=lambda x, y: None,
-        panzoomMove=lambda zoom_factor: None,
+    return sections
+
+
+def swipe(drag, momentum=(), busy=True):
+    return qt_events(native_swipe(drag, momentum), busy)
+
+
+def lift_index(events):
+    """Where the fingers have left: the first momentum or end event."""
+    return next(i for i, e in enumerate(events) if e[0] in (P.ScrollMomentum, P.ScrollEnd))
+
+
+# --- mouse wheels -----------------------------------------------------------
+
+
+def test_one_mouse_notch_is_one_section(window):
+    assert scroll(window, [notch(-1)] * 4) == [51, 50, 49, 48]
+    # macOS also reports a pixelDelta for a wheel notch; it does not count
+    assert scroll(window, [notch(1, pixel=20)] * 4) == [49, 50, 51, 52]
+
+
+def test_one_event_of_two_notches_moves_two_sections(window):
+    assert scroll(window, [notch(2)]) == [START + 2]
+    assert scroll(window, [notch(-3)]) == [START - 1]
+
+
+def test_fine_wheel_steps_add_up_to_one_section_per_notch(window):
+    events = [(P.NoScrollPhase, 0, 30)] * 8
+    assert scroll(window, events)[-1] == START + 2
+    # 50 + 80 + 110 is two notches, with nothing left over
+    events = [(P.NoScrollPhase, 0, d) for d in (50, 80, 110)]
+    assert scroll(window, events)[-1] == START + 4
+    assert window.wheel_steps.total == pytest.approx(0)
+
+
+def test_ten_tenths_of_a_notch_are_one_section(qapp):
+    steps = WheelSteps()
+    event = QWheelEvent(
+        QPointF(5, 5), QPointF(5, 5), QPoint(0, 0), QPoint(0, 12),
+        Qt.NoButton, Qt.NoModifier, P.NoScrollPhase, False,
     )
-    w.activateWindow = lambda: None
-    w.is_zooming = False
-    w.wheel_steps = WheelSteps()
-
-    def increment(down=False):
-        w.moves.append(-1 if down else 1)
-        w.series.current_section += -1 if down else 1
-
-    w.incrementSection = increment
-    return w
+    assert sum(steps.step(event) for _ in range(10)) == 1
 
 
-def test_one_swipe_moves_a_few_sections_not_one_per_event(qapp, window):
-    # 30 updates of 12 is 360 units; 40 momentum events follow the lift
-    for e in swipe(12, 30, momentum=40, momentum_dy=24):
-        MainWindow.wheelEvent(window, e)
-    assert window.moves == [1, 1, 1]
+# --- trackpad swipes ----------------------------------------------------------
 
 
-def test_mouse_notches_still_move_one_section_each(qapp, window):
-    for _ in range(4):
-        MainWindow.wheelEvent(window, wheel(-NOTCH))
-    assert window.moves == [-1] * 4
+def test_a_slow_swipe_moves_one_section_per_60_points(window):
+    assert scroll(window, swipe([12] * 30))[-1] == START + 6
+    assert scroll(window, swipe([-3] * 40))[-1] == START + 4
 
 
-def test_ctrl_trackpad_zoom_matches_one_notch(qapp, window):
-    window.mods["value"] = Qt.ControlModifier
-    for e in swipe(12, 10, momentum=40):
-        MainWindow.wheelEvent(window, e)
+@ORDERS
+def test_momentum_after_the_lift_moves_nothing(window, busy):
+    # 108 points is one section with 48 left over; the first momentum event
+    # (20 points, never tagged as momentum by Qt) would make it two
+    events = swipe([12] * 9, momentum=[20, 16, 12, 8, 4, 2, 1], busy=busy)
+    sections = scroll(window, events)
+    assert sections[-1] == START + 1
+    assert sections[lift_index(events)] == sections[-1]
+
+
+@ORDERS
+def test_a_long_fast_swipe_stops_when_the_fingers_lift(window, busy):
+    drag = [6, 18, 30, 40, 40, 40, 30, 20]  # 224 points
+    events = swipe(drag, momentum=[60, 50, 40, 30, 20, 12, 6, 3, 1], busy=busy)
+    sections = scroll(window, events)
+    assert sections[-1] == START + 3
+    assert sections[lift_index(events)] == sections[-1]
+
+
+@ORDERS
+def test_a_short_flick_moves_one_section(window, busy):
+    events = swipe([20, 15], momentum=[30, 25, 20, 15, 10, 5], busy=busy)
+    sections = scroll(window, events)
+    assert sections[-1] == START + 1
+    # it moves as the fingers lift, not when the momentum runs out
+    assert sections[lift_index(events)] == START + 1
+
+
+def test_a_tiny_flick_moves_nothing(window):
+    assert scroll(window, swipe([10], momentum=[12, 8, 4]))[-1] == START
+
+
+def test_a_flick_after_a_step_adds_nothing(window):
+    # 90 points: one section, then 30 left over at the lift
+    assert scroll(window, swipe([30, 30, 30]))[-1] == START + 1
+
+
+def test_reversing_drops_the_leftover(window):
+    # 50 points up, then 70 down: one section down, not a net 20 down
+    assert scroll(window, swipe([10] * 5 + [-10] * 7))[-1] == START - 1
+
+
+def test_a_wayland_swipe_moves_by_pixels_not_angle(window):
+    # Qt on Wayland reports 12 angleDelta units per pixel of finger travel
+    events = [(P.ScrollBegin, 0, 0)] + [(P.ScrollUpdate, 10, 120)] * 6 + [(P.ScrollEnd, 0, 0)]
+    assert scroll(window, events)[-1] == START + 1
+
+
+def test_a_section_change_from_elsewhere_drops_the_leftover(window):
+    scroll(window, [(P.NoScrollPhase, 0, 100)])
+    window.changeSection(START + 1)
+    window.changeSection(START)
+    # 100 + 30 would have crossed a notch
+    assert scroll(window, [(P.NoScrollPhase, 0, 30)]) == [START]
+
+
+# --- Cmd+scroll zoom (Ctrl+scroll on Windows/Linux) ------------------------------
+
+
+@ORDERS
+def test_trackpad_zoom_follows_the_fingers_only(window, busy):
+    width = window.series.window[2]
+    # 60 points is one notch of zoom; the momentum after the lift adds none
+    events = swipe([12] * 5, momentum=[40, 30, 20, 10], busy=busy)
+    scroll(window, events, Qt.ControlModifier)
     assert window.zoom_factor == pytest.approx(1.1)
-    assert window.moves == []
+    assert window.series.current_section == START
+    QTest.keyRelease(window, Qt.Key_Control)
+    assert not window.is_zooming
+    assert window.series.window[2] == pytest.approx(width / 1.1)
+
+
+def test_mouse_zoom_is_one_step_per_notch(window):
+    scroll(window, [notch(1), notch(1), notch(-1)], Qt.ControlModifier)
+    assert window.zoom_factor == pytest.approx(1.1 * 1.1 * 0.9)
