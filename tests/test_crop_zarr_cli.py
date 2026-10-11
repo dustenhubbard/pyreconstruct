@@ -869,6 +869,141 @@ def test_log_records_the_inputs_and_a_clean_run(case):
     assert len(_arrays(out)) == 10
 
 
+def _version_of(script, **env):
+    """What a copy of the script at `script` says it is (toolVersion())."""
+    code = ("import importlib.util, sys; "
+            "spec = importlib.util.spec_from_file_location('crop_zarr', sys.argv[1]); "
+            "module = importlib.util.module_from_spec(spec); "
+            "spec.loader.exec_module(module); "
+            "print(module.toolVersion())")
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(script)],
+        capture_output=True, text=True, timeout=60, cwd=str(REPO_ROOT), env=_env(**env),
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+def test_the_screen_and_the_log_name_the_copy_of_the_script(case):
+    """The first line printed and a Tool line in the log say which copy of
+    crop_zarr.py ran. From a checkout that is its commit, so a crop made with
+    an old copy can be told from one made with the current one."""
+    jser, src = case
+    out = jser.parent.parent / "out.zarr"
+    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
+    assert result.returncode == 0, result.stderr
+    first = result.stdout.splitlines()[0]
+    commit = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "--short=12", "HEAD"],
+        capture_output=True, text=True, timeout=60,
+    ).stdout.strip()
+    if commit:
+        ## "(modified)" follows while the script has uncommitted edits
+        assert first.startswith(f"crop_zarr.py from checkout {commit}"), first
+    else:
+        assert first == "crop_zarr.py from unknown source"
+    log = (out / "crop_log.txt").read_text().splitlines()
+    assert f"Tool: {first}" in log
+    assert log.index(f"Tool: {first}") < log.index(f"Series: {jser}")
+
+
+def test_an_installed_copy_names_the_commit_in_its_source_file(tmp_path):
+    """Beside a SOURCE file, as an installer writes it, the script names the
+    fork commit from that file and does not ask git. A SOURCE
+    without a commit, or no SOURCE outside a checkout, gives "unknown source"
+    rather than no line."""
+    copy = tmp_path / "crop_zarr.py"
+    shutil.copy(SCRIPT, copy)
+    source = tmp_path / "SOURCE"
+    source.write_text("dustenhubbard/pyreconstruct "
+                      "49f3a7b58cedf12745b5089294aa58e08a2bd1f7 feat(dev): fills gaps (#848)\n")
+    ## GIT_DIR points at nothing, so git cannot answer for a parent folder
+    no_git = {"GIT_DIR": str(tmp_path / "no-such-repo")}
+    assert _version_of(copy, **no_git) == "dustenhubbard/pyreconstruct 49f3a7b58ced"
+    source.write_text("dustenhubbard/pyreconstruct (commit unknown)\n")
+    assert _version_of(copy, **no_git) == "unknown source"
+    ## bytes that are not UTF-8 are no commit either, not a crash
+    source.write_bytes(b"dustenhubbard/pyreconstruct \xff\xfe\n")
+    assert _version_of(copy, **no_git) == "unknown source"
+    source.unlink()
+    assert _version_of(copy, **no_git) == "unknown source"
+
+
+def test_a_checkout_whose_status_fails_is_not_called_clean(tmp_path):
+    """When git names the commit but cannot say whether the file is modified,
+    the version says so instead of dropping the marker."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, timeout=60)
+    copy = repo / "crop_zarr.py"
+    shutil.copy(SCRIPT, copy)
+    subprocess.run(["git", "-C", str(repo), "add", "crop_zarr.py"], check=True, timeout=60)
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x"],
+        check=True, timeout=60,
+    )
+    commit = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--short=12", "HEAD"],
+        capture_output=True, text=True, check=True, timeout=60,
+    ).stdout.strip()
+    assert _version_of(copy) == f"checkout {commit}"
+    copy.write_text(copy.read_text() + "\n# edited\n")
+    assert _version_of(copy) == f"checkout {commit} (modified)"
+    ## a corrupt index makes git status fail while rev-parse still answers
+    (repo / ".git" / "index").write_bytes(b"not an index")
+    assert _version_of(copy) == f"checkout {commit} (modified or not: unknown)"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the stand-in git is a shell script")
+def test_a_checkout_whose_status_hangs_keeps_the_commit(tmp_path):
+    """When git names the commit but status never answers (the script's five
+    second limit runs out), the commit git did name stays, with the marker,
+    rather than falling to "unknown source"."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_git = bin_dir / "git"
+    fake_git.write_text(
+        "#!/bin/sh\n"
+        "for arg; do\n"
+        "  case $arg in\n"
+        "    rev-parse) echo 0123456789ab; exit 0;;\n"
+        "    status) exec sleep 60;;\n"
+        "  esac\n"
+        "done\n"
+        "exit 1\n"
+    )
+    fake_git.chmod(0o755)
+    copy = tmp_path / "crop_zarr.py"
+    shutil.copy(SCRIPT, copy)
+    path = os.pathsep.join([str(bin_dir), os.environ.get("PATH", "")])
+    assert _version_of(copy, PATH=path) == "checkout 0123456789ab (modified or not: unknown)"
+
+
+def test_the_version_is_worked_out_once_per_run(tmp_path):
+    """The screen line and the log's Tool line come from one answer: a SOURCE
+    that changes under a running crop does not make them disagree."""
+    copy = tmp_path / "crop_zarr.py"
+    shutil.copy(SCRIPT, copy)
+    source = tmp_path / "SOURCE"
+    source.write_text("dustenhubbard/pyreconstruct 0123456789abcdef0123456789abcdef01234567 one\n")
+    code = ("import importlib.util, pathlib, sys; "
+            "spec = importlib.util.spec_from_file_location('crop_zarr', sys.argv[1]); "
+            "module = importlib.util.module_from_spec(spec); "
+            "spec.loader.exec_module(module); "
+            "first = module.toolVersion(); "
+            "pathlib.Path(sys.argv[2]).write_text(sys.argv[3]); "
+            "print(first); print(module.toolVersion())")
+    changed = "dustenhubbard/pyreconstruct fedcba9876543210fedcba9876543210fedcba98 two\n"
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(copy), str(source), changed],
+        capture_output=True, text=True, timeout=60, cwd=str(REPO_ROOT), env=_env(),
+    )
+    assert result.returncode == 0, result.stderr
+    first, second = result.stdout.splitlines()
+    assert first == "dustenhubbard/pyreconstruct 0123456789ab"
+    assert second == first
+
+
 ## the zarr names of some real series: the section number, then the grid
 GRID_NAMES = ["000_shapes_grid000.tif", "001_shapes_grid01_sec01.tif", "002_shapes_grid01_sec02.tif",
               "003_shapes_grid02_sec01.tif", "004_shapes_grid02_sec02.tif"]
