@@ -1,6 +1,6 @@
-"""Duplicate detection for open traces (reported by Lyndsey Kirk).
+"""Duplicate detection for open traces.
 
-Her lab's cfa traces are about 98% open lines, and the duplicate scan was
+One lab's cfa traces are about 98% open lines, and the duplicate scan was
 missing pairs that are obvious by eye: one reported pair measured 0.2581 and
 0.25894 in length, 0.33% apart, and was not flagged at a 95% overlap threshold.
 

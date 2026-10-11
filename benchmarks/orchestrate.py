@@ -52,19 +52,19 @@ import argparse, json, os, shutil, subprocess, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 HARNESS = os.path.join(HERE, "harness.py")
 
-# The historical eight lab series, kept for provenance. These paths are one
-# developer's machine and several no longer exist -- pass --series-json to
-# describe whatever data the current machine actually has.
-DEFAULT_DATA_ROOT = "/home/dusten/projects/testing"
+# The historical eight lab series, kept for provenance. They are lab data that
+# is not in this repository -- set PYRECON_BENCH_DATA or pass --data-root, and
+# pass --series-json to describe whatever data the current machine has.
+DEFAULT_DATA_ROOT = os.path.join(HERE, "data")
 DEFAULT_SERIES = [  # (label, relpath, size_mb)
-    ("crop_1",        "autoseg_large_slow_3/crop_1_SSVQM__3600-25970-29792_2500-2000-2000.zarr_with_labels.jser", 5.7),
+    ("crop_1",        "autoseg_large_slow_3/crop_1.jser", 5.7),
     ("ZGBJY",         "cropped_small_class/ZGBJY.jser", 7.0),
-    ("crop_2",        "autoseg_large_slow_3/crop_2_SSVQM__3350-23720-27542_3000-6500-6500.zarr_with_labels.jser", 92),
-    ("GBSFW",         "autoseg_large_slow_1/GBSFW_D02_2025-09-22-MJ-ROIs_with_labels.jser", 127),
-    ("NVWXP",         "autoseg_large_slow_2/NVWXP-R02-2026-06-17-php.jser", 187),
-    ("crop_3",        "autoseg_large_slow_3/crop_3_SSVQM__3100-21470-25292_3500-11000-11000.zarr_with_labels.jser", 312),
-    ("crop_4",        "autoseg_large_slow_3/crop_4_SSVQM__2850-19220-23042_4000-15500-15500.zarr_with_labels.jser", 701),
-    ("crop_ROIsmall", "autoseg_large_slow_3/crop_ROIsmall_SSVQM__0-10000-20000_9700-10000-20000.zarr_with_labels.jser", 1400),
+    ("crop_2",        "autoseg_large_slow_3/crop_2.jser", 92),
+    ("large_a",         "autoseg_large_slow_1/large_a.jser", 127),
+    ("large_b",         "autoseg_large_slow_2/large_b.jser", 187),
+    ("crop_3",        "autoseg_large_slow_3/crop_3.jser", 312),
+    ("crop_4",        "autoseg_large_slow_3/crop_4.jser", 701),
+    ("crop_ROIsmall", "autoseg_large_slow_3/crop_ROIsmall.jser", 1400),
 ]
 
 
