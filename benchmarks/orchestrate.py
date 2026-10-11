@@ -52,10 +52,10 @@ import argparse, json, os, shutil, subprocess, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 HARNESS = os.path.join(HERE, "harness.py")
 
-# The historical eight lab series, kept for provenance. These paths are one
-# developer's machine and several no longer exist -- pass --series-json to
-# describe whatever data the current machine actually has.
-DEFAULT_DATA_ROOT = "<data root>"
+# The historical eight lab series, kept for provenance. They are lab data that
+# is not in this repository -- set PYRECON_BENCH_DATA or pass --data-root, and
+# pass --series-json to describe whatever data the current machine has.
+DEFAULT_DATA_ROOT = os.path.join(HERE, "data")
 DEFAULT_SERIES = [  # (label, relpath, size_mb)
     ("crop_1",        "autoseg_large_slow_3/crop_1.jser", 5.7),
     ("ZGBJY",         "cropped_small_class/ZGBJY.jser", 7.0),

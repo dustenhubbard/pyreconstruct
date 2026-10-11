@@ -66,7 +66,7 @@ class DataTable(QDockWidget):
 
     # Floor while FLOATING. Deliberately much lower: a floated list sized by
     # hand is a choice, not an accident. One user keeps a three-row object
-    # list floating to mark the p-stamp he is on, and the docked floor
+    # list floating to mark the p-stamp in progress, and the docked floor
     # blocked that (his report, 2026-08-25). This floor only stops a floated
     # list from vanishing under its own title bar.
     FLOAT_SHRINK_MIN_WIDTH = 120
@@ -227,7 +227,7 @@ class DataTable(QDockWidget):
             )
         # A floated list may be shrunk by hand well below the docked floor
         # in HEIGHT (a user's three-row list), but never so narrow that its
-        # own menu bar clips (his report, 2026-08-26): the width floor is
+        # own menu bar clips (the same report, 2026-08-26): the width floor is
         # the same menu-bar measure the docked hint uses.
         menubar_width = self.main_widget.menuBar().sizeHint().width() + 8
         self.setMinimumSize(

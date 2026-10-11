@@ -345,7 +345,7 @@ default_series_settings = {
     # Series.setBackupUsesDefaults writes it
     # which lists were open, floating, and where; written by the main window
     # when a series closes and replayed when it opens (a user works with
-    # undocked lists; his layout should survive a restart). Not in any
+    # undocked lists; that layout should survive a restart). Not in any
     # options dialog: the layout itself is the editor.
     "list_layout": {},
 }
