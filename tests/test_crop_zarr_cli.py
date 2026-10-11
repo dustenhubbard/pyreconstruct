@@ -954,6 +954,31 @@ def test_a_checkout_whose_status_fails_is_not_called_clean(tmp_path):
     assert _version_of(copy) == f"checkout {commit} (modified or not: unknown)"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="the stand-in git is a shell script")
+def test_a_checkout_whose_status_hangs_keeps_the_commit(tmp_path):
+    """When git names the commit but status never answers (the script's five
+    second limit runs out), the commit git did name stays, with the marker,
+    rather than falling to "unknown source"."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_git = bin_dir / "git"
+    fake_git.write_text(
+        "#!/bin/sh\n"
+        "for arg; do\n"
+        "  case $arg in\n"
+        "    rev-parse) echo 0123456789ab; exit 0;;\n"
+        "    status) exec sleep 60;;\n"
+        "  esac\n"
+        "done\n"
+        "exit 1\n"
+    )
+    fake_git.chmod(0o755)
+    copy = tmp_path / "crop_zarr.py"
+    shutil.copy(SCRIPT, copy)
+    path = os.pathsep.join([str(bin_dir), os.environ.get("PATH", "")])
+    assert _version_of(copy, PATH=path) == "checkout 0123456789ab (modified or not: unknown)"
+
+
 ## the zarr names of some real series: the section number, then the grid
 GRID_NAMES = ["000_shapes_grid000.tif", "001_shapes_grid01_sec01.tif", "002_shapes_grid01_sec02.tif",
               "003_shapes_grid02_sec01.tif", "004_shapes_grid02_sec02.tif"]

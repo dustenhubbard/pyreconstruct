@@ -65,6 +65,7 @@ its name. That includes the partial output a stopped run leaves behind.
 import argparse
 import datetime
 import difflib
+import functools
 import math
 import os
 import re
@@ -87,6 +88,7 @@ from PyReconstruct.modules.backend.progress import NullProgressReporter
 LOG_NAME = "crop_log.txt"
 
 
+@functools.cache
 def toolVersion():
     """Which copy of this script is running, for the screen and the log.
 
@@ -95,7 +97,8 @@ def toolVersion():
     writes it). Without one, the script is run from a checkout and
     git names its commit, with "(modified)" when the file differs from it
     and "(modified or not: unknown)" when git could not say.
-    "unknown source" when neither answers, so the log always has the line."""
+    "unknown source" when neither answers, so the log always has the line.
+    Worked out once per run, so the screen and the log cannot disagree."""
     script = os.path.abspath(__file__)
     here = os.path.dirname(script)
     try:
@@ -112,19 +115,22 @@ def toolVersion():
             capture_output=True, text=True, timeout=5,
         )
         commit = head.stdout.strip()
-        if head.returncode == 0 and commit:
-            status = subprocess.run(
-                git + ["status", "--porcelain", "--", script],
-                capture_output=True, text=True, timeout=5,
-            )
-            # a status that failed says nothing about the file: never call
-            # it clean on no evidence
-            if status.returncode != 0:
-                return f"checkout {commit} (modified or not: unknown)"
-            return f"checkout {commit}" + (" (modified)" if status.stdout.strip() else "")
     except (OSError, subprocess.SubprocessError):
-        pass
-    return "unknown source"
+        return "unknown source"
+    if head.returncode != 0 or not commit:
+        return "unknown source"
+    # a status that failed, or never answered, says nothing about the file:
+    # keep the commit git did name, and never call the file clean on no evidence
+    try:
+        status = subprocess.run(
+            git + ["status", "--porcelain", "--", script],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return f"checkout {commit} (modified or not: unknown)"
+    if status.returncode != 0:
+        return f"checkout {commit} (modified or not: unknown)"
+    return f"checkout {commit}" + (" (modified)" if status.stdout.strip() else "")
 
 
 def midGray(dtype):
