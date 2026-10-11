@@ -922,8 +922,36 @@ def test_an_installed_copy_names_the_commit_in_its_source_file(tmp_path):
     assert _version_of(copy, **no_git) == "dustenhubbard/pyreconstruct 49f3a7b58ced"
     source.write_text("dustenhubbard/pyreconstruct (commit unknown)\n")
     assert _version_of(copy, **no_git) == "unknown source"
+    ## bytes that are not UTF-8 are no commit either, not a crash
+    source.write_bytes(b"dustenhubbard/pyreconstruct \xff\xfe\n")
+    assert _version_of(copy, **no_git) == "unknown source"
     source.unlink()
     assert _version_of(copy, **no_git) == "unknown source"
+
+
+def test_a_checkout_whose_status_fails_is_not_called_clean(tmp_path):
+    """When git names the commit but cannot say whether the file is modified,
+    the version says so instead of dropping the marker."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, timeout=60)
+    copy = repo / "crop_zarr.py"
+    shutil.copy(SCRIPT, copy)
+    subprocess.run(["git", "-C", str(repo), "add", "crop_zarr.py"], check=True, timeout=60)
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x"],
+        check=True, timeout=60,
+    )
+    commit = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--short=12", "HEAD"],
+        capture_output=True, text=True, check=True, timeout=60,
+    ).stdout.strip()
+    assert _version_of(copy) == f"checkout {commit}"
+    copy.write_text(copy.read_text() + "\n# edited\n")
+    assert _version_of(copy) == f"checkout {commit} (modified)"
+    ## a corrupt index makes git status fail while rev-parse still answers
+    (repo / ".git" / "index").write_bytes(b"not an index")
+    assert _version_of(copy) == f"checkout {commit} (modified or not: unknown)"
 
 
 ## the zarr names of some real series: the section number, then the grid

@@ -93,7 +93,8 @@ def toolVersion():
     A SOURCE file beside the script names the fork commit it was installed
     from ("dustenhubbard/pyreconstruct <commit> <subject>", as an installer
     writes it). Without one, the script is run from a checkout and
-    git names its commit, with "(modified)" when the file differs from it.
+    git names its commit, with "(modified)" when the file differs from it
+    and "(modified or not: unknown)" when git could not say.
     "unknown source" when neither answers, so the log always has the line."""
     script = os.path.abspath(__file__)
     here = os.path.dirname(script)
@@ -106,16 +107,21 @@ def toolVersion():
         pass
     try:
         git = ["git", "-C", here]
-        commit = subprocess.run(
+        head = subprocess.run(
             git + ["rev-parse", "--short=12", "HEAD"],
             capture_output=True, text=True, timeout=5,
-        ).stdout.strip()
-        if commit:
-            changed = subprocess.run(
+        )
+        commit = head.stdout.strip()
+        if head.returncode == 0 and commit:
+            status = subprocess.run(
                 git + ["status", "--porcelain", "--", script],
                 capture_output=True, text=True, timeout=5,
-            ).stdout.strip()
-            return f"checkout {commit}" + (" (modified)" if changed else "")
+            )
+            # a status that failed says nothing about the file: never call
+            # it clean on no evidence
+            if status.returncode != 0:
+                return f"checkout {commit} (modified or not: unknown)"
+            return f"checkout {commit}" + (" (modified)" if status.stdout.strip() else "")
     except (OSError, subprocess.SubprocessError):
         pass
     return "unknown source"
