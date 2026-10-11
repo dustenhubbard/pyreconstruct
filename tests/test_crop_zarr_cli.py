@@ -979,6 +979,31 @@ def test_a_checkout_whose_status_hangs_keeps_the_commit(tmp_path):
     assert _version_of(copy, PATH=path) == "checkout 0123456789ab (modified or not: unknown)"
 
 
+def test_the_version_is_worked_out_once_per_run(tmp_path):
+    """The screen line and the log's Tool line come from one answer: a SOURCE
+    that changes under a running crop does not make them disagree."""
+    copy = tmp_path / "crop_zarr.py"
+    shutil.copy(SCRIPT, copy)
+    source = tmp_path / "SOURCE"
+    source.write_text("dustenhubbard/pyreconstruct 0123456789abcdef0123456789abcdef01234567 one\n")
+    code = ("import importlib.util, pathlib, sys; "
+            "spec = importlib.util.spec_from_file_location('crop_zarr', sys.argv[1]); "
+            "module = importlib.util.module_from_spec(spec); "
+            "spec.loader.exec_module(module); "
+            "first = module.toolVersion(); "
+            "pathlib.Path(sys.argv[2]).write_text(sys.argv[3]); "
+            "print(first); print(module.toolVersion())")
+    changed = "dustenhubbard/pyreconstruct fedcba9876543210fedcba9876543210fedcba98 two\n"
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(copy), str(source), changed],
+        capture_output=True, text=True, timeout=60, cwd=str(REPO_ROOT), env=_env(),
+    )
+    assert result.returncode == 0, result.stderr
+    first, second = result.stdout.splitlines()
+    assert first == "dustenhubbard/pyreconstruct 0123456789ab"
+    assert second == first
+
+
 ## the zarr names of some real series: the section number, then the grid
 GRID_NAMES = ["000_shapes_grid000.tif", "001_shapes_grid01_sec01.tif", "002_shapes_grid01_sec02.tif",
               "003_shapes_grid02_sec01.tif", "004_shapes_grid02_sec02.tif"]
