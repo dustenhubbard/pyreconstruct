@@ -869,6 +869,63 @@ def test_log_records_the_inputs_and_a_clean_run(case):
     assert len(_arrays(out)) == 10
 
 
+def _version_of(script, **env):
+    """What a copy of the script at `script` says it is (toolVersion())."""
+    code = ("import importlib.util, sys; "
+            "spec = importlib.util.spec_from_file_location('crop_zarr', sys.argv[1]); "
+            "module = importlib.util.module_from_spec(spec); "
+            "spec.loader.exec_module(module); "
+            "print(module.toolVersion())")
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(script)],
+        capture_output=True, text=True, timeout=60, cwd=str(REPO_ROOT), env=_env(**env),
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+def test_the_screen_and_the_log_name_the_copy_of_the_script(case):
+    """The first line printed and a Tool line in the log say which copy of
+    crop_zarr.py ran. From a checkout that is its commit, so a crop made with
+    an old copy can be told from one made with the current one."""
+    jser, src = case
+    out = jser.parent.parent / "out.zarr"
+    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
+    assert result.returncode == 0, result.stderr
+    first = result.stdout.splitlines()[0]
+    commit = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "--short=12", "HEAD"],
+        capture_output=True, text=True, timeout=60,
+    ).stdout.strip()
+    if commit:
+        ## "(modified)" follows while the script has uncommitted edits
+        assert first.startswith(f"crop_zarr.py from checkout {commit}"), first
+    else:
+        assert first == "crop_zarr.py from unknown source"
+    log = (out / "crop_log.txt").read_text().splitlines()
+    assert f"Tool: {first}" in log
+    assert log.index(f"Tool: {first}") < log.index(f"Series: {jser}")
+
+
+def test_an_installed_copy_names_the_commit_in_its_source_file(tmp_path):
+    """Beside a SOURCE file, as the khlabgpu1 installer writes it, the script
+    names the fork commit from that file and does not ask git. A SOURCE
+    without a commit, or no SOURCE outside a checkout, gives "unknown source"
+    rather than no line."""
+    copy = tmp_path / "crop_zarr.py"
+    shutil.copy(SCRIPT, copy)
+    source = tmp_path / "SOURCE"
+    source.write_text("dustenhubbard/pyreconstruct "
+                      "49f3a7b58cedf12745b5089294aa58e08a2bd1f7 feat(dev): fills gaps (#848)\n")
+    ## GIT_DIR points at nothing, so git cannot answer for a parent folder
+    no_git = {"GIT_DIR": str(tmp_path / "no-such-repo")}
+    assert _version_of(copy, **no_git) == "dustenhubbard/pyreconstruct 49f3a7b58ced"
+    source.write_text("dustenhubbard/pyreconstruct (commit unknown)\n")
+    assert _version_of(copy, **no_git) == "unknown source"
+    source.unlink()
+    assert _version_of(copy, **no_git) == "unknown source"
+
+
 ## the zarr names of some real series: the section number, then the grid
 GRID_NAMES = ["000_shapes_grid000.tif", "001_shapes_grid01_sec01.tif", "002_shapes_grid01_sec02.tif",
               "003_shapes_grid02_sec01.tif", "004_shapes_grid02_sec02.tif"]

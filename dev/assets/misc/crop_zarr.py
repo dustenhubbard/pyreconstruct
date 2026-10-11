@@ -43,9 +43,11 @@ it off:
   leaves it black. A crop where no section with the object keeps pixels is
   still an error, below.
 
-Every run writes crop_log.txt inside the output zarr: the inputs, a summary,
-and each section that was filled, made gray, kept whole or matched by
-number. The summary is printed too.
+Every run writes crop_log.txt inside the output zarr: which copy of the
+script made it, the inputs, a summary, and each section that was filled,
+made gray, kept whole or matched by number. The summary is printed too, and
+the copy of the script is printed first of all, so a run from an old install
+shows itself before it does any work.
 
 A crop that would keep no pixels is an error too, found before the output
 folder is made: when no section's image name is in the zarr and the names
@@ -68,6 +70,7 @@ import os
 import re
 import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 
@@ -82,6 +85,40 @@ from PyReconstruct.modules.backend.progress import NullProgressReporter
 
 ## the log's file name, inside the output zarr
 LOG_NAME = "crop_log.txt"
+
+
+def toolVersion():
+    """Which copy of this script is running, for the screen and the log.
+
+    A SOURCE file beside the script names the fork commit it was installed
+    from ("dustenhubbard/pyreconstruct <commit> <subject>", written by the
+    khlabgpu1 installer). Without one, the script is run from a checkout and
+    git names its commit, with "(modified)" when the file differs from it.
+    "unknown source" when neither answers, so the log always has the line."""
+    script = os.path.abspath(__file__)
+    here = os.path.dirname(script)
+    try:
+        with open(os.path.join(here, "SOURCE"), encoding="utf-8") as source:
+            words = source.readline().split()
+        if len(words) >= 2 and re.fullmatch(r"[0-9a-f]{7,40}", words[1]):
+            return f"{words[0]} {words[1][:12]}"
+    except OSError:
+        pass
+    try:
+        git = ["git", "-C", here]
+        commit = subprocess.run(
+            git + ["rev-parse", "--short=12", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+        if commit:
+            changed = subprocess.run(
+                git + ["status", "--porcelain", "--", script],
+                capture_output=True, text=True, timeout=5,
+            ).stdout.strip()
+            return f"checkout {commit}" + (" (modified)" if changed else "")
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return "unknown source"
 
 
 def midGray(dtype):
@@ -888,7 +925,8 @@ def cropSections(
             print(f"@@PROGRESS@@ STEP {done} {total}", flush=True)
 
     # written last, so a log in the output means the crop finished
-    about = [("Series", jser_fp or series.jser_fp),
+    about = [("Tool", f"crop_zarr.py from {toolVersion()}"),
+             ("Series", jser_fp or series.jser_fp),
              ("Source zarr", getattr(src_group.store, "path", "")),
              ("Output zarr", new_zarr_fp)]
     summary, text = describeCrop(plan, series, obj_name, radius, scales, about)
@@ -1047,6 +1085,8 @@ def runCli(args):
 
 
 def main(argv : list):
+    # first of all, so an old install shows itself before it does any work
+    print(f"crop_zarr.py from {toolVersion()}", flush=True)
     if not argv:
         jser_fp = input("Jser filepath: ")
         obj_name = input("Object name to crop around: ")
