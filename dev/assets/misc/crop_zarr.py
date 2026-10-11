@@ -91,8 +91,8 @@ def toolVersion():
     """Which copy of this script is running, for the screen and the log.
 
     A SOURCE file beside the script names the fork commit it was installed
-    from ("dustenhubbard/pyreconstruct <commit> <subject>", written by the
-    khlabgpu1 installer). Without one, the script is run from a checkout and
+    from ("dustenhubbard/pyreconstruct <commit> <subject>", as an installer
+    writes it). Without one, the script is run from a checkout and
     git names its commit, with "(modified)" when the file differs from it.
     "unknown source" when neither answers, so the log always has the line."""
     script = os.path.abspath(__file__)
@@ -102,7 +102,7 @@ def toolVersion():
             words = source.readline().split()
         if len(words) >= 2 and re.fullmatch(r"[0-9a-f]{7,40}", words[1]):
             return f"{words[0]} {words[1][:12]}"
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         pass
     try:
         git = ["git", "-C", here]

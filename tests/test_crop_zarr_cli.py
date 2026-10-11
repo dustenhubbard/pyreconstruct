@@ -908,8 +908,8 @@ def test_the_screen_and_the_log_name_the_copy_of_the_script(case):
 
 
 def test_an_installed_copy_names_the_commit_in_its_source_file(tmp_path):
-    """Beside a SOURCE file, as the khlabgpu1 installer writes it, the script
-    names the fork commit from that file and does not ask git. A SOURCE
+    """Beside a SOURCE file, as an installer writes it, the script names the
+    fork commit from that file and does not ask git. A SOURCE
     without a commit, or no SOURCE outside a checkout, gives "unknown source"
     rather than no line."""
     copy = tmp_path / "crop_zarr.py"
