@@ -51,7 +51,7 @@ def repair_self_crossing(trace, max_discard_ratio=0.05):
     """Repair a closed trace whose outline crosses itself, when that is safe.
 
     Autoseg emits traces with tiny self-crossings (a one-pixel spike doubling
-    back), and a crossed outline blocks the scalpel (Patrick's report,
+    back), and a crossed outline blocks the scalpel (a user's report,
     2026-08-25). shapely's make_valid splits a crossed outline into its loops;
     the repair keeps the largest loop's exterior and discards the rest.
 

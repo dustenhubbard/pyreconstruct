@@ -788,7 +788,7 @@ class FieldWidgetTrace(FieldWidgetBase):
             ## "Clean up" submenu). test_knife_cut_guards pins the message
             ## against the live menu titles, so a rename there fails a test
             ## instead of orphaning this hint.
-            ## Two roads, by cause (Patrick's report, 2026-08-25): a
+            ## Two roads, by cause (a user's report, 2026-08-25): a
             ## hand-drawn figure 8 is fixed with the scissors, not Clean up.
             notify(
                 "A selected trace's outline crosses over itself, so the cut "

@@ -1690,7 +1690,7 @@ Nightlies build new commits daily ahead of the next stable release. To run
   Ctrl+wheel for zoom. The other half of a proofreading pass is **Merge traces**
   (`Ctrl+M`), so
   the hand had to move between two modifiers for two halves of the same job.
-  Reported by Patrick Parker, who was doing exactly that, repeatedly.
+  Reported by a user who was doing exactly that, repeatedly.
 
   Qt swaps Ctrl and Meta on macOS, so this reads as `Cmd`-click there, which is
   also what `Ctrl+M` renders as: "the same key as merge" holds on both platforms. A

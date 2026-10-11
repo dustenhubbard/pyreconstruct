@@ -1,7 +1,7 @@
 """Series > Clean up > Repair self-crossing traces.
 
 Autoseg emits closed traces whose outline crosses itself, usually a
-zero-width spike doubling back over its own edge (Patrick's report,
+zero-width spike doubling back over its own edge (a user's report,
 2026-08-25, with a one-pixel example), and a crossed outline blocks the
 scalpel. The repair keeps the trace's real loop and discards the artifact.
 
