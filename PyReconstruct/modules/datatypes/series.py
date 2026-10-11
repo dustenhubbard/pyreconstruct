@@ -2400,7 +2400,7 @@ class Series():
                     # the columnar store never heard, and the end-of-section
                     # resync that repaired it came too late for a multi-object
                     # delete: the guard fired on the NEXT object's first
-                    # removal, mid-edit, on the same section (Patrick's
+                    # removal, mid-edit, on the same section (a user's
                     # report, 2026-08-28, deleting every object on beta-3).
                     # With every trace routed through removeTrace the store
                     # keeps step by itself and no resync is needed at all.

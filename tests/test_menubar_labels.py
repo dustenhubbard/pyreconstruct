@@ -356,7 +356,7 @@ _GET_OTHER_FLAVOR_ROW = (1, "act", "getotherflavor_act")
 # collapse toggle, also the sidebar pill in the status bar. Remappable,
 # default Cmd+Option+S (Ctrl+Alt+S on Windows/Linux).
 _TOGGLE_LISTS_ROW = (1, "act", "togglelists_act")
-# Series > Clean up > Repair self-crossing traces (2026-08-25, Patrick's
+# Series > Clean up > Repair self-crossing traces (2026-08-25, a user's
 # report): autoseg's zero-width spikes block the scalpel; the safe ones are
 # repaired in bulk, real figure 8s are skipped for the scissors.
 _REPAIR_SELF_CROSSINGS_ROW = (2, "act", "repairselfcrossings_act")

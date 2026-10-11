@@ -276,7 +276,7 @@ def test_minimum_is_set_on_every_list_type(qapp, dock_mainwindow, manager):
 
 
 def test_floating_list_shrinks_to_the_float_floor_only(qapp, dock_mainwindow, manager):
-    """Patrick's three-row list (2026-08-25): a floated list sized by hand may
+    """A user's three-row list (2026-08-25): a floated list sized by hand may
     go far below the docked floor in HEIGHT. The WIDTH floor stayed higher on
     his 2026-08-26 call: never so narrow that the list's own menu bar clips,
     the same measure the docked width hint uses."""

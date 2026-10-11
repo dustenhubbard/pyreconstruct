@@ -1690,7 +1690,7 @@ Nightlies build new commits daily ahead of the next stable release. To run
   Ctrl+wheel for zoom. The other half of a proofreading pass is **Merge traces**
   (`Ctrl+M`), so
   the hand had to move between two modifiers for two halves of the same job.
-  Reported by Patrick Parker, who was doing exactly that, repeatedly.
+  Reported by a user who was doing exactly that, repeatedly.
 
   Qt swaps Ctrl and Meta on macOS, so this reads as `Cmd`-click there, which is
   also what `Ctrl+M` renders as: "the same key as merge" holds on both platforms. A
@@ -2389,8 +2389,8 @@ Nightlies build new commits daily ahead of the next stable release. To run
   ignored, the way a line trace in progress already suppresses that menu. Clear
   **Ignore the other mouse buttons** in the knife's right-click dialog, or in
   `Series ▸ Options... ▸ Knife`, to get the older behavior back.
-- **Duplicate detection finds duplicate open traces.** Reported by Lyndsey Kirk,
-  whose lab's cfa traces are about 98% open lines: a pair measuring 0.2581 and
+- **Duplicate detection finds duplicate open traces.** Reported by a
+  lab whose cfa traces are about 98% open lines: a pair measuring 0.2581 and
   0.25894 in length, 0.33% apart and an obvious duplicate by eye, was not flagged
   at a 95% overlap threshold, and the pairs the scan did report were nearly all
   closed traces. Both `Series ▸ Clean up ▸ Remove duplicate traces...` and

@@ -1,6 +1,6 @@
 """Progress bars that show up and say how long (fork issue #421).
 
-Kristen's report: rename, 3D and other long tasks sat with no bar, or a bar
+A user's report: rename, 3D and other long tasks sat with no bar, or a bar
 with no estimate. Three changes, each pinned here:
 
   * Every operation's section pass asks its progress bar for a time estimate.
