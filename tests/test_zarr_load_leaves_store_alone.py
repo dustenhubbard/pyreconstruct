@@ -211,3 +211,19 @@ def test_a_scale_layout_zarr_with_no_scale_1_is_left_alone(
     _load_and_draw(real_series, _section(real_series, fp, "scale_2/img.png"))
 
     assert _snapshot(fp) == before
+
+
+@pytest.mark.parametrize("src", [pytest.param("", id="blank"), "/"])
+def test_a_blank_section_shows_no_image_named_like_a_scale(
+    qapp, real_series, tmp_path, src
+):
+    """A blank name is no image, not the root array named scale_2."""
+    fp = _flat(tmp_path, names=("scale_2", "img.png"))
+    before = _snapshot(fp)
+    section = _section(real_series, fp, src)
+
+    layer = _load_and_draw(real_series, section)
+
+    assert section.zarr_scales == []
+    assert not layer.image_found
+    assert _snapshot(fp) == before
