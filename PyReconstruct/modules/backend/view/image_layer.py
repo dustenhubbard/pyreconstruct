@@ -2,6 +2,7 @@ import os
 import math
 
 import zarr
+from zarr.storage import contains_array
 import numpy as np
 
 from PySide6.QtCore import (
@@ -48,18 +49,9 @@ class ImageLayer():
         # if the image folder is a zarr file
         if self.is_zarr_file:
             if os.path.isdir(self.series.src_dir):
-                self.zg = zarr.open(self.series.src_dir)
-                # special expection: zarr is in previous format. zarr raises
-                # on a name it refuses, which has no image either way.
-                if (
-                    self.section.zarr_key is not None and
-                    self.section.src in self.zg
-                ):
-                    # reorganize the zarr file (move images into scale_1 folder)
-                    self.zg.create_group("scale_1", overwrite=True)
-                    for g in self.zg:
-                        if g != "scale_1":
-                            self.zg.move(g, os.path.join("scale_1", g))
+                _moveFlatImagesIntoScale1(
+                    self.series.src_dir, self.section.zarr_key
+                )
                 # gather scales
                 self.scales = self.section.zarr_scales
                 if not self.scales:
@@ -72,7 +64,7 @@ class ImageLayer():
             else:
                 self.image_found = False
             if self.image_found:
-                self.image = self.zg[f"scale_{self.selected_scale}"][self.section.src]
+                self.image = self._openScale(self.selected_scale)
                 self.bh, self.bw = (n * self.selected_scale for n in self.image.shape)
                 self.base_corners = [(0, 0), (0, self.bh), (self.bw, self.bh), (self.bw, 0)]
                 self.image_found = True
@@ -95,7 +87,21 @@ class ImageLayer():
                 # premultiplied at full depth first
                 self._draw_image = _drawableImage(loaded, self.image)
                 self._pixels = _PixelView(self._draw_image)
-    
+
+    def _openScale(self, scale : int):
+        """This section's zarr image at one scale, opened read-only.
+
+            Params:
+                scale (int): the scale level, one of self.scales
+            Returns:
+                (zarr.Array) the image array
+        """
+        return zarr.open_array(
+            self.series.src_dir,
+            mode="r",
+            path=f"scale_{scale}/{self.section.zarr_key}",
+        )
+
     def _calcTformCorners(self, base_pixmap : QPixmap, tform : Transform) -> tuple:
         """Calculate the vector for each corner of a transformed image.
         
@@ -231,7 +237,7 @@ class ImageLayer():
                     scale_level = scale
                     break
             if self.selected_scale != scale_level:
-                self.image = self.zg[f"scale_{scale_level}"][self.section.src]
+                self.image = self._openScale(scale_level)
                 self.selected_scale = scale_level
         else:
             scale_level = 1
@@ -451,6 +457,51 @@ class ImageLayer():
         arr = np.array(raw, dtype=np.uint8)
 
         return arr
+
+def _moveFlatImagesIntoScale1(zarr_dir : str, key) -> bool:
+    """Move a flat-layout zarr's images into scale_1.
+
+    The first zarr layout kept each image as an array at the root. Opening a
+    section of one moves every root member into a new scale_1 group, the
+    layout zarrs have used since. This is the only write a load makes, and it
+    runs only when all of these hold:
+
+    - the section has an image name zarr accepts, and it is not blank;
+    - the zarr has no scale_N folder, so it is not in the scale layout;
+    - that name is an array at the root.
+
+    zarr reads a blank name ("" or "/") as the root group, and a scale's name
+    as that scale's group, so the old `name in group` test passed for both. A
+    section with no image then ran the move on a scale-layout zarr: scale_1 was
+    made again, empty, which deleted the full-resolution images, and scale_2
+    and up were moved inside it.
+
+        Params:
+            zarr_dir (str): the series' zarr folder
+            key (str): the section's image name as zarr stores it (zarr_key)
+        Returns:
+            (bool) whether the images were moved
+    """
+    if not key:
+        return False
+    try:
+        names = os.listdir(zarr_dir)
+    except OSError:
+        return False
+    if any(
+        n.startswith("scale_") and n.split("_")[1].isnumeric()
+        for n in names
+    ):
+        return False
+    if not contains_array(zarr.DirectoryStore(zarr_dir), key):
+        return False
+    root = zarr.open_group(zarr_dir, mode="a")
+    members = list(root.keys())  # before scale_1 is added
+    root.create_group("scale_1")
+    for name in members:
+        root.move(name, f"scale_1/{name}")
+    return True
+
 
 def _blank(w : int, h : int) -> QImage:
     """A black image layer."""

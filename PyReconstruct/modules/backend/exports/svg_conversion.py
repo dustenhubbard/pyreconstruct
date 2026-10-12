@@ -60,7 +60,7 @@ def export_svg(section_data, svg_fp) -> Union[str, Path]:
     ## Convert img to base64-encoded string to embed in svg
     if "scale_" in str(img_fp):  # NOTE: Turn this into a utility
         
-        z = zarr.open(str(img_fp))
+        z = zarr.open(str(img_fp), "r")
         z_array = z[:]
         image = Image.fromarray(z_array)
 
