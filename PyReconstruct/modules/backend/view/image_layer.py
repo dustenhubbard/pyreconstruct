@@ -467,7 +467,9 @@ def _moveFlatImagesIntoScale1(zarr_dir : str, key) -> bool:
     runs only when all of these hold:
 
     - the section has an image name zarr accepts, and it is not blank;
-    - the zarr has no scale_N folder, so it is not in the scale layout;
+    - the root has nothing named scale_1, which the move would have to replace;
+    - the root has no scale level: a scale_N entry that is not an image
+      array. An image named scale_2 is an array and does not count;
     - that name is an array at the root.
 
     zarr reads a blank name ("" or "/") as the root group, and a scale's name
@@ -475,6 +477,10 @@ def _moveFlatImagesIntoScale1(zarr_dir : str, key) -> bool:
     section with no image then ran the move on a scale-layout zarr: scale_1 was
     made again, empty, which deleted the full-resolution images, and scale_2
     and up were moved inside it.
+
+    A flat image nested under a folder named scale_N (scale_2/a.png) is left
+    where it is: that zarr is the same on disk as a scale-layout zarr with no
+    scale_1, and moving that one would put its scales inside scale_1.
 
         Params:
             zarr_dir (str): the series' zarr folder
@@ -488,10 +494,7 @@ def _moveFlatImagesIntoScale1(zarr_dir : str, key) -> bool:
         names = os.listdir(zarr_dir)
     except OSError:
         return False
-    if any(
-        n.startswith("scale_") and n.split("_")[1].isnumeric()
-        for n in names
-    ):
+    if "scale_1" in names or any(_isScaleLevel(zarr_dir, n) for n in names):
         return False
     if not contains_array(zarr.DirectoryStore(zarr_dir), key):
         return False
@@ -501,6 +504,19 @@ def _moveFlatImagesIntoScale1(zarr_dir : str, key) -> bool:
     for name in members:
         root.move(name, f"scale_1/{name}")
     return True
+
+
+def _isScaleLevel(zarr_dir : str, name : str) -> bool:
+    """Whether a root entry is a scale level rather than an image.
+
+    The name test is the one Section.zarr_scales uses. An entry holding a
+    .zarray is an image array, never a scale level.
+    """
+    return (
+        name.startswith("scale_") and
+        name.split("_")[1].isnumeric() and
+        not os.path.isfile(os.path.join(zarr_dir, name, ".zarray"))
+    )
 
 
 def _blank(w : int, h : int) -> QImage:

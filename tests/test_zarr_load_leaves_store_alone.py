@@ -8,8 +8,8 @@ normal state of a blank section) ran the move on a scale-layout zarr: scale_1
 was made again, empty, which deleted the full-resolution images, and scale_2
 and up ended up inside scale_1.
 
-Each test builds a real zarr on disk and compares every file in it, by path and
-content, before and after the section is loaded and drawn.
+A flat zarr is still moved into scale_1 when a section's image is an array at
+its root, including an image whose own name looks like a scale.
 """
 import os
 
@@ -160,3 +160,54 @@ def test_a_flat_zarr_is_still_moved_into_scale_1(qapp, real_series, tmp_path):
         np.testing.assert_array_equal(group["scale_1"][name][:], _values(1))
     assert layer.image_found
     assert layer.scales == [1]
+
+
+@pytest.mark.parametrize("src", ["scale_2", "img.png"])
+def test_a_flat_image_named_like_a_scale_is_still_moved(
+    qapp, real_series, tmp_path, src
+):
+    """An array named scale_2 at the root is an image, not a scale level."""
+    import zarr
+
+    fp = _flat(tmp_path, names=("scale_2", "img.png"))
+
+    layer = _load_and_draw(real_series, _section(real_series, fp, src))
+
+    group = zarr.open_group(fp, mode="r")
+    assert sorted(group.group_keys()) == ["scale_1"]
+    assert sorted(group["scale_1"].array_keys()) == ["img.png", "scale_2"]
+    np.testing.assert_array_equal(group["scale_1"]["scale_2"][:], _values(1))
+    assert layer.image_found
+    assert layer.scales == [1]
+
+
+def test_a_flat_image_named_scale_1_is_not_overwritten(
+    qapp, real_series, tmp_path
+):
+    """Moving would have to make a scale_1 group where that image is."""
+    fp = _flat(tmp_path, names=("scale_1", "img.png"))
+    before = _snapshot(fp)
+
+    _load_and_draw(real_series, _section(real_series, fp, "img.png"))
+
+    assert _snapshot(fp) == before
+
+
+def test_a_scale_layout_zarr_with_no_scale_1_is_left_alone(
+    qapp, real_series, tmp_path
+):
+    """A name that reaches into scale_2 is an array at the root path, and the
+    zarr has no scale_1 to stop the move."""
+    import zarr
+
+    fp = str(tmp_path / "images.zarr")
+    group = zarr.open_group(fp, mode="w")
+    for k in (2, 4):
+        group.create_group(f"scale_{k}").create_dataset(
+            "img.png", data=_values(k), chunks=(16, 16)
+        )
+    before = _snapshot(fp)
+
+    _load_and_draw(real_series, _section(real_series, fp, "scale_2/img.png"))
+
+    assert _snapshot(fp) == before
