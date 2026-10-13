@@ -875,12 +875,14 @@ class Section():
 
         A conversion that stops partway can write a scale's chunks without its
         .zarray, and zarr cannot open that array, so the scale is left out.
-        Empty when no scale has one or zarr refuses the name; None when the
-        images are not in a zarr.
+        Empty when no scale has one, zarr refuses the name, or the name is
+        blank ("" or "/"); None when the images are not in a zarr. A blank
+        name would make the path scale_N/.zarray, which is an image named
+        scale_N at the root of a flat zarr, not this section's image.
         """
         if self.series.src_dir.endswith("zarr"):
             key = self.zarr_key
-            if key is None:
+            if not key:
                 return []
             return [
                 int(s.split("_")[1])
