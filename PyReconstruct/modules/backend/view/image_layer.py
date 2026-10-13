@@ -2,7 +2,6 @@ import os
 import math
 
 import zarr
-from zarr.storage import contains_array
 import numpy as np
 
 from PySide6.QtCore import (
@@ -49,10 +48,7 @@ class ImageLayer():
         # if the image folder is a zarr file
         if self.is_zarr_file:
             if os.path.isdir(self.series.src_dir):
-                _moveFlatImagesIntoScale1(
-                    self.series.src_dir, self.section.zarr_key
-                )
-                # gather scales
+                # gather scales; an old flat zarr is read as it is (scale 1)
                 self.scales = self.section.zarr_scales
                 if not self.scales:
                     self.image_found = False
@@ -91,6 +87,8 @@ class ImageLayer():
     def _openScale(self, scale : int):
         """This section's zarr image at one scale, opened read-only.
 
+        A flat zarr's image is the array at its root (Section.zarrPath).
+
             Params:
                 scale (int): the scale level, one of self.scales
             Returns:
@@ -99,7 +97,7 @@ class ImageLayer():
         return zarr.open_array(
             self.series.src_dir,
             mode="r",
-            path=f"scale_{scale}/{self.section.zarr_key}",
+            path=self.section.zarrPath(scale),
         )
 
     def _calcTformCorners(self, base_pixmap : QPixmap, tform : Transform) -> tuple:
@@ -457,67 +455,6 @@ class ImageLayer():
         arr = np.array(raw, dtype=np.uint8)
 
         return arr
-
-def _moveFlatImagesIntoScale1(zarr_dir : str, key) -> bool:
-    """Move a flat-layout zarr's images into scale_1.
-
-    The first zarr layout kept each image as an array at the root. Opening a
-    section of one moves every root member into a new scale_1 group, the
-    layout zarrs have used since. This is the only write a load makes, and it
-    runs only when all of these hold:
-
-    - the section has an image name zarr accepts, and it is not blank;
-    - the root has nothing named scale_1, which the move would have to replace;
-    - the root has no scale level: a scale_N entry that is not an image
-      array. An image named scale_2 is an array and does not count;
-    - that name is an array at the root.
-
-    zarr reads a blank name ("" or "/") as the root group, and a scale's name
-    as that scale's group, so the old `name in group` test passed for both. A
-    section with no image then ran the move on a scale-layout zarr: scale_1 was
-    made again, empty, which deleted the full-resolution images, and scale_2
-    and up were moved inside it.
-
-    A flat image nested under a folder named scale_N (scale_2/a.png) is left
-    where it is: that zarr is the same on disk as a scale-layout zarr with no
-    scale_1, and moving that one would put its scales inside scale_1.
-
-        Params:
-            zarr_dir (str): the series' zarr folder
-            key (str): the section's image name as zarr stores it (zarr_key)
-        Returns:
-            (bool) whether the images were moved
-    """
-    if not key:
-        return False
-    try:
-        names = os.listdir(zarr_dir)
-    except OSError:
-        return False
-    if "scale_1" in names or any(_isScaleLevel(zarr_dir, n) for n in names):
-        return False
-    if not contains_array(zarr.DirectoryStore(zarr_dir), key):
-        return False
-    root = zarr.open_group(zarr_dir, mode="a")
-    members = list(root.keys())  # before scale_1 is added
-    root.create_group("scale_1")
-    for name in members:
-        root.move(name, f"scale_1/{name}")
-    return True
-
-
-def _isScaleLevel(zarr_dir : str, name : str) -> bool:
-    """Whether a root entry is a scale level rather than an image.
-
-    The name test is the one Section.zarr_scales uses. An entry holding a
-    .zarray is an image array, never a scale level.
-    """
-    return (
-        name.startswith("scale_") and
-        name.split("_")[1].isnumeric() and
-        not os.path.isfile(os.path.join(zarr_dir, name, ".zarray"))
-    )
-
 
 def _blank(w : int, h : int) -> QImage:
     """A black image layer."""

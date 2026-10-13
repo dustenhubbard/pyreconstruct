@@ -8,8 +8,10 @@ normal state of a blank section) ran the move on a scale-layout zarr: scale_1
 was made again, empty, which deleted the full-resolution images, and scale_2
 and up ended up inside scale_1.
 
-A flat zarr is still moved into scale_1 when a section's image is an array at
-its root, including an image whose own name looks like a scale.
+A flat zarr is not moved either: a section whose image is an array at its root,
+in a zarr with no scale levels, shows that array as its only scale (scale 1),
+and every other reader of the image (img_dims, SVG export, brightness and
+contrast) reads it there too.
 """
 import os
 
@@ -42,14 +44,19 @@ def _pyramid(tmp_path, names=("img.png", "other.png")):
     return fp
 
 
+def _flatValues(i):
+    """The pixels of the i-th image in a flat zarr, different for each."""
+    return _values(1) + np.uint8(11 * i)
+
+
 def _flat(tmp_path, names=("img.png", "other.png")):
     """The first layout: each image an array at the root, no scale groups."""
     import zarr
 
     fp = str(tmp_path / "images.zarr")
     group = zarr.open_group(fp, mode="w")
-    for name in names:
-        group.create_dataset(name, data=_values(1), chunks=(16, 16))
+    for i, name in enumerate(names):
+        group.create_dataset(name, data=_flatValues(i), chunks=(16, 16))
     return fp
 
 
@@ -144,53 +151,104 @@ def test_a_blank_section_leaves_a_flat_zarr_unchanged(
     assert not layer.image_found
 
 
-def test_a_flat_zarr_is_still_moved_into_scale_1(qapp, real_series, tmp_path):
-    """The one load that writes: an image at the root and no scale groups."""
-    import zarr
-
+@pytest.mark.parametrize(
+    "src, i",
+    [pytest.param("img.png", 0, id="first"), pytest.param("other.png", 1, id="second")],
+)
+def test_a_flat_zarr_is_read_in_place(qapp, real_series, tmp_path, src, i):
+    """Its image is the array at the root, as scale 1, and nothing moves."""
     fp = _flat(tmp_path)
+    before = _snapshot(fp)
+    section = _section(real_series, fp, src)
 
-    layer = _load_and_draw(real_series, _section(real_series, fp, "img.png"))
+    layer = _load_and_draw(real_series, section)
 
-    group = zarr.open_group(fp, mode="r")
-    assert sorted(group.group_keys()) == ["scale_1"]
-    assert list(group.array_keys()) == []
-    assert sorted(group["scale_1"].array_keys()) == ["img.png", "other.png"]
-    for name in ("img.png", "other.png"):
-        np.testing.assert_array_equal(group["scale_1"][name][:], _values(1))
+    after = _snapshot(fp)
+    assert sorted(after) == sorted(before), "files added or removed"
+    assert after == before, "a file in the zarr was rewritten"
+    assert section.zarr_flat
+    assert section.zarr_scales == [1]
+    assert section.src_fp == os.path.join(fp, src)
     assert layer.image_found
     assert layer.scales == [1]
+    assert not layer.is_scaled
+    assert layer.image.read_only
+    assert layer.image.shape == (IH, IW)
+    np.testing.assert_array_equal(layer.image[:], _flatValues(i))
+    assert (layer.bw, layer.bh) == (IW, IH)
 
 
-@pytest.mark.parametrize("src", ["scale_2", "img.png"])
-def test_a_flat_image_named_like_a_scale_is_still_moved(
-    qapp, real_series, tmp_path, src
+def test_a_flat_zarr_draws_its_image(qapp, real_series, tmp_path):
+    """The drawn layer holds the image's pixels, not a blank."""
+    fp = _flat(tmp_path)
+    layer = _load_and_draw(real_series, _section(real_series, fp, "other.png"))
+    ww, wh = IW * MAG, IH * MAG
+
+    drawn = layer.generateImageArray((IW, IH), [0.0, 0.0, ww, wh], bc=False)
+
+    np.testing.assert_array_equal(drawn, _flatValues(1))
+
+
+@pytest.mark.parametrize("src, i", [("scale_2", 0), ("img.png", 1)])
+def test_a_flat_image_named_like_a_scale_is_read_in_place(
+    qapp, real_series, tmp_path, src, i
 ):
     """An array named scale_2 at the root is an image, not a scale level."""
-    import zarr
-
     fp = _flat(tmp_path, names=("scale_2", "img.png"))
+    before = _snapshot(fp)
+    section = _section(real_series, fp, src)
 
-    layer = _load_and_draw(real_series, _section(real_series, fp, src))
+    layer = _load_and_draw(real_series, section)
 
-    group = zarr.open_group(fp, mode="r")
-    assert sorted(group.group_keys()) == ["scale_1"]
-    assert sorted(group["scale_1"].array_keys()) == ["img.png", "scale_2"]
-    np.testing.assert_array_equal(group["scale_1"]["scale_2"][:], _values(1))
+    assert _snapshot(fp) == before
+    assert section.zarr_scales == [1]
     assert layer.image_found
     assert layer.scales == [1]
+    np.testing.assert_array_equal(layer.image[:], _flatValues(i))
 
 
-def test_a_flat_image_named_scale_1_is_not_overwritten(
-    qapp, real_series, tmp_path
+@pytest.mark.parametrize("src, i", [("scale_1", 0), ("img.png", 1)])
+def test_a_flat_image_named_scale_1_is_read_in_place(
+    qapp, real_series, tmp_path, src, i
 ):
-    """Moving would have to make a scale_1 group where that image is."""
+    """An array named scale_1 is not the scale_1 group either."""
     fp = _flat(tmp_path, names=("scale_1", "img.png"))
     before = _snapshot(fp)
 
-    _load_and_draw(real_series, _section(real_series, fp, "img.png"))
+    layer = _load_and_draw(real_series, _section(real_series, fp, src))
 
     assert _snapshot(fp) == before
+    assert layer.image_found
+    assert layer.scales == [1]
+    np.testing.assert_array_equal(layer.image[:], _flatValues(i))
+
+
+def test_a_name_missing_from_a_flat_zarr_shows_no_image(
+    qapp, real_series, tmp_path
+):
+    fp = _flat(tmp_path)
+    before = _snapshot(fp)
+    section = _section(real_series, fp, "missing.png")
+
+    layer = _load_and_draw(real_series, section)
+
+    assert _snapshot(fp) == before
+    assert not section.zarr_flat
+    assert section.zarr_scales == []
+    assert not layer.image_found
+
+
+def test_a_scale_layout_zarr_is_not_read_as_flat(qapp, real_series, tmp_path):
+    """Its scales and paths are what they were, scale_N/<name>."""
+    fp = _pyramid(tmp_path)
+    section = _section(real_series, fp, "img.png")
+
+    assert not section.zarr_flat
+    assert sorted(section.zarr_scales) == list(SCALES)
+    assert section.src_fp == os.path.join(fp, "scale_1", "img.png")
+    assert [section.zarrPath(k) for k in SCALES] == [
+        f"scale_{k}/img.png" for k in SCALES
+    ]
 
 
 def test_a_scale_layout_zarr_with_no_scale_1_is_left_alone(
@@ -227,3 +285,87 @@ def test_a_blank_section_shows_no_image_named_like_a_scale(
     assert section.zarr_scales == []
     assert not layer.image_found
     assert _snapshot(fp) == before
+
+
+# The other readers of a section's image.
+
+
+def test_img_dims_of_a_flat_zarr_image(qapp, real_series, tmp_path):
+    fp = _flat(tmp_path)
+    before = _snapshot(fp)
+    section = _section(real_series, fp, "other.png")
+
+    assert section.img_dims == (IH, IW)
+    assert _snapshot(fp) == before
+
+
+def test_svg_export_of_a_flat_zarr_image(qapp, real_series, tmp_path):
+    """The SVG embeds the root array's pixels at their size."""
+    import base64
+    import io
+    import xml.etree.ElementTree as ET
+
+    from PIL import Image
+
+    fp = _flat(tmp_path)
+    before = _snapshot(fp)
+    section = _section(real_series, fp, "other.png")
+    out = tmp_path / "section.svg"
+
+    section.exportAsSVG(str(out))
+
+    assert _snapshot(fp) == before
+    root = ET.parse(out).getroot()
+    assert (root.get("width"), root.get("height")) == (str(IW), str(IH))
+    hrefs = [
+        img.get("{http://www.w3.org/1999/xlink}href") or img.get("href")
+        for img in root.iter("{http://www.w3.org/2000/svg}image")
+    ]
+    assert len(hrefs) == 1
+    data = base64.b64decode(hrefs[0].split(",", 1)[1])
+    np.testing.assert_array_equal(
+        np.asarray(Image.open(io.BytesIO(data))), _flatValues(1)
+    )
+
+
+def _bc_input(monkeypatch, section, **kwargs):
+    """The pixels optimizeSectionBC measures, or None if it read none."""
+    from PyReconstruct.modules.backend.view import optimize_bc
+
+    seen = []
+
+    def record(image, mean, std):
+        seen.append(np.array(image))
+        return None, None
+
+    monkeypatch.setattr(optimize_bc, "adjustPixelsToStats", record)
+    optimize_bc.optimizeSectionBC(section, **kwargs)
+    return seen[0] if seen else None
+
+
+@pytest.mark.parametrize("lowest_res", [True, False])
+def test_brightness_and_contrast_read_a_flat_zarr_image(
+    qapp, real_series, tmp_path, monkeypatch, lowest_res
+):
+    fp = _flat(tmp_path)
+    before = _snapshot(fp)
+    section = _section(real_series, fp, "other.png")
+
+    image = _bc_input(monkeypatch, section, lowest_res=lowest_res)
+
+    assert image is not None, "no image was read"
+    np.testing.assert_array_equal(image, _flatValues(1))
+    assert _snapshot(fp) == before
+
+
+@pytest.mark.parametrize("lowest_res, k", [(True, 16), (False, 1)])
+def test_brightness_and_contrast_read_a_scale_layout_image(
+    qapp, real_series, tmp_path, monkeypatch, lowest_res, k
+):
+    """The coarsest scale, or scale_1, as before."""
+    fp = _pyramid(tmp_path)
+    section = _section(real_series, fp, "img.png")
+
+    image = _bc_input(monkeypatch, section, lowest_res=lowest_res)
+
+    np.testing.assert_array_equal(image, _values(k))
