@@ -11,6 +11,7 @@ from PySide6.QtCore import QEvent
 
 from .main_imports import *
 
+from PyReconstruct.modules.datatypes.section import zarrHasScaleLevels
 from PyReconstruct.modules.datatypes.series import (
     SeriesClosedError,
     SeriesOpenError,
@@ -937,6 +938,7 @@ class MainWindow(QMainWindow):
         if (self.field.section_layer.image_found and
             self.field.section_layer.is_zarr_file and
             not self.field.section_layer.is_scaled and
+            not self._imagesAreFlatZarr() and
             user_is_present()):
             reply = QMessageBox.question(
                 self,
@@ -948,6 +950,21 @@ class MainWindow(QMainWindow):
             if reply == QMessageBox.Yes:
                 self.srcToZarr(create_new=False)
     
+    def _imagesAreFlatZarr(self) -> bool:
+        """Whether the series images are a zarr of the first, flat layout.
+
+        That layout keeps each image at the root, with no scale_N folders.
+        PyReconstruct shows it as it is (Section.zarr_flat), but the scale
+        update reads scale_1 and cannot run on it.
+        """
+        src_dir = self.series.src_dir
+        if not src_dir.endswith("zarr"):
+            return False
+        try:
+            return not zarrHasScaleLevels(src_dir)
+        except OSError:
+            return False
+
     def srcToZarr(self, create_new=True):
         """Convert the series images to scaled zarr."""
         if not self.field.section_layer.image_found:
@@ -962,6 +979,15 @@ class MainWindow(QMainWindow):
             notify(
                 "Images are not in zarr format.\n"
                 "Please convert to zarr first."
+            )
+            return
+
+        elif not create_new and self._imagesAreFlatZarr():
+            # the converter reads scale_1, which this layout does not have
+            notify(
+                "This zarr uses the older layout, with its images at the "
+                "top level.\nPyReconstruct shows it as it is, but updating "
+                "image scales works only on a zarr with scale_N folders."
             )
             return
         
@@ -1753,6 +1779,7 @@ class MainWindow(QMainWindow):
         elif (self.field.section_layer.image_found and
             self.field.section_layer.is_zarr_file and
             not self.field.section_layer.is_scaled and
+            not self._imagesAreFlatZarr() and
             user_is_present()):
             reply = QMessageBox.question(
                 self,

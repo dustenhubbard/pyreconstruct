@@ -934,10 +934,9 @@ class Section():
         if not os.path.isfile(os.path.join(src_dir, key, ".zarray")):
             return False
         try:
-            names = os.listdir(src_dir)
+            return not zarrHasScaleLevels(src_dir)
         except OSError:
             return False
-        return not any(_isScaleLevel(src_dir, n) for n in names)
 
     def zarrPath(self, scale : int) -> str:
         """Where this section's image at one scale sits inside the zarr.
@@ -3343,6 +3342,20 @@ class Section():
         """Export untransformed section as png."""
 
         return export_png(self, png_fp, scale)
+
+
+def zarrHasScaleLevels(zarr_dir : str) -> bool:
+    """Whether a zarr's root holds any scale level (scale_N folders).
+
+    False for a zarr in the first, flat layout, with each image at the root
+    (see Section.zarr_flat). Raises OSError when the folder cannot be listed.
+
+        Params:
+            zarr_dir (str): the zarr folder
+        Returns:
+            (bool) whether any root entry is a scale level
+    """
+    return any(_isScaleLevel(zarr_dir, n) for n in os.listdir(zarr_dir))
 
 
 def _isScaleLevel(zarr_dir : str, name : str) -> bool:
