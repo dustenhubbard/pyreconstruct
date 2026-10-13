@@ -854,6 +854,8 @@ class Section():
                 raise FileNotFoundError(
                     f"zarr cannot hold an image named {self.src!r}"
                 )
+            if self.zarr_flat:  # the image itself is at the root
+                return os.path.join(self.series.src_dir, key)
             return os.path.join(
                 self.series.src_dir,
                 "scale_1",
@@ -879,11 +881,16 @@ class Section():
         blank ("" or "/"); None when the images are not in a zarr. A blank
         name would make the path scale_N/.zarray, which is an image named
         scale_N at the root of a flat zarr, not this section's image.
+
+        An image in a flat zarr (see zarr_flat) has one scale, 1: the array at
+        the root.
         """
         if self.series.src_dir.endswith("zarr"):
             key = self.zarr_key
             if not key:
                 return []
+            if self.zarr_flat:
+                return [1]
             return [
                 int(s.split("_")[1])
                 for s in os.listdir(self.series.src_dir)
@@ -895,6 +902,58 @@ class Section():
                     ))
                 )
             ]
+
+    @property
+    def zarr_flat(self) -> bool:
+        """Whether this section's image is in a zarr of the first layout.
+
+        That layout kept each image as an array at the root, with no scale_N
+        groups. Its image is read where it is, as scale 1; nothing in the
+        zarr is moved or written. True only when all of these hold:
+
+        - the images are in a zarr and the name is one zarr accepts and is
+          not blank (see zarr_key);
+        - that name is an array at the root;
+        - the root has no scale level: a scale_N entry that is not an image
+          array. An image named scale_2 is an array and does not count.
+
+        A name that reaches into a scale (scale_1/a.png) is an array at that
+        path too, but its zarr has scale levels, so it is never read as a
+        flat image. Nor is a flat image kept under a folder named scale_N
+        (scale_2/a.png): on disk that zarr is the same as a scale-layout zarr
+        with no scale_1.
+        """
+        src_dir = self.series.src_dir
+        if not src_dir.endswith("zarr"):
+            return False
+        key = self.zarr_key
+        if not key:
+            return False
+        # one file check, false for a scale-layout zarr unless it also holds
+        # a copy at the root, so the root is listed only when it could matter
+        if not os.path.isfile(os.path.join(src_dir, key, ".zarray")):
+            return False
+        try:
+            names = os.listdir(src_dir)
+        except OSError:
+            return False
+        return not any(_isScaleLevel(src_dir, n) for n in names)
+
+    def zarrPath(self, scale : int) -> str:
+        """Where this section's image at one scale sits inside the zarr.
+
+        scale_N/<zarr_key>, or the bare zarr_key for scale 1 of a flat zarr
+        (see zarr_flat). Only meaningful when zarr_key is not None.
+
+            Params:
+                scale (int): the scale level, one of zarr_scales
+            Returns:
+                (str) the array's path from the zarr's root
+        """
+        key = self.zarr_key
+        if scale == 1 and self.zarr_flat:
+            return key
+        return f"scale_{scale}/{key}"
 
     @staticmethod
     def updateJSON(section_data, n, stored_ids=None):
@@ -3284,7 +3343,20 @@ class Section():
         """Export untransformed section as png."""
 
         return export_png(self, png_fp, scale)
-        
+
+
+def _isScaleLevel(zarr_dir : str, name : str) -> bool:
+    """Whether a zarr root entry is a scale level rather than an image.
+
+    The name test is the one Section.zarr_scales uses. An entry holding a
+    .zarray is an image array, never a scale level.
+    """
+    return (
+        name.startswith("scale_") and
+        name.split("_")[1].isnumeric() and
+        not os.path.isfile(os.path.join(zarr_dir, name, ".zarray"))
+    )
+
 
 class TransformsDict(dict):
     
