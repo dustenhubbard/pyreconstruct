@@ -143,14 +143,11 @@ def optimizeSectionBC(section : Section, desired_mean=128, desired_std=60, windo
             if os.path.isfile(fp):
                 image = cv2.imread(fp, cv2.IMREAD_GRAYSCALE)
             else:  # get the smallest image if using a zarr
-                if lowest_res:
-                    scale_zg = f"scale_{max(scales)}"
-                else:
-                    scale_zg = f"scale_{min(scales)}"
+                scale = max(scales) if lowest_res else min(scales)
+                # scale_N/<name>, or <name> at the root of a flat zarr
                 fp = os.path.join(
                     section.series.src_dir,
-                    scale_zg,
-                    section.zarr_key
+                    section.zarrPath(scale)
                 )
                 image = zarr.open(fp, "r")[:]
             cv2.resize(image, (1024, 1024))

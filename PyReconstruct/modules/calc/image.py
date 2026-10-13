@@ -13,7 +13,9 @@ def getImgDims(img_fp: Union[str, Path]) -> Tuple[height, width]:
     if not isinstance(img_fp, Path):
         img_fp = Path(img_fp)
     
-    if "scale_" in str(img_fp):
+    # a zarr image is a folder: scale_N/<name>, or <name> at the root of a
+    # flat zarr, whose path has no scale_ in it
+    if "scale_" in str(img_fp) or img_fp.is_dir():
 
         # read only: opened to write, a folder with no .zarray (a conversion
         # that stopped partway) gets a .zgroup, and the converter's update
