@@ -198,7 +198,7 @@ class SeriesData():
         }
         self.supress_logging = False
         # in-memory object ids, kept in step with the traces below
-        self.object_ids = ObjectIds()
+        self.object_ids = ObjectIds(series)
     
     def __getitem__(self, index):
         """Allow direct indexing of data dictionary."""
@@ -341,26 +341,31 @@ class SeriesData():
                         del(self.data["objects"][name])
                         removed_objects.add(name)
 
-            ## Keep the object ids in step (object_ids.py)
+            ## Keep the object ids in step (object_ids.py). An object emptied
+            ## here is deleted (removeObjAttrs below) only when events are
+            ## logged; otherwise (an import, a refresh) the host tree keeps
+            ## its id, so it keeps its links, as the object keeps its
+            ## attributes.
             ids = self.object_ids
+            keep = not (log_events and not self.supress_logging)
             for name in trace_names:
                 obj_data = self.data["objects"].get(name)
                 if obj_data is not None and section.n in obj_data.traces:
                     ids.ensure(section.n, name)
                 else:
-                    ids.drop(section.n, name)
-            
+                    ids.drop(section.n, name, keep=keep)
+
             ## Log newly created/destroyed objects
             if log_events and not self.supress_logging:
-                
+
                 for obj_name in added_objects:
-                    
+
                     self.series.addLog(obj_name, None, "Create object")
                     ## Set the fixed alignment of the object to creation
                     self.series.setAttr(obj_name, "alignment", self.series.alignment)
-                    
+
                 for obj_name in removed_objects:
-                    
+
                     self.series.addLog(obj_name, None, "Delete object")
                     ## Remove object from object attributes dicts
                     self.series.removeObjAttrs(obj_name)
