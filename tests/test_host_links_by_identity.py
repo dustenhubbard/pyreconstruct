@@ -483,6 +483,53 @@ def test_redoing_a_later_step_keeps_a_link_a_rename_undo_brought_back(
     assert _saved_host_tree(window, tmp_path / "redone.jser") == {T: [H]}
 
 
+def test_undoing_a_later_step_keeps_out_a_link_a_section_redo_let_go(
+        window, main_window_dialogs, monkeypatch, tmp_path):
+    """Old H is kept with no traces beside a replacement H on s3. H is
+    renamed to X from the object list and T is added to a group. Undo on
+    s3 takes back the group, and again, on that section only, the rename.
+    Redo on s2 puts the group back and redo on s3 the rename, which lets
+    old H go. Undoing the group then changes only the group: T stays
+    hosted by X alone."""
+    import PyReconstruct.modules.gui.main.field_widget_3_object as obj
+    from PyReconstruct.modules.datatypes import Trace
+
+    s1, s2, s3, _ = _delete_both_and_replace(window)
+    _undo_on(window, s2)
+    _undo_on(window, s1)
+    _import_from_a_copy_without(window, monkeypatch, tmp_path, H, snum=s1)
+    assert window.series.host_tree.keptIds(H)
+    _object_list(window, monkeypatch, [H])
+    monkeypatch.setattr(obj.TraceDialog, "exec", lambda self: (
+        (Trace(X, (0, 255, 0), True), None), True,
+    ))
+    window.field.editAttributes()
+    _object_list(window, monkeypatch, [T])
+    monkeypatch.setattr(obj.ObjectGroupDialog, "exec", lambda self: ("g", True))
+    window.field.addToGroup()
+
+    for snum, redo, scope in [
+        (s3, False, "all"),
+        (s3, False, "section"),
+        (s2, True, "all"),
+        (s3, True, "all"),
+    ]:
+        window.changeSection(snum)
+        main_window_dialogs.linked_undo_responses = [scope]
+        action = window.redo_act if redo else window.undo_act
+        assert action.isEnabled()
+        action.trigger()
+    assert window.series.object_groups.getObjectGroups(T) == {"g"}
+    assert _saved_host_tree(window, tmp_path / "redone.jser") == {T: [X]}
+
+    window.changeSection(s2)
+    assert window.undo_act.isEnabled()
+    window.undo_act.trigger()
+    assert window.series.object_groups.getObjectGroups(T) == set()
+    assert _hosts(window) == [X]
+    assert _saved_host_tree(window, tmp_path / "undone.jser") == {T: [X]}
+
+
 # --------------------------------------------------------------------------- #
 # save
 # --------------------------------------------------------------------------- #
