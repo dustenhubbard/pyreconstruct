@@ -1,6 +1,6 @@
 """The dual write from `Section` into the columnar store.
 
-Slice 3 of the Phase 1 rewiring. Every `Section` carries a `SectionColumns`
+Every `Section` carries a `SectionColumns`
 beside its `self.contours`, mirrors every mutation into it, and checks the two
 against each other. Nothing reads the store yet; this exists so that the store
 is driven by real code on real data before one call site is flipped to read
@@ -518,7 +518,7 @@ def test_only_section_py_writes_the_store_and_the_repair_sites_are_pinned():
     sites named in `REPAIR_SITES`.
 
     `self._columns` is deliberately not scanned. It collided with an unrelated
-    `TraceView._columns` (`columnar_store.py`, Phase 1 slices 4/6) the first
+    `TraceView._columns` (`columnar_store.py`) the first
     time both landed on the same tree: the name is common enough that two
     independent classes picked it for unrelated fields.
     """

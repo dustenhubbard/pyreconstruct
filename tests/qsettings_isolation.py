@@ -90,8 +90,8 @@ The two combine as follows:
   should be touching the store there.
 - neither: silent.
 
-A run that fails on something the developer cannot control, in his normal
-working configuration, teaches him to ignore the one message that matters.
+A run that fails on something the developer cannot control, in their normal
+working configuration, teaches them to ignore the one message that matters.
 """
 
 import atexit

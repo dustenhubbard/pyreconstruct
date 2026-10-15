@@ -2,7 +2,7 @@
 
 Every other tool on the palette had a key (P, Z, K, C, O, S, G, F, Q) and a
 row in the shortcuts dialog. Scissors had no action behind it at all, so it
-could only be clicked and could not be given a key. His call (2026-09-14):
+could only be clicked and could not be given a key. The default (2026-09-14):
 Shift+K for now, one step from Knife, the tool it sits beside; it can be
 remapped by the user or given a better default later. S was Stamp, X was
 Focus.
