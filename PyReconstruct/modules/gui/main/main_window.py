@@ -988,14 +988,15 @@ class MainWindow(QMainWindow):
             Returns:
                 (bool) True if the image names were changed
         """
-        zarr_dir = self.series.src_dir
+        series = self.series
+        zarr_dir = series.src_dir
         try:
             zarr_names = zarrImageNames(zarr_dir)
         except OSError:
             return False
         series_names = {
             snum: Section.imageName(data["src"])
-            for snum, data in self.series.data["sections"].items()
+            for snum, data in series.data["sections"].items()
         }
         if any(name in zarr_names for name in series_names.values()):
             # some section has its image here: a missing image, not a naming
@@ -1009,13 +1010,14 @@ class MainWindow(QMainWindow):
                 "The image names were not changed."
             )
             return False
-        dialog = MatchImageNamesDialog(self, self.series, series_names, match, zarr_dir)
+        dialog = MatchImageNamesDialog(self, series, series_names, match, zarr_dir)
         if not dialog.exec():
             return False
-        self.setImageNames(match["names"], f"Use the image names in {zarr_name}")
-        return True
+        return self.setImageNames(
+            series, match["names"], f"Use the image names in {zarr_name}"
+        )
 
-    def setImageNames(self, names : dict, event : str = None):
+    def setImageNames(self, series, names : dict, event : str = None) -> bool:
         """Set the image name of every section in the open series.
 
         The field is saved first, so the traces drawn since the last save
@@ -1023,9 +1025,18 @@ class MainWindow(QMainWindow):
         series' working folder; the series file changes when the user saves.
 
             Params:
+                series (Series): the series the names were chosen for
                 names (dict): section number: the new image name
                 event (str): the log entry, or None to log nothing
+            Returns:
+                (bool) True if the image names were changed
         """
+        # the names are chosen in a dialog, and a .jser opened from the
+        # Finder meanwhile closes that series and opens another in its place
+        if series is not self.series:
+            notify(f"{series.name} was closed, so its image names were not changed.")
+            return False
+
         # the loop reloads every section from disk and field.reload() swaps the
         # disk copies into the field, so unsaved edits on the current and
         # flickered sections must be written first or they are lost
@@ -1049,6 +1060,7 @@ class MainWindow(QMainWindow):
 
         self.field.table_manager.updateSections(list(self.series.sections.keys()))
         self.seriesModified(True)
+        return True
 
     def srcToZarr(self, create_new=True):
         """Convert the series images to scaled zarr."""

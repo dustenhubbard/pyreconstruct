@@ -571,6 +571,7 @@ class SectionTableWidget(DataTable):
             for snum in self.series.sections
         }
         self.mainwindow.setImageNames(
+            self.series,
             names,
             f"Change section image source to {new_src}" if log_event else None,
         )

@@ -7,6 +7,8 @@ dialog lists the pairs and draws a few sections' traces over the proposed
 images, and on confirmation the names are applied through `setImageNames`,
 the path `Edit all image sources...` uses, so unsaved traces survive. The
 zarr is read and never written, and the series file is left to the save.
+Names chosen for a series that a .jser opened from the Finder has replaced
+are dropped with a notice, never applied to the series now open.
 
 The tests run on shapes1 (five sections, traces, images) in place of the
 default fixture series.
@@ -317,3 +319,108 @@ def test_edit_all_image_sources_still_renames_every_section(main_window, monkeyp
 
     assert _names_on_disk(series) == {n: f"img_{n}.tif" for n in range(5)}
     assert main_window.field.section.src == f"img_{series.current_section}.tif"
+
+
+@pytest.fixture
+def finder(qapp, main_window):
+    """Route a .jser opened from the Finder to the window, as the app does."""
+    from PyReconstruct.run import FileOpenWatcher
+
+    watcher = FileOpenWatcher()
+    watcher.main_window = main_window
+    qapp.installEventFilter(watcher)
+    yield watcher
+    qapp.removeEventFilter(watcher)
+
+
+def _open_from_finder(window, tmp_path):
+    """Open a copy of shapes1 as series B, the way a Finder double-click does.
+
+    Asked to save the series it closes, the window gets "no" from the
+    dialog recorder.
+    """
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QFileOpenEvent
+    from PySide6.QtWidgets import QApplication
+
+    folder = tmp_path / "series_b"
+    folder.mkdir()
+    fp = folder / "series_b.jser"
+    shutil.copy(FILES / "shapes1.jser", fp)
+    for image in FILES.glob("shapes_*.tif"):
+        shutil.copy(image, folder / image.name)
+    app = QApplication.instance()
+    app.sendEvent(app, QFileOpenEvent(QUrl.fromLocalFile(str(fp))))
+    assert window.series.jser_fp == str(fp)
+    return window.series
+
+
+def _logged(series):
+    return [log.event for log in series.log_set.all_logs]
+
+
+def test_a_series_opened_while_the_dialog_is_up_keeps_its_names(
+    main_window, main_window_dialogs, finder, on_screen, monkeypatch, tmp_path
+):
+    """The dialog's event loop lets a .jser from the Finder open meanwhile."""
+    from PyReconstruct.modules.gui.main import main_window as mw
+
+    first = main_window.series
+    opened = []
+
+    def exec_(dialog):
+        second = _open_from_finder(main_window, tmp_path)
+        opened.append((second, second.modified))
+        return 1
+
+    monkeypatch.setattr(mw.MatchImageNamesDialog, "exec", exec_)
+    fp = _zarr(tmp_path)
+    main_window_dialogs.notices.clear()
+
+    main_window.changeSrcDir(fp)
+
+    [(second, modified)] = opened
+    assert main_window.series is second is not first
+    assert _names_on_disk(second) == SHAPES
+    assert main_window.field.section_layer.image_found
+    assert not any("grid.zarr" in event for event in _logged(second))
+    assert second.modified == modified
+    assert main_window_dialogs.notices == [
+        f"{first.name} was closed, so its image names were not changed."
+    ]
+
+
+def test_edit_all_image_sources_leaves_a_series_opened_meanwhile_alone(
+    main_window, main_window_dialogs, finder, monkeypatch, tmp_path
+):
+    """The name prompt has its own event loop, so the Finder reaches it too."""
+    from PyReconstruct.modules.gui.table import section as section_mod
+    from PyReconstruct.modules.gui.table.section import SectionTableWidget
+
+    first = main_window.series
+    for snum in list(first.sections):
+        section = first.loadSection(snum)
+        section.align_locked = False
+        section.save()
+    main_window.field.reload()
+    opened = []
+
+    def get_text(*args, **kwargs):
+        second = _open_from_finder(main_window, tmp_path)
+        opened.append((second, second.modified))
+        return "img_#.tif", True
+
+    monkeypatch.setattr(section_mod.QInputDialog, "getText", staticmethod(get_text))
+    table = SectionTableWidget(first, main_window, main_window.field.table_manager)
+    main_window_dialogs.notices.clear()
+
+    table.modifyAllSrc()
+
+    [(second, modified)] = opened
+    assert main_window.series is second
+    assert _names_on_disk(second) == SHAPES
+    assert not any("img_#.tif" in event for event in _logged(second))
+    assert second.modified == modified
+    assert main_window_dialogs.notices == [
+        f"{first.name} was closed, so its image names were not changed."
+    ]
