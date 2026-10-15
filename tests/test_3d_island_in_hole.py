@@ -7,8 +7,9 @@ cleared every negative trace, so a positive trace drawn inside a negative one
 
 The fill now draws the same way and then fills each island back in, less the
 voxels of the negatives ``islandCuts`` lists for it. A section with no island
-draws exactly as it did, which the reference loop below (the shipped fill,
-frozen) pins voxel for voxel.
+draws exactly as the two passes do, which the reference loop below (every
+positive, then every negative, each through ``traceVoxels``) pins voxel for
+voxel.
 """
 import math
 import os
@@ -17,7 +18,6 @@ import shutil
 import numpy as np
 import pytest
 from PySide6.QtWidgets import QApplication
-from skimage.draw import polygon
 
 QApplication.instance() or QApplication(["test"])
 
@@ -28,6 +28,7 @@ from PyReconstruct.modules.backend.volume.objects_3D import (  # noqa: E402
     _traceLine,
     _tracePolygon,
     islandCuts,
+    traceVoxels,
 )
 
 FIXTURE_DIR = os.path.join(
@@ -73,13 +74,13 @@ ONE_POINT = [(1.5, 1.5), (1.5, 1.5), (1.5, 1.5)]
 CROSS = _square(1.5, 1.5, 1.9, 1.9)
 LINE = [(1.5, 1.35), (1.5, 1.65)]
 # negatives beside the island: one sharing part of its right edge, one
-# touching its corner, and two that miss it by less than a voxel's diagonal
-# (the voxels here are 0.03 wide), so both round onto its edge voxels
+# touching its corner, and two that miss it by a fraction of a voxel (the
+# voxels here are 0.03 wide), so both reach into its edge voxels
 TOUCH = _square(1.7, 1.4, 1.9, 1.6)
 CORNER = _square(1.7, 1.7, 1.9, 1.9)
-NEAR = _square(1.724, 1.4, 1.9, 1.6)
-NEAR_CORNER = _square(1.724, 1.724, 1.9, 1.9)
-# one too far to round onto the island at all
+NEAR = _square(1.705, 1.4, 1.9, 1.6)
+NEAR_CORNER = _square(1.705, 1.705, 1.9, 1.9)
+# one too far to reach a voxel of the island at all
 FAR = _square(1.76, 1.4, 1.9, 1.6)
 VOXEL = 0.03
 REACH = math.hypot(VOXEL, VOXEL)
@@ -101,26 +102,26 @@ def _vres(surf):
     return vres_min + (1 - series.getOption("3D_xy_res") / 100) * (vres_max - vres_min)
 
 
-def _grid(points, surf):
-    """A trace's points rounded to the volume's grid, as x and y arrays."""
+def _shape(surf):
+    """The volume's shape in x, y and sections."""
     vres = _vres(surf)
+    xmin, xmax, ymin, ymax, smin, smax = tuple(surf.extremes)
+    return (round((xmax - xmin) / vres) + 1, round((ymax - ymin) / vres) + 1, smax - smin + 1)
+
+
+def _voxels(points, surf):
+    """The voxels a trace covers on the volume's grid, as x and y arrays."""
     xmin, _, ymin, _, _, _ = tuple(surf.extremes)
-    xs = np.array([round((x - xmin) / vres) for x, _ in points])
-    ys = np.array([round((y - ymin) / vres) for _, y in points])
-    return xs, ys
+    return traceVoxels(points, xmin, ymin, _vres(surf), _shape(surf)[:2])
 
 
 def _order_volume(surf, order):
     """The volume drawn in the order ``order(pos, neg)`` gives."""
-    vres = _vres(surf)
-    xmin, xmax, ymin, ymax, smin, smax = tuple(surf.extremes)
-    volume = np.zeros(
-        (round((xmax - xmin) / vres) + 1, round((ymax - ymin) / vres) + 1, smax - smin + 1),
-        dtype=bool,
-    )
+    smin = surf.extremes[4]
+    volume = np.zeros(_shape(surf), dtype=bool)
     for snum, trace_lists in surf.traces.items():
         for trace, fill in order(trace_lists["pos"], trace_lists["neg"]):
-            xx, yy = polygon(*_grid(trace, surf))
+            xx, yy = _voxels(trace, surf)
             volume[xx, yy, snum - smin] = fill
     return volume
 
@@ -135,8 +136,8 @@ def _reference_volume(surf):
 
 
 def _count(volume, points, surf):
-    """Voxels of ``volume`` inside the trace ``points``, on every section."""
-    xx, yy = polygon(*_grid(points, surf))
+    """Voxels of ``volume`` the trace ``points`` covers, on every section."""
+    xx, yy = _voxels(points, surf)
     return int(volume[xx, yy, :].sum())
 
 
@@ -282,7 +283,7 @@ def test_island_cuts_lists_negatives_across_it():
 ])
 def test_negative_beside_the_island_still_cuts_it(name, near):
     """A negative that touches the island, or sits close enough that both
-    round onto the same voxels, cuts it: the island ends up with the voxels
+    reach into the same voxels, cuts it: the island ends up with the voxels
     it has with no hole around it, and the negative's own voxels stay clear
     as they did before."""
     cut = _surface([(OUTER, False), (ISLAND, False), (near, True)])
@@ -299,8 +300,8 @@ def test_negative_beside_the_island_still_cuts_it(name, near):
 
 def test_island_cuts_lists_negatives_beside_the_island():
     pos, neg = [OUTER, ISLAND], [HOLE, TOUCH, CORNER, NEAR, NEAR_CORNER, FAR]
-    # touching counts with no reach; the ones a voxel away need it, and a
-    # negative too far to round onto the island is left out
+    # touching counts with no reach; the ones a fraction of a voxel away need
+    # it, and a negative too far to reach the island's voxels is left out
     assert islandCuts(pos, neg) == [(ISLAND, [TOUCH, CORNER])]
     assert islandCuts(pos, neg, REACH) == [
         (ISLAND, [TOUCH, CORNER, NEAR, NEAR_CORNER]),
@@ -322,8 +323,7 @@ def _outside(surf, island, negatives):
     full = np.ones_like(surf.generateVolume()[0])
     cleared = full.copy()
     for negative in negatives:
-        xs, ys = _grid(negative, surf)
-        xx, yy = polygon(xs, ys, cleared.shape[:2])
+        xx, yy = _voxels(negative, surf)
         cleared[xx, yy, :] = False
     return _count(cleared, island, surf)
 
@@ -456,10 +456,10 @@ def test_no_island_loses_more_than_its_cuts_against_the_old_order(seed):
     shape = volume.shape[:2]
 
     for island, cuts in islandCuts(pos, neg, REACH):
-        xx, yy = polygon(*_grid(island, surf), shape)
+        xx, yy = _voxels(island, surf)
         cut = np.zeros(shape, dtype=bool)
         for n in cuts:
-            cut[polygon(*_grid(n, surf), shape)] = True
+            cut[_voxels(n, surf)] = True
         here, before = volume[xx, yy, 0], main[xx, yy, 0]
         lost = before & ~here
         assert not (lost & ~cut[xx, yy]).any(), seed
