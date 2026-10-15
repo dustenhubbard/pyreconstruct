@@ -13,8 +13,7 @@ Remove, Copy, Revert and Reset buttons; and a preview strip of sixteen sample
 labels colored the way import will color them, with a status line that says
 when a length change has reassigned every label.
 
-The picker is a child widget, not a window (his call, 2026-09-14, after two
-design passes). The old page opened a modal color dialog per swatch, so
+The picker is a child widget, not a window. The old page opened a modal color dialog per swatch, so
 recoloring twelve colors was twelve open-adjust-OK cycles. Now a click on a
 swatch retargets the one picker, every slider move repaints that swatch, and
 Esc or Revert puts it back to what it was when it was selected. Nothing is
@@ -58,8 +57,8 @@ from PyReconstruct.modules.gui.utils import notify
 # and "Shuffle colors" button with nothing to reshuffle (next_shuffle_seed no-ops
 # below two colors). Two is the smallest palette for which the whole color
 # machinery is still meaningful, so it is the enforced floor. Distinctness beyond
-# that (avoiding near-duplicate or hard-to-see colors) is left to the user, per
-# the maintainer's intent.
+# that (avoiding near-duplicate or hard-to-see colors) is left to the user, on
+# purpose.
 MIN_PALETTE_COLORS = 2
 
 _SWATCH_SIZE = QSize(56, 28)

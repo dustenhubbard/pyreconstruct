@@ -162,8 +162,8 @@ class MousePalette():
         # button already made (getBounds), so placing
         # each one as it was created gave every button a different origin:
         # with the column dragged down from its default the buttons piled up
-        # at half spacing until the next resize (his users' "squished tool
-        # bar" at startup, September 2026).
+        # at half spacing until the next resize, a squished tool bar at
+        # startup.
         self.placeModeButtons()
 
         # create palette buttons
@@ -748,7 +748,7 @@ class MousePalette():
         }
         save_palette_positions(_position_settings(), positions)
 
-    # Right-click to hide, group by group (his ask, 2026-08-26): the View
+    # Right-click to hide, group by group: the View
     # menu keeps every toggle, and this adds the direct road from the widget
     # itself. One installer per group, run wherever the widgets are (re)built,
     # so a rebuilt slider is still armed.
@@ -822,7 +822,7 @@ class MousePalette():
 
         Every visibility change lands here through saveVisibilityState, so
         the menu stays in step with a right-click hide as well as its own
-        toggles (his report, 2026-08-26).
+        toggles.
         """
         sync = getattr(self.mainwindow, "syncPaletteToggles", None)
         if sync is not None:
@@ -1120,10 +1120,10 @@ class MousePalette():
     def previewScaleBarWidth(self, percent):
         """Show the bar at `percent` of the field width without storing it.
 
-        Series > Options drives this from its slider as the handle moves
-        (his ask, 2026-09-14: the size could only be judged after OK closed
-        the window). Nothing is written: OK stores the option and rebuilds
-        the palette; Cancel calls restoreScaleBar. A bar pinned to a micron
+        Series > Options drives this from its slider as the handle moves, so
+        the size can be judged before OK without closing and reopening the
+        window. Nothing is written: OK stores the option and rebuilds the
+        palette; Cancel calls restoreScaleBar. A bar pinned to a micron
         length takes the width as the most it may grow to, exactly as the
         stored option does.
         """

@@ -55,7 +55,7 @@ def repair_self_crossing(trace, max_discard_ratio=0.05):
     2026-08-25). shapely's make_valid splits a crossed outline into its loops;
     the repair keeps the largest loop's exterior and discards the rest.
 
-    Safety rule (his option 1, 2026-08-25): repair only when the discarded
+    Safety rule: repair only when the discarded
     loops are tiny beside the kept one -- at most ``max_discard_ratio`` of its
     area. A genuine figure 8 with two real loops is left alone for the
     scissors, because keeping one loop would silently delete the other.
