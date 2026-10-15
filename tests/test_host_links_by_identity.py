@@ -652,6 +652,120 @@ def test_redoing_a_copy_or_split_on_one_section_makes_its_links_again(
     assert _hosts(window, made) == [H]
     assert _saved_host_tree(window, tmp_path / "redone.jser").get(made) == [H]
 
+
+A, Z = "hl_a", "hl_z"
+A_COPY, Z_COPY = A + "_copy", Z + "_copy"
+
+
+def _trigger_on(window, dialogs, snum, act, scope):
+    window.changeSection(snum)
+    dialogs.linked_undo_responses = [scope]
+    assert act.isEnabled()
+    act.trigger()
+
+
+def _copy_into_names_that_exist(window, dialogs, monkeypatch, tmp_path, middle=None):
+    """A_COPY on s1 is hosted by Z_COPY on s4 (through middle on s1 if
+    given), and Z on s2 is hosted by A_COPY; A on s3 has no host. Copying A
+    then Z from the object list clears A_COPY's hosts, then gives Z_COPY the
+    host A_COPY. Undo takes it back on every section."""
+    s1, s2, s3, s4 = _sections(window)
+    for snum, name in [(s1, A_COPY), (s2, Z), (s3, A), (s4, Z_COPY)]:
+        _draw_on(window, snum, name)
+    if middle is None:
+        window.series.setObjHosts([A_COPY], [Z_COPY])
+    else:
+        _draw_on(window, s1, middle)
+        window.series.setObjHosts([middle], [Z_COPY])
+        window.series.setObjHosts([A_COPY], [middle])
+    window.series.setObjHosts([Z], [A_COPY])
+    before = _saved_host_tree(window, tmp_path / "before.jser")
+    _object_list(window, monkeypatch, [A, Z])
+    window.field.copyObjects()
+    copied = _saved_host_tree(window, tmp_path / "copied.jser")
+    assert copied[Z_COPY] == [A_COPY] and A_COPY not in copied
+    _trigger_on(window, dialogs, s2, window.undo_act, "all")
+    assert _saved_host_tree(window, tmp_path / "undone.jser") == before
+    return s2, s3, before, copied
+
+
+@pytest.mark.parametrize("then", ["save", "draw", "reopen"])
+def test_redoing_a_copy_into_names_that_exist_on_one_section_replaces_their_hosts(
+        window, main_window_dialogs, monkeypatch, tmp_path, then):
+    """Redo on s2 alone gives Z_COPY the host A_COPY and takes away A_COPY's
+    host Z_COPY, as the copy did, so the two do not host each other. The
+    saved tree stays the same after an unrelated draw or a reopen."""
+    s2, _, _, copied = _copy_into_names_that_exist(
+        window, main_window_dialogs, monkeypatch, tmp_path
+    )
+    _trigger_on(window, main_window_dialogs, s2, window.redo_act, "section")
+    if then == "draw":
+        _draw_on(window, s2, SPARE)
+    path = tmp_path / "redone.jser"
+    assert _saved_host_tree(window, path) == copied
+    if then == "reopen":
+        from PyReconstruct.modules.datatypes import Series
+
+        other = Series.openJser(str(path))
+        try:
+            assert other.host_tree.getDict() == copied
+        finally:
+            other.close()
+
+
+def test_redoing_a_copy_on_one_section_refuses_a_host_that_would_host_itself(
+        window, main_window_dialogs, monkeypatch, tmp_path):
+    """A_COPY is hosted by Z_COPY through M. Redo on s2 alone cannot give
+    Z_COPY the host A_COPY: the copy took away A_COPY's host M on s3, which
+    is not redone yet. Redo on s3 then makes the copy's tree."""
+    M = "hl_middle"
+    s2, s3, before, copied = _copy_into_names_that_exist(
+        window, main_window_dialogs, monkeypatch, tmp_path, middle=M
+    )
+    _trigger_on(window, main_window_dialogs, s2, window.redo_act, "section")
+    assert _saved_host_tree(window, tmp_path / "s2.jser") == before
+    _draw_on(window, s2, SPARE)
+    assert _saved_host_tree(window, tmp_path / "drawn.jser") == before
+    _trigger_on(window, main_window_dialogs, s3, window.redo_act, "section")
+    assert _saved_host_tree(window, tmp_path / "s3.jser") == copied
+
+
+def test_redoing_an_import_on_one_section_keeps_a_host_it_made_redundant(
+        window, main_window_dialogs, monkeypatch, tmp_path):
+    """H hosts T, and X is on s3. A copy moves T and puts X between them.
+    Importing s2 from it gives T the host X, and H drops from T's hosts as
+    X's host. Redo on s2 alone after an undo there makes T -> X but not
+    X -> H, which belongs to X, so T keeps H."""
+    from PyReconstruct.modules.datatypes import Series
+    import PyReconstruct.modules.gui.main.main_window as mw
+
+    _, s2, s3, _ = _setup(window)
+    _draw_on(window, s3, X)
+    window.saveAllData()
+    path = tmp_path / "copy.jser"
+    window.series.saveJser(str(path))
+    copy = Series.openJser(str(path))
+    try:
+        section = copy.loadSection(s2)
+        section.selected_traces = list(section.contours[T])
+        section.translateTraces(1.0, 1.0)
+        section.save()
+        copy.setObjHosts([X], [H])
+        copy.setObjHosts([T], [X])
+        copy.saveJser(str(path))
+    finally:
+        copy.close()
+    monkeypatch.setattr(mw.FileDialog, "get", lambda *a, **k: str(path))
+    monkeypatch.setattr(mw.ImportSeriesDialog, "exec", lambda self: (
+        {"traces": [(s2, s2 + 1), [], [], 0.95, True, True, True, "other", "other"]},
+        True,
+    ))
+    window.importfromseries_act.trigger()
+    assert _saved_host_tree(window, tmp_path / "imported.jser") == {T: [X], X: [H]}
+    _trigger_on(window, main_window_dialogs, s2, window.undo_act, "all")
+    _trigger_on(window, main_window_dialogs, s2, window.redo_act, "section")
+    assert _saved_host_tree(window, tmp_path / "redone.jser") == {T: [H, X]}
+
 # --------------------------------------------------------------------------- #
 # save
 # --------------------------------------------------------------------------- #
