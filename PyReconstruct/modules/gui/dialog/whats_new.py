@@ -703,6 +703,19 @@ class WhatsNewDialog(QDialog):
         self._header.setFont(hf)
         lay.addWidget(self._header)
 
+        # A dev build shows the latest stable release's notes, and this line
+        # says so and links the changelog for everything since. Its own label
+        # above the browser rather than a paragraph inside it, so it stays on
+        # screen however far the notes scroll; a LinkLabel so its one anchor
+        # survives a live theme switch like the other two in this dialog. A
+        # stable build has no note, and then no widget is added at all.
+        self._note = None
+        if content.get("note"):
+            self._note = LinkLabel(content["note"])
+            self._note.setOpenExternalLinks(True)
+            self._note.setWordWrap(True)
+            lay.addWidget(self._note)
+
         # The notes browser renders the release notes and nothing else; the
         # footer line sits below it, on screen however long the notes are.
         #
