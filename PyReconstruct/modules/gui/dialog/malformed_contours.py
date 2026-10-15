@@ -536,7 +536,7 @@ class SkippedCrossingsDialog(MalformedContoursDialog):
     The bulk repair (Series > Clean up > Repair self-crossing traces...)
     skips a trace whose crossing separates two real loops, because only the
     user can pick the right loop. Naming them in a plain message was not
-    actionable (his report, 2026-08-26): this review list keeps the window
+    actionable: this review list keeps the window
     open while "Go to trace" walks the field to each one, and "Copy table
     list" takes the whole set to a notes app. No delete action on purpose;
     the scissors in the field are the fix.
@@ -566,7 +566,7 @@ class RepairedCrossingsDialog(MalformedContoursDialog):
     """The summary after a self-crossing repair pass.
 
     Lists every trace the pass repaired, with the same copy-to-clipboard and
-    save-as-CSV roads as the other review lists (his ask, 2026-08-26), so a
+    save-as-CSV roads as the other review lists, so a
     lab can keep a record of what a bulk pass touched. "Go to trace" works
     here too, for spot-checking the results. The whole pass is one undo.
     """

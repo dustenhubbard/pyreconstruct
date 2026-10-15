@@ -161,7 +161,7 @@ WHAT THIS MODULE DELIBERATELY DOES NOT DO
   which is where a row's id is actually held.
 * It decides nothing about **split-object** traces (`Series` split, renamed
   `_{n}`) or **palette** traces. Those two rows of the carry table are
-  semantics the maintainer owns and they are unimplemented on purpose.
+  semantics still to be decided, and they are unimplemented on purpose.
 * It writes no byte to disk.
 """
 

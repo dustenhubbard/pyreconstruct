@@ -195,9 +195,9 @@ default_settings = {
     "open_act": "Ctrl+O",
     # Help > Search menus. Ctrl+K (Cmd+K on macOS), the command-palette
     # convention. NOT Ctrl+Shift+/: macOS delivers that chord as Cmd+?, so a
-    # Ctrl+Shift+/ binding never fires there (found in click testing).
+    # Ctrl+Shift+/ binding never fires there.
     "searchmenus_act": "Ctrl+K",
-    # View > Show/Hide lists. S for Sidebar, on his call (2026-08-25):
+    # View > Show/Hide lists. S for Sidebar:
     # Ctrl+Alt+S here, delivered as Cmd+Option+S on macOS. Plain Ctrl+S and
     # Ctrl+Shift+S are save and the section list; bare S is the stamp tool.
     "togglelists_act": "Ctrl+Alt+S",

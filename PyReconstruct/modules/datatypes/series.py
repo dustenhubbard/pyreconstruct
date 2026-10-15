@@ -1913,9 +1913,9 @@ class Series():
                     numbers (used to avoid loading every section for operations
                     that only touch a few objects)
                 eta (bool): show a time estimate on the progress bar once enough
-                    of the pass has run to make one (fork #421: every
-                    operation's bar carries one; the series-open pass in
-                    SeriesData.refresh opts out, his call of 2026-09-14)
+                    of the pass has run to make one (every operation's bar
+                    carries one; the series-open pass in SeriesData.refresh
+                    opts out)
                 writes_after (bool): True if the caller writes series data
                     after the last section (object attributes, the series
                     file): a series closed at the last progress update then
@@ -5857,7 +5857,7 @@ class Series():
                     if attrs["user_columns"][col_name] not in new_opts:
                         del(attrs["user_columns"][col_name])
             # and from palette buttons, by the same rule: a value that is no
-            # longer an option is cleared everywhere (his call, 2026-09-28)
+            # longer an option is cleared everywhere
             for button, columns in list(self._paletteColumnDefaults()):
                 if col_name in columns and columns[col_name] not in new_opts:
                     self._notePaletteChange(button, (col_name, columns[col_name]), None)

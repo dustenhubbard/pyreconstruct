@@ -644,7 +644,7 @@ class FieldWidgetTrace(FieldWidgetBase):
 
         # A trace drawn into a hidden group would vanish the moment it is
         # drawn. Show the group instead, so the trace stays in view and the
-        # View > Groups check box says why (his call, 2026-09-28).
+        # View > Groups check box says why.
         self.showGroupsHiding(new_trace.name)
         
         # if action is logged, increment the mouse_palette button

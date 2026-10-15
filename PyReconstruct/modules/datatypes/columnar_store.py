@@ -282,8 +282,8 @@ before D10 `_resolveID` did the first of the two forbidden things: it accepted
 a carried id verbatim, unregistered, so the issuer's index could later hand the
 same id out again. `foreign_id=` closes that. What `adopt()` cannot do is
 resolve the clash it detects -- it returns `False` and stops -- so the store
-must decide, and **the decision is the maintainer's, recorded as D10 Q2:
-issue a fresh local id for the clashing row only, and report it.** That is
+must decide, and **the rule is: issue a fresh local id for the clashing row
+only, and report it.** That is
 technically a reissue, which the policy names as forbidden; the policy forbids
 *silent* reissuing, and this one is reported through both channels below, so it
 satisfies the policy's intent rather than its letter. The three rejected
@@ -334,7 +334,7 @@ series-open pass in `series_data.py`, which reads one row at a time.
 **Two rows of the carry table are not implemented, on purpose.** Split-object
 traces, where one drawn geometry is redistributed under new `_{n}` names, and
 palette traces, which are templates rather than annotations and may want no id at
-all, are semantics rather than mechanics. They are held for the maintainer, and
+all, are semantics rather than mechanics. They are left undecided, and
 `copyRow` / `duplicateRow` do not cover them: a caller reaching for either case
 finds nothing here rather than an invented answer.
 """
@@ -1719,8 +1719,8 @@ class ContourView():
     views of one row of one store name the same trace whether or not they are
     `is`-equal, and that is what `index` and `__contains__` answer here. The
     route caches nothing, so it is not design §5(A)'s identity-stable view, and
-    it defines no `__eq__` over trace ids, so it is not §5(B), which
-    `DECISIONS.md` records as **rejected**. It is observationally what a cached
+    it defines no `__eq__` over trace ids, so it is not §5(B), which was
+    **rejected**. It is observationally what a cached
     view would give -- a cache handing out one object per row makes `is` mean
     exactly "same row of the same store" -- but with no live-view map, which is
     the cost D1 exists to weigh. **So this route needs no D1 answer: there is no

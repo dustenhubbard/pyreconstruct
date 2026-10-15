@@ -625,8 +625,8 @@ class AllOptionsDialog(QDialog):
     def _previewScaleBar(self, percent):
         """Resize the field's scale bar as the slider moves; nothing is stored.
 
-        The size could only be judged after OK closed the window (his click
-        test, 2026-09-14). OK stores the option and the caller rebuilds the
+        The size cannot be judged once OK has closed the window, so the slider
+        previews it live. OK stores the option and the caller rebuilds the
         palette; Cancel puts the bar back through restoreScaleBar.
         """
         palette = self._palette()
