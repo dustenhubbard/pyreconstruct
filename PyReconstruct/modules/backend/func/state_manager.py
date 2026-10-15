@@ -1361,6 +1361,22 @@ class SeriesStates():
         data = getattr(self.series, "data", None)
         state.keeps_emptied = bool(getattr(data, "supress_logging", False))
 
+    def recordLinksMade(self):
+        """Bring each section state of the newest series action up to date
+        with the links the action made for the names it changed there
+        (FieldState.links_made). An import merges the other series' host
+        tree after its sections are recorded (Series.importTraces), so
+        addSectionUndo saw none of those links."""
+        if not self.undos:
+            return
+        series_state = self.undos[-1]
+        before = series_state.series_attrs.get("host_tree")
+        for snum in series_state.undo_lens:
+            state = self[snum].current_state
+            state.links_made = captureLinksMade(
+                self.series, state.getModifiedContours(), before
+            )
+
     def clear(self):
         """Clear all state tracking."""
         for snum in self.section_states_dict:
