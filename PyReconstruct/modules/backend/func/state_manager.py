@@ -70,6 +70,10 @@ class FieldState():
         # section's contours when its redo runs. None for a field action,
         # whose redo keeps nothing by itself.
         self.kept_after = None
+        # True if the action kept the objects it emptied, as an import does
+        # (SeriesData.supress_logging): its redo keeps them too, with their
+        # attributes and groups (SeriesStates.addSectionUndo)
+        self.keeps_emptied = False
         if updated_contours is None:
             if contours is None:
                 updated_contours = []
@@ -170,6 +174,7 @@ class FieldState():
         c.kept_before = {n: list(v) for n, v in self.kept_before.items()}
         # shared with the other sections of the series action, not copied
         c.kept_after = self.kept_after
+        c.keeps_emptied = self.keeps_emptied
         c.group_viz = dict(self.group_viz)
         c.undo_group_viz = dict(self.undo_group_viz)
         return c
@@ -1295,6 +1300,12 @@ class SeriesStates():
             record.pop(name, None)
         record.update(captureKeptIds(self.series, names))
         state.kept_after = record
+
+        # an action that saves with object logging off (an import) keeps an
+        # object it empties, attributes and all; an object delete does not.
+        # The redo of this section alone saves the same way.
+        data = getattr(self.series, "data", None)
+        state.keeps_emptied = bool(getattr(data, "supress_logging", False))
 
     def clear(self):
         """Clear all state tracking."""
