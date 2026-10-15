@@ -624,6 +624,84 @@ def test_redoing_an_import_on_one_section_makes_its_links_again(
     assert _hosts(window) == [H]
     assert _saved_host_tree(window, tmp_path / "redone.jser") == {T: [H]}
 
+def _copy_where_h_hosts_moved_t(window, monkeypatch, tmp_path):
+    """H on s1 and T on s2, not linked. A copy moves T and makes H its
+    host; the import below reads that copy."""
+    from PyReconstruct.modules.datatypes import Series
+    import PyReconstruct.modules.gui.main.main_window as mw
+
+    _, s2, _, _ = _setup(window)
+    window.series.host_tree.clearHosts(T)
+    window.saveAllData()
+    path = tmp_path / "copy.jser"
+    window.series.saveJser(str(path))
+    copy = Series.openJser(str(path))
+    try:
+        section = copy.loadSection(s2)
+        section.selected_traces = list(section.contours[T])
+        section.translateTraces(1.0, 1.0)
+        section.save()
+        copy.setObjHosts([T], [H])
+        copy.saveJser(str(path))
+    finally:
+        copy.close()
+    monkeypatch.setattr(mw.FileDialog, "get", lambda *a, **k: str(path))
+    return s2
+
+
+def _import(window, monkeypatch, response):
+    import PyReconstruct.modules.gui.main.main_window as mw
+
+    monkeypatch.setattr(
+        mw.ImportSeriesDialog, "exec", lambda self: (response, True)
+    )
+    window.importfromseries_act.trigger()
+
+
+_HOSTS_ONLY = [[
+    ("groups", False), ("hosts", True), ("columns", False),
+    ("z-trace groups", False), ("misc", False),
+]]
+
+
+@pytest.mark.parametrize("with_flags", [False, True])
+def test_redoing_an_import_on_one_section_makes_attributes_tab_hosts_again(
+        window, main_window_dialogs, monkeypatch, tmp_path, with_flags):
+    """The import brings T in with object attributes off on the Traces tab
+    and Hosts checked on the Attributes tab, with or without flags too.
+    Undo takes back the traces on every section and redo on s2 alone
+    brings T back hosted by H."""
+    s2 = _copy_where_h_hosts_moved_t(window, monkeypatch, tmp_path)
+    response = {
+        "traces": [None, [], [], 0.95, True, True, False, "other", "other"],
+        "attributes": _HOSTS_ONLY,
+    }
+    if with_flags:
+        response["flags"] = [min(window.series.sections), max(window.series.sections)]
+    _import(window, monkeypatch, response)
+    assert _saved_host_tree(window, tmp_path / "imported.jser") == {T: [H]}
+
+    window.changeSection(s2)
+    imported = sorted(t.points for t in window.field.section.contours[T])
+    undos = 2 if with_flags else 1
+    for action, scope in [(window.undo_act, "all")] * undos + [(window.redo_act, "section")]:
+        main_window_dialogs.linked_undo_responses = [scope]
+        assert action.isEnabled()
+        action.trigger()
+    assert sorted(t.points for t in window.field.section.contours[T]) == imported
+    assert _hosts(window) == [H]
+    assert _saved_host_tree(window, tmp_path / "redone.jser") == {T: [H]}
+
+
+def test_importing_only_hosts_from_the_attributes_tab_links_them(
+        window, monkeypatch, tmp_path):
+    """Hosts alone, with no traces, links T to H and adds no undo step."""
+    _copy_where_h_hosts_moved_t(window, monkeypatch, tmp_path)
+    undos = len(window.field.series_states.undos)
+    _import(window, monkeypatch, {"attributes": _HOSTS_ONLY})
+    assert _hosts(window) == [H]
+    assert len(window.field.series_states.undos) == undos
+
 
 def _import_a_host_with_no_traces(window, monkeypatch, tmp_path):
     """H on s1 and T on s2, not linked. A copy draws X on s3, moves T and
