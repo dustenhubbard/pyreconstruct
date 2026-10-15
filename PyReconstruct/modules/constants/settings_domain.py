@@ -266,7 +266,7 @@ LEGACY_COPY_MARKER = "meta/copied_from_khlab"
 # Stores whose copy from ``KHLab`` is known, this session, to be unfinished
 # (True) or done (False), by application name. Filled by the copy and by
 # legacy_copy_pending; tests clear it between cases.
-_copy_pending = {}
+_copy_pending: dict[str, bool] = {}
 
 
 def legacy_copy_pending(app):
