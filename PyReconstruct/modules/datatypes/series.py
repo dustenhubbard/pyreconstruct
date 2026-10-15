@@ -2133,16 +2133,19 @@ class Series():
         if self.alignment != "no-alignment" and alignment_dict[self.alignment] is None:
             self.alignment = "no-alignment"
 
-        # and carry the per-object and per-ztrace alignment attributes across,
-        # or they keep naming an alignment this rewrite is about to remove
-        self.remapStoredAlignments(alignment_dict)
-
-        for snum, section in self.enumerateSections(
+        for i, (snum, section) in enumerate(self.enumerateSections(
             message="Modifying alignments...",
             series_states=series_states,
             breakable=False,
             writes_after=log_event,
-        ):
+        )):
+            if i == 0:
+                # and carry the per-object and per-ztrace alignment attributes
+                # across, or they keep naming an alignment this rewrite is
+                # about to remove. Not before the loop: the series undo state
+                # is saved when the first section comes out, and it has to hold
+                # the attributes from before the remap for undo to restore them
+                self.remapStoredAlignments(alignment_dict)
             old_tforms = section.tforms.copy()
             new_tforms = {}
             for new_a, old_a in alignment_dict.items():
