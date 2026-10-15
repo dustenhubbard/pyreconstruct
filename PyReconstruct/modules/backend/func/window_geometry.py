@@ -13,14 +13,12 @@ pixels.
 # Fraction of the primary screen the window falls back to when there is no
 # usable saved geometry. It is LINEAR: applied to width and to height
 # separately, so the window covers roughly `fraction ** 2` of the screen by
-# area. It was 0.5 -- a quarter of the screen -- until he said:
-#
-#     "i think 50% is a tad small."
+# area. It was 0.5, a quarter of the screen, which was a tad small.
 #
 # 0.7 linear is about half the screen by area, still comfortably short of
 # near-maximized, which the centered fallback was deliberately chosen to avoid.
-# This number is his to tune: change it here and both the first-launch fallback
-# and View > Reset window follow.
+# Tune it here: change it and both the first-launch fallback and View > Reset
+# window follow.
 DEFAULT_SCREEN_FRACTION = 0.7
 
 

@@ -11,7 +11,10 @@ from PySide6.QtCore import QEvent
 
 from .main_imports import *
 
-from PyReconstruct.modules.datatypes.section import zarrHasScaleLevels
+from PyReconstruct.modules.datatypes.section import Section, zarrHasScaleLevels
+from PyReconstruct.modules.backend.image_name_match import (
+    matchByNumber, zarrImageNames,
+)
 from PyReconstruct.modules.datatypes.series import (
     SeriesClosedError,
     SeriesOpenError,
@@ -393,13 +396,13 @@ class MainWindow(QMainWindow):
         ## display, so it gets a permanent widget rather than a temporary
         ## message. Qt clears the temporary message on every status-tip event,
         ## and hovering a QAction with no status tip sends an empty one, which
-        ## is what used to blank the readout on a trip to the menu bar.
-        ## A NORMAL status-bar widget, not a permanent one, on his call
-        ## (2026-08-21): permanent widgets are right-anchored, which read as a
-        ## jarring change for no reason a regular user could see. A normal
-        ## widget sits on the left like the old readout did, and still fixes
-        ## the original blanking bug -- menu status-tip events clear the
-        ## TEMPORARY message, and the readout is a widget now, not a message.
+        ## is what used to blank the readout on a trip to the menu bar. A
+        ## NORMAL status-bar widget, not a permanent one: permanent widgets are
+        ## right-anchored, which read as a jarring change for no reason a
+        ## regular user could see. A normal widget sits on the left like the
+        ## old readout did, and still fixes the original blanking bug: menu
+        ## status-tip events clear the TEMPORARY message, and the readout is a
+        ## widget now, not a message.
         ## The one trade: while a real showMessage notice is up (the curation
         ## acknowledgment) Qt hides normal widgets, so the
         ## notice briefly takes the readout's place and the readout returns
@@ -413,7 +416,7 @@ class MainWindow(QMainWindow):
         self.status_readout = FieldStatusReadout()
         self.status_readout.lists_clicked.connect(self.toggleLists)
         self.status_readout.section_clicked.connect(self.sectionJumpFromStatusBar)
-        # right-click keeps the classic Go To Section dialog (his option 1)
+        # right-click keeps the classic Go To Section dialog
         self.status_readout.section_segment.right_clicked.connect(
             lambda: self.changeSection()
         )
@@ -572,15 +575,14 @@ class MainWindow(QMainWindow):
         self.menusearchfield_act = MenuSearchField(self, self.helpmenu)
         first_help_action = self.helpmenu.actions()[0]
         self.helpmenu.insertAction(first_help_action, self.menusearchfield_act)
-        ## The "Search menus..." row itself comes OFF the menu (his
-        ## consolidation call, 2026-08-27): the row and the field said the
-        ## same thing twice, and the field now shows the chord at its right
-        ## edge. The action must outlive its row: newAction attached it to
-        ## this window besides the menu, so the remappable chord still fires
-        ## openMenuSearch with no visible row anywhere, and the shortcuts
-        ## dialog still lists and rebinds it by act_name. The definition
-        ## tuple stays so every rebuild keeps building the carrier. An
-        ## invisible row is no substitute: a setVisible(False) action's
+        ## The "Search menus..." row itself comes OFF the menu: the row and the
+        ## field said the same thing twice, and the field now shows the chord
+        ## at its right edge. The action must outlive its row: newAction
+        ## attached it to this window besides the menu, so the remappable chord
+        ## still fires openMenuSearch with no visible row anywhere, and the
+        ## shortcuts dialog still lists and rebinds it by act_name. The
+        ## definition tuple stays so every rebuild keeps building the carrier.
+        ## An invisible row is no substitute: a setVisible(False) action's
         ## shortcut goes dead (measured on this PySide6).
         self.helpmenu.removeAction(self.searchmenus_act)
         ## Off the menu, the carrier is also off clearMenuBar's teardown
@@ -950,6 +952,13 @@ class MainWindow(QMainWindow):
             # the view may have been saved where the image is not
             self.offerHomeIfViewOffImage()
         self.seriesModified(True)
+
+        # a zarr holding none of the series' image names may still be its
+        # zarr, with the images named another way
+        if (not self.field.section_layer.image_found and
+            self.field.section_layer.is_zarr_file and
+            user_is_present()):
+            self.offerZarrImageNames()
         
         # prompt user to scale zarr images if not scaled
         if (self.field.section_layer.image_found and
@@ -981,6 +990,93 @@ class MainWindow(QMainWindow):
             return not zarrHasScaleLevels(src_dir)
         except OSError:
             return False
+
+    def offerZarrImageNames(self) -> bool:
+        """Offer the image names of the zarr the series points at.
+
+        For a zarr that holds none of the series' image names: when every
+        section pairs with one image there by the number in its image name,
+        the pairs and a few sections' traces over the proposed images are
+        shown, and on confirmation the names are applied to the open series
+        the way Edit all image sources does. The zarr is never changed. When
+        the names cannot be paired, a notice says why and nothing changes.
+
+            Returns:
+                (bool) True if the image names were changed
+        """
+        series = self.series
+        zarr_dir = series.src_dir
+        try:
+            zarr_names = zarrImageNames(zarr_dir)
+        except OSError:
+            return False
+        series_names = {
+            snum: Section.imageName(data["src"])
+            for snum, data in series.data["sections"].items()
+        }
+        if any(name in zarr_names for name in series_names.values()):
+            # some section has its image here: a missing image, not a naming
+            return False
+        zarr_name = os.path.basename(os.path.normpath(zarr_dir))
+        match, reason = matchByNumber(series_names, sorted(zarr_names))
+        if match is None:
+            notify(
+                f"No section image in this series is in {zarr_name}, and the "
+                f"names cannot be matched by number: {reason}.\n"
+                "The image names were not changed."
+            )
+            return False
+        dialog = MatchImageNamesDialog(self, series, series_names, match, zarr_dir)
+        if not dialog.exec():
+            return False
+        return self.setImageNames(
+            series, match["names"], f"Use the image names in {zarr_name}"
+        )
+
+    def setImageNames(self, series, names : dict, event : str = None) -> bool:
+        """Set the image name of every section in the open series.
+
+        The field is saved first, so the traces drawn since the last save
+        reach the files the pass reloads. Each section is written to the
+        series' working folder; the series file changes when the user saves.
+
+            Params:
+                series (Series): the series the names were chosen for
+                names (dict): section number: the new image name
+                event (str): the log entry, or None to log nothing
+            Returns:
+                (bool) True if the image names were changed
+        """
+        # the names are chosen in a dialog, and a .jser opened from the
+        # Finder meanwhile closes that series and opens another in its place
+        if series is not self.series:
+            notify(f"{series.name} was closed, so its image names were not changed.")
+            return False
+
+        # the loop reloads every section from disk and field.reload() swaps the
+        # disk copies into the field, so unsaved edits on the current and
+        # flickered sections must be written first or they are lost
+        self.saveAllData()
+
+        # writes_after: the window goes on to mark the series modified, and
+        # after a switch that is the series opened in its place
+        snum = None
+        for snum, section in self.series.enumerateSections(
+            message="Modifying section image sources...",
+            writes_after=True,
+        ):
+            section.src = Section.imageName(names[snum])
+            section.save()
+
+        if event:
+            self.series.addLog(None, snum, event)
+
+        self.field.reload()
+        self.field.reloadImage()
+
+        self.field.table_manager.updateSections(list(self.series.sections.keys()))
+        self.seriesModified(True)
+        return True
 
     def srcToZarr(self, create_new=True):
         """Convert the series images to scaled zarr."""
@@ -1149,9 +1245,9 @@ class MainWindow(QMainWindow):
         this changelog window after each update?" checkbox, and a checkable that
         contradicts the stored state would invert itself on the next click.
 
-        Checked means the popup is OFF, matching the row's wording (his call,
-        2026-08-26): the tick and the stored suppression flag are the same
-        thing now, so the dialog's checkbox and this row always agree.
+        Checked means the popup is OFF, matching the row's wording: the tick
+        and the stored suppression flag are the same thing now, so the dialog's
+        checkbox and this row always agree.
         """
         from PyReconstruct.modules.gui.main.first_launch import (
             WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT, whats_new_suppressed,
@@ -1204,9 +1300,9 @@ class MainWindow(QMainWindow):
     def toggleWhatsNewPopup(self):
         """Persist the Help-menu toggle: CHECKED means the popup is off.
 
-        The row reads "Turn off What's new pop-up", so a tick is the
-        disabled state (his call, 2026-08-26); the stored preference is the
-        suppression flag itself, and the two now match exactly.
+        The row reads "Turn off What's new pop-up", so a tick is the disabled
+        state; the stored preference is the suppression flag itself, and the
+        two now match exactly.
 
         Writes only that preference. The once-per-version record is
         deliberately untouched, so switching the popup back on hands back the
@@ -1282,13 +1378,12 @@ class MainWindow(QMainWindow):
         which ABORTS when any selected object is locked. Applied series-wide
         that rule would make the action useless the moment one object is
         locked, so locked objects are SKIPPED here instead, and the confirm
-        dialog states the split (his call). The wrapper's other work is
-        mirrored by hand: save the field data first, pass the field's
-        series_states so one undo restores every prior color, then update the
-        object lists and reload the field. The two wrapper behaviors NOT
-        mirrored are selection resolution (this pass names its own objects)
-        and the object list scroll-position restore (updateObjects edits rows
-        in place here; nothing scrolls).
+        dialog states the split. The wrapper's other work is mirrored by hand:
+        save the field data first, pass the field's series_states so one undo
+        restores every prior color, then update the object lists and reload the
+        field. The two wrapper behaviors NOT mirrored are selection resolution
+        (this pass names its own objects) and the object list scroll-position
+        restore (updateObjects edits rows in place here; nothing scrolls).
         """
         self.saveAllData()
 
@@ -2038,6 +2133,11 @@ class MainWindow(QMainWindow):
 
         # open new series
         self.openSeries(series)
+
+        # the open stops early when the save prompt for the series already
+        # open is canceled, and that series stays open as it was
+        if self.series is not series:
+            return
 
         # set view to home
         self.field.home()
@@ -3297,7 +3397,7 @@ class MainWindow(QMainWindow):
             self.field.updateStatusBar()
 
     #: pixels between a status-bar pill and the menu it opens. Matches the
-    #: section popup's own lift, which is the spacing he approved.
+    #: section popup's own lift.
     PILL_MENU_GAP = 2
 
     def statusQuickSwitch(self, segment, names, current, switch, manage=None):
@@ -3320,8 +3420,8 @@ class MainWindow(QMainWindow):
                 switch (callable): called with the chosen name
                 manage ((str, callable)): an optional final row, separated
                     from the names, that opens the matching management dialog
-                    (his click test, 2026-08-25: the pills must offer a road
-                    to CREATING a profile or alignment, not only switching)
+                    (the pills offer a road to CREATING a profile or
+                    alignment, not only switching)
             Returns:
                 (QMenu): the menu that was popped up
         """
@@ -3355,8 +3455,7 @@ class MainWindow(QMainWindow):
         # the screen and lets popup() do its own clamping.
         # The same 2px lift the section popup gives itself
         # (SectionListPopup, status_readout.py): flush against the pill these
-        # two menus read as crowded, and he called the section spacing right
-        # (2026-08-26).
+        # two menus read as crowded.
         top_left = segment.mapToGlobal(segment.rect().topLeft())
         screen_h = self.screen().availableGeometry().height()
         menu.popup(
@@ -3423,14 +3522,14 @@ class MainWindow(QMainWindow):
         """Point the View checkboxes at the palette's live visibility flags.
 
         Seeded state was not enough once a group could be hidden by
-        right-clicking the widget itself (his report, 2026-08-26): that path
-        changes the flag without touching the menu, so the checkmarks
-        disagreed. MousePalette.saveVisibilityState calls this after every
-        visibility change, from either road, which is a push rather than a
-        menu-open pull: connecting to a menu's aboutToShow was tried and is
-        not viable here -- the View attribute is not the menubar's View menu,
-        and walking the live menubar for the real one invalidates the actions
-        createMenuBar is still assigning.
+        right-clicking the widget itself: that path changes the flag without
+        touching the menu, so the checkmarks disagreed.
+        MousePalette.saveVisibilityState calls this after every visibility
+        change, from either road, which is a push rather than a menu-open pull:
+        connecting to a menu's aboutToShow was tried and is not viable here.
+        The View attribute is not the menubar's View menu, and walking the live
+        menubar for the real one invalidates the actions createMenuBar is still
+        assigning.
 
         setChecked emits `toggled`, not `triggered`, and the handlers are on
         `triggered`, so this never re-fires a toggle.
@@ -4384,8 +4483,8 @@ class MainWindow(QMainWindow):
                     return
                 if repaired:
                     # a summary window with copy and save-as-CSV, not a
-                    # message (his ask, 2026-08-26): a lab keeps a record of
-                    # what the bulk pass touched
+                    # message: a lab keeps a record of what the bulk pass
+                    # touched
                     from PyReconstruct.modules.gui.dialog.malformed_contours import (
                         RepairedCrossingsDialog,
                     )
@@ -4399,7 +4498,7 @@ class MainWindow(QMainWindow):
         if looped:
             # a modeless review list, not a message: the user works the field
             # with the scissors while it stays open, and can copy the whole
-            # set out (his report, 2026-08-26)
+            # set out
             from PyReconstruct.modules.gui.dialog.malformed_contours import (
                 SkippedCrossingsDialog,
             )
@@ -5345,7 +5444,6 @@ class MainWindow(QMainWindow):
 
         # the lists measured their columns under the old theme's font and
         # padding; re-measure so the new theme's text is not crowded
-        # (his report, 2026-08-26)
         field = getattr(self, "field", None)
         if field is not None and hasattr(field, "table_manager"):
             field.table_manager.refreshColumnWidths()
@@ -5707,9 +5805,9 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """Save all data to files when the user exits."""
         # capture the list layout FIRST: saveToJser(close=True) closes the
-        # series, and capturing after it recorded nothing -- undocked lists
-        # did not survive a relaunch (his click test, 2026-08-25). A canceled
-        # close leaves the early capture behind, which is merely current.
+        # series, and capturing after it recorded nothing, so undocked lists
+        # did not survive a relaunch. A canceled close leaves the early capture
+        # behind, which is merely current.
         self._captureListLayout()
         response = self.saveToJser(notify=True, close=True)
         if response == "cancel":

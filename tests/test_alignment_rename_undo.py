@@ -19,14 +19,25 @@ def _modify(window, alignment_dict):
     window.createContextMenus()
 
 
+def _unchanged(window):
+    """Every alignment mapped to itself, in the order the sections store them.
+
+    `Series.alignments` is a set, and a dict built from it can put the
+    transforms in a new order. The values then differ position by position,
+    which marks the section modified whether or not the name check is there.
+    """
+    first = window.series.loadSection(min(window.series.sections))
+    return {a: a for a in first.tforms}
+
+
 def _add(window, name):
-    alignment_dict = {a: a for a in window.series.alignments}
+    alignment_dict = _unchanged(window)
     alignment_dict[name] = window.series.alignment
     _modify(window, alignment_dict)
 
 
 def _rename(window, old, new):
-    alignment_dict = {a: a for a in window.series.alignments}
+    alignment_dict = _unchanged(window)
     alignment_dict[new] = old
     alignment_dict[old] = None
     _modify(window, alignment_dict)
@@ -37,6 +48,15 @@ def _names_on_disk(window):
     series = window.series
     return {
         snum: sorted(series.loadSection(snum).tforms)
+        for snum in sorted(series.sections)
+    }
+
+
+def _matrices_on_disk(window):
+    """Section number -> transform values in stored order, names left out."""
+    series = window.series
+    return {
+        snum: [t.getList() for t in series.loadSection(snum).tforms.values()]
         for snum in sorted(series.sections)
     }
 
@@ -56,7 +76,10 @@ def renamed(main_window):
     window = main_window
     _add(window, "extra")
     before = _section_undo_count(window)
+    matrices = _matrices_on_disk(window)
     _rename(window, "extra", "extra2")
+    # only the name changes, so the name check alone has to catch it
+    assert _matrices_on_disk(window) == matrices
     return window, before
 
 

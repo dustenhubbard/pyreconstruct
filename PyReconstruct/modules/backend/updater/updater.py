@@ -79,8 +79,8 @@ UPDATE_CHANNELS = ("release", "prerelease")
 # dialog on a valid radio and picks a valid release (never crashes or silently
 # lands on index 0). Sources:
 #   stable/edge -> the pre-rename names (stable->release, edge->prerelease).
-#   developer   -> the removed Developer channel; the maintainer (at minimum) has
-#                  it stored, so it must remap to Nightly (prerelease), the
+#   developer   -> the removed Developer channel; installs that chose it still
+#                  have it stored, so it must remap to Nightly (prerelease), the
 #                  closest surviving channel, rather than falling back to Stable.
 _LEGACY_CHANNELS = {"stable": "release", "edge": "prerelease", "developer": "prerelease"}
 

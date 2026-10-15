@@ -43,13 +43,12 @@ def object_color_seed(series_data, obj_names : list):
 
     Seed for the object attributes dialog. The swatch went unseeded for
     years and every color-bearing object opened on a gray swatch and a
-    white-seeded picker; reported twice as "the swatch is blank even though
-    the object has a color".
+    white-seeded picker: the swatch was blank even though the object had a
+    color.
 
-    Series-wide, deliberately: a first cut answered from the open section
-    only, and click testing caught the gap the same day it was built (a
-    trace recolored on one section, the dialog opened from an adjacent
-    section, no split shown). ``SeriesData`` carries each trace's color for
+    Series-wide, deliberately: answered from the open section only, a trace
+    recolored on one section and the dialog opened from an adjacent section
+    would show no split. ``SeriesData`` carries each trace's color for
     exactly this reason, so the answer costs no section load. Display only:
     the dialog returns color None unless the picker was actually used (see
     ``TraceDialog.exec``), so a seeded-then-untouched OK cannot repaint an

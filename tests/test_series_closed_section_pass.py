@@ -500,6 +500,7 @@ def test_edit_all_image_sources_closed_at_the_last_update_leaves_the_next_series
 ):
     from types import SimpleNamespace
     from PyReconstruct.modules.datatypes.series import SeriesClosedError
+    from PyReconstruct.modules.gui.main.main_window import MainWindow
     from PyReconstruct.modules.gui.table import section as section_mod
     from PyReconstruct.modules.gui.table.section import SectionTableWidget
     for snum in series.sections:
@@ -509,15 +510,19 @@ def test_edit_all_image_sources_closed_at_the_last_update_leaves_the_next_series
         staticmethod(lambda *a, **k: ("img_#.tif", True)),
     )
     marked = []
+    tables = SimpleNamespace(updateSections=lambda snums: None)
     window = SimpleNamespace(
+        series=series,
         saveAllData=lambda: None,
         seriesModified=marked.append,
-        field=SimpleNamespace(reload=lambda: None, reloadImage=lambda: None),
+        field=SimpleNamespace(
+            reload=lambda: None, reloadImage=lambda: None,
+            table_manager=tables,
+        ),
     )
-    table = SimpleNamespace(
-        series=series, mainwindow=window,
-        manager=SimpleNamespace(updateSections=lambda snums: None),
-    )
+    # the pass and what follows it run in the window
+    window.setImageNames = MainWindow.setImageNames.__get__(window)
+    table = SimpleNamespace(series=series, mainwindow=window, manager=tables)
     logged = _events(series)
     _closes_at_the_end(series)
 
