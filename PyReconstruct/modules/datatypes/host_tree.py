@@ -160,6 +160,23 @@ class HostTree():
                 if ids.name_of.get(oid) == name and not ids.isLive(oid):
                     self.keep(oid)
 
+    def restoreKeptEnds(self, kept : dict):
+        """Keep again the ids a section redo puts back for the ends of the
+        links its action made (FieldState.links_made): a host with no traces
+        of its own, kept only by the tree. An id the tree does not link went
+        with a series undo's copy of the tree, and comes back with the links.
+        An id the tree links and does not keep was let go since, by a delete
+        of its last trace or a rename on another section, and stays out.
+
+            Params:
+                kept (dict): name -> the ids the action kept for it
+        """
+        linked = {oid for edge in self._edges for oid in edge} | self._members
+        self.restoreKept({
+            name: [oid for oid in oids if oid not in linked]
+            for name, oids in kept.items()
+        })
+
     def linksMadeSince(self, before, names) -> set:
         """The links this tree has and the tree before has not, with an end
         under one of the names.
