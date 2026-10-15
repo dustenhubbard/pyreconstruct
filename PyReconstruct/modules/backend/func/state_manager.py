@@ -68,7 +68,8 @@ class FieldState():
         self.kept_before = {}
         # the same after the action, for a section of a series action: the
         # record its sections share (SeriesState.kept_after), read for this
-        # section's contours when its redo runs. None for a field action,
+        # section's contours and the ends of the links it made here when its
+        # redo runs. None for a field action,
         # whose redo keeps nothing by itself.
         self.kept_after = None
         # True if the action kept the objects it emptied, as an import does
@@ -353,6 +354,20 @@ def restoreKeptIds(series : Series, kept : dict) -> None:
     tree = getattr(series, "host_tree", None)
     if kept and tree is not None and hasattr(tree, "restoreKept"):
         tree.restoreKept(kept)
+
+
+def restoreKeptLinkEnds(series : Series, kept : dict) -> None:
+    """Put back the ids the host tree kept for the ends of the links a
+    section redo makes again, unless a later step let them go
+    (HostTree.restoreKeptEnds).
+
+        Params:
+            series (Series): the series
+            kept (dict): name -> the ids to keep
+    """
+    tree = getattr(series, "host_tree", None)
+    if kept and tree is not None and hasattr(tree, "restoreKeptEnds"):
+        tree.restoreKeptEnds(kept)
 
 
 def captureLinksMade(series : Series, names, before) -> set:
@@ -879,8 +894,11 @@ class SectionStates():
         links = getattr(redo_state, "links_made", ())
         kept_after = getattr(redo_state, "kept_after", None) or {}
         restoreKeptIds(series, {
+            n: kept_after[n] for n in modified_contours if n in kept_after
+        })
+        restoreKeptLinkEnds(series, {
             n: kept_after[n]
-            for n in set(modified_contours) | linkEndNames(series, links)
+            for n in linkEndNames(series, links) - set(modified_contours)
             if n in kept_after
         })
         restoreLinksMade(series, links)
@@ -980,7 +998,8 @@ class SeriesState():
         self.mags = {}
         # name -> the ids the host tree keeps for the name once the action
         # is done with it, for each contour a section of the action changed
-        # (SeriesStates.addSectionUndo). Every section's state holds this
+        # and each end of a link it made (SeriesStates.addSectionUndo,
+        # recordKeptLinkEnds). Every section's state holds this
         # same record, so a section redone alone keeps what the whole action
         # kept, not what was kept when the action passed that section.
         self.kept_after = {}

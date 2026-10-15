@@ -625,14 +625,10 @@ def test_redoing_an_import_on_one_section_makes_its_links_again(
     assert _saved_host_tree(window, tmp_path / "redone.jser") == {T: [H]}
 
 
-def test_redoing_an_import_on_one_section_keeps_a_host_with_no_traces(
-        window, main_window_dialogs, monkeypatch, tmp_path):
+def _import_a_host_with_no_traces(window, monkeypatch, tmp_path):
     """H on s1 and T on s2, not linked. A copy draws X on s3, moves T and
     makes X its host. Importing only s2 from the copy, preferring it, with
-    object attributes, makes X T's host though X has no traces here. Undo
-    on every section and redo on s2 alone bring T back hosted by X.
-    Deleting T from the object list then takes the link off, its undo puts
-    it back and its redo takes it off again."""
+    object attributes, makes X T's host though X has no traces here."""
     from PyReconstruct.modules.datatypes import Series, Trace
     import PyReconstruct.modules.gui.main.main_window as mw
 
@@ -664,7 +660,15 @@ def test_redoing_an_import_on_one_section_keeps_a_host_with_no_traces(
     window.importfromseries_act.trigger()
     assert X not in window.series.data["objects"]
     assert _saved_host_tree(window, tmp_path / "imported.jser") == {T: [X]}
+    return s2, s3
 
+
+def test_redoing_an_import_on_one_section_keeps_a_host_with_no_traces(
+        window, main_window_dialogs, monkeypatch, tmp_path):
+    """After the import above, undo on every section and redo on s2 alone
+    bring T back hosted by X. Deleting T from the object list then takes
+    the link off, its undo puts it back and its redo takes it off again."""
+    s2, _ = _import_a_host_with_no_traces(window, monkeypatch, tmp_path)
     window.changeSection(s2)
     imported = sorted(t.points for t in window.field.section.contours[T])
     for action, scope in [(window.undo_act, "all"), (window.redo_act, "section")]:
@@ -684,6 +688,46 @@ def test_redoing_an_import_on_one_section_keeps_a_host_with_no_traces(
         assert action.isEnabled()
         action.trigger()
         assert _saved_host_tree(window, tmp_path / "again.jser") == saved
+
+
+@pytest.mark.parametrize("renamed", [False, True])
+def test_redo_on_one_section_keeps_out_a_host_deleted_since(
+        window, main_window_dialogs, monkeypatch, tmp_path, renamed):
+    """After the import above (then T renamed to SPARE from the object
+    list), undo on s2 alone. X is drawn on s3, taking the host's id, and
+    its trace deleted. Redo on s2 does not bring the deleted X back as the
+    traveler's host."""
+    import PyReconstruct.modules.gui.main.field_widget_3_object as obj
+    from PyReconstruct.modules.datatypes import Trace
+
+    s2, s3 = _import_a_host_with_no_traces(window, monkeypatch, tmp_path)
+    traveler = T
+    if renamed:
+        _object_list(window, monkeypatch, [T])
+        monkeypatch.setattr(obj.TraceDialog, "exec", lambda self: (
+            (Trace(SPARE, (0, 255, 0), True), None), True,
+        ))
+        window.field.editAttributes()
+        traveler = SPARE
+    host_id = window.series.host_tree.keptId(X)
+    window.changeSection(s2)
+    main_window_dialogs.linked_undo_responses = ["section"]
+    window.undo_act.trigger()
+    assert window.series.host_tree.keptIds(X) == {host_id}
+
+    _draw_on(window, s3, X)
+    assert window.series.data.object_ids.peek(s3, X) == host_id
+    window.field.section.selected_traces = _traces(window, X)
+    monkeypatch.setattr(window, "getFocusWidget", lambda: window.field)
+    window.delete_act.trigger()
+    assert _saved_host_tree(window, tmp_path / "deleted.jser") == {}
+
+    window.changeSection(s2)
+    main_window_dialogs.linked_undo_responses = ["section"]
+    assert window.redo_act.isEnabled()
+    window.redo_act.trigger()
+    assert _hosts(window, traveler) == []
+    assert _saved_host_tree(window, tmp_path / "redone.jser") == {}
 
 # --------------------------------------------------------------------------- #
 # save
