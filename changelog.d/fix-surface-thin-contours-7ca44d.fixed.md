@@ -1,5 +1,4 @@
-- **Surface meshes of thin contours are whole sheets at the default XY resolution.**
-  A hole you draw stays open when it is wider than a voxel, and a narrower gap
-  closes at that resolution. Surface area and volume of thin objects come out
-  larger than before because the mesh now covers the whole trace; thick objects
-  change little.
+- **Surface meshes of thin contours have far fewer holes through them at the
+  default XY resolution.** Each trace now fills every voxel it reaches, so gaps
+  narrower than a voxel close, and exported surface area and volume change,
+  with thin objects mostly gaining volume.

@@ -1,4 +1,5 @@
-"""At the default XY resolution, a surface built from thin contours is a whole sheet.
+"""At the default XY resolution, a surface built from thin contours has far fewer
+tunnels; the few that remain come from section fills that touch only at a corner.
 
 ``Surface.generateVolume`` rounded each trace point onto the voxel grid and
 filled the voxels whose center fell inside the rounded outline. A synapse
