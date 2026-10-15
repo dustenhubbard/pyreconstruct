@@ -428,7 +428,10 @@ def test_startup_folds_only_after_a_complete_copy():
     from PyReconstruct import run
 
     source = inspect.getsource(run.runPyReconstruct)
-    assert "if copy_legacy_settings_once().complete:" in source
+    assert "settings_copied = copy_legacy_settings_once().complete" in source
+    assert source.index("if settings_copied:") < source.index(
+        "fold_flavor_settings_once()"
+    )
 
 
 def test_a_failed_shared_copy_keeps_the_dev_value_out(clean, monkeypatch):
@@ -715,3 +718,152 @@ def test_a_marker_that_failed_to_sync_is_not_trusted_on_reopen(
 
     window._foldSeriesSettings()
     assert _settings(SETTINGS_ORG, shared_app).value("legacy_probe_dev_only") == "dev"
+
+
+# --- what the program writes on its own waits for the copy ------------------------
+
+
+def test_a_failed_dev_copy_keeps_defaults_out_of_the_shared_store(
+    real_store_series, clean, monkeypatch,
+):
+    """Only the Dev store's copy fails. The shared store's own copy finished,
+    but the fold into it is still owed, so a default read meanwhile is not
+    saved there: after the retry the Dev value arrives through the fold."""
+    series = real_store_series
+    monkeypatch.setenv("PYRECON_APP_NAME", DEV)
+    _forget(SHARED_APP, "left_handed")
+    _legacy(DEV, left_handed=True)
+    try:
+        with monkeypatch.context() as broken:
+            _unreadable_legacy(broken, DEV)
+            assert _launch().complete is False
+
+        assert series.getOption("left_handed") is False
+        assert not _settings(SETTINGS_ORG, SHARED_APP).contains("left_handed")
+
+        assert _launch().complete is True
+        assert _settings(SETTINGS_ORG, SHARED_APP).value("left_handed", type=bool) is True
+    finally:
+        _forget(SHARED_APP, "left_handed")
+        for app in (DEV,):
+            for org in (SETTINGS_ORG, LEGACY_SETTINGS_ORG):
+                s = _settings(org, app)
+                s.remove("left_handed")
+                s.sync()
+
+
+def test_the_username_waits_for_a_failed_copy(
+    real_store_series, main_window, clean, monkeypatch,
+):
+    """The launch saves the OS login as the username when none is stored.
+    After a failed copy it must not: the retry brings the stored name back."""
+    new = _settings(SETTINGS_ORG, SHARED_APP)
+    had = new.value("username")
+    _forget(SHARED_APP, "username")
+    _legacy(SHARED_APP, username="legacy_probe_user")
+    try:
+        with monkeypatch.context() as broken:
+            _unreadable_legacy(broken, SHARED_APP)
+            assert _launch().complete is False
+
+        main_window.resolveUsernameStartup()
+        assert not _settings(SETTINGS_ORG, SHARED_APP).contains("username")
+
+        assert _launch().complete is True
+        assert _settings(SETTINGS_ORG, SHARED_APP).value("username") == "legacy_probe_user"
+    finally:
+        old = _settings(LEGACY_SETTINGS_ORG, SHARED_APP)
+        old.remove("username")
+        old.sync()
+        new = _settings(SETTINGS_ORG, SHARED_APP)
+        if had is not None:
+            new.setValue("username", had)
+        else:
+            new.remove("username")
+        new.sync()
+
+
+def test_recent_series_wait_for_a_failed_copy(
+    real_store_series, main_window, clean, monkeypatch,
+):
+    """Opening a series rewrites the recent list from what it reads. After a
+    failed copy that list is empty, and saving it would drop the old one."""
+    _forget(SHARED_APP, "recently_opened_series")
+    _legacy(SHARED_APP, recently_opened_series='["/legacy/probe.jser"]')
+    try:
+        with monkeypatch.context() as broken:
+            _unreadable_legacy(broken, SHARED_APP)
+            assert _launch().complete is False
+
+        main_window.addToRecentSeries("/new/probe.jser")
+        assert not _settings(SETTINGS_ORG, SHARED_APP).contains(
+            "recently_opened_series"
+        )
+
+        assert _launch().complete is True
+        assert real_store_series.getOption("recently_opened_series") == [
+            "/legacy/probe.jser"
+        ]
+    finally:
+        for org in (SETTINGS_ORG, LEGACY_SETTINGS_ORG):
+            s = _settings(org, SHARED_APP)
+            s.remove("recently_opened_series")
+            s.sync()
+
+
+def test_the_list_layout_waits_for_a_failed_series_copy(
+    real_store_series, window_series, monkeypatch,
+):
+    """Closing a series saves its open lists. After the series' copy failed,
+    that would save the layout it opened with and hide the old one."""
+    from PyReconstruct.modules.gui.main.main_window import MainWindow
+
+    window, (shared_app, dev_app) = window_series
+    monkeypatch.delenv("PYRECON_APP_NAME", raising=False)
+    _forget(shared_app, "list_layout")
+    _legacy(shared_app, list_layout='{"legacy_probe": []}')
+    try:
+        with monkeypatch.context() as broken:
+            _unreadable_legacy(broken, shared_app)
+            window._foldSeriesSettings()
+
+        MainWindow._captureListLayout(window)
+        assert not _settings(SETTINGS_ORG, shared_app).contains("list_layout")
+
+        window._foldSeriesSettings()
+        assert _settings(SETTINGS_ORG, shared_app).value("list_layout") == (
+            '{"legacy_probe": []}'
+        )
+    finally:
+        for org in (SETTINGS_ORG, LEGACY_SETTINGS_ORG):
+            s = _settings(org, shared_app)
+            s.remove("list_layout")
+            s.sync()
+
+
+def test_startup_resets_the_whats_new_popup_only_after_a_complete_copy():
+    """The reset decides from the stored keys whether this is a fresh
+    install, and the keys are not there yet while the copy is owed."""
+    from PyReconstruct import run
+
+    source = inspect.getsource(run.runPyReconstruct)
+    assert source.index("if settings_copied:") < source.index(
+        "reset_whats_new_popup_startup()"
+    )
+
+
+def test_an_old_store_that_cannot_be_read_is_still_owed(clean, monkeypatch):
+    """A read error is a copy to retry, the same as in the copy itself, even
+    when the error leaves the old store looking empty."""
+    import PySide6.QtCore as qtcore
+
+    from PyReconstruct.modules.backend.settings_store import QSettingsStore
+    from PyReconstruct.modules.constants.settings_domain import (
+        legacy_copy_pending,
+    )
+
+    _unreadable_legacy(monkeypatch, SHARED_APP)
+    monkeypatch.setattr(qtcore.QSettings, "allKeys", lambda self: [])
+
+    assert legacy_copy_pending(SHARED_APP) is True
+    assert QSettingsStore().may_save_defaults(None) is False

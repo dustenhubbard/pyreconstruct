@@ -5422,6 +5422,25 @@ class Series():
 
         self._settingsStore().set_value(scope_code, option_name, value)
     
+    def maySaveOwnValue(self, option_name : str):
+        """Whether the program may store a value of its own for an option now.
+
+        A value of its own is one nobody asked for: a layout captured on
+        close, a list rebuilt from what was read. False while the option's
+        store still waits on the copy from the old KHLab settings, since a
+        value saved then would block the one the copy brings. An option this
+        series does not store is always True.
+        """
+        if option_name in Series.qsettings_series_defaults:
+            if self.isWelcomeSeries():
+                return False
+            scope_code = self.code
+        elif option_name in Series.qsettings_defaults:
+            scope_code = None
+        else:
+            return True
+        return self._settingsStore().may_save_defaults(scope_code)
+
     @property
     def user(self):
         return self.getOption("username")

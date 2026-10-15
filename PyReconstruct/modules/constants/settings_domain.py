@@ -272,13 +272,15 @@ _copy_pending = {}
 def legacy_copy_pending(app):
     """True while ``PyReconstruct / <app>`` still owes a copy from ``KHLab``.
 
-    That is: the copy failed this session, or it has not run and the old
-    store holds something while the new one carries no marker. While a store
-    is pending, nothing writes a default into it (``Series.getOption`` reads
-    the default through instead), because the retry never overwrites a key
-    the new store already holds, and a default written in the meantime would
-    win over the value the retry was meant to bring back. Never raises; when
-    the stores cannot be read the answer is True, which only means a default
+    That is: the copy failed this session, or it has not run and the new
+    store carries no marker while the old one holds something or cannot be
+    read. An old store that cannot be read is a copy to retry, as it is in
+    the copy itself, not a store with nothing to give. While a store is
+    pending, the program saves nothing of its own into it (see
+    ``shared_copy_pending``), because the retry never overwrites a key the
+    new store already holds, and a value written in the meantime would win
+    over the one the retry was meant to bring back. Never raises; when the
+    stores cannot be read the answer is True, which only means such a value
     is not saved yet.
     """
     if app in _copy_pending:
@@ -293,11 +295,30 @@ def legacy_copy_pending(app):
         else:
             old = QSettings(LEGACY_SETTINGS_ORG, app)
             old.setFallbacksEnabled(False)
-            pending = bool(old.allKeys())
+            pending = (
+                bool(old.allKeys()) or old.status() != QSettings.NoError
+            )
     except Exception:
         return True
     _copy_pending[app] = pending
     return pending
+
+
+def shared_copy_pending(suffix=""):
+    """True while the shared store ``PyReconstruct / PyReconstruct<suffix>``
+    is still owed values from ``KHLab``.
+
+    It is owed them by its own copy and, in a flavored build, by the fold of
+    that flavor's store, which waits for the flavor's copy. Until both are
+    done, a value the program writes on its own (a default read on a miss,
+    the username it picks at launch, a list it rebuilds from what it read)
+    would block the stored one, so those wait. A change the user makes is
+    saved as usual: it is newer than anything the copy can bring. ``suffix``
+    is ``""`` for the global store and ``"-<code>"`` for a series' store.
+    """
+    return any(
+        legacy_copy_pending(app) for app in _this_app_and_shared(suffix)
+    )
 
 
 class LegacyCopyResult(dict):

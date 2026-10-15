@@ -101,17 +101,19 @@ def runPyReconstruct(filename=None):
         copy_legacy_settings_once,
         fold_flavor_settings_once,
     )
-    if copy_legacy_settings_once().complete:
-        fold_flavor_settings_once()
-
-    # the What's new pop-up is back on by default from this version, once:
-    # a stored "off" from before it does not bind, and a fresh install records
-    # this version as seen so its first pop-up is the update after it. Before
-    # the window, which writes the keys the fresh-install test reads.
     from PyReconstruct.modules.gui.main.first_launch import (
         reset_whats_new_popup_startup,
     )
-    reset_whats_new_popup_startup()
+    settings_copied = copy_legacy_settings_once().complete
+    if settings_copied:
+        fold_flavor_settings_once()
+
+        # the What's new pop-up is back on by default from this version,
+        # once: a stored "off" from before it does not bind, and a fresh
+        # install records this version as seen so its first pop-up is the
+        # update after it. Before the window, which writes the keys the
+        # fresh-install test reads, and after the copy, which brings them.
+        reset_whats_new_popup_startup()
 
     # create the Qt Application
     app = QApplication(sys.argv)
