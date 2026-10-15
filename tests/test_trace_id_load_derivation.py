@@ -1,6 +1,6 @@
-"""S1: one `TraceIDIssuer` per series, ids DERIVED at load for file rows.
+"""One `TraceIDIssuer` per series, ids DERIVED at load for file rows.
 
-Before this slice, nothing in the shipped application ever constructed a
+Before load-time derivation, nothing in the application ever constructed a
 `TraceIDIssuer`: `Section._rebuildColumnarStore` took its issuer from the
 OUTGOING store, the first build has no outgoing store, and so the chain was
 never seeded -- every trace in every session carried no id at all. These tests
@@ -8,19 +8,19 @@ pin the wiring that closes that gap: `Series` owns the issuer, `Section`
 derives an id per stored row at load (`tid-v1`, a function of the row's own
 content), and the derived ids reach the columnar store as `carried_ids`.
 
-Every test in this module fails on the pre-slice build (`getID` comes back
-`None` for every row), which is the revert-and-fail probe: stash the
-`PyReconstruct/` changes and this whole file goes red.
+Every test in this module fails on a build without the derivation (`getID`
+comes back `None` for every row): revert the `PyReconstruct/` side of it and
+this whole file goes red.
 
-Derived, NOT issued-at-random, and the distinction carries the whole slice:
+Derived, NOT issued-at-random, and the distinction matters:
 two independent opens of one file must agree on every id with no save between
 (`test_two_independent_processes_agree_on_every_id`), because a random id
 minted by a load is the failure `Flag.deriveID`'s docstring records in first
 person.
 
 No byte of any `.jser` changes. That is compared rather than asserted, outside
-this module, by saving the fixture series on the pre-slice and post-slice
-builds and hashing every byte written (the PR carries the hashes); in here,
+this module, by saving the fixture series on builds with and without the
+derivation and hashing every byte written; in here,
 `test_a_full_open_save_cycle_still_saves` keeps the save path exercised.
 """
 import json
@@ -95,9 +95,9 @@ def test_the_series_owns_one_issuer_and_every_section_store_carries_it(
 ):
     """The wiring itself: `Series` grows the issuer, sections take it.
 
-    Pre-slice, `Series` had no `trace_id_issuer` attribute and every section's
-    store had `id_issuer is None` -- the never-seeded chain the spec's finding
-    3 describes.
+    Before this wiring, `Series` had no `trace_id_issuer` attribute and every
+    section's store had `id_issuer is None`, so the issuer chain was never
+    seeded.
     """
     issuer = real_series.trace_id_issuer
     assert issuer is not None
@@ -137,8 +137,8 @@ def test_a_session_created_trace_falls_through_to_issue(real_series):
     """A trace born in the session gets an opaque issued id, not a derived one.
 
     `Section.addTrace` reaches `appendRow` with no `trace_id`, which asks the
-    injected issuer for a fresh one -- the same arm as before the slice, now
-    with an issuer actually present to answer.
+    injected issuer for a fresh one -- the same arm as before load-time
+    derivation, now with an issuer actually present to answer.
     """
     snum = sorted(real_series.sections)[0]
     section = real_series.loadSection(snum)
@@ -163,7 +163,7 @@ def test_a_session_created_trace_falls_through_to_issue(real_series):
 
 
 def test_two_independent_processes_agree_on_every_id(series_jser, tmp_path):
-    """Done criterion 2, measured across real process boundaries.
+    """Two separate opens agree on every id, across real process boundaries.
 
     Two copies of the fixture, two fresh interpreters, one open each, no save
     anywhere: every trace's id must come out identical, because `tid-v1`
@@ -231,7 +231,7 @@ def test_two_independent_processes_agree_on_every_id(series_jser, tmp_path):
 
 
 def test_the_hidden_directory_fast_path_seeds_the_issuer_too(series_jser):
-    """The spec's named design residue, done criterion 6.
+    """The hidden-directory fast path derives the same ids as a full unpack.
 
     `openJser` has two entry paths: the full unpack, and a fast path that
     finds an existing hidden directory and returns a `Series` WITHOUT running
@@ -270,10 +270,11 @@ def test_the_hidden_directory_fast_path_seeds_the_issuer_too(series_jser):
 def test_a_full_open_save_cycle_still_saves(series_jser, tmp_path):
     """The load-time derivation must not disturb the save path.
 
-    The byte-level half of this claim (a save is byte-identical to the
-    pre-slice build) is compared across builds outside the suite; what a test
-    on one build can hold is that the cycle completes and that saving does not
-    move a single id -- `test_a_save_does_not_re_identify_the_traces_it_saves`
+    The byte-level half of this claim (a save is byte-identical to a build
+    without the derivation) is compared across builds outside the suite; what
+    a test on one build can hold is that the cycle completes and that saving
+    does not move a single id --
+    `test_a_save_does_not_re_identify_the_traces_it_saves`
     pins the per-section version of the same property.
     """
     from PyReconstruct.modules.datatypes import Series

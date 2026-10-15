@@ -1,7 +1,7 @@
-"""S2: the id-stability harness. What moves a trace's id, driven through the
+"""The id-stability harness. What moves a trace's id, driven through the
 application's own mutation entry points.
 
-S1 (#297) gave every trace an id at load. This module is the slice that asks
+Every trace gets an id at load. This module asks
 what happens to that id afterwards, and it asks by driving a real fixture
 series through the entry points a user reaches -- `Section.addTrace`,
 `Section.removeTrace`, `Section.deleteTraces`, `Section.editTraceAttributes`,
@@ -22,8 +22,7 @@ id, just not through `duplicateRow`) and its `copyRow` half is **not satisfied
 at all** (an attribute edit or a rename re-identifies the trace it edits, in
 memory, with no save involved). Both are pinned below as the code actually
 behaves, with the discrepancy named in the test's own docstring, because the
-spec's instruction for this slice was to expect it to find real gaps rather than
-to green the table.
+harness exists to find real gaps rather than to green the table.
 
 **The second finding is undo and redo, which the carry table does not mention at
 all.** An undo does not restore the `Trace` objects the section had; it builds
@@ -38,9 +37,10 @@ primitive-level test cannot see and a workload harness can.
 
 WHAT THIS MODULE PINS THAT IS *KNOWN* AND *INTENDED*
 -----------------------------------------------------
-Two behaviors here look like defects and are not; they are Track A's shape, and
-pinning them is the point, because S3+ (persisted ids) is what flips them and a
-harness with no red test to flip is a harness that will not notice.
+Two behaviors here look like defects and are not; they follow from ids that
+are derived from content and never saved. Pinning them is the point, because
+saving ids with the file is what flips them, and a harness with no red test to
+flip is a harness that will not notice.
 
 * **An edit, a save and a reload move the edited trace's id.** With nothing
   persisted, an id can only be a pure function of the row's stored content, and
@@ -54,14 +54,14 @@ harness with no red test to flip is a harness that will not notice.
 
 TWO ROWS ARE RESERVED BY DESIGN AND ARE NOT GUESSED AT
 ---------------------------------------------------------------
-`trace_id.py`'s closing section reserves split-object `_{n}` traces (Q4: same
-trace edited, or new trace?) and palette traces (Q3: templates rather than
-annotations, and they "may want no id at all"). `columnar_store.py` says the
+`trace_id.py`'s closing section reserves split-object `_{n}` traces (is a split
+the same trace edited, or a new trace?) and palette traces (templates rather
+than annotations, which "may want no id at all"). `columnar_store.py` says the
 same and adds that "a caller reaching for either case finds nothing here rather
 than an invented answer". This module therefore asserts **no semantic** for
 either, and `CARRY_TABLE` below lists both as unexercised with the reason. What
-today's code happens to do with them is reported in the pull request, not turned
-into an expectation a future change would have to honour.
+today's code happens to do with them is left out on purpose, not turned into an
+expectation a future change would have to honor.
 
 THE MANIFEST IS THE DONE CRITERION
 -----------------------------------
@@ -133,14 +133,14 @@ CARRY_TABLE = (
         reason="",
     ),
     dict(
-        row="a rebuild CARRIES every id it can correlate (D10, #283)",
+        row="a rebuild CARRIES every id it can correlate",
         entry_point="Section.resyncColumnarStore",
         verdict="holds",
         tests=("test_a_rebuild_carries_every_id",),
         reason="",
     ),
     dict(
-        row="a clean save does not re-identify the traces it saves (#278)",
+        row="a clean save does not re-identify the traces it saves",
         entry_point="Section.save, Series.saveJser",
         verdict="holds",
         tests=(
@@ -150,7 +150,7 @@ CARRY_TABLE = (
         reason="",
     ),
     dict(
-        row="a reload of unchanged content is stable (S1)",
+        row="a reload of unchanged content is stable",
         entry_point="Series.loadSection",
         verdict="holds",
         tests=("test_reloading_unchanged_content_moves_no_id",),
@@ -174,10 +174,11 @@ CARRY_TABLE = (
     ),
     dict(
         row="an edit, a save and a reload -- the edited trace's id moves and the "
-            "neighbours' do not (Track A, inherent)",
+            "neighbours' do not (inherent while ids are not saved)",
         entry_point="Section.editTraceAttributes + Section.save + "
                     "Series.loadSection",
-        verdict="known and intended for Track A; the red test S3+ flips",
+        verdict="known and intended while ids are not saved; the red test "
+                "that saving ids flips",
         tests=(
             "test_an_edit_then_save_then_reload_moves_only_the_edited_traces_id",
         ),
@@ -185,15 +186,16 @@ CARRY_TABLE = (
     ),
     dict(
         row="an id issued in-session does not survive a save and a reload "
-            "(Track A, inherent)",
+            "(inherent while ids are not saved)",
         entry_point="Section.addTrace + Section.save + Series.loadSection",
-        verdict="known and intended for Track A; the second red test S3+ flips",
+        verdict="known and intended while ids are not saved; the second red "
+                "test that saving ids flips",
         tests=("test_an_id_issued_in_session_does_not_survive_a_save_and_reload",),
         reason="",
     ),
     dict(
         row="two byte-identical rows in one contour: deleting the first transfers "
-            "the survivor's id (pr297-duplicate-row-id-transfer)",
+            "the survivor's id",
         entry_point="Section.addTrace + Section.removeTrace + save + reload",
         verdict="inherent to any content-derived scheme over indistinguishable "
                 "rows; reproduced end to end here",
@@ -213,7 +215,7 @@ CARRY_TABLE = (
             "through `addTrace`, so a merge's ids are issued locally rather "
             "than adopted. There is no application entry point to drive, and "
             "`test_columnar_store_parity.py` already covers the primitive "
-            "directly. Wiring it is D10's remaining half, not this slice's."
+            "directly. Wiring it into the import path is separate work."
         ),
     ),
     dict(
@@ -225,11 +227,11 @@ CARRY_TABLE = (
             "Reserved by design. `trace_id.py`'s closing section: the "
             "module decides nothing about split-object traces (Series split, "
             "renamed `_{n}`); those two rows of the carry table are "
-            "unimplemented on purpose. That is Q4. Whether a split's output is the "
+            "unimplemented on purpose. Whether a split's output is the "
             "same annotation under a new name or a set of new annotations is "
             "the question, and asserting either answer here would decide it by "
-            "accident. What the code does today is reported in the pull "
-            "request instead."
+            "accident. What the code does today is left unasserted "
+            "instead."
         ),
     ),
     dict(
@@ -238,7 +240,7 @@ CARRY_TABLE = (
         verdict="unexercised BY DECISION",
         tests=(),
         reason=(
-            "Reserved by design (Q3). Palette traces are templates "
+            "Reserved by design. Palette traces are templates "
             "rather than annotations and the store's own docstring notes they "
             "'may want no id at all'. They also never reach a `SectionColumns` "
             "-- `series.palette_traces` is a plain list of `Trace` objects on "
@@ -358,13 +360,12 @@ def _sectionStates(section, series):
 ## --------------------------------------------------------------------------
 
 def test_every_carry_table_row_is_exercised_or_listed_unexercised():
-    """The spec's Done criterion for S2, checked rather than claimed.
+    """Every carry-table row is exercised or listed with a reason, checked.
 
-    "every carry-table row is either exercised or explicitly listed as
-    unexercised with the reason". A row with tests must name tests that exist
+    A row with tests must name tests that exist
     in this module; a row with none must carry a reason. Adding a carry rule
     and forgetting to cover it is what this catches, and it catches it in the
-    manifest rather than in a reviewer's memory.
+    manifest rather than in someone's memory.
     """
     module = sys.modules[__name__]
     assert CARRY_TABLE, "the manifest is empty, so this proves nothing"
@@ -383,9 +384,9 @@ def test_every_carry_table_row_is_exercised_or_listed_unexercised():
                 )
         else:
             assert entry["reason"], (
-                f"{label}: unexercised and gives no reason. The spec requires "
-                "the reason, because 'we did not get to it' and 'this is the "
-                "maintainer's call' are different facts."
+                f"{label}: unexercised and gives no reason. A reason is "
+                "required, because 'not covered yet' and 'left undecided on "
+                "purpose' are different facts."
             )
 
 
@@ -395,7 +396,7 @@ def test_the_two_reserved_rows_are_present_and_unexercised():
     Named individually rather than left to the count above, because the failure
     this guards is somebody helpfully adding an assertion for one of them: the
     row would move to `tests` and the check above would go on passing while the
-    harness had quietly decided Q3 or Q4.
+    harness had quietly decided what a split or a palette trace's id means.
     """
     reserved = {
         entry["row"]: entry
@@ -422,9 +423,9 @@ def test_the_carry_primitives_have_no_production_caller():
     `copyRow` and `duplicateRow` are the two operations the store's carry table
     is written around, and nothing outside `tests/` calls either at 978b4d91 --
     which is why the two `copyRow` tests below assert that an edit MOVES an id.
-    When D10's remaining half wires them, this test goes red, and going red is
-    the notification: the two contradiction pins below have to be turned over in
-    the same change.
+    When the edit paths start calling them, this test goes red, and going red
+    is the notification: the two contradiction pins below have to be turned
+    over in the same change.
 
     Read off the source rather than by patching, because a monkeypatched method
     would only prove that the call sites this test knows about do not call it.
@@ -441,8 +442,8 @@ def test_the_carry_primitives_have_no_production_caller():
     ## `columnar_store.py` itself is excluded above: it defines both and
     ## documents them, and a module defining its own method is not a caller.
     assert not callers, (
-        "copyRow/duplicateRow now have production callers, which is D10's "
-        "remaining half landing. Turn over the two 'copyRow is not wired' "
+        "copyRow/duplicateRow now have production callers. Turn over the "
+        "two 'copyRow is not wired' "
         f"tests below in the same change.\n{callers}"
     )
 
@@ -545,8 +546,9 @@ def test_an_attribute_edit_moves_the_id_because_copyrow_is_not_wired(real_series
 
     This is not the same finding as the known edit-then-reload movement further
     down. That one is inherent to deriving from content and cannot be fixed
-    inside Track A; this one is a store operation that exists, does exactly the
-    right thing, and has no caller. Recorded as the harness's headline gap.
+    while ids are not saved; this one is a store operation that exists, does
+    exactly the right thing, and has no caller. Recorded as the harness's
+    headline gap.
 
     Asserted rather than xfailed on purpose: an xfail says "we expect to fix
     this and have not"; an assertion on the real behavior says "this is what
@@ -724,7 +726,7 @@ def test_copying_traces_to_sections_issues_ids_and_leaves_the_source(real_series
 ## --------------------------------------------------------------------------
 
 def test_a_rebuild_carries_every_id(real_series):
-    """D10 / #283: `resyncColumnarStore` throws the store away and keeps the ids.
+    """`resyncColumnarStore` throws the store away and keeps the ids.
 
     Keyed on the `Trace` object, because a rebuild is entitled to renumber rows
     and this is exactly the correlation `_rebuildColumnarStore` uses -- the
@@ -749,20 +751,21 @@ def test_a_rebuild_carries_every_id(real_series):
 
 
 def test_a_clean_save_does_not_re_identify_the_traces_it_saves(real_series):
-    """#278's property, driven through the series rather than a hand-built store.
+    """A save keeps ids, driven through the series, not a hand-built store.
 
     `test_section_columnar_dual_write.py` pins this against a store a test
-    installed by hand, because before S1 the production default carried no ids
-    at all and the assertion would have passed vacuously. S1 removed that
-    caveat: every trace on a real section now has an id at load, so the same
-    property is worth re-asserting on the real thing.
+    installed by hand, because before ids were derived at load the production
+    default carried no ids at all and the assertion would have passed
+    vacuously. Load-time derivation removed that caveat: every trace on a
+    real section now has an id at load, so the same property is worth
+    re-asserting on the real thing.
     """
     snum, section = _aWorkingSection(real_series)
     before = _idsByTrace(section)
     store = section._columns
-    ## Not decoration: on the pre-S1 build every id is `None`, and "before ==
-    ## after" over a dict of `None`s passes while proving nothing. The
-    ## revert-and-fail probe found this test green against `30a0dad0` until
+    ## Not decoration: on a build without load-time ids every id is `None`, and
+    ## "before == after" over a dict of `None`s passes while proving nothing.
+    ## The revert-and-fail probe found this test green against `30a0dad0` until
     ## this line was added.
     assert before and all(before.values()), (
         "the section carries no ids, so comparing them before and after a save "
@@ -783,9 +786,9 @@ def test_a_clean_save_does_not_re_identify_the_traces_it_saves(real_series):
 def test_reloading_unchanged_content_moves_no_id(real_series):
     """`Series.loadSection` builds a fresh `Section` every call. Ids must not care.
 
-    S1's own module pins this over the whole series; repeated here on one
-    section because every later test in this module depends on it, and a
-    harness whose baseline is unstable measures nothing.
+    `test_trace_id_load_derivation.py` pins this over the whole series;
+    repeated here on one section because every later test in this module
+    depends on it, and a harness whose baseline is unstable measures nothing.
     """
     snum, section = _aWorkingSection(real_series)
     first = _idsByPosition(section)
@@ -987,21 +990,20 @@ def test_a_redo_re_identifies_the_contours_it_restores(real_series):
 
 
 ## --------------------------------------------------------------------------
-## Track A's two inherent movements -- the red tests S3+ flips
+## Two inherent movements while ids are not saved: red tests that saving flips
 ## --------------------------------------------------------------------------
 
 def test_an_edit_then_save_then_reload_moves_only_the_edited_traces_id(
     real_series,
 ):
-    """KNOWN AND INTENDED for Track A. The pin S3 turns over.
+    """KNOWN AND INTENDED while ids are not saved. Saving ids turns this over.
 
     Nothing is persisted yet, so an id is a pure function of the row's stored
     content, and a pure function of content moves when the content moves.
     `trace_id.py`'s module docstring records the reasoning and the rejected
     alternative (keying the derivation record on position would survive an
     in-place edit and mass-reassign every id after an insert or delete, which
-    is worse). Review 297 recorded the same measurement as
-    `pr297-edit-moves-derived-id-undisclosed`.
+    is worse).
 
     Three halves, all asserted, because the useful statement is not "an id
     moved" but "exactly the edited trace's id moved":
@@ -1046,17 +1048,17 @@ def test_an_edit_then_save_then_reload_moves_only_the_edited_traces_id(
 
     assert len(contour_after) == len(contour_before)
     assert victim_id not in contour_after, (
-        "the edited trace kept its id across a save and a reload. Under Track "
-        "A that cannot happen -- nothing persists the id and the content it is "
-        "derived from has changed -- so either an id is now persisted (S3+ has "
-        "landed and this test is the one to turn over) or the edit did not "
-        "reach the file."
+        "the edited trace kept its id across a save and a reload. With ids "
+        "derived from content that cannot happen -- nothing persists the id "
+        "and the content it is derived from has changed -- so either an id is "
+        "now persisted (and this test is the one to turn over) or the edit "
+        "did not reach the file."
     )
     neighbours_before = set(contour_before) - {victim_id}
     assert neighbours_before <= set(contour_after), (
         "editing one trace moved a neighbour's id as well. THAT would be a "
-        f"defect rather than Track A's shape: {contour_before} -> "
-        f"{contour_after}"
+        f"defect rather than a cost of content-derived ids: "
+        f"{contour_before} -> {contour_after}"
     )
     assert victim_id in real_series.trace_id_issuer.taken, (
         "the superseded id was released; trace_id.py's policy is that an id "
@@ -1078,7 +1080,7 @@ def test_an_edit_then_save_then_reload_moves_only_the_edited_traces_id(
 
 
 def test_an_id_issued_in_session_does_not_survive_a_save_and_reload(real_series):
-    """KNOWN AND INTENDED for Track A. The second pin S3 turns over.
+    """KNOWN AND INTENDED while ids are not saved. Saving ids turns this over.
 
     A trace created during a session is handed an opaque RANDOM id, because
     identity has to survive an edit and a content hash does not
@@ -1086,9 +1088,10 @@ def test_an_id_issued_in_session_does_not_survive_a_save_and_reload(real_series)
     section file, so the reload finds a row it has never seen and DERIVES one
     from its content -- a different id, and the issued one is orphaned.
 
-    This is the mirror image of the edit case and the same cause: within Track
-    A, the only thing that crosses a save is the row's content. Both stop being
-    true the moment a keyed row carries the id, which is why both are here.
+    This is the mirror image of the edit case and the same cause: while ids are
+    not saved, the only thing that crosses a save is the row's content. Both
+    stop being true the moment a keyed row carries the id, which is why both
+    are here.
     """
     snum, section = _aWorkingSection(real_series)
     newcomer = _newTrace("harness_persistence_probe")
@@ -1102,9 +1105,9 @@ def test_an_id_issued_in_session_does_not_survive_a_save_and_reload(real_series)
 
     assert derived is not None and len(derived) == TRACE_ID_LENGTH
     assert derived != issued, (
-        "an id issued during the session survived a save and a reload. Under "
-        "Track A nothing persists it, so this can only mean the writer now "
-        "carries the id (S5) -- turn this pin over."
+        "an id issued during the session survived a save and a reload. "
+        "Nothing persists it today, so this can only mean the writer now "
+        "carries the id -- turn this pin over."
     )
     assert issued in real_series.trace_id_issuer.taken, (
         "the issued id was released when the reload replaced it"
@@ -1114,12 +1117,11 @@ def test_an_id_issued_in_session_does_not_survive_a_save_and_reload(real_series)
 def test_deleting_one_of_two_identical_rows_transfers_the_survivors_id(
     real_series,
 ):
-    """`pr297-duplicate-row-id-transfer`, reproduced through the entry points.
+    """Deleting one of two identical rows hands the survivor the first id.
 
-    Review 297 traced this by hand through `deriveForSection`'s occurrence
-    counter and recorded it as informational, with the note that S2 should list
-    it so the harness "does not report it as a surprise". It is reproduced here
-    instead of listed, because it turned out to be reachable end to end: add a
+    This follows from `deriveForSection`'s occurrence counter, and it is
+    reproduced here rather than only listed because it is reachable end to
+    end: add a
     byte-identical twin, save, reload (the twin now holds the second recorded
     id), delete the FIRST of the pair, save, reload -- and the survivor is
     handed the FIRST id while its own is orphaned.
@@ -1130,10 +1132,10 @@ def test_deleting_one_of_two_identical_rows_transfers_the_survivors_id(
     draw the same list position. Asserted below.
 
     Inherent to any content-derived scheme over genuinely indistinguishable
-    rows, and not fixable inside Track A: the two rows are the same bytes, so
-    the derivation has nothing to tell them apart with except the order they
-    appear in. A persisted id is what distinguishes them, which puts this on
-    the same list as the two tests above.
+    rows, and not fixable while ids are not saved: the two rows are the same
+    bytes, so the derivation has nothing to tell them apart with except the
+    order they appear in. A persisted id is what distinguishes them, which puts
+    this on the same list as the two tests above.
     """
     snum, section = _aWorkingSection(real_series)
     cname = sorted(section.contours, key=str)[0]
@@ -1184,16 +1186,16 @@ def test_deleting_one_of_two_identical_rows_transfers_the_survivors_id(
 def test_palette_traces_never_reach_a_store(real_series):
     """The mechanical half of "palette traces are unexercised". Not a semantic.
 
-    Spec Q3 is whether palette traces should have ids, and it is the
-    maintainer's. What can be stated without answering it is where they live:
+    Whether palette traces should have ids is an open question. What can be
+    stated without answering it is where they live:
     `Series.palette_traces` is a dict of plain `Trace` lists hanging off the
     `Series`, never appended to a `SectionColumns`, so there is no id today and
     no row to read one off. That is a fact about the object graph and it is
     what makes "unexercised" the honest verdict rather than an omission.
 
-    If palette traces ever do reach a store, this goes red and Q3 has been
-    answered by whoever wired it -- which is exactly the notification the
-    reserved rows deserve.
+    If palette traces ever do reach a store, this goes red and that question
+    has been answered by whoever wired it -- which is exactly the notification
+    the reserved rows deserve.
     """
     palettes = real_series.palette_traces
     assert palettes, "the fixture series has no palette traces"
@@ -1213,6 +1215,7 @@ def test_palette_traces_never_reach_a_store(real_series):
         section = real_series.loadSection(snum)
         mapped = {id(trace) for trace in section._column_rows}
         assert not (mapped & palette_objects), (
-            f"a palette trace has a store row on section {snum}; Q3 has been "
-            "answered by wiring rather than by decision"
+            f"a palette trace has a store row on section {snum}; whether "
+            "palette traces get ids was answered by wiring rather than by "
+            "decision"
         )
