@@ -16,6 +16,30 @@ from .field_widget_6_paint import FieldWidgetPaint
 from .status_readout import SEPARATOR
 
 
+# what the status bar says when a view that missed the image was set to it
+VIEW_OFF_IMAGE_NOTICE = "The view was outside the image, so it was set to the image."
+
+
+def viewMissesBounds(window : list, bounds : tuple) -> bool:
+    """Whether a view window and a bounding box share no area.
+
+    A window that only touches an edge of the box shows none of it, so that
+    counts as missing too.
+
+        Params:
+            window (list): the x, y, w, h of the field view
+            bounds (tuple): min_x, min_y, max_x, max_y of the box
+        Returns:
+            (bool): True if the window shows no part of the box
+    """
+    wx, wy, ww, wh = tuple(window)
+    min_x, min_y, max_x, max_y = bounds
+    return (
+        wx + ww <= min_x or wx >= max_x or
+        wy + wh <= min_y or wy >= max_y
+    )
+
+
 class FieldWidgetView(FieldWidgetPaint):
     """
     VIEW FUNCTIONS
@@ -244,12 +268,16 @@ class FieldWidgetView(FieldWidgetPaint):
         else:
             self.deleteTraces()
     
-    def home(self):
-        """Set the view to the image."""
-        # check is an image has been loaded
+    def imageBounds(self):
+        """The section image's bounding box in field coordinates.
+
+            Returns:
+                (tuple): min_x, min_y, max_x, max_y of the image after the
+                    section transform, or None when no image is loaded
+        """
         if not self.section_layer.image_found:
-            return
-        
+            return None
+
         tform = self.section.tform
         xvals = []
         yvals = []
@@ -259,14 +287,58 @@ class FieldWidgetView(FieldWidgetPaint):
             x, y = tform.map(x, y)
             xvals.append(x)
             yvals.append(y)
+        return min(xvals), min(yvals), max(xvals), max(yvals)
+
+    def home(self):
+        """Set the view to the image."""
+        bounds = self.imageBounds()
+        # check is an image has been loaded
+        if bounds is None:
+            return
+
+        min_x, min_y, max_x, max_y = bounds
         self.series.window = [
-            min(xvals),
-            min(yvals),
-            max(xvals) - min(xvals),
-            max(yvals) - min(yvals)
+            min_x,
+            min_y,
+            max_x - min_x,
+            max_y - min_y
         ]
         self.generateView()
-    
+
+    def viewIsOffImage(self) -> bool:
+        """Whether the view window misses the section image entirely.
+
+        False when no image is loaded: a series without images is viewed by
+        its traces, and that view is wherever the user left it.
+        """
+        bounds = self.imageBounds()
+        if bounds is None:
+            return False
+        return viewMissesBounds(self.series.window, bounds)
+
+    def homeIfViewOffImage(self) -> bool:
+        """Set the view to the image when the view misses it, and say so.
+
+        A series can carry a view that shows no part of its image: the
+        reported case was a saved window of [-9.07, -0.94, 1, 1] on an
+        image at the origin, which opened to a black field with the traces
+        off screen as well. Called when a series opens and when its images
+        are located, after the image has loaded. A view that overlaps the
+        image at all is left alone, so a zoom and position the user chose
+        survive a reopen. The notice goes to the status bar's temporary
+        message slot, which the field's readout no longer overwrites
+        (updateStatusBar); a dialog on open would stop the series from
+        opening until it was dismissed.
+
+            Returns:
+                (bool): True if the view was moved
+        """
+        if not self.viewIsOffImage():
+            return False
+        self.home()
+        self.mainwindow.statusBar().showMessage(VIEW_OFF_IMAGE_NOTICE, 8000)
+        return True
+
     def moveTo(self, snum : int, x : float, y : float):
         """Move to a specified section number and coordinates (used from 3D scene).
         

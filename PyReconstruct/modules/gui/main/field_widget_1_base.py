@@ -242,7 +242,10 @@ class FieldWidgetBase:
             self.timer.timeout.connect(self.markTime)
             self.timer.start(5000)
 
-        self.generateView()
+        # a saved view that shows no part of the image is set to the image
+        # (homeIfViewOffImage); otherwise the view is drawn where it was saved
+        if not self.homeIfViewOffImage():
+            self.generateView()
     
     def createZarrLayer(self):
         """Create a zarr layer."""

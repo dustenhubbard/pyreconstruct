@@ -932,6 +932,9 @@ class MainWindow(QMainWindow):
         self.series.src_dir = new_src_dir
         if self.field:
             self.field.reloadImage()
+            # the view may have been saved where the image is not: now that
+            # the image is found, a view that misses it is set to it
+            self.field.homeIfViewOffImage()
         self.seriesModified(True)
         
         # prompt user to scale zarr images if not scaled
@@ -1947,9 +1950,12 @@ class MainWindow(QMainWindow):
         # open new series
         self.openSeries(series)
 
+        # set view to entire image, as the other new-series paths do
+        self.field.home()
+
         # prompt user to save series
         self.saveAsToJser()
-    
+
     def newFromNgZarr(self):
         """Create a new series from a neuroglancer zarr."""
         zarr_fp = FileDialog.get(

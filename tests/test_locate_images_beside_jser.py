@@ -64,6 +64,11 @@ class _FieldStub:
         self.reloads += 1
         self.section_layer.loadImage()
 
+    def homeIfViewOffImage(self):
+        # changeSrcDir asks the field to set a view that misses the newly
+        # found image to the image; this stub has no view, so nothing moves
+        return False
+
 
 class _MainWindowStub:
     def __init__(self, jser_fp, src_dir=""):
