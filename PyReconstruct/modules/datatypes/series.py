@@ -5632,10 +5632,13 @@ class Series():
         """Return this series' code as a safe folder name.
 
         The code is whatever was typed in the series code dialog, so path
-        separators become "_", and so does every dot in a code made only of
-        dots: "." or ".." would name the folder itself or its parent.
+        separators and ":" become "_" (on Windows "C:ABC" would name a folder
+        on another drive), and so does every dot in a code made only of dots:
+        "." or ".." would name the folder itself or its parent.
         """
-        code = (self.code or self.name).replace("/", "_").replace("\\", "_")
+        code = self.code or self.name
+        for c in ("/", "\\", ":"):
+            code = code.replace(c, "_")
         if not code.strip("."):
             code = "_" * max(len(code), 1)
         return code
@@ -5644,34 +5647,14 @@ class Series():
         """Replace {series} in a folder with this series' code."""
         return folder.replace("{series}", self.backupFolderName())
 
-    def backupSeriesFolderOn(self) -> bool:
-        """Return True if the default folder gets a subfolder per series.
-
-        Stored globally as `default_backup_series_folder` and kept out of the
-        settings table, like `backup_use_defaults`: getOption would store a
-        default the first time it reads the key, and one default cannot fit
-        both kinds of user. With nothing stored, a user who has not picked a
-        default folder yet starts with it on. A user who picked a plain
-        folder before this option existed keeps it off, so their backups do
-        not move.
-        """
-        store = self._settingsStore()
-        if store.contains(None, "default_backup_series_folder"):
-            return bool(store.value(None, "default_backup_series_folder", bool))
-        return not self.getOption("default_backup_dir")
-
-    def setBackupSeriesFolder(self, value : bool):
-        """Record whether the default folder gets a subfolder per series."""
-        self._settingsStore().set_value(None, "default_backup_series_folder", bool(value))
-
     @staticmethod
     def splitSeriesFolderTemplate(folder : str) -> tuple:
         """Split a default folder that ends in {series} into (base, True).
 
-        Before the per-series subfolder option, a user typed {series} as the
-        last part of the folder to get one. That reads as the base folder
-        with the option on, which resolves to the same place. Any other
-        folder comes back as (folder, False).
+        The Backup Settings checkbox for a subfolder per series stands for a
+        stored folder ending in {series}, the form v1.24.0 reads, so every
+        version that shares these settings backs up to the same place. Any
+        other folder comes back as (folder, False).
         """
         token = "{series}"
         trimmed = folder.rstrip("/\\")
@@ -5685,20 +5668,19 @@ class Series():
                 return base, True
         return folder, False
 
-    def defaultBackupFolder(self, folder : str, series_folder : bool) -> str:
-        """Return where a default folder puts this series' backups.
+    @staticmethod
+    def joinSeriesFolderTemplate(base : str, series_folder : bool) -> str:
+        """Return the default folder to store for a base folder and the box.
 
-            Params:
-                folder (str): the default folder. {series} in it is still
-                    replaced by the code, so a folder saved that way keeps
-                    working, and then series_folder is not applied.
-                series_folder (bool): add a subfolder named by the code
+        The inverse of splitSeriesFolderTemplate. A base that already holds
+        {series} is stored as it is, so the code is never added twice.
         """
-        if "{series}" in folder:
-            return self.expandBackupFolder(folder)
-        if folder and series_folder:
-            return os.path.join(folder, self.backupFolderName())
-        return folder
+        if not base or not series_folder or "{series}" in base:
+            return base
+        sep = "\\" if "\\" in base and "/" not in base else "/"
+        if base[-1] in ("/", "\\"):
+            return base + "{series}"
+        return base + sep + "{series}"
 
     def autobackupOn(self) -> bool:
         """Return True if this series backs up on every save."""
@@ -5711,24 +5693,17 @@ class Series():
 
             Params:
                 create (bool): make the folder if it comes from the default
-                    folder, is named by the series code, and the folder it
-                    goes in exists. A folder the user picked whole is never
+                    folder, `{series}` names part of it, and the part before
+                    `{series}` exists. A folder the user picked whole is never
                     created: a missing one is reported, as before.
         """
         if not self.usesBackupDefaults():
             return self.getOption("backup_dir")
         template = self.getOption("default_backup_dir")
-        series_folder = self.backupSeriesFolderOn()
-        folder = self.defaultBackupFolder(template, series_folder)
+        folder = self.expandBackupFolder(template)
         i = template.find("{series}")
-        if i != -1:
-            parent = os.path.dirname(template[:i])
-        elif template and series_folder:
-            parent = template
-        else:
-            parent = None
-        if create and parent is not None and not os.path.isdir(folder):
-            if os.path.isdir(parent):
+        if create and i != -1 and not os.path.isdir(folder):
+            if os.path.isdir(os.path.dirname(template[:i])):
                 try:
                     os.makedirs(folder, exist_ok=True)
                 except OSError:

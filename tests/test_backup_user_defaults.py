@@ -2,9 +2,10 @@
 
 `autobackup` and `backup_dir` are per series. A series with no backup
 settings of its own takes `default_autobackup` and `default_backup_dir`.
-`default_backup_series_folder` puts each series in a subfolder named by its
-code; a folder saved by v1.24.0 with `{series}` in it still becomes the
-series code. A series that set its own folder keeps it.
+`{series}` in the folder becomes the series code; the Backup Settings
+checkbox for a subfolder per series stands for a folder ending in `{series}`,
+so v1.24.0, which shares these settings, reads the same folder. A series
+that set its own folder keeps it.
 
 The trap: `Series.getOption` stores the default (off, no folder) the first
 time it reads a per-series key, so a series opened once has stored values
@@ -357,81 +358,25 @@ def test_the_dialog_saves_the_defaults_and_the_series_choice(qapp, tmp_path):
 
 ## A subfolder per series, without typing {series}
 
-def _series_folder(series, folder, on=True, auto=True):
-    _set_defaults(series, folder, auto=auto)
-    series.setBackupSeriesFolder(on)
+def _stable_folder(store, series):
+    """The default backup folder as v1.24.0 resolves it from the shared store.
+
+    `Series.expandBackupFolder` and the template read in `backupFolder` at
+    tag v1.24.0 (dc5b3199): that version knows nothing newer, so whatever
+    this one stores must mean the same folder to it.
+    """
+    template = ""
+    if store.contains(None, "default_backup_dir"):
+        template = store.value(None, "default_backup_dir", str)
+    code = (series.code or series.name).replace("/", "_").replace("\\", "_")
+    if not code.strip("."):
+        code = "_" * max(len(code), 1)
+    return template.replace("{series}", code)
 
 
-def test_the_subfolder_is_named_by_the_series_code(tmp_path):
-    series = _series()
-    _series_folder(series, str(tmp_path))
-    assert series.backupFolder() == str(tmp_path / "ABC")
-
-
-def test_the_subfolder_name_cannot_leave_the_folder(tmp_path):
-    series = _series("..")
-    _series_folder(series, str(tmp_path))
-    assert series.backupFolder() == str(tmp_path / "__")
-
-
-def test_with_the_subfolder_off_the_folder_is_used_whole(tmp_path):
-    series = _series()
-    _series_folder(series, str(tmp_path), on=False)
-    assert series.backupFolder() == str(tmp_path)
-
-
-def test_a_new_user_starts_with_the_subfolder_on():
-    assert _series().backupSeriesFolderOn() is True
-
-
-def test_a_plain_folder_from_before_the_option_stays_put(tmp_path):
-    """A v1.24.0 user who picked a folder without {series}: nothing stored
-    for the new option, and their backups must not move into a subfolder."""
-    store = DictSettingsStore()
-    series = _series(store=store)
-    _set_defaults(series, str(tmp_path))
-    assert not store.contains(None, "default_backup_series_folder")
-    assert series.backupSeriesFolderOn() is False
-    assert series.backupFolder() == str(tmp_path)
-
-
-def test_the_option_is_shared_by_every_series(tmp_path):
-    store = DictSettingsStore()
-    abc, xyz = _series("ABC", store), _series("XYZ", store)
-    _series_folder(abc, str(tmp_path))
-    assert xyz.backupFolder() == str(tmp_path / "XYZ")
-
-
-def test_the_subfolder_is_made_when_the_folder_exists(tmp_path):
-    series = _series()
-    _series_folder(series, str(tmp_path))
-    assert not os.path.exists(tmp_path / "ABC")
-    folder = series.backupFolder(create=True)
-    assert folder == str(tmp_path / "ABC")
-    assert os.path.isdir(folder)
-
-
-def test_nothing_is_made_when_the_folder_is_missing(tmp_path):
-    series = _series()
-    _series_folder(series, str(tmp_path / "unmounted"))
-    series.backupFolder(create=True)
-    assert not os.path.exists(tmp_path / "unmounted")
-
-
-def test_auto_backup_on_save_writes_into_the_subfolder(tmp_path, notes):
-    from PyReconstruct.modules.gui.main.main_window import MainWindow
-
-    series = _series()
-    _series_folder(series, str(tmp_path))
-    saved = []
-    series.saveJser = lambda fp=None, **k: saved.append(fp)
-    series.jser_fp = ""
-
-    MainWindow.backup(_window(series), check_auto=True)
-
-    assert len(saved) == 1
-    assert os.path.dirname(saved[0]) == str(tmp_path / "ABC")
-    assert notes == []
+def _dialog(series):
+    from PyReconstruct.modules.gui.dialog.backup import BackupDialog
+    return BackupDialog(None, series)
 
 
 @pytest.mark.parametrize("folder, split", [
@@ -453,25 +398,56 @@ def test_a_folder_ending_in_series_splits_into_its_base(folder, split):
     assert Series.splitSeriesFolderTemplate(folder) == split
 
 
-@pytest.mark.parametrize("tail", ["{series}", "backups/{series}", "backups/{series}/jser"])
-def test_a_stored_series_folder_keeps_resolving_with_the_option_either_way(tmp_path, tail):
-    """{series} in a stored folder wins over the option, so the folder is
-    never named twice and a mid-path {series} keeps working."""
-    for on in (True, False):
-        series = _series()
-        _series_folder(series, str(tmp_path / tail), on=on)
-        assert series.backupFolder() == str(tmp_path / tail.replace("{series}", "ABC"))
+@pytest.mark.parametrize("base, on, stored", [
+    ("/b", True, "/b/{series}"),
+    ("/b", False, "/b"),
+    ("/", True, "/{series}"),
+    ("C:\\B", True, "C:\\B\\{series}"),
+    ("C:\\", True, "C:\\{series}"),
+    ("C:/B", True, "C:/B/{series}"),
+    ("/b/{series}/jser", True, "/b/{series}/jser"),
+    ("", True, ""),
+])
+def test_the_box_is_stored_as_a_folder_ending_in_series(base, on, stored):
+    assert Series.joinSeriesFolderTemplate(base, on) == stored
+    if on and "{series}" not in base and base:
+        assert Series.splitSeriesFolderTemplate(stored) == (base, True)
+
+
+@pytest.mark.parametrize("code, name", [("C:ABC", "C_ABC"), ("A:B:C", "A_B_C")])
+def test_a_drive_in_the_code_stays_inside_the_picked_folder(code, name):
+    """With Windows paths, "C:ABC" after a separator still names a folder
+    under the picked one once the colon is replaced."""
+    import ntpath
+
+    series = _series(code)
+    folder = series.expandBackupFolder(
+        Series.joinSeriesFolderTemplate("D:\\Backups", True)
+    )
+    assert folder == "D:\\Backups\\" + name
+    assert ntpath.dirname(folder) == "D:\\Backups"
+    assert ntpath.splitdrive(ntpath.join("D:\\Backups", series.backupFolderName()))[0] == "D:"
+
+
+@pytest.mark.gui
+def test_the_dialog_checkbox_keeps_a_windows_drive_code_inside_the_folder(qapp):
+    import ntpath
+
+    series = _series("C:ABC")
+    dialog = _dialog(series)
+    dialog.default_dir_widget.le.setText("D:\\Backups")
+    dialog.default_series_cb.setChecked(True)
+    dialog.set()
+    assert ntpath.dirname(series.backupFolder()) == "D:\\Backups"
 
 
 @pytest.mark.gui
 def test_the_dialog_sets_the_subfolder_with_a_checkbox(qapp, tmp_path):
     from PySide6.QtWidgets import QLabel
 
-    from PyReconstruct.modules.gui.dialog.backup import BackupDialog
-
     store = DictSettingsStore()
     series = _series(store=store)
-    dialog = BackupDialog(None, series)
+    dialog = _dialog(series)
 
     # nothing to type: no {series} hint, and a new user starts with it on
     assert not any("{series}" in lbl.text() for lbl in dialog.findChildren(QLabel))
@@ -484,47 +460,100 @@ def test_the_dialog_sets_the_subfolder_with_a_checkbox(qapp, tmp_path):
     dialog.default_series_cb.setChecked(True)
     dialog.set()
 
-    assert store.value(None, "default_backup_dir", str) == str(tmp_path)
-    assert store.value(None, "default_backup_series_folder", bool) is True
+    assert store.value(None, "default_backup_dir", str) == str(tmp_path / "{series}")
     assert series.backupFolder() == str(tmp_path / "ABC")
+    assert _stable_folder(store, series) == str(tmp_path / "ABC")
 
-    dialog = BackupDialog(None, series)
+    dialog = _dialog(series)
+    assert dialog.default_dir_widget.text() == str(tmp_path)
     assert dialog.default_series_cb.isChecked()
     dialog.default_series_cb.setChecked(False)
     dialog.set()
+    assert store.value(None, "default_backup_dir", str) == str(tmp_path)
     assert series.backupFolder() == str(tmp_path)
+    assert _stable_folder(store, series) == str(tmp_path)
 
 
 @pytest.mark.gui
 def test_the_dialog_shows_a_v1_24_folder_as_its_base_with_the_box_on(qapp, tmp_path):
-    from PyReconstruct.modules.gui.dialog.backup import BackupDialog
-
-    store = DictSettingsStore()
-    series = _series(store=store)
+    series = _series()
     _set_defaults(series, str(tmp_path / "{series}"))
-    before = series.backupFolder()
 
-    dialog = BackupDialog(None, series)
+    dialog = _dialog(series)
     assert dialog.default_dir_widget.text() == str(tmp_path)
     assert dialog.default_series_cb.isChecked()
-    assert dialog.default_folder_lbl.text() == f"For this series: {before}"
-    dialog.set()
-
-    assert store.value(None, "default_backup_dir", str) == str(tmp_path)
-    assert series.backupFolder() == before
+    assert dialog.default_folder_lbl.text() == f"For this series: {tmp_path / 'ABC'}"
 
 
 @pytest.mark.gui
-def test_the_dialog_keeps_a_plain_folder_from_before_the_option(qapp, tmp_path):
-    from PyReconstruct.modules.gui.dialog.backup import BackupDialog
-
-    series = _series()
+def test_the_dialog_keeps_a_plain_folder_with_the_box_off(qapp, tmp_path):
+    store = DictSettingsStore()
+    series = _series(store=store)
     _set_defaults(series, str(tmp_path))
 
-    dialog = BackupDialog(None, series)
+    dialog = _dialog(series)
     assert not dialog.default_series_cb.isChecked()
     dialog.set()
-    assert series.backupFolder() == str(tmp_path)
+    assert store.value(None, "default_backup_dir", str) == str(tmp_path)
+
+
+STORED = ["", "B", "B/{series}", "B/{series}/", "B//{series}", "B/{series}/jser", "B/x{series}"]
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("stored", STORED)
+def test_ok_without_changes_writes_back_the_same_folder_text(qapp, tmp_path, stored):
+    store = DictSettingsStore()
+    series = _series(store=store)
+    template = stored.replace("B", str(tmp_path / "B"))
+    _set_defaults(series, template)
+
+    _dialog(series).set()
+    assert store.value(None, "default_backup_dir", str) == template
+
+
+@pytest.mark.gui
+@pytest.mark.parametrize("stored", STORED)
+@pytest.mark.parametrize("change", ["none", "toggle box", "new folder", "new folder, toggle box"])
+def test_v1_24_reads_the_same_folder_after_any_save(qapp, tmp_path, stored, change):
+    """Stable v1.24.0 and this version share one settings store."""
+    store = DictSettingsStore()
+    series = _series(store=store)
+    _set_defaults(series, stored.replace("B", str(tmp_path / "B")))
+
+    dialog = _dialog(series)
+    if "new folder" in change:
+        dialog.default_dir_widget.le.setText(str(tmp_path / "other"))
+    if "toggle box" in change:
+        dialog.default_series_cb.setChecked(not dialog.default_series_cb.isChecked())
+    shown = dialog.default_folder_lbl.text()
+    dialog.set()
+
+    assert series.backupFolder() == _stable_folder(store, series)
+    if series.backupFolder():
+        assert shown == f"For this series: {series.backupFolder()}"
+
+
+@pytest.mark.gui
+def test_the_checked_subfolder_is_made_when_the_folder_exists(qapp, tmp_path):
+    series = _series()
+    dialog = _dialog(series)
+    dialog.default_dir_widget.le.setText(str(tmp_path))
+    dialog.set()
+    assert not os.path.exists(tmp_path / "ABC")
+    folder = series.backupFolder(create=True)
+    assert folder == str(tmp_path / "ABC")
+    assert os.path.isdir(folder)
+
+
+@pytest.mark.gui
+def test_the_checked_subfolder_is_not_made_when_the_folder_is_missing(qapp, tmp_path):
+    series = _series()
+    dialog = _dialog(series)
+    dialog.default_dir_widget.le.setText(str(tmp_path / "unmounted"))
+    dialog.set()
+    series.backupFolder(create=True)
+    assert not os.path.exists(tmp_path / "unmounted")
 
 
 @pytest.mark.gui
@@ -532,9 +561,8 @@ def test_the_dialog_scrolls_and_keeps_ok_and_cancel_in_view(qapp):
     from PySide6.QtWidgets import QApplication, QDialogButtonBox
 
     from PyReconstruct.modules.gui.dialog import backup
-    from PyReconstruct.modules.gui.dialog.backup import BackupDialog
 
-    dialog = BackupDialog(None, _series())
+    dialog = _dialog(_series())
     buttons = dialog.findChild(QDialogButtonBox)
     assert buttons is not None
     assert not dialog.scroll_area.widget().isAncestorOf(buttons)

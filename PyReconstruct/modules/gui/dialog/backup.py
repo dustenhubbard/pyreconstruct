@@ -94,14 +94,16 @@ class BackupDialog(QDialog):
 
         vlayout.addWidget(_box(content, "This Series", vlayout1))
 
-        # my defaults: used by every series set to use them. A folder saved
-        # as ".../{series}" shows as its base folder with the subfolder on.
+        # my defaults: used by every series set to use them. The subfolder
+        # box stands for a stored folder ending in {series}, the form every
+        # version sharing these settings reads, so it shows as the base
+        # folder with the box checked. With no folder yet, the box starts on.
         vlayout3 = QVBoxLayout()
-        folder, series_folder = Series.splitSeriesFolderTemplate(
-            series.getOption("default_backup_dir")
-        )
-        if not series_folder:
-            series_folder = series.backupSeriesFolderOn()
+        self.default_template = series.getOption("default_backup_dir")
+        folder, series_folder = Series.splitSeriesFolderTemplate(self.default_template)
+        if not folder:
+            series_folder = True
+        self.default_loaded = (folder, series_folder)
         self.default_dir_widget, hbl = _folderRow(content, folder)
         self.default_dir_widget.le.textChanged.connect(self.updateDefaultFolder)
         vlayout3.addLayout(hbl)
@@ -263,14 +265,23 @@ class BackupDialog(QDialog):
 
     def updateDefaultFolder(self):
         """Show where the default folder puts this series' backups."""
-        folder = self.series.defaultBackupFolder(
-            self.default_dir_widget.text(), self.default_series_cb.isChecked()
-        )
+        folder = self.series.expandBackupFolder(self.defaultTemplate())
         if folder:
             self.default_folder_lbl.setText(f"For this series: {folder}")
         else:
             self.default_folder_lbl.setText("")
     
+    def defaultTemplate(self) -> str:
+        """The default folder to store, from the folder field and the box.
+
+        Unchanged controls give back the stored text exactly.
+        """
+        base = self.default_dir_widget.text()
+        series_folder = self.default_series_cb.isChecked()
+        if (base, series_folder) == self.default_loaded:
+            return self.default_template
+        return Series.joinSeriesFolderTemplate(base, series_folder)
+
     def updateWidgets(self):
         """Update the display widgets."""
         l = []
@@ -305,8 +316,7 @@ class BackupDialog(QDialog):
             self.series.setOption("autobackup", self.auto_cb.isChecked())
             self.series.setOption("backup_dir", self.dir_widget.text())
             self.series.setOption("default_autobackup", self.default_auto_cb.isChecked())
-            self.series.setOption("default_backup_dir", self.default_dir_widget.text())
-            self.series.setBackupSeriesFolder(self.default_series_cb.isChecked())
+            self.series.setOption("default_backup_dir", self.defaultTemplate())
             for name, (cb, w) in self.widgets.items():
                 self.series.setOption(
                     f"backup_{name}",

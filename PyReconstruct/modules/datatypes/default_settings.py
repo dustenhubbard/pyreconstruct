@@ -53,9 +53,7 @@ default_settings = {
     "backup_suffix": False,
     "backup_suffix_str": "",
     # what a series with no backup settings of its own uses (see
-    # Series.usesBackupDefaults). "default_backup_series_folder" (bool),
-    # a subfolder per series code, is global too but stays out of this table
-    # on purpose: Series.backupSeriesFolderOn reads it
+    # Series.usesBackupDefaults); {series} in the folder becomes the code
     "default_autobackup": False,
     "default_backup_dir": "",
 
