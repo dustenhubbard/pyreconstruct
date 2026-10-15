@@ -2,6 +2,8 @@ import math
 
 import numpy as np
 
+import shapely
+from shapely.geometry import Polygon
 from skimage.draw import polygon
 import trimesh
 
@@ -68,6 +70,116 @@ def mapTracePoints(points : list, tform : Transform = None) -> list:
         return [(x, y) for x, y in tform.mapPointsArray(points).tolist()]
     else:
         return [(x, y) for x, y in points]
+
+
+def _outlineVoxels(xs : np.ndarray, ys : np.ndarray) -> tuple:
+    """Return the voxels a closed outline passes through, as x and y indices.
+
+    The points are in voxel units, voxel i spanning i to i + 1. Each edge is
+    cut at every grid line it crosses and the voxel holding each piece is
+    taken, so the voxels of an edge are 4-connected: every voxel it passes
+    through and no other. A Bresenham line steps diagonally, and marching
+    cubes joins two voxels only across a shared face, so a diagonal step would
+    leave the surface in two pieces.
+
+        Params:
+            xs (np.ndarray): the x coordinates, in voxel units
+            ys (np.ndarray): the y coordinates, in voxel units
+        Returns:
+            (tuple) the x and y voxel indices, with repeats
+    """
+    n = len(xs)
+    empty = np.zeros(0, dtype=np.intp)
+    if n == 0:
+        return empty, empty
+    x1, y1 = np.roll(xs, -1), np.roll(ys, -1)
+    dx, dy = x1 - xs, y1 - ys
+    segments = [np.repeat(np.arange(n), 2)]
+    times = [np.tile(np.array([0.0, 1.0]), n)]
+    for p0, p1, d in ((xs, x1, dx), (ys, y1, dy)):
+        # the grid lines each edge crosses, as the fraction of the edge
+        # where it crosses them
+        first = np.ceil(np.minimum(p0, p1))
+        last = np.floor(np.maximum(p0, p1))
+        counts = np.where(d != 0, np.maximum(last - first + 1, 0), 0).astype(np.intp)
+        seg = np.repeat(np.arange(n), counts)
+        starts = np.repeat(np.cumsum(counts) - counts, counts)
+        lines = np.repeat(first, counts) + (np.arange(counts.sum()) - starts)
+        segments.append(seg)
+        times.append((lines - p0[seg]) / d[seg])
+    seg = np.concatenate(segments)
+    t = np.clip(np.concatenate(times), 0.0, 1.0)
+    order = np.lexsort((t, seg))
+    seg, t = seg[order], t[order]
+    # the middle of each piece between two crossings sits inside one voxel
+    same = seg[:-1] == seg[1:]
+    piece = same & (t[1:] - t[:-1] > 1e-9)
+    mid = (t[:-1] + t[1:])[piece] / 2
+    vx = np.floor(xs[seg[:-1][piece]] + mid * dx[seg[:-1][piece]])
+    vy = np.floor(ys[seg[:-1][piece]] + mid * dy[seg[:-1][piece]])
+    # a piece with no length is a grid corner the edge passes through, where
+    # it steps diagonally; the four voxels around the corner keep the band
+    # 4-connected (the caller drops the ones the trace does not reach into)
+    touch = same & ~piece
+    px = xs[seg[:-1][touch]] + t[:-1][touch] * dx[seg[:-1][touch]]
+    py = ys[seg[:-1][touch]] + t[:-1][touch] * dy[seg[:-1][touch]]
+    rx, ry = np.round(px), np.round(py)
+    corner = (np.abs(px - rx) < 1e-9) & (np.abs(py - ry) < 1e-9)
+    rx, ry = rx[corner], ry[corner]
+    vx = np.concatenate([vx, rx - 1, rx - 1, rx, rx])
+    vy = np.concatenate([vy, ry - 1, ry, ry - 1, ry])
+    return vx.astype(np.intp), vy.astype(np.intp)
+
+
+def traceVoxels(points : list, xmin : float, ymin : float, vres : float, shape : tuple) -> tuple:
+    """Return the x and y indices of the voxels a trace covers on its section.
+
+    Voxel (i, j) spans xmin + i*vres to xmin + (i+1)*vres across and
+    ymin + j*vres to ymin + (j+1)*vres up. A voxel is covered when the trace
+    reaches into it: the voxels with their center inside the outline, which
+    skimage's polygon finds, and the voxels the outline passes through. The
+    second set is what keeps a trace thinner than a voxel whole. A synapse
+    contour at the default XY resolution is often a fraction of a voxel wide,
+    and filling only the voxels whose center fell inside its rounded outline
+    left a dotted line, or nothing, on a section; stacked across sections the
+    gaps became tunnels through the surface (found 2026-10-14). A trace with
+    no area covers the voxels its outline runs through.
+
+        Params:
+            points (list): the trace's (x, y) points in field units
+            xmin, ymin (float): the corner of the voxel grid
+            vres (float): the voxel width
+            shape (tuple): the grid size in x and y
+        Returns:
+            (tuple) the x and y voxel indices, each voxel once
+    """
+    empty = np.zeros(0, dtype=np.intp)
+    if len(points) == 0:
+        return empty, empty
+    pts = np.asarray(points, dtype=float)
+    xs = (pts[:, 0] - xmin) / vres
+    ys = (pts[:, 1] - ymin) / vres
+    # voxel i has its center at i + 0.5
+    cx, cy = polygon(xs - 0.5, ys - 0.5, shape)
+    ox, oy = _outlineVoxels(xs, ys)
+    inside = (ox >= 0) & (ox < shape[0]) & (oy >= 0) & (oy < shape[1])
+    ox, oy = ox[inside], oy[inside]
+    # an outline running along a grid line passes through the voxels on both
+    # sides of it; keep the ones the trace's area reaches into
+    if len(ox):
+        try:
+            poly = Polygon(np.column_stack([xs, ys]))
+            if poly.area > 0:
+                shapely.prepare(poly)
+                eps = 1e-9
+                boxes = shapely.box(ox + eps, oy + eps, ox + 1 - eps, oy + 1 - eps)
+                reached = shapely.intersects(poly, boxes)
+                ox, oy = ox[reached], oy[reached]
+        except Exception:
+            pass  # an outline GEOS cannot test keeps every voxel it runs through
+    flat = np.unique(np.concatenate([cx, ox]).astype(np.intp) * shape[1]
+                     + np.concatenate([cy, oy]).astype(np.intp))
+    return flat // shape[1], flat % shape[1]
 
 
 class Object3D():
@@ -142,6 +254,10 @@ class Surface(Object3D):
     def generateVolume(self):
         """Fill the voxel volume the mesh is built from.
 
+        Voxel (i, j) of a section spans xmin + i*vres to xmin + (i+1)*vres
+        across and ymin + j*vres to ymin + (j+1)*vres up, and a trace covers
+        every voxel it reaches into (see traceVoxels).
+
             Returns:
                 (np.ndarray): the boolean volume, indexed x, y, section
                 (float): the xy size of a voxel
@@ -162,33 +278,37 @@ class Surface(Object3D):
         # create empty numpy volume
         volume = np.zeros(vshape, dtype=bool)
 
-        def grid(trace):
-            xs = np.array([round((x-xmin) / vres) for x, _ in trace])
-            ys = np.array([round((y-ymin) / vres) for _, y in trace])
-            return xs, ys
+        def voxels(trace):
+            return traceVoxels(trace, xmin, ymin, vres, vshape[:2])
 
         # add the traces to the volume: positives fill and then negatives
         # clear; a positive inside a negative (an island in a hole) is then
         # filled back in, less the voxels of every negative that cuts it. A
-        # negative within a voxel's diagonal of the island can round onto
+        # negative within a voxel's diagonal of the island can reach into
         # its edge voxels, so it counts as cutting it.
         reach = math.hypot(vres, vres)
         for snum, trace_lists in self.traces.items():
             z = snum - smin
             for fill, key in ((True, "pos"), (False, "neg")):
                 for trace in trace_lists[key]:
-                    x_pos, y_pos = polygon(*grid(trace))
+                    x_pos, y_pos = voxels(trace)
                     volume[x_pos, y_pos, z] = fill
             for island, cuts in islandCuts(
                 trace_lists["pos"], trace_lists["neg"], reach
             ):
-                xs, ys = grid(island)
+                xs, ys = voxels(island)
+                if not len(xs):
+                    continue
                 x0, y0 = xs.min(), ys.min()
                 keep = np.zeros((xs.max() - x0 + 1, ys.max() - y0 + 1), dtype=bool)
-                keep[polygon(xs - x0, ys - y0, keep.shape)] = True
+                keep[xs - x0, ys - y0] = True
                 for trace in cuts:
-                    cx, cy = grid(trace)
-                    keep[polygon(cx - x0, cy - y0, keep.shape)] = False
+                    cx, cy = voxels(trace)
+                    inside = (
+                        (cx >= x0) & (cx < x0 + keep.shape[0])
+                        & (cy >= y0) & (cy < y0 + keep.shape[1])
+                    )
+                    keep[cx[inside] - x0, cy[inside] - y0] = False
                 volume[x0:x0 + keep.shape[0], y0:y0 + keep.shape[1], z] |= keep
 
         return volume, vres
@@ -222,6 +342,8 @@ class Surface(Object3D):
 
         # provide real vertex locations
         # (i.e., normalize to real world dimensions)
+        # voxel i spans xmin + i*vres to xmin + (i+1)*vres (see traceVoxels)
+        tm.vertices[:,:2] += 0.5
         tm.vertices[:,:2] *= vres
         tm.vertices[:,0] += xmin
         tm.vertices[:,1] += ymin
