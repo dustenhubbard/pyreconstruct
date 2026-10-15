@@ -2134,6 +2134,11 @@ class MainWindow(QMainWindow):
         # open new series
         self.openSeries(series)
 
+        # the open stops early when the save prompt for the series already
+        # open is canceled, and that series stays open as it was
+        if self.series is not series:
+            return
+
         # set view to home
         self.field.home()
 
