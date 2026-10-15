@@ -1,7 +1,7 @@
 """Backing out of a save must never destroy the work it was protecting.
 
 Three paths through `MainWindow` treated "the user canceled" as "the save
-succeeded" (found by the review fleet, 2026-08-27). All three end at
+succeeded" (found on review, 2026-08-27). All three end at
 `Series.close()`, which deletes the hidden working directory holding every
 edit since the last `.jser` write, so all three could throw away an hour of
 tracing without a prompt:

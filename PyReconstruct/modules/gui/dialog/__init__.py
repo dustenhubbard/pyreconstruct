@@ -20,8 +20,9 @@ from .shortcuts import ShortcutsDialog
 from .backup_comment import BackupCommentDialog
 from .table_columns import TableColumnsDialog
 from .import_series import ImportSeriesDialog, ImportAlignmentsDialog
+from .match_image_names import MatchImageNamesDialog
 from .malformed_contours import (
     MalformedContoursDialog,
     PixelDustDialog,
-    DifferentlyNamedDuplicatesDialog,
+    DuplicateTracesDialog,
 )

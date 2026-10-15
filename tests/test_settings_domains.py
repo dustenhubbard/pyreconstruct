@@ -40,11 +40,12 @@ DEV = "PyReconstruct Dev"
 STABLE_DOMAIN = ("PyReconstruct", "PyReconstruct")
 DEV_DOMAIN = ("PyReconstruct", DEV)
 
-# Section 4 of the design (hub specs/settings-sync-two-apps-2026-09-27.md):
+# Section 4 of the design (2026-09-27):
 # the keys that must differ between the two installed apps, and nothing else.
 SPEC_PER_APP = {
     "suppress_whatsnew",
     "last_whatsnew_version",
+    "whatsnew_popup_reset_applied",
     "last_update_check_epoch",
     "window/geometry",
     "update_notice_version",
@@ -63,7 +64,7 @@ def _known_keys():
         default_settings, default_series_settings,
     )
     from PyReconstruct.modules.gui.main.first_launch import (
-        WHATSNEW_KEY, WHATSNEW_SUPPRESS_KEY,
+        WHATSNEW_KEY, WHATSNEW_SUPPRESS_KEY, WHATSNEW_RESET_MARKER,
     )
     from PyReconstruct.modules.gui.palette.mouse_palette import (
         PALETTE_VIS_KEYS, PALETTE_POS_KEYS,
@@ -83,6 +84,7 @@ def _known_keys():
     raw = {
         WHATSNEW_KEY: "first_launch.WHATSNEW_KEY",
         WHATSNEW_SUPPRESS_KEY: "first_launch.WHATSNEW_SUPPRESS_KEY",
+        WHATSNEW_RESET_MARKER: "first_launch.WHATSNEW_RESET_MARKER",
         "last_update_check_epoch": "main_window.checkForUpdatesStartup",
         "window/geometry": "main_window.windowGeometrySettings",
         "update_notice_version": "main_window.UPDATE_NOTICE_KEY",
@@ -187,13 +189,14 @@ def test_per_app_keys_is_the_single_source_of_truth():
 
 
 def test_the_whats_new_literals_stay_in_step():
-    """constants cannot import from gui, so the two What's new keys are
-    literals in PER_APP_KEYS. If either name moves, both must."""
+    """constants cannot import from gui, so the three What's new keys are
+    literals in PER_APP_KEYS. If a name moves, both copies must."""
     from PyReconstruct.modules.gui.main.first_launch import (
-        WHATSNEW_KEY, WHATSNEW_SUPPRESS_KEY,
+        WHATSNEW_KEY, WHATSNEW_SUPPRESS_KEY, WHATSNEW_RESET_MARKER,
     )
     assert WHATSNEW_KEY in PER_APP_KEYS
     assert WHATSNEW_SUPPRESS_KEY in PER_APP_KEYS
+    assert WHATSNEW_RESET_MARKER in PER_APP_KEYS
 
 
 # --- every known key is classified -------------------------------------------------

@@ -1,4 +1,4 @@
-"""The "Opening series..." dialog exists before the file is read.
+"""The "Opening <name>..." dialog exists before the file is read.
 
 A 249 MB lab series read off the file server took seconds before anything
 appeared, because openJser read and parsed the whole file and only then
@@ -57,7 +57,8 @@ def test_a_corrupt_file_still_closes_the_dialog(tmp_path):
     bad.write_text("this is not json")
     with pytest.raises(SeriesOpenError):
         Series.openJser(str(bad), progress=Recording)
-    assert Recording.log == [("made", "Opening series..."), ("finished", "Opening series...")]
+    # the bar names the file being opened
+    assert Recording.log == [("made", "Opening broken..."), ("finished", "Opening broken...")]
 
 
 def test_declining_the_merge_closes_the_dialog(series_jser, monkeypatch):

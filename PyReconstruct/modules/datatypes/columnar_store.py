@@ -1,11 +1,26 @@
 r"""A columnar store for one section's traces, behind the Qt-free core seam.
 
 Phase 1 of the columnar-sections work. This module is a **parallel
-representation with no consumers**: nothing in the application reads it, no call
-site is rewired, `Trace`/`Contour`/`Section` are untouched, and no byte of any
-`.jser` changes. What it buys today is a thing the parity tests can point at, so
-the layout, the tracking and the identity plumbing can be argued about against
-running code instead of against prose.
+representation of the traces, and it has readers but does not supply the saved
+geometry**. Every loaded `Section` carries a `SectionColumns` as
+`section._columns`, and `Trace`/`Contour`/`Section` are unchanged.
+`self.contours` is still what gets saved: the contours give the saved
+geometry, so no byte of any `.jser` changes, and with keyed rows on
+`Section.getDict` takes the persisted trace ids from the store. `Section` also
+reads the store to carry ids across a rebuild, to keep its trace-to-row map,
+and for its drift and mutation checks. The
+readers that build user-facing data are:
+
+  * SVG export, `svg_conversion.py`, through `ContourView`;
+  * `SeriesData.refresh`, which passes `read_store=True` to
+    `SeriesData.updateSection`, so the series pass reads each section's traces
+    through `TraceView` and `SectionColumns.getCoordinates`;
+  * `Series.openJser`, which does the same on the first `.jser` unpack.
+
+The `SeriesData.updateSection` calls that leave `read_store` at its default of
+False read `self.contours` when they read traces at all; the ones in
+`field_widget_4_data.py` pass no traces. The parity tests keep the layout, the
+tracking and the identity plumbing argued against running code.
 
 WHAT PARITY MEANS HERE, AND WHICH SIDE OF THE ROUNDING THIS SITS ON
 -------------------------------------------------------------------
@@ -267,8 +282,8 @@ before D10 `_resolveID` did the first of the two forbidden things: it accepted
 a carried id verbatim, unregistered, so the issuer's index could later hand the
 same id out again. `foreign_id=` closes that. What `adopt()` cannot do is
 resolve the clash it detects -- it returns `False` and stops -- so the store
-must decide, and **the decision is the maintainer's, recorded as D10 Q2:
-issue a fresh local id for the clashing row only, and report it.** That is
+must decide, and **the rule is: issue a fresh local id for the clashing row
+only, and report it.** That is
 technically a reissue, which the policy names as forbidden; the policy forbids
 *silent* reissuing, and this one is reported through both channels below, so it
 satisfies the policy's intent rather than its letter. The three rejected
@@ -313,13 +328,13 @@ It lives here, beside the store, rather than in a module of its own so that it
 carries no import of anything and stays inside the graph
 `test_datatypes_import_graph_is_qt_free` proves Qt-free -- which a module
 nothing imports would sit outside of, the gap `trace_id.py`'s export note
-records. Nothing in the application references it; the parity suite is its
-only caller.
+records. Two readers use it: SVG export, through `ContourView`, and the
+series-open pass in `series_data.py`, which reads one row at a time.
 
 **Two rows of the carry table are not implemented, on purpose.** Split-object
 traces, where one drawn geometry is redistributed under new `_{n}` names, and
 palette traces, which are templates rather than annotations and may want no id at
-all, are semantics rather than mechanics. They are held for the maintainer, and
+all, are semantics rather than mechanics. They are left undecided, and
 `copyRow` / `duplicateRow` do not cover them: a caller reaching for either case
 finds nothing here rather than an invented answer.
 """
@@ -1413,11 +1428,12 @@ class TraceView():
     """One row of a `SectionColumns`, read and written through a `Trace`-shaped
     surface.
 
-    Uncached, and with no consumers. Each of the eight properties below is a
-    direct call into the store's existing row readers on the way out and into
-    one of its existing mutation entry points on the way in; nothing is
-    remembered between calls. A `TraceView` is therefore free to construct,
-    free to discard, and free to construct again for the same row.
+    Uncached. `SeriesData.updateSection` reads it when `read_store` is set. Each
+    of the eight properties below is a direct call into the store's existing
+    row readers on the way out and into one of its existing mutation entry
+    points on the way in; nothing is remembered between calls. A `TraceView`
+    is therefore free to construct, free to discard, and free to construct
+    again for the same row.
 
     THE EIGHT FIELDS, AND WHY EXACTLY EIGHT
     ---------------------------------------
@@ -1654,9 +1670,11 @@ class ContourView():
     corresponding row, so a walk over a contour is a walk over rows and no
     `Trace` is built anywhere on the path.
 
-    Uncached and with no consumers, for the same reasons `TraceView` is: every
-    method below is a fresh `rowsForContour` call, nothing is remembered
-    between calls, and nothing in the application references this class.
+    Uncached, for the same reasons `TraceView` is: the row-reading methods
+    below each make a fresh `rowsForContour` call, and nothing is remembered
+    between calls. `__init__` and `name` only hold the store and the
+    normalized name.
+    SVG export reads it.
 
     WHAT IS HERE, AND THE ONE PROPERTY THAT IS LOAD-BEARING FOR A LATER SLICE
     ------------------------------------------------------------------------
@@ -1700,9 +1718,8 @@ class ContourView():
     already public, already read-only, and is already the row's identity. Two
     views of one row of one store name the same trace whether or not they are
     `is`-equal, and that is what `index` and `__contains__` answer here. The
-    route caches nothing, so it is not design §5(A)'s identity-stable view, and
-    it defines no `__eq__` over trace ids, so it is not §5(B), which
-    `DECISIONS.md` records as **rejected**. It is observationally what a cached
+    route caches nothing and defines no `__eq__` over trace ids: membership and
+    `index` compare the store and the row. It is observationally what a cached
     view would give -- a cache handing out one object per row makes `is` mean
     exactly "same row of the same store" -- but with no live-view map, which is
     the cost D1 exists to weigh. **So this route needs no D1 answer: there is no
@@ -1748,7 +1765,7 @@ class ContourView():
     (remove / mutate / add it back, or remove / `.copy()` / add the copy, as
     `splitObject` does). The other five mean the removal: `Section.deleteTraces`
     and, in `series.py`, `deleteObjects`, `deleteAllTraces`,
-    `deleteMalformedTraces` and `deleteDuplicateTraces`. The count is
+    `deleteMalformedTraces` and `combineDuplicateTraces`. The count is
     package-wide -- `section.py` and `series.py` both -- and an AST walk in the
     tests holds it there. `removeRow` tombstones: the row number retires for
     good and every `TraceView` over it raises from then on, so the *mutate* step

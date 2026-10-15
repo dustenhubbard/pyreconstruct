@@ -5,6 +5,7 @@ import os
 import time
 
 from PySide6.QtWidgets import (
+    QLabel,
     QMainWindow, 
     QWidget,
     QGestureEvent,
@@ -104,6 +105,18 @@ class FieldWidget(QWidget, FieldWidgetView):
         self.mouse_mode = POINTER
         self.setCursor(QCursor(Qt.ArrowCursor))
 
+        # focus mode label, shown and placed by updateFocusHint. Its own style
+        # sheet so the dark theme's QLabel rule does not repaint it; plain text
+        # so an object name is never read as markup; clicks go to the field.
+        self.focus_hint = QLabel(self)
+        self.focus_hint.setTextFormat(Qt.PlainText)
+        self.focus_hint.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.focus_hint.setStyleSheet(
+            "QLabel { background-color: rgba(0, 0, 0, 170); color: white;"
+            " border-radius: 4px; padding: 4px 8px; }"
+        )
+        self.focus_hint.hide()
+
         self.createField(series)
 
         self.show()
@@ -130,8 +143,7 @@ class FieldWidget(QWidget, FieldWidgetView):
         # magnification never moves on a widget resize. resizeWindow's
         # aspect fixer only ever GROWS a dimension, so without this a shrink
         # (collapsing the lists, narrowing the main window) zoomed the view
-        # out a little, and grow-then-shrink cycles drifted outward forever
-        # (his click test, 2026-08-25; long-reported on window resizes).
+        # out a little, and grow-then-shrink cycles drifted outward forever.
         old_w, old_h = self.pixmap_dim if self.pixmap_dim else (0, 0)
         window = getattr(self.series, "window", None)
         if old_w and old_h and window and (w != old_w or h != old_h):
@@ -181,6 +193,12 @@ class FieldWidget(QWidget, FieldWidgetView):
 
         if g.state() == Qt.GestureState.GestureStarted:
             self.is_gesturing = True
+            # Every mouse event is ignored while gesturing, the release
+            # included, so a lasso under way could never finish, and the pinch
+            # moves the view out from under its points. A pointer press that
+            # is not a lasso yet keeps its points until that same release.
+            self.cancelLasso()
+            self.dropPointerPress()
             p = g.centerPoint()
             if os.name == "nt":
                 p = self.mapFromGlobal(p)
@@ -207,6 +225,24 @@ class FieldWidget(QWidget, FieldWidgetView):
         
         Overwritten from QWidget class.
         """
+        # ignore ALL finger touch for windows
+        #
+        # Before anything else: an ignored press changes nothing, so a dropped
+        # press stays dropped (`dropPress`) and the click flags stay the mouse
+        # button's. The tap still gives the field focus.
+        if os.name == "nt":
+            if event.pointerType() == QPointingDevice.PointerType.Finger:
+                self.setFocus()
+                return
+
+        # A press made while a dropped press is still held joins it, and
+        # reading the held buttons below would hand the dropped one back
+        # (`dropPress`).
+        if self.press_dropped:
+            if len(event.buttons()) > 1:
+                return
+            self.press_dropped = False
+
         # check what was clicked
         self.lclick, self.mclick, self.rclick = get_clicked(event)
 
@@ -258,13 +294,13 @@ class FieldWidget(QWidget, FieldWidgetView):
         self.click_time = time.time()
         self.single_click = True
 
-        # ignore ALL finger touch for windows
-        if os.name == "nt":
-            if event.pointerType() == QPointingDevice.PointerType.Finger:
-                return
-
         # if any finger touch
+        #
+        # No tool sees a press made during a pinch, so it is dropped rather
+        # than left in the click flags for the moves after the pinch
+        # (`dropPress`).
         if self.is_gesturing:
+            self.dropPress()
             return
 
         # pan if middle button clicked
@@ -282,6 +318,11 @@ class FieldWidget(QWidget, FieldWidgetView):
         )
         
         if self.rclick and not exclude_context:  # open context menu
+
+            # The menu takes the press, and a lasso under way ends as it does
+            # on a tool change. Mid-lasso, this is a second button or a
+            # tablet's barrel button.
+            self.cancelLasso()
 
             clicked_label = None
 
@@ -368,7 +409,9 @@ class FieldWidget(QWidget, FieldWidgetView):
             self.lclick = False
             self.rclick = False
             self.mclick = False
-        
+            # every button is up, so a dropped press is over (`dropPress`)
+            self.press_dropped = False
+
         # panzoom if middle button clicked
         if self.mclick:
             self.mousePanzoomMove(event)
@@ -408,12 +451,18 @@ class FieldWidget(QWidget, FieldWidgetView):
         """
         # wait until all buttons are released
         if event.buttons(): return
-        
+
         # ignore ALL finger touch for windows
+        #
+        # Before the dropped press is consumed below: an ignored release ends
+        # nothing (`dropPress`).
         if os.name == "nt":
             if event.pointerType() == QPointingDevice.PointerType.Finger:
                 return
-        
+
+        # Every button is up, so a dropped press is over (`dropPress`).
+        press_dropped, self.press_dropped = self.press_dropped, False
+
         # if any finger touch
         if self.is_gesturing:
             return
@@ -428,6 +477,13 @@ class FieldWidget(QWidget, FieldWidgetView):
         if self.trigger_edit_flag:
             self.edit_flag_event.trigger()
             self.trigger_edit_flag = False
+            return
+
+        # A dropped press leaves no tool anything to finish. Host acts on any
+        # release, so without this it would start a link from a press it never
+        # saw.
+        if press_dropped:
+            self.single_click = False
             return
 
         if self.mouse_mode == POINTER:

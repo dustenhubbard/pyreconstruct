@@ -5,11 +5,14 @@ from .str_helper import sortList
 
 class CompleterBox(QComboBox):
 
-    def __init__(self, parent=None, str_list : list = [], allow_new=False):
-        """Create the CompleterBox widget."""
+    def __init__(self, parent=None, str_list : list = [], allow_new=False, sort=True):
+        """Create the CompleterBox widget.
+
+            Params:
+                sort (bool): False keeps `str_list` in the order given
+        """
         super().__init__(parent)
-        sorted_list = sortList(str_list)
-        self.addItems(sorted_list)
+        self.addItems(sortList(str_list) if sort else list(str_list))
         self.setEditable(True)
         self.setInsertPolicy(QComboBox.NoInsert)
         completer = self.completer()

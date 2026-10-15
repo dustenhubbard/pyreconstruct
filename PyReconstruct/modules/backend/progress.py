@@ -63,9 +63,8 @@ class ProgressReporter(ABC):
     ``set_progress`` records when the first report arrived; ``eta_text()``
     then reads "about 40 seconds left" once enough of the job has run to say
     (see ``estimate_remaining``), and is None before that. Only the operations
-    that ask for it show one: his call (2026-09-14) was the recolor of many
-    objects, not every progress dialog in the app, and an opening series must
-    not carry one.
+    that ask for it show one: the recolor of many objects does, not every
+    progress dialog in the app, and an opening series must not carry one.
     """
 
     def __init__(self, text: str = "", cancel: bool = True, eta: bool = False):

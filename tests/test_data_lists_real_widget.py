@@ -225,6 +225,20 @@ def expected_trace_items(widget, rows):
     ]
 
 
+def test_trace_list_menu_starts_with_refresh(trace_table):
+    actions = trace_table.listmenu.actions()
+    assert actions[0].text() == "Refresh"
+
+
+def test_trace_list_refresh_calls_manager_refresh(trace_table):
+    calls = []
+    trace_table.manager.refresh = lambda: calls.append(1)
+    refresh = [a for a in trace_table.listmenu.actions() if a.text() == "Refresh"]
+    assert len(refresh) == 1  # no Refresh row means nothing safe to trigger
+    refresh[0].trigger()
+    assert calls == [1]
+
+
 def test_trace_table_is_cell_selectable_and_populated(trace_table):
     assert_cellwise_multiselect(trace_table.table)
     assert trace_table.table.rowCount() == 5  # section 44's five traces
@@ -278,8 +292,8 @@ def test_trace_single_still_rejects_two_rows(trace_table, gui_dialogs):
 # Locked rows: table/trace.py keeps the ask-to-unlock idiom (unlike the
 # mouse/scissors gestures -- see test_locked_object_field_guards.py and
 # test_locked_gesture_notify_and_stop.py, which now notify-and-stop and never
-# call notifyLocked at all). Corrected 2026-08-06 ("split notifyLocked",
-# DECISIONS.md): a dispatched fixup found notifyLocked has four real call
+# call notifyLocked at all). Corrected 2026-08-06 ("split notifyLocked"):
+# a closer look found notifyLocked has four real call
 # sites, not two, and the trace list's two (itemChanged, getSelected)
 # genuinely unlock-and-proceed on "Yes", by original design (73f54794). These
 # pin that half so a future change collapsing the two idioms into one

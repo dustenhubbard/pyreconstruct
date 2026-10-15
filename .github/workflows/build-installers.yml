@@ -5,9 +5,11 @@ name: build-installers
 #
 #   * stable:  a clean vX.Y.Z tag on main -> a GitHub Release, the latest one,
 #              with the WHATS_NEW.md body for that version.
-#   * nightly: a vX.Y.Z.devYYYYMMDD tag, cut by nightly.yml from main when main
-#              has new commits -> a GitHub pre-release, never marked latest,
-#              with GitHub's auto-generated notes against the previous nightly
+#   * nightly: a vX.Y.Z.devYYYYMMDDHHMM tag (vX.Y.Z.devYYYYMMDD before
+#              2026-10-08), cut by nightly.yml from main when main has new
+#              commits -> a GitHub pre-release, never marked latest, with the
+#              changes since the newest stable assembled from changelog.d,
+#              then GitHub's auto-generated notes against the previous nightly
 #              (or the newest stable, when no nightly exists yet).
 #
 # Any other tag shape that reaches here (vX.Y.ZrcN, vX.Y.ZaN, a dashed
@@ -91,7 +93,7 @@ jobs:
           - { os: macos-15-intel, plat: macOS,   arch: x86_64 }
     runs-on: ${{ matrix.os }}
     # The signing secrets live in the `release` environment, which accepts only
-    # v* tags (stable tags and the nightly's vX.Y.Z.devYYYYMMDD). Any other ref,
+    # v* tags (stable tags and the nightly's vX.Y.Z.devYYYYMMDDHHMM). Any other ref,
     # such as a manual dispatch on a branch, runs with no environment, gets no
     # signing secrets, and builds the unsigned app.
     environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'release' || '' }}
@@ -173,10 +175,11 @@ jobs:
               echo "::error::setuptools-scm produced a fallback version ($V) — missing tags or fetch-depth:0?"
               exit 1 ;;
           esac
-          # A stable tag (v1.23.0) and a nightly tag (v1.24.0.dev20260928) both
-          # spell the exact version the build must carry; anything else means a
-          # dirty tree or a tag that is not on HEAD.
-          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(\.dev[0-9]{8})?$ && "$V" != "${GITHUB_REF_NAME#v}" ]]; then
+          # A stable tag (v1.23.0) and a nightly tag (v1.24.0.dev202610081315,
+          # or the older 8-digit v1.24.0.dev20260928) spell the exact version
+          # the build must carry; anything else means a dirty tree or a tag
+          # that is not on HEAD.
+          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(\.dev[0-9]{8}([0-9]{4})?)?$ && "$V" != "${GITHUB_REF_NAME#v}" ]]; then
             echo "::error::setuptools-scm produced $V for the tag $GITHUB_REF_NAME; is the tree dirty?"
             exit 1
           fi
@@ -393,6 +396,7 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
         run: |
+          python -m pip install --require-hashes --only-binary :all: -r packaging/macos/dmg-requirements.txt
           mkdir -p dist-assets
           bash packaging/macos/make_dmg.sh
           mv PyReconstruct-*.dmg dist-assets/
@@ -510,7 +514,7 @@ jobs:
               echo "::error::setuptools-scm produced a fallback version ($V): missing tags or fetch-depth:0?"
               exit 1 ;;
           esac
-          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(\.dev[0-9]{8})?$ && "$V" != "${GITHUB_REF_NAME#v}" ]]; then
+          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(\.dev[0-9]{8}([0-9]{4})?)?$ && "$V" != "${GITHUB_REF_NAME#v}" ]]; then
             echo "::error::setuptools-scm produced $V for the tag $GITHUB_REF_NAME; is the tree dirty?"
             exit 1
           fi
@@ -982,10 +986,32 @@ jobs:
           name: sha256sums-signature
           path: dist
       - name: Build nightly release notes
-        # A nightly gets GitHub's auto-generated notes (the merged pull requests
+        # A nightly's body opens with every change since the last stable in
+        # its own history: the changelog.d fragments waiting on main, anything
+        # under [Unreleased] in CHANGELOG.md, and a release section already
+        # written into CHANGELOG.md ahead of its tag (release prep assembles
+        # the fragments before the stable is tagged), grouped under the same
+        # Added / Changed / Fixed / Removed headings a stable release gets, one
+        # line per item. scripts/changes_since_stable.py collates them with
+        # the assembler's own code and writes nothing, so the fragments stay
+        # for the stable that will collect them and nothing is committed. The
+        # dialog's "live changelog" link in the Dev app lands on this page,
+        # which is why the body has to carry it. The script prints nothing
+        # when nothing has landed, and then the section is skipped. A fragment
+        # the assembler refuses (a name that says nothing) is a warning here
+        # rather than a lost nightly; the stable assembly still fails on it.
+        #
+        # Only tags in this commit's history count, for the stable and for the
+        # previous nightly alike. A rebuild of an older nightly after a newer
+        # stable or nightly exists must not measure itself against a release
+        # that came after it.
+        #
+        # Below that come GitHub's auto-generated notes (the merged pull requests
         # and a compare link), measured against the previous release on the
-        # same channel: the newest OTHER nightly by date, or the newest stable
-        # when this is the first nightly. Nobody curates a nightly's notes, and
+        # same channel: the newest nightly older than this one by its dev
+        # number, or the newest stable when there is none. A later nightly is
+        # never the previous one, even when this build finishes or reruns after
+        # it is tagged. Nobody curates a nightly's notes, and
         # the dev audience reads the pull-request list fine. The stable step
         # below is skipped for a nightly and vice versa; both write
         # release_body.md.
@@ -997,17 +1023,32 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -o pipefail
-          NIGHTLY_RE='^v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]{8}$'
+          NIGHTLY_RE='^v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]{8}([0-9]{4})?$'
           STABLE_RE='^v[0-9]+\.[0-9]+\.[0-9]+$'
-          PREV="$(git tag --list 'v*' | grep -E "$NIGHTLY_RE" | grep -vxF "$GITHUB_REF_NAME" \
-            | awk -F'[.]dev' '{ print $2, $0 }' | sort -k1,1n -k2,2V | tail -n 1 | cut -d' ' -f2 || true)"
+          TAGS="$(git tag --list 'v*' --merged HEAD)"
+          STABLE="$(printf '%s\n' "$TAGS" | grep -E "$STABLE_RE" | sort -V | tail -n 1 || true)"
+          CUR="${GITHUB_REF_NAME##*.dev}"
+          PREV="$(printf '%s\n' "$TAGS" | grep -E "$NIGHTLY_RE" \
+            | awk -F'[.]dev' -v cur="$CUR" '$2 + 0 < cur + 0 { print $2, $0 }' \
+            | sort -k1,1n -k2,2V | tail -n 1 | cut -d' ' -f2 || true)"
           if [ -z "$PREV" ]; then
-            PREV="$(git tag --list 'v*' | grep -E "$STABLE_RE" | sort -V | tail -n 1 || true)"
+            PREV="$STABLE"
           fi
+          echo "newest stable in this build's history: ${STABLE:-none}"
           echo "previous release on the nightly channel: ${PREV:-none}"
+          if ! python3 scripts/changes_since_stable.py --stable "$STABLE" --repository "$GITHUB_REPOSITORY" > since_stable.md; then
+            echo "::warning::changelog.d did not assemble; the nightly body carries only the generated notes"
+            : > since_stable.md
+          fi
           {
             echo "Nightly build of PyReconstruct Dev from main at $(git rev-parse --short HEAD)."
             echo ""
+            if [ -s since_stable.md ]; then
+              cat since_stable.md
+              echo ""
+              echo "---"
+              echo ""
+            fi
             gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
               -f tag_name="$GITHUB_REF_NAME" -f target_commitish="$GITHUB_SHA" \
               ${PREV:+-f previous_tag_name="$PREV"} --jq '.body'
@@ -1029,7 +1070,14 @@ jobs:
             ' WHATS_NEW.md
             echo ""
             echo "---"
-            PREV=$(git tag --sort=-version:refname | awk -v c="$GITHUB_REF_NAME" 'found{print; exit} $0==c{found=1}')
+            # A stable compares from the previous stable, never a beta or a
+            # nightly: a plain version sort put v1.23.0-beta-6 between v1.24.0
+            # and v1.23.0. A beta or rc compares from the tag just before it.
+            if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              PREV=$(git tag --list 'v*' | python3 scripts/previous_stable_tag.py "$GITHUB_REF_NAME")
+            else
+              PREV=$(git tag --sort=-version:refname | awk -v c="$GITHUB_REF_NAME" 'found{print; exit} $0==c{found=1}')
+            fi
             if [ -n "$PREV" ]; then
               echo "_For developers, the full technical changelog:_ **[compare ${PREV} → ${GITHUB_REF_NAME}](https://github.com/${GITHUB_REPOSITORY}/compare/${PREV}...${GITHUB_REF_NAME})**"
             else
@@ -1056,7 +1104,7 @@ jobs:
           else
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
             IS_STABLE=false
-            [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]{8}$ ]] && IS_NIGHTLY=true
+            [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]{8}([0-9]{4})?$ ]] && IS_NIGHTLY=true
           fi
           echo "nightly=$IS_NIGHTLY" >> "$GITHUB_OUTPUT"
           # "Latest" is the release GitHub's /releases/latest redirect and the

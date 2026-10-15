@@ -13,9 +13,22 @@ def getImgDims(img_fp: Union[str, Path]) -> Tuple[height, width]:
     if not isinstance(img_fp, Path):
         img_fp = Path(img_fp)
     
-    if "scale_" in str(img_fp):
+    # a zarr image is a folder: scale_N/<name>, or <name> at the root of a
+    # flat zarr, whose path has no scale_ in it
+    if "scale_" in str(img_fp) or img_fp.is_dir():
 
-        z = zarr.open(img_fp)
+        # read only: opened to write, a folder with no .zarray (a conversion
+        # that stopped partway) gets a .zgroup, and the converter's update
+        # then counts the image as present and skips it
+        try:
+            z = zarr.open_array(str(img_fp), mode="r")
+        except (
+            zarr.errors.ArrayNotFoundError,  # no .zarray at that path
+            zarr.errors.ContainsGroupError,  # a .zgroup from such an open
+        ):
+            # only no array at all: a .zarray that is there but cannot be
+            # read keeps its own error
+            raise FileNotFoundError(f"Could not read image: {img_fp}") from None
         return z.shape
                 
     else:

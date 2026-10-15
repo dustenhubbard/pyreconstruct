@@ -26,15 +26,15 @@ What is pinned here:
     `Trace.overlaps` and not just through the ratio
   * the same five hold when the two tracings have *different point counts*,
     which is the realistic case and the one that matters: `pointsMatch` has an
-    absolute 1e-2 tolerance, so at her 0.25 um scale it rescues a pair whose
+    absolute 1e-2 tolerance, so at the reported 0.25 um scale it rescues a pair whose
     point counts happen to agree, and independent tracings' counts do not
   * genuinely different open traces are still not flagged -- a metric that says
     yes to everything would satisfy every assertion above
   * a trace covering only half of another is not called a duplicate of it
   * closed traces still go through the area comparison, unchanged
-  * `Series.findDifferentlyNamedDuplicates` finds an open pair end to end, which
-    the ratio fix alone does not achieve: that scan's area-based ratio ceiling
-    dropped the near-straight pair at 0.63 before any ratio was measured
+  * `Series.findDuplicateTraces` finds an open pair end to end, which the ratio
+    fix alone does not achieve: that scan's area-based ratio ceiling dropped
+    the near-straight pair at 0.63 before any ratio was measured
 """
 import os
 import shutil
@@ -46,7 +46,7 @@ from PyReconstruct.modules.datatypes.trace import Trace
 
 THRESHOLD = 0.95
 
-## Her scale: a cfa profile about 0.25 um long.
+## The reported scale: a cfa profile about 0.25 um long.
 SCALE = 0.25
 
 ## The magnification every ratio here is measured at, in um per image pixel. The
@@ -350,8 +350,8 @@ def test_point_density_does_not_change_the_answer():
 #           OPEN_TRACE_MATCH_MIN_PIXELS * mag,
 #           OPEN_TRACE_MATCH_MAX_PIXELS * mag)
 #
-# The two cases below are the two real traces from her series that the fraction
-# alone gets wrong, one at each end. Both are quoted in image pixels at her own
+# The two cases below are the two real traces from the reported series that the fraction
+# alone gets wrong, one at each end. Both are quoted in image pixels at its own
 # magnification, which is the only unit in which they mean anything.
 # ---------------------------------------------------------------------------
 
@@ -366,7 +366,7 @@ def line_px(length_px, y_px, n, mag=LK_MAG):
 def test_tolerance_is_the_fraction_between_the_two_bounds():
     """Where the fraction lies inside the bounds, nothing has changed.
 
-    A 123 px trace is the median open trace in her series: 2% of it is 2.5 px,
+    A 123 px trace is the median open trace in the reported series: 2% of it is 2.5 px,
     comfortably between 1 and 5, so the clamp is inert and the fraction decides.
     """
     d = Trace.openCurveTolerance(LK_MAG, 123 * LK_MAG, 130 * LK_MAG)
@@ -375,7 +375,7 @@ def test_tolerance_is_the_fraction_between_the_two_bounds():
 
 
 def test_tolerance_is_bounded_below_at_one_pixel():
-    """Her shortest genuine duplicate pair, which the fraction alone missed.
+    """The shortest genuine duplicate pair reported, which the fraction alone missed.
 
     ``s195 d000cfa052axi011`` traces #0 and #1: a 29 px arc traced twice, the two
     tracings 0.72 px apart at worst. 2% of 29 px is 0.58 px, so an unbounded
@@ -404,7 +404,7 @@ def test_the_floor_is_load_bearing_for_that_pair(monkeypatch):
 def test_tolerance_is_bounded_above_at_five_pixels():
     """Two DIFFERENT structures 10 px apart along a 6,846 px trace.
 
-    6,846 px is the 95th percentile open trace in her series, so 2% of it is
+    6,846 px is the 95th percentile open trace in the reported series, so 2% of it is
     137 px: at an unbounded fraction two unrelated profiles running 10 px apart
     lie within tolerance of each other everywhere, and the ratio is exactly 1.0.
     The ceiling of 5 px is what refuses them.
@@ -621,12 +621,12 @@ def _make(section, name, points, closed=False):
     return t
 
 
-def _pairs(records):
-    return {frozenset((r["name"], r["other_name"])) for r in records}
+def _groups(groups):
+    return {tuple(sorted(m["name"] for m in g["members"])) for g in groups}
 
 
 def test_cross_name_scan_finds_open_duplicate(tmp_path):
-    """Her case, end to end: a near-straight open pair under two names."""
+    """The reported case, end to end: a near-straight open pair under two names."""
     series = _load_series(tmp_path)
     snum = _first_snum(series)
     section = series.loadSection(snum)
@@ -635,8 +635,8 @@ def test_cross_name_scan_finds_open_duplicate(tmp_path):
     _make(section, "CFA_B", b)
     section.save()
 
-    records = series.findDifferentlyNamedDuplicates(THRESHOLD)
-    assert frozenset(("CFA_A", "CFA_B")) in _pairs(records)
+    groups = series.findDuplicateTraces(THRESHOLD)
+    assert ("CFA_A", "CFA_B") in _groups(groups)
 
 
 def test_cross_name_scan_still_ignores_different_open_traces(tmp_path):
@@ -651,12 +651,12 @@ def test_cross_name_scan_still_ignores_different_open_traces(tmp_path):
     )))
     section.save()
 
-    records = series.findDifferentlyNamedDuplicates(THRESHOLD)
-    assert frozenset(("CFA_A", "CFA_B")) not in _pairs(records)
+    groups = series.findDuplicateTraces(THRESHOLD)
+    assert ("CFA_A", "CFA_B") not in _groups(groups)
 
 
-def test_delete_duplicates_removes_open_duplicate(tmp_path):
-    """Same-name open duplicates are deleted, where before they were kept."""
+def test_combine_removes_open_duplicate(tmp_path):
+    """Same-name open duplicates are combined, where before they were kept."""
     series = _load_series(tmp_path)
     snum = _first_snum(series)
     section = series.loadSection(snum)
@@ -666,11 +666,15 @@ def test_delete_duplicates_removes_open_duplicate(tmp_path):
     section.save()
     assert len(series.loadSection(snum).contours["CFA_DUP"]) == 2
 
-    series.deleteDuplicateTraces(THRESHOLD, log_event=False)
+    group = next(
+        g for g in series.findDuplicateTraces(THRESHOLD)
+        if g["names"] == ["CFA_DUP"]
+    )
+    series.combineDuplicateTraces([(group, "CFA_DUP")], log_event=False)
     assert len(series.loadSection(snum).contours["CFA_DUP"]) == 1
 
 
-def test_delete_duplicates_keeps_different_open_traces(tmp_path):
+def test_scan_keeps_different_open_traces_apart(tmp_path):
     """Two genuinely different open traces under one name both survive."""
     series = _load_series(tmp_path)
     snum = _first_snum(series)
@@ -682,8 +686,9 @@ def test_delete_duplicates_keeps_different_open_traces(tmp_path):
     )))
     section.save()
 
-    series.deleteDuplicateTraces(THRESHOLD, log_event=False)
-    assert len(series.loadSection(snum).contours["CFA_KEEP"]) == 2
+    assert ("CFA_KEEP", "CFA_KEEP") not in _groups(
+        series.findDuplicateTraces(THRESHOLD)
+    )
 
 
 def test_area_ceiling_would_have_dropped_the_open_pair():

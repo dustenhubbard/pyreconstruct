@@ -1,12 +1,12 @@
 """The two mouse/scissors gesture call sites of the lock guard notify-and-stop.
 
-Corrected 2026-08-06 ("split notifyLocked", DECISIONS.md / BACKLOG.md). The
-maintainer originally decided to standardize every lock-refusal path,
-including `notifyLocked`, onto the notify-and-stop idiom already used by
+Corrected 2026-08-06 ("split notifyLocked"). The original plan was to
+standardize every lock-refusal path, including `notifyLocked`, onto the
+notify-and-stop idiom already used by
 `refuseLockedTraces`/`refuseLockedDestination`/`refuseLockedDestinations`
 (`"Cannot modify locked objects.\\nPlease unlock before modifying."`),
 believing `notifyLocked` had exactly two call sites that both just "ask, then
-stop anyway." A dispatched fixup agent found the premise false: `notifyLocked`
+stop anyway." A closer look found the premise false: `notifyLocked`
 has four real call sites. Two -- `TraceTableWidget.itemChanged`/`getSelected`
 in `table/trace.py` -- genuinely act on "Yes" and unlock-and-proceed, by
 original design (`73f54794`); see `test_data_lists_real_widget.py` for those.

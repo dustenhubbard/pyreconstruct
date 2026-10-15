@@ -5,7 +5,7 @@ zero-width spike doubling back over its own edge (a user's report,
 2026-08-25, with a one-pixel example), and a crossed outline blocks the
 scalpel. The repair keeps the trace's real loop and discards the artifact.
 
-The safety rule under test is his option 1 (2026-08-25): repair only when
+The safety rule under test (2026-08-25): repair only when
 the discarded loops are tiny beside the kept one. A genuine figure 8 with
 two real loops is skipped for the scissors, because keeping one loop would
 silently delete the other.
@@ -150,7 +150,7 @@ def test_unrepairable_records_are_not_applied(series_with_spike):
 
 
 # --------------------------------------------------------------------------
-# The two review windows around the pass (his asks, 2026-08-26): skipped
+# The two review windows around the pass (since 2026-08-26): skipped
 # looped traces get an actionable list, repaired ones get a summary. Both
 # inherit navigation, copy-to-clipboard and save-as-CSV from the malformed-
 # contours review dialog, so only what is specific here is tested.
@@ -176,7 +176,7 @@ def test_skipped_dialog_navigates_and_copies(qapp, gui_dialogs):
         navigate=lambda snum, name, index: visited.append((snum, name)),
     )
     try:
-        assert "scissors" in dialog._headingText()
+        assert "scissors" in dialog._explanationText()
         dialog.table.selectRow(0)
         dialog._navigateToRow(0)
         assert visited == [(4, "figure8")]
@@ -200,7 +200,7 @@ def test_repaired_dialog_summarizes_with_the_same_roads(qapp, gui_dialogs):
     record = dict(_looped_record(), repairable=True)
     dialog = RepairedCrossingsDialog(None, [record], navigate=lambda *a: None)
     try:
-        heading = dialog._headingText()
+        heading = dialog._explanationText()
         assert "Repaired 1 self-crossing trace" in heading
         assert "one undo" in heading
         labels = [b.text() for b in dialog.findChildren(QPushButton)]
@@ -213,7 +213,7 @@ def test_repaired_dialog_summarizes_with_the_same_roads(qapp, gui_dialogs):
 def test_the_repair_prompt_builds_without_error(qapp, main_window, gui_dialogs, monkeypatch):
     """The confirm prompt crashed live with NameError: the undo-chord helper
     was used at line 3519 with no import in scope, and no test drove the
-    prompt itself (his error report, 2026-08-26). This one does: a spiked
+    prompt itself (reported 2026-08-26). This one does: a spiked
     trace goes in, the prompt must reach notifyConfirm and decline safely."""
     from PyReconstruct.modules.datatypes import Trace
     import PyReconstruct.modules.gui.main.main_window as mw

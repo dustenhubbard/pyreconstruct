@@ -18,13 +18,14 @@ itself, started and stopped for real. In order:
    staging folder with the app's pid and waits; then the app is stopped, as
    if the user quit. The helper checks the unpacked payload against tree.json,
    runs the staged copy's self-test, carries the uninstaller over, swaps the
-   folders, sets DisplayVersion, and starts the new version. This script
-   writes health.json for it, which the app will do itself once in-place
-   updates are wired in, and the helper deletes the backup.
-3. A forced rollback. The same payload is staged again, and this time nothing
-   reports a healthy start, so after its timeout the helper stops the running
-   new version, puts the old folder back, restores DisplayVersion, records
-   the version as failed, and starts the old version again.
+   folders, sets DisplayVersion, and starts the new version. The new version
+   reports its own healthy start in health.json, and the helper deletes the
+   backup.
+3. A forced rollback. The same payload is staged again under a version
+   number it does not carry, so the copy the helper starts finds no update
+   waiting on it and never reports in. After its timeout the helper stops it,
+   puts the old folder back, restores DisplayVersion, records the version as
+   failed, and starts the old version again.
 4. An uninstall. The uninstaller removes the install folder, the staging
    folder beside it, and its registry entry, though the folder at the install
    path is no longer the one Setup.exe wrote.
@@ -56,6 +57,7 @@ UNINSTALL = "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall"
 CARRY = ["unins*.*"]
 FROM_UPDATE = "0.0.1"
 FROM_ROLLBACK = "0.0.2"
+UNAWAITED = "99.0.0"  # the version step 3 claims to install, which the build is not
 
 
 def _load_apply():
@@ -259,19 +261,14 @@ def run(artifacts, workdir):
     app.wait(60)
     log("stopped the app, as if the user quit")
 
-    def reached_health():
-        state = A.read_json(str(staging / A.STATE), {})
-        return proc.poll() is not None or (state.get("step") == "health" and state.get("launched_pid"))
-
-    wait_until(reached_health, 600, "the helper to launch the new version")
-    state = A.read_json(str(staging / A.STATE), {})
-    check(proc.poll() is None, f"the helper launched the new version (pid {state.get('launched_pid')})")
-    A.write_health(str(staging), version, pid=state["launched_pid"])
-    log("wrote health.json for the new version")
-    code = proc.wait(600)
+    code = proc.wait(900)
     result = A.read_json(str(staging / A.RESULT), {})
     check(code == 0 and result.get("status") == "updated" and result.get("installed") == "new",
           f"the update went in (exit {code}, {result.get('status')}, {result.get('reason')!r})")
+    report = A.read_json(str(staging / A.HEALTH), {})
+    state = A.read_json(str(staging / A.STATE), {})
+    check(report.get("version") == version, f"the new version reported its own start ({report})")
+    log(f"health.json came from pid {report.get('pid')}; the helper launched pid {state.get('launched_pid')}")
     check(file_id(install) == new_id and file_id(install) != old_id, "the staged folder is now the install")
     check(not (staging / A.OLD).exists() and not (staging / A.NEW).exists(), "the backup is gone")
     check(display_version(key) == version, f"DisplayVersion went from {FROM_UPDATE} to {version}")
@@ -282,7 +279,10 @@ def run(artifacts, workdir):
 
     # 3. A forced rollback: the new version never reports a healthy start
     platform.set_display_version(key, FROM_ROLLBACK)
-    helper = stage(staging, install, archive, tree_path, dict(plan, from_version=FROM_ROLLBACK, pid=None))
+    unawaited_tree = workdir / "unawaited.tree.json"
+    unawaited_tree.write_text(json.dumps(dict(tree, version=UNAWAITED)), encoding="utf-8")
+    helper = stage(staging, install, archive, unawaited_tree,
+                   dict(plan, from_version=FROM_ROLLBACK, to_version=UNAWAITED, pid=None))
     before_id = file_id(install)
     proc = start_helper(helper, staging)
     code = proc.wait(900)
@@ -298,7 +298,7 @@ def run(artifacts, workdir):
         check(not (staging / leftover).exists(), f"no {leftover}/ is left in staging")
     check(display_version(key) == FROM_ROLLBACK, f"DisplayVersion is back to {FROM_ROLLBACK}")
     failed = A.read_json(str(staging / A.FAILED_VERSIONS), {})
-    check(version in failed.get("versions", []), f"{version} is recorded as failed")
+    check(UNAWAITED in failed.get("versions", []), f"{UNAWAITED} is recorded as failed")
     check_matches_tree(install, tree, "the restored install")
     stopped = stop_everything_under(platform, install)
     check(bool(stopped), f"the old version was started again (pids {stopped})")

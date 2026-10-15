@@ -60,8 +60,10 @@ from PyReconstruct.modules.gui.dialog import (
     BackupCommentDialog,
     ImportSeriesDialog,
     ImportAlignmentsDialog,
+    MalformedContoursDialog,
     PixelDustDialog,
-    DifferentlyNamedDuplicatesDialog,
+    DuplicateTracesDialog,
+    MatchImageNamesDialog,
 )
 
 from PyReconstruct.modules.gui.popup import (
@@ -82,6 +84,7 @@ from PyReconstruct.modules.gui.utils import (
     saveNotify,
     unsavedNotify,
     linkedUndoNotify,
+    viewOffImageNotify,
     setMainWindow,
     noUndoWarning,
     checkMag,
@@ -137,7 +140,8 @@ from PyReconstruct.modules.backend.view import (
 
 from PyReconstruct.modules.backend.autoseg import (
     zarrToNewSeries,
-    labelsToObjects
+    labelsToObjects,
+    ZarrRefused,
 )
 
 # 3D mesh export (export3DObjects/export3DData) pulls trimesh + networkx; it is

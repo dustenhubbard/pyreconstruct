@@ -2,7 +2,7 @@
 """Build report.md + report.html from summary.json."""
 import json, os, math
 
-BENCH = "<bench>"
+BENCH = os.environ.get("PYRECON_BENCH_OUT", os.path.join(os.path.dirname(os.path.abspath(__file__)), "bench"))
 S = json.load(open(os.path.join(BENCH, "summary.json")))
 labels = sorted(S, key=lambda l: S[l]["size_mb"])
 

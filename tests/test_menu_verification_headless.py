@@ -260,14 +260,14 @@ def test_view_keeps_its_order_with_the_four_inserted_after_show_z_traces(
     them is byte-identical to the pre-hoist order, which is what the standing
     rule about not reordering View requires.
 
-    One sanctioned addition since (2026-08-12, his placement call): "Recolor
+    One addition since (2026-08-12): "Recolor
     all objects from palette..." directly under "Edit fill opacity...", the
     series-wide sibling of the object menus' "Reapply custom color palette to existing objects...".
     Nothing else moved; tests/test_menubar_labels.py holds the structure guard
     and tests/test_autoseg_reapply_colors.py pins its semantics.
 
-    Second sanctioned addition (2026-08-25, stage 1 of his sidebar):
-    "Show/hide lists" leads the menu -- it is the one View row about whether
+    Second addition (2026-08-25, stage 1 of the sidebar):
+    "Show/Hide lists" leads the menu -- it is the one View row about whether
     the lists are on screen at all, and it mirrors the status bar's Lists
     pill. Everything after it is the prior order, unmoved.
     """
@@ -277,7 +277,7 @@ def test_view_keeps_its_order_with_the_four_inserted_after_show_z_traces(
     order = [p for p in menu_leaf_paths(view) if " > " not in p]
 
     assert order == [
-        "Show/hide lists",
+        "Show/Hide lists",
         "Copy view to clipboard",
         "Save view to file",
         "Change theme...",
@@ -322,6 +322,36 @@ def test_the_field_object_menu_keeps_add_and_remove_reachable(main_window):
 
     assert _cpp(paths["3D > Add to scene"]) == wanted_add
     assert _cpp(paths["3D > Remove from scene"]) == wanted_remove
+
+
+def test_the_field_ztrace_menu_keeps_add_and_remove_together_under_3d(
+    main_window,
+):
+    """`Add to scene` sits beside `Remove from scene` in the z-trace `3D >`.
+
+    The z-trace menu is built by `FieldWidgetTrace.getZtraceMenu`, not by
+    `context_menu_list.py`, so it kept the old hoist (`Add to 3D scene` at top
+    level, `3D >` holding only the removal) after the object menu went back to
+    stable's layout. This pins stable's layout: both rows in `3D >`, in the
+    object menu's order and labels, nothing 3D left at the top level.
+    """
+    wanted_add = _cpp(main_window.addto3D_act)
+    wanted_remove = _cpp(main_window.remove3D_act)
+    add_shortcut = main_window.addto3D_act.shortcut().toString()
+
+    ztrace_menu = submenu_at(main_window.field_menu, "Ztrace")
+    assert ztrace_menu is not None
+
+    paths = menu_leaf_paths(ztrace_menu)
+
+    assert [p for p in paths if p.startswith("3D > ")] == [
+        "3D > Add to scene",
+        "3D > Remove from scene",
+    ]
+    assert _cpp(paths["3D > Add to scene"]) == wanted_add
+    assert _cpp(paths["3D > Remove from scene"]) == wanted_remove
+    assert "Add to 3D scene" not in paths
+    assert add_shortcut == ""
 
 
 # Every option-backed action now applies the key its option holds. `sethosts_act`

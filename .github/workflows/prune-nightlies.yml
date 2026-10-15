@@ -16,7 +16,7 @@
 # the workflow token never fires the `release: published` trigger. Deletes
 # releases and their assets, retaining Git tags as historical evidence for the
 # release-notes checks. Guardrails: only prereleases, only tags shaped
-# vX.Y.Z.devYYYYMMDD (or the old vX.Y.Z-beta-N), never drafts, never stables,
+# vX.Y.Z.devYYYYMMDD[HHMM] (or the old vX.Y.Z-beta-N), never drafts, never stables,
 # and nothing at all when no stable release exists.
 
 name: prune-nightlies

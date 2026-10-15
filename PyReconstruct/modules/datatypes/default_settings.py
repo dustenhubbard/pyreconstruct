@@ -52,6 +52,10 @@ default_settings = {
     "backup_prefix_str": "",
     "backup_suffix": False,
     "backup_suffix_str": "",
+    # what a series with no backup settings of its own uses (see
+    # Series.usesBackupDefaults); {series} in the folder becomes the code
+    "default_autobackup": False,
+    "default_backup_dir": "",
 
     # misc preferences
     "left_handed": False,  # MFO
@@ -191,9 +195,9 @@ default_settings = {
     "open_act": "Ctrl+O",
     # Help > Search menus. Ctrl+K (Cmd+K on macOS), the command-palette
     # convention. NOT Ctrl+Shift+/: macOS delivers that chord as Cmd+?, so a
-    # Ctrl+Shift+/ binding never fires there (found in click testing).
+    # Ctrl+Shift+/ binding never fires there.
     "searchmenus_act": "Ctrl+K",
-    # View > Show/hide lists. S for Sidebar, on his call (2026-08-25):
+    # View > Show/Hide lists. S for Sidebar:
     # Ctrl+Alt+S here, delivered as Cmd+Option+S on macOS. Plain Ctrl+S and
     # Ctrl+Shift+S are save and the section list; bare S is the stamp tool.
     "togglelists_act": "Ctrl+Alt+S",
@@ -258,9 +262,32 @@ default_settings = {
     "scale_bar_mode": "screen_fraction",  # "screen_fraction" | "micron_pinned"  # MFO
     "scale_bar_width": 25,  # displayed as this percentage of the screen (min should be 20)
     "scale_bar_length_um": 5.0,  # microns; used in "micron_pinned" mode  # MFO
+    "scale_bar_thickness": 6,  # pixels, the bar alone; see clampScaleBarThickness  # MFO
     "show_scale_bar_text": True,
     "show_scale_bar_ticks": True,
 }
+
+# The scale bar's thickness in pixels.  25 is the bar as it was drawn before the
+# option existed (the lower half of a 50 px widget); 3 is the thinnest that
+# still has a black line inside its 1 px white edge.
+MIN_SCALE_BAR_THICKNESS = 3
+MAX_SCALE_BAR_THICKNESS = 25
+DEFAULT_SCALE_BAR_THICKNESS = 6  # pixels
+
+
+def clampScaleBarThickness(value) -> int:
+    """A stored thickness the bar can draw, as an int inside the slider's range.
+
+    The options dialog can only store a value inside the range.  The key is
+    global, and a store can be edited outside PyReconstruct.  So the bar clamps
+    the value it reads.  Anything that is not a number gets the default.
+    """
+    try:
+        value = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return DEFAULT_SCALE_BAR_THICKNESS
+    return max(MIN_SCALE_BAR_THICKNESS, min(MAX_SCALE_BAR_THICKNESS, value))
+
 
 # The range of real-world lengths a micron-pinned scale bar can be pinned to:
 # a picometre to a metre, against specimen sections measured in tens of microns.
@@ -313,9 +340,12 @@ default_series_settings = {
     # "manual_backup_dir": ""
     "autobackup": False,
     "backup_dir": "",
+    # "backup_use_defaults" (bool) is per series too, but stays out of this
+    # table on purpose: Series.usesBackupDefaults reads it and
+    # Series.setBackupUsesDefaults writes it
     # which lists were open, floating, and where; written by the main window
     # when a series closes and replayed when it opens (a user works with
-    # undocked lists; his layout should survive a restart). Not in any
+    # undocked lists; that layout should survive a restart). Not in any
     # options dialog: the layout itself is the editor.
     "list_layout": {},
 }

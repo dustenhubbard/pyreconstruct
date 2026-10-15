@@ -2,13 +2,15 @@ import os
 import time
 
 from PySide6.QtWidgets import (
+    QLabel,
     QMainWindow,
     QTextEdit,
 )
 from PySide6.QtGui import (
     QPainter,
     QCursor,
-    QAction
+    QAction,
+    QKeySequence,
 )
 from PySide6.QtCore import (
     QTimer,
@@ -18,9 +20,7 @@ from PySide6.QtCore import (
 from PyReconstruct.modules.datatypes import Series, Section, Trace, Transform
 from PyReconstruct.modules.backend.view import SectionLayer, ZarrLayer
 from PyReconstruct.modules.backend.func import SeriesStates
-from PyReconstruct.modules.backend.func.state_manager import (
-    dropEmptiedGroups, forgetHostLinks, hostLinks, recordDroppedHostLinks,
-)
+from PyReconstruct.modules.backend.func.state_manager import dropEmptiedGroups
 from PyReconstruct.modules.backend.table import TableManager
 
 
@@ -57,6 +57,8 @@ class FieldWidgetBase:
         self.visibility_snapshot : dict     = None
 
         self.focus_mode : bool              = False
+        # label over the field naming the focused object; built by FieldWidget
+        self.focus_hint : QLabel            = None
         self.hide_trace_layer : bool        = False
         self.show_all_traces : bool         = False
         self.hide_image : bool              = False
@@ -97,10 +99,14 @@ class FieldWidgetBase:
         self.clicked_x : int                = 0
         self.clicked_y : int                = 0
         self.clicked_trace                  = None
+        self.selected_trace                 = None
+        self.selected_type                  = None
+        self.pointer_press_recorded : bool  = False
 
         self.lclick : bool                  = False
         self.rclick : bool                  = False
         self.mclick : bool                  = False
+        self.press_dropped : bool           = False  # see dropPress
 
         self.mouse_boundary_timer : QTimer  = None
         self.hover_display_timer : QTimer   = None
@@ -129,6 +135,7 @@ class FieldWidgetBase:
                 series (Series): the new series to load
         """
         self.series = series
+        series.setPassWriteHook(self.refreshPassWrite)
 
         ## Initialize hover columns from series option
         from PyReconstruct.modules.gui.dialog.hover_columns import HoverColumnsDialog
@@ -196,9 +203,13 @@ class FieldWidgetBase:
         self.blend_sections       = False
         
         ## Click defaults
+        self.selected_trace       = None
+        self.selected_type        = None
+        self.pointer_press_recorded = False
         self.lclick               = False
         self.rclick               = False
         self.mclick               = False
+        self.press_dropped        = False
 
         ## Mouse tool defaults
         self.is_panzooming        = False
@@ -354,8 +365,46 @@ class FieldWidgetBase:
         if hasattr(self, "table_manager"):
             self.table_manager.syncSelection(self.section)
 
+        # every focus mode change and every resize ends in a redraw
+        self.updateFocusHint()
+
         if update:
             self.update()
+
+    def focusHintText(self) -> str:
+        """The focus mode label's text, naming the live `focus_act` shortcut."""
+        act = getattr(self.mainwindow, "focus_act", None)
+        key = act.shortcut().toString(QKeySequence.NativeText) if act is not None else ""
+        if key:
+            how = f"Press {key} to exit."
+        else:
+            how = "Use View > Toggle focus mode in the right-click menu to exit."
+        return f"Focus: {self.focus_mode}. {how}"
+
+    def updateFocusHint(self) -> None:
+        """Show the focus mode label while focus mode is on, centered at the top."""
+        hint = getattr(self, "focus_hint", None)
+        if hint is None:
+            return
+        if not self.focus_mode:
+            hint.hide()
+            return
+        text = self.focusHintText()
+        if hint.text() != text:
+            hint.setText(text)
+        # one line when it fits, wrapped to the field's width when it does not
+        hint.setWordWrap(False)
+        w = hint.sizeHint().width()
+        max_w = max(self.width() - 20, 1)
+        if w > max_w:
+            hint.setWordWrap(True)
+            w = max_w
+            hint.resize(w, hint.heightForWidth(w))
+        else:
+            hint.resize(w, hint.sizeHint().height())
+        hint.move((self.width() - w) // 2, 10)
+        hint.show()
+        hint.raise_()
     
     def clearStates(self) -> None:
         """Create/clear the states for each section."""
@@ -366,21 +415,22 @@ class FieldWidgetBase:
         
         ALSO updates the lists.
         """
+        # An edit made while a scissors cut is open (an arrow key moving the
+        # alignment, a paste) is recorded here, and the picked-up trace is
+        # outside the section until the cut ends. The state would hold the
+        # section without it, so undoing and redoing the edit took the trace
+        # out again after a save had put it back. The cut is backed out first,
+        # as a save does. A finished cut records its own state here too, and
+        # lineRelease clears is_line_tracing before that, so it is left alone.
+        self.cancelOpenScissorsCut()
+
         # save the current state
         section_states = self.series_states[self.series.current_section]
         section_states.addState(self.section, self.series)
 
         # update the data/tables
         groups_before = set(self.series.object_groups.getGroupList())
-        names = section_states.current_state.getModifiedContours()
-        objects_before = {n for n in names if n in self.series.data["objects"]}
-        links_before = hostLinks(self.series, names)
         self.updateData()
-        recordDroppedHostLinks(self.series, links_before)
-        forgetHostLinks(self.series, {
-            n for n in names
-            if n not in objects_before and n in self.series.data["objects"]
-        })
 
         # updateData deletes an object whose last trace the action took, and
         # its groups with it; their visibility entries go too, so the Groups
@@ -425,10 +475,14 @@ class FieldWidgetBase:
         if not self.section.tform.equals(tform_before):
             self.tform_before_change = None
 
-        # update the data/tables
-        links_before = hostLinks(self.series, self.section.getAllModifiedNames())
-        self.updateData()
-        recordDroppedHostLinks(self.series, links_before)
+        # update the data/tables. A redo of an action that kept the objects
+        # it emptied (an import) keeps them again, with their attributes,
+        # rather than deleting them as an erase would
+        redone = redo and len(section_states.undo_states) > undos_before
+        keeps_emptied = redone and getattr(
+            section_states.current_state, "keeps_emptied", False
+        )
+        self.updateData(log_events=not keeps_emptied)
 
         # updateData gave each object the step recreated the current
         # alignment; put back the pin the object had, and show it in the lists
@@ -479,7 +533,13 @@ class FieldWidgetBase:
         alignments_before = set(self.series.alignments)
         groups_before = set(self.series.object_groups.getGroupList())
 
+        series = self.series
         self.series_states.undoState(redo)
+        # another series can open at the undo's last progress update. The
+        # undo still finished on the series it began on, and the field now
+        # holds the new one, which a reload would mark modified
+        if self.series is not series:
+            return
         self.reload()
         self.table_manager.recreateTables()
         # a series undo can change palette buttons' object defaults (a custom
@@ -601,6 +661,11 @@ class FieldWidgetBase:
         # remembered for propagation recording no longer applies
         self.tform_before_change = None
 
+        # an open scissors cut ends here with its trace back: left open across
+        # the reload, finishing it would add a second copy beside the one
+        # read back from the file
+        self.cancelOpenScissorsCut()
+
         # reload the actual sections
         self.section = self.series.loadSection(self.series.current_section)
         self.section_layer.section = self.section
@@ -623,6 +688,31 @@ class FieldWidgetBase:
         # notify that the series has been modified
         self.mainwindow.seriesModified(True)
     
+    def refreshPassWrite(self, written) -> None:
+        """Reload the held copies of a section a pass over the files wrote.
+
+        Series.setPassWriteHook calls this right after each write, before
+        the next progress update, so the copies match the file even when the
+        pass stops part-way. The action saved the field before its pass and
+        reloads it after, so nothing unsaved is dropped here.
+
+            Params:
+                written (Section): the pass's own copy, just saved
+        """
+        # a series opened during the pass is the field's now
+        if written.series is not self.series:
+            return
+        # the field's own copy, saved during the pass (the save prompt)
+        if written is self.section or written is self.b_section:
+            return
+        if self.section is not None and self.section.n == written.n:
+            self.section = self.series.loadSection(written.n)
+            self.section_layer.section = self.section
+            self.table_manager.changeSection(self.section)
+        if self.b_section is not None and self.b_section.n == written.n:
+            self.b_section = self.series.loadSection(written.n)
+            self.b_section_layer.section = self.b_section
+
     def reloadImage(self) -> None:
         """Reload the section images (used if transform or image source is modified)."""
         self.section_layer.loadImage()
@@ -640,17 +730,20 @@ class FieldWidgetBase:
         """
         self.table_manager.newTable(list_type, self.section, selected_only=selected_only)
     
-    def updateData(self, clear_tracking=True) -> None:
+    def updateData(self, clear_tracking=True, log_events=True) -> None:
         """Update the series data object and the tables.
-        
+
             Params:
                 clear_tracking (bool): True if tracking vars in Section and Series should be cleared after they are checked
+                log_events (bool): False to keep an object the section no
+                    longer has traces of, as an import does (SeriesData.updateSection)
         """
         # update the series data tracker
         self.series.data.updateSection(
-            self.section, 
+            self.section,
             update_traces=True,
-            all_traces=False
+            all_traces=False,
+            log_events=log_events
         )
 
         self.table_manager.updateAll(clear_tracking)

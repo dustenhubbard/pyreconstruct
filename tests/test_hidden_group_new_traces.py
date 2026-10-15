@@ -7,7 +7,7 @@ checks the trace's object name against the hidden groups.
 
 Drawing is the other case, and it is handled differently: a trace drawn into a
 hidden group turns that group back on, rather than vanishing the moment it is
-drawn (his call, 2026-09-28).
+drawn (since 2026-09-28).
 """
 import pytest
 

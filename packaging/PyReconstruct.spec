@@ -143,11 +143,12 @@ datas += collect_data_files("vedo")
 # import statements: every scipy/skimage call site in PyReconstruct was
 # exercised in a real interpreter and sys.modules read back afterwards. That is
 # deliberate, because these packages cross-import each other internally --
-# skimage.filters pulls scipy.ndimage, skimage.registration pulls
-# skimage.restoration, scipy.interpolate pulls scipy.linalg/special/sparse --
+# skimage.filters pulls scipy.ndimage and skimage.restoration (filters/edges.py
+# imports restoration.uft), scipy.interpolate pulls scipy.linalg/special/sparse --
 # and none of that shows up in a grep of the application. Unlisted, because
 # nothing reached them: scipy.io, scipy.signal, scipy.stats, scipy.integrate,
-# scipy.odr, skimage.feature, skimage.graph, skimage.io, skimage.metrics.
+# scipy.odr, skimage.feature, skimage.graph, skimage.io, skimage.metrics,
+# skimage.registration.
 #
 # Adding a call to a scipy/skimage subpackage that is not listed here means
 # adding it here too. It will not fail at launch: the frozen self-test imports
@@ -168,19 +169,19 @@ _SCIPY_USED = (
     "scipy._lib",         # shared helpers, imported by every subpackage below
     "scipy.cluster",      # via scipy.spatial
     "scipy.constants",    # via scipy.interpolate / skimage
-    "scipy.fft",          # via scipy.fftpack and skimage.registration
+    "scipy.fft",          # via scipy.fftpack and skimage.restoration
     "scipy.fftpack",      # modules/calc/correlation.py (alignment correlation)
     "scipy.interpolate",  # imagej_roi.py (splprep/splev), quantification.py
     "scipy.linalg",       # via scipy.interpolate, skimage.transform
     "scipy.ndimage",      # via skimage.filters / segmentation / transform
-    "scipy.optimize",     # via skimage.registration, scipy.interpolate
+    "scipy.optimize",     # via scipy.interpolate
     "scipy.sparse",       # via scipy.interpolate, skimage.segmentation
     "scipy.spatial",      # via skimage.measure / segmentation
     "scipy.special",      # via scipy.interpolate, skimage.filters
 )
 _SKIMAGE_USED = (
     "skimage._shared",     # shared helpers, imported by every subpackage below
-    "skimage._vendored",   # via skimage.restoration
+    "skimage._vendored",   # via skimage.util (lookfor)
     "skimage.color",       # autoseg palette (rgb2lab / deltaE_ciede2000)
     "skimage.data",        # imported by the subpackages below (payload trimmed)
     "skimage.draw",        # trace_layer.py, objects_3D.py, trace.py (polygon)
@@ -188,8 +189,7 @@ _SKIMAGE_USED = (
     "skimage.filters",     # snap_trace.py (gaussian)
     "skimage.measure",     # large_datasets.py (block_reduce)
     "skimage.morphology",  # via skimage.filters / segmentation
-    "skimage.registration",# field_widget_4_data.py (phase_cross_correlation)
-    "skimage.restoration", # via skimage.registration
+    "skimage.restoration", # via skimage.filters
     "skimage.segmentation",# snap_trace.py (active_contour)
     "skimage.transform",   # large_datasets.py (rescale), transform.py
     "skimage.util",        # via skimage.filters / measure / transform

@@ -1,9 +1,12 @@
-"""Order the positive and negative traces of one object on one section.
+"""Find the islands among the positive and negative traces of one object on
+one section.
 
 A positive trace fills and a negative trace clears. A positive inside a
-negative of the same object is an island in that hole, so it has to fill
-again after the hole clears it. The 3D volume and the label export both
-draw an object's traces in the order ``nestedFillOrder`` returns.
+negative of the same object is an island in that hole: drawing every positive
+and then every negative would clear it with the hole. The 3D volume and the
+label export draw that way and then fill each island back in, less the voxels
+of every negative that cuts it, so a negative clears an island the same way
+whether or not the island sits in a hole.
 """
 
 
@@ -26,14 +29,13 @@ def _tracePolygon(points : list):
     return poly
 
 
-def _covers(outer, inner, allow_equal=False) -> bool:
-    """Return whether one trace polygon covers another.
+def _covers(outer, inner) -> bool:
+    """Return whether one trace polygon covers another, different one.
 
-    Two identical outlines are not nested unless ``allow_equal`` says so: a
-    negative with the same outline as an island cancels that island, so the
-    step that picks the holes after a refill allows it. A trace GEOS cannot
-    compare (some self-crossing outlines) counts as not covered, so it fills
-    the way it did before.
+    Two identical outlines are not nested: a negative with the same outline
+    as an island cancels it, so it is not a hole around it. A trace GEOS
+    cannot compare (some self-crossing outlines) counts as not covered, so it
+    fills the way it did before.
     """
     if outer is None or inner is None:
         return False
@@ -41,50 +43,56 @@ def _covers(outer, inner, allow_equal=False) -> bool:
     if ib[0] < ob[0] or ib[1] < ob[1] or ib[2] > ob[2] or ib[3] > ob[3]:
         return False  # the box test is cheap and settles most pairs
     try:
-        if not outer.covers(inner):
-            return False
-        return allow_equal or not outer.equals(inner)
+        return outer.covers(inner) and not outer.equals(inner)
     except Exception:
         return False
 
 
-def _coversOrEquals(outer, inner) -> bool:
-    """``_covers`` with an identical outline counted."""
-    return _covers(outer, inner, allow_equal=True)
-
-
-def _boxesApart(a, b) -> bool:
-    """Return whether the boxes of two shapes miss each other."""
+def _boxesApart(a, b, reach=0.0) -> bool:
+    """Return whether the boxes of two shapes are more than ``reach`` apart."""
     ab, bb = a.bounds, b.bounds
-    return bb[0] > ab[2] or bb[2] < ab[0] or bb[1] > ab[3] or bb[3] < ab[1]
+    return (
+        bb[0] > ab[2] + reach or bb[2] < ab[0] - reach
+        or bb[1] > ab[3] + reach or bb[3] < ab[1] - reach
+    )
 
 
-def _overlaps(a, b) -> bool:
-    """Return whether two trace polygons share area with neither covering
-    the other, so one cuts across the other's edge."""
-    if a is None or b is None or _boxesApart(a, b):
+def _cutsIsland(island, negative, reach=0.0) -> bool:
+    """Return whether a negative clears part of an island.
+
+    Every negative that touches the island or comes within ``reach`` of it
+    does, unless it is a hole around the island. That takes in one inside the
+    island, one with its outline (which cancels it), one that cuts across or
+    only touches its edge, one with no area that runs over it, and one close
+    enough that the two round onto the same voxel.
+
+        Params:
+            island: the island's polygon
+            negative: the negative's polygon, or its line or point if it has
+                no area
+            reach (float): how far apart the two can be and still count
+        Returns:
+            (bool): whether the negative clears part of the island
+    """
+    if island is None or negative is None:
+        return False
+    if _boxesApart(island, negative, reach):
         return False
     try:
-        return a.overlaps(b)
+        if reach > 0:
+            near = island.dwithin(negative, reach)
+        else:
+            near = island.intersects(negative)
     except Exception:
         return False
-
-
-def _intersects(a, b) -> bool:
-    """Return whether two trace shapes touch at all."""
-    if a is None or b is None or _boxesApart(a, b):
-        return False
-    try:
-        return a.intersects(b)
-    except Exception:
-        return False
+    return near and not _covers(negative, island)
 
 
 def _traceLine(points : list):
     """Return a trace with no area as a line or a point, or None.
 
-    Such a negative still clears the voxels it runs along, so after an
-    island refills it has to be applied again if it touches the island.
+    Such a negative still clears the voxels it runs along, so it cuts an
+    island it reaches.
     """
     from shapely.geometry import LineString, Point
 
@@ -99,88 +107,84 @@ def _traceLine(points : list):
     return None
 
 
-def _matching(geoms : list, others : list, other_idx, test) -> list:
-    """Return the indices of the geometries that ``test`` relates to one of
-    the chosen others.
-
-    A tree over the chosen others narrows each geometry to the others whose
-    box touches its own, and only those pairs go through ``test``. Every test
-    used here needs the two boxes to touch, so the answer is the one a scan
-    of every pair gives, in the same order.
+def _pairs(geoms : list, others : list, reach=0.0) -> dict:
+    """Return, for each geometry, the others whose box comes within
+    ``reach`` of its own, in ascending order.
 
         Params:
-            geoms (list): the shapes to report (None allowed)
-            others (list): the shapes to compare against (None allowed)
-            other_idx: the indices into others to consider
-            test: ``test(other, geom)`` -> bool
+            geoms (list): the shapes to look up (None allowed)
+            others (list): the shapes to find (None allowed)
+            reach (float): how far apart two boxes can be and still pair
         Returns:
-            (list): the indices into geoms, ascending
+            (dict): index into geoms -> ascending indices into others
     """
+    import shapely
     from shapely import STRtree
 
-    chosen = [j for j in other_idx if others[j] is not None]
     present = [i for i, g in enumerate(geoms) if g is not None]
-    if not chosen or not present:
-        return []
+    chosen = [j for j, g in enumerate(others) if g is not None]
+    if not present or not chosen:
+        return {}
 
     tree = STRtree([others[j] for j in chosen])
-    hits = tree.query([geoms[i] for i in present])
-    candidates = {}
+    query = [geoms[i] for i in present]
+    if reach > 0:
+        b = shapely.bounds(query)
+        query = shapely.box(
+            b[:, 0] - reach, b[:, 1] - reach, b[:, 2] + reach, b[:, 3] + reach
+        )
+    hits = tree.query(query)
+    found : dict[int, list[int]] = {}
     for a, b in zip(*hits):
-        candidates.setdefault(present[int(a)], []).append(chosen[int(b)])
-
-    return [
-        i for i in present
-        if any(test(others[j], geoms[i]) for j in candidates.get(i, ()))
-    ]
+        found.setdefault(present[int(a)], []).append(chosen[int(b)])
+    return {i: sorted(js) for i, js in found.items()}
 
 
-def nestedFillOrder(pos : list, neg : list) -> list:
-    """Return the traces of one section in the order they fill the volume.
+def islandCuts(pos : list, neg : list, reach : float = 0.0) -> list:
+    """Return the islands of one section, each with the negatives that cut it.
 
-    Every positive trace fills first and every negative trace clears after it.
-    A positive trace inside a negative trace is an island in that hole, so it
-    fills again after the holes. The negatives that touch the refilled island
-    without being the hole around it clear again after that: one inside the
-    island (or with its own outline, which cancels it), one that cuts across
-    its edge, and one with no area that runs over it. Islands inside those
-    fill next, and so on down the nesting. A section with no island comes
-    back in the same order as before.
+    An island is a positive trace inside a negative trace (a hole). Drawing
+    every positive and then every negative clears it with the hole, so the
+    caller fills each island back in afterward, less the voxels of the
+    negatives listed with it: every negative that touches it or comes within
+    ``reach`` of it, except the holes around it. Each island is filled back
+    on its own, so one island's holes never clear another island, and the
+    island loses the voxels it would lose with no hole around it. A section
+    with no island comes back empty and draws exactly as before.
 
         Params:
             pos (list): the point lists of the positive traces
             neg (list): the point lists of the negative traces
+            reach (float): how far a negative can be from an island and still
+                round onto the island's voxels; the diagonal of one voxel
+                when the caller rounds the points to a grid
         Returns:
-            (list): (points, fill) pairs in fill order
+            (list): (island points, [negative points]) pairs, in the order
+                of pos
     """
-    order = [(pts, True) for pts in pos] + [(pts, False) for pts in neg]
     if not pos or not neg:
-        return order
+        return []
 
     pos_polys = [_tracePolygon(pts) for pts in pos]
     neg_polys = [_tracePolygon(pts) for pts in neg]
-    neg_lines = [
-        None if poly is not None else _traceLine(pts)
+    neg_shapes = [
+        poly if poly is not None else _traceLine(pts)
         for poly, pts in zip(neg_polys, neg)
     ]
 
-    holes = range(len(neg))
-    seen = set()
-    # each level follows from the islands of the one before, so a set of
-    # islands that comes back is a cycle of crossing traces with no end;
-    # the walk stops there, and the count bound is a second safeguard
-    for _ in range(len(pos) + len(neg)):
-        islands = _matching(pos_polys, neg_polys, holes, _covers)
-        if not islands or tuple(islands) in seen:
-            break
-        seen.add(tuple(islands))
-        order.extend((pos[i], True) for i in islands)
-        inside = _matching(neg_polys, pos_polys, islands, _coversOrEquals)
-        across = _matching(neg_polys, pos_polys, islands, _overlaps)
-        along = _matching(neg_lines, pos_polys, islands, _intersects)
-        holes = sorted({*inside, *across, *along})
-        if not holes:
-            break
-        order.extend((neg[j], False) for j in holes)
+    holes = _pairs(pos_polys, neg_polys)
+    islands = [
+        i for i in sorted(holes)
+        if any(_covers(neg_polys[j], pos_polys[i]) for j in holes[i])
+    ]
+    if not islands:
+        return []
 
-    return order
+    near = _pairs([pos_polys[i] for i in islands], neg_shapes, reach)
+    return [
+        (pos[i], [
+            neg[j] for j in near.get(k, ())
+            if _cutsIsland(pos_polys[i], neg_shapes[j], reach)
+        ])
+        for k, i in enumerate(islands)
+    ]

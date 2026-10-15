@@ -36,7 +36,7 @@ qt_offscreen = os.getenv("QT_QPA_PLATFORM") == "offscreen"
 
 # Set to "1" by a caller that is driving the GUI with nobody at the keyboard: a
 # click-test harness, a screenshot script, a computer-use agent. See
-# `user_is_present`, the only reader.
+# `is_unattended`, the only reader.
 UNATTENDED_ENV_VAR = "PYRECON_UNATTENDED"
 
 
@@ -593,10 +593,26 @@ def user_is_present() -> bool:
     Both `qt_offscreen` and the environment variable are read at call time (a
     module global and an `os.environ` lookup, not default arguments) so a test
     can flip either to exercise the other branch.
+
+    False here does not yet mean nobody is there. Offscreen, or with no
+    `QApplication`, a person may still be at the terminal, so `notify` and
+    `notifyConfirm` ask on the console. Only `is_unattended()` rules that out.
     """
-    if os.environ.get(UNATTENDED_ENV_VAR) == "1":
+    if is_unattended():
         return False
     return bool(QApplication.instance()) and not qt_offscreen
+
+
+def is_unattended() -> bool:
+    """Whether the caller has said nobody is at the keyboard or the terminal.
+
+    True only for `PYRECON_UNATTENDED=1`. This is the stronger half of
+    `user_is_present()`: offscreen with the variable unset, a person may still
+    be at the terminal and the console prompts are theirs to answer. With it
+    set there is nobody to read stdin either, so a console prompt would wait
+    forever, or raise `EOFError` when stdin is closed.
+    """
+    return os.environ.get(UNATTENDED_ENV_VAR) == "1"
 
 
 def notify(message, title="PyReconstruct"):
@@ -616,11 +632,19 @@ def notify(message, title="PyReconstruct"):
     else:
 
         print(message)
-        input("Press Enter to continue...")
+        # nobody to press Enter: the notice is printed, and that is all of it
+        if not is_unattended():
+            input("Press Enter to continue...")
 
 
 def notifyConfirm(message, yn=False, title="Confirm"):
-    """Ask the user to confirm. Returns True if they accept (Yes / OK)."""
+    """Ask the user to confirm. Returns True if they accept (Yes / OK).
+
+    Unattended (`is_unattended()`), nobody can accept, so the answer is never
+    True: a yes/no question answers False without reading stdin. An OK/Cancel
+    question with no user present returns False (cancel) without asking at all,
+    unattended or not.
+    """
 
     if yn:
 
@@ -639,6 +663,11 @@ def notifyConfirm(message, yn=False, title="Confirm"):
         else:
 
             print(message)
+
+            if is_unattended():
+                print("There is nobody to answer this; answering no.")
+                return False
+
             return ask_yes_no()
         
     else:
@@ -654,6 +683,10 @@ def notifyConfirm(message, yn=False, title="Confirm"):
             )
             
             return response == QMessageBox.Ok
+
+        # Cancel, as False rather than a fall-through None: `randomizeProject`
+        # and `derandomizeProject` test `response == False`, and None passes it
+        return False
 
 
 def noUndoWarning():
@@ -774,6 +807,46 @@ def linkedUndoNotify(redo=False):
         return "cancel"
 
 
+VIEW_OFF_IMAGE_TITLE = "View Outside Image"
+VIEW_OFF_IMAGE_TEXT = "The saved view is outside the image, so the field looks black."
+VIEW_OFF_IMAGE_HOME = "Set view to image"
+VIEW_OFF_IMAGE_KEEP = "Keep saved view"
+
+
+def viewOffImageNotify(parent=None):
+    """Ask whether to set a saved view that shows none of the image to the
+    image. Returns True only when the user picks "Set view to image".
+
+    The saved view is the user's own, so anything short of that choice keeps
+    it: "Keep saved view", Escape and the close box all return False. With no
+    user present the answer is False for the same reason, and no dialog is
+    built. Built here rather than at the call site for the reason given in
+    `linkedUndoNotify`: tests replace the helper by name.
+
+        Params:
+            parent (QWidget): the window to center on; the first series opens
+                before `setMainWindow` runs, so the caller passes itself
+    """
+    if not user_is_present():
+        return False
+
+    mbox = QMessageBox(parent or mainwindow)
+    mbox.setWindowTitle(VIEW_OFF_IMAGE_TITLE)
+    mbox.setText(VIEW_OFF_IMAGE_TEXT)
+    home_bttn = mbox.addButton(VIEW_OFF_IMAGE_HOME, QMessageBox.AcceptRole)
+    keep_bttn = mbox.addButton(VIEW_OFF_IMAGE_KEEP, QMessageBox.RejectRole)
+    mbox.setDefaultButton(home_bttn)
+    mbox.setEscapeButton(keep_bttn)
+
+    mbox.exec()
+
+    clicked = mbox.clickedButton()
+    return (
+        clicked is not None and
+        mbox.buttonRole(clicked) == QMessageBox.AcceptRole
+    )
+
+
 def drawOutlinedText(
         painter : QPainter, 
         x : int, y : int, 
@@ -891,6 +964,12 @@ def getProgbar(text, cancel=True, maximum=100, window_modality=Qt.WindowModal):
                     0, maximum,
                     mainwindow if mainwindow is not None and mainwindow.isVisible() else None
                 )
+            # The text can name a series, a group or a branch, and Qt would
+            # draw one named "a<br>b" as markup. The label keeps this format
+            # through every later setLabelText.
+            label = progbar.findChild(QLabel)
+            if label is not None:
+                label.setTextFormat(Qt.PlainText)
             progbar.setMinimumDuration(0)
             progbar.setWindowTitle("PyReconstruct")
             progbar.setWindowModality(window_modality)
@@ -1208,9 +1287,9 @@ def ask_yes_no(prompt="Please enter y/[n]: "):
 def undo_chord() -> str:
     """The platform's undo keys, for user-facing text.
 
-    A confirm prompt told a macOS user "Ctrl+Z" (his click test,
-    2026-08-26); prose leads with the chord the reader actually has. The
-    CODE keeps Qt's stored Ctrl+ strings; only display strings come here.
+    A confirm prompt that says "Ctrl+Z" is wrong on macOS, so prose leads with
+    the chord the reader actually has. The CODE keeps Qt's stored Ctrl+
+    strings; only display strings come here.
     """
     import sys
     return "Cmd+Z" if sys.platform == "darwin" else "Ctrl+Z"

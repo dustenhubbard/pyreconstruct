@@ -1,0 +1,1564 @@
+"""``dev/assets/misc/crop_zarr.py`` runs from flags, without prompts or dialogs.
+
+With flags it opens a copy of the jser in a temp folder, prints the converter's
+``@@PROGRESS@@`` lines, and checks its inputs before it writes anything, so
+another program can call it. With no arguments it still asks the same four
+questions.
+
+Every run here is a subprocess, the way a wrapper program would call it.
+"""
+
+import importlib.util
+import json
+import ntpath
+import os
+import posixpath
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import numpy as np
+import pytest
+import zarr
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = REPO_ROOT / "dev" / "assets" / "misc" / "crop_zarr.py"
+SHAPES = REPO_ROOT / "dev" / "assets" / "checker" / "files" / "shapes1.jser"
+
+SCALES = {1: (400, 1000), 2: (200, 500)}
+OBJECT = "square"
+RADIUS = 0.2
+## microns per pixel at scale_1, so each image is 10 x 4 microns, y up from the bottom
+MAG = 0.01
+## the square on each section as (xmin, ymin, xmax, ymax) in microns
+SQUARES = {
+    0: (1.0, 1.0, 2.0, 1.5),  # inside the image
+    1: (-0.5, 3.5, 0.5, 4.5),  # over the top left corner
+    3: (9.5, -0.5, 10.5, 0.5),  # over the bottom right corner
+    4: (-3.0, 5.0, -1.0, 6.0),  # wholly outside, left of and above the image
+}
+## section 2 has no square, so it keeps its image inside the window of the
+## nearest section with one: 1 and 3 are both one away, and the earlier wins
+BLANK_SECTION = 2
+FILLED_FROM = {BLANK_SECTION: 1}
+## section 4's square is wholly outside its image, so no window keeps any of
+## its pixels and it keeps its full, uncropped image
+FULL_SECTION = 4
+## (top, bottom, left, right) rows and columns kept, worked out by hand from
+## SQUARES, RADIUS and MAG; sections not listed keep nothing
+KEPT = {
+    (1, 0): (230, 320, 80, 220),
+    (2, 0): (115, 160, 40, 110),
+    (1, 1): (0, 70, 0, 70),
+    (2, 1): (0, 35, 0, 35),
+    (1, 3): (330, 400, 930, 1000),
+    (2, 3): (165, 200, 465, 500),
+}
+
+
+def _env(**extra):
+    """The environment for a subprocess, with this tree first on the path.
+
+    The script's own folder heads its path and it appends its import root
+    after site-packages, so without this the interpreter's installed
+    PyReconstruct answers the import, which from a worktree sharing another
+    checkout's editable venv is that checkout's code.
+    """
+    path = os.pathsep.join(filter(None, [str(REPO_ROOT), os.environ.get("PYTHONPATH")]))
+    return {**os.environ, "PYTHONPATH": path, **extra}
+
+
+def _run(args, stdin=None, cwd=None):
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *map(str, args)],
+        input=stdin, capture_output=True, text=True, timeout=300,
+        cwd=str(cwd or REPO_ROOT), env=_env(),
+    )
+
+
+def test_subprocesses_import_this_tree(tmp_path):
+    """A script outside the repo, run the way _run runs one, imports this tree."""
+    probe = tmp_path / "probe.py"
+    probe.write_text("import PyReconstruct\nprint(PyReconstruct.__file__)\n")
+    result = subprocess.run(
+        [sys.executable, str(probe)], capture_output=True, text=True, timeout=120,
+        cwd=str(tmp_path), env=_env(),
+    )
+    assert result.returncode == 0, result.stderr
+    imported = Path(result.stdout.strip()).resolve()
+    assert imported.is_relative_to(REPO_ROOT), f"imported {imported}, not this tree"
+
+
+@pytest.fixture
+def case(tmp_path):
+    """A five-section series and a two-scale zarr of nonzero images."""
+    data = json.loads(SHAPES.read_text())
+    for snum, section in enumerate(data["sections"]):
+        section["mag"] = MAG
+        if snum == BLANK_SECTION:
+            del section["contours"][OBJECT]
+            continue
+        xmin, ymin, xmax, ymax = SQUARES[snum]
+        (trace,) = section["contours"][OBJECT]
+        trace[0] = [xmin, xmax, xmax, xmin]
+        trace[1] = [ymin, ymin, ymax, ymax]
+    src = tmp_path / "imgs.zarr"
+    data["series"]["src_dir"] = str(src)
+
+    series_dir = tmp_path / "series"
+    series_dir.mkdir()
+    jser = series_dir / "shapes.jser"
+    jser.write_text(json.dumps(data))
+
+    rng = np.random.default_rng(0)
+    root = zarr.open_group(str(src), mode="w")
+    for scale, shape in SCALES.items():
+        grp = root.create_group(f"scale_{scale}")
+        for section in data["sections"]:
+            grp.create_dataset(
+                section["src"], chunks=(64, 64),
+                data=rng.integers(1, 256, shape, dtype=np.uint8),
+            )
+    return jser, src
+
+
+def _window(scale, snum, fill=True, full=True):
+    """The window a section keeps: its own, with fill its neighbor's, and with
+    full the whole image for the section whose own window is empty."""
+    if full and snum == FULL_SECTION:
+        return (0, SCALES[scale][0], 0, SCALES[scale][1])
+    if fill and snum in FILLED_FROM:
+        snum = FILLED_FROM[snum]
+    return KEPT.get((scale, snum))
+
+
+def _expected(src, fill=True, full=True):
+    """The source images with everything outside each section's window set to zero."""
+    source = zarr.open_group(str(src), mode="r")
+    expected = {}
+    for scale in SCALES:
+        for snum in range(5):
+            name = f"shapes_{snum}.tif"
+            image = source[f"scale_{scale}"][name][:]
+            want = np.zeros_like(image)
+            window = _window(scale, snum, fill, full)
+            if window:
+                t, b, l, r = window
+                want[t:b, l:r] = image[t:b, l:r]
+            expected[(scale, name)] = want
+    return expected
+
+
+def _tree(folder):
+    """Every file under folder, by relative path, with its bytes."""
+    folder = Path(folder)
+    return {
+        str(p.relative_to(folder)): p.read_bytes()
+        for p in sorted(folder.rglob("*")) if p.is_file()
+    }
+
+
+def _arrays(out):
+    group = zarr.open_group(str(out), mode="r")
+    return {
+        (int(g.split("_")[1]), name): group[g][name][:]
+        for g in group.group_keys()
+        for name in group[g].array_keys()
+    }
+
+
+def _hidden_dirs(folder):
+    return [p.name for p in Path(folder).iterdir() if p.name.startswith(".")]
+
+
+def test_flags_crop_without_prompts(case):
+    jser, src = case
+    source_before = _tree(src)
+    out = jser.parent.parent / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out,
+    ], stdin="")
+
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.splitlines()
+    assert lines.count("@@PROGRESS@@ TOTAL 5") == 1
+    assert [l for l in lines if l.startswith("@@PROGRESS@@ STEP")] == [
+        f"@@PROGRESS@@ STEP {i} 5" for i in range(1, 6)
+    ]
+    assert [l for l in lines if l.startswith("Cropped section")] == [
+        f"Cropped section {n}" for n in range(5)
+    ]
+    assert lines[-1] == f"Crop complete: {out}"
+    assert lines[-2] == f"Log: {out / 'crop_log.txt'}"
+
+    got = _arrays(out)
+    want = _expected(src)
+    assert got.keys() == want.keys()
+    for key in want:
+        np.testing.assert_array_equal(got[key], want[key], err_msg=str(key))
+    assert _tree(src) == source_before
+
+    ## nothing left beside the jser, and the default output was not made
+    assert _hidden_dirs(jser.parent) == []
+    assert sorted(p.name for p in jser.parent.iterdir()) == ["shapes.jser"]
+    assert not (src.parent / f"imgs_{OBJECT}_crop.zarr").exists()
+
+
+def _stored_chunks(out, scale, name):
+    """Chunk files on disk for one output array (metadata files excluded)."""
+    folder = Path(out) / f"scale_{scale}" / name
+    return sorted(p.name for p in folder.iterdir() if not p.name.startswith("."))
+
+
+def _touched_chunks(window, size=64):
+    """The chunk file names a (top, bottom, left, right) window overlaps."""
+    t, b, l, r = window
+    return sorted(
+        f"{row}.{col}"
+        for row in range(t // size, (b - 1) // size + 1)
+        for col in range(l // size, (r - 1) // size + 1)
+    )
+
+
+def test_all_zero_chunks_are_not_written(case):
+    """Only chunks that hold part of the object are stored; the rest read as 0."""
+    jser, src = case
+    out = jser.parent.parent / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out,
+    ])
+    assert result.returncode == 0, result.stderr
+
+    group = zarr.open_group(str(out), mode="r")
+    for (scale, name), expected in _expected(src).items():
+        array = group[f"scale_{scale}"][name]
+        assert array.fill_value == 0
+        assert array.shape == SCALES[scale]
+        np.testing.assert_array_equal(array[:], expected, err_msg=str((scale, name)))
+
+        snum = int(name.split("_")[1].split(".")[0])
+        window = _window(scale, snum)
+        want = _touched_chunks(window) if window else []
+        assert _stored_chunks(out, scale, name) == want, (scale, name)
+        if snum != FULL_SECTION:
+            assert len(want) < array.nchunks
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_negative_zero_survives_in_float_images(case, tmp_path, dtype):
+    """A chunk of -0.0 equals the fill value 0 but is still written, sign and all."""
+    jser, src = case
+    floats = tmp_path / "floats.zarr"
+    root = zarr.open_group(str(floats), mode="w")
+    for scale, shape in SCALES.items():
+        grp = root.create_group(f"scale_{scale}")
+        for snum in range(5):
+            grp.create_dataset(
+                f"shapes_{snum}.tif", chunks=(64, 64), data=np.full(shape, -0.0, dtype),
+            )
+    out = tmp_path / "out.zarr"
+    ## every image is all -0.0, which counts as blank: crop it as it is
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS,
+        "--zarr", floats, "--out", out, "--keep-blank-images",
+    ])
+    assert result.returncode == 0, result.stderr
+
+    got = _arrays(out)
+    for scale, shape in SCALES.items():
+        for snum in range(5):
+            image = got[(scale, f"shapes_{snum}.tif")]
+            want = np.zeros(shape, dtype)  # +0.0 outside the window
+            window = _window(scale, snum)
+            if window:
+                t, b, l, r = window
+                want[t:b, l:r] = -0.0
+            assert image.dtype == dtype
+            np.testing.assert_array_equal(
+                np.signbit(image), np.signbit(want), err_msg=str((scale, snum)),
+            )
+
+
+def test_default_output_and_zarr_override(case, tmp_path):
+    jser, src = case
+    moved = tmp_path / "moved" / "imgs-zarr"
+    shutil.copytree(src, moved)
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", moved,
+    ])
+    assert result.returncode == 0, result.stderr
+    out = moved.parent / f"imgs_{OBJECT}_crop-zarr"
+    assert result.stdout.splitlines()[-1] == f"Crop complete: {out}"
+    assert _arrays(out).keys() == _expected(src).keys()
+
+
+def test_no_arguments_still_prompts(case):
+    """The four questions, answered on stdin, give the same crop as the flags."""
+    jser, src = case
+    flags_out = jser.parent.parent / "flags.zarr"
+    assert _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", flags_out,
+    ]).returncode == 0
+
+    result = _run([], stdin=f"{jser}\n{OBJECT}\n{RADIUS}\n\n")
+    assert result.returncode == 0, result.stderr
+    assert "Jser filepath:" in result.stdout
+    prompted = _arrays(src.parent / f"imgs_{OBJECT}_crop.zarr")
+    flagged = _arrays(flags_out)
+    assert prompted.keys() == flagged.keys()
+    for key in flagged:
+        np.testing.assert_array_equal(prompted[key], flagged[key])
+
+
+def test_wrong_object_lists_close_matches(case):
+    jser, src = case
+    out = jser.parent.parent / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", "sqare", "--radius", "1", "--out", out,
+    ])
+    assert result.returncode != 0
+    assert "'sqare' is not in this series" in result.stderr
+    assert "square" in result.stderr
+    assert not out.exists()
+    assert _hidden_dirs(jser.parent) == []
+
+
+@pytest.mark.parametrize("problem", [
+    "missing jser", "missing zarr", "not a zarr", "no scales", "out is source",
+])
+def test_bad_inputs_stop_before_writing(case, tmp_path, problem):
+    jser, src = case
+    out = tmp_path / "out.zarr"
+    args = {"--jser": jser, "--object": OBJECT, "--radius": "1", "--out": out}
+    if problem == "missing jser":
+        args["--jser"] = tmp_path / "nope.jser"
+    elif problem == "missing zarr":
+        args["--zarr"] = tmp_path / "nope.zarr"
+    elif problem == "not a zarr":
+        (tmp_path / "plain.zarr").mkdir()
+        args["--zarr"] = tmp_path / "plain.zarr"
+    elif problem == "no scales":
+        zarr.open_group(str(tmp_path / "flat.zarr"), mode="w").create_group("other")
+        args["--zarr"] = tmp_path / "flat.zarr"
+    elif problem == "out is source":
+        args["--out"] = str(src) + os.sep
+
+    result = _run([x for pair in args.items() for x in pair])
+    assert result.returncode != 0
+    assert result.stderr.strip().startswith("error:")
+    assert len(result.stderr.strip().splitlines()) == 1, result.stderr
+    assert "@@PROGRESS@@" not in result.stdout
+    assert not out.exists()
+    assert _hidden_dirs(jser.parent) == []
+
+
+def _load_script():
+    """Import crop_zarr.py in this process, to call its functions directly."""
+    spec = importlib.util.spec_from_file_location("crop_zarr", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _overlap_out(src, kind):
+    if kind == "inside source":
+        return src / "crop"
+    if kind == "inside a scale group":
+        return src / "scale_1" / "crop"
+    if kind == "holds the source":
+        return src.parent
+    if kind == "inside source through a link":
+        link = src.parent / "link"
+        link.symlink_to(src, target_is_directory=True)
+        return link / "crop"
+    if kind == "source with other letter case":
+        return src.parent / src.name.upper()
+    raise AssertionError(kind)
+
+
+@pytest.mark.parametrize("kind", [
+    "inside source", "inside a scale group", "holds the source",
+    "inside source through a link", "source with other letter case",
+])
+def test_output_overlapping_the_source_is_refused(case, kind):
+    """No output path that is, holds or sits inside the source is written."""
+    if kind == "inside source through a link" and sys.platform == "win32":
+        pytest.skip("symlinks need extra rights on Windows")
+    jser, src = case
+    out = _overlap_out(src, kind)
+    if kind == "source with other letter case" and not out.exists():
+        pytest.skip("case-sensitive file system")
+    source_before = _tree(src)
+    holder_before = sorted(p.name for p in src.parent.iterdir())
+
+    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
+    assert result.returncode == 1, result.stderr
+    assert "source zarr" in result.stderr
+    assert "@@PROGRESS@@" not in result.stdout
+    assert _tree(src) == source_before
+    assert sorted(p.name for p in src.parent.iterdir()) == holder_before
+
+
+@pytest.mark.parametrize("flag", ["--out", "--zarr"])
+@pytest.mark.parametrize("tail", [".", ".."])
+def test_dot_parts_after_a_name_are_refused(case, tmp_path, flag, tail):
+    """"link/." and "link/.." can name a different folder than zarr writes to."""
+    if sys.platform == "win32":
+        pytest.skip("symlinks need extra rights on Windows")
+    jser, src = case
+    (tmp_path / "outside" / "deep").mkdir(parents=True)
+    (src / "link").symlink_to(tmp_path / "outside" / "deep", target_is_directory=True)
+    source_before = _tree(src)
+    entries_before = sorted(p.name for p in src.iterdir())
+    outside_before = sorted(p.name for p in (tmp_path / "outside").iterdir())
+
+    path = f"{src}{os.sep}link{os.sep}{tail}"
+    if tail == "..":
+        path += f"{os.sep}crop" if flag == "--out" else f"{os.sep}imgs.zarr"
+    args = {"--out": tmp_path / "out.zarr", flag: path}
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS,
+        *[x for pair in args.items() for x in pair],
+    ])
+    assert result.returncode == 1, result.stderr
+    assert "without . or .. parts" in result.stderr
+    assert _tree(src) == source_before
+    assert sorted(p.name for p in src.iterdir()) == entries_before
+    assert sorted(p.name for p in (tmp_path / "outside").iterdir()) == outside_before
+    assert not (tmp_path / "out.zarr").exists()
+
+
+@pytest.mark.parametrize("path, ok", [
+    ("out.zarr", True),
+    ("./out.zarr", True),
+    ("../out.zarr", True),
+    ("./../data/out.zarr", True),
+    ("/data/out.zarr", True),
+    ("data/./out.zarr", False),
+    ("data/../out.zarr", False),
+    ("link/.", False),
+    ("link/..", False),
+    ("/data/link/../out.zarr", False),
+])
+def test_plain_path_rule(path, ok):
+    module = _load_script()
+    path = path.replace("/", os.sep)
+    if ok:
+        module.checkPlainPath(path, "output")
+    else:
+        with pytest.raises(module.CropError, match="without . or .. parts"):
+            module.checkPlainPath(path, "output")
+
+
+def test_leading_dot_parts_are_allowed(case, tmp_path):
+    """"./" and "../" start from the current folder and work as before."""
+    jser, src = case
+    work = tmp_path / "work"
+    work.mkdir()
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS,
+        "--zarr", f"..{os.sep}imgs.zarr", "--out", f".{os.sep}out.zarr",
+    ], cwd=work)
+    assert result.returncode == 0, result.stderr
+    got = _arrays(work / "out.zarr")
+    want = _expected(src)
+    assert got.keys() == want.keys()
+    for key in want:
+        np.testing.assert_array_equal(got[key], want[key], err_msg=str(key))
+
+
+def _make_existing(out, what):
+    """Put something at out; return the folder whose files must not change."""
+    if what == "zarr":
+        group = zarr.open_group(str(out), mode="w")
+        group.create_group("scale_1").create_dataset("old.tif", data=np.full((4, 4), 7, np.uint8))
+        return out
+    if what == "folder named like a zarr":
+        out.mkdir()
+        (out / ".zgroup").write_text("not really")
+        (out / "notes.txt").write_text("keep me")
+        return out
+    if what == "empty folder":
+        out.mkdir()
+        return out
+    if what == "file":
+        out.write_text("keep me")
+        return out.parent
+    if what == "link to a folder":
+        target = out.parent / "elsewhere"
+        target.mkdir()
+        (target / "keep.txt").write_text("keep me")
+        out.symlink_to(target, target_is_directory=True)
+        return target
+    raise AssertionError(what)
+
+
+@pytest.mark.parametrize("what", [
+    "zarr", "folder named like a zarr", "empty folder", "file", "link to a folder",
+])
+def test_existing_output_is_refused_and_left_alone(case, what):
+    """Nothing that already exists at the output path is changed or deleted."""
+    if what.startswith("link") and sys.platform == "win32":
+        pytest.skip("symlinks need extra rights on Windows")
+    jser, src = case
+    out = jser.parent.parent / "out.zarr"
+    kept = _make_existing(out, what)
+    before = _tree(kept)
+    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
+    assert result.returncode == 1, result.stderr
+    assert "already exists" in result.stderr and "Remove it" in result.stderr
+    assert "@@PROGRESS@@" not in result.stdout
+    assert _tree(kept) == before
+    assert os.path.lexists(out)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need extra rights on Windows")
+def test_dangling_output_link_is_refused(case, tmp_path):
+    """A link to a missing folder is an existing entry; its target is not made."""
+    jser, src = case
+    out = tmp_path / "out.zarr"
+    missing = tmp_path / "missing.zarr"
+    out.symlink_to(missing, target_is_directory=True)
+    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
+    assert result.returncode == 1, result.stderr
+    assert "already exists" in result.stderr
+    assert out.is_symlink()
+    assert not os.path.lexists(missing)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need extra rights on Windows")
+def test_dangling_output_link_given_with_a_dot_is_refused(case, tmp_path):
+    """"link/." is refused too, so the missing target is never made."""
+    jser, src = case
+    out = tmp_path / "out.zarr"
+    missing = tmp_path / "missing.zarr"
+    out.symlink_to(missing, target_is_directory=True)
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", f"{out}{os.sep}.",
+    ])
+    assert result.returncode == 1, result.stderr
+    assert "without . or .. parts" in result.stderr
+    assert out.is_symlink()
+    assert not os.path.lexists(missing)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need extra rights on Windows")
+def test_dangling_link_given_with_a_dot_to_the_crop_step_is_refused(tmp_path):
+    """cropSections applies the same rule when it is called directly."""
+    module = _load_script()
+    out = tmp_path / "out.zarr"
+    missing = tmp_path / "missing.zarr"
+    out.symlink_to(missing, target_is_directory=True)
+    with pytest.raises(module.CropError, match="without . or .. parts"):
+        module.cropSections(
+            None, OBJECT, 0, None, [1], f"{out}{os.sep}.", show_progress=False,
+        )
+    assert not os.path.lexists(missing)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need extra rights on Windows")
+def test_dangling_link_made_after_the_checks_is_refused(tmp_path):
+    """cropSections refuses a dangling link at the output path by itself."""
+    module = _load_script()
+    out = tmp_path / "out.zarr"
+    missing = tmp_path / "missing.zarr"
+    out.symlink_to(missing, target_is_directory=True)
+    with pytest.raises(module.CropError, match="already exists"):
+        module.cropSections(None, OBJECT, 0, None, [1], str(out), show_progress=False)
+    assert out.is_symlink()
+    assert not os.path.lexists(missing)
+
+
+def test_root_output_is_refused(case, tmp_path):
+    """A root keeps its meaning: "/" is not trimmed to "" (the current folder)."""
+    jser, src = case
+    work = tmp_path / "work"
+    work.mkdir()
+    root = Path(tmp_path.anchor)
+    result = _run(
+        ["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", root], cwd=work,
+    )
+    assert result.returncode == 1, result.stderr
+    assert "root" in result.stderr
+    assert list(work.iterdir()) == []
+
+
+@pytest.mark.parametrize("pathmod, given, kept", [
+    (posixpath, "/", "/"),
+    (posixpath, "//", "//"),
+    (posixpath, "/data/out.zarr/", "/data/out.zarr"),
+    (posixpath, "out.zarr//", "out.zarr"),
+    (ntpath, "C:\\", "C:\\"),
+    (ntpath, "C:/", "C:/"),
+    (ntpath, "C:\\work\\out.zarr\\", "C:\\work\\out.zarr"),
+    (ntpath, "\\\\server\\share\\", "\\\\server\\share\\"),
+])
+def test_trailing_separators_are_trimmed_but_roots_kept(pathmod, given, kept):
+    assert _load_script().trimSeparators(given, pathmod) == kept
+
+
+def test_output_made_after_the_checks_is_not_written_into(tmp_path):
+    """If another program makes the output between the checks and the crop,
+    the crop stops and leaves it alone."""
+    module = _load_script()
+    out = tmp_path / "out.zarr"
+    out.mkdir()
+    (out / "theirs.txt").write_text("keep me")
+    with pytest.raises(module.CropError, match="already exists"):
+        module.cropSections(None, OBJECT, 0, None, [1], str(out), show_progress=False)
+    assert _tree(out) == {"theirs.txt": b"keep me"}
+
+
+def test_prompts_refuse_an_existing_output(case):
+    jser, src = case
+    out = src.parent / f"imgs_{OBJECT}_crop.zarr"
+    _make_existing(out, "zarr")
+    before = _tree(out)
+    result = _run([], stdin=f"{jser}\n{OBJECT}\n{RADIUS}\n\n")
+    assert result.returncode == 1
+    assert "already exists" in result.stderr
+    assert _tree(out) == before
+
+
+def test_prompts_check_the_object_name(case):
+    jser, src = case
+    result = _run([], stdin=f"{jser}\nsqare\n{RADIUS}\n\n")
+    assert result.returncode == 1
+    assert "'sqare' is not in this series" in result.stderr
+    assert not (src.parent / "imgs_sqare_crop.zarr").exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="SIGTERM cannot be caught on Windows")
+def test_sigterm_removes_the_temp_copy(case, tmp_path):
+    """A SIGTERM mid-crop still removes the temp folder holding the jser copy.
+
+    The crop step is replaced with one that sends SIGTERM to its own process,
+    so the signal always arrives while the copy is open.
+    """
+    jser, src = case
+    temp_root = tmp_path / "temp"
+    temp_root.mkdir()
+    code = "\n".join([
+        "import importlib.util, os, signal, sys, time",
+        f"spec = importlib.util.spec_from_file_location('crop_zarr', {str(SCRIPT)!r})",
+        "mod = importlib.util.module_from_spec(spec)",
+        "spec.loader.exec_module(mod)",
+        "def interrupted(*args, **kwargs):",
+        f"    print('during:', sorted(os.listdir({str(temp_root)!r})), flush=True)",
+        "    os.kill(os.getpid(), signal.SIGTERM)",
+        "    time.sleep(30)",
+        "mod.cropSections = interrupted",
+        f"mod.runCli(mod.parseArgs(['--jser', {str(jser)!r}, '--object', {OBJECT!r},",
+        f"    '--radius', '1', '--out', {str(tmp_path / 'out.zarr')!r}]))",
+    ])
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=120,
+        cwd=str(REPO_ROOT), env=_env(TMPDIR=str(temp_root)),
+    )
+    assert result.returncode == 128 + 15, result.stderr
+    assert "'crop_zarr_" in result.stdout
+    assert [p for p in temp_root.iterdir() if p.name.startswith("crop_zarr_")] == []
+    assert _hidden_dirs(jser.parent) == []
+
+
+@pytest.mark.parametrize("args", [
+    ["--jser", "x.jser"],
+    ["--out", "x.zarr"],
+    ["--jser", "x.jser", "--object", "a", "--radius", "-1"],
+    ["--jser", "x.jser", "--object", "a", "--radius", "inf"],
+    ["--jser", "x.jser", "--object", "a", "--radius", "1", "--overwrite"],
+])
+def test_incomplete_or_bad_flags_are_refused(args):
+    result = _run(args)
+    assert result.returncode == 2
+    assert "Jser filepath" not in result.stdout
+
+
+def _zarr_of(folder, names):
+    """A two-scale zarr holding nonzero images under the given array names."""
+    root = zarr.open_group(str(folder), mode="w")
+    for scale, shape in SCALES.items():
+        grp = root.create_group(f"scale_{scale}")
+        for name in names:
+            grp.create_dataset(name, chunks=(64, 64), data=np.full(shape, 9, np.uint8))
+    return folder
+
+
+def _move_square(jser, square):
+    """Put the square at (xmin, ymin, xmax, ymax) microns on every section that has it."""
+    data = json.loads(jser.read_text())
+    xmin, ymin, xmax, ymax = square
+    for section in data["sections"]:
+        if OBJECT in section["contours"]:
+            (trace,) = section["contours"][OBJECT]
+            trace[0] = [xmin, xmax, xmax, xmin]
+            trace[1] = [ymin, ymin, ymax, ymax]
+    jser.write_text(json.dumps(data))
+
+
+def _assert_refused_before_writing(result, out, jser, fragment):
+    assert result.returncode == 1, result.stderr
+    assert result.stderr.strip().startswith("error:")
+    assert len(result.stderr.strip().splitlines()) == 1, result.stderr
+    assert fragment in result.stderr
+    assert "@@PROGRESS@@" not in result.stdout
+    assert "Crop complete" not in result.stdout
+    assert not os.path.lexists(out)
+    assert _hidden_dirs(jser.parent) == []
+
+
+def test_zarr_with_other_image_names_is_refused(case, tmp_path):
+    """No section's image name is in the zarr and no number tells the zarr's
+    images apart: stop, naming both sides, and write nothing.
+
+    Before this check every section was skipped and the run printed
+    "Crop complete" over an output holding only .zgroup.
+    """
+    jser, src = case
+    other = _zarr_of(tmp_path / "other.zarr",
+                     ["grid0_a.tif", "grid0_b.tif", "grid1_a.tif", "grid1_b.tif", "grid2_a.tif"])
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS,
+        "--zarr", other, "--out", out,
+    ])
+    _assert_refused_before_writing(result, out, jser, "No section image in this series is in the zarr")
+    assert "'shapes_0.tif'" in result.stderr
+    assert "'grid0_a.tif'" in result.stderr
+    assert ("no number tells the zarr's images apart: "
+            "'grid0_a.tif' and 'grid0_b.tif' both have the number 0") in result.stderr
+
+
+@pytest.mark.parametrize("where", ["outside every image", "only on sections without an image"])
+def test_crop_that_keeps_no_pixels_is_refused(case, tmp_path, where):
+    jser, src = case
+    args = ["--jser", jser, "--object", OBJECT, "--radius", RADIUS]
+    if where == "outside every image":
+        _move_square(jser, SQUARES[4])
+    else:
+        ## the zarr holds only the section without the square
+        args += ["--zarr", _zarr_of(tmp_path / "part.zarr", [f"shapes_{BLANK_SECTION}.tif"])]
+    out = tmp_path / "out.zarr"
+    result = _run([*args, "--out", out])
+    _assert_refused_before_writing(result, out, jser, "The crop would be empty")
+    assert "'square'" in result.stderr
+
+
+def test_missing_images_are_gray_in_the_nearest_window(case, tmp_path):
+    """A section whose image is not in the zarr gets one the size of the nearest
+    section with the square, 128 inside that section's window and 0 outside."""
+    jser, src = case
+    part = _zarr_of(tmp_path / "part.zarr", ["shapes_0.tif"])
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", part, "--out", out,
+    ])
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[-1] == f"Crop complete: {out}"
+    assert ("No image in the zarr for 4 sections (1-4): mid-gray (128) inside the window of "
+            f"the nearest section with {OBJECT}") in result.stdout
+    got = _arrays(out)
+    assert sorted(got) == [(scale, f"shapes_{n}.tif") for scale in SCALES for n in range(5)]
+    group = zarr.open_group(str(out), mode="r")
+    for scale, shape in SCALES.items():
+        t, b, l, r = KEPT[(scale, 0)]
+        kept = np.zeros(shape, np.uint8)
+        kept[t:b, l:r] = 9
+        np.testing.assert_array_equal(got[(scale, "shapes_0.tif")], kept)
+        gray = np.zeros(shape, np.uint8)
+        gray[t:b, l:r] = 128
+        for n in range(1, 5):
+            np.testing.assert_array_equal(got[(scale, f"shapes_{n}.tif")], gray, err_msg=str(n))
+            assert group[f"scale_{scale}"][f"shapes_{n}.tif"].fill_value == 0
+            assert _stored_chunks(out, scale, f"shapes_{n}.tif") == _touched_chunks((t, b, l, r))
+
+    log = (out / "crop_log.txt").read_text()
+    for n in range(1, 5):
+        assert f"\n  {n} shapes_{n}.tif: 0\n" in log
+
+
+def test_skip_missing_leaves_missing_images_out(case, tmp_path):
+    """--skip-missing keeps the old behavior: no image for a missing section."""
+    jser, src = case
+    part = _zarr_of(tmp_path / "part.zarr", ["shapes_0.tif"])
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", part, "--out", out,
+        "--skip-missing",
+    ])
+    assert result.returncode == 0, result.stderr
+    got = _arrays(out)
+    assert sorted(got) == [(1, "shapes_0.tif"), (2, "shapes_0.tif")]
+    for scale in SCALES:
+        t, b, l, r = KEPT[(scale, 0)]
+        assert got[(scale, "shapes_0.tif")][t:b, l:r].all()
+        assert got[(scale, "shapes_0.tif")].sum() == 9 * (b - t) * (r - l)
+    line = "No image in the zarr for 4 sections (1-4): left out of the crop (--skip-missing)."
+    assert line in result.stdout
+    assert line in (out / "crop_log.txt").read_text()
+
+
+def test_untraced_section_keeps_the_nearest_window(case):
+    """Section 2 has no square; it keeps its own image inside section 1's window
+    (1 and 3 are equally near, and the earlier wins), at every scale level."""
+    jser, src = case
+    out = jser.parent.parent / "out.zarr"
+    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
+    assert result.returncode == 0, result.stderr
+    source = zarr.open_group(str(src), mode="r")
+    got = _arrays(out)
+    name = f"shapes_{BLANK_SECTION}.tif"
+    for scale in SCALES:
+        image = source[f"scale_{scale}"][name][:]
+        t, b, l, r = KEPT[(scale, 1)]
+        assert got[(scale, name)][t:b, l:r].all()
+        np.testing.assert_array_equal(got[(scale, name)][t:b, l:r], image[t:b, l:r])
+        assert got[(scale, name)].sum() == image[t:b, l:r].sum()
+    summary = (f"No {OBJECT} on 1 section (2): each keeps its image inside the window of "
+               f"the nearest section with {OBJECT}.")
+    assert summary in result.stdout
+    log = (out / "crop_log.txt").read_text()
+    assert summary in log
+    assert f"Sections without {OBJECT} (section: the section whose window it kept)\n  2: 1\n" in log
+
+
+def test_blank_untraced_leaves_untraced_sections_black(case):
+    jser, src = case
+    out = jser.parent.parent / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out, "--blank-untraced",
+    ])
+    assert result.returncode == 0, result.stderr
+    got = _arrays(out)
+    want = _expected(src, fill=False)
+    assert got.keys() == want.keys()
+    for key in want:
+        np.testing.assert_array_equal(got[key], want[key], err_msg=str(key))
+    assert not got[(1, f"shapes_{BLANK_SECTION}.tif")].any()
+    assert f"No {OBJECT} on 1 section (2): left black (--blank-untraced)." in result.stdout
+
+
+def test_log_records_the_inputs_and_a_clean_run(case):
+    """Every run writes the log inside the output; a run with no gaps says so."""
+    jser, src = case
+    data = json.loads(jser.read_text())
+    (trace,) = data["sections"][0]["contours"][OBJECT]
+    data["sections"][BLANK_SECTION]["contours"][OBJECT] = [trace]
+    data["sections"][FULL_SECTION]["contours"][OBJECT] = [trace]
+    jser.write_text(json.dumps(data))
+    out = jser.parent.parent / "out.zarr"
+    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
+    assert result.returncode == 0, result.stderr
+    log = (out / "crop_log.txt").read_text().splitlines()
+    assert log[0].startswith("crop_zarr.py log, written ")
+    assert f"Series: {jser}" in log
+    assert f"Source zarr: {src}" in log
+    assert f"Output zarr: {out}" in log
+    assert f"Object: {OBJECT}" in log
+    assert f"Radius: {RADIUS:g} microns" in log
+    assert "Scale levels: 1, 2" in log
+    summary = log[log.index("Summary") + 1:]
+    assert summary == [
+        f"Cropped around {OBJECT}: 5 of 5 sections.",
+        f"Every section has {OBJECT} and its image in the zarr.",
+    ]
+    assert result.stdout.splitlines()[-4:-2] == summary
+    ## the log is a plain file: the crop still opens as a zarr with the same arrays
+    assert len(_arrays(out)) == 10
+
+
+def _version_of(script, **env):
+    """What a copy of the script at `script` says it is (toolVersion())."""
+    code = ("import importlib.util, sys; "
+            "spec = importlib.util.spec_from_file_location('crop_zarr', sys.argv[1]); "
+            "module = importlib.util.module_from_spec(spec); "
+            "spec.loader.exec_module(module); "
+            "print(module.toolVersion())")
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(script)],
+        capture_output=True, text=True, timeout=60, cwd=str(REPO_ROOT), env=_env(**env),
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+def test_the_screen_and_the_log_name_the_copy_of_the_script(case):
+    """The first line printed and a Tool line in the log say which copy of
+    crop_zarr.py ran. From a checkout that is its commit, so a crop made with
+    an old copy can be told from one made with the current one."""
+    jser, src = case
+    out = jser.parent.parent / "out.zarr"
+    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
+    assert result.returncode == 0, result.stderr
+    first = result.stdout.splitlines()[0]
+    commit = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "--short=12", "HEAD"],
+        capture_output=True, text=True, timeout=60,
+    ).stdout.strip()
+    if commit:
+        ## "(modified)" follows while the script has uncommitted edits
+        assert first.startswith(f"crop_zarr.py from checkout {commit}"), first
+    else:
+        assert first == "crop_zarr.py from unknown source"
+    log = (out / "crop_log.txt").read_text().splitlines()
+    assert f"Tool: {first}" in log
+    assert log.index(f"Tool: {first}") < log.index(f"Series: {jser}")
+
+
+def test_an_installed_copy_names_the_commit_in_its_source_file(tmp_path):
+    """Beside a SOURCE file, as an installer writes it, the script names the
+    fork commit from that file and does not ask git. A SOURCE
+    without a commit, or no SOURCE outside a checkout, gives "unknown source"
+    rather than no line."""
+    copy = tmp_path / "crop_zarr.py"
+    shutil.copy(SCRIPT, copy)
+    source = tmp_path / "SOURCE"
+    source.write_text("dustenhubbard/pyreconstruct "
+                      "49f3a7b58cedf12745b5089294aa58e08a2bd1f7 feat(dev): fills gaps (#848)\n")
+    ## GIT_DIR points at nothing, so git cannot answer for a parent folder
+    no_git = {"GIT_DIR": str(tmp_path / "no-such-repo")}
+    assert _version_of(copy, **no_git) == "dustenhubbard/pyreconstruct 49f3a7b58ced"
+    source.write_text("dustenhubbard/pyreconstruct (commit unknown)\n")
+    assert _version_of(copy, **no_git) == "unknown source"
+    ## bytes that are not UTF-8 are no commit either, not a crash
+    source.write_bytes(b"dustenhubbard/pyreconstruct \xff\xfe\n")
+    assert _version_of(copy, **no_git) == "unknown source"
+    source.unlink()
+    assert _version_of(copy, **no_git) == "unknown source"
+
+
+def test_a_checkout_whose_status_fails_is_not_called_clean(tmp_path):
+    """When git names the commit but cannot say whether the file is modified,
+    the version says so instead of dropping the marker."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, timeout=60)
+    copy = repo / "crop_zarr.py"
+    shutil.copy(SCRIPT, copy)
+    subprocess.run(["git", "-C", str(repo), "add", "crop_zarr.py"], check=True, timeout=60)
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x"],
+        check=True, timeout=60,
+    )
+    commit = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--short=12", "HEAD"],
+        capture_output=True, text=True, check=True, timeout=60,
+    ).stdout.strip()
+    assert _version_of(copy) == f"checkout {commit}"
+    copy.write_text(copy.read_text() + "\n# edited\n")
+    assert _version_of(copy) == f"checkout {commit} (modified)"
+    ## a corrupt index makes git status fail while rev-parse still answers
+    (repo / ".git" / "index").write_bytes(b"not an index")
+    assert _version_of(copy) == f"checkout {commit} (modified or not: unknown)"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the stand-in git is a shell script")
+def test_a_checkout_whose_status_hangs_keeps_the_commit(tmp_path):
+    """When git names the commit but status never answers (the script's five
+    second limit runs out), the commit git did name stays, with the marker,
+    rather than falling to "unknown source"."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_git = bin_dir / "git"
+    fake_git.write_text(
+        "#!/bin/sh\n"
+        "for arg; do\n"
+        "  case $arg in\n"
+        "    rev-parse) echo 0123456789ab; exit 0;;\n"
+        "    status) exec sleep 60;;\n"
+        "  esac\n"
+        "done\n"
+        "exit 1\n"
+    )
+    fake_git.chmod(0o755)
+    copy = tmp_path / "crop_zarr.py"
+    shutil.copy(SCRIPT, copy)
+    path = os.pathsep.join([str(bin_dir), os.environ.get("PATH", "")])
+    assert _version_of(copy, PATH=path) == "checkout 0123456789ab (modified or not: unknown)"
+
+
+def test_the_version_is_worked_out_once_per_run(tmp_path):
+    """The screen line and the log's Tool line come from one answer: a SOURCE
+    that changes under a running crop does not make them disagree."""
+    copy = tmp_path / "crop_zarr.py"
+    shutil.copy(SCRIPT, copy)
+    source = tmp_path / "SOURCE"
+    source.write_text("dustenhubbard/pyreconstruct 0123456789abcdef0123456789abcdef01234567 one\n")
+    code = ("import importlib.util, pathlib, sys; "
+            "spec = importlib.util.spec_from_file_location('crop_zarr', sys.argv[1]); "
+            "module = importlib.util.module_from_spec(spec); "
+            "spec.loader.exec_module(module); "
+            "first = module.toolVersion(); "
+            "pathlib.Path(sys.argv[2]).write_text(sys.argv[3]); "
+            "print(first); print(module.toolVersion())")
+    changed = "dustenhubbard/pyreconstruct fedcba9876543210fedcba9876543210fedcba98 two\n"
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(copy), str(source), changed],
+        capture_output=True, text=True, timeout=60, cwd=str(REPO_ROOT), env=_env(),
+    )
+    assert result.returncode == 0, result.stderr
+    first, second = result.stdout.splitlines()
+    assert first == "dustenhubbard/pyreconstruct 0123456789ab"
+    assert second == first
+
+
+## the zarr names of some real series: the section number, then the grid
+GRID_NAMES = ["000_shapes_grid000.tif", "001_shapes_grid01_sec01.tif", "002_shapes_grid01_sec02.tif",
+              "003_shapes_grid02_sec01.tif", "004_shapes_grid02_sec02.tif"]
+
+
+def _renamed_copy(src, folder, names):
+    """A copy of the case's zarr with shapes_<n>.tif renamed to names[n]."""
+    shutil.copytree(src, folder)
+    for scale in SCALES:
+        for n, name in enumerate(names):
+            (folder / f"scale_{scale}" / f"shapes_{n}.tif").rename(folder / f"scale_{scale}" / name)
+    return folder
+
+
+def test_names_are_matched_by_number(case, tmp_path):
+    """No series name is in the zarr, but the first number in each zarr name is
+    the number in one series name, one each: crop as if the names matched,
+    under the series' names."""
+    jser, src = case
+    grid = _renamed_copy(src, tmp_path / "grid.zarr", GRID_NAMES)
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", grid, "--out", out,
+    ])
+    assert result.returncode == 0, result.stderr
+    got = _arrays(out)
+    want = _expected(src)
+    assert got.keys() == want.keys()
+    for key in want:
+        np.testing.assert_array_equal(got[key], want[key], err_msg=str(key))
+    assert ("Image names: no series name is in the zarr, so each section uses the zarr image "
+            "with the same number as its own image ('000_shapes_grid000.tif' for 'shapes_0.tif'), "
+            "by the first number in the zarr's names and the first in the series'. "
+            "The crop uses the series' names.") in result.stdout
+    log = (out / "crop_log.txt").read_text()
+    assert "Image names (section: zarr image -> crop image)\n" in log
+    for n, name in enumerate(GRID_NAMES):
+        assert f"\n  {n}: {name} -> shapes_{n}.tif\n" in log
+
+
+@pytest.mark.parametrize("names, reason", [
+    (GRID_NAMES[:4], "the zarr's 4 images are numbered 0-3, and the series' 5 image names 0-4"),
+    ([f"00{n + 1}_grid.tif" for n in range(5)],
+     "the zarr's 5 images are numbered 1-5, and the series' 5 image names 0-4"),
+    (GRID_NAMES[:4] + ["0003_extra.tif"],
+     "no number tells the zarr's images apart: "
+     "'0003_extra.tif' and '003_shapes_grid02_sec01.tif' both have the number 3"),
+    (GRID_NAMES[:4] + ["grid.tif"], "no number tells the zarr's images apart: 'grid.tif' has no number"),
+    ([f"s{n}_g{4 - n}.tif" for n in range(5)],
+     "the first and the last number in the names both fit and pair the images differently"),
+])
+def test_unclear_number_matches_are_refused(case, tmp_path, names, reason):
+    """A match by number is made only when it is one image per section, exactly."""
+    jser, src = case
+    other = _zarr_of(tmp_path / "other.zarr", names)
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", other, "--out", out,
+    ])
+    _assert_refused_before_writing(result, out, jser, "No section image in this series is in the zarr")
+    assert f"They cannot be matched by number: {reason}" in result.stderr
+
+
+def test_number_match_needs_the_same_names_at_every_scale(case, tmp_path):
+    jser, src = case
+    grid = _renamed_copy(src, tmp_path / "grid.zarr", GRID_NAMES)
+    (grid / "scale_2" / GRID_NAMES[4]).rename(grid / "scale_2" / "004_other.tif")
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", grid, "--out", out,
+    ])
+    _assert_refused_before_writing(result, out, jser, "scale_2 holds other image names than scale_1")
+
+
+def test_number_match_needs_unique_series_names(case, tmp_path):
+    """The crop is written under the series' names, so two sections cannot share one."""
+    jser, src = case
+    data = json.loads(jser.read_text())
+    data["sections"][4]["src"] = "shapes_3.tif"
+    jser.write_text(json.dumps(data))
+    grid = _renamed_copy(src, tmp_path / "grid.zarr", GRID_NAMES)
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", grid, "--out", out,
+    ])
+    _assert_refused_before_writing(
+        result, out, jser, "two sections in the series use the image name 'shapes_3.tif'")
+
+
+def test_exact_names_turns_number_matching_off(case, tmp_path):
+    jser, src = case
+    grid = _renamed_copy(src, tmp_path / "grid.zarr", GRID_NAMES)
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", grid, "--out", out,
+        "--exact-names",
+    ])
+    _assert_refused_before_writing(
+        result, out, jser, "They cannot be matched by number: --exact-names is set.")
+
+
+def test_prompts_refuse_an_empty_crop(case, tmp_path):
+    """The no-argument path stops with the same error and makes no default output."""
+    jser, src = case
+    other = _zarr_of(tmp_path / "other.zarr", ["000_grid00.tif"])
+    result = _run([], stdin=f"{jser}\n{OBJECT}\n{RADIUS}\n{other}\n")
+    assert result.returncode == 1, result.stderr
+    assert "No section image in this series is in the zarr" in result.stderr
+    assert not (tmp_path / f"other_{OBJECT}_crop.zarr").exists()
+    assert not (src.parent / f"imgs_{OBJECT}_crop.zarr").exists()
+
+
+def test_image_missing_at_one_scale_is_gray_there_only(case, tmp_path):
+    """shapes_1.tif is only in scale_1: it is cropped there and gray in scale_2.
+
+    A neighbor must have its image at every scale level, so section 2 (no
+    square) takes section 3's window, not section 1's.
+    """
+    jser, src = case
+    part = tmp_path / "part.zarr"
+    shutil.copytree(src, part)
+    shutil.rmtree(part / "scale_2" / "shapes_1.tif")
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", part, "--out", out,
+    ])
+    assert result.returncode == 0, result.stderr
+    source = zarr.open_group(str(src), mode="r")
+    got = _arrays(out)
+    assert len(got) == 10
+
+    want = _expected(src)
+    np.testing.assert_array_equal(got[(1, "shapes_1.tif")], want[(1, "shapes_1.tif")])
+    t, b, l, r = KEPT[(2, 0)]
+    gray = np.zeros(SCALES[2], np.uint8)
+    gray[t:b, l:r] = 128
+    np.testing.assert_array_equal(got[(2, "shapes_1.tif")], gray)
+
+    for scale in SCALES:
+        image = source[f"scale_{scale}"]["shapes_2.tif"][:]
+        t, b, l, r = KEPT[(scale, 3)]
+        kept = np.zeros_like(image)
+        kept[t:b, l:r] = image[t:b, l:r]
+        np.testing.assert_array_equal(got[(scale, "shapes_2.tif")], kept, err_msg=str(scale))
+
+    log = (out / "crop_log.txt").read_text()
+    assert "\n  1 shapes_1.tif: 0 (scale_2 only)\n" in log
+    assert "\n  2: 3\n" in log
+
+
+def test_no_complete_neighbor_falls_back_to_the_full_image(case, tmp_path):
+    """No section with the square has its image at every scale level, so there
+    is nothing to borrow: an untraced section keeps its full image, missing
+    images are left out, and the log says why."""
+    jser, src = case
+    part = tmp_path / "part.zarr"
+    shutil.copytree(src, part)
+    for n in (0, 1, 3, 4):
+        shutil.rmtree(part / "scale_2" / f"shapes_{n}.tif")
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", part, "--out", out,
+    ])
+    assert result.returncode == 0, result.stderr
+    got = _arrays(out)
+    assert sorted(got) == sorted(
+        [(1, f"shapes_{n}.tif") for n in range(5)] + [(2, "shapes_2.tif")]
+    )
+    ## with nothing to borrow, section 2 keeps its full image
+    source = zarr.open_group(str(src), mode="r")
+    for scale in SCALES:
+        np.testing.assert_array_equal(
+            got[(scale, "shapes_2.tif")], source[f"scale_{scale}"]["shapes_2.tif"][:])
+    reason = (f"no section with {OBJECT} has a window that keeps pixels "
+              f"and its image at every scale level")
+    assert "No usable window on 2 sections (2, 4): each keeps its full, uncropped image." in result.stdout
+    assert f"\n  2: {reason}\n" in (out / "crop_log.txt").read_text()
+    assert f"No image in the zarr for 4 sections (0-1, 3-4): left out of the crop, because {reason}." in result.stdout
+
+
+def test_window_outside_the_image_keeps_the_full_image(case):
+    """Section 4's square is wholly outside its image: its full image is kept,
+    at every scale level, and the log says why."""
+    jser, src = case
+    out = jser.parent.parent / "out.zarr"
+    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
+    assert result.returncode == 0, result.stderr
+    source = zarr.open_group(str(src), mode="r")
+    got = _arrays(out)
+    name = f"shapes_{FULL_SECTION}.tif"
+    for scale in SCALES:
+        np.testing.assert_array_equal(got[(scale, name)], source[f"scale_{scale}"][name][:])
+    summary = "No usable window on 1 section (4): each keeps its full, uncropped image."
+    assert summary in result.stdout
+    log = (out / "crop_log.txt").read_text()
+    assert summary in log
+    assert ("Sections that kept the full image (section: why no window kept pixels)\n"
+            "  4: its trace's window is outside its image\n") in log
+    assert f"Cropped around {OBJECT}: 3 of 5 sections." in log
+
+
+def test_blank_failed_leaves_the_section_black(case):
+    jser, src = case
+    out = jser.parent.parent / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out, "--blank-failed",
+    ])
+    assert result.returncode == 0, result.stderr
+    got = _arrays(out)
+    want = _expected(src, full=False)
+    assert got.keys() == want.keys()
+    for key in want:
+        np.testing.assert_array_equal(got[key], want[key], err_msg=str(key))
+    assert not got[(1, f"shapes_{FULL_SECTION}.tif")].any()
+    assert "No usable window on 1 section (4): left black (--blank-failed)." in result.stdout
+
+
+def _set_mag(jser, snum, mag):
+    data = json.loads(jser.read_text())
+    data["sections"][snum]["mag"] = mag
+    jser.write_text(json.dumps(data))
+
+
+def test_borrowed_window_outside_the_image_keeps_the_full_image(case):
+    """Section 2 borrows section 1's window, but at its own (wrong) mag that
+    window rounds to nothing on its image, so it keeps its full image."""
+    jser, src = case
+    _set_mag(jser, BLANK_SECTION, 1000.0)
+    out = jser.parent.parent / "out.zarr"
+    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
+    assert result.returncode == 0, result.stderr
+    source = zarr.open_group(str(src), mode="r")
+    got = _arrays(out)
+    name = f"shapes_{BLANK_SECTION}.tif"
+    for scale in SCALES:
+        np.testing.assert_array_equal(got[(scale, name)], source[f"scale_{scale}"][name][:])
+    assert "No usable window on 2 sections (2, 4): each keeps its full, uncropped image." in result.stdout
+    assert "\n  2: the window of section 1 is outside its image\n" in (out / "crop_log.txt").read_text()
+
+
+def test_zero_mag_keeps_the_full_image(case):
+    """A mag of 0 on a traced section cannot place a window; that section keeps
+    its full image and the rest crop as usual."""
+    jser, src = case
+    _set_mag(jser, 3, 0)
+    out = jser.parent.parent / "out.zarr"
+    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
+    assert result.returncode == 0, result.stderr
+    source = zarr.open_group(str(src), mode="r")
+    got = _arrays(out)
+    for scale in SCALES:
+        np.testing.assert_array_equal(
+            got[(scale, "shapes_3.tif")], source[f"scale_{scale}"]["shapes_3.tif"][:])
+        want = _expected(src)
+        np.testing.assert_array_equal(got[(scale, "shapes_0.tif")], want[(scale, "shapes_0.tif")])
+    assert "No usable window on 2 sections (3-4): each keeps its full, uncropped image." in result.stdout
+    assert ("\n  3: its magnification or trace is not a usable number (a mag of 0, for example)\n"
+            in (out / "crop_log.txt").read_text())
+
+
+def test_neighbor_needs_a_window_that_keeps_pixels(case, tmp_path):
+    """shapes_3.tif is missing. Section 4 is nearer, but its window is outside
+    its image, so the gray uses section 1's window instead."""
+    jser, src = case
+    part = tmp_path / "part.zarr"
+    shutil.copytree(src, part)
+    for scale in SCALES:
+        shutil.rmtree(part / f"scale_{scale}" / "shapes_3.tif")
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", part, "--out", out,
+    ])
+    assert result.returncode == 0, result.stderr
+    got = _arrays(out)
+    for scale, shape in SCALES.items():
+        t, b, l, r = KEPT[(scale, 1)]
+        gray = np.zeros(shape, np.uint8)
+        gray[t:b, l:r] = 128
+        np.testing.assert_array_equal(got[(scale, "shapes_3.tif")], gray, err_msg=str(scale))
+    assert "\n  3 shapes_3.tif: 1\n" in (out / "crop_log.txt").read_text()
+
+
+@pytest.mark.parametrize("names", [
+    [f"W2Q_00{n}.tif" for n in range(5)],  # the first number repeats; the last is the key
+    [f"s1{n}_00{n}.tif" for n in range(5)],  # both fit; only the last has the series' numbers
+    [f"W2Q.00{n}" for n in range(5)],  # no file extension: ".004" is the number
+])
+def test_trailing_numbers_are_matched(case, tmp_path, names):
+    """The lab's CODE_000.tif and CODE.000 names carry the number at the end."""
+    jser, src = case
+    other = _renamed_copy(src, tmp_path / "other.zarr", names)
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", other, "--out", out,
+    ])
+    assert result.returncode == 0, result.stderr
+    got = _arrays(out)
+    want = _expected(src)
+    assert got.keys() == want.keys()
+    for key in want:
+        np.testing.assert_array_equal(got[key], want[key], err_msg=str(key))
+    assert "by the last number in the zarr's names" in result.stdout
+
+
+def _swap_sources(jser, a, b):
+    """Swap two sections' image names, as reordering sections does."""
+    data = json.loads(jser.read_text())
+    sections = data["sections"]
+    sections[a]["src"], sections[b]["src"] = sections[b]["src"], sections[a]["src"]
+    jser.write_text(json.dumps(data))
+
+
+def test_reordered_series_is_refused(case, tmp_path):
+    """Sections 0 and 1 hold each other's images. The number sets still agree,
+    so matching by section number would put each image under the other
+    section's traces; the crop refuses instead."""
+    jser, src = case
+    _swap_sources(jser, 0, 1)
+    grid = _renamed_copy(src, tmp_path / "grid.zarr", GRID_NAMES)
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", grid, "--out", out,
+    ])
+    _assert_refused_before_writing(
+        result, out, jser,
+        "the numbers in the series' image names differ from the section numbers on 2 sections "
+        "(0-1; section 0 uses 'shapes_1.tif'), so the series may have been reordered")
+
+
+def test_match_keys_on_the_series_image_name():
+    """The pure matcher pairs by the number in the series' own image name, and
+    reports the sections whose section number says otherwise."""
+    module = _load_script()
+    series_names = {0: "shapes_1.tif", 1: "shapes_0.tif", 2: "shapes_2.tif"}
+    match, reason = module.matchByNumber(series_names, GRID_NAMES[:3])
+    assert reason == ""
+    assert match["names"] == {
+        0: "001_shapes_grid01_sec01.tif", 1: "000_shapes_grid000.tif", 2: "002_shapes_grid01_sec02.tif",
+    }
+    assert match["renumbered"] == [0, 1]
+    assert (match["series"], match["zarr"]) == ("first", "first")
+
+
+@pytest.mark.parametrize("name, numbers", [
+    ("RHNGV_000.tif", [0]),
+    ("CSYSR.012.tif", [12]),
+    ("CODE.007", [7]),
+    ("000ZGBJY.tif", [0]),
+    ("001_RHNGV_grid01_sec01.tif", [1, 1, 1]),
+    ("img_5.jp2", [5]),
+    ("plain.tif", []),
+])
+def test_name_numbers(name, numbers):
+    assert _load_script().nameNumbers(name) == numbers
+
+
+def test_number_keys_ignore_padding():
+    keys, reason = _load_script().numberKeys(["001_a.tif", "1_b.tif"])
+    assert keys == {}
+    assert reason == "'001_a.tif' and '1_b.tif' both have the number 1"
+
+
+def _typed_zarr(folder, dtype, names):
+    """A two-scale zarr of the given image type holding only the named images."""
+    root = zarr.open_group(str(folder), mode="w")
+    for scale, shape in SCALES.items():
+        grp = root.create_group(f"scale_{scale}")
+        for name in names:
+            grp.create_dataset(name, chunks=(64, 64), data=np.ones(shape, dtype))
+    return folder
+
+
+def test_missing_image_in_a_16_bit_zarr_is_mid_gray(case, tmp_path):
+    """Mid-gray is half the type's range: 32768 for uint16, not 128."""
+    jser, src = case
+    part = _typed_zarr(tmp_path / "part.zarr", np.uint16, ["shapes_0.tif"])
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", part, "--out", out,
+    ])
+    assert result.returncode == 0, result.stderr
+    got = _arrays(out)
+    for scale, shape in SCALES.items():
+        t, b, l, r = KEPT[(scale, 0)]
+        gray = np.zeros(shape, np.uint16)
+        gray[t:b, l:r] = 32768
+        assert got[(scale, "shapes_1.tif")].dtype == np.uint16
+        np.testing.assert_array_equal(got[(scale, "shapes_1.tif")], gray)
+    assert "No image in the zarr for 4 sections (1-4): mid-gray (32768) inside" in result.stdout
+
+
+@pytest.mark.parametrize("dtype", [np.int8, np.bool_, np.float32])
+def test_missing_image_without_a_mid_gray_is_refused(case, tmp_path, dtype):
+    """Signed, bool and float images have no fixed mid-gray: 128 would be -128
+    in int8 and True in bool. Stop before writing, and point at --skip-missing."""
+    jser, src = case
+    part = _typed_zarr(tmp_path / "part.zarr", dtype, ["shapes_0.tif"])
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", part, "--out", out,
+    ])
+    _assert_refused_before_writing(
+        result, out, jser,
+        f"Section 1 has no image in the zarr, and a stand-in would be {np.dtype(dtype)} like "
+        "the zarr's images, which has no fixed mid-gray. Use --skip-missing to leave it out.")
+
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", part, "--out", out,
+        "--skip-missing",
+    ])
+    assert result.returncode == 0, result.stderr
+    assert sorted(_arrays(out)) == [(1, "shapes_0.tif"), (2, "shapes_0.tif")]
+
+
+@pytest.mark.parametrize("dtype, gray", [
+    (np.uint8, 128), (np.uint16, 32768), (np.uint32, 2 ** 31),
+    (np.int8, None), (np.int16, None), (np.bool_, None), (np.float32, None),
+])
+def test_mid_gray(dtype, gray):
+    assert _load_script().midGray(dtype) == gray
+
+
+def _blank_under_square(src, snum):
+    """Zero section snum's images inside its square's window, at every scale,
+    as a zarr that stored no chunks there reads."""
+    root = zarr.open_group(str(src), mode="r+")
+    for scale in SCALES:
+        t, b, l, r = KEPT[(scale, snum)]
+        root[f"scale_{scale}"][f"shapes_{snum}.tif"][t:b, l:r] = 0
+
+
+def test_image_all_zero_under_the_trace_is_gray(case):
+    """Section 1 has the square and an image, but the image is all 0 under it.
+    It is written mid-gray in the nearest other section's window (0, not
+    itself), and section 2 no longer borrows section 1's empty window."""
+    jser, src = case
+    _blank_under_square(src, 1)
+    out = jser.parent.parent / "out.zarr"
+    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
+    assert result.returncode == 0, result.stderr
+    source = zarr.open_group(str(src), mode="r")
+    got = _arrays(out)
+    for scale, shape in SCALES.items():
+        t, b, l, r = KEPT[(scale, 0)]
+        gray = np.zeros(shape, np.uint8)
+        gray[t:b, l:r] = 128
+        np.testing.assert_array_equal(got[(scale, "shapes_1.tif")], gray, err_msg=str(scale))
+        ## section 2 takes section 3's window: 1 is blank, so 3 is its nearest
+        image = source[f"scale_{scale}"]["shapes_2.tif"][:]
+        t, b, l, r = KEPT[(scale, 3)]
+        kept = np.zeros_like(image)
+        kept[t:b, l:r] = image[t:b, l:r]
+        np.testing.assert_array_equal(got[(scale, "shapes_2.tif")], kept, err_msg=str(scale))
+    summary = ("Image all 0 under square on 1 section (1): mid-gray (128) inside the window "
+               "of the nearest other section with square, at that section's image size.")
+    assert summary in result.stdout
+    log = (out / "crop_log.txt").read_text()
+    assert "\n  1 shapes_1.tif: 0\n" in log
+    assert "\n  2: 3\n" in log
+    assert f"Cropped around {OBJECT}: 2 of 5 sections." in log
+
+
+def test_keep_blank_images_crops_them_as_they_are(case):
+    jser, src = case
+    _blank_under_square(src, 1)
+    out = jser.parent.parent / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out, "--keep-blank-images",
+    ])
+    assert result.returncode == 0, result.stderr
+    got = _arrays(out)
+    want = _expected(src)
+    for key in want:
+        np.testing.assert_array_equal(got[key], want[key], err_msg=str(key))
+    assert not got[(1, "shapes_1.tif")].any()
+    assert "Image all 0" not in result.stdout
+
+
+def test_every_traced_image_all_zero_is_refused(case, tmp_path):
+    jser, src = case
+    for snum in (0, 1, 3):
+        _blank_under_square(src, snum)
+    out = tmp_path / "out.zarr"
+    result = _run(["--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out])
+    _assert_refused_before_writing(
+        result, out, jser,
+        "The crop would be empty: the image under 'square' is all 0 on every section with it "
+        "(0-1, 3). Use --keep-blank-images to crop it anyway.")
+
+
+def test_blank_under_reads_only_the_window():
+    """A nonzero pixel just outside the window does not count."""
+    module = _load_script()
+    group = zarr.group()
+    image = group.create_dataset("a", shape=(200, 200), chunks=(64, 64), dtype=np.uint8, fill_value=0)
+    image[0:10, 0:10] = 5
+    assert module.blankUnder(image, (10, 150, 10, 150))
+    image[149, 149] = 1
+    assert not module.blankUnder(image, (10, 150, 10, 150))
+
+
+def test_blank_image_with_skip_missing_is_cropped_as_it_is(case):
+    """With gray stand-ins off, a blank section is cropped as it is, and the
+    log says so."""
+    jser, src = case
+    _blank_under_square(src, 1)
+    out = jser.parent.parent / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--out", out, "--skip-missing",
+    ])
+    assert result.returncode == 0, result.stderr
+    assert not _arrays(out)[(1, "shapes_1.tif")].any()
+    assert "Image all 0 under square on 1 section (1): cropped as it is (--skip-missing)." in result.stdout
+
+
+def test_same_pairing_read_by_last_number_is_not_refused(case, tmp_path):
+    """A_10_0.tif ... A_14_4.tif against B_10_0.tif ... B_14_4.tif pair the same
+    way by the first number or the last. Only the last numbers the sections as
+    they are, so the crop uses that reading instead of refusing the series as
+    reordered."""
+    jser, src = case
+    data = json.loads(jser.read_text())
+    for n, section in enumerate(data["sections"]):
+        section["src"] = f"A_1{n}_{n}.tif"
+    jser.write_text(json.dumps(data))
+    other = _renamed_copy(src, tmp_path / "other.zarr", [f"B_1{n}_{n}.tif" for n in range(5)])
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", other, "--out", out,
+    ])
+    assert result.returncode == 0, result.stderr
+    got = _arrays(out)
+    for (scale, name), want in _expected(src).items():
+        n = int(name.split("_")[1].split(".")[0])
+        np.testing.assert_array_equal(got[(scale, f"A_1{n}_{n}.tif")], want, err_msg=name)
+    assert "by the last number in the zarr's names and the last in the series'" in result.stdout
+
+
+def test_blank_image_with_no_donor_says_why(case, tmp_path):
+    """Section 1 is all 0 under the square, and no other section with the square
+    has its image at every scale level, so nothing can lend a window. The log
+    gives that reason, not a flag that was never set."""
+    jser, src = case
+    part = tmp_path / "part.zarr"
+    shutil.copytree(src, part)
+    _blank_under_square(part, 1)
+    for n in (0, 3, 4):
+        shutil.rmtree(part / "scale_2" / f"shapes_{n}.tif")
+    out = tmp_path / "out.zarr"
+    result = _run([
+        "--jser", jser, "--object", OBJECT, "--radius", RADIUS, "--zarr", part, "--out", out,
+    ])
+    assert result.returncode == 0, result.stderr
+    line = ("Image all 0 under square on 1 section (1): cropped as it is, because no section "
+            "with square has a window that keeps pixels and its image at every scale level.")
+    assert line in result.stdout
+    assert line in (out / "crop_log.txt").read_text()
+    assert "--skip-missing" not in result.stdout

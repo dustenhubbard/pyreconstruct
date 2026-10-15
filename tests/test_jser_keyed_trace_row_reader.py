@@ -501,7 +501,7 @@ def test_the_undo_baseline_reads_a_keyed_section_file(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# the layer the brief did not name: the unpack
+# the remaining layer: the unpack
 # ---------------------------------------------------------------------------
 
 

@@ -264,7 +264,8 @@ def importSwiftTransforms(series: Series, project_fp: str, scale: int = 1, cal_g
     for section_num, section in series.enumerateSections(
         message="Importing transforms...",
         series_states=series_states,
-        breakable=False
+        breakable=False,
+        writes_after=True,
     ):
         if section_num in tforms:
             tform = tforms[section_num]

@@ -3,14 +3,15 @@ import sys
 import json
 import math
 from collections import namedtuple
-from typing import Dict, List, Union
+from typing import Any, Dict, List, Union
 
 import numpy as np
+from zarr.util import normalize_storage_path
 
 from .contour import Contour
 from .filters import passesFilters
 from .trace import Trace, normalizeObjectName
-from .flag import Flag
+from .flag import Flag, LegacyFlagIDs
 from .transform import Transform
 from .log import LogSetPair
 
@@ -122,7 +123,7 @@ StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 ##     datatypes/series.py              hideAllTraces         (in-place write)
 ##     datatypes/series.py              restoreObjectVisibility(in-place write)
 ##     datatypes/series.py              smoothObject          (in-place write)
-##     datatypes/series.py              deleteDuplicateTraces (in-place write)
+##     datatypes/series.py              combineDuplicateTraces (in-place write)
 ##     gui/main/field_widget_2_trace.py findFlag              (in-place write)
 ##     gui/main/field_widget_2_trace.py smoothTraces          (in-place write)
 ##     gui/main/field_widget_2_trace.py cutTrace's tag merge  (in-place write)
@@ -179,7 +180,7 @@ StoredTraceID = namedtuple("StoredTraceID", ("trace_id", "fill_mode_key"))
 ##
 ## **What that removes, precisely:** an out-of-class edit can no longer leave a
 ## section unsaveable, and can no longer abort a multi-section operation partway
-## through (`smoothObject` and `deleteDuplicateTraces` both call `save()` inside
+## through (`smoothObject` and `combineDuplicateTraces` both call `save()` inside
 ## their own loop). The thirteenth site, whenever it is found, is not a crash in
 ## a user's session and not a data-loss risk. It is also cheaper: rebuilding the
 ## busiest section of `autoseg745` costs about half what comparing it did.
@@ -647,7 +648,7 @@ class Section():
             section_data, n, stored_ids=stored_ids
         )
 
-        self.src = os.path.basename(section_data["src"])
+        self.src = Section.imageName(section_data["src"])
         self.bc_profiles = section_data["brightness_contrast_profiles"]
         self.mag = section_data["mag"]
         self.align_locked = section_data["align_locked"]
@@ -804,13 +805,61 @@ class Section():
         self.bc_profiles[self.series.bc_profile] = (b, c)
     
     @property
+    def zarr_key(self):
+        """This section's image name as zarr stores it inside a scale.
+
+        zarr turns a backslash into a slash, so an image named a\\b.png is
+        kept at scale_N/a/b.png. None for a name zarr refuses (a "." or ".."
+        part): zarr holds no array under it, and the folder path that name
+        spells can lead to a different image.
+        """
+        try:
+            return normalize_storage_path(self.src)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def imageName(src : str) -> str:
+        """The image name a section keeps: os.path.basename of the name given.
+
+        The series image folder (src_dir) is meant to be the one place a
+        folder is kept. Series exist whose names carry the folder the images
+        sat in where the series was made: the class series in
+        dev/assets/checker stores Cropped Images/d03/000ZGBJY.tif, and the
+        zarr made for it holds 000ZGBJY.tif. Keeping that folder would look up
+        an array the zarr does not have, so a/b.png is kept as b.png.
+
+        What counts as a folder is the host's rule. On Windows basename splits
+        on / and \\, so a\\b.png and C:\\scans\\b.png both become b.png. On
+        macOS and Linux it splits on / alone: those two names are kept whole,
+        and since zarr reads a backslash as a slash, a\\b.png there names the
+        nested array a/b.png (see zarr_key).
+
+            Params:
+                src (str): the image name as saved or typed
+            Returns:
+                (str): the name the section looks the image up by
+        """
+        return os.path.basename(src)
+
+    @property
     def src_fp(self):
         if self.series.src_dir.endswith("zarr"):
-            scales = self.zarr_scales
+            # always the full-resolution array: img_dims and the exports turn
+            # its pixels into field units with mag. A coarser scale is never
+            # substituted, since its size is rounded and coordinates made from
+            # it would be off; without a usable scale_1, readers get an error.
+            key = self.zarr_key
+            if key is None:
+                raise FileNotFoundError(
+                    f"zarr cannot hold an image named {self.src!r}"
+                )
+            if self.zarr_flat:  # the image itself is at the root
+                return os.path.join(self.series.src_dir, key)
             return os.path.join(
                 self.series.src_dir,
-                f"scale_{min(scales)}",
-                self.src
+                "scale_1",
+                key
             )
         else:
             return os.path.join(
@@ -824,16 +873,86 @@ class Section():
     
     @property
     def zarr_scales(self):
+        """The scales whose array for this section's image has a .zarray.
+
+        A conversion that stops partway can write a scale's chunks without its
+        .zarray, and zarr cannot open that array, so the scale is left out.
+        Empty when no scale has one, zarr refuses the name, or the name is
+        blank ("" or "/"); None when the images are not in a zarr. A blank
+        name would make the path scale_N/.zarray, which is an image named
+        scale_N at the root of a flat zarr, not this section's image.
+
+        An image in a flat zarr (see zarr_flat) has one scale, 1: the array at
+        the root.
+        """
         if self.series.src_dir.endswith("zarr"):
+            key = self.zarr_key
+            if not key:
+                return []
+            if self.zarr_flat:
+                return [1]
             return [
                 int(s.split("_")[1])
                 for s in os.listdir(self.series.src_dir)
                 if (
-                    s.startswith("scale_") and 
-                    s.split("_")[1].isnumeric() and 
-                    self.src in os.listdir(os.path.join(self.series.src_dir, s))
+                    s.startswith("scale_") and
+                    s.split("_")[1].isnumeric() and
+                    os.path.isfile(os.path.join(
+                        self.series.src_dir, s, key, ".zarray"
+                    ))
                 )
             ]
+
+    @property
+    def zarr_flat(self) -> bool:
+        """Whether this section's image is in a zarr of the first layout.
+
+        That layout kept each image as an array at the root, with no scale_N
+        groups. Its image is read where it is, as scale 1; nothing in the
+        zarr is moved or written. True only when all of these hold:
+
+        - the images are in a zarr and the name is one zarr accepts and is
+          not blank (see zarr_key);
+        - that name is an array at the root;
+        - the root has no scale level: a scale_N entry that is not an image
+          array. An image named scale_2 is an array and does not count.
+
+        A name that reaches into a scale (scale_1/a.png) is an array at that
+        path too, but its zarr has scale levels, so it is never read as a
+        flat image. Nor is a flat image kept under a folder named scale_N
+        (scale_2/a.png): on disk that zarr is the same as a scale-layout zarr
+        with no scale_1.
+        """
+        src_dir = self.series.src_dir
+        if not src_dir.endswith("zarr"):
+            return False
+        key = self.zarr_key
+        if not key:
+            return False
+        # one file check, false for a scale-layout zarr unless it also holds
+        # a copy at the root, so the root is listed only when it could matter
+        if not os.path.isfile(os.path.join(src_dir, key, ".zarray")):
+            return False
+        try:
+            return not zarrHasScaleLevels(src_dir)
+        except OSError:
+            return False
+
+    def zarrPath(self, scale : int) -> str:
+        """Where this section's image at one scale sits inside the zarr.
+
+        scale_N/<zarr_key>, or the bare zarr_key for scale 1 of a flat zarr
+        (see zarr_flat). Only meaningful when zarr_key is not None.
+
+            Params:
+                scale (int): the scale level, one of zarr_scales
+            Returns:
+                (str) the array's path from the zarr's root
+        """
+        key = self.zarr_key
+        if scale == 1 and self.zarr_flat:
+            return key
+        return f"scale_{scale}/{key}"
 
     @staticmethod
     def updateJSON(section_data, n, stored_ids=None):
@@ -1028,8 +1147,12 @@ class Section():
         # on every open. Flag.equals compares IDs and nothing else, so
         # Series.importFlags deduplicated on an identity that did not survive
         # the trip and duplicated every legacy flag it was asked to merge.
-        # See Flag.deriveID.
-        taken = set(
+        # See Flag.deriveID. One LegacyFlagIDs for the whole section keeps each
+        # repeated flag's salt progress, so a repeated flag no longer searches
+        # again from salt zero. Each flag costs one hash plus one per collision
+        # with an ID already taken, rather than n**2 / 2 for n identical flags,
+        # with the same IDs.
+        legacy_ids = LegacyFlagIDs(
             flag[0] for flag in section_data["flags"]
             if len(flag) == 7 and isinstance(flag[0], str)
         )
@@ -1040,8 +1163,7 @@ class Section():
                 # `flag_id`, not `id`: this local used to shadow the builtin for
                 # the whole of `updateJSON`, which the trace-id lift above needs
                 # in order to key rows on object identity.
-                flag_id = Flag.deriveID([n] + flag, taken)
-                taken.add(flag_id)
+                flag_id = legacy_ids.derive([n] + flag)
                 flag.insert(0, flag_id)
 
         # iterate through contours and remove whitespace
@@ -1188,7 +1310,7 @@ class Section():
         """
         if keyed_rows is None:
             keyed_rows = keyed_rows_default()
-        d = {}
+        d : dict[str, Any] = {}
         d["src"] = self.src
         d["brightness_contrast_profiles"] = self.bc_profiles
         d["mag"] = self.mag
@@ -1382,6 +1504,10 @@ class Section():
         # pin the two halves.
         self._rebuildColumnarStoreForSave()
 
+        # inside a pass over the section files, the field refreshes its own
+        # copies of this section from the file now (Series.passWroteSection)
+        self.series.passWroteSection(self)
+
     def tracesAsList(self) -> list[Trace]:
         """Return the trace dictionary as a list. Does NOT copy traces.
         
@@ -1412,6 +1538,9 @@ class Section():
     def tformsModified(self, scaling_only=False):
         if len(self.tforms_values_copy) != len(self.tforms):
             return True
+        # a renamed alignment keeps its matrix, so compare the names too
+        if not scaling_only and self.tforms_names_copy != list(self.tforms):
+            return True
         for t1, t2 in zip(self.tforms_values_copy, self.tforms.values()):
             if scaling_only:
                 if abs(t1.det - t2.det) > 1e-6:
@@ -1427,6 +1556,7 @@ class Section():
         self.removed_traces = []
         self.modified_contours = set()
         self.tforms_values_copy = [t.copy() for t in self.tforms.values()]
+        self.tforms_names_copy = list(self.tforms)
         self.flags_modified = False
 
     # --- the columnar dual write ---------------------------------------------
@@ -1487,7 +1617,7 @@ class Section():
     #   datatypes/series.py              Series.hideAllTraces
     #   datatypes/series.py              Series.restoreObjectVisibility
     #   datatypes/series.py              Series.smoothObject
-    #   datatypes/series.py              Series.deleteDuplicateTraces
+    #   datatypes/series.py              Series.combineDuplicateTraces
     #   gui/main/field_widget_2_trace.py FieldWidgetTrace.findFlag
     #   gui/main/field_widget_2_trace.py FieldWidgetTrace.smoothTraces
     #   gui/main/field_widget_2_trace.py FieldWidgetTrace.cutTrace
@@ -3216,7 +3346,34 @@ class Section():
         """Export untransformed section as png."""
 
         return export_png(self, png_fp, scale)
-        
+
+
+def zarrHasScaleLevels(zarr_dir : str) -> bool:
+    """Whether a zarr's root holds any scale level (scale_N folders).
+
+    False for a zarr in the first, flat layout, with each image at the root
+    (see Section.zarr_flat). Raises OSError when the folder cannot be listed.
+
+        Params:
+            zarr_dir (str): the zarr folder
+        Returns:
+            (bool) whether any root entry is a scale level
+    """
+    return any(_isScaleLevel(zarr_dir, n) for n in os.listdir(zarr_dir))
+
+
+def _isScaleLevel(zarr_dir : str, name : str) -> bool:
+    """Whether a zarr root entry is a scale level rather than an image.
+
+    The name test is the one Section.zarr_scales uses. An entry holding a
+    .zarray is an image array, never a scale level.
+    """
+    return (
+        name.startswith("scale_") and
+        name.split("_")[1].isnumeric() and
+        not os.path.isfile(os.path.join(zarr_dir, name, ".zarray"))
+    )
+
 
 class TransformsDict(dict):
     

@@ -3,18 +3,28 @@
 
 import math
 import shutil
+import struct
 import traceback
 
 from shiboken6 import isValid
+from PySide6.QtCore import QEvent
 
 from .main_imports import *
 
-from PyReconstruct.modules.datatypes.series import SeriesOpenError
+from PyReconstruct.modules.datatypes.section import Section, zarrHasScaleLevels
+from PyReconstruct.modules.backend.image_name_match import (
+    matchByNumber, zarrImageNames,
+)
+from PyReconstruct.modules.datatypes.series import (
+    SeriesClosedError,
+    SeriesOpenError,
+)
 from PyReconstruct.modules.backend.func.window_geometry import (
     default_window_rect,
     window_geometry_is_usable,
 )
 from .status_readout import FieldStatusReadout, StatusSegment
+from .wheel_steps import WheelSteps, zoom_factor
 from PyReconstruct.modules.constants.settings_domain import (
     copy_legacy_series_settings_once, domain_for, fold_series_settings_once,
 )
@@ -154,32 +164,142 @@ def _probeEntries(folder):
     return None
 
 
+## Linux: the inode flag a case-folding folder carries (chattr +F), read with
+## FS_IOC_GETFLAGS, which is _IOR('f', 1, long)
+_FS_CASEFOLD_FL = 0x40000000
+_FS_IOC_GETFLAGS = (2 << 30) | (struct.calcsize("l") << 16) | (ord("f") << 8) | 1
+## Linux: statfs f_type of the filesystems that fold case only in a folder
+## carrying +F, so a folder without it keeps case. Others can fold case
+## without the flag (vfat, exfat, ntfs3, a mounted share, xfs made with
+## ascii-ci), so the flag says nothing there.
+_LINUX_CASE_BY_FLAG_ONLY = {
+    0xEF53,       # ext2, ext3, ext4
+    0x9123683E,   # btrfs, which never folds case
+    0x01021994,   # tmpfs
+}
+## macOS: pathconf name for _PC_CASE_SENSITIVE; os.pathconf_names lacks it
+_PC_CASE_SENSITIVE = 11
+## Windows: FileCaseSensitiveInfo and its FILE_CS_FLAG_CASE_SENSITIVE_DIR
+_FILE_CASE_SENSITIVE_INFO = 23
+_FILE_CS_FLAG_CASE_SENSITIVE_DIR = 0x1
+
+
+def _askFolderCase(folder):
+    """Whether names inside a folder ignore case, as the system reports it.
+
+    Asks about the folder itself, never the one above it: Linux (chattr +F)
+    and Windows (per-folder case sensitivity on NTFS) set case per folder,
+    so an empty folder can fold case under a parent that does not, or the
+    reverse. Nothing is written to the folder.
+
+        Returns:
+            (bool or None): None if the system gives no answer
+    """
+    try:
+        if sys.platform == "darwin":
+            # case is set per volume, and this names the folder's volume
+            sensitive = os.pathconf(folder, _PC_CASE_SENSITIVE)
+            return {0: True, 1: False}.get(sensitive)
+        if sys.platform.startswith("linux"):
+            if _linuxFolderFlags(folder) & _FS_CASEFOLD_FL:
+                return True
+            if _linuxFsType(folder) in _LINUX_CASE_BY_FLAG_ONLY:
+                return False
+            return None
+        if sys.platform == "win32":
+            flags = _windowsFolderCaseFlags(folder)
+            if flags is None:
+                return None
+            return not flags & _FILE_CS_FLAG_CASE_SENSITIVE_DIR
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+    return None
+
+
+def _linuxFolderFlags(folder):
+    """The folder's inode flags (FS_IOC_GETFLAGS); OSError if it has none."""
+    import fcntl
+    fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NONBLOCK)
+    try:
+        buf = bytearray(8)
+        fcntl.ioctl(fd, _FS_IOC_GETFLAGS, buf, True)
+    finally:
+        os.close(fd)
+    return int.from_bytes(buf[:4], sys.byteorder)
+
+
+def _linuxFsType(folder):
+    """The statfs f_type of the folder's filesystem, or None."""
+    import ctypes
+    libc = ctypes.CDLL(None, use_errno=True)
+    buf = ctypes.create_string_buffer(256)  # struct statfs; f_type is first
+    if libc.statfs(os.fsencode(folder), buf) != 0:
+        return None
+    return ctypes.c_ulong.from_buffer(buf).value & 0xFFFFFFFF
+
+
+def _windowsFolderCaseFlags(folder):
+    """The folder's FileCaseSensitiveInfo flags on Windows, or None.
+
+    A volume that keeps no flag (FAT, exFAT, most shares) refuses the call,
+    which gives None.
+    """
+    import ctypes
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create = kernel32.CreateFileW
+    create.restype = wintypes.HANDLE
+    create.argtypes = (
+        wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+        wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+    )
+    get_info = kernel32.GetFileInformationByHandleEx
+    get_info.restype = wintypes.BOOL
+    get_info.argtypes = (
+        wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD,
+    )
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    handle = create(
+        folder,
+        0x80,          # FILE_READ_ATTRIBUTES
+        0x7,           # share read, write and delete
+        None,
+        3,             # OPEN_EXISTING
+        0x02000000,    # FILE_FLAG_BACKUP_SEMANTICS, needed to open a folder
+        None,
+    )
+    if handle in (None, wintypes.HANDLE(-1).value):
+        return None
+    try:
+        flags = wintypes.DWORD(0)
+        if not get_info(
+            handle, _FILE_CASE_SENSITIVE_INFO,
+            ctypes.byref(flags), ctypes.sizeof(flags),
+        ):
+            return None
+    finally:
+        kernel32.CloseHandle(handle)
+    return flags.value
+
+
 def _caseInsensitive(folder):
     """True if names inside a folder ignore case.
 
-    Probes inside the folder first, since folders above it can sit on
-    another volume. With no entry to probe, it looks the folder's own name
-    up in its parent in the other case, which tests the parent's volume:
-    the best available guess, wrong only when the folder is a mount point.
-    A name with no letters (2026) says nothing either, so it walks up one
-    folder at a time and asks the same of each.
+    Probes inside the folder first. With no entry to probe, it asks the
+    system about the folder itself. It never judges the folder by the one
+    above: a mounted drive sits on another volume, and on Linux and Windows
+    one folder can fold case while the folder holding it does not.
     """
     folder = os.path.realpath(folder)
-    while True:
-        found = _probeEntries(folder)
-        if found is not None:
-            return found
-        parent, name = os.path.split(folder)
-        swapped = name.swapcase()
-        if name and swapped != name:
-            return _sameDir(folder, os.path.join(parent, swapped))
-        if not name or parent == folder:
-            # Nothing on the way up could tell. Say case-insensitive: the
-            # caller then treats names differing only in case as one file,
-            # which can only refuse a save, never allow one over a series
-            # in the 3D scene.
-            return True
-        folder = parent
+    found = _probeEntries(folder)
+    if found is None:
+        found = _askFolderCase(folder)
+    if found is None:
+        # Nothing could tell. Say case-insensitive: the caller then treats
+        # names differing only in case as one file, which can only refuse a
+        # save, never allow one over a series in the 3D scene.
+        return True
+    return found
 
 
 def _samePath(a, b):
@@ -190,14 +310,15 @@ def _samePath(a, b):
     whose file is gone still matches itself under another spelling of its
     folder (/tmp and /private/tmp on macOS). Failing that, it compares the
     nearest folders that exist, and the names below them, ignoring case when
-    that folder's volume does (Data/B.jser and data/b.jser on macOS).
+    that folder does (Data/B.jser and data/b.jser on macOS).
     """
     if not a or not b:
         return False
     if _sameDir(a, b):
         return True
-    norm = lambda p: os.path.normcase(os.path.realpath(p))
-    if norm(a) == norm(b):
+    # exact, not normcase: on Windows that lowercases, and a folder there
+    # can be case-sensitive; names differing in case are judged below
+    if os.path.realpath(a) == os.path.realpath(b):
         return True
     a_dir, a_rest = _existingAncestor(a)
     b_dir, b_rest = _existingAncestor(b)
@@ -256,6 +377,7 @@ class MainWindow(QMainWindow):
         self.viewer                 =  None
         self.shortcuts_widget       =  None
         self.is_zooming             =  False
+        self.wheel_steps            =  WheelSteps()
         self.restart_mainwindow     =  False
         self._updater_pool          =  None   # in-flight update guard
         self._pending_installer     =  None   # launched on the accepted close
@@ -274,13 +396,13 @@ class MainWindow(QMainWindow):
         ## display, so it gets a permanent widget rather than a temporary
         ## message. Qt clears the temporary message on every status-tip event,
         ## and hovering a QAction with no status tip sends an empty one, which
-        ## is what used to blank the readout on a trip to the menu bar.
-        ## A NORMAL status-bar widget, not a permanent one, on his call
-        ## (2026-08-21): permanent widgets are right-anchored, which read as a
-        ## jarring change for no reason a regular user could see. A normal
-        ## widget sits on the left like the old readout did, and still fixes
-        ## the original blanking bug -- menu status-tip events clear the
-        ## TEMPORARY message, and the readout is a widget now, not a message.
+        ## is what used to blank the readout on a trip to the menu bar. A
+        ## NORMAL status-bar widget, not a permanent one: permanent widgets are
+        ## right-anchored, which read as a jarring change for no reason a
+        ## regular user could see. A normal widget sits on the left like the
+        ## old readout did, and still fixes the original blanking bug: menu
+        ## status-tip events clear the TEMPORARY message, and the readout is a
+        ## widget now, not a message.
         ## The one trade: while a real showMessage notice is up (the curation
         ## acknowledgment) Qt hides normal widgets, so the
         ## notice briefly takes the readout's place and the readout returns
@@ -294,7 +416,7 @@ class MainWindow(QMainWindow):
         self.status_readout = FieldStatusReadout()
         self.status_readout.lists_clicked.connect(self.toggleLists)
         self.status_readout.section_clicked.connect(self.sectionJumpFromStatusBar)
-        # right-click keeps the classic Go To Section dialog (his option 1)
+        # right-click keeps the classic Go To Section dialog
         self.status_readout.section_segment.right_clicked.connect(
             lambda: self.changeSection()
         )
@@ -339,11 +461,26 @@ class MainWindow(QMainWindow):
         self.applyUpdateCheckDefaultStartup()
 
         ## Background update check (frozen builds), once the window is up
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(2500, self.checkForUpdatesStartup)
+        self.update_check_timer = self._startupTimer(2500, self.checkForUpdatesStartup)
 
         ## First-launch / post-update "What's new" (once per version, dismissible)
-        QTimer.singleShot(750, self.showWhatsNewStartup)
+        self.whats_new_timer = self._startupTimer(750, self.showWhatsNewStartup)
+
+    def _startupTimer(self, msec, handler):
+        """Arm a startup handler on a single-shot timer this window owns.
+
+        A bare `QTimer.singleShot` belongs to no window and outlives one that
+        closes before it fires: after `Restart PyReconstruct`, or a close in
+        the first seconds, the handler still ran on the closed window while
+        the next one was on screen. Parented here so the timer dies with the
+        window, and kept as an attribute so `closeEvent` can stop it.
+        """
+        from PySide6.QtCore import QTimer
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(handler)
+        timer.start(msec)
+        return timer
 
     def _restoredGeometryIsUsable(self) -> bool:
         """Whether the just-restored geometry is usable on the current screens.
@@ -438,15 +575,14 @@ class MainWindow(QMainWindow):
         self.menusearchfield_act = MenuSearchField(self, self.helpmenu)
         first_help_action = self.helpmenu.actions()[0]
         self.helpmenu.insertAction(first_help_action, self.menusearchfield_act)
-        ## The "Search menus..." row itself comes OFF the menu (his
-        ## consolidation call, 2026-08-27): the row and the field said the
-        ## same thing twice, and the field now shows the chord at its right
-        ## edge. The action must outlive its row: newAction attached it to
-        ## this window besides the menu, so the remappable chord still fires
-        ## openMenuSearch with no visible row anywhere, and the shortcuts
-        ## dialog still lists and rebinds it by act_name. The definition
-        ## tuple stays so every rebuild keeps building the carrier. An
-        ## invisible row is no substitute: a setVisible(False) action's
+        ## The "Search menus..." row itself comes OFF the menu: the row and the
+        ## field said the same thing twice, and the field now shows the chord
+        ## at its right edge. The action must outlive its row: newAction
+        ## attached it to this window besides the menu, so the remappable chord
+        ## still fires openMenuSearch with no visible row anywhere, and the
+        ## shortcuts dialog still lists and rebinds it by act_name. The
+        ## definition tuple stays so every rebuild keeps building the carrier.
+        ## An invisible row is no substitute: a setVisible(False) action's
         ## shortcut goes dead (measured on this PySide6).
         self.helpmenu.removeAction(self.searchmenus_act)
         ## Off the menu, the carrier is also off clearMenuBar's teardown
@@ -488,7 +624,7 @@ class MainWindow(QMainWindow):
         self.toggleztraces_act.setChecked(bool(self.series.getOption("show_ztraces")))
 
         ## The What's-new popup toggle is the exception to the note above: the
-        ## dialog's "Don't show again" button can flip the stored preference
+        ## dialog's "Show this changelog window after each update?" box can flip the stored preference
         ## behind the menu's back, so it resyncs on every Help open besides the
         ## build-time seed. The connection is made per rebuild without
         ## disconnecting: clearMenuBar discards the previous helpmenu, and the
@@ -654,7 +790,10 @@ class MainWindow(QMainWindow):
 
         ## Undo/redo
         can_undo_3D, can_undo_2D, _ = self.field.series_states.canUndo(self.field.section.n)
-        self.undo_act.setEnabled(can_undo_3D or can_undo_2D)
+        # an open scissors cut has no undo state yet, but undo() finishes it
+        # and takes it back, so Undo is on for it on a section with no history
+        cut_open = self.field.is_scissoring and self.field.is_line_tracing
+        self.undo_act.setEnabled(can_undo_3D or can_undo_2D or cut_open)
         can_redo_3D, can_redo_2D, _ = self.field.series_states.canUndo(self.field.section.n, redo=True)
         self.redo_act.setEnabled(can_redo_3D or can_redo_2D)
 
@@ -794,8 +933,8 @@ class MainWindow(QMainWindow):
                 self,
                 "Images Not Found",
                 "Images not found.\nWould you like to locate them?",
-                QMessageBox.Yes,
-                QMessageBox.No
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes
             )
             if reply == QMessageBox.No:
                 return
@@ -810,12 +949,22 @@ class MainWindow(QMainWindow):
         self.series.src_dir = new_src_dir
         if self.field:
             self.field.reloadImage()
+            # the view may have been saved where the image is not
+            self.offerHomeIfViewOffImage()
         self.seriesModified(True)
+
+        # a zarr holding none of the series' image names may still be its
+        # zarr, with the images named another way
+        if (not self.field.section_layer.image_found and
+            self.field.section_layer.is_zarr_file and
+            user_is_present()):
+            self.offerZarrImageNames()
         
         # prompt user to scale zarr images if not scaled
         if (self.field.section_layer.image_found and
             self.field.section_layer.is_zarr_file and
             not self.field.section_layer.is_scaled and
+            not self._imagesAreFlatZarr() and
             user_is_present()):
             reply = QMessageBox.question(
                 self,
@@ -827,6 +976,108 @@ class MainWindow(QMainWindow):
             if reply == QMessageBox.Yes:
                 self.srcToZarr(create_new=False)
     
+    def _imagesAreFlatZarr(self) -> bool:
+        """Whether the series images are a zarr of the first, flat layout.
+
+        That layout keeps each image at the root, with no scale_N folders.
+        PyReconstruct shows it as it is (Section.zarr_flat), but the scale
+        update reads scale_1 and cannot run on it.
+        """
+        src_dir = self.series.src_dir
+        if not src_dir.endswith("zarr"):
+            return False
+        try:
+            return not zarrHasScaleLevels(src_dir)
+        except OSError:
+            return False
+
+    def offerZarrImageNames(self) -> bool:
+        """Offer the image names of the zarr the series points at.
+
+        For a zarr that holds none of the series' image names: when every
+        section pairs with one image there by the number in its image name,
+        the pairs and a few sections' traces over the proposed images are
+        shown, and on confirmation the names are applied to the open series
+        the way Edit all image sources does. The zarr is never changed. When
+        the names cannot be paired, a notice says why and nothing changes.
+
+            Returns:
+                (bool) True if the image names were changed
+        """
+        series = self.series
+        zarr_dir = series.src_dir
+        try:
+            zarr_names = zarrImageNames(zarr_dir)
+        except OSError:
+            return False
+        series_names = {
+            snum: Section.imageName(data["src"])
+            for snum, data in series.data["sections"].items()
+        }
+        if any(name in zarr_names for name in series_names.values()):
+            # some section has its image here: a missing image, not a naming
+            return False
+        zarr_name = os.path.basename(os.path.normpath(zarr_dir))
+        match, reason = matchByNumber(series_names, sorted(zarr_names))
+        if match is None:
+            notify(
+                f"No section image in this series is in {zarr_name}, and the "
+                f"names cannot be matched by number: {reason}.\n"
+                "The image names were not changed."
+            )
+            return False
+        dialog = MatchImageNamesDialog(self, series, series_names, match, zarr_dir)
+        if not dialog.exec():
+            return False
+        return self.setImageNames(
+            series, match["names"], f"Use the image names in {zarr_name}"
+        )
+
+    def setImageNames(self, series, names : dict, event : str = None) -> bool:
+        """Set the image name of every section in the open series.
+
+        The field is saved first, so the traces drawn since the last save
+        reach the files the pass reloads. Each section is written to the
+        series' working folder; the series file changes when the user saves.
+
+            Params:
+                series (Series): the series the names were chosen for
+                names (dict): section number: the new image name
+                event (str): the log entry, or None to log nothing
+            Returns:
+                (bool) True if the image names were changed
+        """
+        # the names are chosen in a dialog, and a .jser opened from the
+        # Finder meanwhile closes that series and opens another in its place
+        if series is not self.series:
+            notify(f"{series.name} was closed, so its image names were not changed.")
+            return False
+
+        # the loop reloads every section from disk and field.reload() swaps the
+        # disk copies into the field, so unsaved edits on the current and
+        # flickered sections must be written first or they are lost
+        self.saveAllData()
+
+        # writes_after: the window goes on to mark the series modified, and
+        # after a switch that is the series opened in its place
+        snum = None
+        for snum, section in self.series.enumerateSections(
+            message="Modifying section image sources...",
+            writes_after=True,
+        ):
+            section.src = Section.imageName(names[snum])
+            section.save()
+
+        if event:
+            self.series.addLog(None, snum, event)
+
+        self.field.reload()
+        self.field.reloadImage()
+
+        self.field.table_manager.updateSections(list(self.series.sections.keys()))
+        self.seriesModified(True)
+        return True
+
     def srcToZarr(self, create_new=True):
         """Convert the series images to scaled zarr."""
         if not self.field.section_layer.image_found:
@@ -841,6 +1092,15 @@ class MainWindow(QMainWindow):
             notify(
                 "Images are not in zarr format.\n"
                 "Please convert to zarr first."
+            )
+            return
+
+        elif not create_new and self._imagesAreFlatZarr():
+            # the converter reads scale_1, which this layout does not have
+            notify(
+                "This zarr uses the older layout, with its images at the "
+                "top level.\nPyReconstruct shows it as it is, but updating "
+                "image scales works only on a zarr with scale_N folders."
             )
             return
         
@@ -981,13 +1241,13 @@ class MainWindow(QMainWindow):
         """Reflect the stored What's-new popup preference on the Help toggle.
 
         Runs at menubar build and on every Help open (see createMenuBar): the
-        preference can change outside the menu, through the dialog's "Don't
-        show again" button, and a checkable that contradicts the stored state
-        would invert itself on the next click.
+        preference can change outside the menu, through the dialog's "Show
+        this changelog window after each update?" checkbox, and a checkable that
+        contradicts the stored state would invert itself on the next click.
 
-        Checked means the popup is OFF, matching the row's wording (his call,
-        2026-08-26): the tick and the stored suppression flag are the same
-        thing now, so the dialog's button and this row always agree.
+        Checked means the popup is OFF, matching the row's wording: the tick
+        and the stored suppression flag are the same thing now, so the dialog's
+        checkbox and this row always agree.
         """
         from PyReconstruct.modules.gui.main.first_launch import (
             WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT, whats_new_suppressed,
@@ -1040,9 +1300,9 @@ class MainWindow(QMainWindow):
     def toggleWhatsNewPopup(self):
         """Persist the Help-menu toggle: CHECKED means the popup is off.
 
-        The row reads "Turn off What's new pop-up", so a tick is the
-        disabled state (his call, 2026-08-26); the stored preference is the
-        suppression flag itself, and the two now match exactly.
+        The row reads "Turn off What's new pop-up", so a tick is the disabled
+        state; the stored preference is the suppression flag itself, and the
+        two now match exactly.
 
         Writes only that preference. The once-per-version record is
         deliberately untouched, so switching the popup back on hands back the
@@ -1054,6 +1314,8 @@ class MainWindow(QMainWindow):
         settings.setValue(
             WHATSNEW_SUPPRESS_KEY, self.togglewhatsnew_act.isChecked()
         )
+        from PyReconstruct.modules.gui.dialog.whats_new import sync_show_boxes
+        sync_show_boxes(self)
 
     def changeUsername(self, new_name : str = None):
         """Edit the login name used to track history.
@@ -1116,13 +1378,12 @@ class MainWindow(QMainWindow):
         which ABORTS when any selected object is locked. Applied series-wide
         that rule would make the action useless the moment one object is
         locked, so locked objects are SKIPPED here instead, and the confirm
-        dialog states the split (his call). The wrapper's other work is
-        mirrored by hand: save the field data first, pass the field's
-        series_states so one undo restores every prior color, then update the
-        object lists and reload the field. The two wrapper behaviors NOT
-        mirrored are selection resolution (this pass names its own objects)
-        and the object list scroll-position restore (updateObjects edits rows
-        in place here; nothing scrolls).
+        dialog states the split. The wrapper's other work is mirrored by hand:
+        save the field data first, pass the field's series_states so one undo
+        restores every prior color, then update the object lists and reload the
+        field. The two wrapper behaviors NOT mirrored are selection resolution
+        (this pass names its own objects) and the object list scroll-position
+        restore (updateObjects edits rows in place here; nothing scrolls).
         """
         self.saveAllData()
 
@@ -1245,6 +1506,11 @@ class MainWindow(QMainWindow):
             if _sameDir(self.series.hidden_dir, new_series.hidden_dir):
                 self.series.leave_open = True
             self.series.close()
+
+        # the 3D scene keeps the outgoing series' objects, and reads the host
+        # tree it had last, not the one kept when they were added
+        if self.series and self.viewer and not self.viewer.is_closed:
+            self.viewer.seriesClosing(self.series)
 
         # set new series
         self.series = new_series
@@ -1580,10 +1846,14 @@ class MainWindow(QMainWindow):
         """Create (or reset) the field widget and the mouse palette."""
         # create field
         if self.field is not None:  # close previous field widget
+            self._closeCleanupLists()
             self.field.createField(self.series)
         else:
             self.field = FieldWidget(self.series, self)
             self.setCentralWidget(self.field)
+
+        # the saved view may show no part of the image
+        self.offerHomeIfViewOffImage()
 
         # create mouse palette
         if self.mouse_palette: # close previous mouse dock
@@ -1596,6 +1866,42 @@ class MainWindow(QMainWindow):
             self.series.palette_traces[palette_group][index]
         ) # set the current trace
 
+    def offerHomeIfViewOffImage(self):
+        """Offer to set the view to the image when the view misses it.
+
+        Asked after the image loads: when a series opens with its image
+        found, and when its images are located. The saved view is the
+        user's, so it moves only when they pick "Set view to image";
+        declining or dismissing the prompt leaves the position and zoom as
+        saved. A view that overlaps the image at all asks nothing.
+
+            Returns:
+                (bool): True if the view was moved
+        """
+        if not self.field.viewIsOffImage():
+            return False
+        if not viewOffImageNotify(self):
+            return False
+        self.field.home()
+        return True
+
+    def _closeCleanupLists(self):
+        """Close every open clean-up review list before the series changes.
+
+        Pixel dust, Duplicates, the self-crossing lists and the smoothing
+        list are modeless and parented to this window. Their rows name
+        traces in the series being left, but their Delete and Combine
+        buttons call the field, which is reused for the new series: a list
+        left open deleted or combined the matching trace in the series
+        opened next. Found through the children rather than the attributes
+        that hold them, so a list from an earlier run of the same clean-up
+        closes too. A Delete or Combine already waiting on its confirmation
+        stops itself (MalformedContoursDialog._forOpenSeries), and a pixel-dust
+        or Duplicates scan that a new series opened under opens no list.
+        """
+        for dialog in self.findChildren(MalformedContoursDialog):
+            dialog.close()
+
     def _ensureImagesAvailable(self):
         """Locate the section images, and offer to scale unscaled zarrs."""
         # ensure that images are found
@@ -1607,6 +1913,7 @@ class MainWindow(QMainWindow):
         elif (self.field.section_layer.image_found and
             self.field.section_layer.is_zarr_file and
             not self.field.section_layer.is_scaled and
+            not self._imagesAreFlatZarr() and
             user_is_present()):
             reply = QMessageBox.question(
                 self,
@@ -1779,9 +2086,17 @@ class MainWindow(QMainWindow):
         # open new series
         self.openSeries(series)
 
+        # the open stops early when the save prompt for the series already
+        # open is canceled, and that series stays open as it was
+        if self.series is not series:
+            return
+
+        # set view to entire image, as the other new-series paths do
+        self.field.home()
+
         # prompt user to save series
         self.saveAsToJser()
-    
+
     def newFromNgZarr(self):
         """Create a new series from a neuroglancer zarr."""
         zarr_fp = FileDialog.get(
@@ -1810,13 +2125,24 @@ class MainWindow(QMainWindow):
         name = response[0]
         label_groups = [g for g in response[1] if g in groups]
 
-        series = zarrToNewSeries(zarr_fp, label_groups, name)
+        # a raw or label array PyReconstruct cannot read is refused with a
+        # message saying what to save instead; any other error is reported
+        try:
+            series = zarrToNewSeries(zarr_fp, label_groups, name)
+        except ZarrRefused as e:
+            notify(str(e))
+            return
 
         if not series:
             return
 
         # open new series
         self.openSeries(series)
+
+        # the open stops early when the save prompt for the series already
+        # open is canceled, and that series stays open as it was
+        if self.series is not series:
+            return
 
         # set view to home
         self.field.home()
@@ -2194,6 +2520,8 @@ class MainWindow(QMainWindow):
         
         # end the field pending events
         self.field.endPendingEvents()
+        # scroll left over from before the change does not carry past it
+        self.wheel_steps.navigated()
         # save data
         if save:
             self.saveAllData()
@@ -2532,59 +2860,76 @@ class MainWindow(QMainWindow):
             f"{project_dir}"
         )
 
-    def incrementSection(self, down=False):
-        """Increment the section number by one.
+    def incrementSection(self, down=False, count=1):
+        """Increment the section number by one, or by count.
         
             Params:
                 down (bool): the direction to move
+                count (int): the number of sections to move, stopping at the ends
         """
         section_numbers = sorted(list(self.series.sections.keys()))  # get list of section numbers
         section_number_i = section_numbers.index(self.series.current_section)  # get current section index
         if down:
-            if section_number_i > 0:
-                self.changeSection(section_numbers[section_number_i - 1])  
-        else:   
-            if section_number_i < len(section_numbers) - 1:
-                self.changeSection(section_numbers[section_number_i + 1])       
+            target_i = max(section_number_i - count, 0)
+        else:
+            target_i = min(section_number_i + count, len(section_numbers) - 1)
+        if target_i != section_number_i:
+            self.changeSection(section_numbers[target_i])
     
     def wheelEvent(self, event):
         """Called when mouse scroll is used."""
-        # do nothing if middle button is clicked
-        if self.field.mclick:
-            return
-        
-        modifiers = QApplication.keyboardModifiers()
+        # every event is read first, so the swipe is followed wherever it goes;
+        # however this returns, a lift drops the leftover scroll on the way out
+        with self.wheel_steps.reading(event) as units:
 
-        # if zooming
-        if modifiers == Qt.ControlModifier:
-            self.activateWindow()
-            field_cursor = self.field.cursor()
-            p = self.field.mapFromGlobal(field_cursor.pos())
-            x, y = p.x(), p.y()
-            if not self.is_zooming:
-                # check if user just started zooming in
-                self.field.panzoomPress(x, y)
-                self.zoom_factor = 1
-                self.is_zooming = True
-
-            if event.angleDelta().y() > 0:  # if scroll up
-                self.zoom_factor *= 1.1
-            elif event.angleDelta().y() < 0:  # if scroll down
-                self.zoom_factor *= 0.9
-            self.field.panzoomMove(zoom_factor=self.zoom_factor)
-        
-        # if changing sections
-        elif modifiers == Qt.NoModifier:
-            # check for the position of the mouse
-            mouse_pos = event.point(0).pos()
-            field_geom = self.field.geometry()
-            if not field_geom.contains(mouse_pos.x(), mouse_pos.y()):
+            # do nothing if middle button is clicked
+            if self.field.mclick:
                 return
-            # change the section
-            if event.angleDelta().y() > 0:  # if scroll up
-                self.incrementSection()
-            elif event.angleDelta().y() < 0:  # if scroll down
-                self.incrementSection(down=True)
+
+            modifiers = QApplication.keyboardModifiers()
+
+            # if zooming
+            if modifiers == Qt.ControlModifier:
+                # in proportion to the scroll; nothing after a trackpad swipe lifts
+                factor = zoom_factor(units)
+                if factor == 1.0 and not self.is_zooming:
+                    return  # no scroll, such as momentum, starts no zoom
+                self.activateWindow()
+                field_cursor = self.field.cursor()
+                p = self.field.mapFromGlobal(field_cursor.pos())
+                x, y = p.x(), p.y()
+                if not self.is_zooming:
+                    # check if user just started zooming in
+                    self.field.panzoomPress(x, y)
+                    self.zoom_factor = 1
+                    self.is_zooming = True
+
+                self.zoom_factor *= factor
+                self.field.panzoomMove(zoom_factor=self.zoom_factor)
+
+            # if changing sections
+            elif modifiers == Qt.NoModifier:
+                # check for the position of the mouse; scroll outside the
+                # field neither moves nor uses up travel
+                mouse_pos = event.point(0).pos()
+                field_geom = self.field.geometry()
+                if not field_geom.contains(mouse_pos.x(), mouse_pos.y()):
+                    return
+                # one section per notch, or per stretch of trackpad travel
+                steps = self.wheel_steps.take(event, units)
+                if not steps:
+                    return
+                # change the section, keeping the scroll left over
+                with self.wheel_steps.moving():
+                    self.incrementSection(down=steps < 0, count=abs(steps))
+
+    def changeEvent(self, event):
+        """Overwritten: a window that is no longer active drops pending scroll."""
+        # the app going to the back, or another window or dialog in front,
+        # both arrive here
+        if event.type() == QEvent.ActivationChange and not self.isActiveWindow():
+            self.wheel_steps.cancel()
+        super().changeEvent(event)
     
     def keyReleaseEvent(self, event):
         """Overwritten: checks for Ctrl+Zoom."""
@@ -2598,6 +2943,10 @@ class MainWindow(QMainWindow):
         """Write current series and section data into hidden files."""
         if self.series.isWelcomeSeries():
             return
+        # Save, Save As, Close, Open and New all write through here, so a
+        # scissors cut still open puts its trace back first; otherwise the
+        # section is written without it
+        self.field.cancelOpenScissorsCut()
         # # save the trace palette
         # self.series.palette_traces = []
         # for button in self.mouse_palette.palette_buttons:  # get trace palette
@@ -2605,9 +2954,9 @@ class MainWindow(QMainWindow):
         #     if button.isChecked():
         #         self.series.current_trace = button.trace
 
-        # the b (flickered-away) section can hold unsaved edits: flickering and
-        # moveTo swap sections without saving, so it MUST be written here too --
-        # otherwise a save drops those edits and then marks the series clean
+        # the b (flickered-away) section can hold unsaved edits: flickering
+        # swaps sections without saving, so it MUST be written here too.
+        # Otherwise a save drops those edits and then marks the series clean
         sections = [self.field.section]
         if self.field.b_section:
             sections.append(self.field.b_section)
@@ -2636,20 +2985,41 @@ class MainWindow(QMainWindow):
                 than re-serializing the entire series again. Used by the save
                 paths so a save + autobackup is one full serialization, not two.
         """
-        if check_auto and not self.series.getOption("autobackup"):
+        if check_auto and not self.series.autobackupOn():
+            return
+
+        # A backup that arrives while a save is writing (the progress dialog
+        # lets queued events through) is refused here, before the backup
+        # folder is made or the settings dialog opens, with a notice and no
+        # exception. from_saved is not exempt: the file it would copy is the
+        # one the running save is replacing, so the copy would not be of a
+        # saved series.
+        if self.series.jserSaveRunning():
+            self.series.refuseNestedSave(self.series.backupFolder())
+            return
+        # the same for a backup while a series step (an undo or redo, or a
+        # change to the profiles or alignments) rewrites the sections: the
+        # sections and the series file would not match yet
+        if self.series.seriesStepRunning():
+            self.series.refuseSaveDuringStep(self.series.backupFolder())
             return
 
         # make sure the backup directory exists
-        if not os.path.isdir(self.series.getOption("backup_dir")):
+        if not os.path.isdir(self.series.backupFolder(create=True)):
             notify(
                 "Backup folder not found.\n" +
                 "Please set the backup folder in following dialog."
             )
-            self.series.setOption("backup_dir", "")
+            if not self.series.usesBackupDefaults():
+                # record the choice first: with auto-backup off and the folder
+                # cleared, the series would otherwise read as having nothing
+                # of its own and take the defaults
+                self.series.setBackupUsesDefaults(False)
+                self.series.setOption("backup_dir", "")
             self.setBackup()
 
         # double check if user entered a valid backup directory
-        if os.path.isdir(self.series.getOption("backup_dir")):
+        if os.path.isdir(self.series.backupFolder(create=True)):
             fp = self.series.getBackupPath(comment)
             if (
                 from_saved
@@ -2666,8 +3036,17 @@ class MainWindow(QMainWindow):
                 "Backup folder not found.\n" +
                 "Backup file not saved."
             )
-            self.series.setOption("backup_dir", "")
-            self.series.setOption("autobackup", False)
+            # Turn auto-backup off for this series alone, so it stops asking
+            # on every save. The defaults other series use stay as they are,
+            # and a series on the defaults with auto-backup already off has
+            # nothing to turn off, so it stays on them.
+            if (
+                not self.series.usesBackupDefaults()
+                or self.series.autobackupOn()
+            ):
+                self.series.setBackupUsesDefaults(False)
+                self.series.setOption("backup_dir", "")
+                self.series.setOption("autobackup", False)
     
     def saveToJser(self, notify=False, close=False):
         """Store data in JSER file.
@@ -2677,7 +3056,8 @@ class MainWindow(QMainWindow):
             close (bool): If true, delete hidden series files.
         Returns:
             (str): "cancel" when nothing was written because the user backed
-                out, either at the save prompt or at the Save As dialog. Every
+                out, either at the save prompt or at the Save As dialog, or
+                because another save of this series was still running. Every
                 caller that goes on to close or discard the series must treat
                 that as an abort.
         """
@@ -2685,6 +3065,26 @@ class MainWindow(QMainWindow):
         ## If welcome series, close without saving
         if self.series.isWelcomeSeries():
             return
+
+        # A save, close or open that arrives while a save is running (the
+        # progress dialog lets queued events through) is refused here, before
+        # anything is written or closed: closing deletes the working folder
+        # the running save is reading. The series stays modified, and
+        # returning instead of raising keeps the exception hook from opening
+        # an error report for a save that was only skipped.
+        if self.series.jserSaveRunning():
+            self.series.refuseNestedSave(self.series.jser_fp)
+            return "cancel"
+        # The same while a series step rewrites the sections (a .jser opened
+        # from the Finder arrives at its progress updates): an undo or redo
+        # puts the series attributes back only after the last section, and a
+        # change to the profiles or alignments has rewritten some sections and
+        # not the rest, so a save here would write them out of step (see
+        # Series.seriesStep). Refused before the prompt, so the step finishes
+        # on this series and the open is skipped with the notice.
+        if self.series.seriesStepRunning():
+            self.series.refuseSaveDuringStep(self.series.jser_fp)
+            return "cancel"
 
         ## Populate hidden files with unsaved data
         self.saveAllData()
@@ -2730,8 +3130,21 @@ class MainWindow(QMainWindow):
             (str): "cancel" if the user dismissed the dialog. Nothing was
                 written in that case, and saveToJser relies on hearing about
                 it; None on success (and for the welcome series, which has
-                nothing to save either way).
+                nothing to save either way). Also "cancel" when another save
+                of this series was still running.
         """
+        # A Save As that arrives while a save is running (the progress dialog
+        # lets queued events through) is refused first: before the working
+        # files are rewritten under the save that is reading them, before the
+        # file dialog asks for a place it will not save to, and before the
+        # series moves, which would leave it pointed at a path with no file.
+        if self.series.jserSaveRunning():
+            self.series.refuseNestedSave("")
+            return "cancel"
+        if self.series.seriesStepRunning():
+            self.series.refuseSaveDuringStep("")
+            return "cancel"
+
         ## Store series data in hidden files
         self.saveAllData()
 
@@ -2786,6 +3199,17 @@ class MainWindow(QMainWindow):
     
     def manualBackup(self):
         """Back up series to a specified location."""
+        # Backup now, chosen while a save is writing: refused before the
+        # working files are rewritten under the save that is reading them,
+        # and before the comment dialog opens. backup() checks again for its
+        # other callers; this one has to come first.
+        if self.series.jserSaveRunning():
+            self.series.refuseNestedSave(self.series.backupFolder())
+            return
+        if self.series.seriesStepRunning():
+            self.series.refuseSaveDuringStep(self.series.backupFolder())
+            return
+
         self.saveAllData()
 
         response, confirmed = BackupCommentDialog(self, self.series).exec()
@@ -2910,25 +3334,6 @@ class MainWindow(QMainWindow):
             x, y = 0, -num
         self.field.translate(x, y)
     
-    def newAlignment(self, new_alignment_name : str):
-        """Add a new alignment (based on existing alignment).
-        
-            Params:
-                new_alignment_name (str): the name of the new alignment
-        """
-        if new_alignment_name in self.field.section.tforms:
-            QMessageBox.information(
-                self,
-                "Alignment Exists",
-                "This alignment already exists.",
-                QMessageBox.Ok
-            )
-            return
-        self.series.newAlignment(
-            new_alignment_name,
-            self.series.alignment
-        )
-    
     def modifyAlignments(self):
         """Open dialog to modify alignments."""
         self.saveAllData()
@@ -2997,7 +3402,7 @@ class MainWindow(QMainWindow):
             self.field.updateStatusBar()
 
     #: pixels between a status-bar pill and the menu it opens. Matches the
-    #: section popup's own lift, which is the spacing he approved.
+    #: section popup's own lift.
     PILL_MENU_GAP = 2
 
     def statusQuickSwitch(self, segment, names, current, switch, manage=None):
@@ -3020,8 +3425,8 @@ class MainWindow(QMainWindow):
                 switch (callable): called with the chosen name
                 manage ((str, callable)): an optional final row, separated
                     from the names, that opens the matching management dialog
-                    (his click test, 2026-08-25: the pills must offer a road
-                    to CREATING a profile or alignment, not only switching)
+                    (the pills offer a road to CREATING a profile or
+                    alignment, not only switching)
             Returns:
                 (QMenu): the menu that was popped up
         """
@@ -3055,8 +3460,7 @@ class MainWindow(QMainWindow):
         # the screen and lets popup() do its own clamping.
         # The same 2px lift the section popup gives itself
         # (SectionListPopup, status_readout.py): flush against the pill these
-        # two menus read as crowded, and he called the section spacing right
-        # (2026-08-26).
+        # two menus read as crowded.
         top_left = segment.mapToGlobal(segment.rect().topLeft())
         screen_h = self.screen().availableGeometry().height()
         menu.popup(
@@ -3123,14 +3527,14 @@ class MainWindow(QMainWindow):
         """Point the View checkboxes at the palette's live visibility flags.
 
         Seeded state was not enough once a group could be hidden by
-        right-clicking the widget itself (his report, 2026-08-26): that path
-        changes the flag without touching the menu, so the checkmarks
-        disagreed. MousePalette.saveVisibilityState calls this after every
-        visibility change, from either road, which is a push rather than a
-        menu-open pull: connecting to a menu's aboutToShow was tried and is
-        not viable here -- the View attribute is not the menubar's View menu,
-        and walking the live menubar for the real one invalidates the actions
-        createMenuBar is still assigning.
+        right-clicking the widget itself: that path changes the flag without
+        touching the menu, so the checkmarks disagreed.
+        MousePalette.saveVisibilityState calls this after every visibility
+        change, from either road, which is a push rather than a menu-open pull:
+        connecting to a menu's aboutToShow was tried and is not viable here.
+        The View attribute is not the menubar's View menu, and walking the live
+        menubar for the real one invalidates the actions createMenuBar is still
+        assigning.
 
         setChecked emits `toggled`, not `triggered`, and the handlers are on
         `triggered`, so this never re-fires a toggle.
@@ -3929,86 +4333,48 @@ class MainWindow(QMainWindow):
 
         self.series.setOption("find_zoom", z)
     
-    def deleteDuplicateTraces(self):
-        """Remove all duplicate traces from the series."""
-        self.saveAllData()
+    def reviewDuplicateTraces(self):
+        """Find duplicate traces and open them for review.
 
-        structure = [
-            ["Overlap threshold:", ("float", 0.95, (0, 1))],
-            [("check", ("check locked traces", True))]
-        ]
-        response, confirmed = QuickDialog.get(self, structure, "Remove duplicate traces")
-        if not confirmed:
-            return
-        threshold = response[0]
-        include_locked = response[1][0][1]
-        
-        removed = self.series.deleteDuplicateTraces(threshold, include_locked, self.field.series_states)
-
-        if removed:
-            message = "The following duplicate traces were removed:"
-            for snum in removed:
-                message += f"\nSection {snum}: " + ", ".join(removed[snum])
-            TextWidget(self, message, title="Removed Traces")
-        else:
-            notify("No duplicate traces found.")
-
-        self.field.reload()
-        self.seriesModified(True)
-
-    def findDifferentlyNamedDuplicates(self):
-        """Review traces that duplicate each other under two different names.
-
-        The sibling of "Remove duplicate traces...", for the case that one
-        cannot see: two people tracing the same structure give it two names, so
-        the two traces never end up in the same contour and the same-name
-        comparison never puts them side by side.
-
-        Which of the two names survives is a question about the data rather than
-        about geometry, so this operation never chooses one. The scan reports
-        every pair and the review list asks per row which name to keep; only the
-        rows answered there are acted on, and the trace under the other name is
-        what gets deleted. A row left unanswered is skipped, not defaulted.
+        One scan finds overlapping traces whether their names match or not,
+        one row per structure however many times it was traced. The list
+        asks which name to keep in each row and changes nothing until the
+        user combines; combining is one undoable step per press.
         """
         self.saveAllData()
 
-        # the same two controls as "Remove duplicate traces...", so the pair of
-        # operations reads the same way
         structure = [
             ["Overlap threshold:", ("float", 0.95, (0, 1))],
             [("check", ("check locked traces", False))]
         ]
-        response, confirmed = QuickDialog.get(
-            self, structure, "Find duplicates named differently"
-        )
+        response, confirmed = QuickDialog.get(self, structure, "Duplicates")
         if not confirmed:
             return
         threshold = response[0]
         include_locked = response[1][0][1]
 
-        pairs = self.series.findDifferentlyNamedDuplicates(
-            threshold, include_locked
-        )
-        if not pairs:
-            notify(
-                "No differently-named duplicate traces found at that overlap "
-                "threshold."
-            )
+        series = self.series
+        try:
+            groups = series.findDuplicateTraces(threshold, include_locked)
+        except SeriesClosedError:
+            # a .jser opened from the Finder at an earlier progress update:
+            # the scan only reads, so stopping it loses nothing
+            return
+        if self.series is not series:
+            # the same at the scan's last progress update: the rows name the
+            # series left (see _closeCleanupLists)
+            return
+        if not groups:
+            notify("No duplicate traces found at that overlap threshold.")
             return
 
-        # a review list that can act on the rows the user answers, and only
-        # those: the callback takes (record, keep) choices, never the whole list
-        self.differently_named_duplicates_dialog = (
-            DifferentlyNamedDuplicatesDialog(
-                self,
-                pairs,
-                navigate=self.field.focusMalformedContour,
-                delete_unselected=(
-                    self.field.deleteDifferentlyNamedDuplicates
-                ),
-            )
+        self.duplicate_traces_dialog = DuplicateTracesDialog(
+            self,
+            groups,
+            navigate=self.field.focusMalformedContour,
+            combine=self.field.combineDuplicateTraces,
         )
-        self.differently_named_duplicates_dialog.show()
+        self.duplicate_traces_dialog.show()
 
     def removePixelDustTraces(self):
         """Find tiny "pixel-dust" traces and remove them through a review list.
@@ -4042,7 +4408,17 @@ class MainWindow(QMainWindow):
         # locked objects are always left alone: the review-list delete path
         # (deleteMalformedContours) refuses locked objects, so surfacing them
         # here would be a dead end. Empty-trace removal skips locked the same way.
-        candidates = self.series.findPixelDustTraces(threshold)
+        series = self.series
+        try:
+            candidates = series.findPixelDustTraces(threshold)
+        except SeriesClosedError:
+            # a .jser opened from the Finder at an earlier progress update:
+            # the scan only reads, so stopping it loses nothing
+            return
+        if self.series is not series:
+            # the same at the scan's last progress update: the rows name the
+            # series left (see _closeCleanupLists)
+            return
         if not candidates:
             notify("No pixel-dust traces found at or below that pixel area.")
             return
@@ -4069,7 +4445,17 @@ class MainWindow(QMainWindow):
 
         from PyReconstruct.modules.gui.utils import undo_chord
 
-        candidates = self.series.findSelfCrossingTraces()
+        series = self.series
+        try:
+            candidates = series.findSelfCrossingTraces()
+        except SeriesClosedError:
+            # a .jser opened from the Finder at an earlier progress update:
+            # the scan only reads, so stopping it loses nothing
+            return
+        if self.series is not series:
+            # the same at the scan's last progress update: the records name
+            # the series left (see _closeCleanupLists)
+            return
         if not candidates:
             notify("No self-crossing traces found.")
             return
@@ -4090,12 +4476,20 @@ class MainWindow(QMainWindow):
                     f"\n\n{len(looped)} more {skipped_noun} the scissors; "
                     "a review list opens after."
                 )
-            if notifyConfirm(prompt, yn=True):
+            confirmed = notifyConfirm(prompt, yn=True)
+            if self.series is not series:
+                # a .jser opened from the Finder during the confirmation:
+                # the records name the series left (see _closeCleanupLists)
+                return
+            if confirmed:
                 repaired = self.field.repairSelfCrossingContours(safe)
+                if self.series is not series:
+                    # the same at the repair's last progress update
+                    return
                 if repaired:
                     # a summary window with copy and save-as-CSV, not a
-                    # message (his ask, 2026-08-26): a lab keeps a record of
-                    # what the bulk pass touched
+                    # message: a lab keeps a record of what the bulk pass
+                    # touched
                     from PyReconstruct.modules.gui.dialog.malformed_contours import (
                         RepairedCrossingsDialog,
                     )
@@ -4109,7 +4503,7 @@ class MainWindow(QMainWindow):
         if looped:
             # a modeless review list, not a message: the user works the field
             # with the scissors while it stays open, and can copy the whole
-            # set out (his report, 2026-08-26)
+            # set out
             from PyReconstruct.modules.gui.dialog.malformed_contours import (
                 SkippedCrossingsDialog,
             )
@@ -4130,7 +4524,17 @@ class MainWindow(QMainWindow):
         """
         self.saveAllData()
 
-        candidates = self.series.findEmptyTraces(include_locked=False)
+        series = self.series
+        try:
+            candidates = series.findEmptyTraces(include_locked=False)
+        except SeriesClosedError:
+            # a .jser opened from the Finder at an earlier progress update:
+            # the scan only reads, so stopping it loses nothing
+            return
+        if self.series is not series:
+            # the same at the scan's last progress update: the records name
+            # the series left (see _closeCleanupLists)
+            return
         if not candidates:
             notify("No empty traces found.")
             return
@@ -4143,7 +4547,9 @@ class MainWindow(QMainWindow):
             f"Remove {count} {noun} from the series?\n\n"
             f"This can be undone ({undo_chord()}).",
             yn=True,
-        ):
+        ) or self.series is not series:
+            # a .jser opened from the Finder during the confirmation: the
+            # records name the series left (see _closeCleanupLists)
             return
 
         deleted = self.field.deleteMalformedContours(candidates)
@@ -4318,6 +4724,25 @@ class MainWindow(QMainWindow):
             Params:
                 redo (bool): True if redo should be performed
         """
+        # An open scissors cut is settled before the save below, which would
+        # otherwise back it out with no undo state and leave this Undo to take
+        # the edit made before the cut. Undo finishes the cut, so the cut is
+        # what it takes back and Redo can bring it back. Redo backs the cut
+        # out instead: finishing it would be a new edit, and a new edit ends
+        # every redo, the one asked for included.
+        if redo:
+            self.field.cancelOpenScissorsCut()
+        elif self.field.hide_trace_layer:
+            # With the trace layer hidden, newTrace refuses the finished cut,
+            # so finishing would only put the trace back with a state that
+            # changes nothing, end the redo, and leave undoState (which does
+            # nothing while hidden) to skip it. The cut is backed out with no
+            # state instead, and that is the whole Undo, as taking back the
+            # finished cut is with traces shown.
+            if self.field.cancelOpenScissorsCut():
+                return
+        else:
+            self.field.finishOpenScissorsCut()
         self.saveAllData()
         can_3D, can_2D, linked = self.field.series_states.canUndo(redo=redo)
         def act2D():
@@ -4822,7 +5247,12 @@ class MainWindow(QMainWindow):
         for act_name in LEGACY_SHORTCUT_ALIASES:
             if act_name not in shortcuts_dict and getattr(self, act_name, None):
                 applySeriesShortcut(getattr(self, act_name), act_name, self.series)
-    
+
+        # the focus mode label names the focus_act shortcut
+        field = getattr(self, "field", None)
+        if field is not None:
+            field.updateFocusHint()
+
     def displayAbout(self):
         """Display the widget display information about the series."""
         # update the editors
@@ -5019,7 +5449,6 @@ class MainWindow(QMainWindow):
 
         # the lists measured their columns under the old theme's font and
         # padding; re-measure so the new theme's text is not crowded
-        # (his report, 2026-08-26)
         field = getattr(self, "field", None)
         if field is not None and hasattr(field, "table_manager"):
             field.table_manager.refreshColumnWidths()
@@ -5082,6 +5511,11 @@ class MainWindow(QMainWindow):
         if not confirmed or not response:
             o_series.close()
             return
+
+        # Hosts, the second box on the Attributes tab
+        import_hosts = (
+            "attributes" in response and response["attributes"][0][1][1]
+        )
         
         if "traces" in response:
             (
@@ -5124,6 +5558,14 @@ class MainWindow(QMainWindow):
                 keep_below, 
                 self.field.series_states
             )
+
+            # hosts checked on the Attributes tab come in with these traces,
+            # as part of the same undo step: merge them before the next
+            # import starts its own, and record on each section the links
+            # they made there, or a redo of that section alone leaves them out
+            if import_hosts:
+                self.series.importHostTree(o_series)
+                self.field.series_states.recordLinksMade()
         
         if "z-traces" in response:
             regex_filters = response["z-traces"][0]
@@ -5150,7 +5592,7 @@ class MainWindow(QMainWindow):
             bools = [b for n, b in response["attributes"][0]]
             if bools[0]:
                 self.series.importObjectGroups(o_series)
-            if bools[1]:
+            if bools[1] and "traces" not in response:
                 self.series.importHostTree(o_series)
             if bools[2]:
                 self.series.importUserCols(o_series)
@@ -5269,13 +5711,18 @@ class MainWindow(QMainWindow):
         exported_image.fill(Qt.transparent)
 
         ## Draw base image
+        try:
+            base_image = QImage(self.field.section.src_fp)
+        except FileNotFoundError:  # a name zarr cannot hold has no image
+            base_image = QImage()
+
         with QPainter(exported_image) as painter:
 
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
 
             painter.drawImage(
                 exported_image.rect(),
-                QImage(self.field.section.src_fp),
+                base_image,
                 self.rect()
             )
 
@@ -5376,9 +5823,9 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """Save all data to files when the user exits."""
         # capture the list layout FIRST: saveToJser(close=True) closes the
-        # series, and capturing after it recorded nothing -- undocked lists
-        # did not survive a relaunch (his click test, 2026-08-25). A canceled
-        # close leaves the early capture behind, which is merely current.
+        # series, and capturing after it recorded nothing, so undocked lists
+        # did not survive a relaunch. A canceled close leaves the early capture
+        # behind, which is merely current.
         self._captureListLayout()
         response = self.saveToJser(notify=True, close=True)
         if response == "cancel":
@@ -5393,6 +5840,12 @@ class MainWindow(QMainWindow):
             # app instead of exiting (found 2026-08-28)
             self.restart_mainwindow = False
             return
+        # the startup timers serve no window once the close is committed.
+        # Left running, they fired on this window after a restart had built
+        # the next one, or in the next test of a suite that closes windows
+        # without deleting them.
+        self.update_check_timer.stop()
+        self.whats_new_timer.stop()
         # persist window geometry so size/position survive a restart
         windowGeometrySettings().setValue("window/geometry", self.saveGeometry())
         if self.viewer and not self.viewer.is_closed:

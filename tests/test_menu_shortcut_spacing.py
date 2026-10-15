@@ -244,8 +244,8 @@ def test_shortcut_column_stays_right_justified(qapp):
 # --------------------------------------------------------------------------- #
 # 3. the max-width interaction: menus of the Lists / View shape
 # --------------------------------------------------------------------------- #
-# The maintainer click-tested the first version of this style and reported Lists
-# as "looking untouched" while File was visibly improved. The cause is Qt's
+# The first version of this style left the Lists menu looking untouched
+# while File was visibly improved. The cause is Qt's
 # single-width-per-menu layout, not the shortcut code path: a menu whose widest
 # row carries NO shortcut absorbs a per-shortcut-row widening entirely. Both
 # shapes below are regression cases for that, and both are unaffected by the
@@ -288,7 +288,7 @@ VIEW_SHAPED_ITEMS = [
 def test_shortcut_column_moves_even_when_the_widest_row_has_no_shortcut(
     qapp, items, shortcut_row, strictly_absorbing
 ):
-    """The regression the maintainer caught: these menus must gain the same
+    """The regression the first version had: these menus must gain the same
     offset File does, though no shortcut row is the widest row.
 
     ``strictly_absorbing`` distinguishes what each case can promise, because

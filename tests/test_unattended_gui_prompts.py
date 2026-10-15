@@ -3,8 +3,8 @@
 `user_is_present()` answers "can a real user see and answer a blocking dialog".
 It was answering that question with `QApplication.instance() and not
 qt_offscreen`, which is a test for *how Qt is drawing*, not for whether anyone
-is watching. The two come apart for a scripted GUI session: a click-test
-harness, a `codex exec` computer-use run, a screenshot script. Those launch on a
+is watching. The two come apart for a scripted GUI session: a UI automation
+harness, a computer-use run, a screenshot script. Those launch on a
 real platform, so `qt_offscreen` is False and the predicate says True, and then
 `MainWindow.openSeries` raises a modal that no unattended script can dismiss.
 
@@ -231,7 +231,7 @@ def test_an_unattended_launch_raises_no_startup_prompt_at_all(on_screen_window):
     """The other two startup blockers, which the same guard covers.
 
     The images question is the first one `openSeries` reaches, so it is the only
-    one a manual click-test ever gets far enough to see. `setSeriesCode`'s
+    one a person clicking through ever gets far enough to see. `setSeriesCode`'s
     non-cancelable `QuickDialog` and the unscaled-zarr question are behind it
     and would stall a scripted launch just as completely. Pinning all three here
     is the reason the fix belongs in the predicate rather than at one call site.

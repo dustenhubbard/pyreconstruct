@@ -203,8 +203,7 @@ MENUBAR_BASELINE = [
     (1, "sep", None),
     (1, "act", "findobjectfirst_act"),
     (1, "menu", "cleanupmenu"),
-    (2, "act", "removeduplicates_act"),
-    (2, "act", "finddiffnamedduplicates_act"),
+    (2, "act", "duplicates_act"),
     (2, "act", "removepixeldust_act"),
     (2, "act", "removeempty_act"),
     (1, "sep", None),
@@ -325,13 +324,13 @@ MENUBAR_BASELINE = [
 #    It lands after the submenu, next to "Reset palette position", not inside
 #    it: the palette submenu is palette-scoped and this is window-scoped.
 # 4. "Turn off What's new pop-up" in Help, directly under "What's new".
-#    Checked means OFF (his call, 2026-08-26).
+#    Checked means OFF (since 2026-08-26).
 #    Added with the What's-new dialog's "Don't show again" button: the button
 #    switches the startup popup off, and a preference that could only be
 #    switched off from inside the dialog it hides needs a visible way back on.
 #    Checkable, resynced from the stored preference every time Help opens.
 # 5. "Recolor all objects from palette..." in View, directly under "Edit fill
-#    opacity..." (2026-08-12, his placement call). The series-wide sibling of
+#    opacity..." (2026-08-12). The series-wide sibling of
 #    the object menus' selection-scoped "Reapply custom color palette to existing objects...": recolors
 #    every unlocked object with the current palette and seed as one undoable
 #    pass, SKIPPING locked objects rather than aborting on them (an abort
@@ -353,7 +352,7 @@ _TOGGLE_UPDATECHECK_ROW = (1, "act", "toggleupdatecheck_act")
 # offers the Dev nightly, Dev offers stable; legacy test-channel users hold a
 # lone Dev install and this is their road back to stable.
 _GET_OTHER_FLAVOR_ROW = (1, "act", "getotherflavor_act")
-# View > Show/hide lists (2026-08-25, his stage 1 of the sidebar): the
+# View > Show/Hide lists (2026-08-25, stage 1 of the sidebar): the
 # collapse toggle, also the sidebar pill in the status bar. Remappable,
 # default Cmd+Option+S (Ctrl+Alt+S on Windows/Linux).
 _TOGGLE_LISTS_ROW = (1, "act", "togglelists_act")
@@ -370,8 +369,8 @@ _REPAIR_SELF_CROSSINGS_ROW = (2, "act", "repairselfcrossings_act")
 # are pinned by test_menu_search.py.
 _SEARCH_MENUS_ROW = (1, "act", "searchmenus_act")
 _RECOLOR_ALL_ROW = (1, "act", "recolorallfrompalette_act")
-# Help > "Request a feature..." (2026-09-28, his
-# call): the single "Report bug / Request feature" row, which opened GitHub's
+# Help > "Request a feature..." (2026-09-28): the single "Report bug / Request
+# feature" row, which opened GitHub's
 # chooser page, became one row per issue form, because only a direct form
 # link can carry the prefilled version/OS/Python field. The bug row kept the
 # baseline act_name (submitissue_act, now "Report a bug..."); this is the
@@ -405,7 +404,7 @@ MENUBAR_EXPECTED.insert(
     MENUBAR_EXPECTED.index((2, "act", "removeempty_act")) + 1,
     _REPAIR_SELF_CROSSINGS_ROW,
 )
-# The second sanctioned MOVE (2026-08-26, his Help layout call): Help is
+# The second sanctioned MOVE (2026-08-26, the Help layout): Help is
 # regrouped into five separated groups -- the search field, then what this
 # build IS, then updates, then the What's-new pop-up, then the rest exactly
 # as it was. Expressed as remove-then-rebuild of the Help rows rather than by
@@ -470,7 +469,7 @@ for _row in _NESTED_VISIBILITY_ROWS:
 _hoist_at = MENUBAR_EXPECTED.index((1, "act", "toggleztraces_act")) + 1
 MENUBAR_EXPECTED[_hoist_at:_hoist_at] = _HOISTED_VISIBILITY_ROWS
 
-# The third sanctioned MOVE (2026-09-27, his Help order call, fork #459): the
+# The third sanctioned MOVE (2026-09-27, the Help order, #459): the
 # bottom of Help becomes one flat list in the order the steps happen. Copy
 # the diagnostic report, then send it to us or file it, then the log tools,
 # then Online resources last. The "Report issues (GitHub)" submenu row is the
@@ -543,16 +542,17 @@ def test_menubar_action_and_submenu_counts():
     mean a move had dropped or duplicated one. Additions 4 and 5 (the what's-new toggle
     and the series-wide recolor, both 2026-08-12, built on separate branches)
     each took the count up one, 117 to 119 together. Lists > Object list of
-    selected traces (fork #438) took it from 125 to 126.
+    selected traces (fork #438) took it from 125 to 126. Clean up >
+    Duplicates... replaced its two duplicate finders, 126 to 125.
     """
     rows = _rows()
-    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 126
+    assert sum(1 for _d, kind, _a, _t in rows if kind == "act") == 125
     assert sum(1 for _d, kind, _a, _t in rows if kind == "menu") == 30
 
 
 def test_recolor_all_objects_sits_in_view_beside_fill_opacity():
     """Addition 4: the series-wide recolor lives in View, directly under "Edit
-    fill opacity..." (his placement call; the View section about how every
+    fill opacity..." (the View section about how every
     object is painted). The label names the scope ("all objects") and the
     source ("from palette"), keeps the ASCII ellipsis because it opens a
     confirm dialog, and deliberately does not say "autoseg": the palette
@@ -603,7 +603,7 @@ def test_renamed_label(attr):
 
 
 # The second label pass: the deferred "verb with no object" items from the pass
-# above, plus the maintainer's catch-all name for the former Projects submenu.
+# above, plus the catch-all name for the former Projects submenu.
 # Same rules: every label verified against its handler, nothing moved, no
 # shortcut changed.
 RENAMED_SECOND_PASS = {
@@ -620,7 +620,7 @@ RENAMED_SECOND_PASS = {
     "importmenu": ("Import", "Import series data"),
     # importFromSeries's own docstring: "Import from another series."
     "importfromseries_act": ("From series...", "From another series..."),
-    # the maintainer's catch-all for rarely used, user-requested functions;
+    # the catch-all for rarely used, user-requested functions;
     # signals where future niche items go
     "projectsmenu": ("Projects", "Utilities"),
     # randomize_project acts on a project directory (codes its images and
@@ -716,8 +716,7 @@ SERIES_MENU_LABELS = [
     "-----",
     "Find first object contour...",
     "Clean up >",
-    "    Remove duplicate traces...",
-    "    Find duplicates named differently...",
+    "    Duplicates...",
     "    Remove pixel-dust traces...",
     "    Remove empty traces...",
     "    Repair self-crossing traces...",

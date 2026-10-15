@@ -181,6 +181,47 @@ def test_dev_takes_only_a_nightly(env):
     assert "tag=v1.25.0.dev20261002" in paths(env, "dev")["marker"].read_text()
 
 
+def test_dev_takes_a_timed_nightly(env):
+    """A nightly cut since 2026-10-08 is tagged vX.Y.Z.devYYYYMMDDHHMM."""
+    rels = [
+        dev_release("v1.25.0.dev202610081315"),
+        dev_release("v1.25.0.dev20261008"),
+    ]
+    with FakeGitHub(rels) as gh:
+        run(env, gh, "--dev")
+    assert "tag=v1.25.0.dev202610081315" in paths(env, "dev")["marker"].read_text()
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_dev_takes_the_highest_nightly_whatever_the_feed_order(env, shell):
+    """The feed is not in version order; 12 digits rank above 8, as in PEP 440."""
+    rels = [
+        dev_release("v1.25.0.dev20261008"),
+        dev_release("v1.25.0.dev202610081315"),
+        dev_release("v1.25.0.dev202610081840"),
+        dev_release("v1.25.0.dev20261007"),
+        dev_release("v1.24.0.dev202610061200"),
+    ]
+    with FakeGitHub(rels) as gh:
+        p = run(env, gh, "--dev", shell=shell)
+    assert "tag=v1.25.0.dev202610081840" in paths(env, "dev")["marker"].read_text()
+    assert "no Linux AppImage" not in p.stderr
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_dev_falls_back_by_version_when_the_highest_has_no_appimage(env, shell):
+    rels = [
+        dev_release("v1.25.0.dev20261008"),
+        release("v1.25.0.dev202610081840", prerelease=True,
+                assets={"PyReconstruct-1.25.0.dev202610081840-macOS-arm64-Dev.dmg": b"x"}),
+        dev_release("v1.25.0.dev202610081315"),
+    ]
+    with FakeGitHub(rels) as gh:
+        p = run(env, gh, "--dev", shell=shell)
+    assert "tag=v1.25.0.dev202610081315" in paths(env, "dev")["marker"].read_text()
+    assert "newest nightly (v1.25.0.dev202610081840) has no Linux AppImage" in p.stderr
+
+
 def test_dev_falls_back_to_the_newest_nightly_with_an_appimage(env):
     rels = [
         release("v1.25.0.dev20261002", prerelease=True, assets={"PyReconstruct-1.25.0.dev20261002-macOS-arm64-Dev.dmg": b"x"}),
@@ -350,7 +391,7 @@ def test_every_curl_call_keeps_redirects_on_https():
         assert line.count("curl -f") == line.count("--proto-redir =https"), line
 
 
-@pytest.mark.skipif(sys.version_info[:2] not in ((3, 11), (3, 12)), reason="install.sh needs a Python 3.11 or 3.12")
+@pytest.mark.skipif(sys.version_info[:2] not in ((3, 11), (3, 12), (3, 13)), reason="install.sh needs a Python 3.11, 3.12 or 3.13")
 def test_source_installer_refuses_to_install_over_the_appimage(env):
     root = paths(env, "stable")["root"]
     root.mkdir(parents=True)
@@ -362,7 +403,7 @@ def test_source_installer_refuses_to_install_over_the_appimage(env):
     assert sorted(x.name for x in root.iterdir()) == [".appimage-install"]
 
 
-@pytest.mark.skipif(sys.version_info[:2] not in ((3, 11), (3, 12)), reason="install.sh needs a Python 3.11 or 3.12")
+@pytest.mark.skipif(sys.version_info[:2] not in ((3, 11), (3, 12), (3, 13)), reason="install.sh needs a Python 3.11, 3.12 or 3.13")
 def test_source_installer_with_a_prefix_keeps_the_appimage_launcher(env, tmp_path):
     with FakeGitHub([stable_release("v1.24.0")]) as gh:
         run(env, gh)

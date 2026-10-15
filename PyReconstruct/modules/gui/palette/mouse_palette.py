@@ -96,7 +96,7 @@ def clear_palette_positions(settings : QSettings) -> None:
 
 
 from .buttons import PaletteButton, ModeButton, MoveableButton
-from .scale_bar import ScaleBar
+from .scale_bar import ScaleBar, drawableLengths, formatLength
 from .outlined_label import OutlinedLabel
 from .help import palette_help
 
@@ -108,6 +108,7 @@ from PyReconstruct.modules.constants import (
 )
 from PyReconstruct.modules.gui.dialog import TracePaletteDialog, QuickDialog
 from PyReconstruct.modules.gui.popup import TextWidget
+from PyReconstruct.modules.gui.utils import notify
 
 
 class MousePalette():
@@ -161,8 +162,8 @@ class MousePalette():
         # button already made (getBounds), so placing
         # each one as it was created gave every button a different origin:
         # with the column dragged down from its default the buttons piled up
-        # at half spacing until the next resize (his users' "squished tool
-        # bar" at startup, September 2026).
+        # at half spacing until the next resize, a squished tool bar at
+        # startup.
         self.placeModeButtons()
 
         # create palette buttons
@@ -594,13 +595,20 @@ class MousePalette():
         b_slider_value = round((abs(b)/100) ** (1/2) * 100) * (-1 if b < 0 else 1)
         c_slider_value = round((abs(c)/100) ** (1/2) * 100) * (-1 if c < 0 else 1)
 
+        # The sliders only show the section's values here. Unblocked, a moved
+        # slider fires setBrightness/setContrast, which square and round its
+        # position and write that back: 99 shows as 99 and comes back as 98.
         b_bttn, b_slider = self.bc_widgets[0]
         b_bttn.setText(str(b))
+        b_blocked = b_slider.blockSignals(True)
         b_slider.setValue(b_slider_value)
+        b_slider.blockSignals(b_blocked)
 
         c_bttn, c_slider = self.bc_widgets[1]
         c_bttn.setText(str(c))
+        c_blocked = c_slider.blockSignals(True)
         c_slider.setValue(c_slider_value)
+        c_slider.blockSignals(c_blocked)
     
     def createBCButtons(self):
         """Create the brightnes/contrast buttons."""
@@ -669,6 +677,11 @@ class MousePalette():
         """
         x1, x2, y1, y2 = self.getBounds()[group]
         current_x, current_y = self.getButtonCoords(group)
+        if group == "sb" and self.sb.x() < int(current_x):
+            # the bar is drawn left of its saved spot (see placeSB), so a drag
+            # starts from the drawn position; from the saved spot the bar would
+            # not move until that spot was on screen again
+            current_x = self.sb.x()
         new_x = ((current_x + dx) - x1) / (x2 - x1)
         if new_x < 0: new_x = 0
         elif new_x > 1: new_x = 1
@@ -704,7 +717,8 @@ class MousePalette():
             "trace": (fx1 + pblen*5, fx2 - pblen*6 - 3, fy1 + pblen, fy2 - pblen),
             "inc": (fx1, fx2 - ibw, fy1, fy2 - ibh*2 - 15),
             "bc": (fx1, fx2 - 6*bcsize - 5, fy1, fy2 - 2*bcsize - 20),
-            "sb": (fx1, fx2 - 10, fy1, fy2 - 50)
+            # the bar's height follows its thickness option
+            "sb": (fx1, fx2 - 10, fy1, fy2 - (self.sb.height() if "sb" in dir(self) else 50))
         }
 
     def loadVisibilityState(self):
@@ -734,7 +748,7 @@ class MousePalette():
         }
         save_palette_positions(_position_settings(), positions)
 
-    # Right-click to hide, group by group (his ask, 2026-08-26): the View
+    # Right-click to hide, group by group: the View
     # menu keeps every toggle, and this adds the direct road from the widget
     # itself. One installer per group, run wherever the widgets are (re)built,
     # so a rebuilt slider is still armed.
@@ -762,15 +776,25 @@ class MousePalette():
             ("bc", [w for pair in self.bc_widgets for w in pair], self.toggleBC),
             ("sb", [self.sb], self.toggleSB),
         )
+        # the scale bar's own items go in its one menu; a second menu on the
+        # same widget would open two menus on one click
+        extras = {"sb": self.sbMenuActions}
         for key, widgets, toggle in groups:
             for widget in widgets:
                 if widget is None:
                     continue
-                self._installHideMenu(widget, self.HIDE_LABELS[key], toggle)
+                self._installHideMenu(
+                    widget, self.HIDE_LABELS[key], toggle, extras.get(key)
+                )
 
-    def _installHideMenu(self, widget, label, toggle):
+    def _installHideMenu(self, widget, label, toggle, extras=None):
         """Arm one widget. Idempotent: the palettes rebuild, and a second
-        connect on the same widget would open two menus on one click."""
+        connect on the same widget would open two menus on one click.
+
+        `extras`, if given, returns (label, slot) pairs to list above the
+        hide item. It is called each time the menu opens, so an item can
+        depend on the widget's state.
+        """
         from PySide6.QtCore import Qt
 
         if widget.property("pyrecon_hide_menu"):
@@ -778,11 +802,15 @@ class MousePalette():
         widget.setProperty("pyrecon_hide_menu", True)
         widget.setContextMenuPolicy(Qt.CustomContextMenu)
 
-        def show(pos, widget=widget, label=label, toggle=toggle):
+        def show(pos, widget=widget, label=label, toggle=toggle, extras=extras):
             from PySide6.QtWidgets import QMenu
 
             menu = QMenu(widget)
             menu.aboutToHide.connect(menu.deleteLater)
+            if extras is not None:
+                for extra_label, slot in extras():
+                    menu.addAction(extra_label, slot)
+                menu.addSeparator()
             menu.addAction(label, toggle)
             self._hide_menu = menu   # reachable for the tests
             menu.popup(widget.mapToGlobal(pos))
@@ -794,7 +822,7 @@ class MousePalette():
 
         Every visibility change lands here through saveVisibilityState, so
         the menu stays in step with a right-click hide as well as its own
-        toggles (his report, 2026-08-26).
+        toggles.
         """
         sync = getattr(self.mainwindow, "syncPaletteToggles", None)
         if sync is not None:
@@ -1030,6 +1058,23 @@ class MousePalette():
     def setScale(self):
         if "sb" in dir(self):
             self.sb.setScale(self.getScale())
+            self.placeSB()   # a pinned bar's width follows the zoom
+
+    def followZoom(self, zoom_factor):
+        """Show the scale of a zoom that is still in progress.
+
+        A pinch, Ctrl+scroll or right-drag zoom stretches a copy of the field
+        and only redraws it on release, so the series window, and with it
+        getScale, still has the scale from before the zoom. The stretched
+        view is zoom_factor times larger, so it shows getScale() / zoom_factor
+        units per pixel. Only the bar repaints; nothing here touches the field.
+        """
+        if "sb" not in dir(self) or not zoom_factor:
+            return
+        scale = self.getScale() / zoom_factor
+        if scale != self.sb.scale:
+            self.sb.setScale(scale)
+            self.placeSB()
     
     def getPinnedLength(self):
         """The real-world length the scale bar is pinned to, or None.
@@ -1048,14 +1093,25 @@ class MousePalette():
         # a running application and a control they can fix the value in.
         return length if validPinnedLength(length) else None
 
+    def sbWidth(self, percent=None):
+        """The widest the scale bar may be drawn, in pixels.
+
+        Both modes are limited to the "Scale bar size" share of the field. The
+        screen-fraction bar fills between 40 and 100 percent of it, and a pinned
+        bar steps a decade before it would outgrow it.
+        """
+        if percent is None:
+            percent = self.series.getOption("scale_bar_width")
+        return int(percent / 100 * self.mainwindow.field.width())
+
     def createSB(self):
         """Create the scale bar."""
-        field_w = self.mainwindow.field.width()
-        sb_w = int(self.series.getOption("scale_bar_width") / 100 * field_w)
+        sb_w = self.sbWidth()
         self.sb = ScaleBar(
-            self.mainwindow, self, sb_w, 50, 1,
+            self.mainwindow, self, sb_w,
+            self.series.getOption("scale_bar_thickness"), 1,
             micron_length=self.getPinnedLength(),
-            max_pixel_length=field_w,
+            max_pixel_length=sb_w,
         )
         self.setScale()
         self.placeSB()
@@ -1064,27 +1120,101 @@ class MousePalette():
     def previewScaleBarWidth(self, percent):
         """Show the bar at `percent` of the field width without storing it.
 
-        Series > Options drives this from its slider as the handle moves
-        (his ask, 2026-09-14: the size could only be judged after OK closed
-        the window). Nothing is written: OK stores the option and rebuilds
-        the palette; Cancel calls restoreScaleBar. A bar pinned to a micron
-        length ignores the width, exactly as the stored option does.
+        Series > Options drives this from its slider as the handle moves, so
+        the size can be judged before OK without closing and reopening the
+        window. Nothing is written: OK stores the option and rebuilds the
+        palette; Cancel calls restoreScaleBar. A bar pinned to a micron
+        length takes the width as the most it may grow to, exactly as the
+        stored option does.
         """
-        if self.sb.micron_length:
-            return
-        sb_w = int(percent / 100 * self.mainwindow.field.width())
-        if sb_w > 0 and sb_w != self.sb.width():
-            self.sb.resize(sb_w, self.sb.height())
+        sb_w = self.sbWidth(percent)
+        if sb_w > 0:
+            self.sb.setMaxPixelLength(sb_w)
             self.placeSB()
-            self.sb.update()
+
+    def sbMenuActions(self):
+        """The scale bar's own right-click items, above "Hide the scale bar"."""
+        actions = [("Set the scale bar length...", self.setSBLength)]
+        if self.sb.override_length:
+            actions.append(("Size the scale bar automatically", self.clearSBLength))
+        return actions
+
+    def sbLengthRange(self):
+        """The shortest and longest lengths, in µm, you can type for a bar
+        drawn exactly at the current zoom, with the field width as its room.
+        The first is larger when there is none (see drawableLengths)."""
+        return drawableLengths(self.sb.scale, self.mainwindow.field.width())
+
+    def setSBLength(self):
+        """Ask for a length and draw the bar at it until told otherwise.
+
+        For figures. The length set here is not stored anywhere, so the
+        stored mode and size are untouched and a new series, or picking
+        "Size the scale bar automatically", brings the automatic bar back.
+        """
+        lo, hi = self.sbLengthRange()
+        if lo > hi:
+            notify(
+                "At this zoom and window width there is no scale bar length "
+                "that can be drawn. Zoom in or out, or widen the window, then "
+                "try again."
+            )
+            return
+        length = self.sb.currentLength()[0]
+        while True:
+            structure = [
+                ["Length (µm):", ("float", round(length, 10))],
+                [f"At this zoom the bar can be {formatLength(lo)} to "
+                 f"{formatLength(hi)} µm long."],
+                ["It keeps this length until you choose"],
+                ["\"Size the scale bar automatically\" or open another series."],
+            ]
+            response, confirmed = QuickDialog.get(
+                self.mainwindow, structure, "Scale Bar Length"
+            )
+            if not confirmed:
+                return
+            length = response[0]
+            if length is not None and lo <= length <= hi:
+                break
+            notify(
+                f"Please enter a length from {formatLength(lo)} to "
+                f"{formatLength(hi)} µm, or zoom first to draw a "
+                "longer or shorter bar."
+            )
+            if length is None or not length > 0:
+                length = self.sb.currentLength()[0]
+        self.sb.setOverride(float(length), self.mainwindow.field.width())
+        self.placeSB()
+
+    def clearSBLength(self):
+        """Go back to the bar the stored mode and size draw."""
+        self.sb.setOverride(None)
+        self.placeSB()
+
+    def previewScaleBarThickness(self, thickness):
+        """Show the bar at `thickness` pixels without storing it; the
+        thickness slider's counterpart of previewScaleBarWidth."""
+        self.sb.setThickness(thickness)
+        self.placeSB()
 
     def restoreScaleBar(self):
         """Restore stored width in place, preserving visibility and hide controls."""
         self.previewScaleBarWidth(self.series.getOption("scale_bar_width"))
+        self.previewScaleBarThickness(self.series.getOption("scale_bar_thickness"))
 
     def placeSB(self):
-        """Place the scale bar."""
+        """Place the scale bar.
+
+        The bar can be wider than the room to the right of where it was
+        left. This happens with a long length you typed, a pinned bar the zoom
+        has grown, or a size near 100 percent. It is then drawn as far left
+        as it must be to fit in the field. The saved position is kept, so a
+        shorter bar goes back to it.
+        """
         x, y = self.getButtonCoords("sb")
+        field = self.mainwindow.field
+        x = max(field.x(), min(x, field.x() + field.width() - self.sb.width()))
         self.sb.move(x, y)
         
     def resize(self):
@@ -1100,16 +1230,26 @@ class MousePalette():
         self.placeLabel()
         self.placeIncrementButtons()
         self.placeBCButtons()
-        # the field may have changed width, which is the room a pinned bar is
-        # allowed to grow into; a no-op when the width is unchanged
-        self.sb.setMaxPixelLength(self.mainwindow.field.width())
+        # the field may have changed width, and the bar's room is a share of
+        # it (all of it for a length you typed); a no-op when unchanged
+        self.sb.setMaxPixelLength(self.sbWidth())
+        if self.sb.override_length:
+            self.sb.setOverride(self.sb.override_length, self.mainwindow.field.width())
         self.placeSB()
 
     def reset(self):
         """Reset the mouse palette when opening a new series."""
         mode = self.mainwindow.field.mouse_mode
+        # a length you type lasts until another series opens; Options OK
+        # and a palette import rebuild the palette on the same series
+        override = None
+        if self.mainwindow.series is self.series:
+            override = self.sb.override_length
         self.close()
         self.__init__(self.mainwindow)
+        if override:
+            self.sb.setOverride(override, self.mainwindow.field.width())
+            self.placeSB()
         # the new buttons start on Pointer, but the field keeps its mode
         for name, (button, mouse_mode, _) in self.mode_buttons.items():
             button.setChecked(mouse_mode == mode)

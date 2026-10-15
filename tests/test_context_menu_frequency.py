@@ -26,8 +26,8 @@ Also guarded here:
     traces", "Edit radius...", "Edit shape...", "Unhide"), one object-wide and
     one selection-scoped, and nothing in either label said which. The fourth was
     found by the standing rule rather than by reading the menu, and was fixed
-    a few hours after the other three once the maintainer chose to narrow his
-    "leave the visibility section alone" instruction for it. See
+    a few hours after the other three, once the "leave the visibility section
+    alone" rule was narrowed for it. See
     test_no_label_is_shared_between_the_object_and_trace_menus.
 
 The definitions are built against light stubs (no Qt loop), matching the idiom
@@ -190,8 +190,8 @@ def _top_level(menu):
 
 # --------------------------------------------------------------------------- #
 # The exact-layout pins that used to live here described the frequency-first
-# redesign. That scheme is parked (2026-08-21, his call: the Dev build follows
-# stable's context-menu organization "until i come up with a new scheme"), and
+# redesign. That scheme is parked since 2026-08-21 (the Dev build follows
+# stable's context-menu organization until there is a new scheme), and
 # the layouts now come verbatim from the release line, where their own history
 # pins them. What stays here: the shared stubs the other menu tests import,
 # and sanity checks that the seven surfaces still build and carry the rows

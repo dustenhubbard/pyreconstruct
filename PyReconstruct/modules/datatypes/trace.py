@@ -616,7 +616,7 @@ class Trace():
 
         # get the transform
         if xml_trace.transform is not None:
-            points = xml_trace.transform.transformPoints(xml_trace.points)
+            points = xml_trace.transform.transformPoints(points)
         if xml_image_tform is not None:
             points = xml_image_tform.inverseTransformPoints(points)
         
@@ -998,10 +998,9 @@ class Trace():
         look at it. Every production caller has a section in scope:
         Section.importTraces passes ``self.mag`` down through
         Contour.importTraces and tracesWithoutCounterpart (and reconciles the two
-        series' magnifications with Trace.magScale before it does), and both
-        series-level scans (Series.deleteDuplicateTraces and
-        Series.findDifferentlyNamedDuplicates) pass ``section.mag`` from the
-        section they are walking.
+        series' magnifications with Trace.magScale before it does), and the
+        series-level duplicate scan (Series.findDuplicateTraces) passes
+        ``section.mag`` from the section it is walking.
 
         ``open_curve=False`` sends an open pair down the area path instead, byte
         for byte as it was before the curve metric existed, and needs no ``mag``.
@@ -1183,7 +1182,13 @@ def convertMode(arg):
                 # any Reconstruct mode other than 9, 11, 13 and 15. The field
                 # draws a None style at full opacity, so it goes out as solid.
                 mode = 13
-            if arg[1] == "unselected":
+            # Reconstruct keeps the fill condition only as the sign of the
+            # mode: positive fills a selected trace, negative an unselected
+            # one. The sign matches TraceLayer.drawTrace, which fills a trace
+            # only while it is unselected unless its condition is "selected"
+            # or "always", so "none" goes out negative like "unselected".
+            # "always" has no form of its own and goes out as selected.
+            if arg[1] not in ("selected", "always"):
                 mode *= -1
         return mode
 
