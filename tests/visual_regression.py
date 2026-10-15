@@ -24,6 +24,15 @@ Tolerance, in two parts:
 The image size must match exactly. A dialog that grows by a pixel has changed
 layout, and that is worth a look.
 
+Text and the renderer: on Linux the glyphs are rasterized by the system
+FreeType, and two FreeType versions draw the same DejaVu Sans at the same size
+differently enough that an image which is mostly text fails the tolerance
+while its layout is unchanged. So the Linux baseline folder records the
+renderer that drew it in ``text_renderer.txt``, and a check marked ``text``
+skips on a Linux host whose renderer differs, with a reason naming both. On
+the CI runner that check fails instead, so the gate never loses a test
+quietly; accepting the artifact records the new renderer with the images.
+
 Updating baselines:
 
 * Locally: ``make baselines`` (or ``pytest tests/test_visual_regression.py
@@ -34,7 +43,7 @@ Updating baselines:
   the ``visual-diffs`` artifact. When a change to the screen is intended,
   download it and copy the rendered images over the Linux baselines with
   ``python tests/visual_regression.py accept <artifact folder>``, which skips
-  the expected and diff images.
+  the expected and diff images and carries the renderer record along.
 """
 
 from __future__ import annotations
@@ -55,6 +64,7 @@ CHANNEL_TOLERANCE = 40
 MAX_CHANGED_FRACTION = 0.0002
 
 _SUFFIXES = (".expected.png", ".diff.png")
+TEXT_RENDERER_FILE = "text_renderer.txt"
 
 
 def platform_key() -> str:
@@ -66,6 +76,64 @@ def platform_key() -> str:
 
 def baseline_dir() -> Path:
     return BASELINE_ROOT / platform_key()
+
+
+def on_ci() -> bool:
+    return bool(os.environ.get("GITHUB_ACTIONS"))
+
+
+def text_renderer() -> str | None:
+    """What rasterizes text on this host, as ``FreeType 2.13.2``, or None
+    where that is not FreeType or it cannot be asked. Qt on Linux links the
+    system libfreetype, so the version read here is the one drawing the
+    glyphs. macOS and Windows draw text with their own engines, and their
+    baselines are per machine anyway."""
+    if platform_key() != "linux":
+        return None
+    import ctypes
+
+    try:
+        lib = ctypes.CDLL("libfreetype.so.6")
+    except OSError:
+        return None
+    lib.FT_Library_Version.restype = None
+    handle = ctypes.c_void_p()
+    if lib.FT_Init_FreeType(ctypes.byref(handle)) != 0:
+        return None
+    major, minor, patch = ctypes.c_int(), ctypes.c_int(), ctypes.c_int()
+    lib.FT_Library_Version(
+        handle, ctypes.byref(major), ctypes.byref(minor), ctypes.byref(patch)
+    )
+    lib.FT_Done_FreeType(handle)
+    return f"FreeType {major.value}.{minor.value}.{patch.value}"
+
+
+def recorded_text_renderer(folder: Path | None = None) -> str | None:
+    """The renderer recorded beside the baselines (or in ``folder``)."""
+    record = (folder or baseline_dir()) / TEXT_RENDERER_FILE
+    if not record.is_file():
+        return None
+    return record.read_text().strip() or None
+
+
+def record_text_renderer(folder: Path) -> None:
+    renderer = text_renderer()
+    if renderer is None:
+        return
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / TEXT_RENDERER_FILE).write_text(renderer + "\n")
+
+
+def text_renderer_mismatch() -> str | None:
+    """A sentence naming the host's renderer and the recorded one when they
+    differ, else None. Either one unknown counts as a match."""
+    host, recorded = text_renderer(), recorded_text_renderer()
+    if host is None or recorded is None or host == recorded:
+        return None
+    return (
+        f"text is drawn by {host} here and the {platform_key()} baselines "
+        f"were drawn by {recorded}, which rasterizes the same glyphs differently"
+    )
 
 
 def image_to_array(image):
@@ -137,12 +205,16 @@ def diff_image(actual, expected, channel_tolerance=CHANNEL_TOLERANCE):
     return out
 
 
-def check_image(image, name: str, update: bool = False) -> None:
+def check_image(image, name: str, update: bool = False, text: bool = False) -> None:
     """Compare a grabbed QImage with the baseline called ``name``.
 
     Raises AssertionError on a mismatch or a missing baseline, after writing
     the rendered image (and, when there is a baseline, the expected image and a
     diff) to ``DIFF_DIR``. With ``update`` the baseline is rewritten instead.
+
+    ``text`` marks an image that is mostly glyphs: it skips on a host whose
+    text renderer differs from the recorded one, except on CI, where the
+    check fails and the renderer is written to ``DIFF_DIR`` for ``accept``.
     """
     import pytest
 
@@ -151,6 +223,7 @@ def check_image(image, name: str, update: bool = False) -> None:
 
     if update:
         save_png(actual, baseline)
+        record_text_renderer(baseline_dir())
         return
 
     if not baseline_dir().is_dir():
@@ -171,15 +244,26 @@ def check_image(image, name: str, update: bool = False) -> None:
             f"image is in {DIFF_DIR}; run with --update-baselines to accept it."
         )
 
+    mismatch = text_renderer_mismatch() if text else None
+    if mismatch and not on_ci():
+        pytest.skip(mismatch)
+
     expected = load_png(baseline)
     matches, message = compare(actual, expected)
-    if matches:
+    if matches and not mismatch:
         return
 
     save_png(actual, DIFF_DIR / f"{name}.png")
     save_png(expected, DIFF_DIR / f"{name}.expected.png")
     if actual.shape == expected.shape:
         save_png(diff_image(actual, expected), DIFF_DIR / f"{name}.diff.png")
+    if mismatch:
+        record_text_renderer(DIFF_DIR)
+        raise AssertionError(
+            f"{name}: {mismatch}; the pixels {'match' if matches else 'differ: ' + message}. "
+            f"Accept the artifact from {DIFF_DIR} to record this runner's renderer "
+            "with its images."
+        )
     raise AssertionError(
         f"{name} does not match its baseline: {message}. The rendered image, "
         f"the baseline and a diff are in {DIFF_DIR}. If the change is intended, "
@@ -198,6 +282,11 @@ def accept(folder: Path, platform: str = "linux") -> list[Path]:
         target.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(path, target / path.name)
         copied.append(target / path.name)
+    record = Path(folder) / TEXT_RENDERER_FILE
+    if record.is_file():
+        target.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(record, target / record.name)
+        copied.append(target / record.name)
     return copied
 
 
