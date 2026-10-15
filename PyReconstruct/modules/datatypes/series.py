@@ -2611,6 +2611,10 @@ class Series():
         for obj_name, copy_name in zip(obj_names, copy_names):
             self.objects.copyObjAttrs(obj_name, copy_name)
 
+        ## The sections were recorded before the copies had hosts
+        if series_states is not None:
+            series_states.recordLinksMade()
+
         self.modified = True
 
         return copy_names
@@ -6094,6 +6098,10 @@ class Series():
         ## Assign original attrs to new objects
         for obj in new_names:
             self.objects.assignCopyAttrs(obj, alignment, obj_groups, host)
+
+        ## The sections were recorded before the new objects had hosts
+        if series_states is not None:
+            series_states.recordLinksMade()
         
         if log_event:
             self.addLog(name, None, "Split into individual objects per trace")

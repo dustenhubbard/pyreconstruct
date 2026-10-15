@@ -624,6 +624,34 @@ def test_redoing_an_import_on_one_section_makes_its_links_again(
     assert _hosts(window) == [H]
     assert _saved_host_tree(window, tmp_path / "redone.jser") == {T: [H]}
 
+
+@pytest.mark.parametrize("action", ["copy", "split"])
+def test_redoing_a_copy_or_split_on_one_section_makes_its_links_again(
+        window, main_window_dialogs, monkeypatch, tmp_path, action):
+    """H hosts T. T is copied (Create copy of object(s)) or split (Split
+    traces into individual objects) from the object list, and the new
+    object takes T's host after the sections are recorded. Undo takes it
+    back on every section, and redo on s2 alone brings the new object
+    back hosted by H."""
+    _, s2, _, _ = _setup(window)
+    _object_list(window, monkeypatch, [T])
+    if action == "copy":
+        window.field.copyObjects()
+        made = T + "_copy"
+    else:
+        window.field.splitObject()
+        made = T + "_1"
+    assert _saved_host_tree(window, tmp_path / "made.jser")[made] == [H]
+
+    window.changeSection(s2)
+    for act, scope in [(window.undo_act, "all"), (window.redo_act, "section")]:
+        main_window_dialogs.linked_undo_responses = [scope]
+        assert act.isEnabled()
+        act.trigger()
+    assert made in window.field.section.contours
+    assert _hosts(window, made) == [H]
+    assert _saved_host_tree(window, tmp_path / "redone.jser").get(made) == [H]
+
 # --------------------------------------------------------------------------- #
 # save
 # --------------------------------------------------------------------------- #
