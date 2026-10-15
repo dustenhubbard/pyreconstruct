@@ -783,3 +783,21 @@ def test_the_interactive_profiler_redirects_qsettings_by_domain():
             "QSettings on macOS; it is on the list of scoping that looks like "
             "it worked and did not."
         )
+
+
+def test_the_interactive_profiler_names_and_redirects_both_organizations():
+    """The profiler's redirect covers the store the app writes now and the
+    ``KHLab`` one it still reads once to copy from. Left unredirected, that
+    read reaches the developer's real old store, and the copy it finds owed
+    keeps every default from being saved, which is not the shipped path."""
+    profiler = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "benchmarks", "profile_interactive.py",
+    )
+    with open(profiler) as f:
+        source = f.read()
+
+    assert 'REAL_ORG, REAL_APP = "PyReconstruct", "PyReconstruct"' in source
+    assert 'LEGACY_ORG = "KHLab"' in source
+    assert "args[0] in (REAL_ORG, LEGACY_ORG)" in source
+    assert "com.pyreconstruct.PyReconstruct.plist" in source
