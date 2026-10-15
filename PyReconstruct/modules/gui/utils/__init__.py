@@ -19,6 +19,7 @@ from .utils import (
     saveNotify,
     unsavedNotify,
     linkedUndoNotify,
+    viewOffImageNotify,
     mainwindow,
     drawOutlinedText,
     getProgbar,

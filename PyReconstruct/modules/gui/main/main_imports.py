@@ -83,6 +83,7 @@ from PyReconstruct.modules.gui.utils import (
     saveNotify,
     unsavedNotify,
     linkedUndoNotify,
+    viewOffImageNotify,
     setMainWindow,
     noUndoWarning,
     checkMag,
