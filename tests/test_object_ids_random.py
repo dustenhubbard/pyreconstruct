@@ -43,6 +43,10 @@ class Run:
     def ids(self):
         return self.series.data.object_ids
 
+    @property
+    def tree(self):
+        return self.series.host_tree
+
     # -- what the field does -------------------------------------------------- #
     def act(self, snum, edit):
         series = self.series
@@ -73,8 +77,7 @@ class Run:
         snum = self.rng.choice(sorted(self.series.sections))
         name = self.rng.choice(NAMES)
         had = self.ids.live(name)
-        reserved = self.ids.unplaced.get(name)
-        parked = set(self.ids.parked.get(name, ()))
+        kept = self.tree.keptIds(name)
         issued = set(self.ids.name_of)
         placed = self.ids.peek(snum, name)
 
@@ -89,10 +92,8 @@ class Run:
             assert oid == placed
         elif had:
             assert oid == max(had)
-        elif reserved is not None:
-            assert oid == reserved
-        elif parked:
-            assert oid == max(parked)
+        elif kept:
+            assert oid == max(kept)
         else:
             assert oid not in issued, "a name with no live id reused an old one"
 
@@ -132,17 +133,17 @@ class Run:
         assert self.series.host_tree.add(traveler, [host]) == []
         self.links |= {
             (t, h)
-            for t in self.ids.visibleIds(traveler)
-            for h in self.ids.visibleIds(host)
+            for t in self.tree.visibleIds(traveler)
+            for h in self.tree.visibleIds(host)
         }
 
     def unlink(self):
         traveler = self.rng.choice(TRAVELERS)
         self.series.clearObjHosts([traveler])
-        ids = self.ids
+        tree = self.tree
         self.links = {
             (t, h) for t, h in self.links
-            if not (t in ids.visibleIds(traveler) and ids.visible(h))
+            if not (t in tree.visibleIds(traveler) and tree.visible(h))
         }
 
     def delete_object(self):
@@ -201,14 +202,16 @@ class Run:
             per_name = counts.setdefault(name, {})
             per_name[oid] = per_name.get(oid, 0) + 1
         assert ids._live == counts, f"{label}: an id outlived its traces"
-        for name, held in ids.parked.items():
-            assert held and not held & set(counts.get(name, ())), label
-
         tree = series.host_tree
+        for name in NAMES:
+            kept = tree.keptIds(name)
+            assert not kept & set(counts.get(name, ())), f"{label}: a kept id has traces"
+            assert tree.visibleIds(name) == ids.live(name) | kept, label
+
         expected = {
             (ids.name_of[t], ids.name_of[h])
             for t, h in self.links
-            if ids.visible(t) and ids.visible(h)
+            if tree.visible(t) and tree.visible(h)
         }
         shown = {
             (t, h)

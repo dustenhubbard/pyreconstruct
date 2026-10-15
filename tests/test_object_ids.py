@@ -6,6 +6,7 @@ back the id each restored set of traces had. Nothing about ids is written to
 the .jser.
 """
 import json
+import types
 
 import pytest
 
@@ -16,6 +17,7 @@ from PyReconstruct.modules.backend.func.state_manager import (
 from PyReconstruct.modules.backend.progress import NullProgressReporter
 from PyReconstruct.modules.constants.jser_format import SERIES_KEYS
 from PyReconstruct.modules.datatypes import Series, Trace
+from PyReconstruct.modules.datatypes.host_tree import HostTree
 from PyReconstruct.modules.datatypes.object_ids import ObjectIds
 
 H = "ids_host"
@@ -80,14 +82,21 @@ def test_an_undone_delete_and_a_new_object_share_a_name():
     assert ids.live(H) == {old}
 
 
-def test_a_reserved_id_is_taken_by_the_first_traces():
-    ids = ObjectIds()
-    r = ids.reserve(H)
-    assert ids.reserve(H) == r
-    assert ids.live(H) == set()
-    assert ids.ensure(4, H) == r
-    assert H not in ids.unplaced
-    assert ids.reserve(H) == r
+def test_an_id_the_host_tree_keeps_is_taken_by_the_first_traces():
+    """A name with links but no traces (a dangling host in a file) has an
+    id the host tree keeps for it; the name's first traces take it, and
+    later traces join it."""
+    series = types.SimpleNamespace(data=types.SimpleNamespace(objects={}))
+    ids = series.data.object_ids = ObjectIds(series)
+    tree = series.host_tree = HostTree({}, series)
+    ids.ensure(1, T)
+    tree.add(T, [H])
+    kept = tree.keptId(H)
+    assert kept is not None and ids.live(H) == set()
+    assert ids.ensure(4, H) == kept
+    assert tree.keptIds(H) == set()
+    assert ids.ensure(5, H) == kept
+    assert tree.getHosts(T) == [H]
 
 
 def test_reconcile_gives_a_new_pair_the_name_s_one_live_id():
@@ -442,8 +451,9 @@ def test_reordering_right_after_a_delete_lets_the_id_die(series):
 def test_a_new_section_under_a_deleted_number_starts_clean(series, where):
     """H only on the last section; delete it and, with no refresh, insert a
     section, which reuses the deleted number. Nothing is placed on the new
-    section, and H drawn there takes back the id the section delete parked
-    (the object was not deleted, so it keeps its links)."""
+    section, and H drawn there takes back the id the host tree kept when
+    the section was deleted (the object was not deleted, so it keeps its
+    links)."""
     last = max(series.sections)
     section = series.loadSection(last)
     _draw(series, section, H)
@@ -452,7 +462,7 @@ def test_a_new_section_under_a_deleted_number_starts_clean(series, where):
 
     series.deleteSections([last])
     assert _ids(series).live(H) == set()
-    assert _ids(series).parked == {H: {old}}
+    assert series.host_tree.keptIds(H) == {old}
     index = min(series.sections) if where == "top" else last + 5
     renumbered = series.insertSection(index, "no-image", 0.00254, 0.05)
     assert last not in renumbered and index in series.sections
@@ -464,7 +474,7 @@ def test_a_new_section_under_a_deleted_number_starts_clean(series, where):
     section.save()
     assert _ids(series).peek(index, H) == old
     assert _ids(series).live(H) == {old}
-    assert H not in _ids(series).parked
+    assert series.host_tree.keptIds(H) == set()
 
 
 def test_ids_are_not_saved(series, tmp_path):

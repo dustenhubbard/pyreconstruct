@@ -61,9 +61,13 @@ class FieldState():
         # name -> object id, for each contour held here that has traces
         # (captureObjectIds); undo and redo put these back
         self.oids = {}
-        # the parking changes this state's action made (ObjectIds.journal);
-        # its undo applies their inverse, its redo applies them again
-        self.parked_journal = []
+        # name -> the ids the host tree kept for the name while it had no
+        # traces (HostTree.keptIds), for each contour the action changed:
+        # before the action, which its undo puts back, and after it, which
+        # a redo of a series action's section puts back (SeriesStates.
+        # addSectionUndo). A field action's redo keeps nothing by itself.
+        self.kept_before = {}
+        self.kept_after = None
         if updated_contours is None:
             if contours is None:
                 updated_contours = []
@@ -161,7 +165,11 @@ class FieldState():
         c = FieldState(self.contours, self.ztraces, self.tforms, self.flags, self.contours_fp)
         c.obj_snapshot = deepcopy(self.obj_snapshot)
         c.oids = dict(self.oids)
-        c.parked_journal = list(getattr(self, "parked_journal", []))
+        c.kept_before = {n: list(v) for n, v in self.kept_before.items()}
+        c.kept_after = (
+            None if self.kept_after is None
+            else {n: list(v) for n, v in self.kept_after.items()}
+        )
         c.group_viz = dict(self.group_viz)
         c.undo_group_viz = dict(self.undo_group_viz)
         return c
@@ -297,6 +305,44 @@ def restoreObjectIds(series : Series, section : Section, names, oids : dict):
             ids.place(section.n, name, oid)
         else:
             ids.ensure(section.n, name)
+
+def captureKeptIds(series : Series, names, tree=None) -> dict:
+    """The ids the host tree keeps for each named object while it has no
+    traces (HostTree.keptIds).
+
+        Params:
+            series (Series): the series
+            names: the object names to read
+            tree (HostTree): the tree to read instead of the series' own: a
+                series state's copy, taken before the action
+        Returns:
+            (dict): name -> the kept ids, sorted, only for names with any
+    """
+    if tree is None:
+        tree = getattr(series, "host_tree", None)
+    if tree is None or not hasattr(tree, "keptIds"):
+        return {}
+    out = {}
+    for name in names:
+        kept = tree.keptIds(name)
+        if kept:
+            out[name] = sorted(kept)
+    return out
+
+
+def restoreKeptIds(series : Series, kept : dict) -> None:
+    """Put back the ids the host tree kept for the named objects without
+    traces, as a state recorded them (captureKeptIds). The tree leaves an
+    id that has traces now alone.
+
+        Params:
+            series (Series): the series
+            kept (dict): name -> the ids to keep
+    """
+    tree = getattr(series, "host_tree", None)
+    if kept and tree is not None and hasattr(tree, "restoreKept"):
+        tree.restoreKept(kept)
+
 
 def objectSnapshot(series : Series, names, before : dict = None) -> dict:
     """What an undo step must bring back with an object it recreates.
@@ -529,12 +575,10 @@ class SectionStates():
             updated_ztraces
         )
         self.current_state.obj_snapshot = objectSnapshot(series, updated_contours)
-        # this action's parking changes go on its own list from here: a draw
-        # takes back a parked id (ObjectIds.ensure) below, and the series
-        # data, which sees the action next, may park or release ids
-        ids = _objectIds(series)
-        if ids is not None and hasattr(ids, "beginStep"):
-            ids.beginStep(self.current_state.parked_journal)
+        # the ids the tree keeps for these names, before the action: the
+        # capture below gives a drawn name its id, and may take a kept one
+        # (ObjectIds.ensure)
+        self.current_state.kept_before = captureKeptIds(series, updated_contours)
         self.current_state.oids = captureObjectIds(
             series, section, updated_contours, assign=True
         )
@@ -733,6 +777,7 @@ class SectionStates():
                     section.contours[contour] = Contour(contour)
 
         restoreObjectIds(series, section, modified_contours, restored_oids)
+        restoreKeptIds(series, getattr(self.current_state, "kept_before", {}))
 
         recreated = [
             n for n in modified_contours
@@ -766,6 +811,7 @@ class SectionStates():
         restoreObjectIds(
             series, section, state_contours, getattr(redo_state, "oids", {})
         )
+        restoreKeptIds(series, getattr(redo_state, "kept_after", None) or {})
         # objects this redo brings back from nothing get their attributes and
         # groups back too (see objectSnapshot)
         recreated = [
@@ -860,8 +906,6 @@ class SeriesState():
         # section number : the section's mag before this state's action.
         # Populated only by a magnification change (FieldWidget.setMag).
         self.mags = {}
-        # the parking changes the action made (ObjectIds.journal)
-        self.parked_journal = []
 
     def recordMag(self, snum : int, mag : float):
         """Store a section's mag as it was before the action.
@@ -1047,6 +1091,11 @@ class SeriesState():
                 continue  # only replace obj columns under specific circumstances (below)
             if attr == "groups_visibility":
                 continue  # only fills in missing entries (below)
+            if attr == "host_tree" and hasattr(value, "inheritKept"):
+                # an object that lost its traces with no undoable step since
+                # this copy was taken (a refresh, an unlogged update) stays
+                # kept: nothing undoes that
+                value.inheritKept(series.host_tree)
             setattr(series, attr, value)
 
         # a group the step brings back gets the visibility it had when the
@@ -1156,9 +1205,6 @@ class SeriesStates():
         for states in self.section_states_dict.values():
             states.redo_states = []
         new_state = SeriesState(breakable)
-        ids = _objectIds(self.series)
-        if ids is not None and hasattr(ids, "beginStep"):
-            ids.beginStep(new_state.parked_journal)
         new_state.resetSeriesAttributes(self.series)
         self.undos.append(new_state)
     
@@ -1221,19 +1267,16 @@ class SeriesStates():
                 self.series, names, self.undos[-1].series_attrs
             ))
 
-        # the section's parking changes were made by the series action, on
-        # its list (its saves came before this state); this state keeps a
-        # copy of them for an undo of this section alone, and the series
-        # action goes on recording on its own list
-        series_state = self.undos[-1]
-        own = getattr(state, "parked_journal", [])
-        series_state.parked_journal.extend(own)
-        state.parked_journal = [
-            change for change in series_state.parked_journal if change[3] == snum
-        ]
-        ids = _objectIds(self.series)
-        if ids is not None and hasattr(ids, "beginStep"):
-            ids.journal = series_state.parked_journal
+        # the ids the tree kept for the names the action changed here:
+        # before the action, read from the series state's copy of the tree
+        # (the action's saves came before this state), and after it, from
+        # the tree now. An undo of this section alone puts back the first,
+        # a redo the second.
+        names = state.getModifiedContours()
+        state.kept_before = captureKeptIds(
+            self.series, names, self.undos[-1].series_attrs.get("host_tree")
+        )
+        state.kept_after = captureKeptIds(self.series, names)
 
     def clear(self):
         """Clear all state tracking."""
@@ -1338,14 +1381,6 @@ class SeriesStates():
         
         state = self.redos[-1] if redo else self.undos[-1]
 
-        # the parking changes the sections' restores make on the way are set
-        # aside; the action's own changes are undone or redone at the end
-        ids = _objectIds(self.series)
-        if ids is not None and hasattr(ids, "beginUndo"):
-            ids.beginUndo(
-                getattr(state, "parked_journal", []), undo=not redo, on_save=False
-            )
-
         # what the opposite step puts back, captured before any section is
         # restored: restoring a section can delete an object (undoing a partial
         # rename deletes the new one), and that clears its attributes, groups
@@ -1382,8 +1417,6 @@ class SeriesStates():
         
         # undo/redo the series attributes
         state.applySeriesAttributes(self.series, pre_series_attrs)
-        if ids is not None and hasattr(ids, "finishUndo"):
-            ids.finishUndo()
 
         # move the state accordingly, stamped as it goes onto the other stack
         # the way SectionStates stamps its states: favor3D compares these
@@ -1423,19 +1456,6 @@ class SeriesStates():
                 else:
                     return # do not continue if state is unbreakable
                 
-        # the step's parking changes are undone or redone once the section's
-        # data has caught up (SeriesData.updateSection)
-        states = self.section_states_dict[section.n]
-        target = (
-            (states.redo_states[-1] if states.redo_states else None) if redo
-            else (states.current_state if states.undo_states else None)
-        )
-        ids = _objectIds(self.series)
-        if target is not None and ids is not None and hasattr(ids, "beginUndo"):
-            ids.beginUndo(
-                getattr(target, "parked_journal", []), undo=not redo, on_save=True
-            )
-
         if redo:
             self.section_states_dict[section.n].redoState(section, self.series)
         else:

@@ -13,10 +13,20 @@ class HostTree():
     undo brings that object back, and a new object that takes the old name
     does not get them.
 
+    The tree also keeps the ids of objects that have links but no traces: a
+    name a loaded file links to with no traces of its own, a host another
+    series had, or an object emptied without being deleted (its sections
+    deleted, an import). Their links stay on screen and in the file, and the
+    name's next traces take the kept id back (ObjectIds.ensure). An object
+    deleted outright takes the ids kept for its name out of sight until an
+    undo. The kept ids are part of the tree's state, so a series undo's copy
+    of the tree carries them, and a section undo puts back the ones its action
+    changed (FieldState.kept_before).
+
     Callers still speak names. Reads go through a name projection of the
-    links whose two ends are both visible (ObjectIds.visible), rebuilt when
-    the links or the ids change. When an undo brings an old object back while
-    a new one has its name, the name shows the links of both.
+    links whose two ends are both visible (live or kept), rebuilt when the
+    links or the ids change. When an undo brings an old object back while a
+    new one has its name, the name shows the links of both.
     """
 
     def __init__(self, host_dict : dict, series):
@@ -29,14 +39,15 @@ class HostTree():
         self.series = series
         ids = getattr(getattr(series, "data", None), "object_ids", None)
         # a tree with no series keeps its own ids; every name then holds a
-        # reserved id, and the tree behaves as a plain name tree
+        # kept id, and the tree behaves as a plain name tree
         self._ids = ids if ids is not None else ObjectIds()
         self._reset(set(), set())
 
         for obj_name, hosts in host_dict.items():
             self.add(obj_name, hosts)
 
-    def _reset(self, edges : set, members : set, order : Optional[dict] = None):
+    def _reset(self, edges : set, members : set, order : Optional[dict] = None,
+               kept : Optional[dict] = None):
         # names in the order the tree has always listed them: added by
         # add() (the object, then its hosts), dropped by removeObject, and
         # moved to the end by a rename. Reads that walk the tree by name
@@ -50,6 +61,9 @@ class HostTree():
         # ids registered by add() whether or not they have links, so a name
         # stays in the tree as it always has
         self._members : set[int] = members
+        # name -> the ids kept visible for it while they have no traces (see
+        # the class docstring)
+        self._kept : dict[str, set[int]] = kept if kept is not None else {}
         # ids treated as gone while a rename runs (see renameObject)
         self._hidden : frozenset = frozenset()
         # the name projection: name -> {"hosts", "travelers"}, and the
@@ -65,12 +79,107 @@ class HostTree():
         # objects under one name), so it is not just the visible links
         self._exact = False
         self._trimmed : list = []
-        self._ids.watched |= members
-        for t, h in edges:
-            self._ids.watched.add(t)
-            self._ids.watched.add(h)
 
-    # -- the name projection ------------------------------------------------ #
+    # the ids kept for names without traces
+    def visible(self, oid : int) -> bool:
+        """True while the id stands for an object the user can see: it has
+        traces, or the tree keeps it for a name with none."""
+        return self._visible(oid)
+
+    def visibleIds(self, name : str) -> set:
+        """The visible ids under the name."""
+        return self._visibleIds(name)
+
+    def keptIds(self, name : str) -> set:
+        """The ids kept for the name while they have no traces."""
+        return set(self._kept.get(name, ()))
+
+    def keptId(self, name : str):
+        """The id the name's next traces take: the newest kept for it, or
+        None (ObjectIds.ensure)."""
+        return max(self.keptIds(name), default=None)
+
+    def keep(self, oid : int):
+        """Keep the id visible: its object lost its traces without being
+        deleted (ObjectIds.drop)."""
+        if self._ids.isLive(oid):
+            return
+        name = self._ids.name_of[oid]
+        kept = self._kept.setdefault(name, set())
+        if oid not in kept:
+            kept.add(oid)
+            self._stale = True
+
+    def traced(self, oid : int):
+        """The id has traces again (ObjectIds.ensure, place): it needs no
+        keeping."""
+        name = self._ids.name_of[oid]
+        kept = self._kept.get(name)
+        if kept and oid in kept:
+            kept.discard(oid)
+            if not kept:
+                del self._kept[name]
+            self._stale = True
+
+    def deleted(self, oid : int):
+        """The object with this id lost its last trace by a delete
+        (ObjectIds.drop): the ids kept for its name go out of sight, until
+        an undo keeps them again."""
+        self._release(self._ids.name_of[oid])
+
+    def _release(self, name : str):
+        if self._kept.pop(name, None):
+            self._stale = True
+
+    def restoreKept(self, kept : dict):
+        """Keep again the ids a section undo or redo puts back
+        (FieldState.kept_before, kept_after), for the names its action
+        changed. An id with traces now needs no keeping.
+
+            Params:
+                kept (dict): name -> the ids kept for it at that state
+        """
+        ids = self._ids
+        for name, oids in kept.items():
+            for oid in oids:
+                if ids.name_of.get(oid) == name and not ids.isLive(oid):
+                    self.keep(oid)
+
+    def inheritKept(self, previous):
+        """Take over what the tree this one replaces keeps, as a series undo
+        or redo installs this copy (SeriesState.applySeriesAttributes).
+
+        An object that lost its traces with no undoable step since this copy
+        was taken (a refresh, an unlogged update) stays kept: nothing undoes
+        that. Only ids this tree links or lists are worth keeping, and an id
+        with traces now needs no keeping.
+
+            Params:
+                previous (HostTree): the tree being replaced
+        """
+        ids = self._ids
+        linked = {oid for edge in self._edges for oid in edge} | self._members
+        for oids in previous._kept.values():
+            for oid in oids:
+                if oid in linked and not ids.isLive(oid):
+                    self.keep(oid)
+        # ids this copy kept that got traces since it was taken
+        for name in list(self._kept):
+            self._kept[name] = {
+                oid for oid in self._kept[name] if not ids.isLive(oid)
+            }
+            if not self._kept[name]:
+                del self._kept[name]
+
+    def _reserve(self, name : str) -> int:
+        """A kept id for a name with no visible id: a name a link names
+        before it has traces (a dangling host in a file, a rename target)."""
+        oid = self._ids.issue(name)
+        self._kept.setdefault(name, set()).add(oid)
+        self._stale = True
+        return oid
+
+    # the name projection
     @property
     def objects(self) -> dict:
         """name -> {"hosts": set, "travelers": set}, for the visible links."""
@@ -83,10 +192,16 @@ class HostTree():
         self._objects = value
 
     def _visible(self, oid : int) -> bool:
-        return oid not in self._hidden and self._ids.visible(oid)
+        if oid in self._hidden:
+            return False
+        ids = self._ids
+        if ids.isLive(oid):
+            return True
+        name = ids.name_of.get(oid)
+        return name is not None and oid in self._kept.get(name, ())
 
     def _visibleIds(self, name : str) -> set:
-        return self._ids.visibleIds(name) - self._hidden
+        return (self._ids.live(name) | self._kept.get(name, set())) - self._hidden
 
     def _fresh(self) -> bool:
         """True if the projection matches the ids and links now, and is
@@ -95,7 +210,6 @@ class HostTree():
             not self._stale and self._exact
             and self._built == (self._ids.version, self._hidden)
         )
-
     def _pairOf(self, t : int, h : int):
         """The name pair of a visible link, or None."""
         if not (self._visible(t) and self._visible(h)):
@@ -187,9 +301,6 @@ class HostTree():
             return
         in_place = self._fresh()
         self._edges |= new
-        for t, h in new:
-            self._ids.watched.add(t)
-            self._ids.watched.add(h)
         if not in_place:
             self._stale = True
             return
@@ -229,7 +340,6 @@ class HostTree():
             return
         in_place = self._fresh()
         self._members |= new
-        self._ids.watched |= new
         if not in_place:
             self._stale = True
             return
@@ -239,9 +349,9 @@ class HostTree():
 
     def _writeIds(self, name : str) -> set:
         """The ids a new link of this name joins: its visible ids, or one
-        reserved for it if it has none."""
+        kept for it if it has none."""
         oids = self._visibleIds(name)
-        return oids or {self._ids.reserve(name)}
+        return oids or {self._reserve(name)}
 
     def _dropVisible(self, t_name : str, h_name : str):
         """Remove the visible links from t_name's objects to h_name's."""
@@ -250,7 +360,7 @@ class HostTree():
             {(t, h) for t, h in self._edges if t in t_ids and h in h_ids}
         )
 
-    # -- writes ------------------------------------------------------------- #
+    # writes
     def add(self, obj_name : str, hosts : list):
         """Add an entry to the host tree.
         
@@ -304,13 +414,15 @@ class HostTree():
     def removeObject(self, obj_name : str):
         """The object is gone.
 
-        Deleting an object's last trace already made its ids invisible, so
-        its links stay, dormant, and an undo that brings it back brings them
-        back. Here only a reserved id (a name with no traces) is let go, and
-        the links of any id that still has traces are removed, for a caller
-        that removes an object outright.
+        Deleting an object's last trace already made its ids invisible and
+        took the ids kept for its name out of sight (ObjectIds.drop), so its
+        links stay, dormant, and an undo that brings it back brings them
+        back. Here the name leaves the tree's order, and for a caller that
+        removes an object outright while it still has traces, the links of
+        those ids are removed. The ids kept for the name are left alone: a
+        redo that empties an object a step kept (a section of an import,
+        redone on its own) keeps it again before the series data calls this.
         """
-        self._ids.release(obj_name)
         if self._order.pop(obj_name, None) is not None:
             self._stale = True
         live = self._ids.live(obj_name) - self._hidden
@@ -355,13 +467,18 @@ class HostTree():
                 traveler_copies.append((t_name, t))
         if not keep_old:
             # the old object's links stay with its ids: dormant once its last
-            # trace is renamed, back if an undo brings it back
-            ids.release(old_name)
+            # trace is renamed, back if an undo brings it back. The ids kept
+            # for the old name go out of sight with it.
+            self._release(old_name)
             self._hidden = frozenset(old_ids)
             if self._order.pop(old_name, None) is not None:
                 self._stale = True
         try:
-            new_id = ids.reserve(new_name)
+            # the object under the new name: its newest live id, else the
+            # newest kept for the name, else one kept until its traces come
+            live = ids.live(new_name) - self._hidden
+            kept = self.keptIds(new_name) - self._hidden
+            new_id = max(live) if live else (max(kept) if kept else self._reserve(new_name))
             self._register(
                 [new_name] + sorted({h for h, _ in host_copies}, key=str)
                 + sorted({t for t, _ in traveler_copies}, key=str)
@@ -393,11 +510,10 @@ class HostTree():
         """Forget the links with an end that cannot come back. Called when
         the undo history is cleared: only an undo can bring back an id that
         lost its last trace. Nothing visible changes."""
-        ids = self._ids
         self._edges = {
-            (t, h) for t, h in self._edges if ids.visible(t) and ids.visible(h)
+            (t, h) for t, h in self._edges if self._visible(t) and self._visible(h)
         }
-        self._members = {oid for oid in self._members if ids.visible(oid)}
+        self._members = {oid for oid in self._members if self._visible(oid)}
     
     def _reachable(self, start : list, edge : str, only_secondary : bool):
         """Collect every name reachable from start by following one edge type.
@@ -487,7 +603,8 @@ class HostTree():
         return d
 
     def copy(self):
-        """A copy of the links, dormant ones included, on the same ids."""
+        """A copy of the links, dormant ones included, and of the ids kept
+        for names without traces, on the same ids."""
         c = HostTree.__new__(HostTree)
         c.series = self.series
         c._ids = self._ids
@@ -499,7 +616,10 @@ class HostTree():
             order.extend(hosts)
         # the names a copy keeps are the linked ones, dormant links included
         linked = {oid for edge in self._edges for oid in edge}
-        c._reset(set(self._edges), self._members & linked, order)
+        c._reset(
+            set(self._edges), self._members & linked, order,
+            kept={name: set(oids) for name, oids in self._kept.items()},
+        )
         return c
 
     def getHostGroup(self, obj_name : str, obj_pool=None):
