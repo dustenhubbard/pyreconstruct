@@ -473,11 +473,11 @@ def _other_flavor_label(self=None):
 def return_help_menu(self):
     """Return help menu.
 
-    Ordered in five groups, separator between each: the search field, then
-    what this build IS, then updates, then the What's-new pop-up, then the
-    shortcuts list, then one flat group for reporting a problem in the order
-    the steps happen: copy the report, send it to us or file it, the log
-    tools, and the links last.
+    Ordered in seven groups, separator between each: the search field, then
+    what this build IS, then updates, then the other build's download, then
+    the What's-new pop-up, then the shortcuts list, then one flat group for
+    reporting a problem in the order the steps happen: copy the report, send
+    it to us or file it, the log tools, and the links last.
     The search field itself is inserted at the very top by
     MainWindow.createMenuBar, which also focuses it when Help opens.
     """

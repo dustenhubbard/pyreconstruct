@@ -1718,9 +1718,8 @@ class ContourView():
     already public, already read-only, and is already the row's identity. Two
     views of one row of one store name the same trace whether or not they are
     `is`-equal, and that is what `index` and `__contains__` answer here. The
-    route caches nothing, so it is not design §5(A)'s identity-stable view, and
-    it defines no `__eq__` over trace ids, so it is not §5(B), which was
-    **rejected**. It is observationally what a cached
+    route caches nothing and defines no `__eq__` over trace ids: membership and
+    `index` compare the store and the row. It is observationally what a cached
     view would give -- a cache handing out one object per row makes `is` mean
     exactly "same row of the same store" -- but with no live-view map, which is
     the cost D1 exists to weigh. **So this route needs no D1 answer: there is no

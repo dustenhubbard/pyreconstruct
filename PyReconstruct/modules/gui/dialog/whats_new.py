@@ -671,7 +671,7 @@ class WhatsNewDialog(QDialog):
         if url is None:
             # The releases INDEX, not this version's tag: the dialog already
             # renders this version's notes, so the link's job is everything
-            # else -- every shipped version's notes in one place. The
+            # else: every shipped version's notes in one place. The
             # truncation line in a capped body points at the
             # same landing.
             url = github_release_url()

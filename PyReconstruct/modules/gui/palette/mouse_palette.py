@@ -1120,9 +1120,10 @@ class MousePalette():
     def previewScaleBarWidth(self, percent):
         """Show the bar at `percent` of the field width without storing it.
 
-        Series > Options drives this from its slider as the handle moves
-        (the size cannot be judged once OK has closed the window). Nothing is written: OK stores the option and rebuilds
-        the palette; Cancel calls restoreScaleBar. A bar pinned to a micron
+        Series > Options drives this from its slider as the handle moves, so
+        the size can be judged before OK without closing and reopening the
+        window. Nothing is written: OK stores the option and rebuilds the
+        palette; Cancel calls restoreScaleBar. A bar pinned to a micron
         length takes the width as the most it may grow to, exactly as the
         stored option does.
         """
