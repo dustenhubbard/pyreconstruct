@@ -372,6 +372,40 @@ def restoreLinksMade(series : Series, links) -> None:
         tree.restoreLinks(links)
 
 
+def linkEndNames(series : Series, links) -> set:
+    """The names of the objects the links join.
+
+        Params:
+            series (Series): the series
+            links: (traveler id, host id) pairs
+    """
+    ids = _objectIds(series)
+    if ids is None:
+        return set()
+    return {
+        ids.name_of[oid] for edge in links for oid in edge if oid in ids.name_of
+    }
+
+
+def recordKeptLinkEnds(series : Series, record : dict, links, names) -> None:
+    """Bring an action's kept record (SeriesState.kept_after) up to date for
+    the other ends of the links it made. A host the action linked with no
+    traces of its own (an import's host from another series) is kept only by
+    the tree, and a series undo's copy of the tree does not keep it, so a
+    section redo that makes the link again keeps the host from this record.
+
+        Params:
+            series (Series): the series
+            record (dict): name -> kept ids, the action's record
+            links: (traveler id, host id) pairs the action made
+            names: the names the record already covers
+    """
+    ends = linkEndNames(series, links) - set(names)
+    for name in ends:
+        record.pop(name, None)
+    record.update(captureKeptIds(series, ends))
+
+
 def objectSnapshot(series : Series, names, before : dict = None) -> dict:
     """What an undo step must bring back with an object it recreates.
 
@@ -840,11 +874,16 @@ class SectionStates():
         restoreObjectIds(
             series, section, state_contours, getattr(redo_state, "oids", {})
         )
+        # what the action kept for its contours here, and for the hosts and
+        # travelers of the links it made here (recordKeptLinkEnds)
+        links = getattr(redo_state, "links_made", ())
         kept_after = getattr(redo_state, "kept_after", None) or {}
         restoreKeptIds(series, {
-            n: kept_after[n] for n in modified_contours if n in kept_after
+            n: kept_after[n]
+            for n in set(modified_contours) | linkEndNames(series, links)
+            if n in kept_after
         })
-        restoreLinksMade(series, getattr(redo_state, "links_made", ()))
+        restoreLinksMade(series, links)
         # objects this redo brings back from nothing get their attributes and
         # groups back too (see objectSnapshot)
         recreated = [
@@ -1354,6 +1393,7 @@ class SeriesStates():
         state.links_made = captureLinksMade(
             self.series, names, self.undos[-1].series_attrs.get("host_tree")
         )
+        recordKeptLinkEnds(self.series, record, state.links_made, names)
 
         # an action that saves with object logging off (an import) keeps an
         # object it empties, attributes and all; an object delete does not.
@@ -1373,8 +1413,10 @@ class SeriesStates():
         before = series_state.series_attrs.get("host_tree")
         for snum in series_state.undo_lens:
             state = self[snum].current_state
-            state.links_made = captureLinksMade(
-                self.series, state.getModifiedContours(), before
+            names = state.getModifiedContours()
+            state.links_made = captureLinksMade(self.series, names, before)
+            recordKeptLinkEnds(
+                self.series, series_state.kept_after, state.links_made, names
             )
 
     def clear(self):

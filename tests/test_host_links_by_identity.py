@@ -624,6 +624,67 @@ def test_redoing_an_import_on_one_section_makes_its_links_again(
     assert _hosts(window) == [H]
     assert _saved_host_tree(window, tmp_path / "redone.jser") == {T: [H]}
 
+
+def test_redoing_an_import_on_one_section_keeps_a_host_with_no_traces(
+        window, main_window_dialogs, monkeypatch, tmp_path):
+    """H on s1 and T on s2, not linked. A copy draws X on s3, moves T and
+    makes X its host. Importing only s2 from the copy, preferring it, with
+    object attributes, makes X T's host though X has no traces here. Undo
+    on every section and redo on s2 alone bring T back hosted by X.
+    Deleting T from the object list then takes the link off, its undo puts
+    it back and its redo takes it off again."""
+    from PyReconstruct.modules.datatypes import Series, Trace
+    import PyReconstruct.modules.gui.main.main_window as mw
+
+    _, s2, s3, _ = _setup(window)
+    window.series.host_tree.clearHosts(T)
+    window.saveAllData()
+    path = tmp_path / "copy.jser"
+    window.series.saveJser(str(path))
+    copy = Series.openJser(str(path))
+    try:
+        section = copy.loadSection(s3)
+        trace = Trace(X, (0, 255, 0), True)
+        trace.points = [(1.0, 1.0), (2.0, 1.0), (1.0, 2.0)]
+        section.addTrace(trace)
+        section.save()
+        section = copy.loadSection(s2)
+        section.selected_traces = list(section.contours[T])
+        section.translateTraces(1.0, 1.0)
+        section.save()
+        copy.setObjHosts([T], [X])
+        copy.saveJser(str(path))
+    finally:
+        copy.close()
+    monkeypatch.setattr(mw.FileDialog, "get", lambda *a, **k: str(path))
+    monkeypatch.setattr(mw.ImportSeriesDialog, "exec", lambda self: (
+        {"traces": [(s2, s2 + 1), [], [], 0.95, True, True, True, "other", "other"]},
+        True,
+    ))
+    window.importfromseries_act.trigger()
+    assert X not in window.series.data["objects"]
+    assert _saved_host_tree(window, tmp_path / "imported.jser") == {T: [X]}
+
+    window.changeSection(s2)
+    imported = sorted(t.points for t in window.field.section.contours[T])
+    for action, scope in [(window.undo_act, "all"), (window.redo_act, "section")]:
+        main_window_dialogs.linked_undo_responses = [scope]
+        assert action.isEnabled()
+        action.trigger()
+    assert sorted(t.points for t in window.field.section.contours[T]) == imported
+    assert _hosts(window) == [X]
+    assert _saved_host_tree(window, tmp_path / "redone.jser") == {T: [X]}
+
+    _object_list(window, monkeypatch, [T])
+    window.field.deleteObjects()
+    assert T not in window.series.data["objects"]
+    assert _saved_host_tree(window, tmp_path / "deleted.jser") == {}
+    for action, saved in [(window.undo_act, {T: [X]}), (window.redo_act, {})]:
+        main_window_dialogs.linked_undo_responses = ["all"]
+        assert action.isEnabled()
+        action.trigger()
+        assert _saved_host_tree(window, tmp_path / "again.jser") == saved
+
 # --------------------------------------------------------------------------- #
 # save
 # --------------------------------------------------------------------------- #
