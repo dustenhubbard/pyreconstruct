@@ -1127,8 +1127,9 @@ class SeriesState():
             if attr == "host_tree" and hasattr(value, "inheritKept"):
                 # an object that lost its traces with no undoable step since
                 # this copy was taken (a refresh, an unlogged update) stays
-                # kept: nothing undoes that
-                value.inheritKept(series.host_tree, self.renamed_out)
+                # kept: nothing undoes that. One a section step let go since
+                # stays out, unless this action's own rename took it
+                value.inheritKept(series.host_tree, self.renamed_out, renamed_out)
             setattr(series, attr, value)
 
         # a group the step brings back gets the visibility it had when the
