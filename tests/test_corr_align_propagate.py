@@ -212,6 +212,8 @@ def _prop_stub(monkeypatch, base_tforms, current_section, locked=()):
     stub.generateView = lambda *a, **k: None
     stub.saveState = lambda *a, **k: None
     stub.reload = lambda *a, **k: None
+    # no scissors cut is open on a stub field
+    stub.cancelOpenScissorsCut = lambda: None
     monkeypatch.setattr(
         fw, "getProgbar",
         lambda *a, **k: types.SimpleNamespace(

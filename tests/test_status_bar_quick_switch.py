@@ -62,7 +62,7 @@ def choose(qtbot, menu, text):
 
 
 # ---- section: the bounded list popup, reached from the bar -------------------
-# The center-screen Go To Section dialog left this path on his call
+# The center-screen Go To Section dialog left this path
 # (2026-08-22); the menu-bar route and a right-click on the segment still own
 # the dialog. The popup is a jump field over a scrollable list of the whole
 # series (SectionListPopup), because a QMenu cannot scroll inside a bounded
@@ -128,7 +128,7 @@ def test_clicking_the_alignment_segment_lists_the_series_alignments(
     menu = popup_of(main_window.status_readout.alignment_segment)
     assert menu is not None and menu.isVisible()
     # the trailing separator ("" in entry_texts) and the management row were
-    # added on his click test call (2026-08-25)
+    # added 2026-08-25
     assert entry_texts(menu) == expected + ["", "New or edit alignments..."]
     assert checked_texts(menu) == [main_window.series.alignment]
 
@@ -264,7 +264,7 @@ def test_a_second_click_does_not_leave_the_first_menu_behind(qtbot, main_window)
 
 def test_pill_menus_offer_the_management_dialog(qapp, main_window):
     """The pills must offer a road to CREATING a profile or alignment, not
-    only switching (his click test, 2026-08-25): a separated final row opens
+    only switching (since 2026-08-25): a separated final row opens
     the matching management dialog."""
     menu = main_window.quickSwitchBCProfile()
     try:
@@ -285,8 +285,8 @@ def test_pill_menus_offer_the_management_dialog(qapp, main_window):
 
 def test_pill_menus_clear_the_pill_by_the_section_gap(qapp, main_window, qtbot):
     """The alignment and B/C menus sat flush against their pill and read as
-    crowded; the section popup's own 2px lift is the approved spacing (his
-    call, 2026-08-26), so both menus use it."""
+    crowded; the section popup's own 2px lift is the spacing (since
+    2026-08-26), so both menus use it."""
     from PyReconstruct.modules.gui.main.main_window import MainWindow
 
     for open_menu, segment in (

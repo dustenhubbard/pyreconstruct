@@ -29,16 +29,8 @@ from PyReconstruct.modules.calc import (
     getDistanceFromTrace,
     getExterior
 )
-from PyReconstruct.modules.calc.nesting import nestedFillOrder
+from PyReconstruct.modules.calc.nesting import islandCuts
 from PyReconstruct.modules.gui.utils import drawOutlinedText
-
-# How a selected trace is drawn: (color, pen width in pixels), widest first.
-# None stands for the trace's own color.
-SELECTION_OUTLINE = (
-    ((0, 0, 0), 8),
-    ((255, 255, 255), 6),
-    (None, 3),
-)
 
 class TraceLayer():
 
@@ -298,8 +290,18 @@ class TraceLayer():
         painter.setBrush(Qt.NoBrush)
         painter.setPen(QPen(QColor(*draw_color), 1))
 
-        ## Draw trace (a selected trace gets its line from the outline below)
-        if not selected:
+        ## Draw trace
+        if trace.closed:
+            painter.drawPolygon(qpoints)
+        else:
+            painter.drawPolyline(qpoints)
+
+        ## Draw highlight
+        if selected:
+
+            painter.setPen(QPen(QColor(*draw_color), 8))
+            painter.setOpacity(0.4)
+
             if trace.closed:
                 painter.drawPolygon(qpoints)
             else:
@@ -342,35 +344,7 @@ class TraceLayer():
 
             painter.drawPolygon(qpoints)
 
-        ## Draw the selection outline last, so a fill never covers it
-        if selected:
-            self._drawSelectionOutline(painter, qpoints, trace.closed, draw_color)
-
         return True
-
-    def _drawSelectionOutline(self, painter : QPainter, qpoints, closed : bool, draw_color):
-        """Draw a selected trace as a black and white band with its own color down the middle.
-
-        The black edge shows on a light image and the white band on a dark
-        one, whatever the trace's own color is.
-
-            Params:
-                painter (QPainter): the painter
-                qpoints: the trace in pixmap coordinates
-                closed (bool): True to draw a polygon, False for a polyline
-                draw_color: the color the trace line is drawn in
-        """
-        painter.setOpacity(1)
-        painter.setBrush(Qt.NoBrush)
-        draw = painter.drawPolygon if closed else painter.drawPolyline
-        for color, width in SELECTION_OUTLINE:
-            pen = QPen(QColor(*(color or draw_color)), width)
-            # round joins cost about twice the stroke time on long traces, so
-            # corners keep the default bevel; round caps only on open ends
-            if not closed:
-                pen.setCapStyle(Qt.RoundCap)
-            painter.setPen(pen)
-            draw(qpoints)
     
     def _drawZtrace(self, trace_layer : QPixmap, ztrace : Ztrace):
         """Draw points on the current trace layer.
@@ -699,13 +673,15 @@ class TraceLayer():
     def _drawHoledLabel(self, arr : np.ndarray, traces : list[Trace], label : int, tform : Transform = None):
         """Draw one object's traces as a label, with its negative traces as holes.
 
-        The positives fill and then the holes clear, in the order
-        nestedFillOrder gives, so a positive inside a hole (an island) fills
-        again after the hole. The order comes from the traces before they are
-        rounded to pixels, the same points the 3D volume uses, so rounding
-        cannot make a trace an island or stop it being one. The mask covers
-        only the box of the object's positive traces, not the whole array, so
-        a large export stays fast.
+        The positives fill and then the holes clear. A positive inside a hole
+        (an island) is then filled back in, less the pixels of every negative
+        that islandCuts says cuts it, the same way the 3D volume does: one
+        that cuts or touches the island, or comes within a pixel's diagonal
+        of it. The islands come from the traces before they are rounded to
+        pixels, the same points the 3D volume uses, so rounding cannot make a
+        trace an island or stop it being one. The mask covers only the box of
+        the object's positive traces, not the whole array, so a large export
+        stays fast.
 
             Params:
                 arr (np.ndarray): the array to draw the label on
@@ -735,10 +711,32 @@ class TraceLayer():
             return  # entirely outside the array
 
         mask = np.zeros((y1 - y0, x1 - x0), dtype=bool)
-        for field, fill in nestedFillOrder(positive, holes):
-            pts = pix[id(field)]
-            yy, xx = polygon(pts[:, 1] - y0, pts[:, 0] - x0, mask.shape)
-            mask[yy, xx] = fill
+        for fill, fields in ((True, positive), (False, holes)):
+            for field in fields:
+                pts = pix[id(field)]
+                yy, xx = polygon(pts[:, 1] - y0, pts[:, 0] - x0, mask.shape)
+                mask[yy, xx] = fill
+        # a negative within a pixel's diagonal of an island can round onto
+        # its edge pixels, so it counts as cutting it. islandCuts measures in
+        # field units, and one pixel spans window_w / pixmap_w of them across
+        # and window_h / pixmap_h down at any mag.
+        window_w, window_h = tuple(self.series.window)[2:]
+        pixmap_w, pixmap_h = tuple(self.pixmap_dim)
+        reach = math.hypot(window_w / pixmap_w, window_h / pixmap_h)
+        for island, cuts in islandCuts(positive, holes, reach):
+            # fill the island back in over its own box within the mask
+            pts = pix[id(island)]
+            ix0, iy0 = np.maximum(pts.min(axis=0), (x0, y0))
+            ix1 = min(int(pts[:, 0].max()) + 1, x1)
+            iy1 = min(int(pts[:, 1].max()) + 1, y1)
+            if ix0 >= ix1 or iy0 >= iy1:
+                continue
+            keep = np.zeros((iy1 - iy0, ix1 - ix0), dtype=bool)
+            for field, fill in [(island, True)] + [(c, False) for c in cuts]:
+                pts = pix[id(field)]
+                yy, xx = polygon(pts[:, 1] - iy0, pts[:, 0] - ix0, keep.shape)
+                keep[yy, xx] = fill
+            mask[iy0 - y0:iy1 - y0, ix0 - x0:ix1 - x0] |= keep
 
         arr[y0:y1, x0:x1][mask] = label
 

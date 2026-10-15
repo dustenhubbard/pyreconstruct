@@ -22,7 +22,9 @@ from PyReconstruct.modules.gui.utils import (
     getProgbar,
 )
 
-from PyReconstruct.modules.backend.func.state_manager import FieldState, nextStamp
+from PyReconstruct.modules.backend.func.state_manager import (
+    FieldState, nextStamp, captureObjectIds
+)
 
 from .field_widget_3_object import FieldWidgetObject
 
@@ -221,6 +223,9 @@ class FieldWidgetData(FieldWidgetObject):
             Params:
                 to_end (bool): True propagates to the end, False propagates to beginning
         """
+        # the field's section is written below without saveAllData, so an
+        # open scissors cut has to put its trace back here
+        self.cancelOpenScissorsCut()
         # Reading each candidate section can take time before propagation
         # itself begins. Acknowledge the command before even this preparation.
         checking = getProgbar("Checking sections for propagation...", cancel=False)
@@ -515,8 +520,12 @@ class FieldWidgetData(FieldWidgetObject):
         # while the rest of the series stays at the new one
         self.series_states.addState(breakable=False)
         mag_states = []
+        # writes_after: the z-traces, log, reload and tables below go through
+        # self.series, which is the series opened in its place if one opened
+        # at the last update
         for snum, section in self.series.enumerateSections(
-            message="Changing series magnification..."
+            message="Changing series magnification...",
+            writes_after=True,
         ):
             # the state before the change, read from the section's file
             section_states = self.series_states[section]
@@ -544,6 +553,9 @@ class FieldWidgetData(FieldWidgetObject):
                 contours_fp,
                 src_fp=section.filepath if contours_fp else None,
             )
+            section_states.current_state.oids = captureObjectIds(
+                self.series, section, section.contours
+            )
             mag_states.append(section_states.current_state)
             self.series_states.addSectionUndo(snum)
 
@@ -559,38 +571,3 @@ class FieldWidgetData(FieldWidgetObject):
         # reload the field
         self.reload()
         self.table_manager.recreateTables(refresh_data=True)
-    
-    def quickAlign(self):
-        """Do a quick translational alignment of the current secion and b section."""  
-        if not self.b_section_layer or self.section.align_locked:
-            return
-
-        from skimage import registration
-        
-        pixmap_dim = self.section_layer.pixmap_dim
-        window = self.series.window
-        
-        arr1 = self.b_section_layer.generateImageArray(pixmap_dim, window)
-        arr2 = self.section_layer.generateImageArray(pixmap_dim, window)
-
-        # Perform phase correlation to find translation
-        model = registration.phase_cross_correlation(arr1, arr2)
-        error = model[1]
-        shift_x = model[0][1] / self.scaling * self.section.mag
-        # array rows grow downward but field y grows upward, so negate
-        shift_y = (model[0][0] / self.scaling * self.section.mag) * -1
-
-        current_tform = self.section.tform
-        shift_tform = Transform([
-            1,
-            0,
-            shift_x,
-            0,
-            1,
-            shift_y
-        ])
-        # the shift is measured in field space (post-transform), so compose it
-        # after the existing tform: A * B maps p -> B(A(p)) in this codebase.
-        # changeTform records it for propagation, logs it and saves the state,
-        # the same as corrAlign
-        self.changeTform(current_tform * shift_tform)

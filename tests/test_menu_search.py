@@ -155,8 +155,8 @@ def test_rebuilds_leave_exactly_one_chord_carrier(main_window):
 
 
 def test_the_field_shows_the_chord_as_a_hint(main_window):
-    """The field advertises the key the row used to show (his consolidation
-    call, 2026-08-27): the platform-native chord, grayed, right edge. Typing
+    """The field advertises the key the row used to show (since 2026-08-27):
+    the platform-native chord, grayed, right edge. Typing
     hides it, because the clear button appears in the same corner; clearing
     brings it back."""
     from PySide6.QtGui import QKeySequence
@@ -296,7 +296,7 @@ def test_a_disabled_command_is_visible_but_not_runnable(main_window):
 
 def test_shortcut_text_rides_along_in_the_result_row(main_window):
     field = _snapshotted_field(main_window)
-    # "Show/hide lists" carries a remappable default chord, so its row must
+    # "Show/Hide lists" carries a remappable default chord, so its row must
     # show one; the old probe ("Search menus...") has no menu row any more
     field._query.setText("hide lists")
     labels = [field._results.item(i).text() for i in range(field._results.count())]
@@ -392,7 +392,7 @@ def test_ctrl_k_opens_help_and_focuses_the_field(main_window):
 # --------------------------------------------------------------------------- #
 def test_right_click_commands_are_searchable(main_window):
     """The day-to-day operations live in the field's context menu, not the
-    menubar; a search that misses them misses the point (click-test report)."""
+    menubar; a search that misses them misses the point."""
     from PyReconstruct.modules.gui.main.menu_search import collect_all_commands
 
     paths = [c[0] for c in collect_all_commands(main_window)]
@@ -424,7 +424,7 @@ def test_reveal_declines_right_click_paths(main_window):
 
 
 def test_the_field_takes_focus_when_help_opens(qapp, main_window, qtbot):
-    """The cursor lands in the search field on every Help open (his call,
+    """The cursor lands in the search field on every Help open (since
     2026-08-26), with no click. Hooked to the field's own show rather than
     the menu's aboutToShow: the window's menu attribute is not always the
     menu the menubar shows, so a menu-side connect can fire for nobody."""

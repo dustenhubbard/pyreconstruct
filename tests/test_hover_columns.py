@@ -1,6 +1,6 @@
 """The field hover pop-up's configurable columns.
 
-Ported from upstream 267c26257817 (Michael, #100): a per-series choice of
+Ported from upstream commit 267c26257817: a per-series choice of
 which object data the hover pop-up shows over a trace, and in what order,
 edited through HoverColumnsDialog.
 

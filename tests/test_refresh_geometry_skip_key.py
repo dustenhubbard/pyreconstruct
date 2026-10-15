@@ -1,6 +1,6 @@
 """The section file is not a sound skip key for ``SeriesData.refresh()``.
 
-``benchmarks/REPORT.md`` §5.3 carried a proposal, inherited by the backlog, to
+``benchmarks/REPORT.md`` §5.3 carried a proposal to
 skip geometry in ``SeriesData.refresh()`` for sections whose file is unchanged,
 keyed on mtime and size. It is withdrawn, and these tests are why: the geometry
 is not a function of the section file alone.
@@ -25,10 +25,9 @@ sites reach it with ``refresh_data=True`` and only ``changeAlignment`` is an
 alignment change. Series magnification (``field_widget_4_data.py:492``) rewrites
 every section file, so the key would be correct on that one.
 
-Measured on the ``rhhks276`` dataset, an alignment switch modifies **0 of 276**
+Measured on a 276-section lab series, an alignment switch modifies **0 of 276**
 section files and changes **94.6%** of trace geometry; the key would have
-falsely skipped **272** sections. Those are ledger rows
-``RH276.refresh.falseskip`` and ``RH276.refresh.stalerows``.
+falsely skipped **272** sections.
 
 These tests pin the property rather than the numbers, so that if anyone lands a
 file-keyed skip the suite says so instead of the user finding stale quantities

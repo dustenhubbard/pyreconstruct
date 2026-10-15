@@ -53,53 +53,65 @@ platforms).
 
 ### One-click installers (Windows, macOS, and Linux)
 
-Download the build for your platform from the current stable release, **v1.23.0**.
-Windows and macOS builds include Python; the Linux installer requires Python
-3.11. Each link below downloads that platform's installer directly; every build,
-its SHA-256 checksum, and past versions are on the
+Download the build for your platform from the current stable release, **v1.24.0**.
+Windows, macOS, and the Linux AppImage include Python. Each link below downloads
+that platform's installer directly; every build, its SHA-256 checksum, and past
+versions are on the
 **[Releases page](https://github.com/dustenhubbard/PyReconstruct/releases/latest)**.
 
 - **Windows**:
-  [`PyReconstruct-1.23.0-Windows-x86_64-Setup.exe`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.23.0/PyReconstruct-1.23.0-Windows-x86_64-Setup.exe).
+  [`PyReconstruct-1.24.0-Windows-x86_64-Setup.exe`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-Windows-x86_64-Setup.exe).
   This is a per-user installer (no administrator rights required). Builds are
   unsigned for now, so Windows SmartScreen may warn that the publisher is
   unknown; choose **More info ▸ Run anyway**. Re-running a newer installer
   upgrades the existing installation in place.
-- **macOS (Apple Silicon or Intel)**:
-  [`PyReconstruct-1.23.0-macOS-arm64.dmg`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.23.0/PyReconstruct-1.23.0-macOS-arm64.dmg) on
-  Apple Silicon, or
-  [`PyReconstruct-1.23.0-macOS-x86_64.dmg`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.23.0/PyReconstruct-1.23.0-macOS-x86_64.dmg) on an Intel Mac. Open
-  the `.dmg` and drag **PyReconstruct** onto the **Applications** shortcut. Builds are
-  unsigned for now, so the first launch of a browser-downloaded copy is blocked by
-  Gatekeeper. Clear the quarantine flag once in Terminal:
+- **macOS**: open the `.dmg` and drag **PyReconstruct** onto the **Applications**
+  shortcut. PyReconstruct is signed and notarized by Apple, so the first launch
+  shows the usual question for an app downloaded from the internet. Click **Open**.
+
+  Versions before 1.24.0 were not signed. To open one of those, clear the
+  quarantine flag once in Terminal:
 
   ```
   xattr -dr com.apple.quarantine /Applications/PyReconstruct.app
   ```
 
-  Alternatively, the first time macOS shows the "could not verify" dialog, open
-  **System Settings ▸ Privacy & Security** and click **Open Anyway**.
-
 > 📸 *Screenshot: the macOS `.dmg` window showing the app and the Applications drop target.*
 
-Both macOS builds are native (arm64 and x86_64), and the in-app updater serves each
-Mac its matching architecture.
+Both macOS builds are native:
+[`PyReconstruct-1.24.0-macOS-arm64.dmg`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-macOS-arm64.dmg) for
+Apple Silicon and
+[`PyReconstruct-1.24.0-macOS-x86_64.dmg`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-macOS-x86_64.dmg) for an
+Intel Mac. The in-app updater serves each Mac its matching architecture.
 
-- **Linux**:
-  [`PyReconstruct-1.23.0-Linux-installer.tar.gz`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.23.0/PyReconstruct-1.23.0-Linux-installer.tar.gz).
-  Extract it and run `bash install.sh`, a no-root `.sh` installer that builds an
-  isolated virtual environment, puts a `pyreconstruct` launcher on your PATH, and
-  adds an application-menu entry. It needs a system **Python 3.11** (`python3.11` + `venv`;
-  on Debian/Ubuntu, `sudo apt install python3.11 python3.11-venv`) and targets
-  x86_64. To update, re-run `install.sh`.
+- **Linux**: install the AppImage with one command:
 
-### From source (Linux, other platforms, and developers)
+  ```
+  curl -fsSL https://pyreconstruct.org/install.sh | bash
+  ```
 
-PyReconstruct requires **Python 3.11 or 3.12**. Its native dependencies are
-tested on those versions (the project pins `>=3.11,<3.13`). Your
+  It needs no root and no Python. It adds a `pyreconstruct` command and a menu
+  entry. Re-run it to update. For PyReconstruct Dev, end the command with
+  `bash -s -- --dev`. To uninstall, end it with `bash -s -- --uninstall`. You can
+  also download
+  [`PyReconstruct-1.24.0-linux-x86_64.AppImage`](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-linux-x86_64.AppImage)
+  and run it directly, or install from source with a system
+  **Python 3.11, 3.12 or 3.13**:
+
+  ```
+  curl -fsSL https://pyreconstruct.org/install-from-source.sh | bash
+  ```
+
+  If FUSE is missing, PyReconstruct still starts, only more slowly, and the
+  installer names the package that speeds it up.
+
+### From source (other platforms and developers)
+
+PyReconstruct requires **Python 3.11, 3.12 or 3.13**. Its native dependencies are
+tested on those versions (the project pins `>=3.11,<3.14`). Your
 system `python3` may be newer, and installing against it will fail; the steps
-below get you 3.11 without changing your system Python (use `--python 3.12` in
-place of `--python 3.11` for 3.12). The recommended tool is
+below get you 3.11 without changing your system Python (use `--python 3.12` or
+`--python 3.13` in place of `--python 3.11` for those). The recommended tool is
 [uv](https://docs.astral.sh/uv/), which downloads Python 3.11 for you. Install
 it with `curl -LsSf https://astral.sh/uv/install.sh | sh` (or `brew install uv`).
 
@@ -120,8 +132,8 @@ To **track the latest unreleased code on `main`** (what the retired in-app
 "Developer" channel used to offer), clone the repository and let uv build the
 environment from the committed `uv.lock`. This is the canonical developer setup:
 `uv sync` reads the checkout's `.python-version` (3.11), provisions the
-interpreter, and installs the exact pinned dependency set. To use 3.12 instead,
-set `UV_PYTHON=3.12` in your shell before `uv sync` and `uv run`.
+interpreter, and installs the exact pinned dependency set. To use 3.12 or 3.13
+instead, set `UV_PYTHON=3.12` (or `3.13`) in your shell before `uv sync` and `uv run`.
 
 ```
 git clone https://github.com/dustenhubbard/PyReconstruct
@@ -161,8 +173,8 @@ list.)
 The frozen Windows and macOS one-click builds can update themselves from within the
 app. The updater downloads the new build from GitHub Releases and **verifies it
 against a published SHA-256 checksum before installing**. If the checksum can't be
-reached or doesn't match, nothing is installed. (The Linux `.sh` installer updates
-by re-running `install.sh`; see [Installing PyReconstruct](#1-installing-pyreconstruct).)
+reached or doesn't match, nothing is installed. (On Linux, re-run the install
+command to update; see [Installing PyReconstruct](#1-installing-pyreconstruct).)
 
 ### Update channels
 

@@ -42,7 +42,8 @@ the leading `v`.
 
 ## The nightly build
 
-`.github/workflows/nightly.yml` checks `main` daily at 06:00 UTC. If there are
+`.github/workflows/nightly.yml` checks `main` daily at 02:17 UTC. GitHub can
+start a scheduled run hours late, so the build may land later. If there are
 new commits since the last release on either channel, it tags `main` and
 explicitly dispatches `build-installers.yml` on that tag. The explicit
 workflow dispatch is necessary because a tag pushed with `GITHUB_TOKEN`
@@ -59,10 +60,20 @@ major release. A rerun on the same UTC date skips if that day's tag already
 exists. A day without new commits also skips.
 
 Under the default draft policy, a successful nightly publishes immediately
-as a GitHub pre-release and never becomes Latest. Its release notes are
-GitHub's generated change list, compared with the previous nightly, or with
-the newest stable for the first nightly. Nightlies do not require a
-`WHATS_NEW.md` section and skip the in-app What's New popup.
+as a GitHub pre-release and never becomes Latest. Its release body opens
+with every change since the newest stable in its history, one line per item:
+the `changelog.d` fragments on `main`, anything under `[Unreleased]` in
+`CHANGELOG.md`, and a release section already written there ahead of its
+tag, collated by `scripts/changes_since_stable.py` with the same code a
+stable release uses, reading everything and writing nothing. Below that is
+GitHub's generated change list, compared with the previous nightly in its
+history, or with that stable for the first nightly. Only tags in the built
+commit's history count, so rebuilding an older nightly after a newer release
+exists still measures it from its own baseline. Nightlies do not require a
+`WHATS_NEW.md` section and skip the
+in-app What's New popup. `Help` > `What's new` in PyReconstruct Dev shows the newest
+stable section at or below the nightly's base version, with a line above it
+that links the nightly's own release page as the live changelog.
 
 A failed build leaves its tag in place. If `main` has not changed, the next
 scheduled run skips too. Recover by rerunning the installer workflow on the
@@ -82,10 +93,16 @@ stable release:
 ```bash
 git checkout main
 git pull --ff-only
-# Confirm WHATS_NEW.md has the approved ## [1.24.0] section.
-git tag v1.24.0
-git push origin v1.24.0
+# Confirm WHATS_NEW.md has the approved ## [1.25.0] section.
+git tag -a v1.25.0 -m "Stable v1.25.0"
+git push origin v1.25.0
 ```
+
+The stable tag must be annotated. Nightly tags are annotated, and
+`git describe` prefers an annotated tag over a lightweight one on the same
+commit. A lightweight `v1.25.0` on a nightly's commit therefore resolves to
+that nightly's `.devYYYYMMDDHHMM` version, and the version check in
+`build-installers.yml` fails every build.
 
 `build-installers.yml` uses `STAGE_RELEASE_AS_DRAFT` to decide when a release
 becomes public:
@@ -98,13 +115,20 @@ becomes public:
 
 Under `auto`, inspect the stable draft before publishing:
 
-1. Confirm all eight assets: Windows Setup, both macOS architectures, the
-   Linux installer tarball, and a SHA-256 file for each.
+1. Confirm all 17 assets. Seven are release files: Windows Setup, the
+   Windows update payload (`-update-windows-x86_64.tar.xz` and its
+   `.tree.json`), both macOS architectures, the Linux installer tarball, and
+   the AppImage. Each has a `.sha256` file. The other three are
+   `update-manifest.json`, `SHA256SUMS`, and `SHA256SUMS.minisig`. The build
+   leaves out an AppImage that failed its distribution tests, and a Windows
+   update payload that failed its swap test, so a shorter list names the
+   test to check.
 2. Check the notes against the matching `WHATS_NEW.md` section and confirm
    the compare link.
 3. Publish the draft as Latest.
-4. Update the stable download links and version text in `README.md`,
-   `docs/index.md`, and the installation section of `docs/USER_GUIDE.md`.
+4. Review and merge the pull request that `download-links-bump.yml` opens
+   when the release is published. It moves the stable download links and
+   version text in `README.md`, `docs/index.md`, and `docs/USER_GUIDE.md`.
 
 The PyPI workflow is separate and runs only by manual dispatch. An installer
 release does not publish to PyPI.

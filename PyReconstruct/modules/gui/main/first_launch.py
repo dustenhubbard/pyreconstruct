@@ -13,6 +13,7 @@ The GUI shells that call these live in ``main_window`` (startup wiring) and
 
 import re
 from datetime import datetime
+from html import escape
 from pathlib import Path
 
 from packaging.version import Version, InvalidVersion
@@ -21,6 +22,7 @@ from PyReconstruct.modules.datatypes.default_settings import get_username
 from PyReconstruct.modules.constants.locations import assets_dir, src_dir
 from PyReconstruct.modules.backend.updater.updater import GITHUB_REPO
 from PyReconstruct.modules.backend.updater.install_info import install_kind
+from PyReconstruct.modules.backend.func.logging_setup import log_note, log_exception
 
 WHATSNEW_KEY = "last_whatsnew_version"
 
@@ -34,10 +36,29 @@ WHATSNEW_KEY = "last_whatsnew_version"
 # the next launch.
 WHATSNEW_SUPPRESS_KEY = "suppress_whatsnew"
 
-# The popup ships off: nothing appears unasked until the user turns it back on
-# from the Help menu. The toggle and the dialog's "Don't show again" button
-# keep working either way; this is only what an unset preference means.
-WHATSNEW_SUPPRESS_DEFAULT = True
+# The popup ships on: with nothing stored, the stable app shows the notes once
+# after an update. It shipped off from 2026-08-21 until this version, while
+# the stable build was meant to stay quiet. The toggle and the dialog's
+# "Don't show again" button keep working either way; this is only what an
+# unset preference means. A dev build never shows it regardless; see
+# ``whats_new_due``.
+WHATSNEW_SUPPRESS_DEFAULT = False
+
+# Marker recording that ``reset_whats_new_popup_once`` has run in this store.
+# Per app, beside the two keys it governs; a plain key rather than ``meta/``,
+# following ``update_check_on_startup_default_applied``, so somebody reading
+# their own settings can see what happened. Mirrored as a literal in
+# constants/settings_domain.py (PER_APP_KEYS); the test on that list checks
+# the two stay in step.
+WHATSNEW_RESET_MARKER = "whatsnew_popup_reset_applied"
+
+# Keys a store holds only if PyReconstruct has launched from it before.
+# ``username`` is persisted by the first read of it, on every launch since the
+# option existed; the update-check marker has been written on every launch
+# since 1.21.0. Both are shared keys, so they are read from the shared store.
+# ``allKeys()`` is deliberately not used: on macOS it also lists the global
+# NSUserDefaults domain, so a fresh store never reads as empty through it.
+PRIOR_INSTALL_KEYS = ("username", "update_check_on_startup_default_applied")
 
 
 def whats_new_suppressed(stored):
@@ -72,13 +93,11 @@ def whats_new_suppressed(stored):
 # unreachable; it stops being pre-expanded.
 ON_DEMAND_CAP = 3
 
-# Provenance line shown below the notes in every framing of the What's-new dialog,
-# and near the footer of the GitHub release body. Maintainer-approved verbatim: it
-# names who maintains this build without naming any other repository, so a lab that
-# installs it knows whose build it is and reports its issues to the right person.
-# It is a quiet provenance line, not a boast; keep it a distinct field so it reads
-# as an aside below the notes rather than as one more release bullet.
-MAINTAINER_BYLINE = "An independent build of PyReconstruct, maintained by Dusten Hubbard."
+# The footer line shown below the notes in every framing of the What's-new
+# dialog. Keep it a distinct field so it reads as an aside below the notes
+# rather than as one more release bullet, and short enough to sit on one line
+# beside Close.
+MAINTAINER_BYLINE = "A fork of PyReconstruct, maintained by Dusten Hubbard."
 
 # Where the byline points, and which word carries the link. The project name
 # inside the provenance line is a link to the home page, so a lab that wants to
@@ -148,6 +167,113 @@ def whats_new_due(stored, current):
     if prev is None:
         return True
     return prev < cur
+
+
+def reset_whats_new_popup_once(settings, current, shared=None):
+    """Bring the popup back on for everyone, once, and keep a fresh install quiet.
+
+    The popup shipped off by default from 2026-08-21 until this version, and
+    the Help toggle and the "Don't show again" button wrote ``suppress_whatsnew``
+    all that while. With the default back on, a choice to turn the popup off
+    is kept only from this version on: a value stored before it does not
+    bind, and a fresh install does not show the notes at all.
+    ``maybe_show_whats_new`` cannot tell an old "off" from a new one and
+    cannot tell a fresh install from an upgrade on a store that never showed
+    the popup, so this runs first and settles both, at the first launch of
+    the first stable version that carries it:
+
+    * **marker present**: nothing, whatever is stored. Every write of
+      ``suppress_whatsnew`` after this point is a decision and is kept.
+    * **dev build, or no usable version**: nothing, and no marker. The gate
+      never shows the popup for these, so there is nothing to bring back on,
+      and a stored "off" keeps meaning what the Help row says. The reset
+      waits for a stable version to run in this store: a source checkout of
+      main uses the stable store, and must not record the reset as done for
+      the stable build installed after it.
+    * **fresh install**: no last-seen version, and none of
+      ``PRIOR_INSTALL_KEYS`` in ``shared``. The running version is recorded
+      as seen, so the first popup this install ever shows is the update after
+      it.
+    * **anything else**: an upgrade. The stored suppression is removed, so the
+      ordinary once-per-version rules show the notes once on this launch, and
+      the user can switch the popup off again from the dialog or the Help menu.
+
+    The marker is written last, after the change it records. A store that
+    cannot be saved is caught by ``reset_whats_new_popup_startup``, which
+    checks the status after ``sync()``. Never writes
+    ``suppress_whatsnew`` itself: the default carries the "on", and a stored
+    ``False`` would be indistinguishable from a user's choice.
+
+    ``settings`` is the store holding the What's new keys (this app's own);
+    ``shared`` is where the prior-install evidence lives, and defaults to
+    ``settings`` because for the stable app the two are one store. Both take
+    anything QSettings-shaped (``contains``/``value``/``setValue``/``remove``).
+    Returns True when the reset ran, whether or not it changed anything.
+    """
+    if settings.contains(WHATSNEW_RESET_MARKER):
+        return False
+    if not whats_new_due(None, current):
+        return False            # a dev build or no version: deferred, untouched
+    if shared is None:
+        shared = settings
+    fresh = (
+        not settings.contains(WHATSNEW_KEY)
+        and not any(shared.contains(key) for key in PRIOR_INSTALL_KEYS)
+    )
+    if fresh:
+        settings.setValue(WHATSNEW_KEY, current)
+    else:
+        settings.remove(WHATSNEW_SUPPRESS_KEY)
+    settings.setValue(WHATSNEW_RESET_MARKER, True)
+    return True
+
+
+def reset_whats_new_popup_startup(current=None):
+    """Run ``reset_whats_new_popup_once`` against the real stores, at launch.
+
+    Called from ``run.py`` before the ``QApplication`` exists, beside the
+    settings fold: the fresh-install test reads keys that ``MainWindow``
+    writes while it is being built (``username`` through the welcome series,
+    the update-check marker through its own migration), so this has to look
+    before any of that runs. Resolves both domains through ``domain_for`` so
+    the Dev app resets its own popup state and reads the shared store for
+    the evidence. Never raises: a settings correction on the startup path
+    must not be able to stop PyReconstruct from opening, and an unrecorded
+    reset simply runs again next launch. The failure is logged first, the
+    way ``MainWindow.showWhatsNewStartup`` logs its own: a store that keeps
+    missing the reset would otherwise leave no trace of why. A store that
+    ``sync()`` could not write is logged too, and returns False: the reset
+    did not reach the file. ``current`` is injectable for tests.
+    """
+    try:
+        from PySide6.QtCore import QSettings
+        from PyReconstruct.modules.constants.settings_domain import domain_for
+        from PyReconstruct.modules.backend.updater.install_info import (
+            current_version_str,
+        )
+        if current is None:
+            current = current_version_str()
+        settings = QSettings(*domain_for(
+            WHATSNEW_KEY, WHATSNEW_SUPPRESS_KEY, WHATSNEW_RESET_MARKER,
+        ))
+        shared = QSettings(*domain_for(*PRIOR_INSTALL_KEYS))
+        ran = reset_whats_new_popup_once(settings, current, shared=shared)
+        if ran:
+            settings.sync()
+            if settings.status() != QSettings.NoError:
+                # sync() reports an unwritable store through status() rather
+                # than raising. The marker did not reach the file, so the
+                # reset runs again next launch.
+                log_note(
+                    "What's new (startup reset) could not be saved "
+                    f"({settings.status().name}); it runs again next launch"
+                )
+                return False
+            log_note("What's new (startup reset): applied to this store")
+        return ran
+    except Exception:
+        log_exception("What's new (startup reset) failed; continuing without it")
+        return False
 
 
 # --- changelog notes ----------------------------------------------------------
@@ -285,6 +411,72 @@ def github_release_url(version=None):
     base = f"https://github.com/{GITHUB_REPO}/releases"
     v = _normalize_version(version)
     return f"{base}/tag/v{v}" if v and _safe_version(v) else base
+
+
+# A nightly's version as nightly.yml tags it, without the v: X.Y.Z.devYYYYMMDDHHMM
+# since 2026-10-08, X.Y.Z.devYYYYMMDD before. A source checkout of main is a
+# dev release too (1.24.0.dev20261005+g41462b60d) but has no release of its
+# own, and its local part keeps it from matching.
+_NIGHTLY_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+\.dev\d{8}(?:\d{4})?$")
+
+
+def nightly_release_url(version):
+    """This dev build's own GitHub release page, or the releases index.
+
+    A nightly's release body opens with the changes since the newest stable,
+    assembled from the changelog entries waiting on ``main``
+    (``build-installers.yml``), so that page is the live changelog for the
+    build that is running. Only a version shaped like a nightly tag has such a
+    page; any other dev version (a source checkout of main) gets the releases
+    index, where the nightlies are listed.
+    """
+    if _NIGHTLY_VERSION_RE.match(_normalize_version(version)):
+        return github_release_url(version)
+    return github_release_url()
+
+
+def latest_stable_section(sections, version):
+    """The newest final-release section at or below ``version``'s base, or None.
+
+    For a dev build (``1.24.0.dev20261007``, or a source checkout's
+    ``1.24.0.dev5+g0123abc``) the notes it should show are the latest stable
+    release's: the nightly is that stable plus whatever has landed since, and
+    the since part is in the changelog, not in ``WHATS_NEW.md``. The base is
+    the version the dev build previews (``1.24.0``), so a ``[1.24.0]`` section
+    that has landed on ``main`` ahead of its tag is picked up by the nightly
+    built after it, and a ``[1.25.0]`` section never is.
+
+    Final releases only: a beta (``1.21.0-beta-5``, which parses as a
+    pre-release) or another dev heading is not a stable, and ``[Unreleased]``
+    does not parse at all.
+    """
+    cur_v = _safe_version(version)
+    if cur_v is None:
+        return None
+    base = Version(cur_v.base_version)
+    best = None
+    for s in sections:
+        sv = _safe_version(s["version"])
+        if sv is None or sv.is_prerelease or sv.is_devrelease or sv > base:
+            continue
+        if best is None or sv > _safe_version(best["version"]):
+            best = s
+    return best
+
+
+def dev_build_note(stable_version, url):
+    """The line a dev build shows above the stable release's notes.
+
+    Rich text, not markdown: the dialog renders it as its own label above the
+    notes browser, so it is on screen however far the notes scroll, and the
+    label takes HTML. Only "live changelog" is a link, and ``url`` is where it
+    goes: the build's own release page from ``nightly_release_url``.
+    """
+    return (
+        f"This is the nightly build. The notes below are for {escape(stable_version)}, "
+        f"the latest stable release. The latest PyReconstruct Dev changes can be "
+        f'found in the <a href="{url}">live changelog</a>.'
+    )
 
 
 # Shown when the running version has no friendly highlights bundled at all; the
@@ -434,6 +626,10 @@ def whats_new_content(current, last_seen=None, cap=3, text=None, on_demand=False
       * ``byline``    -- the maintainer provenance line (``MAINTAINER_BYLINE``),
                          the same on every framing; the dialog renders it once,
                          in the footer row below the body.
+      * ``note``      -- on a dev build showing a stable release's notes, the
+                         rich-text line saying so and linking the build's own
+                         release page (``dev_build_note``); None everywhere
+                         else.
       * ``truncated`` -- True when more than ``cap`` missed sections existed.
 
     Sections shown: when ``last_seen`` is a valid version older than ``current``,
@@ -446,6 +642,20 @@ def whats_new_content(current, last_seen=None, cap=3, text=None, on_demand=False
     bundled notes (for testing); by default the bundled ``WHATS_NEW.md`` is read.
     ``installed_app`` overrides the install-kind check that gates the
     update-checks note (for testing); by default ``install_kind()`` answers it.
+
+    A dev build (a nightly, or a source checkout of main) has no section of its
+    own and never will: its version changes every day and the notes are written
+    for stable releases. It shows the latest stable's notes instead, as if that
+    stable were running, with ``note`` set above them: the section
+    ``latest_stable_section`` picks stands in for the running version in every
+    rule above, so a nightly lists exactly what the stable it is built on lists,
+    and the header still names the version actually running. ``date`` is None,
+    since the date belongs to the stable and is already in the body's section
+    heading. A dev build with no stable section at or below its
+    base (nothing bundled, or notes that start after it) falls through to the
+    generic body like any other version without a section, and carries no note.
+    One updated from the stable it shows, or from past it, has no section in
+    the update interval and shows that stable's section rather than nothing.
     """
     if text is None:
         text = _read_whats_new()
@@ -455,6 +665,17 @@ def whats_new_content(current, last_seen=None, cap=3, text=None, on_demand=False
 
     cur_v = _safe_version(current)
     prev_v = _safe_version(last_seen)
+
+    # The version whose notes are shown: the running one, or on a dev build the
+    # latest stable at or below its base. ``cur_v`` keeps deciding the framing
+    # (updating or not) because that is about the versions actually run.
+    note = None
+    shown_v = cur_v
+    if cur_v is not None and cur_v.is_devrelease:
+        stable = latest_stable_section(sections, current)
+        if stable is not None:
+            shown_v = _safe_version(stable["version"])
+            note = dev_build_note(stable["version"], nightly_release_url(current))
     updating = (
         not on_demand
         and prev_v is not None and cur_v is not None and prev_v < cur_v
@@ -485,12 +706,12 @@ def whats_new_content(current, last_seen=None, cap=3, text=None, on_demand=False
     # [1.20.4-rc.1] -- matches a 1.20.4rc1 runtime (mirrors whats_new_due).
     current_section = next(
         (s for s in sections
-         if cur_v is not None and _safe_version(s["version"]) == cur_v),
+         if shown_v is not None and _safe_version(s["version"]) == shown_v),
         None,
     )
     friendly = (
         friendly_date(current_section["date"])
-        if current_section and current_section["date"] else None
+        if current_section and current_section["date"] and note is None else None
     )
 
     # No notes for the running version at all -> friendly generic body. An
@@ -501,15 +722,20 @@ def whats_new_content(current, last_seen=None, cap=3, text=None, on_demand=False
         body = GENERIC_WELCOME_NOTES if welcoming else GENERIC_NOTES
         return {"version": current, "date": friendly, "orienter": orienter,
                 "body": _with_welcome_note(body) if show_update_note else body,
-                "byline": MAINTAINER_BYLINE, "truncated": False}
+                "byline": MAINTAINER_BYLINE, "note": None, "truncated": False}
 
     truncated = False
     if updating:
         shown = [
             s for s in sections
             if _safe_version(s["version"]) is not None
-            and prev_v < _safe_version(s["version"]) <= cur_v
+            and prev_v < _safe_version(s["version"]) <= shown_v
         ]
+        # A dev build updated from the stable it shows, or from past it, has
+        # no section in that interval: the since part is in the live changelog
+        # the note links. The stable's own section stands in for an empty body.
+        if not shown and note is not None:
+            shown = [current_section]
         shown.sort(key=lambda s: _safe_version(s["version"]), reverse=True)
         if len(shown) > cap:
             shown, truncated = shown[:cap], True
@@ -521,7 +747,7 @@ def whats_new_content(current, last_seen=None, cap=3, text=None, on_demand=False
         shown = sorted(
             (s for s in sections
              if _safe_version(s["version"]) is not None
-             and (cur_v is None or _safe_version(s["version"]) <= cur_v)),
+             and (shown_v is None or _safe_version(s["version"]) <= shown_v)),
             key=lambda s: _safe_version(s["version"]), reverse=True,
         )
         if len(shown) > cap:
@@ -530,4 +756,4 @@ def whats_new_content(current, last_seen=None, cap=3, text=None, on_demand=False
     body = _render_sections(shown, truncated)
     return {"version": current, "date": friendly, "orienter": orienter,
             "body": _with_welcome_note(body) if show_update_note else body,
-            "byline": MAINTAINER_BYLINE, "truncated": truncated}
+            "byline": MAINTAINER_BYLINE, "note": note, "truncated": truncated}

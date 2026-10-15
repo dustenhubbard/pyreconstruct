@@ -447,6 +447,43 @@ def test_second_trace_of_the_same_new_object_does_not_reapply(main_window):
     )
 
 
+@pytest.mark.gui
+def test_undo_of_the_first_trace_takes_the_defaults_away(main_window):
+    """Custom column values are stored in obj_attrs, apart from the object's
+    traces, so the object being gone after the undo does not by itself show
+    that they went too. A trace drawn later under the same name, from a plain
+    item, must start a bare object."""
+    from PyReconstruct.modules.backend.progress import NullProgressReporter
+
+    field = main_window.field
+    series = main_window.series
+    series.setProgressReporter(NullProgressReporter)
+    try:
+        series.addUserCol("Reviewer", ["KH", "DH"], log_event=False)
+        item = Trace("undone_obj", (0, 255, 0), True)
+        item.obj_defaults = {"groups": ["axons"], "user_columns": {"Reviewer": "KH"}}
+        field.setTracingTrace(item)
+        # logged, so newTrace saves the undo step a user's draw makes
+        field.newTrace(_square(series, 0.3), field.tracing_trace,
+                       points_as_pix=False, reduce_points=False)
+        assert series.getAttr("undone_obj", "user_columns") == {"Reviewer": "KH"}
+
+        main_window.undo()
+        assert "undone_obj" not in series.data["objects"]
+        assert "user_columns" not in series.obj_attrs.get("undone_obj", {}), (
+            "the undo leaves the palette's column values behind"
+        )
+        assert "axons" not in series.object_groups.getObjectGroups("undone_obj")
+
+        field.setTracingTrace(Trace("undone_obj", (0, 255, 0), True))
+        field.newTrace(_square(series, 0.5), field.tracing_trace,
+                       points_as_pix=False, reduce_points=False)
+        assert series.getAttr("undone_obj", "user_columns") == {}
+        assert series.object_groups.getObjectGroups("undone_obj") == set()
+    finally:
+        series.setProgressReporter(None)
+
+
 def _row_order(dlg):
     """Top-to-bottom order of the dialog's labeled rows, by label text."""
     from PySide6.QtWidgets import QLabel

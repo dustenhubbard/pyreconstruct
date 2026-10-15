@@ -62,6 +62,43 @@ def test_label_offset_is_measured_from_raw(labels_attrs, expected):
     assert conversions.get_label_offset(labels, raw) == pytest.approx(expected)
 
 
+## four entries are channel first; the channel entry pairs with no axis
+@pytest.mark.parametrize(
+    "raw_attrs, labels_attrs",
+    [
+        ({"offset": [100, 200, 300]}, {"offset": [0, 140, 208, 304]}),
+        ({"offset": [0, 100, 200, 300]}, {"offset": [140, 208, 304]}),
+        ({"offset": [1, 100, 200, 300]}, {"offset": [0, 140, 208, 304]}),
+        (
+            {"offset": [100, 200, 300]},
+            {"offset": [0, 0.14, 0.208, 0.304], "units": ["um", "um", "um"]},
+        ),
+        (
+            {"offset": [0.1, 0.2, 0.3], "units": ["", "um", "um", "um"]},
+            {"offset": [140, 208, 304]},
+        ),
+    ],
+)
+def test_four_entry_label_offset_is_channel_first(raw_attrs, labels_attrs):
+    raw = _array(raw_attrs)
+    labels = _array(labels_attrs)
+
+    assert conversions.get_label_offset(labels, raw) == pytest.approx([40, 8, 4])
+
+
+@pytest.mark.parametrize(
+    "values, units",
+    [
+        ([1, 0.05, 0.004, 0.008], ["um", "um", "um"]),
+        ([1, 0.05, 0.004, 0.008], "um"),
+        ([0.05, 4, 8], ["", "um", "nm", "nm"]),
+        ([1, 0.05, 4, 8], ["", "um", "nm", "nm"]),
+    ],
+)
+def test_four_entry_units_pair_with_the_spatial_axes(values, units):
+    assert conversions.as_nm(values, _array({"units": units})) == pytest.approx([50, 4, 8])
+
+
 ## seriesToLabels
 
 
@@ -204,6 +241,51 @@ def test_labels_offset_from_raw_move_by_the_difference(tmp_path, real_series):
     assert bounds == pytest.approx((x0 + 0.04, x1 + 0.04, y0 - 0.04, y1 - 0.04))
 
 
+@pytest.mark.parametrize("raw_offset", [[0, 0, 0], [0, 40, 80]])
+@pytest.mark.parametrize("units", ["nm", "um"])
+def test_raw_offset_shifts_imported_points(tmp_path, real_series, raw_offset, units):
+    stored_offset = [v / 1000 for v in raw_offset] if units == "um" else raw_offset
+    bounds = _import_box(
+        tmp_path, real_series,
+        {"voxel_size": [0.05, 0.004, 0.004] if units == "um" else [50, 4, 4],
+         "offset": stored_offset, "units": units},
+        {"voxel_size": [50, 4, 4], "offset": [0, 0, 0]},
+    )
+
+    x0, x1, y0, y1 = AT_ZERO
+    dx, dy = -raw_offset[2] / 1000, raw_offset[1] / 1000
+    assert bounds == pytest.approx((x0 + dx, x1 + dx, y0 + dy, y1 + dy))
+
+
+@pytest.mark.parametrize(
+    "raw_attrs, label_attrs",
+    [
+        (
+            {"voxel_size": [1, 50, 4, 4], "offset": [0, 0, 0]},
+            {"voxel_size": [50, 4, 4], "offset": [0, 0, 0]},
+        ),
+        (
+            {"voxel_size": [50, 4, 4], "offset": [0, 500, 1200, 2000]},
+            {"voxel_size": [1, 50, 4, 4], "offset": [500, 1200, 2000]},
+        ),
+        (
+            {
+                "voxel_size": [1, 0.05, 0.004, 0.004],
+                "offset": [0, 0.5, 1.2, 2.0],
+                "units": ["um", "um", "um"],
+            },
+            {"voxel_size": [50, 4, 4], "offset": [1, 500, 1200, 2000]},
+        ),
+    ],
+)
+def test_four_entry_metadata_imports_labels_in_place(
+    tmp_path, real_series, raw_attrs, label_attrs
+):
+    bounds = _import_box(tmp_path, real_series, raw_attrs, label_attrs)
+
+    assert bounds == pytest.approx(AT_ZERO)
+
+
 def test_shared_z_offset_starts_at_raw_first_section(tmp_path):
     fp = str(tmp_path / "z.zarr")
     zg = zarr.open(fp, "w")
@@ -230,7 +312,9 @@ def _overlay(tmp_path, raw_attrs, label_attrs, true_mag=0.004):
     raw.attrs.update(raw_attrs)
     labels = group.create_dataset("labels", shape=(1, 5, 5), dtype="u4")
     labels.attrs.update(label_attrs)
-    series = types.SimpleNamespace(zarr_overlay_fp=fp, zarr_overlay_group="labels")
+    series = types.SimpleNamespace(
+        zarr_overlay_fp=fp, zarr_overlay_group="labels", sections={}, data={"sections": {}}
+    )
     layer = ZarrLayer(series)
     return layer.zarr_mag, layer.zarr_x, layer.zarr_y, layer.zarr_s
 
@@ -287,8 +371,57 @@ def test_overlay_puts_labels_with_no_size_on_raws_grid(tmp_path, raw_attrs, labe
     assert _overlay(tmp_path, raw_attrs, label_attrs) == pytest.approx(RAW_GRID_OVERLAY)
 
 
+@pytest.mark.parametrize("attribute", ["voxel_size", "resolution"])
+@pytest.mark.parametrize("label_size", [[1, 0, 0, 0], [1, 50, 4, 4]])
+def test_overlay_uses_channel_first_label_resolution(tmp_path, attribute, label_size):
+    assert _overlay(
+        tmp_path,
+        {"voxel_size": [50, 4, 4]},
+        {attribute: label_size, "offset": [50, 4, 8]},
+    ) == pytest.approx(RAW_GRID_OVERLAY)
+
+
+@pytest.mark.parametrize(
+    "raw_attrs, label_attrs",
+    [
+        ({"voxel_size": [1, 50, 4, 4]}, {"offset": [50, 4, 8]}),
+        ({"voxel_size": [50, 4, 4]}, {"offset": [1, 50, 4, 8]}),
+        (
+            {"voxel_size": [1, 0.05, 0.004, 0.004], "units": ["um", "um", "um"]},
+            {"voxel_size": [1, 0, 0, 0], "offset": [0, 50, 4, 8]},
+        ),
+    ],
+)
+def test_overlay_reads_four_entry_raw_and_offset_metadata(tmp_path, raw_attrs, label_attrs):
+    assert _overlay(tmp_path, raw_attrs, label_attrs) == pytest.approx(RAW_GRID_OVERLAY)
+
+
 def test_overlay_with_no_size_on_either_array_starts_at_raws_corner(tmp_path):
     assert _overlay(tmp_path, {}, {}) == pytest.approx((0.004, 1, 2, 3))
+
+
+@pytest.mark.parametrize("raw_attrs", [{"voxel_size": [25.4, 0, 0]}, {}])
+def test_overlay_recovers_legacy_grid_with_series_thickness(tmp_path, raw_attrs):
+    from PyReconstruct.modules.backend.view.zarr_layer import ZarrLayer
+
+    fp = str(tmp_path / "legacy-overlay.zarr")
+    group = zarr.open_group(fp, mode="w")
+    raw = group.create_dataset("raw", shape=(1, 10, 10), dtype="u1")
+    raw.attrs.update({
+        "window": [1, 2, 0.005, 0.005], "sections": [3], "true_mag": 0.0005,
+        **raw_attrs,
+    })
+    labels = group.create_dataset("labels", shape=raw.shape, dtype="u4")
+    labels.attrs["voxel_size"] = [0, 0, 0]
+    series = types.SimpleNamespace(
+        zarr_overlay_fp=fp, zarr_overlay_group="labels", sections={3: "section3"},
+        data={"sections": {3: {"thickness": 0.0254}}},
+    )
+
+    layer = ZarrLayer(series)
+    assert layer.raw_resolution == layer.resolution == [25.4, 0.5, 0.5]
+    assert layer.zarr_mag == pytest.approx(0.0005)
+    assert (layer.zarr_x, layer.zarr_y, layer.zarr_s) == (1, 2, 3)
 
 
 @pytest.mark.parametrize(

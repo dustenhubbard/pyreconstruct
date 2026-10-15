@@ -126,3 +126,41 @@ def test_dependabot_watches_every_manifest_we_install_from():
         "behind pyproject.toml for two days and kept a CVE alert open"
     )
     assert ("uv", "/") in watched
+
+
+def test_dependabot_ignores_major_bumps_of_the_pinned_stack():
+    """numpy and opencv-python-headless are pinned per Python line and zarr is
+    held at 2.18.2, so a major version means moving those pins together. Each
+    Python entry ignores major bumps of the four packages and still groups
+    patch and minor updates."""
+    # Regex, not YAML, for the reason above. Each pattern is anchored to the
+    # block it means: the rules under `ignore:` and the types under
+    # `routine:`, so a rule nested elsewhere does not count.
+    text = (REPO_ROOT / ".github" / "dependabot.yml").read_text()
+    stack = {"numpy", "opencv-python", "opencv-python-headless", "zarr"}
+    entries = {}
+    for chunk in re.split(r"\n\s*- package-ecosystem:", text)[1:]:
+        eco = re.match(r'\s*"?([\w-]+)"?', chunk).group(1)
+        directory = re.search(r'directory:\s*"?([^"\n]+)"?', chunk).group(1).strip()
+        ignore_block = re.search(r"\n    ignore:\n((?:      .*\n)+)", chunk)
+        rules = re.findall(
+            r'- dependency-name:\s*"([^"]+)"\s*\n\s*update-types:\s*\[([^\]]*)\]',
+            ignore_block.group(1) if ignore_block else "",
+        )
+        # only majors: a minor or patch type here would stop those updates too
+        for name, types in rules:
+            listed = [t.strip().strip("\"'") for t in types.split(",")]
+            assert listed == ["version-update:semver-major"], (
+                f"{eco} {directory} ignores {listed} for {name}"
+            )
+        entries[(eco, directory)] = ({name for name, _ in rules}, chunk)
+
+    for key in [("uv", "/"), ("pip", "/"), ("pip", "/benchmarks")]:
+        ignored, chunk = entries[key]
+        assert ignored == stack, f"{key} ignores major bumps of {sorted(ignored)}"
+        assert re.search(
+            r'\n    groups:\n(?:      #.*\n)*      routine:\n        update-types:\s*\["patch", "minor"\]',
+            chunk,
+        ), (
+            f"{key} no longer groups patch and minor updates"
+        )

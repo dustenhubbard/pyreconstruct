@@ -38,6 +38,13 @@ class FieldWidgetMouse(FieldWidgetData):
                 mode (int): number corresponding to mouse mode
         """
         self.endPendingEvents()  # end pending mouse events
+
+        # A real tool change ends a lasso. The pointer shortcut pressed
+        # mid-lasso is not one: it calls this with the pointer already the
+        # tool, and that lasso keeps going.
+        if mode != self.mouse_mode:
+            self.cancelLasso()
+
         self.mouse_mode = mode
 
         ## Set cursor icon
@@ -165,7 +172,8 @@ class FieldWidgetMouse(FieldWidgetData):
 
         if traces_to_merge:
             traces_to_merge.append(new_trace)
-            # the draw's newTrace already saved an undo state; fold the states
+            # the draw already saved an undo state (newTrace, or lineRelease
+            # for a scissors cut, which newTrace does not log); fold the states
             # the merge saves into it so the whole gesture (draw plus
             # auto-merge) is one undo step and one Ctrl+Z restores the section
             # as it was before the draw (upstream issue #137)
@@ -190,11 +198,16 @@ class FieldWidgetMouse(FieldWidgetData):
                 self.clicked_x,
                 self.clicked_y
             )
+            self.pointer_press_recorded = True
 
     def pointerMove(self, event):
         """Called when mouse is moved in pointer mode."""
         # ignore if not clicking
         if not self.lclick:
+            return
+
+        # A dropped press or a tool switch cannot start a pointer gesture.
+        if not self.pointer_press_recorded:
             return
         
         # keep track of possible lasso if insufficient time has passed
@@ -331,8 +344,112 @@ class FieldWidgetMouse(FieldWidgetData):
 
         return True
 
+    def cancelLasso(self) -> bool:
+        """Drop a lasso in progress without selecting anything.
+
+        Only ``pointerRelease`` ends a lasso, and only the release of the
+        lasso's own press, in pointer mode and outside a pinch, reaches it. A
+        tool change, a pinch, or a right press that opened the context menu
+        left the lasso flag, its points and the edge-pan timer behind: the
+        points stayed on screen in the new tool's pen, and the timer kept
+        panning the view whenever the cursor came near an edge.
+
+        Dropped rather than committed: a selection made by a tool change, a
+        pinch or a menu is one nobody asked for. Nothing is lost, so there is
+        no notice.
+
+        The press goes with it (``dropPress``). The button is usually still
+        down, and the tool that inherits it must not act on a press it never
+        saw. Otherwise a rectangle trace indexed the emptied
+        ``current_trace``, a pencil or stamp drew, the knife cut, and the
+        pointer, after the pinch or a switch back, started a second lasso and
+        its timer.
+
+            Returns:
+                (bool): True if a lasso was in progress and was dropped
+        """
+        if not self.is_selecting_traces:
+            return False
+
+        self.is_selecting_traces = False
+        self.current_trace = []
+        self.deactivateMouseBoundaryTimer()
+        self.dropPress()
+        self.update()
+
+        return True
+
+    def dropPointerPress(self) -> bool:
+        """Drop a pointer press that is not a lasso yet, with its points.
+
+        From its first move the pointer keeps a press's points in
+        ``current_trace``, in case it becomes a lasso, and only
+        ``pointerRelease`` clears them. A pinch ignores that release, so the
+        points outlasted it: a later lasso went around them as well as its
+        own, and selected a region nobody had drawn around. Drops the press
+        too (``dropPress``), as ``cancelLasso`` does for a lasso, so the moves
+        after the pinch cannot carry it on.
+
+        A drag of selected traces is left alone; that is its own gesture
+        (``cancelTraceMove``).
+
+            Returns:
+                (bool): True if a pointer press was under way and was dropped
+        """
+        if (
+            self.mouse_mode != POINTER
+            or not self.pointer_press_recorded
+            or self.is_moving_trace
+            or self.is_selecting_traces
+        ):
+            return False
+
+        self.current_trace = []
+        self.dropPress()
+
+        return True
+
+    def dropPress(self):
+        """Drop the press under way, so no tool acts on it again.
+
+        What owns a gesture, and for how long:
+
+        * The press that starts a gesture owns it until every button is up.
+          The click flags (``lclick``, ``mclick``, ``rclick``) are that press;
+          the tools read them, not the buttons.
+        * A secondary press comes while the owning press is held: a second
+          mouse button, or a tablet's barrel button with the tip down.
+          ``mousePressEvent`` decides what it does. A middle press made with
+          another button is ignored, the knife ignores one mid-cut, and a
+          right press takes over from the left one. Where that opens the
+          context menu, the menu takes the press and ends a lasso under way.
+        * A press made during a pinch is dropped as it arrives. Every mouse
+          event is ignored while gesturing, so no tool sees it, and its click
+          flags used to outlast the pinch: the moves after it acted on a
+          press no tool had started.
+        * Finger input on Windows is ignored before any of this, so it
+          neither drops a press nor hands a dropped one back.
+        * Dropping the press clears the click flags and the pointer's recorded
+          press, and marks what is still held as dropped. A press that reports
+          another button down as well joins the dropped one and is ignored.
+          ``mousePressEvent`` reads the held buttons afresh, so otherwise the
+          dropped button came back with it, for a tool that never saw it
+          pressed.
+        * The dropped press is over when every button is up: at the release
+          that leaves none down, which finishes nothing, or a move that
+          reports none. A press of one button alone, outside a pinch, starts
+          afresh as well. Either the dropped button is up and its release
+          never reached the field, or the device stopped reporting it (a
+          barrel press can arrive alone), and a press cannot hand back a
+          button it does not report.
+        """
+        self.lclick, self.rclick, self.mclick = False, False, False
+        self.pointer_press_recorded = False
+        self.press_dropped = True
+
     def pointerRelease(self, event):
         """Called when mouse is released in pointer mode."""
+        self.pointer_press_recorded = False
 
         ## User single-clicked
         if self.lclick and self.isSingleClicking():
@@ -417,7 +534,7 @@ class FieldWidgetMouse(FieldWidgetData):
             # `endPendingEvents` normally catches this at the moment the section
             # changes, which is every route through `MainWindow.changeSection`.
             # This is the invariant behind that: `FieldWidget.changeSection` can
-            # also be called directly (`moveTo` from the 3D scene), and the
+            # also be called directly, and the
             # commit below is only meaningful against the section the drag
             # started on. Identity, not section number: a mid-drag `reload`
             # rebuilds the section, and the carried traces belong to the old
@@ -519,6 +636,9 @@ class FieldWidgetMouse(FieldWidgetData):
         painter = QPainter(new_field)
         painter.drawPixmap(move_x + x, move_y + y, w, h, field)
         self.field_pixmap = new_field
+        # the scale bar follows the stretched view, not the one before the zoom
+        if self.mainwindow.mouse_palette:
+            self.mainwindow.mouse_palette.followZoom(zoom_factor)
         self.update()
 
     def mousePanzoomMove(self, event):
@@ -755,6 +875,14 @@ class FieldWidgetMouse(FieldWidgetData):
                 if recreated and log_event and self.is_scissoring:
                     self.series.addLog(self.tracing_trace.name, self.section.n, "Modify trace(s)")
 
+                # A logged draw saves its undo state inside newTrace, and
+                # autoMerge folds the merge into that state. A cut is not
+                # logged there, so it saves its state here, before the merge:
+                # otherwise autoMerge drops the state holding the section from
+                # before the cut, and Undo gives back the merged trace.
+                if recreated and self.is_scissoring:
+                    self.saveState()
+
                 if recreated and closed and len(self.current_trace) > 2:
                     self.autoMerge()
 
@@ -782,9 +910,10 @@ class FieldWidgetMouse(FieldWidgetData):
 
                 ## NOTE: saveState is usually invoked through newTrace; however,
                 ## because this event is not logged through that function,
-                ## saveState must be called here explicitly.
-                
-                self.saveState() 
+                ## saveState must be called explicitly: above for a finished
+                ## cut, here for the original trace put back.
+                if not recreated:
+                    self.saveState()
                 self.generateView()
                 
             else:
@@ -829,6 +958,59 @@ class FieldWidgetMouse(FieldWidgetData):
             self.series.palette_traces[self.series.palette_index[0]][self.series.palette_index[1]]
         )
         self.generateView()
+
+    def cancelOpenScissorsCut(self):
+        """Back out of a scissors cut that is still open, before a write or reload.
+
+        Until a cut ends, its trace lives outside the section. A save in that
+        window wrote the section without it and marked the series saved, and
+        a close then deleted the working folder, so the trace was permanently
+        lost. Anything that writes or rereads the field's section, or records
+        an undo state of it (saveState), calls this first, and the trace goes
+        back exactly as it was, as with Backspace.
+
+        Backing out rather than finishing is deliberate. Finishing would save
+        a cut nobody finished: on an open trace the pickup has already dropped
+        the shorter side of the click.
+
+        Does nothing unless a cut is open. lineRelease clears is_line_tracing
+        before it finishes a cut, so a save reached from inside it, through a
+        table refresh, leaves the cut alone.
+
+        The trace goes back into self.section, so this relies on the cut
+        being on the section shown: every section change, paging through
+        MainWindow.changeSection or a 3D double-click through moveTo, ends
+        the gesture with endPendingEvents before the field moves, and a cut
+        never outlives its section.
+
+        Undo is the one exception, and finishes the cut instead
+        (finishOpenScissorsCut) unless the trace layer is hidden.
+
+            Returns:
+                (bool): True if a cut was open and is now backed out
+        """
+        if self.is_scissoring and self.is_line_tracing:
+            self.cancelScissors()
+            return True
+        return False
+
+    def finishOpenScissorsCut(self):
+        """Finish a scissors cut that is still open, as a right-click would.
+
+        MainWindow.undo calls this before its own save. Finished, the cut is
+        an edit with an undo state, so that Undo takes back the cut and
+        nothing older, and Redo brings the cut back. Left to the save, the
+        cut would be backed out with no state, and the Undo would take the
+        edit made before it.
+
+        Not for a hidden trace layer, where newTrace refuses the finished
+        trace and lineRelease puts the original back with a state that
+        changes nothing. Undo backs the cut out there instead.
+
+        Does nothing unless a cut is open.
+        """
+        if self.is_scissoring and self.is_line_tracing:
+            self.lineRelease(override=True)
 
     def stampPress(self, event):
         """Called when mouse is pressed in stamp mode.

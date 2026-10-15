@@ -8,7 +8,7 @@ the flow this project develops and releases against. uv has two advantages for
 contributors:
 
 - It provisions the correct interpreter itself (the project pins
-  `requires-python = ">=3.11,<3.13"`, and `.python-version` picks 3.11), so you
+  `requires-python = ">=3.11,<3.14"`, and `.python-version` picks 3.11), so you
   don't need a separate conda env just to get Python 3.11.
 - `uv sync` installs PyReconstruct into a project-local `.venv` and resolves
   against the committed `uv.lock`, so everyone gets the same pinned dependency
@@ -117,6 +117,11 @@ on a *real* platform, so nothing Qt can observe tells it apart from a real
 user's session. This variable is how the caller says so; each prompt then takes
 the same deliberate no-user answer it already takes offscreen
 (`gui/utils/utils.py`, `user_is_present`).
+
+Offscreen without this variable, a plain notice or a yes/no question falls back
+to the console and waits for an answer on stdin. With it set, nothing reads
+stdin: a notice is printed and the run continues, and a yes/no question is
+printed and answered no.
 
 Exactly `1` enables it. Leave it unset for an ordinary launch — it suppresses
 dialogs a real user wants to see.

@@ -16,6 +16,7 @@ from PySide6.QtCore import Qt, QEvent
 from PyReconstruct.modules.gui.dialog import QuickDialog, FileDialog
 from PyReconstruct.modules.backend.threading import ThreadPoolProgBar
 from PyReconstruct.modules.datatypes import Series
+from PyReconstruct.modules.datatypes.host_tree import HostTree
 from PyReconstruct.modules.backend.volume import (
     generateVolumes,
     convert_vedo_to_tm,
@@ -41,7 +42,6 @@ class VPlotter(vedo.Plotter):
     def __init__(self, qt_parent, *args, **kwargs):
         self.qt_parent = qt_parent
         self.mainwindow = qt_parent.mainwindow
-        self.series = self.mainwindow.series
         super().__init__(*args, **kwargs)
 
         self.objs = SceneObjectList()
@@ -66,12 +66,38 @@ class VPlotter(vedo.Plotter):
 
         self.saveState = self.qt_parent.saveState  # connect save state function
         
-    def getSectionFromZ(self, z):
-        """Get the section number from a z coordinate."""
-        snum = round(z / self.mainwindow.field.section.thickness)  # probably change this
+    @property
+    def series(self):
+        """The series open in the main window right now.
 
-        # if the section is not in the seris, find closest section
-        all_sections = list(self.series.sections.keys())
+        Read live rather than stored at construction: the 3D window outlives
+        `File > Open series`, and a copy taken then kept pointing at the
+        first series after a switch. Every add, remove and stale mark that
+        was given names only went to that series' objects (fork #786).
+        """
+        return self.mainwindow.series
+
+    def getSectionFromZ(self, z, series_fp=None):
+        """Get the section number from a z coordinate.
+
+            Params:
+                z (float): the z coordinate in the scene
+                series_fp (str): the path of the series the mesh came from;
+                    None reads the open series
+        """
+        # a mesh's z is its section number times its series' average
+        # thickness (objects_3D), so the inverse uses that same series: a
+        # mesh from another series has its own thickness and section numbers,
+        # recorded when it was added, since that series may be closed by now
+        recorded = None if series_fp is None else self.objs.section_maps.get(series_fp)
+        if recorded is None or series_fp == self.series.jser_fp:
+            thickness = self.series.avg_thickness
+            all_sections = sorted(self.series.sections)
+        else:
+            thickness, all_sections = recorded
+        snum = round(z / thickness)
+
+        # if the section is not in the series, find closest section
         if snum not in all_sections:
             diffs = [abs(s - snum) for s in all_sections]
             snum = all_sections[diffs.index(min(diffs))]
@@ -740,7 +766,7 @@ class VPlotter(vedo.Plotter):
             if scene_obj.type != "object":
                 continue
             # get the host group names
-            host_group = self.objs.getHostGroup(scene_obj)
+            host_group = self.objs.getHostGroup(scene_obj, self.series)
             # add the objects to selected
             for so in host_group:
                 if so not in self.selected:
@@ -762,7 +788,7 @@ class VPlotter(vedo.Plotter):
             groups = []
             for scene_obj in self.objs.getType("object"):
                 if not any([scene_obj in hg for hg in groups]):  # if obj group has not been found yet
-                    groups.append(self.objs.getHostGroup(scene_obj))
+                    groups.append(self.objs.getHostGroup(scene_obj, self.series))
         else:
             groups = []
             for scene_obj in self.objs.getType("object"):
@@ -811,8 +837,9 @@ class VPlotter(vedo.Plotter):
         # get the transform and apply its inverse to a point
         x, y, z = msh.transform.T.GetInverse().TransformFloatPoint(*pt)
 
-        # get the section
-        s = self.getSectionFromZ(z)
+        # get the section, in the numbering of the series the mesh came from
+        obj = self.objs[msh]
+        s = self.getSectionFromZ(z, obj.series_fp if obj else None)
 
         return round(x, 3), round(y, 3), s
 
@@ -935,7 +962,6 @@ class CustomPlotter(QVTKRenderWindowInteractor):
         self.container.setCentralWidget(self)
 
         self.mainwindow = mainwindow
-        self.series = self.mainwindow.series
         self.screen_info = mainwindow.screen_info  # info about primary screen
 
         self.is_closed = False
@@ -1087,6 +1113,11 @@ class CustomPlotter(QVTKRenderWindowInteractor):
         self.plt.show(*self.plt.actors, resetcam=(False if load_fp else None))
         self.show()
         self.container.show()
+
+    @property
+    def series(self):
+        """The series open in the main window right now (see VPlotter.series)."""
+        return self.mainwindow.series
 
     def _syncRenderWindowSize(self):
         """Resize the render window if it no longer matches this widget.
@@ -1330,6 +1361,14 @@ class CustomPlotter(QVTKRenderWindowInteractor):
             else:
                 series_fps[new_fp] = moved
 
+    def seriesClosing(self, series : Series):
+        """Keep what the scene needs from a series the window is replacing.
+
+            Params:
+                series (Series): the series leaving the main window
+        """
+        self.plt.objs.keepHostTree(series)
+
     def seriesPaths(self):
         """The series paths the scene and its undo and redo states hold.
 
@@ -1566,7 +1605,10 @@ class CustomPlotter(QVTKRenderWindowInteractor):
         """
         if self.is_closed:
             return
-        obj_names, ztrace_names = self.plt.objs.popStale()
+        # names alone cannot be checked against a series that is not open:
+        # after a series switch, a stale object from the first series keeps
+        # its mark until that series is open again
+        obj_names, ztrace_names = self.plt.objs.popStale(self.series.jser_fp)
         if not (obj_names or ztrace_names):
             return
 
@@ -1762,6 +1804,9 @@ class SceneObjectList():
         """Create the scene object list."""
         self.scene_objects = {}
         self.host_trees = {}
+        # per series path: (average thickness, sorted section numbers), for
+        # the hover's section lookup once that series is no longer open
+        self.section_maps = {}
         # IDs of scene objects whose 2D source data changed after their mesh
         # was generated (see markStale/popStale)
         self.stale_ids = set()
@@ -1804,6 +1849,13 @@ class SceneObjectList():
         # add to the host tree
         if series.jser_fp not in self.host_trees:
             self.host_trees[series.jser_fp] = series.host_tree
+        # refreshed on every add: the open series can gain or lose sections
+        # while the scene is up (a Series-like without sections records none)
+        sections = getattr(series, "sections", None)
+        if sections is not None:
+            self.section_maps[series.jser_fp] = (
+                series.avg_thickness, sorted(sections)
+            )
         
         return scene_object
     
@@ -1837,6 +1889,26 @@ class SceneObjectList():
                 scene_obj.series_fp = new_fp
         if old_fp in self.host_trees:
             self.host_trees[new_fp] = self.host_trees.pop(old_fp)
+        if old_fp in self.section_maps:
+            self.section_maps[new_fp] = self.section_maps.pop(old_fp)
+
+    def keepHostTree(self, series : Series):
+        """Keep a series' host tree as it is now, for its objects to read once
+        it is no longer open.
+
+        A series undo or redo replaces series.host_tree with a stored copy, so
+        the tree kept at add time can be one the series no longer uses. The
+        tree is in memory and a closed series' working folder is not read.
+        The scene keeps a copy with no series, so a later change to the
+        series' tree does not reach it and the series is not kept alive.
+
+            Params:
+                series (Series): the series leaving the main window
+        """
+        if series.jser_fp in self.host_trees:
+            self.host_trees[series.jser_fp] = HostTree(
+                series.host_tree.getDict(), None
+            )
 
     def markStale(self, obj_names=None, ztrace_names=None, series_fp=None):
         """Mark scene objects as stale: their 2D data changed after their mesh
@@ -1868,23 +1940,30 @@ class SceneObjectList():
             if scene_obj.type in ("object", "ztrace") and scene_obj.series_fp == series_fp:
                 self.stale_ids.add(scene_obj.id)
 
-    def popStale(self):
-        """Return the names of the stale scene objects and clear the stale set.
+    def popStale(self, series_fp=None):
+        """Return the names of the stale scene objects and clear their marks.
 
+            Params:
+                series_fp (str): only pop objects from this series; the
+                    others keep their mark. None pops every stale object.
             Returns:
                 obj_names (list): the names of the stale objects
                 ztrace_names (list): the names of the stale ztraces
         """
         obj_names, ztrace_names = [], []
+        kept = set()
         for obj_id in self.stale_ids:
             scene_obj = self[obj_id]
             if scene_obj is None:  # no longer in the scene
+                continue
+            if series_fp is not None and scene_obj.series_fp != series_fp:
+                kept.add(obj_id)
                 continue
             if scene_obj.type == "object":
                 obj_names.append(scene_obj.name)
             elif scene_obj.type == "ztrace":
                 ztrace_names.append(scene_obj.name)
-        self.stale_ids.clear()
+        self.stale_ids.intersection_update(kept)
         return obj_names, ztrace_names
 
     def getExportDict(self):
@@ -1933,16 +2012,24 @@ class SceneObjectList():
                 obj.series_fp == series_fp
             ): return obj
     
-    def getHostGroup(self, scene_obj : SceneObject):
+    def getHostGroup(self, scene_obj : SceneObject, series : Series = None):
         """Get the host group for an object.
         
             Params:
                 scene_obj (SceneObject): the scene object
+                series (Series): the series open in the main window. Its own
+                    objects read its host tree at the time of the call; a
+                    series undo or redo replaces that tree, so the one kept
+                    at add time can be out of date. Objects from any other
+                    series read the tree kept for it (keepHostTree).
         """
         if not scene_obj.type == "object":
             return
         
-        host_tree = self.host_trees[scene_obj.series_fp]
+        if series is not None and scene_obj.series_fp == series.jser_fp:
+            host_tree = series.host_tree
+        else:
+            host_tree = self.host_trees[scene_obj.series_fp]
         names = host_tree.getHostGroup(
             scene_obj.name,
             [o.name for o in self.getType("object")]

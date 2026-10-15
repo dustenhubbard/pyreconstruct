@@ -1,4 +1,4 @@
-"""The last of the review fleet's confirmed findings (2026-08-28).
+"""The last of the confirmed findings from the 2026-08-28 review.
 
 Small, scattered, all real: an exported group name cut in two, stacked zarr
 palettes wired to the wrong store, a menubar that never let a generation

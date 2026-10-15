@@ -123,7 +123,6 @@ class TableManager():
         anchor = self._dockedAnchor(new_table)
         if hasattr(self.mainwindow, "setTabPosition"):
             # tabs along the top of the list area, not Qt's bottom default
-            # (his call, 2026-08-25)
             from PySide6.QtWidgets import QTabWidget
             self.mainwindow.setTabPosition(
                 Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea,
@@ -164,15 +163,14 @@ class TableManager():
         return bool(self._collapsed)
 
     def toggleListsCollapsed(self):
-        """The sidebar pill / View menu / shortcut toggle (his stage 1,
-        2026-08-25): hide every docked list, or bring back exactly the set
-        the collapse hid. Floating lists are real windows now and are never
+        """The sidebar pill / View menu / shortcut toggle: hide every docked
+        list, or bring back exactly the set the collapse hid. Floating lists are real windows now and are never
         touched. Collapsing with no docked list visible is a no-op rather
         than an empty collapsed state, so the toggle cannot get stuck.
 
         With NO list open at all -- a freshly opened series -- the toggle
-        opens the object list instead of doing nothing (his call,
-        2026-08-26): it is the list people reach for first, and a button
+        opens the object list instead of doing nothing: it is the list
+        people reach for first, and a button
         that appears dead on a new series is worse than an opinion.
         """
         if self._collapsed:
@@ -215,9 +213,8 @@ class TableManager():
                 if tb.parent() is self.mainwindow]
 
     def _wireTabBars(self):
-        """Give every dock tab an X (his call, 2026-08-25: "tabs but with
-        x's") and a double-click that floats its list, the deliberate sibling
-        of dragging the tab out. Wired at most once per tab bar; Qt reuses
+        """Give every dock tab an X and a double-click that floats its list,
+        the deliberate sibling of dragging the tab out. Wired at most once per tab bar; Qt reuses
         them, and the property guard keeps a rewire from stacking
         connections."""
         from PySide6.QtCore import Qt as _Qt
@@ -225,12 +222,12 @@ class TableManager():
         for tb in self._dockTabBars():
             # Re-applied every pass, NOT guarded: Qt resets these on the tab
             # bar it reuses as docks come and go, which is how the close
-            # buttons went missing and came back (his report, 2026-08-26).
+            # buttons went missing and came back.
             # Only the signal connections are one-shot, below.
             tb.setTabsClosable(True)
             tb.setContextMenuPolicy(_Qt.CustomContextMenu)
             # tabs stretch to fill the bar: two tabs over a wide list left a
-            # blank stump of bar beside them (his call, 2026-08-26)
+            # blank stump of bar beside them
             tb.setExpanding(True)
             if not tb.property("pyrecon_close_wired"):
                 tb.setProperty("pyrecon_close_wired", True)
@@ -245,8 +242,8 @@ class TableManager():
                 )
                 # dragging a tab out: ours, not Qt's. A tabbed list hides its
                 # title bar, and Qt tears a dock out BY that title bar, so
-                # there is nothing left for it to drag (his report,
-                # 2026-08-26, twice). The filter below does the tear-out and
+                # there is nothing left for it to drag. The filter below does
+                # the tear-out and
                 # hands the rest of the drag to the window system.
                 tb.installEventFilter(self._tab_drag_filter)
 
@@ -280,8 +277,8 @@ class TableManager():
         table.setFloating(True)
         table._becomeRealWindow()
         # Qt applies the list's LAST floating geometry to the fresh float in
-        # queued events, which yanked the window to wherever it floated last
-        # (his report, 2026-08-26: a wild jump). Drain those first, THEN put
+        # queued events, which yanked the window to wherever it floated last,
+        # a wild jump. Drain those first, THEN put
         # the window under the cursor, near the title bar's left end so the
         # gesture reads as dragging the window by its title.
         from PySide6.QtWidgets import QApplication
@@ -295,8 +292,8 @@ class TableManager():
             handle.startSystemMove()
 
     def _tabContextMenu(self, tab_bar, pos):
-        """Right-click on a tab: float or close its list (his ask,
-        2026-08-25). Returned for the tests; popped up for the user."""
+        """Right-click on a tab: float or close its list. Returned for the
+        tests; popped up for the user."""
         index = tab_bar.tabAt(pos)
         if index < 0:
             return None
@@ -331,8 +328,8 @@ class TableManager():
 
         Re-wires the tab bars on the way through: Qt discards and rebuilds a
         dock area's QTabBar as docks come and go, and a rebuilt bar arrives
-        with no close buttons and none of our handlers (his report,
-        2026-08-26: the tab X vanished, then came back). Wiring is
+        with no close buttons and none of our handlers, so the tab X vanished,
+        then came back. Wiring is
         idempotent, so running it here is cheap insurance.
         """
         self._wireTabBars()
@@ -388,8 +385,8 @@ class TableManager():
 
         A theme switch changes fonts and cell padding, but the lists kept
         the widths measured under the OLD theme, so dark-theme text crowded
-        its columns (his report, 2026-08-26; measured: a fresh dark list
-        wants 99/53/45 where a switched one kept 91/36/28). The main window
+        its columns (measured: a fresh dark list wants 99/53/45 where a
+        switched one kept 91/36/28). The main window
         calls this after applying a theme.
         """
         for tables in self.tables.values():

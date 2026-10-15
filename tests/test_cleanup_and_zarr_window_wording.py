@@ -1,4 +1,7 @@
-"""The wording of the clean-up list headings and the Zarr converter window."""
+"""The wording of the clean-up list explanations and the Zarr converter window.
+
+The explanation is the tooltip of the `?` beside each list's one-line heading.
+"""
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,7 +11,7 @@ import pytest
 pytestmark = pytest.mark.gui
 
 from PyReconstruct.modules.gui.dialog import (
-    DifferentlyNamedDuplicatesDialog,
+    DuplicateTracesDialog,
     MalformedContoursDialog,
     PixelDustDialog,
 )
@@ -29,18 +32,17 @@ def _record(**extra):
     return record
 
 
-def _pair():
-    return _record(
-        name="A", other_name="B", other_index=1, other_points=14,
-        other_location=(0.1, 0.0), area=0.5, other_area=0.52, ratio=0.97,
-        reason="Overlap 0.97 with 'B' (above 0.95)",
-        other_match={"color": [1, 2, 3], "points": [(0.1, 0.0)]},
-    )
+def _group():
+    members = [_record(name="A"), _record(name="B", index=1)]
+    return {
+        "section": 1, "members": members, "names": ["A", "B"], "count": 2,
+        "ratio": 0.97, "location": (0.0, 0.0),
+    }
 
 
 def _heading(qtbot, dialog):
     qtbot.addWidget(dialog)
-    return dialog.heading.text()
+    return dialog.help_icon.toolTip()
 
 
 def test_the_smoothing_list_says_why_a_trace_is_skipped(qtbot):
@@ -68,13 +70,73 @@ def test_the_pixel_dust_list_explains_the_area_column(qtbot):
     ) in heading
 
 
-def test_the_pairs_heading_asks_for_one_name_per_row(qtbot):
+def test_the_duplicates_heading_asks_for_one_name_per_row(qtbot):
     heading = _heading(
-        qtbot,
-        DifferentlyNamedDuplicatesDialog(None, [_pair()],
-                                         delete_unselected=lambda c: []),
+        qtbot, DuplicateTracesDialog(None, [_group()], combine=lambda c: [])
     )
-    assert "then tick the name you want to KEEP, one name per row." in heading
+    assert "Pick the name to keep in each row." in heading
+    assert "A row with more than one is left alone until you pick one." in (
+        heading
+    )
+
+
+def test_the_duplicates_help_says_what_the_overlap_number_is(qtbot):
+    """A row chains its traces, so the Overlap number is the lowest pair that
+    joined the row (tests/test_duplicate_traces.py pins that), and two traces
+    in the row can overlap less than it."""
+    heading = _heading(
+        qtbot, DuplicateTracesDialog(None, [_group()], combine=lambda c: [])
+    )
+    assert "lowest Overlap among the pairs that put the traces in one row" in (
+        heading
+    )
+    assert "A and C can overlap less than the number shown" in heading
+    assert "lowest overlap ratio between the row's traces" not in heading
+
+
+def test_the_duplicates_help_says_what_an_overlap_of_1_means(qtbot):
+    """1 is no promise of the same points or the same area: a square with an
+    extra point on one edge scores 1 by area, a unit square and its copy
+    shifted 0.001 score 1 while their real areas differ, and a small square
+    shifted within the point-match tolerance scores 1 by its points while
+    sharing only about 91% of its area. So the help says what the range
+    means and makes no geometry promise."""
+    from PyReconstruct.modules.datatypes.trace import Trace
+
+    def trace(points):
+        t = Trace("A", (0, 0, 0), True)
+        t.points = points
+        return t
+
+    square = trace([(0, 0), (1, 0), (1, 1), (0, 1)])
+    extra_point = trace([(0, 0), (0.5, 0), (1, 0), (1, 1), (0, 1)])
+    assert square.getOverlapRatio(extra_point) == 1.0
+    assert not square.pointsMatch(extra_point)
+
+    nudged = trace([(x + 0.001, y) for x, y in reversed(square.points)])
+    assert square.getOverlapRatio(nudged) == 1.0
+    assert not square.pointsMatch(nudged)
+
+    small = trace([(0, 0), (0.1, 0), (0.1, 0.1), (0, 0.1)])
+    shifted = trace([(x + 0.005, y) for x, y in small.points])
+    assert small.pointsMatch(shifted)
+    assert small.getOverlapRatio(shifted) < 0.95
+
+    heading = _heading(
+        qtbot, DuplicateTracesDialog(None, [_group()], combine=lambda c: [])
+    )
+    assert "Higher means more alike." in heading
+    assert (
+        "1 means the scan could not tell them apart, but two traces at 1 can "
+        "still differ slightly."
+    ) in heading
+    assert (
+        "the “Overlap threshold” you chose sets how alike two traces must be "
+        "to share a row"
+    ) in heading
+    for claim in ("the same points", "same area", "0.01", "series units",
+                  "image pixels", "point for point"):
+        assert claim not in heading, claim
 
 
 @pytest.fixture

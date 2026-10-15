@@ -1,27 +1,24 @@
-"""The screen-fraction scale bar must render exactly as it did before the mode toggle.
+"""The screen-fraction scale bar renders exactly as recorded.
 
-The scale bar grew a second sizing model (`scale_bar_mode`), and the promise
-made with it is that anyone who does not opt in sees no change whatsoever. This
-module is the proof, and it is deliberately written so that it can be run
-against the tree *before* the change as well as after: it imports only
-`ScaleBar` and the module's `drawOutlinedText`, both of which predate the mode
-toggle, and it builds the bar through the five-argument constructor
-`MousePalette.createSB` used before the change.
+The scale bar has two sizing models (`scale_bar_mode`). This module pins the
+screen-fraction model with one digest over every screen-fraction bar the size
+option can produce, across a wide zoom range and both display preferences.
 
-`BASELINE_DIGEST` was recorded by copying this file, unmodified, into a clean
-clone of `origin/main` at `e09d21c5` (the branch point) and running it there.
-So a green run here is a same-file, same-command comparison rather than a
-re-derivation of what the code is expected to do.
+`BASELINE_DIGEST` is a golden value and changes only on purpose. It was first
+recorded at `e09d21c5`, before the mode toggle, and was unchanged by it.
+It was recorded again when the bar became thin and map-like. The
+ladder went to 1, 2, 5 per decade, the bar's thickness became an option (6 px
+here, the default), and the ticks and their labels moved below the bar and
+became outlined so that they read on a light image as well as a dark one.
 
-What goes into the digest is everything about the drawn bar that does not
-depend on the font: the widget's size, every `drawRect` (the bar and its inner
-fill), every `drawLine` (the tick marks and their positions), the label string,
-and the tick label strings. Glyph positions are computed from
-`QFontMetrics.boundingRect`, so they would make the digest depend on which
-fonts the machine has; the strings themselves do not. A separate raw-pixel
-comparison of the same 2,916 cases was run on both trees by hand and also
-matched (see the PR body) -- it is not committed because the rendered glyphs
-would differ on a machine without Courier New.
+The digest contains everything about the drawn bar that does not depend on the
+font.  That is the widget's size, every `drawRect` (the bar, its inner fill
+and the tick marks), every `drawLine`, the label string, and the tick label
+strings. Glyph positions are computed from `QFontMetrics.boundingRect`,
+so they would make the digest depend on which fonts the machine has; the
+strings themselves do not. Which tick labels are printed does depend on the
+font, because labels too close to fit are thinned out by their measured width,
+so the sweep measures text with `_FixedMetrics`, a font-free stand-in.
 """
 import hashlib
 import os
@@ -31,6 +28,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QRect
 from PySide6.QtGui import QPainter, QPixmap
 
 from PyReconstruct.modules.gui.palette import scale_bar as sb_mod
@@ -45,8 +43,8 @@ SCALES = (0.0007, 0.004, 0.01, 0.02, 0.04, 0.08, 0.16, 0.3, 1.0)
 # both display preferences, both ways
 TEXT_AND_TICKS = ((True, True), (True, False), (False, True), (False, False))
 
-# recorded on origin/main at e09d21c5, by running this file there unchanged
-BASELINE_DIGEST = "297566d161a8f7bccf040d6756e271c2469eaed1320b8915155cb4fd7996715b"
+# recorded with the 1-2-5 ladder and the 6 px bar; see the module docstring
+BASELINE_DIGEST = "c562c05257a56f8d2ec9776a52c59c384765e5e3c1b92245b907191dcaca8d9b"
 
 
 @pytest.fixture(scope="module")
@@ -79,8 +77,23 @@ _REAL_TEXT = QPainter.drawText
 _REAL_OUTLINED = sb_mod.drawOutlinedText
 
 
+class _FixedMetrics:
+    """QFontMetrics as if every glyph were 7 px wide and 12 px tall, so the
+    digest is the same on a machine with Courier New and one without."""
+
+    def __init__(self, font):
+        pass
+
+    def horizontalAdvance(self, text):
+        return 7 * len(text)
+
+    def boundingRect(self, text):
+        return QRect(0, 0, 7 * len(text), 12)
+
+
 def _install_spies(monkeypatch):
     """Collect everything drawn that a font cannot move. Installed once."""
+    monkeypatch.setattr(sb_mod, "QFontMetrics", _FixedMetrics)
     collected = {"rects": [], "lines": [], "outlined": [], "plain": []}
 
     def spy_rect(painter, *args):
@@ -127,10 +140,10 @@ def _sweep(monkeypatch):
     for text, ticks in TEXT_AND_TICKS:
         for scale in SCALES:
             for pct in SLIDER_POSITIONS:
-                # exactly what MousePalette.createSB built before the mode toggle
+                # what MousePalette.createSB builds in screen-fraction mode
                 sb_w = int(pct / 100 * FIELD_W)
                 bar = ScaleBar(None, _StubManager(text=text, ticks=ticks),
-                               sb_w, 50, 1)
+                               sb_w, 6, 1)
                 bar.setScale(scale)
                 digest.update(
                     repr((text, ticks, scale, pct, _render(bar, collected))).encode()
@@ -141,19 +154,19 @@ def _sweep(monkeypatch):
 
 
 def test_the_screen_fraction_bar_renders_exactly_as_it_did(app, monkeypatch):
-    """2,916 rendered bars, one digest, recorded before the change."""
+    """2,916 rendered bars, one digest."""
     cases, digest = _sweep(monkeypatch)
     assert cases == 2916
     assert digest == BASELINE_DIGEST, (
-        "the screen-fraction bar changed; recorded on origin/main e09d21c5 as "
-        f"{BASELINE_DIGEST}, now {digest}"
+        f"the screen-fraction bar changed; recorded as {BASELINE_DIGEST}, "
+        f"now {digest}"
     )
 
 
 def test_the_five_argument_constructor_still_means_screen_fraction(app):
     """The call `MousePalette.createSB` made before the change is still valid,
     and the bar it builds is not pinned to anything."""
-    bar = ScaleBar(None, _StubManager(), 250, 50, 1)
+    bar = ScaleBar(None, _StubManager(), 250, 6, 1)
     try:
         assert bar.width() == 250
         bar.setScale(0.02)

@@ -40,6 +40,14 @@ def test_stable_build_gets_the_newest_nightly(monkeypatch):
     assert U.other_flavor_url() == f"{BASE}/tag/v1.24.0.dev20260928"
 
 
+def test_stable_build_gets_the_highest_nightly_whatever_the_feed_order(monkeypatch):
+    rels = [{"tag_name": t, "prerelease": True, "draft": False, "html_url": f"{BASE}/tag/{t}"}
+            for t in ("v1.24.0.dev20261008", "v1.24.0.dev202610081408")]
+    monkeypatch.setattr(U, "pinned_channel", lambda: "release")
+    monkeypatch.setattr(U, "fetch_releases", lambda timeout=6: rels)
+    assert U.other_flavor_url() == f"{BASE}/tag/v1.24.0.dev202610081408"
+
+
 def test_dev_build_gets_the_latest_stable_without_the_api(monkeypatch):
     def boom(timeout=6):
         raise AssertionError("the Dev side must not call the API")

@@ -1,22 +1,24 @@
 name: tests
 
-# A ruff lint pass and the pytest suite, plus one job that reports and does not
-# gate. Fires on every pull request whatever it targets, and on pushes to main
+# A ruff lint pass, the pytest suite, and a mypy job that fails only on new
+# errors. Fires on every pull request whatever it targets, and on pushes to main
 # itself (the post-merge validation). The tests import PySide6
 # (gui.main), so the job installs the headless Qt system libs and runs under the
 # offscreen QPA platform, with no X server / xvfb needed.
 #
-# Exactly one of the three jobs here blocks a merge: `test`. `lint` does fail
-# the run when it goes red, but it is not a required status check, so on its
-# own it does not stop the pull request merging -- fix it anyway, it is the
-# critical-error set and nothing else catches those. `type` is reporting only
-# by design and cannot fail the build at all -- see its own comment for why,
-# and `mypy.ini` for what it covers. Do not promote it to a gate without
-# watching its count over a run of pull requests first.
+# This file defines five jobs: `lint`, `type`, `test`, `test-python` and
+# `updater-apply`. Two of them block a merge: `test` and `type`. `lint`,
+# `test-python` and `updater-apply` do fail the run when they go red, but they
+# are not required status checks, so on their own they do not stop the pull
+# request merging. Fix a red `lint` anyway, it is the critical-error set and
+# nothing else catches those. `type` fails the run when
+# a pull request adds mypy errors compared with its merge base, or when mypy
+# does not run to completion; it is a required status check. See its own
+# comment for the rule, and `mypy.ini` for what it covers.
 #
 # The authority on what blocks a merge is branch protection on `main`, whose
-# required contexts are exactly `test` and `merge-evidence` -- not this
-# comment, and not the set of jobs defined here. Note the second one is not in
+# required contexts are exactly `test`, `merge-evidence` and `type` -- not this
+# comment, and not the set of jobs defined here. Note `merge-evidence` is not in
 # this file: `merge-evidence` is a separate workflow,
 # `.github/workflows/merge-evidence.yml`, and is no part of this one. Editing
 # the jobs below changes neither list; changing what gates is a branch
@@ -89,12 +91,13 @@ jobs:
       - name: Ruff (critical-error set)
         run: uvx ruff@0.15.20 check .
 
-  # REPORTING ONLY. This job cannot fail the build and is not a merge gate: the
-  # mypy step ends in an explicit `exit 0` and the count is written to the run
-  # summary instead. That is the whole design. A type checker that turns a pull request
-  # red for an error the pull request did not introduce gets ignored, then
-  # switched off, which leaves the repository worse off than having no checker.
-  # It earns a gate by being watched for a while first.
+  # FAILS ON NEW ERRORS ONLY. The core is not at zero errors, so failing on any
+  # error would turn every pull request red for errors it did not introduce,
+  # and a checker that does that gets ignored, then switched off. So the job
+  # measures the error count on this ref and on the pull request's merge base,
+  # and fails only when this ref's count is higher. Equal or lower passes. The
+  # full rule, including what counts as "could not measure", is in the step's
+  # comment below.
   #
   # Scope, strictness and the measured baseline all live in `mypy.ini` -- read
   # that file, not this job, for what is being checked and why. Summary: the
@@ -128,7 +131,7 @@ jobs:
         # resolve the same environment and cannot report different counts.
         run: uv sync --frozen --no-default-groups --extra test
 
-      - name: mypy (Qt-free core, non-strict, reporting only)
+      - name: mypy (Qt-free core, non-strict, fails on new errors)
         # mypy is pinned: an unpinned type checker changes its findings under
         # you and the baseline in mypy.ini stops meaning anything. `--with`
         # keeps it out of pyproject.toml and uv.lock entirely.
@@ -140,8 +143,8 @@ jobs:
         # a clean tree, 1 is "errors found" and is the normal case here, and 2
         # or above is mypy itself failing (a config error, a crash, an internal
         # error). Without that distinction a crash produces an empty report and
-        # a summary reading "0 errors", which is the most misleading thing a
-        # reporting-only job can say. It still does not fail the build.
+        # a summary reading "0 errors", which would also pass any comparison.
+        # A run that did not complete fails the step instead.
         #
         # One exit code below that threshold is not mypy's at all. `status` is
         # the exit of the whole `uv run` wrapper, and uv exits 1 when it cannot
@@ -164,8 +167,8 @@ jobs:
         # The headline used to end "Baseline when this job landed: 218 in 17."
         # That literal was stale within an hour of landing -- the tree read 216
         # in 16 the same day and 224 in 17 once the columnar store merged -- and
-        # a frozen number cannot answer the only question a reporting-only job
-        # exists to answer, which is what *this* pull request changed. So the
+        # a frozen number cannot answer the only question this job exists to
+        # answer, which is what *this* pull request changed. So the
         # count is measured on both sides instead: once on this ref, once on the
         # pull request's own merge base, and the summary reports the delta. A
         # literal cannot go stale if there is no literal.
@@ -176,16 +179,30 @@ jobs:
         # which packages are importable (see above), so a pull request that
         # moves the lock would otherwise have that effect attributed to nothing.
         #
-        # On a `push` to main the event carries no pull request and there is no
-        # merge base, so the summary reports the absolute count and says that no
-        # delta is being claimed rather than inventing a comparison. Same when
-        # the base commit cannot be fetched or its run does not complete: the
-        # absolute count is still true, the delta is simply withheld.
+        # WHEN THE STEP FAILS
         #
-        # Still reporting only. The delta is information, not a threshold; this
-        # step ends in the same unconditional `exit 0` it always did, and adding
-        # a failure condition is a separate decision that has to be made on
-        # purpose. See `mypy.ini` on why it reports before it gates.
+        # On a pull request it fails when any of these holds, and passes
+        # otherwise:
+        #   - this ref has more errors than the merge base;
+        #   - mypy did not run to completion on this ref;
+        #   - the merge base could not be fetched, checked out, or run to
+        #     completion. A gate that cannot measure its baseline has nothing
+        #     to compare against, and passing would let any count through.
+        # The summary headline says which one it was.
+        #
+        # It compares counts, not error text. The per-error diff in the summary
+        # keys on file and message, and both move for reasons that add no error:
+        # a message that quotes a line number churns when code moves, and a
+        # renamed file re-reports every error in it. Failing on that diff would
+        # turn refactors red. The count misses one case, a pull request that
+        # fixes one error and adds a different one, and the diff still shows
+        # that to whoever reads the summary.
+        #
+        # On a `push` to main there is no pull request and no merge base. The
+        # change was already compared when it was a pull request, so the step
+        # reports the absolute count and passes, and fails only when mypy did
+        # not run to completion. A red run there blocks nothing, but it is the
+        # first place a broken mypy setup on main shows up.
         env:
           # Empty on a `push` event. That emptiness is the "no merge base"
           # signal the script below reads; it is not an error.
@@ -235,14 +252,15 @@ jobs:
           head_files=$files
 
           # none: no pull request, so no merge base to compare against.
-          # unavailable: there is one, but it could not be fetched or measured.
+          # unfetched: there is one, but it could not be fetched or checked out.
+          # incomplete: it was checked out, but mypy did not run to completion.
           # ok: measured, and the delta below is real.
           base_state=none
           # `${BASE_SHA:-}` and not `$BASE_SHA`: Actions sets the variable to
           # the empty string on a `push`, but `set -u` would abort the whole
           # step rather than report if it ever arrived unset instead.
           if [ -n "${BASE_SHA:-}" ]; then
-            base_state=unavailable
+            base_state=unfetched
             # The checkout is shallow, so the base commit is not in it. Fetching
             # the single commit by SHA keeps it shallow rather than paying for
             # the full history on every pull request.
@@ -254,26 +272,38 @@ jobs:
               base_files=$files
               if ran_to_completion "$base_status" "$base_errors"; then
                 base_state=ok
+              else
+                base_state=incomplete
               fi
             fi
           fi
 
+          # `failure` is the plain-text reason the step fails, empty when it
+          # passes. It goes to the log as an error annotation; the headline
+          # carries the same verdict into the run summary.
+          failure=
           if ! ran_to_completion "$head_status" "$head_errors"; then
-            headline="mypy did not run to completion (exit ${head_status}, ${head_errors} errors parsed). The counts below mean nothing."
+            failure="mypy did not run to completion on this ref (exit ${head_status}, ${head_errors} errors parsed)."
+            headline="**${failure}** The counts below mean nothing."
           elif [ "$base_state" = ok ]; then
             delta=$((head_errors - base_errors))
             if [ "$delta" -gt 0 ]; then
-              verdict="**This pull request adds $(plural "$delta" error).**"
+              failure="This pull request adds $(plural "$delta" error)."
+              verdict="**${failure}**"
             elif [ "$delta" -lt 0 ]; then
               verdict="**This pull request removes $(plural "$((0 - delta))" error).**"
             else
               verdict="**No change in the error count.**"
             fi
             headline="${verdict} Merge base \`${BASE_SHA:0:7}\`: ${base_errors} in ${base_files} files. This ref: ${head_errors} in ${head_files} files."
-          elif [ "$base_state" = unavailable ]; then
-            headline="**${head_errors} errors in ${head_files} files.** The merge base \`${BASE_SHA:0:7}\` could not be measured, so no delta is claimed."
+          elif [ "$base_state" = unfetched ]; then
+            failure="The merge base ${BASE_SHA:0:7} could not be fetched or checked out, so there is nothing to compare against."
+            headline="**${failure}** This ref: ${head_errors} errors in ${head_files} files."
+          elif [ "$base_state" = incomplete ]; then
+            failure="mypy did not run to completion on the merge base ${BASE_SHA:0:7} (exit ${base_status}, ${base_errors} errors parsed), so there is nothing to compare against."
+            headline="**${failure}** This ref: ${head_errors} errors in ${head_files} files."
           else
-            headline="**${head_errors} errors in ${head_files} files.** A \`${GITHUB_EVENT_NAME}\` event has no merge base, so no delta is claimed."
+            headline="**${head_errors} errors in ${head_files} files.** A \`${GITHUB_EVENT_NAME}\` event has no merge base, so no delta is claimed and the step passes."
           fi
 
           if [ "$base_state" = ok ]; then
@@ -284,11 +314,11 @@ jobs:
           fi
 
           {
-            echo "## mypy: Qt-free core (reporting only)"
+            echo "## mypy: Qt-free core"
             echo
             echo "$headline"
             echo
-            echo 'Not a gate. See `mypy.ini` for the scope and why `--strict` over the whole tree was rejected.'
+            echo 'Fails only when a pull request adds errors compared with its merge base, or when either run does not complete. See `mypy.ini` for the scope and why `--strict` over the whole tree was rejected.'
             echo
             if [ "$base_state" = ok ]; then
               echo '<details><summary>Which errors changed</summary>'
@@ -314,11 +344,18 @@ jobs:
             echo '</details>'
           } >> "$GITHUB_STEP_SUMMARY"
           cat mypy-report.txt
-          exit 0   # reporting only: this job never fails the build
+          if [ -n "$failure" ]; then
+            echo "::error title=mypy::${failure}"
+            exit 1
+          fi
 
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 25   # headroom for the cold wheel install (vtk/scipy/...); the suite itself is ~seconds
+    # The suite is no longer seconds: green runs from Oct 3 to 7, 2026 took a
+    # median of 16 minutes and up to 24.4 on a loaded runner, and a 25-minute
+    # cap canceled jobs that had passed every test. 40 covers the slowest
+    # green run plus a full apt retry (10 minutes, below) with room to spare.
+    timeout-minutes: 40
     steps:
       # Still a shallow clone: no test reads the setuptools-scm version. Tags
       # are the one exception and they are cheap to add on their own.
@@ -339,16 +376,31 @@ jobs:
         # PySide6 6.5 needs these even under the offscreen platform. libglib2.0-0t64,
         # libX11, libfreetype6 and zlib are already present on the ubuntu-latest image.
         # PNG export draws with QtSvg, so no Cairo is needed.
+        #
+        # apt-get can hang rather than fail. On Oct 7, 2026 three jobs sat in
+        # `apt-get update` for the whole job cap after the image's
+        # azure.archive.ubuntu.com mirror went unreachable and apt fell back to
+        # archive.ubuntu.com: the last line was the noble-security InRelease
+        # fetch and nothing followed it. apt's own timeouts never fired, and
+        # the old retry loop only retried an update that exited. So each
+        # attempt (update, then install) is killed at 4 minutes and tried once
+        # more; a healthy one takes 12 seconds at the median and 229 at the
+        # slowest seen. The step's own timeout backs that up.
+        timeout-minutes: 10
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          for i in 1 2 3; do sudo apt-get update && break || sleep 5; done
           # fonts-dejavu-core: the screenshot tests pin DejaVu Sans and DejaVu
           # Sans Mono, so their baselines do not move when the runner image
           # changes its fonts.
-          sudo apt-get install -y --no-install-recommends \
-            libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 \
-            fonts-dejavu-core
+          attempt() {
+            sudo timeout --kill-after=10 240 sh -c '
+              apt-get -o Acquire::Retries=3 update &&
+              apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
+                libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 \
+                fonts-dejavu-core'
+          }
+          attempt || { echo '::warning::apt failed or hung (exit 124 is the 4-minute limit); trying once more'; sleep 10; attempt; }
 
       - name: Install project + test deps (frozen against uv.lock)
         # --frozen: use the committed lock exactly, fail if it drifted from pyproject.toml.
@@ -420,9 +472,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.12"]
+        python: ["3.12", "3.13"]
     runs-on: ubuntu-latest
-    timeout-minutes: 25   # the cold wheel install, as in `test`
+    timeout-minutes: 40   # the suite's run time plus an apt retry, as in `test`
     env:
       UV_PYTHON: ${{ matrix.python }}
     steps:
@@ -437,14 +489,21 @@ jobs:
           cache-suffix: py${{ matrix.python }}
 
       - name: Install headless Qt system libs
+        # A 4-minute limit per attempt and one retry, as in `test`, for the
+        # same hang.
+        timeout-minutes: 10
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          for i in 1 2 3; do sudo apt-get update && break || sleep 5; done
           # fonts-dejavu-core: the screenshot tests run here too, as in `test`
-          sudo apt-get install -y --no-install-recommends \
-            libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 \
-            fonts-dejavu-core
+          attempt() {
+            sudo timeout --kill-after=10 240 sh -c '
+              apt-get -o Acquire::Retries=3 update &&
+              apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
+                libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 \
+                fonts-dejavu-core'
+          }
+          attempt || { echo '::warning::apt failed or hung (exit 124 is the 4-minute limit); trying once more'; sleep 10; attempt; }
 
       - name: Install project + test deps (frozen against uv.lock)
         run: uv sync --frozen --no-default-groups --extra test
@@ -494,4 +553,4 @@ jobs:
       - name: Swap engine tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: uv run --frozen --no-default-groups --extra test python -m pytest -ra tests/test_updater_apply.py tests/test_run_apply_dispatch.py
+        run: uv run --frozen --no-default-groups --extra test python -m pytest -ra tests/test_updater_apply.py tests/test_run_apply_dispatch.py tests/test_update_staging.py

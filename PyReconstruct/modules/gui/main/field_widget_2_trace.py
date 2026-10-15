@@ -22,6 +22,7 @@ from PyReconstruct.modules.calc import (
     pixmapPointToField,
     getExterior, 
     mergeTracesInField, 
+    MergeLosesArea,
     reducePoints,
     cutTraces,
     uncuttable_closed_traces,
@@ -643,7 +644,7 @@ class FieldWidgetTrace(FieldWidgetBase):
 
         # A trace drawn into a hidden group would vanish the moment it is
         # drawn. Show the group instead, so the trace stays in view and the
-        # View > Groups check box says why (his call, 2026-09-28).
+        # View > Groups check box says why.
         self.showGroupsHiding(new_trace.name)
         
         # if action is logged, increment the mouse_palette button
@@ -787,7 +788,7 @@ class FieldWidgetTrace(FieldWidgetBase):
             ## "Clean up" submenu). test_knife_cut_guards pins the message
             ## against the live menu titles, so a rename there fails a test
             ## instead of orphaning this hint.
-            ## Two roads, by cause (Patrick's report, 2026-08-25): a
+            ## Two roads, by cause (a user's report, 2026-08-25): a
             ## hand-drawn figure 8 is fixed with the scissors, not Clean up.
             notify(
                 "A selected trace's outline crosses over itself, so the cut "
@@ -1138,14 +1139,25 @@ class FieldWidgetTrace(FieldWidgetBase):
                 vscroll = None  # scroll bar if object list
                 data_table = self.table_manager.hasFocus()
 
-                if isinstance(data_table, TraceTableWidget):
-                    selected_traces = data_table.getTraces(data_table.getSelected() or [])
+                # an explicit restrict list (autoMerge) names the traces the
+                # action works on, so it stands in for the selection whichever
+                # widget has focus: the draw's undo state refreshes the Trace
+                # List, and a focused list has lost its selection by now. The
+                # list is not read at all, since getSelected asks to unlock a
+                # locked row there, and that object is not one of the targets
+                restrict = kwargs.get("restrict")
+                if restrict:
+                    selected_traces = list(restrict)
 
-                    vscroll = data_table.table.verticalScrollBar()  # track scroll bar pos
-                    scroll_pos = vscroll.value()
+                elif isinstance(data_table, TraceTableWidget):
+                    selected_traces = data_table.getTraces(data_table.getSelected() or [])
 
                 else:
                     selected_traces = self.section.selected_traces.copy()
+
+                if isinstance(data_table, TraceTableWidget):
+                    vscroll = data_table.table.verticalScrollBar()  # track scroll bar pos
+                    scroll_pos = vscroll.value()
 
                 ## If no objs selected
                 if not selected_traces:
@@ -1287,6 +1299,7 @@ class FieldWidgetTrace(FieldWidgetBase):
             self,
             traces,
             tag_sets=self.series.tag_sets,
+            used_tags=self.series.data.usedTags(),
         )
         t, confirmed = dialog.exec()
         if not confirmed:
@@ -1409,17 +1422,34 @@ class FieldWidgetTrace(FieldWidgetBase):
                 # (fork issue #423)
                 field_traces.append(tform.mapPointsArray(trace.points).tolist())
             
-            merged_traces = mergeTracesInField(field_traces, self.section.mag)
+            try:
+                merged_traces = mergeTracesInField(field_traces, self.section.mag)
+            except MergeLosesArea as e:
+                # an outline exists, but it would lose most of a trace's
+                # area; refuse before deleting, as below
+                hint = "Drawing that trace wider may let it merge"
+                if e.coarse:
+                    hint += (
+                        ", and so may merging traces that span less of the "
+                        "section"
+                    )
+                notify(
+                    "The merge would lose most of the area of at least one "
+                    f"trace, so the traces were left as they are. {hint}."
+                )
+                return False
 
-            # A merge that yields nothing must not delete what it was given:
-            # a trace smaller than a grid cell leaves no outline behind
-            # (fork #467 review), and the old traces were already gone by the
-            # time that showed. Refuse instead, and say so.
+            # A merge must not delete what its result leaves out: a trace
+            # smaller than a grid cell leaves no outline behind, and the old
+            # traces were already gone by the time that showed.
+            # mergeTracesInField returns nothing when any separate trace or
+            # group would vanish, so refuse before deleting, and say so.
             if not merged_traces:
                 notify(
-                    "The merge produced no outline, so the traces were left "
-                    "as they are. Traces this small are usually leftover "
-                    "specks; delete them or redraw them larger."
+                    "The merge produced no outline for at least one trace, so "
+                    "the traces were left as they are. Traces this small are "
+                    "usually leftover specks; delete them or redraw them "
+                    "larger."
                 )
                 return False
             
@@ -1577,16 +1607,14 @@ class FieldWidgetTrace(FieldWidgetBase):
         context_menu_list = [
             ("editztracce_act", "Edit z-trace attributes...", "", self.editZtraceAttributes),
             ("smoothztrace_act", "Smooth", "", self.smoothZtrace),
-            # Hoisted out of "3D >" alongside the object menu's equivalent (this
-            # lab is 3D-heavy). The label gains "3D" because at top level it no
-            # longer has the submenu for context.
-            ("addto3D_act", "Add to 3D scene", "", self.addZtraceTo3D),
             None,
             {
                 "attr_name": "ztracemenu_3D",
                 "text": "3D",
                 "opts":
                 [
+                    # same order and labels as the object menu's "3D >"
+                    ("addto3D_act", "Add to scene", "", self.addZtraceTo3D),
                     ("remove3D_act", "Remove from scene", "", self.removeZtrace3D)
                 ]
             },

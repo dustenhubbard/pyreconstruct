@@ -5,6 +5,8 @@ from typing import Union
 
 from PyReconstruct.modules.calc import traceGeometry
 
+from .columnar_store import TraceView
+from .object_ids import ObjectIds
 from .section import Section
 from .transform import Transform
 from .trace import Trace
@@ -12,12 +14,16 @@ from .trace import Trace
 
 class TraceData():
 
-    def __init__(self, trace : Trace, index : int, tform : Transform):
+    def __init__(self, trace : Trace, index : int, tform : Transform, points=None):
         """Create a trace table item.
         
             Params:
-                trace (Trace): the trace object for the trace
+                trace (Trace): the trace object for the trace, or a `TraceView`
+                    of its row in the section's columnar store
                 tform (Transform): the transform applied to the trace
+                points: the trace's points, if not `trace.points`. The store
+                    passes its own (n, 2) float64 array, so no list of tuples
+                    is built and then converted back to an array.
         """
         self.index = index
         self.closed = trace.closed
@@ -38,7 +44,7 @@ class TraceData():
         # functions: length/area/centroid identical, radius within machine
         # epsilon. For affine tforms the centroid of the mapped points equals the
         # mapped centroid of the raw points (up to rounding).
-        pts = tform.mapPointsArray(trace.points)
+        pts = tform.mapPointsArray(trace.points if points is None else points)
         if len(pts):
             length, trace_area, (cx, cy), radius = traceGeometry(pts, self.closed)
         else:
@@ -136,13 +142,14 @@ class ObjectData():
         """Return True of object data is empty."""
         return not bool(self.traces)
     
-    def addTrace(self, trace : Trace, section : Section, series):
+    def addTrace(self, trace : Trace, section : Section, series, points=None):
         """Add a trace to the object data.
         
             Params:
                 trace (Trace): the trace to add
                 section (Section): the section containing the trace
                 series (Series): the series containing the trace
+                points: passed on to `TraceData`
         """
         if section.n not in self.traces:
             self.traces[section.n] = []
@@ -163,7 +170,7 @@ class ObjectData():
         i = len(self.traces[section.n])
         
         self.traces[section.n].append(
-            TraceData(trace, i, tform)
+            TraceData(trace, i, tform, points)
         )
     
     def clearSection(self, snum : int):
@@ -190,6 +197,8 @@ class SeriesData():
             "objects": {},
         }
         self.supress_logging = False
+        # in-memory object ids, kept in step with the traces below
+        self.object_ids = ObjectIds(series)
     
     def __getitem__(self, index):
         """Allow direct indexing of data dictionary."""
@@ -213,22 +222,39 @@ class SeriesData():
 
         return trace_data
     
-    def refresh(self):
-        """Completely refresh the series data."""
+    def refresh(self, message="Loading series data...", show_progress=True):
+        """Completely refresh the series data.
+
+            Params:
+                message (str): the progress text. `Series.__init__` names the
+                    series it opens; a refresh of the open series keeps the
+                    default.
+                show_progress (bool): False to show no progress bar at all
+        """
 
         self.data = {
             "sections": {},
             "objects": {},
         }
 
-        # No time estimate here: this is the pass behind "Loading series
-        # data..." when a series opens, and an opening series must not carry
-        # one (his call, 2026-09-14). Every other operation bar does.
-        for snum, section in self.series.enumerateSections(eta=False):
+        # No time estimate here: this is the pass behind the "Opening
+        # <name>..." bar when a series opens, and an opening series must not
+        # carry one (decided 2026-09-14). Every other operation bar does.
+        for snum, section in self.series.enumerateSections(
+            show_progress=show_progress, message=message, eta=False
+        ):
 
-            self.updateSection(section, update_traces=True, log_events=False)
+            self.updateSection(section, update_traces=True, log_events=False, read_store=True)
+
+        # the ids carry over: traces that are still there keep their ids
+        # (a renumbering moved them already, Series.reorderSections)
+        self.object_ids.reconcile(
+            (snum, name)
+            for name, obj_data in self.data["objects"].items()
+            for snum in obj_data.traces
+        )
     
-    def updateSection(self, section : Section, update_traces=False, all_traces=True, log_events=True):
+    def updateSection(self, section : Section, update_traces=False, all_traces=True, log_events=True, read_store=False):
         """Update the existing section data.
         
             Params:
@@ -236,6 +262,13 @@ class SeriesData():
                 update_traces (bool): True if all traces should also be updated
                 all_traces (bool): True if all traces on the section should be updated IF NO TRACES HAVE BEEN MARKED AS MODIFIED
                 log_events (bool): True if events (creating and deleting objects) should be logged
+                read_store (bool): True to read the traces from the section's
+                    columnar store instead of `section.contours`. Only for a
+                    section just loaded from its file, as the series-open pass
+                    does, where the store was built from the contours a moment
+                    earlier. `Section.save` reads the contours: an edit made
+                    outside `Section` can make the store stale until the save
+                    rebuilds it, and the save updates the series data first.
         """
         # create/update the data for a section
         if section.n not in self.data["sections"]:
@@ -276,6 +309,9 @@ class SeriesData():
             added_objects = set()
             removed_objects = set()
 
+            ## Only a Section built through `Section.__new__` has no store
+            store = section._columns if read_store else None
+
             ## Clear existing trace data on this section
             for name in trace_names:
                 
@@ -285,8 +321,15 @@ class SeriesData():
                     
                 ## Add new trace data
                 if name in section.contours:
-                    for trace in section.contours[name]:
-                        is_new_object = self.addTrace(trace, section)
+                    if store is not None:
+                        traces = (
+                            (TraceView(store, row), store.getCoordinates(row))
+                            for row in store.rowsForContour(name)
+                        )
+                    else:
+                        traces = ((trace, None) for trace in section.contours[name])
+                    for trace, points in traces:
+                        is_new_object = self.addTrace(trace, section, points)
                         if is_new_object:
                             added_objects.add(name)
             
@@ -297,28 +340,43 @@ class SeriesData():
                     if obj_data.isEmpty():
                         del(self.data["objects"][name])
                         removed_objects.add(name)
-            
+
+            ## Keep the object ids in step (object_ids.py). An object emptied
+            ## here is deleted (removeObjAttrs below) only when events are
+            ## logged; otherwise (an import, a refresh) the host tree keeps
+            ## its id, so it keeps its links, as the object keeps its
+            ## attributes.
+            ids = self.object_ids
+            keep = not (log_events and not self.supress_logging)
+            for name in trace_names:
+                obj_data = self.data["objects"].get(name)
+                if obj_data is not None and section.n in obj_data.traces:
+                    ids.ensure(section.n, name)
+                else:
+                    ids.drop(section.n, name, keep=keep)
+
             ## Log newly created/destroyed objects
             if log_events and not self.supress_logging:
-                
+
                 for obj_name in added_objects:
-                    
+
                     self.series.addLog(obj_name, None, "Create object")
                     ## Set the fixed alignment of the object to creation
                     self.series.setAttr(obj_name, "alignment", self.series.alignment)
-                    
+
                 for obj_name in removed_objects:
-                    
+
                     self.series.addLog(obj_name, None, "Delete object")
                     ## Remove object from object attributes dicts
                     self.series.removeObjAttrs(obj_name)
     
-    def addTrace(self, trace : Trace, section : Section):
+    def addTrace(self, trace : Trace, section : Section, points=None):
         """Add trace data to the existing object.
         
             Params:
                 trace (Trace): the trace to add
                 section (Section): the section containing the trace
+                points: passed on to `TraceData`
             Returns:
                 (bool): True if a new object was just created
         """
@@ -340,7 +398,7 @@ class SeriesData():
 
             new_object = False
         
-        object_data[trace.name].addTrace(trace, section, self.series)
+        object_data[trace.name].addTrace(trace, section, self.series, points)
 
         return new_object
     
@@ -472,7 +530,21 @@ class SeriesData():
             for trace_data in trace_list:
                 tags = tags.union(trace_data.getTags())
         return tags
-    
+
+    def usedTags(self) -> set:
+        """Every tag on a trace anywhere in the series.
+
+        Read from this cache, which the field updates after each edit, so no
+        section file is opened.
+        """
+        tags = set()
+        for obj_data in self.data["objects"].values():
+            for trace_list in obj_data.traces.values():
+                for trace_data in trace_list:
+                    if trace_data.tags:
+                        tags.update(trace_data.tags)
+        return tags
+
     def getColorCounts(self, obj_name : str) -> dict:
         """Traces per color for an object, across every section it is on.
 

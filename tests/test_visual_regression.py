@@ -12,6 +12,13 @@ palette (the default theme), one font at a fixed pixel size, one monospace
 font for the field's labels, the field's size in pixels, the view window onto
 the section, and the series itself. The
 settings store every test gets is empty, so every option is its default.
+
+What cannot be pinned from here is the FreeType that rasterizes the glyphs:
+Qt uses the system one, and its versions differ in how they draw the same
+font. The two dialog images are mostly text, so they are checked as ``text``
+images and skip on a Linux host whose FreeType is not the one recorded beside
+the baselines. The field images carry a few short labels and are compared
+everywhere.
 """
 
 import math
@@ -212,7 +219,7 @@ def test_trace_attributes_dialog(window, update_baselines):
         [trace_named(field.section, "dendrite01", 0)],
         tag_sets=window.series.tag_sets,
     )
-    vr.check_image(grab_dialog(dialog), "trace_dialog", update_baselines)
+    vr.check_image(grab_dialog(dialog), "trace_dialog", update_baselines, text=True)
 
 
 def test_palette_trace_dialog(window, update_baselines):
@@ -225,7 +232,9 @@ def test_palette_trace_dialog(window, update_baselines):
         tag_sets=series.tag_sets,
         series=series,
     )
-    vr.check_image(grab_dialog(dialog), "palette_trace_dialog", update_baselines)
+    vr.check_image(
+        grab_dialog(dialog), "palette_trace_dialog", update_baselines, text=True
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -284,6 +293,62 @@ def test_a_mismatch_writes_the_images_for_review(tmp_path, monkeypatch, qapp):
     copied = vr.accept(tmp_path / "diffs", vr.platform_key())
     assert [p.name for p in copied] == ["square.png"]
     vr.check_image(vr.array_to_image(changed), "square")
+
+
+@pytest.fixture
+def renderers_differ(tmp_path, monkeypatch, qapp):
+    """A baseline folder drawn by one FreeType, a host drawing with another,
+    and a square that matches its baseline exactly."""
+    monkeypatch.setattr(vr, "BASELINE_ROOT", tmp_path / "baselines")
+    monkeypatch.setattr(vr, "DIFF_DIR", tmp_path / "diffs")
+    monkeypatch.setattr(vr, "platform_key", lambda: "linux")
+    monkeypatch.setattr(vr, "text_renderer", lambda: "FreeType 9.9.9")
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    base = np.zeros((20, 20, 3), dtype=np.uint8)
+    vr.save_png(base, vr.baseline_dir() / "square.png")
+    (vr.baseline_dir() / vr.TEXT_RENDERER_FILE).write_text("FreeType 2.13.2\n")
+    return vr.array_to_image(base)
+
+
+def test_a_text_check_skips_where_the_renderer_differs(renderers_differ):
+    square = renderers_differ
+    # the pixels match, so a plain check passes
+    vr.check_image(square, "square")
+    with pytest.raises(pytest.skip.Exception) as skipped:
+        vr.check_image(square, "square", text=True)
+    assert "FreeType 9.9.9" in str(skipped.value)
+    assert "FreeType 2.13.2" in str(skipped.value)
+
+
+def test_a_text_check_fails_on_ci_where_the_renderer_differs(
+    renderers_differ, monkeypatch, tmp_path
+):
+    square = renderers_differ
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    with pytest.raises(AssertionError, match="FreeType 9.9.9") as failed:
+        vr.check_image(square, "square", text=True)
+    assert "the pixels match" in str(failed.value)
+    diffs = tmp_path / "diffs"
+    assert (diffs / vr.TEXT_RENDERER_FILE).read_text().strip() == "FreeType 9.9.9"
+    # accepting the artifact records the runner's renderer with its image
+    copied = vr.accept(diffs, "linux")
+    assert [p.name for p in copied] == ["square.png", vr.TEXT_RENDERER_FILE]
+    assert vr.recorded_text_renderer() == "FreeType 9.9.9"
+    vr.check_image(square, "square", text=True)
+
+
+def test_renderer_unknown_on_either_side_compares_as_usual(renderers_differ, monkeypatch):
+    square = renderers_differ
+    monkeypatch.setattr(vr, "text_renderer", lambda: None)
+    vr.check_image(square, "square", text=True)
+    monkeypatch.setattr(vr, "text_renderer", lambda: "FreeType 9.9.9")
+    (vr.baseline_dir() / vr.TEXT_RENDERER_FILE).unlink()
+    vr.check_image(square, "square", text=True)
+
+
+def test_updating_baselines_records_the_renderer(renderers_differ):
+    vr.check_image(renderers_differ, "square", update=True)
+    assert vr.recorded_text_renderer() == "FreeType 9.9.9"
 
 
 def test_missing_linux_baselines_fail_instead_of_skipping(tmp_path, monkeypatch, qapp):

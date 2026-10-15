@@ -1,7 +1,7 @@
 """Right-click a palette group to hide it.
 
 The View menu keeps every visibility toggle; this adds the direct road from
-the widget itself (his ask, 2026-08-26): right-click the scale bar, the
+the widget itself (since 2026-08-26): right-click the scale bar, the
 section increment buttons, or the brightness/contrast sliders and hide that
 group without a trip to the menu bar.
 
@@ -52,7 +52,11 @@ def test_every_group_offers_its_own_hide(qapp, main_window, gui_dialogs):
     for widget, label in cases:
         menu = _menu_for(palette, widget)
         assert menu is not None, f"no hide menu on {label}"
-        assert [a.text() for a in menu.actions()] == [label]
+        texts = [a.text() for a in menu.actions() if not a.isSeparator()]
+        # the hide item is last; the scale bar lists its own items above it
+        assert texts[-1] == label
+        if widget is not palette.sb:
+            assert texts == [label]
         menu.hide()
 
 
@@ -60,7 +64,7 @@ def test_the_hide_action_actually_hides_that_group(qapp, main_window, gui_dialog
     palette = main_window.mouse_palette
     assert not palette.sb_hidden
     menu = _menu_for(palette, palette.sb)
-    menu.actions()[0].trigger()
+    menu.actions()[-1].trigger()
     qapp.processEvents()
     assert palette.sb_hidden
     assert palette.sb.isHidden()
@@ -80,19 +84,19 @@ def test_arming_is_idempotent_across_rebuilds(qapp, main_window, gui_dialogs):
 
     menu = _menu_for(palette, palette.sb)
     assert menu is not None
-    assert len(menu.actions()) == 1
+    assert [a.text() for a in menu.actions()].count("Hide the scale bar") == 1
     menu.hide()
 
 
 def test_view_checkmarks_follow_a_right_click_hide(qapp, main_window, gui_dialogs):
-    """The bug his click test found: hiding a group from its own right-click
+    """The bug the first version had: hiding a group from its own right-click
     left the View checkbox still ticked. Every visibility change now pushes a
     resync (MousePalette.saveVisibilityState), so both roads agree."""
     palette = main_window.mouse_palette
     assert main_window.togglesb_act.isChecked()
 
     menu = _menu_for(palette, palette.sb)
-    menu.actions()[0].trigger()          # "Hide the scale bar"
+    menu.actions()[-1].trigger()          # "Hide the scale bar"
     qapp.processEvents()
     assert palette.sb_hidden
 

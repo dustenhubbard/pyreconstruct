@@ -4,7 +4,7 @@ resizeWindow's aspect fixer only ever GROWS a view dimension, so shrinking
 the field widget (collapsing the lists, narrowing the main window) zoomed
 the view out a little, and every grow-then-shrink cycle drifted outward
 forever. Long reported on window resizes; the lists collapse made it a
-one-keystroke reproducer (his click test, 2026-08-25).
+one-keystroke reproducer (2026-08-25).
 
 The fix scales the view window by the exact pixel change on every widget
 resize, centered, so magnification holds and a cycle returns to the start.

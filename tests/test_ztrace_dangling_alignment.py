@@ -36,7 +36,7 @@ Fixed in two layers, both pinned here, because either alone is unsatisfying:
   a new name.
 * ``transform.alignment_tform`` degrades instead of raising, so a series saved
   before the first layer existed still opens. That is the layer the reporter
-  needs, since his series already carries the dangling name.
+  needs, since the reported series already carries the dangling name.
 """
 
 import pytest
@@ -93,7 +93,7 @@ def _stored(series, name, ztrace=True):
 def test_ztrace_list_opens_with_a_dangling_alignment(main_window):
     """The reporter's scenario, driven through the widget that crashed.
 
-    The dangling attribute is written directly, which is the state his saved
+    The dangling attribute is written directly, which is the state the reported
     series is in: pinned to an alignment that no longer exists. Before the fix
     this raised KeyError inside createTable and the list never appeared.
     """

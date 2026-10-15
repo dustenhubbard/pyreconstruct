@@ -1,10 +1,10 @@
 """Progress bars that show up and say how long (fork issue #421).
 
-Kristen's report: rename, 3D and other long tasks sat with no bar, or a bar
+A user's report: rename, 3D and other long tasks sat with no bar, or a bar
 with no estimate. Three changes, each pinned here:
 
   * Every operation's section pass asks its progress bar for a time estimate.
-    Opening a series does not (his call, 2026-09-14).
+    Opening a series does not (since 2026-09-14).
   * The 3D export pass (export meshes, export 3D data) shows a bar with an
     estimate and loads only the sections that hold the objects. It ran silently
     over every section before.

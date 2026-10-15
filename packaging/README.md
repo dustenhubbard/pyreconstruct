@@ -55,8 +55,13 @@ Measure the bundle size before quoting it to anyone:
 bash packaging/macos/make_icns.sh        # generates packaging/PyReconstruct.icns
 pyinstaller --noconfirm packaging/PyReconstruct.spec
 # -> dist/PyReconstruct.app
+python -m pip install --require-hashes --only-binary :all: -r packaging/macos/dmg-requirements.txt
 bash packaging/macos/make_dmg.sh
 ```
+
+`make_dmg.sh` lays out the dmg window with `dmgbuild` (`dmg_settings.py`):
+PyReconstruct, a chevron, and the Applications alias. The background images come
+from `make_dmg_background.py`; rerun it after changing the layout.
 
 `make_dmg.sh` names the dmg by arch via the `ARCH` env var (defaults to
 `x86_64`); set `ARCH=arm64` on Apple Silicon. PyInstaller freezes for the arch
