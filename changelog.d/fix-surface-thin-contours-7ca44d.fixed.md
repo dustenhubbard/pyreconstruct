@@ -1,5 +1,5 @@
-- **Surface meshes of thin contours no longer have holes through them.** A
-  synapse contour about one voxel wide at the default XY resolution filled a
-  dotted or offset row of voxels on each section, and the gaps stacked into
-  tunnels; every trace now fills every voxel it reaches into, so the sheet is
-  whole, and a hole you draw stays a hole.
+- **Surface meshes of thin contours are whole sheets at the default XY resolution.**
+  A hole you draw stays open when it is wider than a voxel, and a narrower gap
+  closes at that resolution. Surface area and volume of thin objects come out
+  larger than before because the mesh now covers the whole trace; thick objects
+  change little.

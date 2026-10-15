@@ -1,4 +1,4 @@
-"""A surface built from thin contours is a whole sheet, not a sheet with tunnels.
+"""At the default XY resolution, a surface built from thin contours is a whole sheet.
 
 ``Surface.generateVolume`` rounded each trace point onto the voxel grid and
 filled the voxels whose center fell inside the rounded outline. A synapse
@@ -11,9 +11,11 @@ the voxels with their center inside the outline and the voxels the outline
 passes through, which is a 4-connected band on every section, and two
 outlines that overlap on consecutive sections always share a voxel.
 
-A genuine perforation keeps its tunnel: a ring-shaped trace, a positive with
-a negative inside it, and a sheet drawn as two separate traces on one
-section. Two separate sheets stay two bodies.
+A perforation drawn wider than a voxel keeps its tunnel: a ring-shaped
+trace, a positive with a negative inside it, and a sheet drawn as two
+separate traces on one section. A gap narrower than a voxel closes at that
+resolution, so each of these draws its hole several voxels wide. Two
+separate sheets stay two bodies.
 """
 import math
 import os
