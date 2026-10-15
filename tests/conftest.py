@@ -928,14 +928,15 @@ def main_window(qapp, series_jser, qsettings_snapshot, main_window_dialogs):
         series' hidden working directory is cleaned up the way it is in the app.
 
     The What's-new gate is closed before the window is built, and that is load
-    bearing rather than tidy-minded. `MainWindow.__init__` ends with
-    `QTimer.singleShot(750, self.showWhatsNewStartup)`, and the redirected
+    bearing rather than tidy-minded. `MainWindow.__init__` ends by arming
+    `whats_new_timer` (750 ms, `showWhatsNewStartup`), and the redirected
     settings store starts every session empty, so on the first window built in a
-    session that handler is due. The timer belongs to the window, but teardown
-    only calls `deleteLater()`, so whether the window is destroyed before 750 ms
-    elapse depends on when a later test happens to run `processEvents`. Lose the
-    race and a modeless `WhatsNewDialog` opens in the middle of an unrelated
-    test, parented to a window that test never asked for.
+    session that handler is due, and a test that processes events for that long
+    gets a modeless `WhatsNewDialog` in the middle of it, parented to a window
+    it never asked for. The timer used to be a bare `QTimer.singleShot` that
+    outlived the window, so it fired in later tests as well; the window now
+    owns both startup timers and `closeEvent` stops them, which the `close()`
+    below runs and `tests/test_main_window_startup_timers.py` holds in place.
 
     What that costs is not cosmetic. The dialog becomes
     `QApplication.activeWindow()` and never closes, and Qt resolves a

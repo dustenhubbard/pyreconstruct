@@ -54,10 +54,11 @@ def launch(main_window, monkeypatch):
     def fake_check(self, channel, on_result, on_error, kind=None):
         # Only this test's window counts. Every MainWindow schedules
         # checkForUpdatesStartup 2.5 s after it is built, and a window from an
-        # earlier test is only deleteLater()ed, so its timer can still be
-        # pending. pytest-qt runs processEvents right after fixture setup, and
-        # a timer that comes due then reaches this class-wide patch with
-        # install_kind already faked, which put an extra "release" in checks.
+        # earlier test is only deleteLater()ed. Its timer used to stay pending
+        # (pytest-qt runs processEvents right after fixture setup, and a timer
+        # that came due then reached this class-wide patch with install_kind
+        # already faked, which put an extra "release" in checks); closeEvent
+        # stops it now, and this guard stays as a second line.
         if self is not main_window:
             return
         checks.append(channel)
