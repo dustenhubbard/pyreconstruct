@@ -160,6 +160,35 @@ class HostTree():
                 if ids.name_of.get(oid) == name and not ids.isLive(oid):
                     self.keep(oid)
 
+    def linksMadeSince(self, before, names) -> set:
+        """The links this tree has and the tree before has not, with an end
+        under one of the names.
+
+            Params:
+                before (HostTree): an earlier copy of this tree
+                names: the object names
+            Returns:
+                (set): (traveler id, host id) for each such link
+        """
+        name_of = self._ids.name_of
+        names = set(names)
+        return {
+            (t, h) for t, h in self._edges - before._edges
+            if name_of.get(t) in names or name_of.get(h) in names
+        }
+
+    def restoreLinks(self, links):
+        """Make again links a series undo took with its copy of the tree,
+        as a section redo brings back the ids they join
+        (FieldState.links_made).
+
+            Params:
+                links: (traveler id, host id) pairs
+        """
+        links = set(links)
+        self._addMembers({oid for edge in links for oid in edge})
+        self._addEdges(links)
+
     def renamedIds(self, first : int, last : int) -> set:
         """The kept ids still out of sight from the renames numbered first
         to last."""

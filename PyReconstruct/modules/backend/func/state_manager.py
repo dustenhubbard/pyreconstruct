@@ -75,6 +75,10 @@ class FieldState():
         # (SeriesData.supress_logging): its redo keeps them too, with their
         # attributes and groups (SeriesStates.addSectionUndo)
         self.keeps_emptied = False
+        # (traveler id, host id) for each link the series action made for a
+        # contour it changed here (a rename copies its links to the new
+        # name): the redo of this section alone makes them again
+        self.links_made = set()
         if updated_contours is None:
             if contours is None:
                 updated_contours = []
@@ -176,6 +180,7 @@ class FieldState():
         # shared with the other sections of the series action, not copied
         c.kept_after = self.kept_after
         c.keeps_emptied = self.keeps_emptied
+        c.links_made = set(self.links_made)
         c.group_viz = dict(self.group_viz)
         c.undo_group_viz = dict(self.undo_group_viz)
         return c
@@ -350,6 +355,23 @@ def restoreKeptIds(series : Series, kept : dict) -> None:
         tree.restoreKept(kept)
 
 
+def captureLinksMade(series : Series, names, before) -> set:
+    """The links the series' host tree has and the tree before has not,
+    with an end under one of the names (HostTree.linksMadeSince)."""
+    tree = getattr(series, "host_tree", None)
+    if not (hasattr(tree, "linksMadeSince") and hasattr(before, "linksMadeSince")):
+        return set()
+    return tree.linksMadeSince(before, names)
+
+
+def restoreLinksMade(series : Series, links) -> None:
+    """Make again the links a section redo's action made
+    (FieldState.links_made)."""
+    tree = getattr(series, "host_tree", None)
+    if links and tree is not None and hasattr(tree, "restoreLinks"):
+        tree.restoreLinks(links)
+
+
 def objectSnapshot(series : Series, names, before : dict = None) -> dict:
     """What an undo step must bring back with an object it recreates.
 
@@ -359,7 +381,8 @@ def objectSnapshot(series : Series, names, before : dict = None) -> dict:
     the trace back bare: a palette button's groups and custom columns (fork
     #419), set when the trace was drawn, were gone. Each state now keeps a copy
     of those for the objects it touched. Host links need no copy: they join
-    object ids, and come back with the id (HostTree).
+    object ids, and come back with the id (HostTree). The links a series
+    action made are the exception (FieldState.links_made).
 
     The copy is taken when the action's state is added, before SeriesData
     sees the action, so a state whose action deletes an object still holds
@@ -821,6 +844,7 @@ class SectionStates():
         restoreKeptIds(series, {
             n: kept_after[n] for n in modified_contours if n in kept_after
         })
+        restoreLinksMade(series, getattr(redo_state, "links_made", ()))
         # objects this redo brings back from nothing get their attributes and
         # groups back too (see objectSnapshot)
         recreated = [
@@ -1323,6 +1347,13 @@ class SeriesStates():
             record.pop(name, None)
         record.update(captureKeptIds(self.series, names))
         state.kept_after = record
+
+        # the links the action made for those names, so far. A series undo
+        # puts back a copy of the tree with none of them, and a redo of this
+        # section alone brings the ids back but not the links
+        state.links_made = captureLinksMade(
+            self.series, names, self.undos[-1].series_attrs.get("host_tree")
+        )
 
         # an action that saves with object logging off (an import) keeps an
         # object it empties, attributes and all; an object delete does not.

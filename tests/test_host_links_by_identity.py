@@ -530,6 +530,56 @@ def test_undoing_a_later_step_keeps_out_a_link_a_section_redo_let_go(
     assert _saved_host_tree(window, tmp_path / "undone.jser") == {T: [X]}
 
 
+
+@pytest.mark.parametrize("old_host_back", [False, True])
+def test_redoing_a_rename_on_one_section_makes_its_links_again(
+        window, main_window_dialogs, monkeypatch, tmp_path, old_host_back):
+    """H hosts T. H is renamed to X from the object list and T is added to
+    a group (old_host_back: after a replacement H, the old H kept with no
+    traces, as in the import tests above). Undo takes back the group and
+    the rename. Redo on X's section only brings X back hosting T, and redo
+    of the group then changes only the group."""
+    import PyReconstruct.modules.gui.main.field_widget_3_object as obj
+    from PyReconstruct.modules.datatypes import Trace
+
+    if old_host_back:
+        s1, s2, s3, _ = _delete_both_and_replace(window)
+        _undo_on(window, s2)
+        _undo_on(window, s1)
+        _import_from_a_copy_without(window, monkeypatch, tmp_path, H, snum=s1)
+        x_section = s3
+    else:
+        s1, s2, _, _ = _setup(window)
+        x_section = s1
+    _object_list(window, monkeypatch, [H])
+    monkeypatch.setattr(obj.TraceDialog, "exec", lambda self: (
+        (Trace(X, (0, 255, 0), True), None), True,
+    ))
+    window.field.editAttributes()
+    _object_list(window, monkeypatch, [T])
+    monkeypatch.setattr(obj.ObjectGroupDialog, "exec", lambda self: ("g", True))
+    window.field.addToGroup()
+    assert _saved_host_tree(window, tmp_path / "renamed.jser") == {T: [X]}
+
+    for snum, redo, scope in [
+        (s2, False, "all"),
+        (s2, False, "all"),
+        (x_section, True, "section"),
+    ]:
+        window.changeSection(snum)
+        main_window_dialogs.linked_undo_responses = [scope]
+        action = window.redo_act if redo else window.undo_act
+        assert action.isEnabled()
+        action.trigger()
+    assert window.series.object_groups.getObjectGroups(T) == set()
+    assert _hosts(window) == [X]
+    assert _saved_host_tree(window, tmp_path / "redone.jser") == {T: [X]}
+
+    assert window.redo_act.isEnabled()
+    window.redo_act.trigger()
+    assert window.series.object_groups.getObjectGroups(T) == {"g"}
+    assert _saved_host_tree(window, tmp_path / "grouped.jser") == {T: [X]}
+
 # --------------------------------------------------------------------------- #
 # save
 # --------------------------------------------------------------------------- #
