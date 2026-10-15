@@ -61,6 +61,15 @@ class FieldState():
         # name -> object id, for each contour held here that has traces
         # (captureObjectIds); undo and redo put these back
         self.oids = {}
+        # name -> the ids the host tree kept for the name while it had no
+        # traces (HostTree.keptIds), for each contour the action changed,
+        # before the action: its undo puts them back
+        self.kept_before = {}
+        # the same after the action, for a section of a series action: the
+        # record its sections share (SeriesState.kept_after), read for this
+        # section's contours when its redo runs. None for a field action,
+        # whose redo keeps nothing by itself.
+        self.kept_after = None
         if updated_contours is None:
             if contours is None:
                 updated_contours = []
@@ -158,6 +167,9 @@ class FieldState():
         c = FieldState(self.contours, self.ztraces, self.tforms, self.flags, self.contours_fp)
         c.obj_snapshot = deepcopy(self.obj_snapshot)
         c.oids = dict(self.oids)
+        c.kept_before = {n: list(v) for n, v in self.kept_before.items()}
+        # shared with the other sections of the series action, not copied
+        c.kept_after = self.kept_after
         c.group_viz = dict(self.group_viz)
         c.undo_group_viz = dict(self.undo_group_viz)
         return c
@@ -294,6 +306,44 @@ def restoreObjectIds(series : Series, section : Section, names, oids : dict):
         else:
             ids.ensure(section.n, name)
 
+def captureKeptIds(series : Series, names, tree=None) -> dict:
+    """The ids the host tree keeps for each named object while it has no
+    traces (HostTree.keptIds).
+
+        Params:
+            series (Series): the series
+            names: the object names to read
+            tree (HostTree): the tree to read instead of the series' own: a
+                series state's copy, taken before the action
+        Returns:
+            (dict): name -> the kept ids, sorted, only for names with any
+    """
+    if tree is None:
+        tree = getattr(series, "host_tree", None)
+    if tree is None or not hasattr(tree, "keptIds"):
+        return {}
+    out = {}
+    for name in names:
+        kept = tree.keptIds(name)
+        if kept:
+            out[name] = sorted(kept)
+    return out
+
+
+def restoreKeptIds(series : Series, kept : dict) -> None:
+    """Put back the ids the host tree kept for the named objects without
+    traces, as a state recorded them (captureKeptIds). The tree leaves an
+    id that has traces now alone.
+
+        Params:
+            series (Series): the series
+            kept (dict): name -> the ids to keep
+    """
+    tree = getattr(series, "host_tree", None)
+    if kept and tree is not None and hasattr(tree, "restoreKept"):
+        tree.restoreKept(kept)
+
+
 def objectSnapshot(series : Series, names, before : dict = None) -> dict:
     """What an undo step must bring back with an object it recreates.
 
@@ -302,7 +352,8 @@ def objectSnapshot(series : Series, names, before : dict = None) -> dict:
     undo states hold only traces, transforms and flags, so a redo used to bring
     the trace back bare: a palette button's groups and custom columns (fork
     #419), set when the trace was drawn, were gone. Each state now keeps a copy
-    of those for the objects it touched, and of their hosts and travelers.
+    of those for the objects it touched. Host links need no copy: they join
+    object ids, and come back with the id (HostTree).
 
     The copy is taken when the action's state is added, before SeriesData
     sees the action, so a state whose action deletes an object still holds
@@ -316,29 +367,21 @@ def objectSnapshot(series : Series, names, before : dict = None) -> dict:
             before (dict): series attributes to read instead of the series
                 (SeriesState.getSeriesAttributes)
         Returns:
-            (dict): name -> {"attrs": dict, "groups": list, "hosts": list,
-                "travelers": list}, only for names that have any of them
+            (dict): name -> {"attrs": dict, "groups": list}, only for names
+                that have either
     """
     if before is None:
-        obj_attrs, object_groups, host_tree = (
-            series.obj_attrs, series.object_groups, series.host_tree
-        )
+        obj_attrs, object_groups = series.obj_attrs, series.object_groups
     else:
-        obj_attrs, object_groups, host_tree = (
-            before["obj_attrs"], before["object_groups"], before["host_tree"]
-        )
+        obj_attrs, object_groups = before["obj_attrs"], before["object_groups"]
     out = {}
     for name in names:
         attrs = obj_attrs.get(name)
         groups = object_groups.getObjectGroups(name)
-        hosts = host_tree.getHosts(name)
-        travelers = host_tree.getTravelers(name)
-        if attrs or groups or hosts or travelers:
+        if attrs or groups:
             out[name] = {
                 "attrs": deepcopy(attrs) if attrs else {},
                 "groups": sorted(groups),
-                "hosts": sorted(hosts),
-                "travelers": sorted(travelers),
             }
     return out
 
@@ -354,10 +397,6 @@ def restoreObjectSnapshot(series : Series, snapshot : dict, recreated,
     """
     state_viz = state_viz or {}
     emptied_viz = getattr(series, "emptied_group_viz", {})
-    recreated = list(recreated)
-    # a host or traveler is put back only if it is an object now, or comes
-    # back in this same step: the tree must not gain a name nothing traces
-    present = set(series.data["objects"]) | set(recreated)
     for name in recreated:
         entry = snapshot.get(name)
         if not entry:
@@ -376,69 +415,14 @@ def restoreObjectSnapshot(series : Series, snapshot : dict, recreated,
                     value = emptied_viz.get(group, True)
                 series.groups_visibility[group] = value
             series.object_groups.add(group=group, obj=name)
-        hosts = [h for h in entry.get("hosts", []) if h in present]
-        if hosts:
-            series.host_tree.add(name, hosts)
-        for traveler in entry.get("travelers", []):
-            if traveler in present:
-                series.host_tree.add(traveler, [name])
-
-    # a link a delete dropped comes back once both its objects are back
-    # (see recordDroppedHostLinks)
-    record = getattr(series, "dropped_host_links", None)
-    if record:
-        back = {
-            (t, h) for t, h in record
-            if (t in recreated or h in recreated) and t in present and h in present
-        }
-        for traveler, host in sorted(back):
-            series.host_tree.add(traveler, [host])
-        record -= back
 
 
-def hostLinks(series : Series, names) -> set:
-    """The (traveler, host) links that touch these objects."""
-    links = set()
-    for name in names:
-        links.update((name, h) for h in series.host_tree.getHosts(name))
-        links.update((t, name) for t in series.host_tree.getTravelers(name))
-    return links
-
-
-def recordDroppedHostLinks(series : Series, links_before) -> None:
-    """Keep each host link a section step dropped by deleting an object.
-
-    Deleting an object drops its links (removeObjAttrs), and a state's copy
-    of an object (objectSnapshot) holds only the links it had when the state
-    was made. With H hosting T, H deleted on one section and then T on
-    another, T's copy has no link, and the undo of H's delete cannot put the
-    link back while T is gone. This record keeps the link until a step
-    brings both objects back (restoreObjectSnapshot). It is not saved and
-    starts over with the undo history (SeriesStates).
-
-        Params:
-            series (Series): the series
-            links_before (set): hostLinks of the step's objects before it
-    """
-    objects = series.data["objects"]
-    dropped = {
-        (t, h) for t, h in links_before
-        if t not in objects or h not in objects
-    }
-    if dropped:
-        record = getattr(series, "dropped_host_links", None)
-        if record is None:
-            record = series.dropped_host_links = set()
-        record |= dropped
-
-
-def forgetHostLinks(series : Series, names) -> None:
-    """Drop the recorded links of objects an action just created: a new
-    object with an old name does not take the old object's links."""
-    record = getattr(series, "dropped_host_links", None)
-    if record:
-        names = set(names)
-        record -= {(t, h) for t, h in record if t in names or h in names}
+def forgetDormantHostLinks(series : Series) -> None:
+    """Drop the host links of objects gone for good. Called when the undo
+    history starts over: only an undo can bring a deleted object's id back."""
+    tree = getattr(series, "host_tree", None)
+    if tree is not None and hasattr(tree, "dropDormant"):
+        tree.dropDormant()
 
 
 def recreatedAlignments(snapshot : dict, recreated) -> dict:
@@ -591,6 +575,10 @@ class SectionStates():
             updated_ztraces
         )
         self.current_state.obj_snapshot = objectSnapshot(series, updated_contours)
+        # the ids the tree keeps for these names, before the action: the
+        # capture below gives a drawn name its id, and may take a kept one
+        # (ObjectIds.ensure)
+        self.current_state.kept_before = captureKeptIds(series, updated_contours)
         self.current_state.oids = captureObjectIds(
             series, section, updated_contours, assign=True
         )
@@ -789,6 +777,7 @@ class SectionStates():
                     section.contours[contour] = Contour(contour)
 
         restoreObjectIds(series, section, modified_contours, restored_oids)
+        restoreKeptIds(series, getattr(self.current_state, "kept_before", {}))
 
         recreated = [
             n for n in modified_contours
@@ -822,6 +811,10 @@ class SectionStates():
         restoreObjectIds(
             series, section, state_contours, getattr(redo_state, "oids", {})
         )
+        kept_after = getattr(redo_state, "kept_after", None) or {}
+        restoreKeptIds(series, {
+            n: kept_after[n] for n in modified_contours if n in kept_after
+        })
         # objects this redo brings back from nothing get their attributes and
         # groups back too (see objectSnapshot)
         recreated = [
@@ -916,6 +909,12 @@ class SeriesState():
         # section number : the section's mag before this state's action.
         # Populated only by a magnification change (FieldWidget.setMag).
         self.mags = {}
+        # name -> the ids the host tree keeps for the name once the action
+        # is done with it, for each contour a section of the action changed
+        # (SeriesStates.addSectionUndo). Every section's state holds this
+        # same record, so a section redone alone keeps what the whole action
+        # kept, not what was kept when the action passed that section.
+        self.kept_after = {}
 
     def recordMag(self, snum : int, mag : float):
         """Store a section's mag as it was before the action.
@@ -1101,6 +1100,11 @@ class SeriesState():
                 continue  # only replace obj columns under specific circumstances (below)
             if attr == "groups_visibility":
                 continue  # only fills in missing entries (below)
+            if attr == "host_tree" and hasattr(value, "inheritKept"):
+                # an object that lost its traces with no undoable step since
+                # this copy was taken (a refresh, an unlogged update) stays
+                # kept: nothing undoes that
+                value.inheritKept(series.host_tree)
             setattr(series, attr, value)
 
         # a group the step brings back gets the visibility it had when the
@@ -1173,10 +1177,9 @@ class SeriesStates():
             self.section_states_dict[snum] = SectionStates()
         self.undos : list[SeriesState] = []
         self.redos : list[SeriesState] = []
-        # the visibility record of emptied groups belongs to this history,
-        # and so does the record of dropped host links
+        # the visibility record of emptied groups belongs to this history
         self.series.emptied_group_viz = {}
-        self.series.dropped_host_links = set()
+        forgetDormantHostLinks(self.series)
     
     def __iter__(self):
         """Return the iterator object for the series states"""
@@ -1212,7 +1215,6 @@ class SeriesStates():
             states.redo_states = []
         new_state = SeriesState(breakable)
         new_state.resetSeriesAttributes(self.series)
-        new_state.objects_before = set(self.series.data["objects"])
         self.undos.append(new_state)
     
     def recordBCProfiles(self, snum : int, bc_profiles : dict):
@@ -1257,9 +1259,8 @@ class SeriesStates():
         self.undos[-1].undo_lens[snum] = len(self[snum].undo_states)
 
         # the action saved the section before its state was added, so an
-        # object the save deleted had already lost its attributes, groups and
-        # hosts, and a rename has already moved an object's hosts to the new
-        # name. So each object the action took off this section gets its copy
+        # object the save deleted had already lost its attributes and groups.
+        # So each object the action took off this section gets its copy
         # from the series state, taken before the action. Only an undo reads
         # that copy: a redo brings back only objects with traces here.
         state = self[snum].current_state
@@ -1275,14 +1276,25 @@ class SeriesStates():
                 self.series, names, self.undos[-1].series_attrs
             ))
 
-        # an object the action created (a rename to a deleted object's name)
-        # does not take the links that deleted object had
-        before = getattr(self.undos[-1], "objects_before", None)
-        if before is not None:
-            forgetHostLinks(self.series, {
-                n for n in state.getModifiedContours()
-                if n not in before and n in self.series.data["objects"]
-            })
+        # the ids the tree kept for the names the action changed here:
+        # before the action, read from the series state's copy of the tree
+        # (the action's saves came before this state), and after it. An undo
+        # of this section alone puts back the first, a redo the second.
+        # After the action is the series state's record, which each section
+        # brings up to date for its names. A name on more than one section
+        # can still have traces on a section not yet passed, so what is kept
+        # now may not be what the action keeps: with H on s1 and s3, an
+        # import that empties both keeps H only once it passes s3, and s1,
+        # redone alone after an undo there, must keep H too.
+        names = state.getModifiedContours()
+        state.kept_before = captureKeptIds(
+            self.series, names, self.undos[-1].series_attrs.get("host_tree")
+        )
+        record = self.undos[-1].kept_after
+        for name in names:
+            record.pop(name, None)
+        record.update(captureKeptIds(self.series, names))
+        state.kept_after = record
 
     def clear(self):
         """Clear all state tracking."""
@@ -1291,7 +1303,7 @@ class SeriesStates():
         self.undos = []
         self.redos = []
         self.series.emptied_group_viz = {}
-        self.series.dropped_host_links = set()
+        forgetDormantHostLinks(self.series)
     
     def canUndo(self, current_section : int = None, redo=False):
         """Checks if an undo is possible.
