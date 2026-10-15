@@ -277,9 +277,9 @@ class MenuSearchField(QWidgetAction):
         layout.addWidget(self._query)
         self.setDefaultWidget(container)
 
-        # The remappable chord, shown inside the field's right edge (his
-        # consolidation call, 2026-08-27: the field replaced the "Search
-        # menus..." row, so the field carries the row's one useful fact).
+        # The remappable chord, shown inside the field's right edge: the
+        # field replaced the "Search menus..." row, so the field carries the
+        # row's one useful fact.
         # NativeText renders the platform's own chord. Disabled, so the
         # palette grays it like a placeholder; mouse-transparent, so clicks
         # land in the field under it. The TEXT is refreshed on every Help
@@ -307,8 +307,8 @@ class MenuSearchField(QWidgetAction):
         self._results.setMouseTracking(True)  # itemEntered needs it
         self._results.setAlternatingRowColors(True)
 
-        # The cursor lands in the field whenever Help opens (his call,
-        # 2026-08-26). Hooked to the CONTAINER's show, not the menu's
+        # The cursor lands in the field whenever Help opens. Hooked to the
+        # CONTAINER's show, not the menu's
         # aboutToShow: the menu attribute the window holds is not always the
         # menu the menubar shows (measured on the View menu, 2026-08-26), and
         # the widget cannot be shown without its menu being open. The focus

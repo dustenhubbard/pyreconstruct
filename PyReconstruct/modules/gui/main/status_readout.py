@@ -46,7 +46,7 @@ class StatusSegment(QLabel):
     give a plain widget a press, and press (not release) is what the rest of
     this application's popups use.
 
-    The affordance is shape, not color (his call: not link-blue): a rounded
+    The affordance is shape, not color (not link-blue): a rounded
     outline painted from the palette's text color at low alpha, a slightly
     stronger fill on hover, stronger again while the segment's popup is open.
     Palette-derived, so both themes are covered without theme code. The
@@ -66,8 +66,8 @@ class StatusSegment(QLabel):
     def __init__(self, tooltip: str, parent=None, outlined=True):
         """``outlined`` False drops the pill border and its fill, for a
         segment whose content is a glyph rather than a value: the sidebar
-        icon read as cramped inside a pill at readout text size (his call,
-        2026-08-26). Hover and press still work; the affordance is the
+        icon read as cramped inside a pill at readout text size. Hover and
+        press still work; the affordance is the
         cursor and the glyph itself.
         """
         super().__init__(parent)
@@ -173,7 +173,7 @@ class SidebarIconSegment(StatusSegment):
     A panel outline with its left column filled, drawn from the palette's
     text color so both themes are covered. Painted rather than set as text
     because a font large enough to read at a glance made the status bar
-    taller (his call, 2026-08-26), and because a glyph's own padding wastes
+    taller, and because a glyph's own padding wastes
     the line height a painted icon can use.
     """
 
@@ -240,8 +240,8 @@ class FieldStatusReadout(QWidget):
         # The one segment with fixed text: it names an action (show/hide the
         # docked lists), not a current value, so setReadout never rewrites it
         # and it stays out of self._segments. The text is a sidebar glyph
-        # (U+25E7, square with left half filled), not a word, on his click
-        # test call (2026-08-25); the word lives in the hover.
+        # (U+25E7, square with left half filled), not a word; the word lives
+        # in the hover.
         #
         # PAINTED, not a text glyph, and with no pill (2026-08-26): the glyph
         # was hard to make out, and a font big enough to fix that grew the
@@ -376,8 +376,8 @@ class SectionListPopup(QWidget):
         layout.addWidget(self.field)
         layout.addWidget(self.list)
 
-        # Visually a sibling of the QMenus beside it (his call: the first cut
-        # was too wide, sharp-cornered, and obviously a different species).
+        # Visually a sibling of the QMenus beside it (the first cut was too
+        # wide, sharp-cornered, and obviously a different species).
         # Rounded translucent frame in the menu's palette roles, menu-shaped
         # rows with the highlight color, and a width fitted to the content
         # instead of whatever a QListWidget defaults to.
