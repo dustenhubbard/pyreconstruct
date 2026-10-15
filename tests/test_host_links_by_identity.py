@@ -384,10 +384,11 @@ def test_undo_on_one_section_keeps_a_link_an_import_kept_on_another(window):
     assert _hosts(window) == [H]
 
 
-def _import_from_a_copy_without(window, monkeypatch, tmp_path, name):
+def _import_from_a_copy_without(window, monkeypatch, tmp_path, name, snum=None):
     """Series > Import series data > From another series, from a copy of
-    this series that deleted the object: traces on all sections, history
-    checked, object attributes not imported."""
+    this series that deleted the object (or only its traces on snum):
+    traces on all sections, history checked, object attributes not
+    imported."""
     from PyReconstruct.modules.datatypes import Series
     import PyReconstruct.modules.gui.main.main_window as mw
 
@@ -396,7 +397,13 @@ def _import_from_a_copy_without(window, monkeypatch, tmp_path, name):
     window.series.saveJser(str(path))
     copy = Series.openJser(str(path))
     try:
-        copy.deleteObjects([name])
+        if snum is None:
+            copy.deleteObjects([name])
+        else:
+            section = copy.loadSection(snum)
+            for trace in list(section.contours[name]):
+                section.removeTrace(trace)
+            section.save()
         copy.saveJser(str(path))
     finally:
         copy.close()
@@ -430,6 +437,48 @@ def test_redoing_sections_of_an_import_alone_keeps_the_link_it_kept(
         window.changeSection(snums[name])
         window.redo_act.trigger()
     assert H not in window.series.data["objects"]
+    assert _hosts(window) == [H]
+    assert _saved_host_tree(window, tmp_path / "redone.jser") == {T: [H]}
+
+
+@pytest.mark.parametrize("again", [False, True])
+def test_redoing_a_later_step_keeps_a_link_a_rename_undo_brought_back(
+        window, main_window_dialogs, monkeypatch, tmp_path, again):
+    """Old H is back beside a replacement H on s3, and an import from a
+    copy without old H's traces on s1 keeps old H with none. H is renamed
+    to X, T is added to a group, and the group is undone. Undoing the
+    rename on s3 alone brings H back, old H kept with it (again: after
+    redoing it there and redoing and undoing the group). Redoing the group
+    leaves T hosted by H, and saves it."""
+    import PyReconstruct.modules.gui.main.field_widget_3_object as obj
+
+    s1, s2, s3, _ = _delete_both_and_replace(window)
+    _undo_on(window, s2)
+    _undo_on(window, s1)
+    _import_from_a_copy_without(window, monkeypatch, tmp_path, H, snum=s1)
+    assert set(window.series.data["objects"][H].traces) == {s3}
+    assert window.series.host_tree.keptIds(H)
+    _rename_everywhere(window, H, X)
+    assert _hosts(window) == [X]
+    _object_list(window, monkeypatch, [T])
+    monkeypatch.setattr(obj.ObjectGroupDialog, "exec", lambda self: ("g", True))
+    window.field.addToGroup()
+
+    _undo_on(window, s1)
+    assert window.series.object_groups.getObjectGroups(T) == set()
+    main_window_dialogs.linked_undo_responses = ["section"]
+    _undo_on(window, s3)
+    assert _hosts(window) == [H]
+    if again:
+        _undo_on(window, s3, redo=True)
+        _undo_on(window, s1, redo=True)
+        assert window.series.object_groups.getObjectGroups(T) == {"g"}
+        _undo_on(window, s1)
+        _undo_on(window, s3)
+        assert _hosts(window) == [H]
+
+    _undo_on(window, s1, redo=True)
+    assert window.series.object_groups.getObjectGroups(T) == {"g"}
     assert _hosts(window) == [H]
     assert _saved_host_tree(window, tmp_path / "redone.jser") == {T: [H]}
 

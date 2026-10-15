@@ -29,6 +29,11 @@ class HostTree():
     new one has its name, the name shows the links of both.
     """
 
+    # renames so far, in every tree: each numbers the kept ids it takes out
+    # of sight, so an undo step can tell its own from an earlier one's
+    # (SeriesState.renamed_out)
+    renames = 0
+
     def __init__(self, host_dict : dict, series):
         """Create the HostTree from a dictionary of (obj_name, hosts)
         
@@ -48,7 +53,7 @@ class HostTree():
             self.add(obj_name, hosts)
 
     def _reset(self, edges : set, members : set, order : Optional[dict] = None,
-               kept : Optional[dict] = None, renamed : Optional[set] = None):
+               kept : Optional[dict] = None, renamed : Optional[dict] = None):
         # names in the order the tree has always listed them: added by
         # add() (the object, then its hosts), dropped by removeObject, and
         # moved to the end by a rename. Reads that walk the tree by name
@@ -66,8 +71,8 @@ class HostTree():
         # the class docstring)
         self._kept : dict[str, set[int]] = kept if kept is not None else {}
         # kept ids a rename took out of sight, until an undo keeps them again
-        # or they get traces (see inheritKept)
-        self._renamed : set[int] = renamed if renamed is not None else set()
+        # or they get traces: id -> the rename's number (see renames)
+        self._renamed : dict[int, int] = renamed if renamed is not None else {}
         # ids treated as gone while a rename runs (see renameObject)
         self._hidden : frozenset = frozenset()
         # the name projection: name -> {"hosts", "travelers"}, and the
@@ -112,7 +117,7 @@ class HostTree():
         deleted (ObjectIds.drop)."""
         if self._ids.isLive(oid):
             return
-        self._renamed.discard(oid)
+        self._renamed.pop(oid, None)
         name = self._ids.name_of[oid]
         kept = self._kept.setdefault(name, set())
         if oid not in kept:
@@ -122,7 +127,7 @@ class HostTree():
     def traced(self, oid : int):
         """The id has traces again (ObjectIds.ensure, place): it needs no
         keeping."""
-        self._renamed.discard(oid)
+        self._renamed.pop(oid, None)
         name = self._ids.name_of[oid]
         kept = self._kept.get(name)
         if kept and oid in kept:
@@ -155,27 +160,33 @@ class HostTree():
                 if ids.name_of.get(oid) == name and not ids.isLive(oid):
                     self.keep(oid)
 
-    def inheritKept(self, previous):
+    def renamedIds(self, first : int, last : int) -> set:
+        """The kept ids still out of sight from the renames numbered first
+        to last."""
+        return {oid for oid, n in self._renamed.items() if first <= n <= last}
+
+    def inheritKept(self, previous, out_of_sight=()):
         """Take over what the tree this one replaces keeps, as a series undo
         or redo installs this copy (SeriesState.applySeriesAttributes).
 
         An object that lost its traces with no undoable step since this copy
         was taken (a refresh, an unlogged update) stays kept: nothing undoes
         that. Only ids this tree links or lists are worth keeping, and an id
-        with traces now needs no keeping. An id a rename took out of sight
-        before this copy was taken stays out: no section step replays the
-        rename of an object with no traces, so the tree being replaced can
-        still keep it from before the rename, and a redo would show the old
-        name again.
+        with traces now needs no keeping. The ids out_of_sight stay out: the
+        redo of a rename of an object with no traces passes the ids it took
+        out of sight, since no section step replays that rename, so the tree
+        being replaced can still keep them from before it, and the redo
+        would show the old name again.
 
             Params:
                 previous (HostTree): the tree being replaced
+                out_of_sight (set): kept ids the step takes out of sight
         """
         ids = self._ids
         linked = {oid for edge in self._edges for oid in edge} | self._members
         for oids in previous._kept.values():
             for oid in oids:
-                if oid in linked and oid not in self._renamed and not ids.isLive(oid):
+                if oid in linked and oid not in out_of_sight and not ids.isLive(oid):
                     self.keep(oid)
         # ids this copy kept that got traces since it was taken
         for name in list(self._kept):
@@ -483,7 +494,9 @@ class HostTree():
             # the old object's links stay with its ids: dormant once its last
             # trace is renamed, back if an undo brings it back. The ids kept
             # for the old name go out of sight with it.
-            self._renamed |= self._kept.get(old_name, set())
+            HostTree.renames += 1
+            for oid in self._kept.get(old_name, ()):
+                self._renamed[oid] = HostTree.renames
             self._release(old_name)
             self._hidden = frozenset(old_ids)
             if self._order.pop(old_name, None) is not None:
@@ -529,7 +542,7 @@ class HostTree():
             (t, h) for t, h in self._edges if self._visible(t) and self._visible(h)
         }
         self._members = {oid for oid in self._members if self._visible(oid)}
-        self._renamed = set()
+        self._renamed = {}
     
     def _reachable(self, start : list, edge : str, only_secondary : bool):
         """Collect every name reachable from start by following one edge type.
@@ -635,7 +648,7 @@ class HostTree():
         c._reset(
             set(self._edges), self._members & linked, order,
             kept={name: set(oids) for name, oids in self._kept.items()},
-            renamed=set(self._renamed),
+            renamed=dict(self._renamed),
         )
         return c
 

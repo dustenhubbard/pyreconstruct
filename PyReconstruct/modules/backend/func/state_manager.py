@@ -12,6 +12,7 @@ from PyReconstruct.modules.datatypes import (
     Trace
 )
 from PyReconstruct.modules.datatypes.trace import copyObjDefaults
+from PyReconstruct.modules.datatypes.host_tree import HostTree
 
 from PyReconstruct.modules.constants import keyed_trace_row_to_positional
 
@@ -920,6 +921,13 @@ class SeriesState():
         # same record, so a section redone alone keeps what the whole action
         # kept, not what was kept when the action passed that section.
         self.kept_after = {}
+        # the numbers of the renames this action made (HostTree.renames):
+        # from the one after the count when it began, up to the count when
+        # the next action began or this one was first undone
+        self.renames = [HostTree.renames + 1, None]
+        # the kept ids those renames took out of sight, for the redo to
+        # keep out (applySeriesAttributes)
+        self.renamed_out = set()
 
     def recordMag(self, snum : int, mag : float):
         """Store a section's mag as it was before the action.
@@ -1100,6 +1108,17 @@ class SeriesState():
                     sections were restored
         """
         self.swapPaletteChanges(series)
+        # the ids the opposite step keeps out of sight: those this action's
+        # own renames marked, if still marked as it is undone. A tree taken
+        # after a rename holds its marks too, and an id a section undo of
+        # that rename brought back since stays when a later action is undone
+        # or redone
+        if self.renames[1] is None:
+            self.renames[1] = HostTree.renames
+        leaving = pre_series_attrs.get("host_tree")
+        renamed_out = set()
+        if hasattr(leaving, "renamedIds"):
+            renamed_out = leaving.renamedIds(*self.renames)
         for attr, value in self.series_attrs.items():
             if attr == "object_columns":
                 continue  # only replace obj columns under specific circumstances (below)
@@ -1109,7 +1128,7 @@ class SeriesState():
                 # an object that lost its traces with no undoable step since
                 # this copy was taken (a refresh, an unlogged update) stays
                 # kept: nothing undoes that
-                value.inheritKept(series.host_tree)
+                value.inheritKept(series.host_tree, self.renamed_out)
             setattr(series, attr, value)
 
         # a group the step brings back gets the visibility it had when the
@@ -1143,6 +1162,7 @@ class SeriesState():
             series.setOption("object_columns", self.series_attrs["object_columns"])
 
         self.series_attrs = pre_series_attrs
+        self.renamed_out = renamed_out
 
 def getAlignment(attrs, name):
     if name in attrs and "alignment" in attrs[name]:
@@ -1218,6 +1238,8 @@ class SeriesStates():
         self.redos = []
         for states in self.section_states_dict.values():
             states.redo_states = []
+        if self.undos and self.undos[-1].renames[1] is None:
+            self.undos[-1].renames[1] = HostTree.renames
         new_state = SeriesState(breakable)
         new_state.resetSeriesAttributes(self.series)
         self.undos.append(new_state)
