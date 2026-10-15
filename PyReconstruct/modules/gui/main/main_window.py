@@ -3160,25 +3160,6 @@ class MainWindow(QMainWindow):
             x, y = 0, -num
         self.field.translate(x, y)
     
-    def newAlignment(self, new_alignment_name : str):
-        """Add a new alignment (based on existing alignment).
-        
-            Params:
-                new_alignment_name (str): the name of the new alignment
-        """
-        if new_alignment_name in self.field.section.tforms:
-            QMessageBox.information(
-                self,
-                "Alignment Exists",
-                "This alignment already exists.",
-                QMessageBox.Ok
-            )
-            return
-        self.series.newAlignment(
-            new_alignment_name,
-            self.series.alignment
-        )
-    
     def modifyAlignments(self):
         """Open dialog to modify alignments."""
         self.saveAllData()
