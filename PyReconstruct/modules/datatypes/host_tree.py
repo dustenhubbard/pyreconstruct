@@ -165,7 +165,7 @@ class HostTree():
         to last."""
         return {oid for oid, n in self._renamed.items() if first <= n <= last}
 
-    def inheritKept(self, previous, out_of_sight=()):
+    def inheritKept(self, previous, out_of_sight=(), brought_back=()):
         """Take over what the tree this one replaces keeps, as a series undo
         or redo installs this copy (SeriesState.applySeriesAttributes).
 
@@ -178,9 +178,21 @@ class HostTree():
         being replaced can still keep them from before it, and the redo
         would show the old name again.
 
+        The other way round, an id this copy keeps that the tree being
+        replaced links but no longer keeps was let go since this copy was
+        taken: by a section step (a section redo of a rename, an object
+        delete) that the step installing this copy did not make. The step's
+        own sections have already put back what its action kept. So such an
+        id stays out, unless it is one of brought_back: the undo of a rename
+        of an object with no traces passes the ids that rename took out of
+        sight, since no section step brings those back. An id the tree being
+        replaced does not link at all is new to it (the redo of a rename
+        brings back the id it kept for the new name), and stays.
+
             Params:
                 previous (HostTree): the tree being replaced
                 out_of_sight (set): kept ids the step takes out of sight
+                brought_back (set): kept ids the step brings back
         """
         ids = self._ids
         linked = {oid for edge in self._edges for oid in edge} | self._members
@@ -188,10 +200,18 @@ class HostTree():
             for oid in oids:
                 if oid in linked and oid not in out_of_sight and not ids.isLive(oid):
                     self.keep(oid)
-        # ids this copy kept that got traces since it was taken
+        # ids this copy kept that got traces since it was taken, or that the
+        # tree being replaced let go
+        previous_linked = (
+            {oid for edge in previous._edges for oid in edge} | previous._members
+        )
         for name in list(self._kept):
+            still = previous._kept.get(name, ())
             self._kept[name] = {
-                oid for oid in self._kept[name] if not ids.isLive(oid)
+                oid for oid in self._kept[name]
+                if not ids.isLive(oid) and (
+                    oid in still or oid in brought_back or oid not in previous_linked
+                )
             }
             if not self._kept[name]:
                 del self._kept[name]
