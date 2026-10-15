@@ -1743,6 +1743,9 @@ class MainWindow(QMainWindow):
             self.field = FieldWidget(self.series, self)
             self.setCentralWidget(self.field)
 
+        # a saved view that shows no part of the image is set to the image
+        self.field.homeIfViewOffImage()
+
         # create mouse palette
         if self.mouse_palette: # close previous mouse dock
             self.mouse_palette.reset()
