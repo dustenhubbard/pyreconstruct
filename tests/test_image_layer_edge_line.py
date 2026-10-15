@@ -1,8 +1,8 @@
 """The intermittent 1px black line at the field's edge, pinned for good.
 
-His report (2026-08-26): a thin vertical line at the field's left edge,
+Reported 2026-08-26: a thin vertical line at the field's left edge,
 white on the default theme, blue on qdark, per-section, oscillating on
-scroll. Parked, then root-caused by the review fleet: adjustBounds rounds
+scroll. Parked, then root-caused on review: adjustBounds rounds
 the crop to whole image pixels, the scaled crop truncates besides, so the
 scaled image came up short of the pixmap; the centered rip then started at
 a NEGATIVE origin, and QImage.copy paints out-of-source columns black. The
@@ -61,7 +61,7 @@ def _edge_black_fraction(image, edge):
     return black / len(samples)
 
 
-# The exact shape from the fleet's sweep: mag 0.01, pixmap 977, window
+# The exact shape from the brute-force sweep: mag 0.01, pixmap 977, window
 # widths chosen so the rounded crop scales to just under the pixmap.
 VIEWS = [
     (3.0, 4.0, 3.7467),
@@ -90,7 +90,7 @@ def test_no_edge_of_the_view_is_a_black_line(white_layer, wx, wy, ww):
 
 
 def test_the_sweep_finds_no_black_lines(white_layer):
-    """The fleet's brute-force sweep, shrunk to stay fast: many random-ish
+    """The brute-force sweep, shrunk to stay fast: many random-ish
     view positions, every edge checked. Before the fix most positions failed."""
     import itertools
 

@@ -292,8 +292,8 @@ def test_trace_single_still_rejects_two_rows(trace_table, gui_dialogs):
 # Locked rows: table/trace.py keeps the ask-to-unlock idiom (unlike the
 # mouse/scissors gestures -- see test_locked_object_field_guards.py and
 # test_locked_gesture_notify_and_stop.py, which now notify-and-stop and never
-# call notifyLocked at all). Corrected 2026-08-06 ("split notifyLocked",
-# DECISIONS.md): a dispatched fixup found notifyLocked has four real call
+# call notifyLocked at all). Corrected 2026-08-06 ("split notifyLocked"):
+# a closer look found notifyLocked has four real call
 # sites, not two, and the trace list's two (itemChanged, getSelected)
 # genuinely unlock-and-proceed on "Yes", by original design (73f54794). These
 # pin that half so a future change collapsing the two idioms into one

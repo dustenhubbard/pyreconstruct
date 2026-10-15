@@ -150,7 +150,7 @@ def test_determine_cpus_floors_at_one():
 
 def test_default_cpu_max_leaves_headroom():
     """The shipped default should be a bounded share (not 100%) so a limited
-    laptop stays usable during conversion. The maintainer may tune this."""
+    laptop stays usable during conversion. The value may change later."""
     d = default_settings["cpu_max"]
     assert isinstance(d, int)
     assert 0 < d < 100, d

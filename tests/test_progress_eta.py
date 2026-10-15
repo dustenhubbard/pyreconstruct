@@ -1,11 +1,10 @@
 """The recolor progress dialog says how long is left; nothing else does.
 
-His ask (2026-09-14), from recoloring every object in a series: the bar
+Reported 2026-09-14, from recoloring every object in a series: the bar
 showed a percentage but no time. The estimate lives in the GUI-free
-ProgressReporter base but is opt-in (``eta=True``): his correction the same
-day, on seeing one while a series opened, was that only the recolor was
-meant to have it. reapplyAutosegColors asks; openJser and everything else
-do not.
+ProgressReporter base but is opt-in (``eta=True``): a series open showed
+one the same day, and only the recolor was meant to have it.
+reapplyAutosegColors asks; openJser and everything else do not.
 """
 import types
 

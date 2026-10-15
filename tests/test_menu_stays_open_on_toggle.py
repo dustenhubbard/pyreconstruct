@@ -215,8 +215,8 @@ def test_a_plain_menubar_row_still_closes_its_menu(main_window, qapp):
 
 # --------------------------------------------------------------------------- #
 # The field right-click surface's checkable view toggles, and their resync
-# through checkActions, left with the frequency-first menus (2026-08-21, his
-# call: Dev follows stable's context-menu organization for now). The menubar
+# through checkActions, left with the frequency-first menus (parked 2026-08-21:
+# Dev follows stable's context-menu organization for now). The menubar
 # visibility toggles above are where the keep-open behavior lives on. The
 # field-surface cases are in git history beside the parked scheme.
 # --------------------------------------------------------------------------- #

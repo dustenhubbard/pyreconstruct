@@ -1,8 +1,8 @@
 """Focus mode's edit-click modifier is remappable to whatever the user holds.
 
 The binding shipped fixed at Ctrl in 1.21.0 after a three-way ctrl/shift/both
-radio group was cut at the maintainer's word — *"i just wanted the shortcut
-remappable"* — because three presets are not a remapping. This is the remapping.
+radio group was cut, because three presets are not a remapping. This is the
+remapping.
 
 **Why a bespoke widget rather than the one the dialog already has.** Both halves
 of the constraint were measured against the pinned PySide6 6.5.2, and both are

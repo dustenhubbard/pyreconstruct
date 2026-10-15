@@ -642,7 +642,7 @@ def test_the_decided_backing_is_segmented_and_the_module_carries_no_other():
     revert, or the old class cherry-picked back under its old name. It is not
     the property. On its own it enforced a *name* -- the identical deleted
     class re-inserted as `ArenaCoordinates` passed this module 35/35
-    (review-wave-b F01) -- while this test's own name promises the module
+    (seen on review), while this test's own name promises the module
     carries no other backing at all. So the property is asserted directly: no
     class reachable in the module's namespace but `SegmentedCoordinates` has a
     coordinate backing's shape.
@@ -694,9 +694,9 @@ def test_the_backing_scan_sits_in_a_gap():
 def test_the_store_is_exported_through_the_datatypes_package():
     """The deferred `datatypes/__init__.py` export, taken in this PR.
 
-    Neither wave-B PR could take it without colliding with the other, so it
-    was parked for the PR that decides the backing (2026-08-03 realign, Part
-    2, wave B, order 1). Identity is asserted, not just importability: the
+    Neither of the two earlier PRs could take it without colliding with the
+    other, so it was parked for the PR that decides the backing (2026-08-03).
+    Identity is asserted, not just importability: the
     package must hand out the same objects this suite tests.
     """
     from PyReconstruct.modules import datatypes
@@ -952,9 +952,8 @@ def test_a_section_rebuilt_from_a_files_key_set_still_carries_no_alignment(
     and `Section.updateJSON` deletes it on unpack. So a consumer that rebuilt
     a section's transforms from the file's key set through a plain dict would
     lose `no-alignment` on every section, and every other test in this file
-    would pass clean over the loss -- which is why the 2026-08-03 realign
-    requires this pin before any consumer parity claim is accepted (Part 2,
-    wave B, order 2).
+    would pass clean over the loss, which is why this pin (2026-08-03) comes
+    before any consumer parity claim is accepted.
 
     Every section here IS a rebuild from a file's key set: `Section.__init__`
     walks `section_data["tforms"]` into a fresh `TransformsDict`. Both halves
@@ -1209,10 +1208,8 @@ def test_ids_are_issued_once_per_row_over_a_whole_real_section(loaded_sections):
 # another series, registered through `TraceIDIssuer.adopt` before it is
 # accepted, and replaced-and-reported when the issuer refuses it.
 #
-# The maintainer's decision, recorded in DECISIONS.md 2026-08-05: Q1 register
-# via `adopt()`, Q2 on a clash issue a fresh local id for that row only and
-# report it. The investigation is
-# `specs/phase1-foreign-trace-id-acquisition-2026-08-05.md`.
+# The policy since 2026-08-05: Q1 register via `adopt()`, Q2 on a clash issue
+# a fresh local id for that row only and report it.
 #
 # These use the REAL `TraceIDIssuer` rather than `StubIssuer`, because `adopt`
 # and its collision log are the subject. `StubIssuer` stays valid for every
@@ -1233,8 +1230,8 @@ def test_a_foreign_id_is_registered_with_the_local_issuer():
     `trace_id.py`'s recorded policy is "at load and at merge -- detect and
     report by name, never silently adopt and never silently reissue", and
     accepting a foreign id verbatim is the silent adoption half of that.
-    `TraceIDIssuer.adopt` has existed and been tested since wave B and had zero
-    production callers; what was missing was only the call.
+    `TraceIDIssuer.adopt` has existed and been tested since the issuer landed,
+    with zero production callers; what was missing was only the call.
     """
     from PyReconstruct.modules.datatypes.trace_id import (
         TraceIDIssuer, encodeTraceID,
@@ -1297,7 +1294,7 @@ def test_a_clashing_foreign_id_is_reissued_and_reported(capsys):
     one id. The investigation reproduced two live rows sharing an id with the
     issuer's collision log empty.
 
-    `adopt` detects it and resolves nothing; he chose b4, a fresh local id for
+    `adopt` detects it and resolves nothing; the fix is b4, a fresh local id for
     the clashing row only, reported rather than silent.
     """
     from PyReconstruct.modules.datatypes.trace_id import (
@@ -1590,7 +1587,7 @@ def test_a_rebuild_carries_the_ids_it_is_given_and_issues_for_the_rest(
 #
 # `TraceView` is the first `Trace`-shaped surface over the columns. It is
 # read-only, it caches nothing, and nothing in the application references it --
-# the same shape wave B's other work took, built behind the seam and proved
+# the same shape the earlier store work took, built behind the seam and proved
 # against `materializeTrace` before a single call site is asked to trust it.
 #
 # The bar here is exhaustive rather than sampled: every row of every populated
@@ -2474,8 +2471,8 @@ def test_contours_surface_is_split_exhaustively_between_this_slice_and_the_next(
 
     ## `Contour` defines no `__contains__`, so `in` falls back to `__iter__`
     ## plus `==`; `ContourView` now defines one, over the row. What neither
-    ## defines -- and what 7b' did NOT reach for, because it is §5(B) and
-    ## `DECISIONS.md` rejects it -- is `__eq__`.
+    ## defines, and what 7b' did NOT reach for because §5(B) equality over
+    ## id is rejected, is `__eq__`.
     assert "__contains__" not in vars(Contour)
     assert "__contains__" in vars(ContourView)
     assert "__eq__" not in vars(Contour)
@@ -2842,7 +2839,7 @@ def test_membership_is_object_identity_on_a_contour_and_row_identity_on_a_view()
 # ---------------------------------------------------------------------------------
 # It claimed identity through a view "can never match", and that the only two
 # routes were design §5(A)'s cached identity-stable views (D1, open) and §5(B)'s
-# equality-over-id (`DECISIONS.md`: REJECTED) -- so that "there is no third
+# equality-over-id (rejected), so that "there is no third
 # option that is merely mechanical".
 #
 # There is a third, and it is mechanical: match on `TraceView.row`. It caches

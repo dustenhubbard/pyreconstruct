@@ -143,7 +143,7 @@ def test_the_default_store_helpers_are_isolated():
 def test_overriding_the_default_store_reaches_getOption_too():
     """One `set_default_settings_store()` call closes the whole seam.
 
-    Backlog item: "the undo harness's settings seam only closes one of two
+    The defect: "the undo harness's settings seam only closes one of two
     stores". `datatypes/series.py` used to keep a second module-level cache of
     its own, so `set_default_settings_store()` -- the documented way to redirect
     settings -- reached `constants.getdatetime` and did *not* reach
@@ -551,9 +551,9 @@ def test_an_unattributed_change_warns_instead_of_failing():
 
     A digest change with no recorded mutation cannot be the suite's doing, and
     the developer runs the suite with the application open, which writes its own
-    preferences as it goes. Failing the run there blames him for something he
-    did not do and cannot prevent, and a check that cries wolf during ordinary
-    work is a check he will learn to ignore.
+    preferences as it goes. Failing the run there blames them for something
+    they did not do and cannot prevent, and a check that cries wolf during
+    ordinary work is a check they will learn to ignore.
     """
     problems = [
         "modified: /Preferences/com.khlab.PyReconstruct.plist "
