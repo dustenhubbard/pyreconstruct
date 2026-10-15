@@ -456,7 +456,7 @@ def test_the_right_click_item_opens_the_settings(main_window, monkeypatch):
 
 @pytest.mark.gui
 def test_the_options_group_previews_ticks_too(main_window, local_series_settings, qapp):
-    """Before, only the two sliders previewed from Series > Options."""
+    """Unchecking ticks in Series > Options previews on the bar and Cancel restores it."""
     series = local_series_settings(main_window)
     palette = main_window.mouse_palette
     palette.reset()
