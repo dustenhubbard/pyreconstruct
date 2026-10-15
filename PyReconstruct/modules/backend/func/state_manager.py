@@ -62,11 +62,13 @@ class FieldState():
         # (captureObjectIds); undo and redo put these back
         self.oids = {}
         # name -> the ids the host tree kept for the name while it had no
-        # traces (HostTree.keptIds), for each contour the action changed:
-        # before the action, which its undo puts back, and after it, which
-        # a redo of a series action's section puts back (SeriesStates.
-        # addSectionUndo). A field action's redo keeps nothing by itself.
+        # traces (HostTree.keptIds), for each contour the action changed,
+        # before the action: its undo puts them back
         self.kept_before = {}
+        # the same after the action, for a section of a series action: the
+        # record its sections share (SeriesState.kept_after), read for this
+        # section's contours when its redo runs. None for a field action,
+        # whose redo keeps nothing by itself.
         self.kept_after = None
         if updated_contours is None:
             if contours is None:
@@ -166,10 +168,8 @@ class FieldState():
         c.obj_snapshot = deepcopy(self.obj_snapshot)
         c.oids = dict(self.oids)
         c.kept_before = {n: list(v) for n, v in self.kept_before.items()}
-        c.kept_after = (
-            None if self.kept_after is None
-            else {n: list(v) for n, v in self.kept_after.items()}
-        )
+        # shared with the other sections of the series action, not copied
+        c.kept_after = self.kept_after
         c.group_viz = dict(self.group_viz)
         c.undo_group_viz = dict(self.undo_group_viz)
         return c
@@ -811,7 +811,10 @@ class SectionStates():
         restoreObjectIds(
             series, section, state_contours, getattr(redo_state, "oids", {})
         )
-        restoreKeptIds(series, getattr(redo_state, "kept_after", None) or {})
+        kept_after = getattr(redo_state, "kept_after", None) or {}
+        restoreKeptIds(series, {
+            n: kept_after[n] for n in modified_contours if n in kept_after
+        })
         # objects this redo brings back from nothing get their attributes and
         # groups back too (see objectSnapshot)
         recreated = [
@@ -906,6 +909,12 @@ class SeriesState():
         # section number : the section's mag before this state's action.
         # Populated only by a magnification change (FieldWidget.setMag).
         self.mags = {}
+        # name -> the ids the host tree keeps for the name once the action
+        # is done with it, for each contour a section of the action changed
+        # (SeriesStates.addSectionUndo). Every section's state holds this
+        # same record, so a section redone alone keeps what the whole action
+        # kept, not what was kept when the action passed that section.
+        self.kept_after = {}
 
     def recordMag(self, snum : int, mag : float):
         """Store a section's mag as it was before the action.
@@ -1269,14 +1278,23 @@ class SeriesStates():
 
         # the ids the tree kept for the names the action changed here:
         # before the action, read from the series state's copy of the tree
-        # (the action's saves came before this state), and after it, from
-        # the tree now. An undo of this section alone puts back the first,
-        # a redo the second.
+        # (the action's saves came before this state), and after it. An undo
+        # of this section alone puts back the first, a redo the second.
+        # After the action is the series state's record, which each section
+        # brings up to date for its names. A name on more than one section
+        # can still have traces on a section not yet passed, so what is kept
+        # now may not be what the action keeps: with H on s1 and s3, an
+        # import that empties both keeps H only once it passes s3, and s1,
+        # redone alone after an undo there, must keep H too.
         names = state.getModifiedContours()
         state.kept_before = captureKeptIds(
             self.series, names, self.undos[-1].series_attrs.get("host_tree")
         )
-        state.kept_after = captureKeptIds(self.series, names)
+        record = self.undos[-1].kept_after
+        for name in names:
+            record.pop(name, None)
+        record.update(captureKeptIds(self.series, names))
+        state.kept_after = record
 
     def clear(self):
         """Clear all state tracking."""

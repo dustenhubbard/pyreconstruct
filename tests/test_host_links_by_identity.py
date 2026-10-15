@@ -384,6 +384,56 @@ def test_undo_on_one_section_keeps_a_link_an_import_kept_on_another(window):
     assert _hosts(window) == [H]
 
 
+def _import_from_a_copy_without(window, monkeypatch, tmp_path, name):
+    """Series > Import series data > From another series, from a copy of
+    this series that deleted the object: traces on all sections, history
+    checked, object attributes not imported."""
+    from PyReconstruct.modules.datatypes import Series
+    import PyReconstruct.modules.gui.main.main_window as mw
+
+    window.saveAllData()
+    path = tmp_path / "copy.jser"
+    window.series.saveJser(str(path))
+    copy = Series.openJser(str(path))
+    try:
+        copy.deleteObjects([name])
+        copy.saveJser(str(path))
+    finally:
+        copy.close()
+    monkeypatch.setattr(mw.FileDialog, "get", lambda *a, **k: str(path))
+    monkeypatch.setattr(mw.ImportSeriesDialog, "exec", lambda self: (
+        {"traces": [None, [], [], 0.95, True, True, False, "self", ""]}, True,
+    ))
+    window.importfromseries_act.trigger()
+
+
+@pytest.mark.parametrize("undone", [["s1"], ["s1", "s3"]])
+def test_redoing_sections_of_an_import_alone_keeps_the_link_it_kept(
+        window, main_window_dialogs, monkeypatch, tmp_path, undone):
+    """H is on s1 and s3. An import from a copy that deleted H empties both
+    and keeps the link, though H still had traces on s3 when the import
+    passed s1. Undoing the import on s1 alone (then on s3), and redoing it
+    there in the other order, keeps the link and saves it."""
+    s1, s2, s3, _ = _setup(window)
+    _draw_on(window, s3, H)
+    _import_from_a_copy_without(window, monkeypatch, tmp_path, H)
+    assert H not in window.series.data["objects"]
+    assert _hosts(window) == [H]
+
+    snums = {"s1": s1, "s3": s3}
+    main_window_dialogs.linked_undo_responses = ["section"]
+    for name in undone:
+        window.changeSection(snums[name])
+        window.undo_act.trigger()
+        assert _hosts(window) == [H]
+    for name in reversed(undone):
+        window.changeSection(snums[name])
+        window.redo_act.trigger()
+    assert H not in window.series.data["objects"]
+    assert _hosts(window) == [H]
+    assert _saved_host_tree(window, tmp_path / "redone.jser") == {T: [H]}
+
+
 # --------------------------------------------------------------------------- #
 # save
 # --------------------------------------------------------------------------- #
