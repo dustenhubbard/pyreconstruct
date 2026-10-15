@@ -1464,7 +1464,7 @@ class Series():
         if window[2] == 0:  # width
             window[2] = 1
         if window[3] == 0:  # height
-            window[3] == 1
+            window[3] = 1
         
         # check for separate obj attrs
         if "obj_attrs" not in series_data:
