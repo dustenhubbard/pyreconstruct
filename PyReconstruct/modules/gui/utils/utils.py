@@ -1212,8 +1212,9 @@ def getOpenRecentMenu(series, openSeries, clearRecents=None):
     Rows are listed most-recently-opened first: MainWindow.addToRecentSeries
     inserts at index 0 and the list is walked in order here, so the order is
     reverse-chronological by *open* time (not by file mtime). Paths that no
-    longer exist are pruned from the stored option as a side effect, and the
-    series currently open is skipped (there is nothing to reopen).
+    longer exist are pruned from the stored option as a side effect, unless
+    the old settings are still being copied, and the series currently open is
+    skipped (there is nothing to reopen).
 
         Params:
             series (Series): the series holding the recently-opened option
@@ -1227,14 +1228,19 @@ def getOpenRecentMenu(series, openSeries, clearRecents=None):
 
     opts_list = []
     filepaths = series.getOption("recently_opened_series")
+    pruned = False
     for fp in filepaths.copy():
         if not os.path.isfile(fp):  # remove if not a file
             filepaths.remove(fp)
+            pruned = True
         elif fp != series.jser_fp:
             opts_list.append(
                 (f"openrecent{len(opts_list)}_act", fp, "", getCall(fp))
             )
-    series.setOption("recently_opened_series", filepaths)
+    # the list read before the old settings are copied is not the stored one,
+    # and saving it would keep the stored one from coming back
+    if pruned and series.maySaveOwnValue("recently_opened_series"):
+        series.setOption("recently_opened_series", filepaths)
 
     if clearRecents is not None:
         # separated from the paths so it cannot be hit by a mis-click aimed at

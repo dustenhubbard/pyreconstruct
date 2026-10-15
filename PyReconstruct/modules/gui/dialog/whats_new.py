@@ -36,7 +36,7 @@ from PyReconstruct.modules.gui.main.first_launch import (
 )
 
 from PyReconstruct.modules.constants.settings_domain import (
-    SETTINGS_ORG, SHARED_APP, domain_for,
+    SETTINGS_ORG, SHARED_APP, domain_for, per_app_copy_pending,
 )
 # ORG/APP name the shared store, kept as module names because tests and the
 # isolation suite address the store through them. The live QSettings sites
@@ -880,6 +880,11 @@ def maybe_show_whats_new(parent, settings=None, current=None, show=None,
     record where it stood is what lets the Help-menu toggle hand the ordinary
     once-per-version rules back intact, pending bump included.
     """
+    if per_app_copy_pending():
+        # this app's store still owes its copy from the old settings, which
+        # can bring a switched-off popup and the version last seen; showing
+        # now would save this version over them
+        return False
     if settings is None:
         settings = QSettings(*domain_for(WHATSNEW_SUPPRESS_KEY, key))
     if current is None:
