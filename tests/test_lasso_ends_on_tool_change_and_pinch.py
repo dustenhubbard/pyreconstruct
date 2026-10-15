@@ -32,6 +32,13 @@ the menu ends the lasso as a tool change does. Before, the lasso kept its
 edge-pan timer through the menu. The release after the menu finishes nothing,
 and the next lasso starts from its own press, not from the old lasso's points.
 
+A pinch drops a pointer press that is not a lasso yet as well, with the points
+it had collected (`dropPointerPress`). Only `pointerRelease` clears those, and
+a release during the pinch never reaches it, so they stayed for the next lasso.
+Finger input, which Windows ignores in the field, is ignored before any of
+this: a finger press used to set the click flags and end the drop on its way
+to the filter.
+
 Driven against a real `MainWindow`, a real `FieldWidget` and a real
 `TraceLayer`, over a writable copy of the fixture series. The mode changes go
 through the real shortcut actions, and every press, move and release goes
@@ -40,6 +47,8 @@ through the field's own `mousePressEvent`, `mouseMoveEvent` and
 stand-in event: a `QPinchGesture`'s state is set only by Qt's gesture manager,
 so a test cannot build one in the started state.
 """
+
+import types
 
 import pytest
 
@@ -110,6 +119,13 @@ class FakeMouseEvent:
         return Qt.NoModifier
 
 
+class FakeFingerEvent(FakeMouseEvent):
+    """A touch press, move or release, as Windows reports one."""
+
+    def pointerType(self):
+        return QPointingDevice.PointerType.Finger
+
+
 class FakePinch:
     """The accessors `gestureEvent` reads off a `QPinchGesture`."""
 
@@ -157,6 +173,14 @@ def field_notices(monkeypatch):
             module, "notify", lambda message, *a, **kw: notices.append(message)
         )
     return notices
+
+
+@pytest.fixture
+def windows(monkeypatch):
+    """Make the field's handlers take their Windows branches."""
+    from PyReconstruct.modules.gui.main import field_widget
+
+    monkeypatch.setattr(field_widget, "os", types.SimpleNamespace(name="nt"))
 
 
 @pytest.fixture
@@ -672,4 +696,139 @@ def test_a_press_during_a_pinch_does_not_start_a_host_link(
     field.mousePressEvent(FakeMouseEvent(x, y, HELD))
     field.mouseReleaseEvent(FakeMouseEvent(x, y))
     assert field.hosted_trace is not None
+    assert field_notices == []
+
+
+@pytest.mark.parametrize(
+    "button",
+    ["released during the pinch", "pressed again during the pinch", "held through it"],
+)
+def test_a_pinch_drops_the_pointers_points_before_they_are_a_lasso(
+    main_window, main_window_dialogs, field_notices, field_menu, button
+):
+    """The pinch comes while the moves could still be a click.
+
+    From its first move the pointer keeps a press's points, in case it becomes
+    a lasso, and `pointerRelease` is what clears them. A release during the
+    pinch never reaches it, so the points stayed, and the next lasso went
+    around them as well as its own region. A press made during the pinch is
+    dropped, and so is its release, so that cleared nothing either. Held
+    through the pinch, the moves after it made a lasso of the stale points.
+    """
+    main_window.usepointer_act.trigger()
+    field = main_window.field
+    # a single-click window that lasts, however slow the run
+    field.max_click_time = 60
+    started = Qt.GestureState.GestureStarted
+    updated = Qt.GestureState.GestureUpdated
+    finished = Qt.GestureState.GestureFinished
+
+    field.mousePressEvent(FakeMouseEvent(40, 40, HELD))
+    for x, y in [(40, 40), (100, 40), (100, 100), (40, 100)]:
+        field.mouseMoveEvent(FakeMouseEvent(x, y, HELD))
+    assert field.is_selecting_traces is False
+    assert len(field.current_trace) == 4
+
+    field.gestureEvent(FakeGestureEvent(FakePinch(started, 200, 150, 1.0)))
+    field.gestureEvent(FakeGestureEvent(FakePinch(updated, 210, 150, 1.5)))
+    if button != "held through it":
+        field.mouseReleaseEvent(FakeMouseEvent(40, 100))
+    if button == "pressed again during the pinch":
+        field.mousePressEvent(FakeMouseEvent(60, 60, HELD))
+    field.gestureEvent(FakeGestureEvent(FakePinch(finished, 210, 150, 1.5)))
+    assert field.is_gesturing is False
+    if button == "pressed again during the pinch":
+        field.mouseReleaseEvent(FakeMouseEvent(60, 60))
+    elif button == "held through it":
+        # past the single-click window now, so a move with the button down
+        # is where a lasso would start
+        field.click_time = 0
+        field.mouseMoveEvent(FakeMouseEvent(60, 60, HELD))
+        field.mouseMoveEvent(FakeMouseEvent(120, 120, HELD))
+        assert field.is_selecting_traces is False
+        assert field.mouse_boundary_timer is None
+        field.mouseReleaseEvent(FakeMouseEvent(120, 120))
+    assert field.current_trace == []
+
+    # placed after the pinch, which moves the view: where the old points,
+    # run together with a fresh lasso, also go around the first square
+    _add_square(field, "old-region", 75, 50, 90, 65)
+    _add_square(field, "new-region", 150, 150, 170, 170)
+    field.section.selected_traces.clear()
+
+    corners = [(140, 140), (180, 140), (180, 180), (140, 180)]
+    _drag_lasso(field, corners)
+    lasso = list(field.current_trace)
+    field.mouseReleaseEvent(FakeMouseEvent(*corners[-1]))
+
+    assert [t.name for t in field.section.selected_traces] == ["new-region"]
+    assert lasso == corners
+    assert field_menu == []
+    assert field_notices == []
+
+
+@pytest.mark.parametrize("interruption", ["pinch", "tool change"])
+def test_an_ignored_finger_press_does_not_hand_the_dropped_press_back(
+    main_window,
+    main_window_dialogs,
+    field_notices,
+    field_menu,
+    windows,
+    interruption,
+):
+    """Windows ignores finger input in the field, now before it changes anything.
+
+    The filter came after the click flags were read, so a finger press made
+    while a dropped press was held set `lclick` from the button it reported
+    and ended the drop on its way out. The next move with the mouse drew a
+    rectangle from the emptied `current_trace`: `IndexError`.
+    """
+    field = main_window.field
+    field.closed_trace_shape = "rect"
+    trace, timer = _start_lasso(main_window)
+    started = Qt.GestureState.GestureStarted
+    finished = Qt.GestureState.GestureFinished
+
+    if interruption == "pinch":
+        field.gestureEvent(FakeGestureEvent(FakePinch(started, 200, 150, 1.0)))
+    main_window.usectrace_act.trigger()
+    assert field.mouse_mode == CLOSEDTRACE
+    _assert_lasso_dropped(field, timer)
+    count = len(field.section.tracesAsList())
+
+    # a finger press reporting the left button alone, the mouse still held
+    field.mousePressEvent(FakeFingerEvent(300, 60, HELD))
+    if interruption == "pinch":
+        field.gestureEvent(FakeGestureEvent(FakePinch(finished, 210, 150, 1.5)))
+
+    after_moves = _hold_then_release(field, trace)
+
+    assert after_moves == []
+    _assert_lasso_dropped(field, timer)
+    assert len(field.section.tracesAsList()) == count
+    assert field_menu == []
+    assert field_notices == []
+
+
+def test_an_ignored_finger_release_does_not_end_the_dropped_press(
+    main_window, main_window_dialogs, field_notices, field_menu, windows
+):
+    """Host acts on any release, so the drop has to outlast a finger's.
+
+    A finger release reports no buttons, and the drop used to end there, one
+    line before the filter ignored the event. The mouse's own release then
+    started a link from a press Host never saw.
+    """
+    field = main_window.field
+    trace, timer = _start_lasso(main_window)
+    main_window.usehost_act.trigger()
+    assert field.mouse_mode == HOST
+    _assert_lasso_dropped(field, timer)
+
+    x, y = field.section_layer.traceToPix(trace)[0]
+    field.mouseMoveEvent(FakeMouseEvent(x, y, HELD))
+    field.mouseReleaseEvent(FakeFingerEvent(x, y))
+    field.mouseReleaseEvent(FakeMouseEvent(x, y))
+
+    assert field.hosted_trace is None
     assert field_notices == []

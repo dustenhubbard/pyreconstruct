@@ -196,8 +196,10 @@ class FieldWidget(QWidget, FieldWidgetView):
             self.is_gesturing = True
             # Every mouse event is ignored while gesturing, the release
             # included, so a lasso under way could never finish, and the pinch
-            # moves the view out from under its points.
+            # moves the view out from under its points. A pointer press that
+            # is not a lasso yet keeps its points until that same release.
             self.cancelLasso()
+            self.dropPointerPress()
             p = g.centerPoint()
             if os.name == "nt":
                 p = self.mapFromGlobal(p)
@@ -224,6 +226,16 @@ class FieldWidget(QWidget, FieldWidgetView):
         
         Overwritten from QWidget class.
         """
+        # ignore ALL finger touch for windows
+        #
+        # Before anything else: an ignored press changes nothing, so a dropped
+        # press stays dropped (`dropPress`) and the click flags stay the mouse
+        # button's. The tap still gives the field focus.
+        if os.name == "nt":
+            if event.pointerType() == QPointingDevice.PointerType.Finger:
+                self.setFocus()
+                return
+
         # A press made while a dropped press is still held joins it, and
         # reading the held buttons below would hand the dropped one back
         # (`dropPress`).
@@ -282,11 +294,6 @@ class FieldWidget(QWidget, FieldWidgetView):
             self.clicked_y = self.mouse_y
         self.click_time = time.time()
         self.single_click = True
-
-        # ignore ALL finger touch for windows
-        if os.name == "nt":
-            if event.pointerType() == QPointingDevice.PointerType.Finger:
-                return
 
         # if any finger touch
         #
@@ -446,14 +453,17 @@ class FieldWidget(QWidget, FieldWidgetView):
         # wait until all buttons are released
         if event.buttons(): return
 
-        # Every button is up, so a dropped press is over (`dropPress`).
-        press_dropped, self.press_dropped = self.press_dropped, False
-
         # ignore ALL finger touch for windows
+        #
+        # Before the dropped press is consumed below: an ignored release ends
+        # nothing (`dropPress`).
         if os.name == "nt":
             if event.pointerType() == QPointingDevice.PointerType.Finger:
                 return
-        
+
+        # Every button is up, so a dropped press is over (`dropPress`).
+        press_dropped, self.press_dropped = self.press_dropped, False
+
         # if any finger touch
         if self.is_gesturing:
             return

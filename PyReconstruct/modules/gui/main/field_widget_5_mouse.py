@@ -378,6 +378,36 @@ class FieldWidgetMouse(FieldWidgetData):
 
         return True
 
+    def dropPointerPress(self) -> bool:
+        """Drop a pointer press that is not a lasso yet, with its points.
+
+        From its first move the pointer keeps a press's points in
+        ``current_trace``, in case it becomes a lasso, and only
+        ``pointerRelease`` clears them. A pinch ignores that release, so the
+        points outlasted it: a later lasso went around them as well as its
+        own, and selected a region nobody had drawn around. Drops the press
+        too (``dropPress``), as ``cancelLasso`` does for a lasso, so the moves
+        after the pinch cannot carry it on.
+
+        A drag of selected traces is left alone; that is its own gesture
+        (``cancelTraceMove``).
+
+            Returns:
+                (bool): True if a pointer press was under way and was dropped
+        """
+        if (
+            self.mouse_mode != POINTER
+            or not self.pointer_press_recorded
+            or self.is_moving_trace
+            or self.is_selecting_traces
+        ):
+            return False
+
+        self.current_trace = []
+        self.dropPress()
+
+        return True
+
     def dropPress(self):
         """Drop the press under way, so no tool acts on it again.
 
@@ -396,6 +426,8 @@ class FieldWidgetMouse(FieldWidgetData):
           event is ignored while gesturing, so no tool sees it, and its click
           flags used to outlast the pinch: the moves after it acted on a
           press no tool had started.
+        * Finger input on Windows is ignored before any of this, so it
+          neither drops a press nor hands a dropped one back.
         * Dropping the press clears the click flags and the pointer's recorded
           press, and marks what is still held as dropped. A press that reports
           another button down as well joins the dropped one and is ignored.
