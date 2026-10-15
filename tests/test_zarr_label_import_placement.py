@@ -14,6 +14,7 @@ import pytest
 import zarr
 
 from PyReconstruct.modules.backend.autoseg import conversions
+from PyReconstruct.modules.backend.autoseg.placement import label_placement
 from PyReconstruct.modules.datatypes import Transform
 
 
@@ -189,7 +190,8 @@ def test_y_flip_is_exact_when_raw_and_labels_share_a_grid(height, nm):
     res = [nm, nm, nm]
     ext = np.array([[0, 0]])
     tform = Transform([1, 0, 0, 0, 1, 0])
-    points = conversions.exterior_to_points(
-        ext, [0, 0, 0], res, raw, (0, 0), tform, 1, raw_resolution=list(res)
-    )
+    ## x at 4 nm on both, so a true mag of 1 is 1 µm per label pixel exactly
+    res[2] = 4
+    placement = label_placement(res, list(res), [0, 0, 0], (0, 0), [0], 1, raw.shape[-2])
+    points = conversions.exterior_to_points(ext, placement, tform)
     assert points[0][1] == float(height)
