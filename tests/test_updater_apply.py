@@ -19,6 +19,7 @@ import json
 import os
 import plistlib
 import stat
+import subprocess
 import sys
 import time
 from dataclasses import replace
@@ -1249,8 +1250,31 @@ def _python():
     return os.path.realpath(getattr(sys, "_base_executable", None) or sys.executable)
 
 
+# PosixPlatform lists processes with ``ps`` everywhere but Linux, which reads /proc.
+_LISTS_WITH_PS = os.name != "nt" and not sys.platform.startswith("linux")
+
+
+def _ps_refusal():
+    """Why ``ps`` cannot run here, or None.
+
+    A sandbox that refuses to spawn ``ps`` raises PermissionError. The platform
+    swallows that and reports no processes, which is right for the helper, so
+    the real-platform test has to find out for itself and skip.
+    """
+    if not _LISTS_WITH_PS:
+        return None
+    try:
+        subprocess.run(["ps", "-axww", "-o", "pid=,comm="], capture_output=True, text=True, timeout=10)
+    except PermissionError as e:
+        return f"ps is refused here: {e}"
+    return None
+
+
 def test_real_platform_runs_waits_and_kills(tmp_path):
     """The OS layer itself, with a Python child standing in for the app. No registry."""
+    refusal = _ps_refusal()
+    if refusal:
+        pytest.skip(refusal)
     plat = A.default_platform()
     exe = _python()
     # A framework build (the macOS runner's) re-execs from
@@ -1278,6 +1302,16 @@ def test_real_platform_runs_waits_and_kills(tmp_path):
         plat.kill(pid, force=True)
     assert plat.wait_pid(pid, 10, 0.05)
     assert not plat.pid_alive(pid)
+
+
+@pytest.mark.skipif(not _LISTS_WITH_PS, reason="only PosixPlatform off Linux lists processes with ps")
+def test_real_platform_test_skips_when_ps_is_refused(tmp_path, monkeypatch):
+    """Refused ``ps`` is a skip with a reason, not a failed process-list assertion."""
+    def refuse(argv, *args, **kwargs):
+        raise PermissionError(1, "Operation not permitted", argv[0])
+    monkeypatch.setattr(subprocess, "run", refuse)
+    with pytest.raises(pytest.skip.Exception, match="ps is refused here"):
+        test_real_platform_runs_waits_and_kills(tmp_path)
 
 
 def test_real_run_writes_output_to_the_log_file(tmp_path):
