@@ -184,10 +184,131 @@ def test_undo_of_an_earlier_action_keeps_links_kept_since(series, tmp_path, how)
     assert saved_links(series, tmp_path / "undone.jser") == SAVED_BEFORE
 
 
+def test_a_series_undo_that_refreshes_keeps_an_object_the_refresh_finds_emptied(
+        series, tmp_path):
+    """A series step with no section states (an alignment attribute set
+    from the object list) is undone after a section was saved behind the
+    series data's back, with H's traces gone. The undo refreshes the series
+    data, which finds H emptied by no undoable step and keeps its link; the
+    undo of the attribute leaves that alone."""
+    from PyReconstruct.modules.backend.func.state_manager import SeriesStates
+
+    where = setup(series)
+    states = SeriesStates(series)
+    states.addState()
+    series.setAttr(K, "alignment", "no-alignment")
+
+    section = series.loadSection(where[H])
+    for trace in list(section.contours[H]):
+        section.removeTrace(trace)
+    del section.contours[H]
+    section.save(update_series_data=False)
+    assert H in series.data["objects"]
+
+    series.current_section = where[T]
+    states.undoState()
+    assert H not in series.data["objects"]
+    assert series.getAttr(K, "alignment") != "no-alignment"
+    assert saved_links(series, tmp_path / "undone.jser") == SAVED_BEFORE
+
+
+def test_redoing_the_import_s_section_alone_keeps_the_link(series, tmp_path):
+    """The import empties H on its section and keeps the link. Undoing that
+    section alone brings H back; redoing it alone empties H again without
+    deleting it, so the link stays, as the import left it."""
+    from PyReconstruct.modules.backend.func.state_manager import SeriesStates
+
+    where = setup(series)
+    states = SeriesStates(series)
+    series.current_section = where[H]
+    empty_by_import(series, tmp_path / "other.jser", H, attrs=False, states=states)
+    assert H not in series.data["objects"]
+
+    section = series.loadSection(where[H])
+    for redo in (False, True, False, True):
+        states.undoSection(section, redo)
+        series.data.updateSection(section, update_traces=True, all_traces=False)
+        section.clearTracking()
+        section.save()
+        assert (H in series.data["objects"]) is not redo
+        assert saved_links(series, tmp_path / f"redo-{redo}.jser") == SAVED_BEFORE
+
+
 def test_an_object_delete_still_takes_its_links_out_of_the_file(series, tmp_path):
     setup(series)
     series.deleteObjects([H])
     assert saved_links(series, tmp_path / "deleted.jser") == {}
+
+
+def _record(states, section, edit):
+    """An action recorded the way the field records one: the state first,
+    then the series data, then the save."""
+    states[section]
+    edit(section)
+    states[section.n].addState(section, states.series)
+    states.series.data.updateSection(section, update_traces=True, all_traces=False)
+    section.clearTracking()
+    section.save()
+
+
+def _undo_alone(states, section):
+    states.series.current_section = section.n
+    states.undoSection(section)
+    states.series.data.updateSection(section, update_traces=True, all_traces=False)
+    section.clearTracking()
+    section.save()
+
+
+def _erase(section, name):
+    for trace in list(section.contours.get(name, [])):
+        section.removeTrace(trace)
+
+
+def _draw_trace(section, series, name, offset):
+    trace = Trace(name, (0, 255, 0), True)
+    trace.points = _square(series, offset)
+    section.addTrace(trace)
+
+
+def test_a_delete_made_with_no_undo_state_is_not_undone_with_an_earlier_step(
+        series, tmp_path):
+    """Old H is back beside a replacement H after an undo, then loses its
+    traces to an unlogged update and is kept. Another object is drawn: the
+    newest step. Then H is deleted with no undo history (a caller that
+    passes no series states): the replacement dies and the kept old id goes
+    out of sight. Undoing the draw leaves them there: the delete belongs to
+    no step, so no undo reverses it."""
+    from PyReconstruct.modules.backend.func.state_manager import SeriesStates
+
+    where = setup(series)
+    s3, s4 = _free_sections(series)[:2]
+    states = SeriesStates(series)
+
+    old_section = series.loadSection(where[H])
+    _record(states, old_section, lambda section: _erase(section, H))
+    replacement = series.loadSection(s3)
+    _record(states, replacement, lambda section: _draw_trace(section, series, H, 0.5))
+    assert saved_links(series, tmp_path / "replaced.jser") == {}
+
+    _undo_alone(states, old_section)
+    assert saved_links(series, tmp_path / "both.jser") == SAVED_BEFORE
+    _erase(old_section, H)
+    del old_section.contours[H]
+    old_section.save(update_series_data=False)
+    series.data.updateSection(old_section, update_traces=True, log_events=False)
+    assert saved_links(series, tmp_path / "kept.jser") == SAVED_BEFORE
+
+    spare = series.loadSection(s4)
+    _record(states, spare, lambda section: _draw_trace(section, series, "kl_spare", 0.7))
+
+    series.deleteObjects([H])
+    assert H not in series.data["objects"]
+    assert saved_links(series, tmp_path / "deleted.jser") == {}
+
+    _undo_alone(states, spare)
+    assert "kl_spare" not in series.data["objects"]
+    assert H not in series.data["objects"]
+    assert saved_links(series, tmp_path / "undone.jser") == {}
 
 
 # --------------------------------------------------------------------------- #

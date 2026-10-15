@@ -10,12 +10,16 @@ they do in the app.
 Each step records the host links it added and removed, and the objects it
 made appear or disappear. Undoing a step must remove exactly the links it
 added and bring back exactly the ones it removed, and redoing it the reverse,
-unless a later step changed one of those links or touched an object at either
-end of one, or the undo makes objects appear or disappear differently from
-the way the step did (its object had traces on another section that a later
-step took away). Objects emptied by an unlogged update between steps, as a
-refresh does, belong to no step. After every step the ids must match the
-traces, and what the tree shows must be what it saves.
+unless another step changed one of those links or touched an object at either
+end of one since this step was made, or the undo makes objects appear or
+disappear differently from the way the step did (its object had traces on
+another section that a later step took away). A section of a series step
+undone or redone on its own leaves the links of objects the step did not
+touch alone, and once every section of the step has been undone (or redone)
+that way, the links are as a whole undo (or redo) would leave them. Objects
+emptied by an unlogged update between steps, as a refresh does, belong to no
+step. After every step the ids must match the traces, and what the tree shows
+must be what it saves.
 """
 import os
 import random
@@ -70,7 +74,13 @@ class Run:
         self.names = list(NAMES)
         self.renamed = 0
         self.clock = 0
+        # the checks that ran: of whole steps, of section steps alone, of a
+        # section of a series step alone, and of a series step undone or
+        # redone section by section to the end
         self.checked = 0
+        self.checked_sections = 0
+        self.checked_parts = 0
+        self.checked_whole_parts = 0
         self.restart()
 
     def restart(self):
@@ -283,18 +293,25 @@ class Run:
         self.series.data.updateSection(section, update_traces=True, log_events=False)
 
     # -- undo and redo, on a random section ------------------------------------ #
-    def independent(self, step):
-        """True if no step since this one changed its links, touched an
-        object at either end of one, or linked an object the step made or
-        deleted (undoing it deletes or brings back that object's newer
-        links too)."""
-        if step.broken:
+    def independent(self, step, partial=False):
+        """True if no step changed its links, touched an object at either
+        end of one, or linked an object the step made or deleted (undoing
+        it deletes or brings back that object's newer links too) since this
+        step was made. A step last made, undone or redone before that is
+        part of what this step was recorded against; one toggled since is
+        not, whatever the order the two were made in.
+
+            Params:
+                partial (bool): True for a series step undone or redone one
+                    section at a time (see undo)
+        """
+        if step.broken and not partial:
             return False
         changed = step.added | step.removed
         for other in self.steps:
             if other is step:
                 continue
-            if other.made <= step.made and other.at <= step.at:
+            if other.at <= step.made:
                 continue
             if (other.added | other.removed) & changed:
                 return False
@@ -325,6 +342,42 @@ class Run:
                 return step
         return None
 
+    def find_series_part(self, snum, pos):
+        """The series step a section's state at this position belongs to:
+        the newest one still on the stacks or broken into its sections."""
+        for step in reversed(self.steps):
+            if (step.kind == "series" and (step.alive or step.broken)
+                    and step.series_state.undo_lens.get(snum) == pos):
+                return step
+        return None
+
+    def near(self, step):
+        """The objects a section of the step can change the links of: the
+        ones it touched or linked, and those linked to them through others
+        (a link shows only while it is not redundant through a chain of
+        hosts, so a change reaches a link through the chain)."""
+        pairs = self.pairs()
+        near = set(step.touched | step.names)
+        grown = True
+        while grown:
+            grown = False
+            for t, h in pairs:
+                if (t in near) != (h in near):
+                    near |= {t, h}
+                    grown = True
+        return near
+
+    def unrelated(self, near):
+        return {p for p in self.pairs() if not (set(p) & near)}
+
+    def complete(self, step, redo):
+        """True once every section of the series step has been undone (or
+        redone) on its own."""
+        return all(
+            len(self.states.section_states_dict[snum].undo_states) == n - (0 if redo else 1)
+            for snum, n in step.series_state.undo_lens.items()
+        )
+
     def undo(self, redo=False):
         series, states = self.series, self.states
         snum = self.rng.choice(sorted(series.sections))
@@ -339,6 +392,8 @@ class Run:
         if not (can_3d or can_2d):
             return
 
+        word = "redo" if redo else "undo"
+        part = None
         if whole:
             step = self.find_series_step(states.redos[-1] if redo else states.undos[-1])
         else:
@@ -346,17 +401,23 @@ class Run:
             pos = len(section_states.undo_states) + (1 if redo else 0)
             step = self.find_section_step(snum, pos)
             if step is None:
-                # a section of a series step, undone alone
-                for other in self.steps:
-                    if (other.alive and other.kind == "series"
-                            and other.series_state.undo_lens.get(snum) == pos):
-                        other.broken = True
-                        other.at = self.tick()
+                # a section of a series step, undone or redone alone
+                part = self.find_series_part(snum, pos)
+                if part is not None:
+                    part.broken = True
+                    part.at = self.tick()
         expected = None
         existed = self.existing()
         if step is not None and self.independent(step):
             gone, back = (step.removed, step.added) if redo else (step.added, step.removed)
             expected = (self.pairs() - gone) | back
+        part_expected = None
+        if part is not None:
+            near = self.near(part)
+            unrelated = self.unrelated(near)
+            if self.independent(part, partial=True):
+                gone, back = (part.removed, part.added) if redo else (part.added, part.removed)
+                part_expected = (self.pairs() - gone) | back
 
         if whole:
             states.undoState(redo=redo)
@@ -371,13 +432,27 @@ class Run:
         if step is not None:
             step.applied = redo
             step.at = self.tick()
+        if part is not None and self.complete(part, redo):
+            part.applied = redo
         self.prune()
         if expected is not None:
             self.checked += 1
-            word = "redo" if redo else "undo"
+            if step.kind == "section":
+                self.checked_sections += 1
             assert self.pairs() == expected, (
                 f"{word} of a {step.kind} step on {step.snum} did not restore its links"
             )
+        if part is not None:
+            self.checked_parts += 1
+            assert self.unrelated(near) == unrelated, (
+                f"{word} of one section of a series step changed the links of "
+                "objects it did not touch"
+            )
+            if part_expected is not None and self.complete(part, redo):
+                self.checked_whole_parts += 1
+                assert self.pairs() == part_expected, (
+                    f"{word} of a series step section by section did not restore its links"
+                )
 
     def redo(self):
         self.undo(redo=True)
@@ -419,9 +494,8 @@ OPS = (
 )
 
 
-@pytest.mark.parametrize("seed", range(int(os.environ.get("HR_SEEDS", "100"))))
-def test_undo_and_redo_in_any_order_restore_the_links(shapes1_jser, seed):
-    series = Series.openJser(str(shapes1_jser))
+def _run(jser_path, seed) -> Run:
+    series = Series.openJser(str(jser_path))
     series.setProgressReporter(NullProgressReporter)
     try:
         rng = random.Random(seed)
@@ -432,5 +506,34 @@ def test_undo_and_redo_in_any_order_restore_the_links(shapes1_jser, seed):
             history.append(op)
             getattr(run, op)()
             run.check(f"seed {seed}, step {i}: {history[-8:]}")
+        return run
     finally:
         series.close()
+
+
+@pytest.mark.parametrize("seed", range(int(os.environ.get("HR_SEEDS", "100"))))
+def test_undo_and_redo_in_any_order_restore_the_links(shapes1_jser, seed):
+    _run(shapes1_jser, seed)
+
+
+@pytest.mark.parametrize("seed", [2747, 2877])
+def test_orders_found_by_a_wider_run_restore_the_links(shapes1_jser, seed):
+    """Two orders a run of thousands of seeds found: a link step redone
+    after the draw of its host was undone (2747), and a rename undone after
+    one section of an earlier rename was undone alone (2877). Each is a step
+    toggled after the checked step was made, which the checks must count
+    whatever the order the two steps were made in."""
+    _run(shapes1_jser, seed)
+
+
+def test_sections_of_series_steps_are_checked(shapes1_jser):
+    """The runs above check section steps undone alone, sections of series
+    steps undone alone, and series steps undone section by section to the
+    end, not only whole steps."""
+    counts = {"sections": 0, "parts": 0, "whole_parts": 0}
+    for seed in range(40):
+        run = _run(shapes1_jser, seed)
+        counts["sections"] += run.checked_sections
+        counts["parts"] += run.checked_parts
+        counts["whole_parts"] += run.checked_whole_parts
+    assert all(counts.values()), counts

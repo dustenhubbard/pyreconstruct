@@ -20,6 +20,7 @@ H = "hl_host"
 T = "hl_traveler"
 SPARE = "hl_spare"
 X = "hl_renamed"
+D = "hl_dangling"
 
 
 @pytest.fixture
@@ -270,12 +271,15 @@ def test_replacement_on_two_sections_then_undo_all(window):
 # an object whose section was deleted keeps its links through undo
 # --------------------------------------------------------------------------- #
 
-@pytest.mark.parametrize("step", ["delete", "rename"])
-def test_undo_brings_back_the_links_of_a_parked_object(
-        window, main_window_dialogs, gui_dialogs, step):
+@pytest.mark.parametrize(
+    "step", ["delete", "rename, undo all sections", "rename, undo this section"]
+)
+def test_undo_brings_back_the_links_of_a_kept_object(
+        window, main_window_dialogs, gui_dialogs, tmp_path, step):
     """Old H back beside a replacement H; old H's only section is deleted,
     so it keeps its link to T without traces. Deleting the replacement, or
-    renaming H, and undoing that brings the link back."""
+    renaming H from the object list, and undoing that, on every section or
+    on the replacement's section alone, brings the link back and saves it."""
     from tests.test_object_ids_field import _section_list, _select, _unlock_sections
 
     s1, s2, s3, _ = _delete_both_and_replace(window, host_first=False)
@@ -300,10 +304,42 @@ def test_undo_brings_back_the_links_of_a_parked_object(
     else:
         _rename_everywhere(window, H, X)
         assert _hosts(window) == [X]
-        main_window_dialogs.linked_undo_responses = ["all"]
+        main_window_dialogs.linked_undo_responses = [
+            "all" if step.endswith("all sections") else "section"
+        ]
         _undo_on(window, s3)
     assert H in window.series.data["objects"]
     assert _hosts(window) == [H]
+    assert _saved_host_tree(window, tmp_path / "kept.jser").get(T) == [H]
+
+
+@pytest.mark.parametrize("scope", ["all", "section"])
+def test_undoing_a_rename_to_a_linked_name_with_no_traces_keeps_its_link(
+        window, main_window_dialogs, tmp_path, scope):
+    """T is hosted by D, a name no section has traces of (a file can link
+    one). Renaming an unrelated H to D from the object list gives D traces.
+    Undoing the rename, on every section or on H's section alone, leaves T
+    hosted by D as before, and saves it."""
+    s1, s2, _, _ = _sections(window)
+    window.changeSection(s1)
+    _draw(window, H)
+    window.changeSection(s2)
+    _draw(window, T)
+    window.series.host_tree.add(T, [D])
+    assert D not in window.series.data["objects"]
+    assert _hosts(window) == [D]
+
+    _rename_everywhere(window, H, D)
+    assert D in window.series.data["objects"]
+    assert H not in window.series.data["objects"]
+    assert _hosts(window) == [D]
+
+    main_window_dialogs.linked_undo_responses = [scope]
+    _undo_on(window, s1)
+    assert H in window.series.data["objects"]
+    assert D not in window.series.data["objects"]
+    assert _hosts(window) == [D]
+    assert _saved_host_tree(window, tmp_path / "dangling.jser").get(T) == [D]
 
 
 def test_undo_on_one_section_keeps_a_link_an_import_kept_on_another(window):
