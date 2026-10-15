@@ -237,6 +237,32 @@ def test_a_release_heading_in_an_html_block_is_not_a_release(tmp_path, opening, 
     assert section(repo(tmp_path, changelog=changelog)) == ""
 
 
+@pytest.mark.parametrize("quoted", [
+    pytest.param("> > quote\ntext\n", id="a-nested-quote"),
+    pytest.param("  > quote\ntext\n", id="a-quote-in-the-bullet"),
+])
+def test_a_release_heading_in_html_after_quoted_text_is_not_a_release(tmp_path, quoted):
+    """The example sits in a lone tag's HTML block, after a quote whose
+    paragraph runs on past the lines that carry no marker: nested, or inside
+    the bullet. The tag starts a block, as the quote no longer holds the line."""
+    changelog = (
+        "## [Unreleased]\n"
+        "\n"
+        "## [1.23.0] - 2026-09-27\n"
+        "\n"
+        "### Added\n"
+        "- **Already shipped.** An example:\n"
+        "\n"
+        f"{quoted}"
+        "<span>\n"
+        "## [1.24.0]\n"
+        "### Fixed\n"
+        "- **Old example, not a new fix.**\n"
+        "</span>\n"
+    )
+    assert section(repo(tmp_path, changelog=changelog)) == ""
+
+
 @pytest.mark.parametrize("body,versions", [
     pytest.param("<details>\n## [1.24.0]\n</details>\n", ["1.23.0"], id="details-until-a-blank-line"),
     pytest.param("<details>\n\n## [1.24.0]\n", ["1.23.0", "1.24.0"], id="details-ends-at-a-blank-line"),
@@ -263,6 +289,18 @@ def test_a_release_heading_in_an_html_block_is_not_a_release(tmp_path, opening, 
     # reads it (markdown-it-py reads both of these as more of the paragraph).
     pytest.param("> quote\n<span>\n## [1.24.0]\n", ["1.23.0"], id="a-lone-tag-after-a-quote-opens-a-block"),
     pytest.param("> - q\n===\n<span>\n## [1.24.0]\n", ["1.23.0"], id="a-quoted-items-paragraph-runs-on"),
+    # A lazy line is still the quote's paragraph when the quote is nested or
+    # inside an item, and a lone tag after it opens a block all the same.
+    pytest.param("> > quote\ntext\n<span>\n## [1.24.0]\n", ["1.23.0"], id="a-nested-quotes-paragraph-runs-on"),
+    pytest.param("- a\n  > quote\ntext\n<span>\n## [1.24.0]\n", ["1.23.0"], id="a-quote-in-an-item-runs-on"),
+    pytest.param("- a\n\n  > quote\ntext\n<span>\n## [1.24.0]\n", ["1.23.0"], id="a-quote-after-an-items-blank-line-runs-on"),
+    pytest.param("> > quote\n  more\n  <span>\n## [1.24.0]\n", ["1.23.0"], id="a-lone-tag-indented-under-four-opens-a-block"),
+    # Where an inner quote or an item stops holding a lone tag, the tag opens a
+    # block in what holds it, and the next line at the margin is a paragraph.
+    pytest.param("> > quote\n> <span>\ntext\n<span>\n## [1.24.0]\n", ["1.23.0", "1.24.0"],
+                 id="a-lone-tag-in-the-outer-quote-is-a-block"),
+    pytest.param("- > quote\n  <span>\ntext\n<span>\n## [1.24.0]\n", ["1.23.0", "1.24.0"],
+                 id="a-lone-tag-at-the-items-column-is-a-block"),
 ])
 def test_only_html_at_the_margin_hides_a_release_heading(body, versions):
     """Each expectation is what GitHub's parser, cmark-gfm, makes of the same text."""

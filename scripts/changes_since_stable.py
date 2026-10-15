@@ -225,13 +225,15 @@ def starts_block(line, after_paragraph=False):
 
 def paragraph_text(text, after_paragraph):
     """Whether ``text`` (indentation removed, at most three columns of it) is a
-    line of a paragraph that the next line can continue. A quote's is not
-    counted: a line indented less ends the quote and whatever holds it."""
+    line of a paragraph that the next line can continue."""
     if not text or starts_block(text, after_paragraph):
         return False
     if re.match(r"^(?:=+|-+)[ \t]*$", text):  # a setext underline ends the paragraph
         return not after_paragraph
     return True
+
+
+QUOTE = ">"  # an open block quote, among the open containers
 
 
 def in_margin_code(lines):
@@ -241,114 +243,90 @@ def in_margin_code(lines):
     Only such a block can hold a line that starts at the margin, so only it can
     make a ``## [...]`` line look like a release heading when it is an example.
     Indented code cannot: four columns in, no line in it starts ``## ``. A
-    fence or HTML block inside a list item (indented as far as the item's text)
-    is the item's, and ends with it at the first line at the margin, so it is
-    not counted. Telling the two apart means following the list items: a line
-    belongs to each open item whose text column it is indented to, and a line
-    indented less continues them only when it continues a paragraph, which no
-    fence, heading, rule, quote, HTML block or list item does. A line that is
-    only a tag cannot start an HTML block inside a paragraph; at the margin,
-    after a quote's or a list item's paragraph, it is not inside that one and
-    starts a block (as GitHub reads it).
+    fence or HTML block inside a list item or a quote is that container's and
+    ends with it, so it is not counted. Telling the two apart means following
+    the containers the way CommonMark does. A line belongs to each open list
+    item whose text column it is indented to and to each open quote whose
+    marker it carries, from the outside in; where it stops matching, it either
+    continues the paragraph open in the innermost container (a lazy line: not
+    blank, and not the start of a fence, heading, rule, quote, HTML block or
+    list item) or ends every container it does not match and is read in the
+    last one it does. A list item or a quote can hold anything, so what is left
+    of the line is read again inside it. A line that is only a tag cannot start
+    an HTML block inside a paragraph; where a quote or a list item stops
+    holding the line, it is not inside that paragraph and starts a block (as
+    GitHub reads it).
     """
     flags = []
-    fence = None  # the open fence at the margin
-    html = None  # the pattern that ends the open HTML block at the margin
-    items = []  # the text columns of the open list items, the first at the margin
-    empty = False  # the innermost item has no text yet, so a blank line ends it
-    inner = None  # a fence or HTML block open in the innermost item
-    lazy = False  # the line before is paragraph text the next line can continue
-    quote = False  # the same, for a quote's paragraph
-    quoted = None  # a fence or HTML block open in the quote
+    containers = []  # open, outermost first: QUOTE, or a list item's text column
+    block = None  # the fence or HTML block open in the innermost container
+    paragraph = False  # the innermost container has a paragraph open to continue
+    empty = False  # the innermost container is a list item with nothing in it yet
     for line in lines:
-        text = line.expandtabs(4)
-        stripped = text.lstrip()
-        indent = len(text) - len(stripped)
-        if fence:
-            flags.append(True)
-            if indent < 4 and fence_closes(stripped, fence):
-                fence = None
-            continue
-        if html:
-            flags.append(True)
-            if html.search(stripped):
-                html = None
-            continue
+        rest = line.expandtabs(4)
+        matched = 0
+        for container in containers:
+            stripped = rest.lstrip()
+            indent = len(rest) - len(stripped)
+            if container is QUOTE:
+                if indent >= 4 or not stripped.startswith(">"):
+                    break
+                rest = stripped[2:] if stripped.startswith("> ") else stripped[1:]
+            elif stripped and indent >= container:
+                rest = rest[container:]
+            elif stripped or (empty and matched + 1 == len(containers)):
+                break  # too far left, or a blank line in an item with nothing yet
+            matched += 1
+        stripped = rest.lstrip()
+        depth = len(rest) - len(stripped)
         blank = not stripped
-        held = len(items) if blank else sum(indent >= column for column in items)
-        if blank and empty:
-            held -= 1
-        elif held < len(items) and lazy and not starts_block(stripped):
-            flags.append(False)  # more of the innermost item's paragraph
+        if matched < len(containers):
+            if paragraph and not blank and (depth >= 4 or not starts_block(rest)):
+                flags.append(False)  # a lazy line of the innermost paragraph
+                continue
+            del containers[matched:]
+            block, paragraph, empty = None, False, False
+        if block:
+            flags.append(not containers)
+            if block_closes(stripped, block, depth):
+                block = None
             continue
-        ended = held < len(items)
-        if ended:
-            del items[held:]
-            inner, lazy = None, False
-        empty = False
-        if items:
-            # The line is the innermost open item's; read it from its text column.
-            column = items[-1]
-            inside = text[column:]
-            body = inside.lstrip()
-            depth = len(inside) - len(body)
-            if inner:
-                if block_closes(body, inner, depth):
-                    inner = None
-            elif blank:
-                lazy = False
-            elif depth < 4:  # deeper is more of the paragraph, or indented code
-                nested = list_item(inside, lazy)
-                if nested is not None:
-                    items.append(column + nested[0])
-                    body = nested[1]
-                    empty = body == ""
-                after = lazy and nested is None
-                inner = block_open(body, after) if body else None
-                lazy = bool(body) and paragraph_text(body, after)
-            flags.append(False)
+        flags.append(False)
+        if not blank:
+            empty = False
+        after = paragraph  # the line is read right after the open paragraph
+        while not blank:
+            if depth >= 4:
+                break  # more of the paragraph, or indented code: nothing opens
+            if stripped.startswith(">"):
+                containers.append(QUOTE)
+                rest = stripped[2:] if stripped.startswith("> ") else stripped[1:]
+                paragraph = after = False
+            else:
+                item = list_item(rest, after)
+                if item is None:
+                    break
+                column, first = item
+                containers.append(column)
+                paragraph = after = False
+                empty = first == ""
+                if first is None:
+                    break  # the item opens with indented code
+                rest = rest[column:]
+            stripped = rest.lstrip()
+            depth = len(rest) - len(stripped)
+            blank = not stripped
+        if blank:
+            paragraph = False
             continue
-        if indent >= 4 or not stripped.startswith(">"):
-            quoted = None  # the quote, if any, has ended
-        fence = fence_open(stripped) if indent < 4 else None
-        html = None if fence or indent >= 4 else html_open(stripped, lazy)
-        if html and html.search(stripped):
-            html = None  # one that ends on the line it starts
-            flags.append(True)
-            lazy = quote = False
+        if depth >= 4:
             continue
-        flags.append(bool(fence or html))
-        opened = None if fence or html or indent >= 4 else list_item(text, lazy)
-        if opened is not None:
-            column, first = opened
-            items = [column]
-            empty, quote = first == "", False
-            inner = block_open(first, False) if first else None
-            lazy = bool(first) and paragraph_text(first, False)
-        elif fence or html or blank:
-            lazy = quote = False
-        elif indent < 4 and stripped.startswith(">"):
-            # A quote. A list item may follow its paragraph, which a line at
-            # the margin continues as it would any other; a list item in it is
-            # read from its text, as an item's is.
-            inside = stripped[2:] if stripped.startswith("> ") else stripped[1:]
-            body = inside.lstrip()
-            depth = len(inside) - len(body)
-            if quoted:
-                if block_closes(body, quoted, depth):
-                    quoted = None
-            elif depth < 4:
-                nested = list_item(body, quote)
-                if nested is not None:
-                    body = nested[1]
-                after = quote and nested is None
-                quoted = block_open(body, after) if body else None
-                quote = bool(body) and paragraph_text(body, after)
-            lazy = False
-        elif indent < 4 and quote and not starts_block(text):
-            lazy = False  # more of the quote's paragraph
-        elif indent < 4:
-            lazy, quote = paragraph_text(stripped, lazy), False
+        block = block_open(stripped, after)
+        if block or html_open(stripped, after):  # or an HTML block of one line
+            paragraph = False
+            flags[-1] = not containers
+        else:
+            paragraph = paragraph_text(stripped, after)
     return flags
 
 
