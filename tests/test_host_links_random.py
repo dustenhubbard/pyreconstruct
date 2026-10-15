@@ -128,7 +128,7 @@ class Run:
                 ):
                     step.alive = False
 
-    # -- actions ---------------------------------------------------------------- #
+    # actions
     def section_action(self, snum, name, edit):
         series = self.series
         before, existed = self.pairs(), self.existing()
@@ -292,7 +292,7 @@ class Run:
         section.save(update_series_data=False)
         self.series.data.updateSection(section, update_traces=True, log_events=False)
 
-    # -- undo and redo, on a random section ------------------------------------ #
+    # undo and redo, on a random section
     def independent(self, step, partial=False):
         """True if no step changed its links, touched an object at either
         end of one, or linked an object the step made or deleted (undoing
@@ -457,7 +457,7 @@ class Run:
     def redo(self):
         self.undo(redo=True)
 
-    # -- a step that starts the history over -------------------------------------- #
+    # a step that starts the history over
     def delete_section(self):
         series = self.series
         if len(series.sections) <= 3:
@@ -468,7 +468,7 @@ class Run:
         series.data.refresh()
         self.restart()
 
-    # -- the check ------------------------------------------------------------- #
+    # the check
     def check(self, label):
         series = self.series
         present = {
