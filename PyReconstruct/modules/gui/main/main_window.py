@@ -458,11 +458,26 @@ class MainWindow(QMainWindow):
         self.applyUpdateCheckDefaultStartup()
 
         ## Background update check (frozen builds), once the window is up
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(2500, self.checkForUpdatesStartup)
+        self.update_check_timer = self._startupTimer(2500, self.checkForUpdatesStartup)
 
         ## First-launch / post-update "What's new" (once per version, dismissible)
-        QTimer.singleShot(750, self.showWhatsNewStartup)
+        self.whats_new_timer = self._startupTimer(750, self.showWhatsNewStartup)
+
+    def _startupTimer(self, msec, handler):
+        """Arm a startup handler on a single-shot timer this window owns.
+
+        A bare `QTimer.singleShot` belongs to no window and outlives one that
+        closes before it fires: after `Restart PyReconstruct`, or a close in
+        the first seconds, the handler still ran on the closed window while
+        the next one was on screen. Parented here so the timer dies with the
+        window, and kept as an attribute so `closeEvent` can stop it.
+        """
+        from PySide6.QtCore import QTimer
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(handler)
+        timer.start(msec)
+        return timer
 
     def _restoredGeometryIsUsable(self) -> bool:
         """Whether the just-restored geometry is usable on the current screens.
@@ -5674,6 +5689,12 @@ class MainWindow(QMainWindow):
             # app instead of exiting (found 2026-08-28)
             self.restart_mainwindow = False
             return
+        # the startup timers serve no window once the close is committed.
+        # Left running, they fired on this window after a restart had built
+        # the next one, or in the next test of a suite that closes windows
+        # without deleting them.
+        self.update_check_timer.stop()
+        self.whats_new_timer.stop()
         # persist window geometry so size/position survive a restart
         windowGeometrySettings().setValue("window/geometry", self.saveGeometry())
         if self.viewer and not self.viewer.is_closed:
