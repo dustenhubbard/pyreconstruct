@@ -1049,8 +1049,8 @@ def test_an_edit_then_save_then_reload_moves_only_the_edited_traces_id(
     assert len(contour_after) == len(contour_before)
     assert victim_id not in contour_after, (
         "the edited trace kept its id across a save and a reload. With ids "
-        "derived from content that cannot happen -- nothing persists the id "
-        "and the content it is derived from has changed -- so either an id is "
+        "derived from content that cannot happen: nothing persists the id "
+        "and the content it is derived from has changed. So either an id is "
         "now persisted (and this test is the one to turn over) or the edit "
         "did not reach the file."
     )
@@ -1107,7 +1107,7 @@ def test_an_id_issued_in_session_does_not_survive_a_save_and_reload(real_series)
     assert derived != issued, (
         "an id issued during the session survived a save and a reload. "
         "Nothing persists it today, so this can only mean the writer now "
-        "carries the id -- turn this pin over."
+        "carries the id. Turn this pin over."
     )
     assert issued in real_series.trace_id_issuer.taken, (
         "the issued id was released when the reload replaced it"
@@ -1194,7 +1194,7 @@ def test_palette_traces_never_reach_a_store(real_series):
     what makes "unexercised" the honest verdict rather than an omission.
 
     If palette traces ever do reach a store, this goes red and that question
-    has been answered by whoever wired it -- which is exactly the notification
+    has been answered by whoever wired it. That is exactly the notification
     the reserved rows deserve.
     """
     palettes = real_series.palette_traces

@@ -329,7 +329,7 @@ def test_derive_for_section_hands_its_own_index_to_every_derivation(monkeypatch)
     assert all(handed), (
         "deriveForSection handed something other than the index it started "
         "with -- either a per-call copy of it or a per-trace rebind of the "
-        "attribute -- and both re-pay the O(n**2) per-trace copy"
+        "attribute. Both re-pay the O(n**2) per-trace copy"
     )
     assert issuer._taken is index, (
         "deriveForSection rebound the series index instead of mutating it, so "
@@ -516,7 +516,7 @@ def test_migration_takes_the_series_index_not_the_sections():
 
     The body used to pass section number 1 BOTH times, which pinned something
     this docstring never claimed: that re-deriving the SAME section's content
-    hands out fresh ids. Deriving ids at load made that a bad property --
+    hands out fresh ids. Deriving ids at load made that a bad property:
     `Series.loadSection` builds a fresh `Section` per call with no cache, so
     salt-bumping on re-derivation would reissue every id on a section per
     scroll and leak a section's worth of taken-set per load. Re-derivation is

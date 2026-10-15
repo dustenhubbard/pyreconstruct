@@ -137,7 +137,7 @@ def test_a_session_created_trace_falls_through_to_issue(real_series):
     """A trace born in the session gets an opaque issued id, not a derived one.
 
     `Section.addTrace` reaches `appendRow` with no `trace_id`, which asks the
-    injected issuer for a fresh one -- the same arm as before load-time
+    injected issuer for a fresh one. That is the same arm as before load-time
     derivation, now with an issuer actually present to answer.
     """
     snum = sorted(real_series.sections)[0]
@@ -273,7 +273,7 @@ def test_a_full_open_save_cycle_still_saves(series_jser, tmp_path):
     The byte-level half of this claim (a save is byte-identical to a build
     without the derivation) is compared across builds outside the suite; what
     a test on one build can hold is that the cycle completes and that saving
-    does not move a single id --
+    does not move a single id.
     `test_a_save_does_not_re_identify_the_traces_it_saves`
     pins the per-section version of the same property.
     """
