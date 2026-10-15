@@ -443,7 +443,7 @@ class _StubManager:
 
 
 def test_the_thickness_default_and_range():
-    """15 px by default (his choice, 2026-10-15; it was 6); 3 to 25 can be set.
+    """15 px by default (it was 6 before 2026-10-15); 3 to 25 can be set.
     The default only reaches a store with no value in it: a stored thickness,
     6 included, is never rewritten."""
     assert default_settings["scale_bar_thickness"] == 15

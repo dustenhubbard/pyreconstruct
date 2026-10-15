@@ -1,16 +1,13 @@
 """Scale bar: the 15 px default, a hover box that keeps off the bar, and one
 settings page reachable from the bar's right-click menu.
 
-His words, 2026-10-15: "The default thickness should be 15. The scale bar can
-be obscured by the trace hover info. ... The right click option for the scale
-bar should let you control all the settings not just fixed length."
-
 * **The default.** 15 px for a store with no thickness in it. A stored value,
   6 included, is never rewritten.
 * **The hover box.** It used to go in the bottom corner opposite the tool
-  palette, which by default is the scale bar's corner. `hoverDisplayPosition`
-  now tries the corners in order and takes the first that covers neither the
-  bar nor another palette widget.
+  palette, which by default is the scale bar's corner, so it covered the bar.
+  `hoverDisplayPosition` now lifts it in that corner to sit just above the bar
+  (or the section buttons), and it never lands on the selected trace and
+  z-trace names painted at the top of the same side.
 * **One page, two places.** Series > Options > View and the bar's "Scale bar
   settings..." dialog are both built by `scale_bar_settings`, preview every
   control on the bar, store nothing until OK, and restore the bar on Cancel.
@@ -59,8 +56,6 @@ BOX = QSize(200, 80)
 M = 3
 BOTTOM_LEFT = QPoint(M, 600 - 80 - M)
 BOTTOM_RIGHT = QPoint(1000 - 200 - M, 600 - 80 - M)
-TOP_LEFT = QPoint(M, M)
-TOP_RIGHT = QPoint(1000 - 200 - M, M)
 BAR_BOTTOM_LEFT = QRect(10, 540, 250, 50)
 
 
@@ -74,25 +69,50 @@ def test_a_hidden_bar_is_not_dodged():
     assert hoverDisplayPosition(FIELD, BOX, False, scale_bar=None) == BOTTOM_LEFT
 
 
-def test_the_box_moves_to_the_other_bottom_corner_off_the_bar():
+def test_the_box_is_lifted_just_above_the_bar():
     assert hoverDisplayPosition(
-        FIELD, BOX, False, scale_bar=BAR_BOTTOM_LEFT) == BOTTOM_RIGHT
+        FIELD, BOX, False, scale_bar=BAR_BOTTOM_LEFT) == QPoint(M, 540 - M - 80)
 
 
-def test_a_bar_across_both_bottom_corners_sends_the_box_to_the_top():
+def test_a_bar_across_the_whole_bottom_still_lifts_the_box_on_its_side():
     wide_bar = QRect(0, 540, 1000, 50)
-    assert hoverDisplayPosition(FIELD, BOX, False, scale_bar=wide_bar) == TOP_LEFT
-    assert hoverDisplayPosition(FIELD, BOX, True, scale_bar=wide_bar) == TOP_RIGHT
+    assert hoverDisplayPosition(FIELD, BOX, False, scale_bar=wide_bar) == QPoint(
+        M, 540 - M - 80)
+    assert hoverDisplayPosition(FIELD, BOX, True, scale_bar=wide_bar) == QPoint(
+        1000 - 200 - M, 540 - M - 80)
 
 
-def test_the_default_layout_puts_the_box_top_left():
-    """Bar bottom-left, section buttons bottom-right, tools top-right: the
-    other bottom corner would cover the section buttons."""
+def test_the_box_is_lifted_past_everything_stacked_in_its_corner():
+    inc_buttons = QRect(900, 500, 90, 85)
+    sliders = QRect(880, 400, 110, 60)
+    assert hoverDisplayPosition(
+        FIELD, BOX, True, others=[inc_buttons, sliders]) == QPoint(
+        1000 - 200 - M, 400 - M - 80)
+
+
+def test_the_default_layout_keeps_the_box_bottom_left_above_the_bar():
+    """Bar bottom-left, section buttons bottom-right, tools top-right, and a
+    selection list top-left: the box sits just above the bar."""
     inc_buttons = QRect(900, 500, 90, 85)
     tools = QRect(950, 10, 40, 400)
+    selection = QRect(8, 0, 180, 120)
     assert hoverDisplayPosition(
         FIELD, BOX, False, scale_bar=BAR_BOTTOM_LEFT,
-        others=[inc_buttons, tools]) == TOP_LEFT
+        others=[inc_buttons, tools], text=selection) == QPoint(M, 540 - M - 80)
+
+
+def test_the_box_never_lands_on_the_corner_text():
+    """A selection list tall enough to meet the lifted box sends it to the
+    other side, lifted the same way."""
+    selection = QRect(8, 0, 180, 500)
+    assert hoverDisplayPosition(
+        FIELD, BOX, False, scale_bar=BAR_BOTTOM_LEFT,
+        text=selection) == BOTTOM_RIGHT
+
+
+def test_the_corner_text_alone_does_not_move_the_box():
+    selection = QRect(8, 0, 180, 120)
+    assert hoverDisplayPosition(FIELD, BOX, False, text=selection) == BOTTOM_LEFT
 
 
 def test_covering_a_button_beats_covering_the_bar():
@@ -102,7 +122,7 @@ def test_covering_a_button_beats_covering_the_bar():
         others=everywhere) == BOTTOM_RIGHT
 
 
-def test_when_every_corner_covers_the_bar_the_usual_corner_wins():
+def test_when_every_spot_covers_the_bar_the_usual_corner_wins():
     bar_everywhere = QRect(0, 0, 1000, 600)
     assert hoverDisplayPosition(
         FIELD, BOX, False, scale_bar=bar_everywhere) == BOTTOM_LEFT
@@ -131,6 +151,55 @@ def test_the_hover_box_does_not_cover_the_scale_bar(main_window, qapp):
 
     assert not box.intersects(palette.sb.geometry())
     assert main_window.field.geometry().contains(box)
+
+
+@pytest.mark.gui
+def test_the_hover_box_does_not_cover_the_selected_trace_names(main_window, qapp):
+    """A selection list at top-left and the bar at bottom-left, the default
+    layout: the box must clear both."""
+    field = main_window.field
+    palette = main_window.mouse_palette
+    if palette.sb_hidden:
+        palette.toggleSB()
+    traces = [t for traces in field.section.contours.values() for t in traces]
+    field.section.selected_traces = traces[:3]
+    field.mouse_x = field.mouse_y = -10_000
+    field.grab()                       # paintText draws the list
+    text = field.cornerTextRect()
+    assert text is not None
+    assert "Selected Traces:" in field.corner_text[0]
+
+    box = _hover(main_window, qapp)
+
+    assert not box.intersects(text)
+    assert not box.intersects(palette.sb.geometry())
+    assert main_window.field.geometry().contains(box)
+
+
+@pytest.mark.gui
+def test_the_placement_is_given_the_corner_text_and_the_obstacles(
+    main_window, qapp, monkeypatch
+):
+    from PyReconstruct.modules.gui.main import field_widget_6_paint as paint
+
+    field = main_window.field
+    traces = [t for traces in field.section.contours.values() for t in traces]
+    field.section.selected_traces = traces[:2]
+    field.mouse_x = field.mouse_y = -10_000
+    field.grab()
+    seen = {}
+    real = paint.hoverDisplayPosition
+
+    def spy(*args, **kwargs):
+        seen.update(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(paint, "hoverDisplayPosition", spy)
+    _hover(main_window, qapp)
+
+    assert seen["text"] == field.cornerTextRect() is not None
+    sb, others = main_window.mouse_palette.hoverObstacles()
+    assert (seen["scale_bar"], seen["others"]) == (sb, others)
 
 
 @pytest.mark.gui
