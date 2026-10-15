@@ -393,13 +393,13 @@ class MainWindow(QMainWindow):
         ## display, so it gets a permanent widget rather than a temporary
         ## message. Qt clears the temporary message on every status-tip event,
         ## and hovering a QAction with no status tip sends an empty one, which
-        ## is what used to blank the readout on a trip to the menu bar.
-        ## A NORMAL status-bar widget, not a permanent one, on his call
-        ## (2026-08-21): permanent widgets are right-anchored, which read as a
-        ## jarring change for no reason a regular user could see. A normal
-        ## widget sits on the left like the old readout did, and still fixes
-        ## the original blanking bug -- menu status-tip events clear the
-        ## TEMPORARY message, and the readout is a widget now, not a message.
+        ## is what used to blank the readout on a trip to the menu bar. A
+        ## NORMAL status-bar widget, not a permanent one: permanent widgets are
+        ## right-anchored, which read as a jarring change for no reason a
+        ## regular user could see. A normal widget sits on the left like the
+        ## old readout did, and still fixes the original blanking bug: menu
+        ## status-tip events clear the TEMPORARY message, and the readout is a
+        ## widget now, not a message.
         ## The one trade: while a real showMessage notice is up (the curation
         ## acknowledgment) Qt hides normal widgets, so the
         ## notice briefly takes the readout's place and the readout returns
@@ -413,7 +413,7 @@ class MainWindow(QMainWindow):
         self.status_readout = FieldStatusReadout()
         self.status_readout.lists_clicked.connect(self.toggleLists)
         self.status_readout.section_clicked.connect(self.sectionJumpFromStatusBar)
-        # right-click keeps the classic Go To Section dialog (his option 1)
+        # right-click keeps the classic Go To Section dialog
         self.status_readout.section_segment.right_clicked.connect(
             lambda: self.changeSection()
         )
@@ -572,15 +572,14 @@ class MainWindow(QMainWindow):
         self.menusearchfield_act = MenuSearchField(self, self.helpmenu)
         first_help_action = self.helpmenu.actions()[0]
         self.helpmenu.insertAction(first_help_action, self.menusearchfield_act)
-        ## The "Search menus..." row itself comes OFF the menu (his
-        ## consolidation call, 2026-08-27): the row and the field said the
-        ## same thing twice, and the field now shows the chord at its right
-        ## edge. The action must outlive its row: newAction attached it to
-        ## this window besides the menu, so the remappable chord still fires
-        ## openMenuSearch with no visible row anywhere, and the shortcuts
-        ## dialog still lists and rebinds it by act_name. The definition
-        ## tuple stays so every rebuild keeps building the carrier. An
-        ## invisible row is no substitute: a setVisible(False) action's
+        ## The "Search menus..." row itself comes OFF the menu: the row and the
+        ## field said the same thing twice, and the field now shows the chord
+        ## at its right edge. The action must outlive its row: newAction
+        ## attached it to this window besides the menu, so the remappable chord
+        ## still fires openMenuSearch with no visible row anywhere, and the
+        ## shortcuts dialog still lists and rebinds it by act_name. The
+        ## definition tuple stays so every rebuild keeps building the carrier.
+        ## An invisible row is no substitute: a setVisible(False) action's
         ## shortcut goes dead (measured on this PySide6).
         self.helpmenu.removeAction(self.searchmenus_act)
         ## Off the menu, the carrier is also off clearMenuBar's teardown
@@ -1149,9 +1148,9 @@ class MainWindow(QMainWindow):
         this changelog window after each update?" checkbox, and a checkable that
         contradicts the stored state would invert itself on the next click.
 
-        Checked means the popup is OFF, matching the row's wording (his call,
-        2026-08-26): the tick and the stored suppression flag are the same
-        thing now, so the dialog's checkbox and this row always agree.
+        Checked means the popup is OFF, matching the row's wording: the tick
+        and the stored suppression flag are the same thing now, so the dialog's
+        checkbox and this row always agree.
         """
         from PyReconstruct.modules.gui.main.first_launch import (
             WHATSNEW_SUPPRESS_KEY, WHATSNEW_SUPPRESS_DEFAULT, whats_new_suppressed,
@@ -1204,9 +1203,9 @@ class MainWindow(QMainWindow):
     def toggleWhatsNewPopup(self):
         """Persist the Help-menu toggle: CHECKED means the popup is off.
 
-        The row reads "Turn off What's new pop-up", so a tick is the
-        disabled state (his call, 2026-08-26); the stored preference is the
-        suppression flag itself, and the two now match exactly.
+        The row reads "Turn off What's new pop-up", so a tick is the disabled
+        state; the stored preference is the suppression flag itself, and the
+        two now match exactly.
 
         Writes only that preference. The once-per-version record is
         deliberately untouched, so switching the popup back on hands back the
@@ -1282,13 +1281,12 @@ class MainWindow(QMainWindow):
         which ABORTS when any selected object is locked. Applied series-wide
         that rule would make the action useless the moment one object is
         locked, so locked objects are SKIPPED here instead, and the confirm
-        dialog states the split (his call). The wrapper's other work is
-        mirrored by hand: save the field data first, pass the field's
-        series_states so one undo restores every prior color, then update the
-        object lists and reload the field. The two wrapper behaviors NOT
-        mirrored are selection resolution (this pass names its own objects)
-        and the object list scroll-position restore (updateObjects edits rows
-        in place here; nothing scrolls).
+        dialog states the split. The wrapper's other work is mirrored by hand:
+        save the field data first, pass the field's series_states so one undo
+        restores every prior color, then update the object lists and reload the
+        field. The two wrapper behaviors NOT mirrored are selection resolution
+        (this pass names its own objects) and the object list scroll-position
+        restore (updateObjects edits rows in place here; nothing scrolls).
         """
         self.saveAllData()
 
@@ -3297,7 +3295,7 @@ class MainWindow(QMainWindow):
             self.field.updateStatusBar()
 
     #: pixels between a status-bar pill and the menu it opens. Matches the
-    #: section popup's own lift, which is the spacing he approved.
+    #: section popup's own lift.
     PILL_MENU_GAP = 2
 
     def statusQuickSwitch(self, segment, names, current, switch, manage=None):
@@ -3320,8 +3318,8 @@ class MainWindow(QMainWindow):
                 switch (callable): called with the chosen name
                 manage ((str, callable)): an optional final row, separated
                     from the names, that opens the matching management dialog
-                    (his click test, 2026-08-25: the pills must offer a road
-                    to CREATING a profile or alignment, not only switching)
+                    (the pills offer a road to CREATING a profile or
+                    alignment, not only switching)
             Returns:
                 (QMenu): the menu that was popped up
         """
@@ -3355,8 +3353,7 @@ class MainWindow(QMainWindow):
         # the screen and lets popup() do its own clamping.
         # The same 2px lift the section popup gives itself
         # (SectionListPopup, status_readout.py): flush against the pill these
-        # two menus read as crowded, and he called the section spacing right
-        # (2026-08-26).
+        # two menus read as crowded.
         top_left = segment.mapToGlobal(segment.rect().topLeft())
         screen_h = self.screen().availableGeometry().height()
         menu.popup(
@@ -3423,14 +3420,14 @@ class MainWindow(QMainWindow):
         """Point the View checkboxes at the palette's live visibility flags.
 
         Seeded state was not enough once a group could be hidden by
-        right-clicking the widget itself (his report, 2026-08-26): that path
-        changes the flag without touching the menu, so the checkmarks
-        disagreed. MousePalette.saveVisibilityState calls this after every
-        visibility change, from either road, which is a push rather than a
-        menu-open pull: connecting to a menu's aboutToShow was tried and is
-        not viable here -- the View attribute is not the menubar's View menu,
-        and walking the live menubar for the real one invalidates the actions
-        createMenuBar is still assigning.
+        right-clicking the widget itself: that path changes the flag without
+        touching the menu, so the checkmarks disagreed.
+        MousePalette.saveVisibilityState calls this after every visibility
+        change, from either road, which is a push rather than a menu-open pull:
+        connecting to a menu's aboutToShow was tried and is not viable here.
+        The View attribute is not the menubar's View menu, and walking the live
+        menubar for the real one invalidates the actions createMenuBar is still
+        assigning.
 
         setChecked emits `toggled`, not `triggered`, and the handlers are on
         `triggered`, so this never re-fires a toggle.
@@ -4384,8 +4381,8 @@ class MainWindow(QMainWindow):
                     return
                 if repaired:
                     # a summary window with copy and save-as-CSV, not a
-                    # message (his ask, 2026-08-26): a lab keeps a record of
-                    # what the bulk pass touched
+                    # message: a lab keeps a record of what the bulk pass
+                    # touched
                     from PyReconstruct.modules.gui.dialog.malformed_contours import (
                         RepairedCrossingsDialog,
                     )
@@ -4399,7 +4396,7 @@ class MainWindow(QMainWindow):
         if looped:
             # a modeless review list, not a message: the user works the field
             # with the scissors while it stays open, and can copy the whole
-            # set out (his report, 2026-08-26)
+            # set out
             from PyReconstruct.modules.gui.dialog.malformed_contours import (
                 SkippedCrossingsDialog,
             )
@@ -5345,7 +5342,6 @@ class MainWindow(QMainWindow):
 
         # the lists measured their columns under the old theme's font and
         # padding; re-measure so the new theme's text is not crowded
-        # (his report, 2026-08-26)
         field = getattr(self, "field", None)
         if field is not None and hasattr(field, "table_manager"):
             field.table_manager.refreshColumnWidths()
@@ -5707,9 +5703,9 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """Save all data to files when the user exits."""
         # capture the list layout FIRST: saveToJser(close=True) closes the
-        # series, and capturing after it recorded nothing -- undocked lists
-        # did not survive a relaunch (his click test, 2026-08-25). A canceled
-        # close leaves the early capture behind, which is merely current.
+        # series, and capturing after it recorded nothing, so undocked lists
+        # did not survive a relaunch. A canceled close leaves the early capture
+        # behind, which is merely current.
         self._captureListLayout()
         response = self.saveToJser(notify=True, close=True)
         if response == "cancel":
