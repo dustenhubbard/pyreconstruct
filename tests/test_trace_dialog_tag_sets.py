@@ -3,7 +3,7 @@
 Each pick-one set gets its own labeled, restricted dropdown above the Tags
 rows, blank allowed. The Tags rows are editable dropdowns that list every
 pick-many tag with completion and show a tag's description as a tooltip. Typed
-text is still accepted (pick many allows user values, his word on 2026-08-16).
+text is still accepted (pick many allows user values, since 2026-08-16).
 Without tag sets the rows stay the plain line edits they were, so no existing
 series changes shape.
 

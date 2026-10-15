@@ -16,8 +16,8 @@ keyboard and idle on the mouse.
 
 **Where the option is, which is the part worth reading.** A three-way
 ctrl/shift/both radio group on the Mouse Tools tab was built, reviewed and then
-cut before shipping, at the maintainer's word: three presets are not a remapping,
-and a remapping is what was wanted. 1.21.0 therefore changed the binding and
+cut before shipping: three presets are not a remapping, and a remapping is
+what was wanted. 1.21.0 therefore changed the binding and
 nothing else, and Shift-click stopped working. The real thing landed afterwards:
 a picker in the *shortcuts* dialog that accepts whatever combination the user
 holds, covered by ``test_focus_edit_modifier_remappable.py``. Ctrl is still the

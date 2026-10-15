@@ -947,6 +947,8 @@ class MainWindow(QMainWindow):
         self.series.src_dir = new_src_dir
         if self.field:
             self.field.reloadImage()
+            # the view may have been saved where the image is not
+            self.offerHomeIfViewOffImage()
         self.seriesModified(True)
         
         # prompt user to scale zarr images if not scaled
@@ -1755,6 +1757,9 @@ class MainWindow(QMainWindow):
             self.field = FieldWidget(self.series, self)
             self.setCentralWidget(self.field)
 
+        # the saved view may show no part of the image
+        self.offerHomeIfViewOffImage()
+
         # create mouse palette
         if self.mouse_palette: # close previous mouse dock
             self.mouse_palette.reset()
@@ -1765,6 +1770,25 @@ class MainWindow(QMainWindow):
         self.changeTracingTrace(
             self.series.palette_traces[palette_group][index]
         ) # set the current trace
+
+    def offerHomeIfViewOffImage(self):
+        """Offer to set the view to the image when the view misses it.
+
+        Asked after the image loads: when a series opens with its image
+        found, and when its images are located. The saved view is the
+        user's, so it moves only when they pick "Set view to image";
+        declining or dismissing the prompt leaves the position and zoom as
+        saved. A view that overlaps the image at all asks nothing.
+
+            Returns:
+                (bool): True if the view was moved
+        """
+        if not self.field.viewIsOffImage():
+            return False
+        if not viewOffImageNotify(self):
+            return False
+        self.field.home()
+        return True
 
     def _closeCleanupLists(self):
         """Close every open clean-up review list before the series changes.
@@ -1962,9 +1986,17 @@ class MainWindow(QMainWindow):
         # open new series
         self.openSeries(series)
 
+        # the open stops early when the save prompt for the series already
+        # open is canceled, and that series stays open as it was
+        if self.series is not series:
+            return
+
+        # set view to entire image, as the other new-series paths do
+        self.field.home()
+
         # prompt user to save series
         self.saveAsToJser()
-    
+
     def newFromNgZarr(self):
         """Create a new series from a neuroglancer zarr."""
         zarr_fp = FileDialog.get(
@@ -2860,8 +2892,9 @@ class MainWindow(QMainWindow):
         if self.series.jserSaveRunning():
             self.series.refuseNestedSave(self.series.backupFolder())
             return
-        # the same for a backup while a series undo or redo restores the
-        # sections: the series file would not match them yet
+        # the same for a backup while a series step (an undo or redo, or a
+        # change to the profiles or alignments) rewrites the sections: the
+        # sections and the series file would not match yet
         if self.series.seriesStepRunning():
             self.series.refuseSaveDuringStep(self.series.backupFolder())
             return
@@ -2937,12 +2970,13 @@ class MainWindow(QMainWindow):
         if self.series.jserSaveRunning():
             self.series.refuseNestedSave(self.series.jser_fp)
             return "cancel"
-        # The same while a series undo or redo restores the sections (a .jser
-        # opened from the Finder arrives at its progress updates): the series
-        # attributes are put back only after the last section, so a save here
-        # would write a series file that does not match them. Refused before
-        # the prompt, so the step finishes on this series and the open is
-        # skipped with the notice.
+        # The same while a series step rewrites the sections (a .jser opened
+        # from the Finder arrives at its progress updates): an undo or redo
+        # puts the series attributes back only after the last section, and a
+        # change to the profiles or alignments has rewritten some sections and
+        # not the rest, so a save here would write them out of step (see
+        # Series.seriesStep). Refused before the prompt, so the step finishes
+        # on this series and the open is skipped with the notice.
         if self.series.seriesStepRunning():
             self.series.refuseSaveDuringStep(self.series.jser_fp)
             return "cancel"

@@ -310,7 +310,7 @@ def test_whats_new_reads_bundled_file_and_is_offline_safe(monkeypatch, tmp_path)
     assert "All release notes on GitHub" in F.whats_new_content("1.20.3")["body"]
 
 
-# ---- the maintainer byline (provenance line on every framing) ---------------
+# ---- the footer provenance line on every framing ----------------------------
 # The footer line is a distinct field so the dialog can set it off from the
 # notes as a quiet aside rather than mixing it into the release bullets, and it
 # must be present on every framing.
@@ -481,7 +481,7 @@ def _on_demand_body(monkeypatch, tmp_path, current="1.20.3"):
 
 def test_help_menu_reopen_shows_the_latest_three(monkeypatch, tmp_path):
     """The running version leads, with the two releases before it beneath:
-    recent history, newest first (his ask, 2026-08-25)."""
+    recent history, newest first (since 2026-08-25)."""
     content = _on_demand_body(monkeypatch, tmp_path)
     assert content["body"].index("### 1.20.3") < content["body"].index("### 1.20.2")
     assert "Bullet three-A." in content["body"]        # its own notes, in full
@@ -1081,7 +1081,7 @@ def test_secondary_color_survives_the_cocoa_degenerate_palette(qapp):
     #000000``, because the macOS style dims disabled text at paint time rather
     than in the palette. The first secondary blend interpolated disabled
     toward active, which on that palette returns pure black at every
-    fraction, so Dusten saw solid dark text while offscreen/Fusion (#bebebe
+    fraction, so macOS showed solid dark text while offscreen/Fusion (#bebebe
     disabled) rendered the intended gray on every CI and local test run. The
     blend now runs background-to-text, endpoints no readable theme can leave
     equal; this feeds it the exact cocoa shape and requires a real

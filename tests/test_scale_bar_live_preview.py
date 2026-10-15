@@ -1,6 +1,6 @@
 """The scale bar size slider previews on the field as it moves.
 
-His click test (2026-09-14): the size could only be judged after OK closed
+Before 2026-09-14 the size could only be judged after OK closed
 Series > Options. Now the slider resizes the bar in the field live, nothing
 is stored until OK, and Cancel puts the bar back to its stored size.
 """

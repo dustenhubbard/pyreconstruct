@@ -252,7 +252,7 @@ def test_section_edit_resolves_each_trace_from_its_own_tags(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# a value belongs to one pick-one set (his pick A, 2026-09-23)
+# a value belongs to one pick-one set (since 2026-09-23)
 # ---------------------------------------------------------------------------
 LOCATION = {"mode": "one", "tags": ["shaft", "base", "neck"], "descriptions": {"shaft": "On the dendritic shaft."}}
 

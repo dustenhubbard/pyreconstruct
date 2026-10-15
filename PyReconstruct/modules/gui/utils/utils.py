@@ -807,6 +807,46 @@ def linkedUndoNotify(redo=False):
         return "cancel"
 
 
+VIEW_OFF_IMAGE_TITLE = "View Outside Image"
+VIEW_OFF_IMAGE_TEXT = "The saved view is outside the image, so the field looks black."
+VIEW_OFF_IMAGE_HOME = "Set view to image"
+VIEW_OFF_IMAGE_KEEP = "Keep saved view"
+
+
+def viewOffImageNotify(parent=None):
+    """Ask whether to set a saved view that shows none of the image to the
+    image. Returns True only when the user picks "Set view to image".
+
+    The saved view is the user's own, so anything short of that choice keeps
+    it: "Keep saved view", Escape and the close box all return False. With no
+    user present the answer is False for the same reason, and no dialog is
+    built. Built here rather than at the call site for the reason given in
+    `linkedUndoNotify`: tests replace the helper by name.
+
+        Params:
+            parent (QWidget): the window to center on; the first series opens
+                before `setMainWindow` runs, so the caller passes itself
+    """
+    if not user_is_present():
+        return False
+
+    mbox = QMessageBox(parent or mainwindow)
+    mbox.setWindowTitle(VIEW_OFF_IMAGE_TITLE)
+    mbox.setText(VIEW_OFF_IMAGE_TEXT)
+    home_bttn = mbox.addButton(VIEW_OFF_IMAGE_HOME, QMessageBox.AcceptRole)
+    keep_bttn = mbox.addButton(VIEW_OFF_IMAGE_KEEP, QMessageBox.RejectRole)
+    mbox.setDefaultButton(home_bttn)
+    mbox.setEscapeButton(keep_bttn)
+
+    mbox.exec()
+
+    clicked = mbox.clickedButton()
+    return (
+        clicked is not None and
+        mbox.buttonRole(clicked) == QMessageBox.AcceptRole
+    )
+
+
 def drawOutlinedText(
         painter : QPainter, 
         x : int, y : int, 

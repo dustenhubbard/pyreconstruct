@@ -43,8 +43,7 @@ first re-deciding how row shapes are discriminated. And the project already
 has a successor mechanism: ``LogSet``/``Log`` records dated, attributed,
 per-object, per-section history at series level, which is a strict superset of
 what a per-trace string held. Whether the legacy field should be migrated into
-the log, preserved verbatim, or left dropped is the maintainer's call. See the
-PR body.
+the log, preserved verbatim, or left dropped is an open question.
 """
 
 import pytest

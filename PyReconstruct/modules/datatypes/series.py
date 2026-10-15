@@ -77,6 +77,11 @@ class SeriesClosedError(FileNotFoundError):
     """
 
 
+## what a series undo or redo is doing, for the notice of a save it skips
+## ("this series is <why>"; see Series.seriesStep)
+UNDO_STEP = "in the middle of an undo or redo"
+
+
 def _checkColumnsOption(option_name : str, value):
     """Raise if a ``*_columns`` option is not a list of (name, shown) pairs.
 
@@ -967,9 +972,10 @@ class Series():
         file. The GUI checks `jserSaveRunning` before it gets here, so in the
         app the refusal is the notice alone.
         Nothing in the app queues saves, so refusing is the whole fix.
-        A save while a series undo or redo is restoring the sections is
-        refused the same way (see `seriesStep`): it would write the restored
-        sections with the series attributes from before the step.
+        A save while a series undo or redo, or a change to the profiles or
+        alignments, is rewriting the sections is refused the same way (see
+        `seriesStep`): it would write the sections out of step with each
+        other or with the series attributes.
         See `_saveJser` for what a save does.
 
             Params:
@@ -977,9 +983,9 @@ class Series():
                 close (bool): True if series should be closed after saving
             Raises:
                 SeriesSaveError: if another save of this series is running, if
-                    a series undo or redo is running, or if the series cannot
-                    be written without losing a section. The existing .jser is
-                    not replaced in any of these cases.
+                    a series step is running (see seriesStep), or if the series
+                    cannot be written without losing a section. The existing
+                    .jser is not replaced in any of these cases.
         """
         target = self.jser_fp if not save_fp else save_fp
         if self.jserSaveRunning():
@@ -1019,7 +1025,7 @@ class Series():
         return self._refuseSkippedSave("already being saved", target)
 
     def refuseSaveDuringStep(self, target : str) -> SeriesSaveError:
-        """Tell the user a save was skipped because a series undo or redo is running.
+        """Tell the user a save was skipped because a series step is running.
 
         As refuseNestedSave: the notice, and the error for the caller to
         raise. The GUI's save, close, open and backup paths call it before
@@ -1032,7 +1038,7 @@ class Series():
             Returns:
                 (SeriesSaveError) the error, not raised
         """
-        return self._refuseSkippedSave("in the middle of an undo or redo", target)
+        return self._refuseSkippedSave(self._series_step or UNDO_STEP, target)
 
     def _refuseSkippedSave(self, why : str, target : str) -> SeriesSaveError:
         """Show the notice for a skipped save and return its error, not raised.
@@ -1458,7 +1464,7 @@ class Series():
         if window[2] == 0:  # width
             window[2] = 1
         if window[3] == 0:  # height
-            window[3] == 1
+            window[3] = 1
         
         # check for separate obj attrs
         if "obj_attrs" not in series_data:
@@ -1957,35 +1963,45 @@ class Series():
         """True while enumerateSections is going through this series."""
         return bool(self._running_passes)
 
-    ## True while a series undo or redo is restoring this series' sections
-    ## (SeriesStates.undoState); saveJser refuses meanwhile
-    _series_step_running = False
+    ## What the series step running on this series is doing, in the user's
+    ## terms, or None (see seriesStep); saveJser refuses meanwhile
+    _series_step = None
 
     def seriesStepRunning(self) -> bool:
-        """True while a series undo or redo is restoring this series."""
-        return self._series_step_running
+        """True while a series step is rewriting this series' sections."""
+        return self._series_step is not None
 
     @contextmanager
-    def seriesStep(self):
-        """Mark a series undo or redo as running while it restores the sections.
+    def seriesStep(self, why : str = UNDO_STEP):
+        """Mark a series step as running while it rewrites the sections.
 
-        The step restores and writes its sections one by one, and puts the
-        series attributes back only after the last one. Its progress dialog
-        runs the event loop on every update, where a .jser opened from the
-        Finder asks to save this series. A save there wrote the restored
-        sections with the series attributes from before the step: undoing a
-        brightness/contrast profile rename saved sections carrying the old
-        name under a series file still naming the new one, and the series
-        raised KeyError when it was opened again (see _repointBCProfile).
+        A series undo or redo (SeriesStates.undoState) restores and writes
+        its sections one by one, and puts the series attributes back only
+        after the last one. Its progress dialog runs the event loop on every
+        update, where a .jser opened from the Finder asks to save this
+        series. A save there wrote the restored sections with the series
+        attributes from before the step: undoing a brightness/contrast
+        profile rename saved sections carrying the old name under a series
+        file still naming the new one, and the series raised KeyError when it
+        was opened again (see _repointBCProfile). Changing the profiles or
+        the alignments (modifyBCProfiles, modifyAlignments) rewrites every
+        section the same way, and a save part-way wrote sections that
+        disagreed about which profiles or alignments exist.
         saveJser refuses while this is set, and the GUI's save, close, open
         and backup paths check it first and skip with a notice, so the step
-        finishes on the series it began on.
+        finishes on the series it began on. A step inside another leaves the
+        outer one marked when it ends.
+
+            Params:
+                why (str): what the step is doing, for the notice ("this
+                    series is <why>")
         """
-        self._series_step_running = True
+        outer = self._series_step
+        self._series_step = why
         try:
             yield
         finally:
-            self._series_step_running = False
+            self._series_step = outer
 
     def setPassWriteHook(self, hook):
         """Call hook(section) after a pass over the section files writes one.
@@ -2133,28 +2149,33 @@ class Series():
         if self.alignment != "no-alignment" and alignment_dict[self.alignment] is None:
             self.alignment = "no-alignment"
 
-        for i, (snum, section) in enumerate(self.enumerateSections(
-            message="Modifying alignments...",
-            series_states=series_states,
-            breakable=False,
-            writes_after=log_event,
-        )):
-            if i == 0:
-                # and carry the per-object and per-ztrace alignment attributes
-                # across, or they keep naming an alignment this rewrite is
-                # about to remove. Not before the loop: the series undo state
-                # is saved when the first section comes out, and it has to hold
-                # the attributes from before the remap for undo to restore them
-                self.remapStoredAlignments(alignment_dict)
-            old_tforms = section.tforms.copy()
-            new_tforms = {}
-            for new_a, old_a in alignment_dict.items():
-                if old_a is None or old_a not in old_tforms:
-                    continue
-                else:
-                    new_tforms[new_a] = old_tforms[old_a]
-            section.tforms = new_tforms
-            section.save()
+        # A .jser save part-way would write sections that disagree about
+        # which alignments exist, and the window raised opening that file:
+        # the series refuses such a save while the loop runs.
+        with self.seriesStep("in the middle of changing its alignments"):
+            for i, (snum, section) in enumerate(self.enumerateSections(
+                message="Modifying alignments...",
+                series_states=series_states,
+                breakable=False,
+                writes_after=log_event,
+            )):
+                if i == 0:
+                    # and carry the per-object and per-ztrace alignment
+                    # attributes across, or they keep naming an alignment this
+                    # rewrite is about to remove. Not before the loop: the
+                    # series undo state is saved when the first section comes
+                    # out, and it has to hold the attributes from before the
+                    # remap for undo to restore them
+                    self.remapStoredAlignments(alignment_dict)
+                old_tforms = section.tforms.copy()
+                new_tforms = {}
+                for new_a, old_a in alignment_dict.items():
+                    if old_a is None or old_a not in old_tforms:
+                        continue
+                    else:
+                        new_tforms[new_a] = old_tforms[old_a]
+                section.tforms = new_tforms
+                section.save()
         
         if log_event:
             for new_a, old_a in alignment_dict.items():
@@ -2182,28 +2203,36 @@ class Series():
         # every section, and Series.bc_profiles raises when the sections disagree
         # about which profiles exist, so the undo has to be all-or-nothing rather
         # than dissolvable into per-section undos.
-        for snum, section in self.enumerateSections(
-            message="Modifying brightness/contrast profiles...",
-            series_states=series_states,
-            breakable=False,
-            writes_after=log_event,
+        # A .jser save part-way would write sections that disagree about
+        # which profiles exist, under a series file naming the displayed
+        # profile from before the change: the series refuses such a save
+        # while the loop runs. The caller points bc_profile at the renamed
+        # profile after this returns, with no event loop turn in between.
+        with self.seriesStep(
+            "in the middle of changing its brightness/contrast profiles"
         ):
-            old_profiles = section.bc_profiles.copy()
-            # SeriesIterator records a per-section undo only when a section
-            # reports modified traces, transforms or flags, and bc_profiles is
-            # none of those, so hand the old profiles to the series state here.
-            if series_states is not None:
-                series_states.recordBCProfiles(snum, old_profiles)
-            new_profiles = {}
-            for new_p, old_p in profiles_dict.items():
-                if old_p is None:
-                    continue
-                elif old_p not in old_profiles:
-                    continue
-                else:
-                    new_profiles[new_p] = old_profiles[old_p]
-            section.bc_profiles = new_profiles
-            section.save()
+            for snum, section in self.enumerateSections(
+                message="Modifying brightness/contrast profiles...",
+                series_states=series_states,
+                breakable=False,
+                writes_after=log_event,
+            ):
+                old_profiles = section.bc_profiles.copy()
+                # SeriesIterator records a per-section undo only when a section
+                # reports modified traces, transforms or flags, and bc_profiles is
+                # none of those, so hand the old profiles to the series state here.
+                if series_states is not None:
+                    series_states.recordBCProfiles(snum, old_profiles)
+                new_profiles = {}
+                for new_p, old_p in profiles_dict.items():
+                    if old_p is None:
+                        continue
+                    elif old_p not in old_profiles:
+                        continue
+                    else:
+                        new_profiles[new_p] = old_profiles[old_p]
+                section.bc_profiles = new_profiles
+                section.save()
         
         if log_event:
             for new_p, old_p in profiles_dict.items():
