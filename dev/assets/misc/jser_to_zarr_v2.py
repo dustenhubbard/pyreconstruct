@@ -12,13 +12,13 @@ Three independent failures, each reproduced by running this file against
 line numbers drift and these two files drift independently:
 
 1. **The path is a placeholder.** ``jser_fp`` below is literally
-   ``r"C:\path\to\Series\DSNYJ_JSER\DSNYJ.jser"``. It sits under the
+   ``r"C:\path\to\Series\SERIES_JSER\SERIES.jser"``. It sits under the
    ``# user-entered info`` comment, so it is arguably meant to be edited, but it
    means the file as committed cannot run anywhere. The ``Series.openJser(jser_fp)``
    call below raises::
 
        FileNotFoundError: [Errno 2] No such file or directory:
-       'C:\\path\\to\\Series\\DSNYJ_JSER\\DSNYJ.jser'
+       'C:\\path\\to\\Series\\SERIES_JSER\\SERIES.jser'
 
 2. **``generateLabelsArray`` has a different signature now.** The call below
    passes ``contour_names``, a list of ``str``. ``TraceLayer.generateLabelsArray``
@@ -90,7 +90,7 @@ from PyReconstruct.modules.datatypes import Series
 from PyReconstruct.modules.backend.view import SectionLayer
 
 # user-entered info
-jser_fp = r"C:\path\to\Series\DSNYJ_JSER\DSNYJ.jser"
+jser_fp = r"C:\path\to\Series\SERIES_JSER\SERIES.jser"
 contour_names = ["d001"]  # use drop-down method with object groups
 srange = (100, 151)  # enter manually
 window = [16, 15, 10, 10]  # use a stamp (make one of the palette traces a freaking square)

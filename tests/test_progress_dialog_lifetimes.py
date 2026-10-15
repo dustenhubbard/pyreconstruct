@@ -1,6 +1,6 @@
 """Progress dialogs must come down however their operation ends.
 
-Three findings from the review fleet (2026-08-28), one disease: a reporter
+Three findings from the 2026-08-28 review, one disease: a reporter
 that reaches 100% only on the happy path. The enumerateSections dialog has
 no cancel button, so an abandoned iteration left a window-modal dialog
 blocking the app with force-quit as the only exit; openJser's dialog

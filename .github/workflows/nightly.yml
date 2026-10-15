@@ -6,11 +6,14 @@ name: nightly
 # a GitHub pre-release. Stable stays a promotion: a clean vX.Y.Z tag on main,
 # cut by hand (see build-installers.yml).
 #
-# Tag shape: vX.Y.Z.devYYYYMMDD, a PEP 440 dev release of the NEXT stable, so
-# v1.24.0.dev20260928 sorts above v1.23.0 and below the v1.24.0 that will
-# replace it. X.Y.Z is the newest stable with the minor bumped, or the
-# `version` input for a planned major or a patch line. At most one nightly a
-# day: a second run on the same date finds its tag already there and stops.
+# Tag shape: vX.Y.Z.devYYYYMMDDHHMM (UTC), a PEP 440 dev release of the NEXT
+# stable, so v1.24.0.dev202610081315 sorts above v1.23.0 and below the v1.24.0
+# that will replace it. X.Y.Z is the newest stable with the minor bumped, or
+# the `version` input for a planned major or a patch line. The time in the tag
+# lets a manual run ship a second nightly the same day. PEP 440 compares the
+# dev number as an integer, so every 12-digit tag sorts above every older
+# 8-digit vX.Y.Z.devYYYYMMDD tag, and the old tags stay valid everywhere they
+# are read. A run whose tag already exists (two runs in one minute) stops.
 #
 # Why this pushes the tag AND dispatches the build, rather than letting the
 # tag push trigger build-installers.yml on its own: GitHub does not create a
@@ -66,7 +69,7 @@ jobs:
         run: |
           set -euo pipefail
           STABLE_RE='^v[0-9]+\.[0-9]+\.[0-9]+$'
-          NIGHTLY_RE='^v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]{8}$'
+          NIGHTLY_RE='^v[0-9]+\.[0-9]+\.[0-9]+\.dev[0-9]{8}([0-9]{4})?$'
 
           newest_stable="$(git tag --list 'v*' | grep -E "$STABLE_RE" | sort -V | tail -n 1 || true)"
           if [ -z "$newest_stable" ]; then
@@ -74,8 +77,9 @@ jobs:
             exit 1
           fi
 
-          # Newest nightly by its date field, then by version for a same-day
-          # tie across base versions.
+          # Newest nightly by its date (or date and time) field, compared as
+          # an integer like PEP 440 does, then by version for a tie across
+          # base versions.
           newest_nightly="$(git tag --list 'v*' | grep -E "$NIGHTLY_RE" \
             | awk -F'[.]dev' '{ print $2, $0 }' | sort -k1,1n -k2,2V | tail -n 1 | cut -d' ' -f2 || true)"
 
@@ -90,14 +94,14 @@ jobs:
             base="$major.$((minor + 1)).0"
           fi
 
-          today="$(date -u +%Y%m%d)"
-          tag="v${base}.dev${today}"
+          stamp="$(date -u +%Y%m%d%H%M)"
+          tag="v${base}.dev${stamp}"
           echo "newest stable:  $newest_stable"
           echo "newest nightly: ${newest_nightly:-none}"
           echo "tonight's tag:  $tag"
 
           if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-            echo "::notice::$tag already exists; one nightly a day"
+            echo "::notice::$tag already exists; one nightly a minute"
             echo "tag=" >> "$GITHUB_OUTPUT"
             exit 0
           fi

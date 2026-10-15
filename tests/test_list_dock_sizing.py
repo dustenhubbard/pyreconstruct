@@ -230,7 +230,7 @@ def test_squeezed_list_floats_usable(qapp, dock_mainwindow, manager):
 def test_hand_set_float_size_survives_refloat(qapp, dock_mainwindow, manager):
     """After the first float, the size belongs to the user -- bigger or
     smaller than the default, refloating keeps it. The one bound: width
-    never goes under the menu-bar floor (his call, 2026-08-26), so the
+    never goes under the menu-bar floor (since 2026-08-26), so the
     small example here sits just above it."""
     table = open_list(manager, "object", qapp)
     for user_size in ((760, 820), (380, 300)):
@@ -276,9 +276,9 @@ def test_minimum_is_set_on_every_list_type(qapp, dock_mainwindow, manager):
 
 
 def test_floating_list_shrinks_to_the_float_floor_only(qapp, dock_mainwindow, manager):
-    """Patrick's three-row list (2026-08-25): a floated list sized by hand may
-    go far below the docked floor in HEIGHT. The WIDTH floor stayed higher on
-    his 2026-08-26 call: never so narrow that the list's own menu bar clips,
+    """A user's three-row list (2026-08-25): a floated list sized by hand may
+    go far below the docked floor in HEIGHT. The WIDTH floor stayed higher
+    since 2026-08-26: never so narrow that the list's own menu bar clips,
     the same measure the docked width hint uses."""
     table = open_list(manager, "object", qapp)
     table.setFloating(True)
@@ -342,7 +342,7 @@ def test_layout_state_roundtrip_keeps_lists_usable(qapp, dock_mainwindow, manage
 
 
 # --------------------------------------------------------------------------
-# Floating lists are real windows (2026-08-25, his beta-2 report): a floated
+# Floating lists are real windows (reported on beta 2, 2026-08-25): a floated
 # list used to be a Qt TOOL window, pinned above the main window forever.
 # --------------------------------------------------------------------------
 
@@ -386,7 +386,7 @@ def test_dock_button_appears_only_while_floating(qapp, dock_mainwindow, manager)
     assert not button.icon().isNull()          # an icon, not a text row
     # painted at 2x from the palette, not a faint stock style icon -- and
     # spread across the WHOLE canvas: device-space coordinates once clipped
-    # the glyph to the top-left corner (his screenshot, 2026-08-26)
+    # the glyph to the top-left corner (seen 2026-08-26)
     image = button.icon().pixmap(16, 16).toImage()
     w, h = image.width(), image.height()
 
@@ -549,7 +549,7 @@ def test_float_from_tab_group_and_back(qapp, dock_mainwindow, manager):
 
 
 # --------------------------------------------------------------------------
-# Tabs sit along the top of the list area (his call, 2026-08-25)
+# Tabs sit along the top of the list area (since 2026-08-25)
 # --------------------------------------------------------------------------
 
 def test_list_tabs_sit_on_top(qapp, dock_mainwindow, manager):
@@ -563,7 +563,7 @@ def test_list_tabs_sit_on_top(qapp, dock_mainwindow, manager):
 
 
 # --------------------------------------------------------------------------
-# The collapse toggle (stage 1 of the sidebar, his call 2026-08-25): hide the
+# The collapse toggle (stage 1 of the sidebar, 2026-08-25): hide the
 # docked lists, bring the same set back, never touch a floating list.
 # --------------------------------------------------------------------------
 
@@ -632,7 +632,7 @@ def test_new_list_while_collapsed_expands_first(qapp, dock_mainwindow, manager):
 
 
 # --------------------------------------------------------------------------
-# Tabs with X's, no double title (his click test, 2026-08-25): the tab names
+# Tabs with X's, no double title (since 2026-08-25): the tab names
 # the list and closes it; the title bar only exists for a lone docked list.
 # --------------------------------------------------------------------------
 
@@ -651,7 +651,7 @@ def test_tabbed_lists_hide_their_title_bars(qapp, dock_mainwindow, manager):
 
 def test_a_lone_docked_list_keeps_the_original_title_bar(qapp, dock_mainwindow, manager):
     """A lone list keeps Qt's own title bar (a slim tab-styled bar was tried
-    and reverted on his click test, 2026-08-25): the drag, float and close
+    and reverted, 2026-08-25): the drag, float and close
     affordances stay exactly what stable users know."""
     only = open_list(manager, "object", qapp)
     assert only.titleBarWidget() is None
@@ -708,7 +708,7 @@ def test_floated_list_never_keeps_the_empty_title_widget(qapp, dock_mainwindow, 
 
 # --------------------------------------------------------------------------
 # Tearing a list out by drag must survive the real-window flag swap
-# (his click test, 2026-08-25: the swap mid-drag killed the gesture).
+# (seen 2026-08-25: the swap mid-drag killed the gesture).
 # --------------------------------------------------------------------------
 
 def test_flag_swap_waits_for_the_mouse_release(qapp, dock_mainwindow, manager, monkeypatch):
@@ -767,7 +767,7 @@ def test_double_clicking_a_tab_floats_its_list(qapp, dock_mainwindow, manager):
 
 
 # --------------------------------------------------------------------------
-# Right-click roads between docked and floating (his ask, 2026-08-25)
+# Right-click roads between docked and floating (since 2026-08-25)
 # --------------------------------------------------------------------------
 
 def test_tab_right_click_offers_float_and_close(qapp, dock_mainwindow, manager):
@@ -809,15 +809,15 @@ def test_title_bar_right_click_offers_float_and_close(qapp, dock_mainwindow, man
 
 
 def test_default_docked_width_clears_the_list_menu_bar(qapp, dock_mainwindow, manager):
-    """The default width must not obscure any of the list's own menus (his
-    click test, 2026-08-26). Columns may still overflow; the menu bar not."""
+    """The default width must not obscure any of the list's own menus (seen
+    on 2026-08-26). Columns may still overflow; the menu bar not."""
     table = open_list(manager, "object", qapp)
     assert table.width() >= table.main_widget.menuBar().sizeHint().width()
 
 
 def test_toggle_on_a_bare_series_opens_the_object_list(qapp, dock_mainwindow, manager):
     """A freshly opened series has no lists, and the sidebar button used to
-    do nothing at all there. It now opens the object list (his call,
+    do nothing at all there. It now opens the object list (since
     2026-08-26), the one most people want first."""
     assert not any(manager.tables.values())
     manager.toggleListsCollapsed()
@@ -838,7 +838,7 @@ def test_toggle_on_a_bare_series_opens_the_object_list(qapp, dock_mainwindow, ma
 def test_tab_properties_survive_a_dock_rebuild(qapp, dock_mainwindow, manager):
     """Qt resets tabsClosable and the context-menu policy on the tab bar it
     reuses as docks come and go; the X went missing and reappeared on that
-    beat (his report, 2026-08-26). Both are re-applied on every wiring pass,
+    beat (reported 2026-08-26). Both are re-applied on every wiring pass,
     so a reset cannot outlive the next dock change."""
     from PySide6.QtCore import Qt
 
@@ -858,7 +858,7 @@ def test_tab_properties_survive_a_dock_rebuild(qapp, dock_mainwindow, manager):
 
 def test_a_tab_drag_tears_the_list_out(qapp, dock_mainwindow, manager):
     """Qt tears a dock out by its title bar, which a tabbed list hides, so
-    the gesture did nothing (his report, 2026-08-26). The tear-out is ours
+    the gesture did nothing (reported 2026-08-26). The tear-out is ours
     now: past the drag threshold, the list floats."""
     import shiboken6
     from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
@@ -893,7 +893,7 @@ def test_a_tab_drag_tears_the_list_out(qapp, dock_mainwindow, manager):
 
 def test_theme_switch_remeasures_list_columns(qapp, main_window, gui_dialogs):
     """A theme switch changes fonts and padding, but the lists kept the OLD
-    theme's column widths and the new theme's text crowded them (his report,
+    theme's column widths and the new theme's text crowded them (reported
     2026-08-26). setTheme now re-measures every open list."""
     mgr = main_window.field.table_manager
     mgr.newTable("object")
@@ -918,7 +918,7 @@ def test_theme_switch_remeasures_list_columns(qapp, main_window, gui_dialogs):
 def test_docked_table_never_overflows_its_viewport(qapp, dock_mainwindow, manager):
     """The last rows of a docked list could not be scrolled to: an old
     resizeEvent override sized the table to the DOCK's height minus a guessed
-    20px, past the space under the menu bar (his report, 2026-08-26). The
+    20px, past the space under the menu bar (reported 2026-08-26). The
     layout owns the size now, so the table must end inside its window."""
     table = open_list(manager, "object", qapp)
     settle(qapp)
@@ -935,7 +935,7 @@ def test_docked_table_never_overflows_its_viewport(qapp, dock_mainwindow, manage
 
 def test_tabs_fill_the_full_bar_width(qapp, dock_mainwindow, manager):
     """Two tabs over a wide list left a blank stump of tab bar beside them;
-    tabs expand to share the full width (his call, 2026-08-26)."""
+    tabs expand to share the full width (since 2026-08-26)."""
     open_list(manager, "object", qapp)
     open_list(manager, "section", qapp)
     settle(qapp)

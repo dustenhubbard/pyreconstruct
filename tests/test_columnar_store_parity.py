@@ -34,7 +34,7 @@ one trace, and
 Those gaps are covered twice, deliberately. Tests below mutate real traces on
 real sections, so the mutation entry points get covered against real material.
 And `tests/fixtures/parity_series.jser` -- a checked-in synthetic series added
-because review-246 found the real fixture cannot distinguish the parity
+because the real fixture cannot distinguish the parity
 definitions that matter -- carries the missing domains in the *file itself*:
 positional (list) contour rows, coordinates inexact at 7 decimal places,
 tagged/negative/hidden traces, and single-point traces the load path screens.
@@ -43,7 +43,7 @@ fixture keeps carrying all of them.
 
 The coordinate backing is `SegmentedCoordinates`, and it is the decided one:
 the paired undo-snapshot measurement found the per-section packed alternative
-0.32% dearer on the workload it was hypothesized to win, the A1 open-pass
+0.32% dearer on the workload it was hypothesized to win, the open-pass timing
 split leans the same way, and the losing backing was deleted rather than kept
 as an option. The store still reaches its backing only through the five-method
 interface, so these tests exercise the seam a future layout would arrive
@@ -105,7 +105,7 @@ def loaded_sections(real_series):
 
 
 ## The checked-in synthetic series. It exists because the real fixture cannot
-## prove the parity this suite claims (review-246): every one of its 40,210
+## prove the parity this suite claims: every one of its 40,210
 ## coordinate values is exact at 7 dp, none of its traces is tagged, negative
 ## or hidden, and its contour rows are legacy dicts. This file carries, in the
 ## raw bytes rather than through an in-test mutation: positional (list) contour
@@ -318,10 +318,9 @@ def test_the_synthetic_file_itself_carries_what_the_real_series_cannot():
     ## The fill mode is a (mode, condition) pair and the parity walk compares it
     ## column by column, so a fixture that carried one pair everywhere would let
     ## a store that dropped the column entirely still pass. Three pairs are
-    ## checked in (none/none x6, solid/unselected, transparent/selected), which
-    ## is the number the PR body claims, so the count is asserted rather than
-    ## the exact pairs: a re-cut is free to change which three, not free to
-    ## flatten the variety (review-248 N01).
+    ## checked in (none/none x6, solid/unselected, transparent/selected), so
+    ## the count is asserted rather than the exact pairs: a re-cut is free to
+    ## change which three, not free to flatten the variety.
     fill_modes = {tuple(row[6]) for row in rows}
     assert len(fill_modes) >= 3, (
         f"the fixture carries only {len(fill_modes)} fill-mode pair(s), "
@@ -367,8 +366,8 @@ def test_synthetic_coordinates_stay_unrounded_from_file_to_store(synthetic_secti
     """The two parity definitions, distinguished on checked-in material.
 
     The real series cannot tell a silently rounding store from a faithful one
-    (all 40,210 values exact at 7 dp), which is review-246's finding against
-    this suite's own fixture. Here coordinates that a `getList` round trip
+    (all 40,210 values exact at 7 dp), so this suite's own real fixture
+    cannot catch a rounding store. Here coordinates that a `getList` round trip
     would move arrive from the file, survive `Trace.fromList` verbatim, and
     must come back out of the store bit-identical -- so a store that rounded
     on the way in fails on the fixture alone, with nothing mutated in-test.
@@ -586,10 +585,9 @@ def test_the_columns_are_the_dtypes_the_layout_claims():
 ##
 ## `totalPoints` was a sixth member of this tuple and is not one any more. Its
 ## only consumer anywhere in the tree was `PackedCoordinates.deadPoints`, which
-## this PR deleted, so pinning it here would have made the regression net defend
-## dead code -- against this PR's own stated principle that code nobody consumes
-## is unreleased scope (review-246 F06). The property went with the tuple entry,
-## in this commit (review-248 F02).
+## is deleted, so pinning it here would make the regression net defend dead
+## code, and code nobody consumes is unreleased scope. The property went with
+## the tuple entry.
 COORDINATE_BACKING_SURFACE = ("append", "get", "set", "release", "freeze")
 
 ## How much of that surface makes a class a backing for the purpose of the pin
@@ -613,7 +611,7 @@ def _backingsInNamespace(module) -> list:
     deprecation alias such as `LegacyCoordinates = SegmentedCoordinates` --
     introduces no second backing, but a plain scan of `vars()` would return it
     twice and fail the pin below with a message asserting a second backing
-    exists when it does not (review-248 F03). Names are not the unit here; the
+    exists when it does not. Names are not the unit here; the
     objects are.
     """
     unique = {
@@ -628,12 +626,12 @@ def _backingsInNamespace(module) -> list:
 def test_the_decided_backing_is_segmented_and_the_module_carries_no_other():
     """The backing decision, pinned so reverting it is loud.
 
-    Design question 1 (one coordinate array per section versus one per trace)
-    was decided for the segmented pole after the paired undo-snapshot
-    measurement found `PackedCoordinates` 0.32% dearer on the workload it was
-    hypothesized to win, with A1's open-pass split leaning the same way. The
-    loser was deleted, not parked: a second backing nobody consumes is
-    unreleased scope (review-246 F06), and this test is what makes
+    One coordinate array per section versus one per trace was decided for
+    the segmented pole after the paired undo-snapshot measurement found
+    `PackedCoordinates` 0.32% dearer on the workload it was hypothesized to
+    win, with the open-pass timing split leaning the same way. The loser was
+    deleted, not parked: a second backing nobody consumes is unreleased
+    scope, and this test is what makes
     reintroducing it a decision rather than a drift.
 
     PINNED ON THE SURFACE, NOT ON THE NAME
@@ -641,8 +639,8 @@ def test_the_decided_backing_is_segmented_and_the_module_carries_no_other():
     The `hasattr` line below is a tripwire for the one drift it can see: a
     revert, or the old class cherry-picked back under its old name. It is not
     the property. On its own it enforced a *name* -- the identical deleted
-    class re-inserted as `ArenaCoordinates` passed this module 35/35
-    (review-wave-b F01) -- while this test's own name promises the module
+    class re-inserted as `ArenaCoordinates` passed this module 35/35, while
+    this test's own name promises the module
     carries no other backing at all. So the property is asserted directly: no
     class reachable in the module's namespace but `SegmentedCoordinates` has a
     coordinate backing's shape.
@@ -692,11 +690,9 @@ def test_the_backing_scan_sits_in_a_gap():
 
 
 def test_the_store_is_exported_through_the_datatypes_package():
-    """The deferred `datatypes/__init__.py` export, taken in this PR.
+    """The store classes are exported from `datatypes/__init__.py`.
 
-    Neither wave-B PR could take it without colliding with the other, so it
-    was parked for the PR that decides the backing (2026-08-03 realign, Part
-    2, wave B, order 1). Identity is asserted, not just importability: the
+    Identity is asserted, not just importability: the
     package must hand out the same objects this suite tests.
     """
     from PyReconstruct.modules import datatypes
@@ -779,7 +775,7 @@ def test_the_two_contour_enumerators_differ_only_in_order():
     """`contourNames` sorts, `contourNamesInInsertionOrder` does not, and they
     enumerate the same names.
 
-    The store-only half of the 2026-08-06 ordering decision; the object-model
+    The store-only half of the contour ordering rule; the object-model
     half is in `test_section_columnar_dual_write.py`. Names chosen so that
     append order and sorted order share no position.
     """
@@ -952,9 +948,8 @@ def test_a_section_rebuilt_from_a_files_key_set_still_carries_no_alignment(
     and `Section.updateJSON` deletes it on unpack. So a consumer that rebuilt
     a section's transforms from the file's key set through a plain dict would
     lose `no-alignment` on every section, and every other test in this file
-    would pass clean over the loss -- which is why the 2026-08-03 realign
-    requires this pin before any consumer parity claim is accepted (Part 2,
-    wave B, order 2).
+    would pass clean over the loss, which is why this pin comes before any
+    consumer parity claim is accepted.
 
     Every section here IS a rebuild from a file's key set: `Section.__init__`
     walks `section_data["tforms"]` into a fresh `TransformsDict`. Both halves
@@ -1200,19 +1195,17 @@ def test_ids_are_issued_once_per_row_over_a_whole_real_section(loaded_sections):
     assert issuer.count == len(ids)
 
 
-# --- D10: how a foreign trace's id enters this series' store -----------------
+# --- How a foreign trace's id enters this series' store ----------------------
 #
 # `appendRow` takes two mutually exclusive id parameters, and the distinction
-# between them is the whole of D10. `trace_id=` is an id THIS series already
-# owns, carried verbatim without consulting the issuer -- it is in the issuer's
-# index already, put there when it was issued. `foreign_id=` is an id from
-# another series, registered through `TraceIDIssuer.adopt` before it is
+# between them is the subject of this section. `trace_id=` is an id THIS series
+# already owns, carried verbatim without consulting the issuer. It is in the
+# issuer's index already, put there when it was issued. `foreign_id=` is an id
+# from another series, registered through `TraceIDIssuer.adopt` before it is
 # accepted, and replaced-and-reported when the issuer refuses it.
 #
-# The maintainer's decision, recorded in DECISIONS.md 2026-08-05: Q1 register
-# via `adopt()`, Q2 on a clash issue a fresh local id for that row only and
-# report it. The investigation is
-# `specs/phase1-foreign-trace-id-acquisition-2026-08-05.md`.
+# The policy since 2026-08-05: register a foreign id via `adopt()`, and on a
+# clash issue a fresh local id for that row only and report it.
 #
 # These use the REAL `TraceIDIssuer` rather than `StubIssuer`, because `adopt`
 # and its collision log are the subject. `StubIssuer` stays valid for every
@@ -1227,14 +1220,16 @@ def _aRow(store, name="axon", **kwargs):
 
 
 def test_a_foreign_id_is_registered_with_the_local_issuer():
-    """D10 Q1. The gap was that `_resolveID` registered a carried id with
-    nothing.
+    """A foreign id is registered with the local issuer.
+
+    Without the registration, `_resolveID` accepted a carried id and told the
+    issuer nothing.
 
     `trace_id.py`'s recorded policy is "at load and at merge -- detect and
     report by name, never silently adopt and never silently reissue", and
     accepting a foreign id verbatim is the silent adoption half of that.
-    `TraceIDIssuer.adopt` has existed and been tested since wave B and had zero
-    production callers; what was missing was only the call.
+    `TraceIDIssuer.adopt` has existed and been tested since the issuer landed,
+    with zero production callers; what was missing was only the call.
     """
     from PyReconstruct.modules.datatypes.trace_id import (
         TraceIDIssuer, encodeTraceID,
@@ -1256,15 +1251,15 @@ def test_a_foreign_id_is_registered_with_the_local_issuer():
 
 
 def test_registering_a_foreign_id_stops_the_issuer_handing_it_out_again():
-    """R2 from the investigation, and the reason registration is the fix.
+    """Registration also stops the issuer minting the same id again later.
 
     An unregistered foreign id is invisible to `issue()`'s refuse-and-reissue
     loop, so the issuer can later mint the same id for a different trace. With
     the identical bits source, registration lets that loop see the id and step
     past it. The real `secrets.randbits(64)` source makes this ~4.1e-6 across
     the largest dataset on record rather than a live data-loss risk, but it is a
-    hole in the issuer's stated contract either way, and unlike R1 it is closed
-    completely by registration alone.
+    hole in the issuer's stated contract either way, and unlike two live rows
+    sharing one id, it is closed completely by registration alone.
     """
     from PyReconstruct.modules.datatypes.trace_id import (
         TraceIDIssuer, encodeTraceID,
@@ -1286,7 +1281,7 @@ def test_registering_a_foreign_id_stops_the_issuer_handing_it_out_again():
 
 
 def test_a_clashing_foreign_id_is_reissued_and_reported(capsys):
-    """D10 Q2, against R1 -- the CERTAIN case, not the rare one.
+    """A clashing foreign id is reissued and reported: the CERTAIN case.
 
     `deriveTraceID` is a pure function of the trace's own stored row, and that
     is the property it exists for: two independent opens of one legacy file
@@ -1294,11 +1289,11 @@ def test_a_clashing_foreign_id_is_reissued_and_reported(capsys):
     descended from one ancestor still hold the ancestor's id for two traces
     that have since diverged. When the merge keeps both -- which it does,
     correctly, whenever the overlap test fails -- both land in one store under
-    one id. The investigation reproduced two live rows sharing an id with the
+    one id. Before the fix, a merge left two live rows sharing an id with the
     issuer's collision log empty.
 
-    `adopt` detects it and resolves nothing; he chose b4, a fresh local id for
-    the clashing row only, reported rather than silent.
+    `adopt` detects it and resolves nothing, so the store issues a fresh local
+    id for the clashing row only, and reports it rather than staying silent.
     """
     from PyReconstruct.modules.datatypes.trace_id import (
         TraceIDIssuer, deriveTraceID,
@@ -1311,7 +1306,8 @@ def test_a_clashing_foreign_id_is_reissued_and_reported(capsys):
     b_id = deriveTraceID(5, "axon", ancestor)
     assert a_id == b_id, (
         "the derivation stopped agreeing across two independent derivations, "
-        "which is the property R1 depends on and tid-v1 is frozen to provide"
+        "which is the property this clash comes from and tid-v1 is frozen to "
+        "provide"
     )
 
     ## Series A holds it already; series B's copy arrives through an import.
@@ -1326,7 +1322,7 @@ def test_a_clashing_foreign_id_is_reissued_and_reported(capsys):
         "the clashing row was given no id -- the store's own docstring calls "
         "that the worse failure, one a merge cannot place and nothing detects"
     )
-    assert fresh != a_id, "TWO LIVE ROWS SHARE ONE ID: the R1 failure itself"
+    assert fresh != a_id, "TWO LIVE ROWS SHARE ONE ID: the clash went through"
     assert fresh in issuer.taken
 
     ## Reported through both channels, which is what makes the reissue
@@ -1384,10 +1380,10 @@ def test_a_foreign_id_needs_an_issuer_to_register_with():
     """An id cannot be registered with nothing.
 
     Accepting it into an issuer-less store would store it unregistered, which
-    is precisely the silent adoption D10 removed, arriving through the fix. It
-    refuses instead: a caller holding a foreign id and no issuer has no way to
-    be correct, and a loud programming error at a boundary with no production
-    caller costs nothing.
+    is precisely the silent adoption that registration removed, arriving
+    through the fix. It refuses instead: a caller holding a foreign id and no
+    issuer has no way to be correct, and a loud programming error at a boundary
+    with no production caller costs nothing.
     """
     from PyReconstruct.modules.datatypes.trace_id import encodeTraceID
 
@@ -1454,7 +1450,7 @@ def test_the_foreign_id_clash_report_is_capped_but_the_record_is_not(capsys):
 
     The report is teed into the per-user log file, which rotates at 2 MB, so an
     uncapped one would evict the history somebody opened the log to read --
-    D11's `DRIFT_REPORT_LIMIT` precedent, for its reason. The RECORD is not
+    the same reason `DRIFT_REPORT_LIMIT` exists. The RECORD is not
     capped, because a caller reporting in its own vocabulary needs all of it.
     """
     from PyReconstruct.modules.datatypes.columnar_store import (
@@ -1489,9 +1485,10 @@ def test_a_rebuild_carries_the_ids_it_is_given_and_issues_for_the_rest(
 ):
     """`fromSection`'s `carried_ids`, over a real section.
 
-    The rebuild path. Until D10 this appended every row with no id, so the
-    issuer minted a fresh one for each -- and `Section.resyncColumnarStore`
-    reaches it from fourteen call sites, plus every `save()` since D11.
+    The rebuild path. Before ids were carried, this appended every row with no
+    id, so the issuer minted a fresh one for each. And
+    `Section.resyncColumnarStore` reaches it from fourteen call sites, plus
+    every `save()`.
 
     Keyed on the `Trace` object because that is the only correlation there is:
     `Trace` carries no id attribute of any kind, so an id cannot be read off
@@ -1545,7 +1542,7 @@ def test_a_rebuild_carries_the_ids_it_is_given_and_issues_for_the_rest(
     ## identity cannot see, because both lookups are of different objects. The
     ## issuer cannot catch it either: a carried id is deliberately never offered
     ## to `adopt()`, so its collision log stays empty while two live rows share
-    ## one id. That is the R1 duplicate this whole mechanism exists to prevent,
+    ## one id. That is the duplicate this whole mechanism exists to prevent,
     ## and the rebuild would otherwise propagate it forward on every save.
     assert len(carried) >= 2
     one, other = list(carried)[:2]
@@ -1575,7 +1572,7 @@ def test_a_rebuild_carries_the_ids_it_is_given_and_issues_for_the_rest(
     )
     assert fell_through in issuer.taken, "the fresh id was not registered"
     assert len(set(tripled.values())) == len(tripled), (
-        "TWO LIVE ROWS SHARE ONE ID: the R1 duplicate, arriving through the "
+        "TWO LIVE ROWS SHARE ONE ID: a duplicate, arriving through the "
         "rebuild's own carry"
     )
     ## Exactly two draws: the newcomer that has no carried id, and the trace
@@ -1590,7 +1587,7 @@ def test_a_rebuild_carries_the_ids_it_is_given_and_issues_for_the_rest(
 #
 # `TraceView` is the first `Trace`-shaped surface over the columns. It is
 # read-only, it caches nothing, and nothing in the application references it --
-# the same shape wave B's other work took, built behind the seam and proved
+# the same shape the earlier store work took, built behind the seam and proved
 # against `materializeTrace` before a single call site is asked to trust it.
 #
 # The bar here is exhaustive rather than sampled: every row of every populated
@@ -1611,7 +1608,7 @@ TRACE_FIELDS = ("name", "color", "closed", "negative", "points", "hidden",
 TRACE_FIELD_STORAGE = {"name": "_name"}
 
 ## Fields a Trace carries that never reach a section row, so the store has
-## nothing to hold for them. `obj_defaults` (fork #419) rides on a palette
+## nothing to hold for them. `obj_defaults` rides on a palette
 ## item only: `newTrace` strips it before `Section.addTrace`, and neither
 ## `getList` nor `fromList` knows it. A section trace always has it as None.
 TRACE_FIELDS_NOT_STORED = {"obj_defaults"}
@@ -1774,7 +1771,7 @@ def test_a_view_reads_the_unrounded_coordinate_the_store_kept(loaded_sections):
 def test_a_view_holds_no_value_and_so_cannot_go_stale():
     """The no-cache property, asserted as behavior rather than as an absence.
 
-    This slice builds no identity cache, no weak-value map and no
+    The view builds no identity cache, no weak-value map and no
     generation-counter invalidation, because the shim's caching question is
     still open and a view that cached would answer it by accident. What that
     buys is asserted here directly: **one** view instance, held across every
@@ -1840,8 +1837,8 @@ def test_a_view_hands_out_fresh_containers_it_does_not_remember():
     assert view.tags == {"alpha"}
     assert view.color == [1, 2, 3]
 
-    ## Two views of one row are two objects. Identity is explicitly not this
-    ## slice's subject: nothing consumes the view, so nothing depends on it.
+    ## Two views of one row are distinct objects with equal field values.
+    ## The two assertions below check both halves.
     other = TraceView(store, row)
     assert other is not view
     assert other.name == view.name and other.points == view.points
@@ -1886,7 +1883,7 @@ def test_a_view_refuses_the_writes_it_has_no_property_for():
 
 # --- TraceView: the write path ------------------------------------------------
 #
-# Slice 6. Each of the eight properties grows a setter that is one call into a
+# Each of the eight properties has a setter that is one call into a
 # mutation entry point `SectionColumns` already had -- `setAttribute` for the
 # six scalars, `setTags` for `tags`, `setCoordinates` for `points` -- and does
 # nothing else. No cache is added, no identity map, and no consumer: the view
@@ -1965,7 +1962,7 @@ def test_a_setter_moves_the_underlying_column_and_bumps_the_generation(field):
     The counter delta is asserted as exactly one, not merely as an increase. A
     setter that both wrote through *and* bumped a counter of its own, or that
     routed through two entry points, would show up as two, and "the store bumps
-    it because the store is what bumps it" is the property this slice claims.
+    it because the store is what bumps it" is the property the setters claim.
     """
     written, readStore, expected = WRITE_THROUGH_CASES[field]
     store, row = _aStoredRow()
@@ -1996,12 +1993,12 @@ def test_a_setter_moves_the_underlying_column_and_bumps_the_generation(field):
 
 @pytest.mark.parametrize("field", TRACE_FIELDS)
 def test_a_write_through_one_view_is_visible_to_a_view_built_afterwards(field):
-    """Slice 4's no-cache property, continuing to hold across a write.
+    """The view's no-cache property, continuing to hold across a write.
 
     A view built *after* the write has never touched the row and holds no
     state, so it can only be reading the column. This is the assertion that a
-    per-instance cache -- the thing this slice is explicitly not allowed to
-    build -- would fail, and it is the write-direction counterpart of
+    per-instance cache (the thing the view is explicitly not allowed to
+    build) would fail, and it is the write-direction counterpart of
     `test_a_view_holds_no_value_and_so_cannot_go_stale`.
 
     Both directions are covered: the writing view still reports the new value
@@ -2350,7 +2347,7 @@ def test_a_view_over_a_removed_row_answers_exactly_as_the_store_does():
     corrected in the view, because a view that added a liveness check of its own
     would be a second, divergent answer to a question the store already answers
     -- and deciding what a view over a dead row should do is the business of the
-    slice that gives the view a consumer, which this one deliberately does not.
+    change that gives the view a consumer. Nothing consumes it yet.
     """
     store = SectionColumns(1)
     row = store.appendRow(name="axon", points=[(0.0, 0.0), (1.0, 1.0)],
@@ -2384,11 +2381,11 @@ def test_constructing_a_view_touches_no_column():
 
 # --- ContourView: the read half of the container protocol ---------------------
 #
-# `ContourView` is slice 7a: the read-only half of a `Contour`-shaped surface
-# over the store's per-contour row index, mirroring the shape `TraceView` took
-# in slices 4 and 6. It caches nothing, it mutates nothing, and nothing in the
-# application references it. Its identity semantics arrived later, in 7b', and
-# are the row's rather than the object's -- see the section at the bottom of
+# `ContourView` is the read-only half of a `Contour`-shaped surface over the
+# store's per-contour row index, mirroring the shape `TraceView` took. It
+# caches nothing, it mutates nothing, and nothing in the application
+# references it. Its identity semantics came later, and are the row's rather
+# than the object's. See the section at the bottom of
 # this file.
 #
 # The bar is the same as `TraceView`'s and for the same reason: every contour of
@@ -2402,9 +2399,9 @@ def test_constructing_a_view_touches_no_column():
 ## `vars(Contour)` below rather than trusted, so a method added to `Contour`
 ## lands in no group and turns the split red instead of silently becoming a
 ## thing the view is missing.
-## `index` moved groups in 7b': it is a pure read, and the row route answers it
-## without a cache, an `__eq__` or an id comparison. `__contains__` is not in
-## either group because `Contour` does not define it at all -- it comes along
+## `index` is in the read group: it is a pure read, and the row route answers
+## it without a cache, an `__eq__` or an id comparison. `__contains__` is not
+## in either group because `Contour` does not define it at all. It comes along
 ## with `index` as the same question spelled twice.
 CONTOUR_READ_ONLY_SURFACE = frozenset(
     {"__iter__", "__getitem__", "__len__", "isEmpty", "getTraces", "index"}
@@ -2444,10 +2441,10 @@ def test_contours_surface_is_split_exhaustively_between_this_slice_and_the_next(
     for member in sorted(CONTOUR_READ_ONLY_SURFACE):
         assert hasattr(ContourView, member), f"ContourView is missing {member}"
 
-    ## `index` is in the read group and is present. It got there in 7b' by
-    ## matching on `TraceView.row`, which caches nothing and defines no `__eq__`
-    ## -- so it is neither §5(A) nor §5(B), and it needed no D1 answer. It
-    ## brought `__contains__`, which `Contour` does not define, with it.
+    ## `index` is in the read group and is present. It works by matching on
+    ## `TraceView.row`, which caches nothing and defines no `__eq__`, so it
+    ## needs neither a cached identity-stable view nor equality over trace id.
+    ## It brought `__contains__`, which `Contour` does not define, with it.
     assert hasattr(ContourView, "__contains__")
 
     ## And nothing from the other two groups arrived with it. `copy` is the
@@ -2455,15 +2452,14 @@ def test_contours_surface_is_split_exhaustively_between_this_slice_and_the_next(
     ## the batched coordinate pass that `TraceView` deliberately has no
     ## `getBounds` for.
     ##
-    ## The identity-or-mutation group was 7b's, and 7b has now been attempted:
-    ## the four that remain stay out, and the measured reasons are the section
-    ## at the bottom of this file. This assertion is no longer "not yet" -- it
-    ## is the standing statement that none of them may arrive without one of
-    ## the read/write boundary, a store reorder decision (D9), or the §10
-    ## id-carry rule (D10) being settled first.
+    ## The four in the identity-or-mutation group stay out, and the measured
+    ## reasons are the section at the bottom of this file. This assertion is
+    ## not "not yet": it is the standing statement that none of them may
+    ## arrive before the read/write boundary, how the store reorders a
+    ## contour, or how an id carries between stores is decided.
     for member in sorted(CONTOUR_IDENTITY_OR_MUTATION | CONTOUR_DEFERRED_ELSEWHERE):
         assert not hasattr(ContourView, member), (
-            f"ContourView carries {member}, which is a later slice's"
+            f"ContourView carries {member}, which is outside its read surface"
         )
 
     ## `traces` is absent deliberately: on a `Contour` it is the live list, and
@@ -2474,8 +2470,8 @@ def test_contours_surface_is_split_exhaustively_between_this_slice_and_the_next(
 
     ## `Contour` defines no `__contains__`, so `in` falls back to `__iter__`
     ## plus `==`; `ContourView` now defines one, over the row. What neither
-    ## defines -- and what 7b' did NOT reach for, because it is §5(B) and
-    ## `DECISIONS.md` rejects it -- is `__eq__`.
+    ## defines is `__eq__`: equality over trace id is rejected, so the view
+    ## must not gain one.
     assert "__contains__" not in vars(Contour)
     assert "__contains__" in vars(ContourView)
     assert "__eq__" not in vars(Contour)
@@ -2555,7 +2551,7 @@ def _assert_contour_parity(store, view, contour):
         )
         assert type(sliced) is list, (
             f"ContourView[{s}] returned {type(sliced).__name__}, not a bare "
-            f"list; importTraces (slice 7b) walks and mutates this result"
+            f"list; importTraces walks and mutates this result"
         )
         assert len(sliced) == len(reference)
         for element, trace in zip(sliced, reference):
@@ -2617,7 +2613,7 @@ def test_a_contour_view_slice_is_a_bare_list_and_takes_what_importTraces_does(
         loaded_sections):
     """The load-bearing property, stated directly rather than only in the walk.
 
-    `Contour.importTraces` -- slice 7b, not this one -- does this to the result
+    `Contour.importTraces` does this to the result
     of `self[i:]`: iterates it with `enumerate`, calls `.copy()` on it, calls
     `.pop(found_i)`, `+`-concatenates it, and takes `len()` of the contour it
     came from. All of that is `list` mechanics and all of it is exercised here
@@ -2625,8 +2621,8 @@ def test_a_contour_view_slice_is_a_bare_list_and_takes_what_importTraces_does(
 
     The one operation NOT exercised is `rem_o_traces.remove(o_trace)`, which
     resolves a trace to a position through `Trace`'s inherited `==` -- object
-    identity. That is precisely the line that makes 7b a port rather than a
-    mechanical translation, and it is out of this slice deliberately.
+    identity. That is precisely the line that makes porting `importTraces` a
+    port rather than a mechanical translation, and it is out of scope here.
     """
     for section in loaded_sections:
         store = SectionColumns.fromSection(section)
@@ -2799,12 +2795,11 @@ def test_membership_is_object_identity_on_a_contour_and_row_identity_on_a_view()
     its elements are freshly built `TraceView`s, so no object a caller can hold
     is ever `is`-equal to one, not even the object it handed out one line ago.
 
-    7a read that as "identity has no answer here" and left `index` and
-    `__contains__` absent. 7b' answers it a different way -- by row -- which is
-    what the two assertions in the middle of this test are. The divergence that
-    survives is the last one: a materialized `Trace` holds no row and so is
-    never a member, which is the honest answer rather than a guess and is the
-    reason a caller holding real `Trace`s cannot use these methods at all.
+    So `index` and `__contains__` answer it a different way, by row, which
+    is what the two assertions in the middle of this test are. The divergence
+    that survives is the last one: a materialized `Trace` holds no row and so
+    is never a member, which is the honest answer rather than a guess and is
+    the reason a caller holding real `Trace`s cannot use these methods at all.
     """
     store = SectionColumns(1)
     row = store.appendRow(name="axon", points=[(0.0, 0.0), (1.0, 1.0)],
@@ -2829,29 +2824,22 @@ def test_membership_is_object_identity_on_a_contour_and_row_identity_on_a_view()
         view.index(trace)
 
 
-# --- ContourView: the identity and import seam (slices 7b and 7b') ------------
+# --- ContourView: the identity and import seam -------------------------------
 #
-# Slice 7b was dispatched as "`importTraces` + identity ops on `ContourView`".
-# Its first pass shipped no production code and argued that neither half could
-# be built. Half of that argument was then falsified by construction
-# (review-274 F1), and 7b' is the repair: `index` and `__contains__` are now built,
-# by row, and the tests below are split into what ships and what is still
-# blocked.
+# `index` and `__contains__` are built on `ContourView`, by row. `importTraces`
+# and `remove` are not, and the tests below are split into what is built and
+# what is still blocked.
 #
-# WHAT THE FIRST PASS GOT WRONG, RECORDED BECAUSE THE TESTS BELOW USED TO ASSERT IT
-# ---------------------------------------------------------------------------------
-# It claimed identity through a view "can never match", and that the only two
-# routes were design §5(A)'s cached identity-stable views (D1, open) and §5(B)'s
-# equality-over-id (`DECISIONS.md`: REJECTED) -- so that "there is no third
-# option that is merely mechanical".
-#
-# There is a third, and it is mechanical: match on `TraceView.row`. It caches
-# nothing, defines no `__eq__`, compares no trace ids, and needs no D1 answer,
-# because there is no cache for D1 to be about. The measurement the first pass
-# made was exactly right -- zero object-identity hits on six routes over 221
-# real contours -- and the inference from it was too strong. Both survive below:
-# the measurement is still asserted, and the row route is asserted on the same
-# six routes and the same 221 contours.
+# WHY IDENTITY THROUGH A VIEW IS THE ROW'S
+# ----------------------------------------
+# Object identity through a view never matches: every route to an element
+# builds a fresh `TraceView`. That does not leave only a cached
+# identity-stable view or equality over trace id (rejected) as answers. A
+# third route is mechanical: match on `TraceView.row`. It caches nothing,
+# defines no `__eq__` and compares no trace ids, so it settles nothing about
+# caching. Both facts are asserted below: zero object-identity hits on six
+# routes over 221 real contours, and the row route answering on the same six
+# routes and the same 221 contours.
 #
 # WHAT REMAINS BLOCKED, ONE TEST EACH
 # -----------------------------------
@@ -2868,7 +2856,7 @@ def test_membership_is_object_identity_on_a_contour_and_row_identity_on_a_view()
 #
 #   3. LIFTED. `importTraces` ends by rebinding `self.traces` to a REORDERED
 #      list, and the store now has a purpose-built way to say so:
-#      `reorderContour(name, rows)`, built for D9. What it replaces is a rename
+#      `reorderContour(name, rows)`. What it replaces is a rename
 #      round-trip -- `setAttribute(row, "name", ...)` appends the row at the end
 #      of its destination contour, so a rename away and back was a move-to-end,
 #      and n-1 of those realized any permutation with no renumbering and no held
@@ -2881,8 +2869,8 @@ def test_membership_is_object_identity_on_a_contour_and_row_identity_on_a_view()
 #      contour, which is a contour of a different section of a different series
 #      with a different store. `section.py` then calls `Contour.remove` on
 #      exactly those objects, by identity. Adopting a foreign trace into this
-#      store was an id-carry decision (design §10), not a mechanical append --
-#      and D10 has since made it: `appendRow(foreign_id=...)` registers the id
+#      store was an id-carry decision, not a mechanical append. It has
+#      since been made: `appendRow(foreign_id=...)` registers the id
 #      with the local issuer and reissues-and-reports on a clash. The id half
 #      is answered; which store the adopted row belongs to is not, and nothing
 #      threads a foreign id through yet.
@@ -2907,24 +2895,25 @@ def _everyWayOfGettingAnElement(view):
 
 def test_object_identity_still_fails_on_every_route_but_row_identity_answers(
         loaded_sections):
-    """The 7b measurement and the 7b' repair, on the same real material.
+    """Object identity fails on a view and row identity answers, on real data.
 
     Two arms that must BOTH hold, because each is what makes the other mean
     something.
 
-    The first is 7b's own measurement, kept verbatim and still true: object
+    The first is the object-identity measurement, still true: object
     identity fails on every route. `Contour.remove(t)` is `self.traces.remove(t)`,
     which walks with `==`, which `Trace` does not define -- so it is `is`. Every
     route to an element of a `ContourView` builds a new `TraceView`, so `is`
     answers False for all six, including the object the container handed out one
     line earlier. If this arm ever goes green the other way, a caching or
-    identity mechanism has arrived and D1 has been answered by accident.
+    identity mechanism has arrived and the caching question has been answered
+    by accident.
 
-    The second is the repair. The first pass concluded from the arm above that
-    "there is no third option that is merely mechanical" and left `index` and
-    `__contains__` unbuilt. There is one: `TraceView.row`. It caches nothing and
-    defines no `__eq__`, so it is neither §5(A) nor the rejected §5(B), and it
-    resolves all six routes on all 221 contours -- which is what this arm walks.
+    The second is row identity, which `index` and `__contains__` use:
+    `TraceView.row`. It caches nothing and defines no `__eq__`, so it is
+    neither a cached identity-stable view nor the rejected equality over trace
+    id, and it resolves all six routes on all 221 contours, which is what
+    this arm walks.
 
     The contrast arm on the real `Contour` stays, because it is what makes the
     first arm a divergence rather than a tautology about views.
@@ -2940,13 +2929,13 @@ def test_object_identity_still_fails_on_every_route_but_row_identity_answers(
                 ## Arm 1: object identity, still zero hits.
                 assert not any(element is candidate for element in view), (
                     f"{label} is identically an element of the view -- a "
-                    f"caching or identity mechanism has arrived and D1 has "
-                    f"been answered by accident"
+                    f"caching or identity mechanism has arrived and the "
+                    f"caching question has been answered by accident"
                 )
                 ## Arm 2: row identity, which answers where `is` cannot.
                 assert candidate in view, (
-                    f"{label} is not a member by row -- 7b's identity ops have "
-                    f"regressed"
+                    f"{label} is not a member by row. The view's identity "
+                    f"ops have regressed"
                 )
                 assert view.index(candidate) == 0, label
 
@@ -2966,20 +2955,20 @@ def test_object_identity_still_fails_on_every_route_but_row_identity_answers(
 
 def test_a_materialized_trace_is_never_a_member_however_it_was_built(
         loaded_sections):
-    """The divergence from `Contour` that 7b' does NOT erase.
+    """The divergence from `Contour` that row identity does NOT erase.
 
     Row identity answers for things that HAVE a row. A `Trace` does not: it is
     an object built outside the store, and `materializeTrace` builds a fresh one
     on every call, so there is nothing for `_rowOf` to match. That is the honest
     answer rather than a guess, and it is the reason a caller still holding real
-    `Trace`s cannot reach for these methods at all -- which is exactly what the
-    slice that flips consumers has to know.
+    `Trace`s cannot reach for these methods at all. That is exactly what
+    moving a consumer onto views has to know.
 
     Pinned on the real series and not on a synthetic row, because the failure
-    mode this guards is a later slice quietly teaching `_rowOf` to fall back on
-    matching by trace id, coordinates or name -- any of which would make a
-    materialized trace a member here and would be §5(B) arriving under another
-    name.
+    mode this guards is a later change quietly teaching `_rowOf` to fall back
+    on matching by trace id, coordinates or name. Any of these would make a
+    materialized trace a member here and would be the rejected equality over
+    trace id arriving under another name.
 
     The three other non-members are pinned too: a view over a different store, a
     view over a different contour of this store, and a view over a row this
@@ -2996,7 +2985,7 @@ def test_a_materialized_trace_is_never_a_member_however_it_was_built(
             trace = store.materializeTrace(rows[0])
             assert trace not in view, (
                 "a materialized Trace became a member -- identity is no longer "
-                "the row, and equality-over-id (§5(B), REJECTED) may have "
+                "the row, and equality-over-id (REJECTED) may have "
                 "arrived under another name"
             )
             with pytest.raises(ValueError):
@@ -3090,11 +3079,10 @@ def _removeTraceCallersIn(paths, root):
 def _removeTraceCallers():
     """`_removeTraceCallersIn` over the whole `PyReconstruct` package.
 
-    Over the package, not over `inspect.getsource(Section)`, which is what an
-    earlier draft walked: a walk of one class sees six of the eleven callers
-    and is structurally blind to the five in `series.py` -- four of them
-    unconditional deletions, which is how "only `deleteTraces` means it" got
-    into a docstring (review-274 N1/N2).
+    Over the package, not over `inspect.getsource(Section)`: a walk of one
+    class sees six of the eleven callers and is structurally blind to the five
+    in `series.py`. Four of them are unconditional deletions, which is how "only
+    `deleteTraces` means it" once got into a docstring.
     """
     from PyReconstruct.modules.datatypes import section
 
@@ -3182,7 +3170,7 @@ def test_remove_would_not_be_the_operation_contour_remove_is():
     `Series.splitObject`, is remove / `.copy()` / add-the-copy. The other five
     mean the removal: `Section.deleteTraces` and, in `series.py`,
     `deleteObjects`, `deleteTracesFromSections`, `deleteAllTraces`,
-    `deleteMalformedTraces` and `deleteDuplicateTraces`. `SectionColumns.removeRow` TOMBSTONES: the row
+    `deleteMalformedTraces` and `combineDuplicateTraces`. `SectionColumns.removeRow` TOMBSTONES: the row
     number retires and every view over it raises from then on, so the *mutate*
     step has nothing left to write through, as this test measures.
 
@@ -3216,7 +3204,7 @@ def test_remove_would_not_be_the_operation_contour_remove_is():
         "modules/datatypes/series.py:deleteTracesFromSections",
         "modules/datatypes/series.py:deleteAllTraces",
         "modules/datatypes/series.py:deleteMalformedTraces",
-        "modules/datatypes/series.py:deleteDuplicateTraces",
+        "modules/datatypes/series.py:combineDuplicateTraces",
         "modules/datatypes/series.py:repairSelfCrossingTraces",
         "modules/datatypes/series.py:splitObject",
     }, readds
@@ -3229,12 +3217,12 @@ def test_remove_would_not_be_the_operation_contour_remove_is():
     )
     ## The six that mean the removal -- named, so a caller that starts reusing
     ## the object it just removed flips one of these and fails here.
-    ## deleteTracesFromSections (fork #422) is deleteObjects over a chosen set
+    ## deleteTracesFromSections is deleteObjects over a chosen set
     ## of sections, and deletes the same way.
     assert [key for key, readd in sorted(readds.items()) if not readd] == [
         "modules/datatypes/section.py:deleteTraces",
+        "modules/datatypes/series.py:combineDuplicateTraces",
         "modules/datatypes/series.py:deleteAllTraces",
-        "modules/datatypes/series.py:deleteDuplicateTraces",
         "modules/datatypes/series.py:deleteMalformedTraces",
         "modules/datatypes/series.py:deleteObjects",
         "modules/datatypes/series.py:deleteTracesFromSections",
@@ -3265,18 +3253,18 @@ def test_the_import_walk_needs_two_trace_methods_the_row_view_does_not_carry():
     """Blocker 2: `importTraces` calls `overlaps` and `mergeTags` on its elements.
 
     Both are on `Trace` and neither is on `TraceView`, each for a reason that
-    predates this slice and that this slice is not entitled to overturn:
+    predates the import seam and that porting it is not entitled to overturn:
 
       * `overlaps` is the geometry family. `TraceView` carries no `getBounds`,
-        no `getCentroid` and no `getOverlapRatio` because the rewiring plan's
-        pattern table makes geometry a batched whole-section pass over the
-        coordinate column. Adding a per-trace `overlaps` here would ship the
-        exact per-trace shape that work exists to replace.
+        no `getCentroid` and no `getOverlapRatio` because geometry is meant to
+        be a batched whole-section pass over the coordinate column. Adding a
+        per-trace `overlaps` here would ship the exact per-trace shape that
+        work exists to replace.
       * `mergeTags` is outside the eight fields `Trace.__init__` assigns, which
         is `TraceView`'s whole stated surface.
 
     A tripwire in both directions: it fails if `TraceView` grows either method
-    (7b's second blocker is then lifted) and it fails if `Contour.importTraces`
+    (blocker 2 is then lifted) and it fails if `Contour.importTraces`
     stops calling either (the port's shape has changed).
     """
     source = inspect.getsource(Contour.importTraces)
@@ -3287,7 +3275,7 @@ def test_the_import_walk_needs_two_trace_methods_the_row_view_does_not_carry():
         )
         assert hasattr(Trace, method)
         assert not hasattr(TraceView, method), (
-            f"TraceView has grown {method}; 7b's geometry/surface blocker is "
+            f"TraceView has grown {method}; the geometry/surface blocker is "
             f"lifted and the import walk may now be portable"
         )
 
@@ -3314,9 +3302,9 @@ def _threeRowContour():
 ## that the probe below is driven by what an API *does* when called, not by what
 ## it is *called*, so a reorder added under a name nobody guessed is still
 ## found. The keyword and callable shapes are here because name-independence was
-## not enough on its own: review-274 N3 planted `arrangeContour(name, *, order)`
-## and `sortContourBy(name, key)`, both capability-identical reorders, and both
-## escaped a matrix of positional tuples by raising `TypeError` on every one.
+## not enough on its own: `arrangeContour(name, *, order)` and
+## `sortContourBy(name, key)`, both capability-identical reorders, escape a
+## matrix of positional tuples by raising `TypeError` on every one.
 _REORDER_PROBE_ARGUMENTS = (
     (("axon", [2, 1, 0]), {}),          # reindexContour(name, rows)
     (([2, 1, 0], "axon"), {}),
@@ -3379,18 +3367,17 @@ def _entryPointsThatReorderCleanly():
 
 
 def test_exactly_one_entry_point_reorders_a_contour_cleanly():
-    """Blocker 3's tripwire, inverted by D9's answer. It now names the API.
+    """Blocker 3's tripwire, inverted now that the store can reorder.
 
-    This assertion used to be `found == []`, with the message "SectionColumns
-    can now reorder a contour cleanly ... D9 has been answered by an
-    implementation". D9 has been answered by an implementation, so the tripwire
-    becomes the acceptance test for it -- and it is a good one precisely because
-    it was not written for `reorderContour`: it was written to catch a reorder
-    *whatever it was named and whatever its signature*, so what it certifies
-    here is capability, not spelling. "Cleanly" is still `_entryPointsThatReorder
-    Cleanly`'s own definition, unchanged: after ONE call the contour holds the
-    same rows in a different order, every one of them is still live, and nothing
-    foreign has entered the tracking sets.
+    This assertion used to be `found == []`, a tripwire for the day the store
+    could reorder a contour cleanly. `reorderContour` is that day, so the
+    tripwire becomes the acceptance test for it, and it is a good one
+    precisely because it was not written for `reorderContour`: it was written
+    to catch a reorder *whatever it was named and whatever its signature*, so
+    what it certifies here is capability, not spelling. "Cleanly" is still
+    `_entryPointsThatReorderCleanly`'s own definition, unchanged: after ONE
+    call the contour holds the same rows in a different order, every one of
+    them is still live, and nothing foreign has entered the tracking sets.
 
     Exactly one, and that is the second half of the assertion. The decision was
     to build a reorder entry point and retire the round trip, not to grow a
@@ -3410,9 +3397,10 @@ def test_exactly_one_entry_point_reorders_a_contour_cleanly():
     )
     assert all(entry[2] == [2, 1, 0] for entry in found), found
 
-    ## The two docstring pins the first pass relied on. Still true, and still
-    ## the reason the entry point had to be built rather than assembled out of
-    ## these two: an append cannot insert and a removal cannot come back.
+    ## The two docstring pins the older reasoning relied on. Still true, and
+    ## still the reason the entry point had to be built rather than assembled
+    ## out of these two: an append cannot insert and a removal cannot come
+    ## back.
     assert "An append, never an insert" in SectionColumns.appendRow.__doc__
     assert "is not reused" in SectionColumns.removeRow.__doc__
 
@@ -3421,7 +3409,7 @@ def test_the_reorder_tripwire_fires_on_a_reorder_added_under_an_unguessed_name(
         monkeypatch):
     """The tripwire above, tested against the mutation that escaped the old one.
 
-    This is the review's seventh planted mutation, brought inside the suite: a
+    This is a planted mutation, brought inside the suite: a
     real within-contour reorder named `reindexContour`, a name containing none
     of the four substrings the old assertion searched for. Both halves are
     asserted -- that the old nominal check would have passed it, and that the
@@ -3466,9 +3454,9 @@ def test_the_reorder_tripwire_fires_on_reorders_whose_SIGNATURE_is_unguessed(
     Name-independence was demonstrated above and is not the whole story. The
     probe calls candidates with a matrix of argument shapes and swallows every
     exception, so a capability-identical reorder whose signature is outside the
-    matrix used to raise `TypeError`, be swallowed, and never be probed at all
-    (review-274 N3). These are the reviewer's two escaping mutations, verbatim:
-    one keyword-only, one taking a callable. Both are caught now.
+    matrix used to raise `TypeError`, be swallowed, and never be probed at all.
+    These are two such reorders: one keyword-only, one taking a callable. Both
+    are caught now.
     """
     def arrangeContour(self, name, *, order):
         """Keyword-only: a capability-identical reorder the old matrix missed."""
@@ -3500,7 +3488,7 @@ def test_the_reorder_tripwire_fires_on_reorders_whose_SIGNATURE_is_unguessed(
 
 
 def test_the_setAttribute_round_trip_reorders_without_renumbering_but_pollutes():
-    """The RETIRED route, kept as the measurement D9 was decided on.
+    """The RETIRED route, kept as the measurement `reorderContour` rests on.
 
     Nothing calls this pattern any more -- `reorderContour` is the entry point,
     and the tests below are what exercise it. What this one holds is the
@@ -3510,11 +3498,10 @@ def test_the_setAttribute_round_trip_reorders_without_renumbering_but_pollutes()
     ever stop firing, the reason `reorderContour` exists has changed and the
     decision behind it wants re-reading.
 
-    The first pass claimed "there is no reorder, insert, move or swap" and that
-    "the only reorder available is destroy-and-rebuild, which renumbers every
-    row and kills every `TraceView` a caller holds". The second half is true of
-    destroy-and-rebuild (the next test measures it) and false as a statement
-    about the store, as review-274 F2 demonstrated by construction.
+    It is tempting to say "the only reorder available is destroy-and-rebuild,
+    which renumbers every row and kills every `TraceView` a caller holds".
+    That is true of destroy-and-rebuild (the next test measures it) and false
+    as a statement about the store, as this test shows by construction.
 
     `setAttribute(row, "name", ...)` moves a row between contour indices and
     **appends it at the end of the destination** -- its own docstring says so.
@@ -3527,7 +3514,7 @@ def test_the_setAttribute_round_trip_reorders_without_renumbering_but_pollutes()
     The cost is real but much smaller than a missing capability, and it is the
     last two assertions: the temporary name leaks into `modified_contours` and
     into `getAllModifiedNames`, which is the scope of an undo snapshot. That
-    leak, not the absence of an API, is what D9 asks about.
+    leak, not the absence of an API, is why `reorderContour` exists.
     """
     store, rows = _threeRowContour()
     held = [TraceView(store, row) for row in rows]
@@ -3559,7 +3546,7 @@ def test_the_setAttribute_round_trip_reorders_without_renumbering_but_pollutes()
 
 
 def test_destroy_and_rebuild_reorders_quietly_and_costs_the_row_numbers():
-    """The other retired route, and the other half of what D9 chose between.
+    """The other retired route, and the other price `reorderContour` avoids.
 
     `Contour.importTraces` ends with `self.traces = traces`, and `traces` is
     built as [matched duplicates, in positional order] + rem_s + rem_o -- a
@@ -3598,14 +3585,14 @@ def test_destroy_and_rebuild_reorders_quietly_and_costs_the_row_numbers():
 
 
 # =============================================================================
-# `reorderContour`: D9's answer, and what it is required to cost
+# `reorderContour`, and what it is required to cost
 # =============================================================================
 #
 # The two tests above are the two routes that existed before it, each measured
 # with its own price attached: the rename round trip renumbers nothing and leaks
 # a scratch name into the undo scope, and destroy-and-rebuild keeps the tracking
-# honest and renumbers every row. D9 decided that neither price is one a shim
-# may impose silently and that the store should grow an entry point that pays
+# honest and renumbers every row. Neither price is one a shim
+# may impose silently, and that the store should grow an entry point that pays
 # neither. These tests are that entry point's acceptance: they assert each half
 # of both prices is *not* paid, rather than asserting the method exists.
 
@@ -3676,12 +3663,12 @@ def test_reorderContour_reorders_without_renumbering_or_invalidating_a_view():
 
 
 def test_reorderContour_marks_the_contour_and_leaks_no_scratch_name():
-    """The third price, not paid: the review's own finding, closed.
+    """The third price, not paid: no scratch name leaks into the tracking.
 
-    review-274 F2 reproduced `modified_contours == {'axon', '__tmp__'}` after a
-    round-trip reorder, with `'__tmp__' not in contourNames()` -- a name in the
-    scope of an undo snapshot that names no contour. That is the finding D9 was
-    raised by, and this is the test that it cannot happen through the entry
+    A round-trip reorder leaves `modified_contours == {'axon', '__tmp__'}`,
+    with `'__tmp__' not in contourNames()`: a name in the scope of an undo
+    snapshot that names no contour. That leak is why `reorderContour` exists,
+    and this is the test that it cannot happen through the entry
     point: the tracking sets hold the reordered contour and nothing else, and
     every name in them is a real contour.
 
@@ -3699,7 +3686,7 @@ def test_reorderContour_marks_the_contour_and_leaks_no_scratch_name():
     assert store.getAllModifiedNames() == {"axon"}
     assert store.added_rows == [] and store.removed_rows == []
 
-    ## The F2 assertion, inverted: every tracked name is a contour that exists.
+    ## The leak assertion, inverted: every tracked name is a real contour.
     assert store.getAllModifiedNames() <= set(store.contourNames())
 
 
@@ -3732,7 +3719,7 @@ def test_reorderContour_and_the_round_trip_reach_the_same_state():
     assert _rowStateForComparison(clean) == _rowStateForComparison(dirty)
     assert clean.rowsForContour("axon") == dirty.rowsForContour("axon") == [2, 1, 0]
 
-    ## Where they part. The leak is the reason D9 was asked.
+    ## Where they part. The leak is the reason `reorderContour` exists.
     assert clean.getAllModifiedNames() == {"axon"}
     assert dirty.getAllModifiedNames() == {"axon", "__reorder_tmp__"}
     assert clean.generation - started_at == 1
@@ -3743,14 +3730,14 @@ def test_reorderContour_realizes_an_arbitrary_permutation_on_real_contours(
         loaded_sections):
     """Not just a reversal, and not just on invented geometry.
 
-    review-274 F2 reproduced the round trip one notch harder than the PR did, on
-    a NON-reversal permutation, because a reversal is the one permutation a
-    buggy implementation can reach by accident. The same standard applies to the
+    The round trip reorders a NON-reversal permutation too, and that is the
+    harder case, because a reversal is the one permutation a buggy
+    implementation can reach by accident. The same standard applies to the
     replacement, and it is applied here on every multi-row contour of the real
     fixture series rather than on a three-row fixture.
 
-    WHAT THIS MATERIAL CAN AND CANNOT DELIVER (review-277 F04)
-    ----------------------------------------------------------
+    WHAT THIS MATERIAL CAN AND CANNOT DELIVER
+    -----------------------------------------
     An earlier form of this test rotated every contour by one and claimed that
     as "no fixed point and no symmetry to hide behind". That claim was false on
     most of what it ran against. The fixture series' contour row-count
@@ -3884,7 +3871,7 @@ def test_reorderContour_refuses_anything_that_is_not_a_permutation():
 
 
 def test_reorderContour_refuses_non_integral_row_numbers_but_keeps_numpy_ints():
-    """review-277 F01: the corruption a *value* comparison cannot see.
+    """The corruption a *value* comparison cannot see.
 
     `sorted(ordered) != sorted(current)` compares values, and `2.0 == 2`, so a
     `rows` holding `float` or `numpy.float64` elements was a valid permutation
@@ -4007,9 +3994,9 @@ def test_importTraces_hands_back_the_contours_own_objects_and_may_hand_back_the_
     production is a contour of a different section of a different series.
 
     A `ContourView.importTraces` would therefore have to adopt a foreign row
-    into this store. That is design §10's id-carry question ("the id follows the
-    surviving `Trace`"), not an append. D10 answered the id half --
-    `appendRow(foreign_id=...)` exists and is tested above -- so what is left
+    into this store. That is an id-carry question ("the id follows the
+    surviving `Trace`"), not an append. The id half is answered:
+    `appendRow(foreign_id=...)` exists and is tested above. What is left
     for the port is which store the adopted row belongs to, and threading the
     foreign id from `other`'s store to this one, which nothing does today.
 
@@ -4068,19 +4055,18 @@ def test_importTraces_hands_back_the_contours_own_objects_and_may_hand_back_the_
 
 def test_the_slice_guarantee_7b_inherits_still_holds_on_real_contours(
         loaded_sections):
-    """D5's working default, re-verified as 7b's own precondition.
+    """A view slice is a bare `list`, re-checked as the import port's premise.
 
-    Slice 7a established that `ContourView[i:]` is a bare `list` exactly as
-    `Contour[i:]` is, which is what makes `importTraces`' `.copy()`/`.pop()`/
-    `+` mechanics survive a view. A prior slice's guarantee is a fact to
-    re-check, not one to inherit, so it is re-measured here on every contour of
-    the real series -- and one notch harder than 7a's walk, which compares
-    exception TYPES: this compares the exception MESSAGE STRINGS, the level the
-    #270 review checked at but that no test held.
+    `ContourView[i:]` is a bare `list` exactly as `Contour[i:]` is, which is
+    what makes `importTraces`' `.copy()`/`.pop()`/`+` mechanics survive a
+    view. That guarantee is a fact to re-check, not one to inherit, so it is
+    re-measured here on every contour of the real series, one notch
+    harder than the contour walk above, which compares exception TYPES: this
+    compares the exception MESSAGE STRINGS.
 
-    It matters that this is the half of 7b that is NOT blocked: the container
-    mechanics port cleanly and are pinned. What does not port is identity and
-    the rebind, which the four tests above measure.
+    It matters that this is the half of the import port that is NOT blocked:
+    the container mechanics port cleanly and are pinned. What does not port is
+    identity and the rebind, which the four tests above measure.
     """
     checked = slices = 0
     for section in loaded_sections:

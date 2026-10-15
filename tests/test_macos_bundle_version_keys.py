@@ -124,6 +124,7 @@ def test_the_full_version_rides_in_its_own_key():
 @pytest.mark.parametrize("full, numeric", [
     ("1.24.0", "1.24.0"),
     ("1.24.0.dev20260928", "1.24.0"),
+    ("1.24.0.dev202610081315", "1.24.0"),
     ("1.23.1rc2", "1.23.1"),
     ("0.0.0", "0.0.0"),
     ("garbage", "0.0.0"),

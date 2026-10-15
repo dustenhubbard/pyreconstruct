@@ -203,8 +203,12 @@ def seriesXMLToJSON(series_fp, section_fps, hidden_dir):
     ## TODO: Set to first available section
     series_dict["current_section"] = xml_series.index
 
-    # get the view window
-    series_dict["window"] = list(xml_series.viewport[:2]) + [1, 1]
+    # the view window: the same default a new series gets. The legacy
+    # viewport holds the lower-left corner and the pixel size of the view,
+    # not its extent, so the corner alone cannot be made into a window: with
+    # a one-micron width it landed left of or below the image whenever the
+    # legacy view was scrolled past the image corner by more than a micron.
+    series_dict["window"] = [0, 0, 1, 1]
     
     # import the palette
     series_dict["palette_traces"] = []

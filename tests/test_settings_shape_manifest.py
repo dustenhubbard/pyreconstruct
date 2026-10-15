@@ -7,7 +7,7 @@ stored value with the type of ITS OWN default (``type(defaults[name])``, and
 would raise inside the stable app at read time, on a machine that never ran
 the nightly's code.
 
-The rule, from the design (hub specs/settings-sync-two-apps-2026-09-27.md):
+The rule, from the design (2026-09-27):
 a key's type never changes and a key is never removed. Want a different
 shape? Add a new key, leave the old one, and let the stable app keep reading
 it. ``tests/settings_manifest.json`` pins the type name of every default and

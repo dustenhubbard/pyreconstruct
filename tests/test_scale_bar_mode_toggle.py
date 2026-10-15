@@ -52,7 +52,7 @@ from PyReconstruct.modules.gui.palette import scale_bar as sb_mod
 from PyReconstruct.modules.gui.palette.mouse_palette import MousePalette
 from PyReconstruct.modules.gui.palette.scale_bar import (
     MIN_PINNED_PIXELS,
-    NICE_LENGTHS,
+    TICK_SUBDIVISIONS,
     ScaleBar,
     formatLength,
     pinnedLength,
@@ -149,14 +149,15 @@ def _render(bar, collected):
     pixmap = QPixmap(bar.size())
     pixmap.fill()
     bar.render(pixmap)
+    # the label and the tick labels are both outlined text, label first
     return (collected["rects"][0][2] if collected["rects"] else None,
             collected["outlined"][0] if collected["outlined"] else None,
-            tuple(collected["plain"]))
+            tuple(collected["outlined"][1:]) + tuple(collected["plain"]))
 
 
 def _pinned_bar(micron_length, scale, room=ROOM, **opts):
     """Build a pinned ScaleBar exactly the way MousePalette.createSB does."""
-    bar = ScaleBar(None, _StubManager(**opts), room, 50, 1,
+    bar = ScaleBar(None, _StubManager(**opts), room, 6, 1,
                    micron_length=micron_length, max_pixel_length=room)
     bar.setScale(scale)
     return bar
@@ -316,7 +317,7 @@ def test_nothing_to_draw_is_not_an_error():
 # ------------------------------------------------------------------- the ticks
 
 def test_a_length_on_the_ladder_is_ticked_the_way_the_ladder_ticks_it():
-    for mantissa, subdivs in NICE_LENGTHS:
+    for mantissa, subdivs in TICK_SUBDIVISIONS:
         for decade in (0.01, 1.0, 100.0):
             assert pinnedSubdivisions(mantissa * decade) == subdivs
 
@@ -450,12 +451,13 @@ def test_the_response_layout_is_what_the_other_tests_index(qapp, tmp_path):
     try:
         w = _widget(dlg)
         assert w.accept(close=False)
-        assert len(w.responses) == 4
+        assert len(w.responses) == 5
         assert [label for label, _checked in w.responses[0]] == [
             "show numbers", "show ticks"]
         assert len(w.responses[1]) == 2                  # the mode radio
         assert isinstance(w.responses[2], int)           # the percentage slider
         assert isinstance(w.responses[3], float)         # the µm length
+        assert isinstance(w.responses[4], int)           # the thickness slider
     finally:
         dlg.deleteLater()
 
@@ -616,7 +618,7 @@ def test_and_the_next_launch_still_builds_a_bar(qapp, tmp_path, typed):
         dlg.deleteLater()
 
     stored = series.getOption("scale_bar_length_um")
-    bar = ScaleBar(None, _StubManager(), ROOM, 50, 1,
+    bar = ScaleBar(None, _StubManager(), ROOM, 6, 1,
                    micron_length=stored, max_pixel_length=ROOM)
     try:
         bar.setScale(0.01)
@@ -641,7 +643,7 @@ def test_a_store_already_holding_one_degrades_instead_of_crashing(
     assert _StubPalette(series).getPinnedLength() is None
     assert pinnedLength(stored, 0.01, ROOM) == (0.0, 0)
 
-    bar = ScaleBar(None, _StubManager(), ROOM, 50, 1,
+    bar = ScaleBar(None, _StubManager(), ROOM, 6, 1,
                    micron_length=stored, max_pixel_length=ROOM)
     try:
         bar.setScale(0.01)
@@ -721,9 +723,10 @@ def test_the_palette_builds_a_pinned_bar_when_asked(
     collected = _install_spies(monkeypatch)
     pix_width = main_window.field.pixmap_dim[0]
     seen = []
-    # the window widths whose zoom keeps a 5 µm bar inside the field's own
-    # legible range: 560 px of room and a 40 px floor put that at 5 to 70 µm
-    for window_um in (10.0, 20.0, 50.0, 60.0):
+    # the window widths whose zoom keeps a 5 µm bar inside its legible range.
+    # The default 25 % of a 560 px field is 140 px of room.  With a 40 px
+    # floor, that puts the window at 20 to 70 µm
+    for window_um in (20.0, 30.0, 50.0, 60.0):
         series.window[2] = window_um
         palette.setScale()
         pix, label, _ticks = _render(palette.sb, collected)

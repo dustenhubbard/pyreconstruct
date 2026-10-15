@@ -1,4 +1,4 @@
-"""The import/export findings from the review fleet (2026-08-28).
+"""The import/export findings from the 2026-08-28 review.
 
 Every test here fails against the code as it stood: silently dropped ROI
 exports, crashed or distorted ROI imports, a leaked temp descriptor, a

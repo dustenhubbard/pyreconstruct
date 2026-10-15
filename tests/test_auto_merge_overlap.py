@@ -200,7 +200,7 @@ def test_merged_trace_keeps_the_existing_traces_attributes(merge_field):
 
 def _finish_poly(field, pix_points):
     """Finish a point-to-point trace the way the mouse handlers do: through
-    lineRelease, guards and all. The click-test regression lived in exactly
+    lineRelease, guards and all. The regression lived in exactly
     the part the direct newTrace-plus-autoMerge calls above skip: lineRelease
     decided whether the draw happened by counting section.added_traces, but a
     logged draw refreshes the tables inside newTrace, and that refresh calls

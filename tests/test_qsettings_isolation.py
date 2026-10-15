@@ -108,6 +108,39 @@ def test_direct_two_argument_construction_writes_into_the_root():
         assert "isolation_probe_direct" in f.read()
 
 
+def test_an_explicit_file_keeps_its_directory_inside_the_root(tmp_path):
+    """The `QSettings(fileName, IniFormat)` form, as the geometry tests use it
+    for a scratch file under their own `tmp_path`.
+
+    The path is replayed under the root with its directories kept, so two
+    tests that each ask for `<their tmp_path>/scratch.ini` get two files.
+    Collapsing the path to its basename shared one file across every test
+    that used the name: a window closed in one test saved `window/geometry`
+    into the file the next test expected to find empty, which is how
+    `test_first_launch_falls_back_to_the_centered_default` failed whenever it
+    did not run first.
+    """
+    _require_isolated()
+    import PySide6.QtCore as qtcore
+
+    ini = qtcore.QSettings.Format.IniFormat
+    one = qtcore.QSettings(str(tmp_path / "one" / "scratch.ini"), ini)
+    two = qtcore.QSettings(str(tmp_path / "two" / "scratch.ini"), ini)
+
+    assert _under_root(one.fileName()), one.fileName()
+    assert _under_root(two.fileName()), two.fileName()
+    assert one.fileName() != two.fileName()
+
+    one.setValue("isolation_probe_explicit", "one")
+    one.sync()
+    assert two.value("isolation_probe_explicit") is None
+
+    # the same name asked for twice is still one file, which is what a test
+    # that reads back what its window saved relies on
+    again = qtcore.QSettings(str(tmp_path / "one" / "scratch.ini"), ini)
+    assert again.value("isolation_probe_explicit") == "one"
+
+
 def test_the_settings_store_seam_is_isolated():
     """Route with by far the widest reach: `Series.getOption`/`setOption` go
     through `QSettingsStore`, which builds its own `QSettings` from a deferred
@@ -143,7 +176,7 @@ def test_the_default_store_helpers_are_isolated():
 def test_overriding_the_default_store_reaches_getOption_too():
     """One `set_default_settings_store()` call closes the whole seam.
 
-    Backlog item: "the undo harness's settings seam only closes one of two
+    The defect: "the undo harness's settings seam only closes one of two
     stores". `datatypes/series.py` used to keep a second module-level cache of
     its own, so `set_default_settings_store()` -- the documented way to redirect
     settings -- reached `constants.getdatetime` and did *not* reach
@@ -551,9 +584,9 @@ def test_an_unattributed_change_warns_instead_of_failing():
 
     A digest change with no recorded mutation cannot be the suite's doing, and
     the developer runs the suite with the application open, which writes its own
-    preferences as it goes. Failing the run there blames him for something he
-    did not do and cannot prevent, and a check that cries wolf during ordinary
-    work is a check he will learn to ignore.
+    preferences as it goes. Failing the run there blames them for something
+    they did not do and cannot prevent, and a check that cries wolf during
+    ordinary work is a check they will learn to ignore.
     """
     problems = [
         "modified: /Preferences/com.khlab.PyReconstruct.plist "

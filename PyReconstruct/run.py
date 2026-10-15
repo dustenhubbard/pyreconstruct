@@ -97,6 +97,15 @@ def runPyReconstruct(filename=None):
     )
     fold_flavor_settings_once()
 
+    # the What's new pop-up is back on by default from this version, once:
+    # a stored "off" from before it does not bind, and a fresh install records
+    # this version as seen so its first pop-up is the update after it. Before
+    # the window, which writes the keys the fresh-install test reads.
+    from PyReconstruct.modules.gui.main.first_launch import (
+        reset_whats_new_popup_startup,
+    )
+    reset_whats_new_popup_startup()
+
     # create the Qt Application
     app = QApplication(sys.argv)
 
@@ -105,6 +114,26 @@ def runPyReconstruct(filename=None):
     # first window opens straight into that series instead of the welcome one)
     file_open_watcher = FileOpenWatcher()
     app.installEventFilter(file_open_watcher)
+    app.processEvents()
+    if filename is None and file_open_watcher.pending is not None:
+        filename = file_open_watcher.pending
+        file_open_watcher.pending = None
+
+    # frozen macOS: eject the installer disk image of this build. Here, before
+    # the first window, no series is open and no path can change while
+    # hdiutil runs. A launch that opens a file skips it, since that series may
+    # keep images on the image; the next plain launch ejects. A FileOpen
+    # received while hdiutil looks for the image also stops it: one more
+    # processEvents pass right before the detach collects it. Another pass
+    # after the lookup collects one that came when no image qualified, so
+    # the first window still opens it. Once per process, so an in-app
+    # restart below does not run it again.
+    def no_file_pending():
+        app.processEvents()
+        return file_open_watcher.pending is None
+
+    from PyReconstruct.modules.backend.func.installer_image import eject_installer_image
+    eject_installer_image(open_file=filename, before_detach=no_file_pending)
     app.processEvents()
     if filename is None and file_open_watcher.pending is not None:
         filename = file_open_watcher.pending

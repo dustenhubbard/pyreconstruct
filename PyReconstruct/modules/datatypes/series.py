@@ -5,6 +5,7 @@ import json
 import shutil
 import secrets
 from datetime import datetime, timezone
+from contextlib import contextmanager
 from copy import copy, deepcopy
 from pathlib import Path
 from typing import Union
@@ -54,6 +55,31 @@ class SeriesSaveError(Exception):
 
 class SeriesOptionError(Exception):
     """Raised when an option read from the series file has the wrong shape."""
+
+
+class SeriesClosedError(FileNotFoundError):
+    """Raised when a section pass reaches a section of a closed series.
+
+    A progress dialog runs the event loop on each update, so another series
+    can open under any pass that shows one (a .jser opened from the Finder
+    reaches the window there), and opening it closes this series and deletes
+    its working files. The pass stops before it reads the next section
+    instead of failing on the missing file, or reading files the series that
+    replaced it now owns. A FileNotFoundError still, so a caller that handles
+    that one handles this the same.
+
+    Not quiet: a pass that writes may have saved some sections and not the
+    rest, so the app's exception hook reports it like any other error. A
+    pass with series data to write after its last section (writes_after)
+    stops at the last update too, after every section is done. Only
+    a caller that loses nothing by stopping (the read-only pixel-dust and
+    Duplicates scans in MainWindow) catches it and ends without a word.
+    """
+
+
+## what a series undo or redo is doing, for the notice of a save it skips
+## ("this series is <why>"; see Series.seriesStep)
+UNDO_STEP = "in the middle of an undo or redo"
 
 
 def _checkColumnsOption(option_name : str, value):
@@ -106,6 +132,43 @@ def _checkColumnsOption(option_name : str, value):
                 f"entry {i} has a {type(pair[0]).__name__} where the column "
                 f"name should be"
             )
+
+
+#: The data lists whose column choices are stored in the series, one option
+#: each. A column added to one of their defaults reaches an older series
+#: through `addMissingColumns`, which `Series.updateJSON` runs on load.
+LIST_COLUMN_OPTIONS = (
+    "object_columns",
+    "trace_columns",
+    "section_columns",
+    "ztrace_columns",
+    "flag_columns",
+)
+
+
+def addMissingColumns(columns : list, defaults : list) -> bool:
+    """Append each default column that `columns` lacks, in place.
+
+    The one rule for a list-column option written before a default existed:
+    the missing column goes at the end with its default shown value, and
+    every stored column keeps its place and its shown/hidden choice. Names
+    already present are left alone, so running it again adds nothing, and a
+    column that is not a default (an object list's own user column) stays.
+
+        Params:
+            columns (list): the stored (name, shown) pairs, updated in place
+            defaults (list): the option's default (name, shown) pairs
+        Returns:
+            (bool): True if a column was added
+    """
+    present = {name for name, _ in columns}
+    added = False
+    for name, shown in defaults:
+        if name not in present:
+            columns.append((name, shown))
+            present.add(name)
+            added = True
+    return added
 def contourNameCollisions(jser_data : dict) -> dict:
     """Find the object names a load would fold together, without loading.
 
@@ -257,6 +320,8 @@ def applyContourRenames(series_data : dict, renames : dict, collisions : dict):
     if isinstance(host_tree, dict):
         rebuilt = {}
         for obj_name, hosts in host_tree.items():
+            if isinstance(hosts, str):
+                hosts = [hosts]  # one host as a bare string, as HostTree.add reads it
             if not isinstance(hosts, list):
                 rebuilt[obj_name] = hosts  # shape this code does not know: keep
                 continue
@@ -327,6 +392,17 @@ def _default_progress_reporter_factory():
         from PyReconstruct.modules.backend.progress import QtProgressReporter
         _PROGRESS_REPORTER_FACTORY = QtProgressReporter
     return _PROGRESS_REPORTER_FACTORY
+
+
+def _openingText(name: str) -> str:
+    """The progress text while a series opens, naming the series.
+
+    An open runs one of two passes: `openJser` unpacking the .jser, or the
+    series-data pass in `Series.__init__` that a recovered or already-unpacked
+    working folder takes instead. Both say this, with the name the window
+    title shows once the series is open.
+    """
+    return f"Opening {name}..."
 
 
 _NOTIFIER = None
@@ -536,6 +612,8 @@ class Series():
         self.modified_ztraces = set()
         self.modified_objects = set()
         self.leave_open = False
+        # set by close(); a section pass stops on it (SeriesClosedError)
+        self.closed = False
 
         # possible zarr overlay
         self.zarr_overlay_fp = None
@@ -552,7 +630,15 @@ class Series():
         # keep track of relevant overall series data
         self.data = SeriesData(self)
         if get_series_data:
-            self.data.refresh()
+            if self.isWelcomeSeries():
+                # The welcome series PyReconstruct opens at launch is one
+                # bundled section with no traces, read in well under a
+                # millisecond. Its bar only flashed "Loading series data..."
+                # before the user had chosen any series, so it gets none.
+                self.data.refresh(show_progress=False)
+            else:
+                self.data.refresh(message=_openingText(self.name))
+            self._repointBCProfile()
 
         # objects for non-GUI users
         self.objects = Objects(self)
@@ -716,7 +802,7 @@ class Series():
         # 2026); the bar itself only appears after Qt's minimum duration, so a
         # small local file still opens without a flash.
         factory = progress if progress is not None else _default_progress_reporter_factory()
-        reporter = factory(text="Opening series...")
+        reporter = factory(text=_openingText(sname))
         try:
             jser_data, collisions = Series._readJserForOpen(fp, notifier)
         except BaseException:
@@ -854,6 +940,9 @@ class Series():
                     return None
                 progress += 1
                 reporter.set_progress(progress/final_value * 100)
+            # the series data is complete here, as after the refresh in
+            # __init__: a displayed profile no section has is repointed now
+            series._repointBCProfile()
 
         except BaseException:
             shutil.rmtree(hidden_dir, ignore_errors=True)
@@ -861,7 +950,7 @@ class Series():
         finally:
             # The dialog closes only at 100%, which a failure never reaches:
             # the raise above used to leave the window-modal "Opening
-            # series..." dialog standing behind the error that follows it
+            # <name>..." dialog standing behind the error that follows it
             # (found 2026-08-28) -- the same shape saveJser's finally already
             # fixes. Cancel returns pass through here too; finishing a
             # reporter twice is harmless.
@@ -877,22 +966,32 @@ class Series():
         progress lets Qt deliver queued events, so a second save (a shortcut, a
         menu action, an autosave) can start inside the first. Two saves of one
         series at once have nothing to gain and every way to collide, so the
-        second is refused with a message, writes nothing, and raises. The
-        message promises nothing about the first save: if the refusal's
+        second is refused with a notice, writes nothing, and raises. The
+        notice promises nothing about the first save: if the refusal's
         exception reaches it, it stops like any failed save and keeps the old
-        file. Nothing in the app queues saves, so refusing is the whole fix.
+        file. The GUI checks `jserSaveRunning` before it gets here, so in the
+        app the refusal is the notice alone.
+        Nothing in the app queues saves, so refusing is the whole fix.
+        A save while a series undo or redo, or a change to the profiles or
+        alignments, is rewriting the sections is refused the same way (see
+        `seriesStep`): it would write the sections out of step with each
+        other or with the series attributes.
         See `_saveJser` for what a save does.
 
             Params:
                 save_fp (str): the optional override filepath to save the jser file
                 close (bool): True if series should be closed after saving
             Raises:
-                SeriesSaveError: if another save of this series is running, or
-                    if the series cannot be written without losing a section.
-                    The existing .jser is not replaced in either case.
+                SeriesSaveError: if another save of this series is running, if
+                    a series step is running (see seriesStep), or if the series
+                    cannot be written without losing a section. The existing
+                    .jser is not replaced in any of these cases.
         """
+        target = self.jser_fp if not save_fp else save_fp
         if self.jserSaveRunning():
-            raise self.refuseNestedSave(self.jser_fp if not save_fp else save_fp)
+            raise self.refuseNestedSave(target)
+        if self.seriesStepRunning():
+            raise self.refuseSaveDuringStep(target)
         self._jser_save_running = True
         try:
             self._saveJser(save_fp, close)
@@ -906,25 +1005,58 @@ class Series():
     def refuseNestedSave(self, target : str) -> SeriesSaveError:
         """Tell the user a save was skipped because one is running.
 
-        Shows the message and returns the error for the caller to raise. Save
-        As calls it before moving the series, since a move followed by a
-        refused save would leave the series pointing at a path with no file.
+        Shows the message and returns the error for the caller to raise. The
+        GUI's save, close and backup paths call it themselves, before anything
+        is written or closed, and return without raising: raised from a menu
+        action, the error reaches the exception hook, which opens the
+        error-report window anyway. Save As also calls it before moving the
+        series, since a move followed by a refused save would leave the series
+        pointing at a path with no file.
+
+        The message is a plain notice, not the "Save failed" report window. A
+        skipped save is expected and nothing failed, so there is nothing to
+        report.
 
             Params:
                 target (str): the path the skipped save would have written
             Returns:
                 (SeriesSaveError) the error, not raised
         """
-        err = SeriesSaveError(
-            "this series is already being saved, so this save was skipped."
-        )
-        self._surfaceSaveError(
-            target, err,
-            message=(
-                "Save skipped: this series is already being saved.\n\n"
-                f"This save wrote nothing to:\n{target}"
-            ),
-        )
+        return self._refuseSkippedSave("already being saved", target)
+
+    def refuseSaveDuringStep(self, target : str) -> SeriesSaveError:
+        """Tell the user a save was skipped because a series step is running.
+
+        As refuseNestedSave: the notice, and the error for the caller to
+        raise. The GUI's save, close, open and backup paths call it before
+        anything is written, asked or closed, and return without raising, so
+        the step goes on and finishes on the series it began on (see
+        seriesStep).
+
+            Params:
+                target (str): the path the skipped save would have written
+            Returns:
+                (SeriesSaveError) the error, not raised
+        """
+        return self._refuseSkippedSave(self._series_step or UNDO_STEP, target)
+
+    def _refuseSkippedSave(self, why : str, target : str) -> SeriesSaveError:
+        """Show the notice for a skipped save and return its error, not raised.
+
+            Params:
+                why (str): what the series is busy with, in the user's terms
+                target (str): the path the skipped save would have written
+        """
+        err = SeriesSaveError(f"this series is {why}, so this save was skipped.")
+        message = f"Save skipped: this series is {why}."
+        if target:
+            message += f"\n\nThis save wrote nothing to:\n{target}"
+        try:
+            shown = self._notifier().notify(message)
+        except Exception:
+            shown = False  # the notice must never stop the refusal
+        if not shown:
+            print(message)
         return err
 
     def _saveJser(self, save_fp : str = None, close : bool = False):
@@ -1231,16 +1363,23 @@ class Series():
     
     def close(self):
         """Clear the hidden directory of the series."""
-        
+
         if self.isWelcomeSeries() or self.leave_open:
+            # closed even so: a series left open for the one replacing it in
+            # the same hidden dir must not go on editing that one's files
+            self.closed = True
             return
-        
+
         if os.path.isdir(self.hidden_dir):
-            
+
             for f in os.listdir(self.hidden_dir):
                 os.remove(os.path.join(self.hidden_dir, f))
-                
+
             os.rmdir(self.hidden_dir)
+
+        # only once its files are gone: a close that raised part-way (a
+        # locked working file) leaves the series in the window, still usable
+        self.closed = True
     
     @staticmethod
     def updateJSON(series_data : dict):
@@ -1261,7 +1400,18 @@ class Series():
         for key in list(series_data["options"].keys()):
             if key not in empty_series["options"]:
                 del series_data["options"][key]
-        
+
+        # backfill list columns added since the file was written, so the
+        # settings dialog and the lists agree before any list opens. A
+        # malformed value is left for getOption to report by name.
+        for key in LIST_COLUMN_OPTIONS:
+            columns = series_data["options"][key]
+            try:
+                _checkColumnsOption(key, columns)
+            except SeriesOptionError:
+                continue
+            addMissingColumns(columns, empty_series["options"][key])
+
         # check for backup_dir key
         if "backup_dir" in series_data:
             del series_data["backup_dir"]
@@ -1314,7 +1464,7 @@ class Series():
         if window[2] == 0:  # width
             window[2] = 1
         if window[3] == 0:  # height
-            window[3] == 1
+            window[3] = 1
         
         # check for separate obj attrs
         if "obj_attrs" not in series_data:
@@ -1755,7 +1905,7 @@ class Series():
         section = Section(section_num, self)
         return section
     
-    def enumerateSections(self, show_progress : bool = True, message : str = "Loading series data...", series_states=None, breakable=True, section_numbers=None, eta=True):
+    def enumerateSections(self, show_progress : bool = True, message : str = "Loading series data...", series_states=None, breakable=True, section_numbers=None, eta=True, writes_after=False):
         """Allow iteration through the sections.
 
         Proper use in a for loop: for snum, section in series.enumerateSections():
@@ -1769,15 +1919,19 @@ class Series():
                     numbers (used to avoid loading every section for operations
                     that only touch a few objects)
                 eta (bool): show a time estimate on the progress bar once enough
-                    of the pass has run to make one (fork #421: every
-                    operation's bar carries one; the series-open pass in
-                    SeriesData.refresh opts out, his call of 2026-09-14)
+                    of the pass has run to make one (every operation's bar
+                    carries one; the series-open pass in SeriesData.refresh
+                    opts out)
+                writes_after (bool): True if the caller writes series data
+                    after the last section (object attributes, the series
+                    file): a series closed at the last progress update then
+                    stops the pass with SeriesClosedError, as at the others
             Returns:
                 (generator): yielding (section number, Section) pairs
         """
         iterator = SeriesIterator(
             self, show_progress, message, series_states, breakable,
-            section_numbers, eta=eta,
+            section_numbers, eta=eta, writes_after=writes_after,
         )
         ## A generator around the iterator, for the finally alone. The
         ## iterator's window-modal progress dialog has no cancel button and
@@ -1787,10 +1941,101 @@ class Series():
         ## force-quit as the only exit (found 2026-08-28). Abandoning a
         ## generator closes it (GeneratorExit), so the finally runs on every
         ## road out: exhaustion, break, and an exception in the body.
+        self._running_passes = self._running_passes + (iterator,)
         try:
             yield from iterator
         finally:
-            iterator.finishProgress()
+            self._running_passes = tuple(
+                p for p in self._running_passes if p is not iterator
+            )
+            try:
+                iterator.recordWritten()
+            finally:
+                iterator.finishProgress()
+
+    ## The passes enumerateSections is running on this series, innermost
+    ## last, and the callable told of each section file one of them writes
+    ## (see setPassWriteHook).
+    _running_passes: tuple["SeriesIterator", ...] = ()
+    _pass_write_hook = None
+
+    def sectionPassRunning(self) -> bool:
+        """True while enumerateSections is going through this series."""
+        return bool(self._running_passes)
+
+    ## What the series step running on this series is doing, in the user's
+    ## terms, or None (see seriesStep); saveJser refuses meanwhile
+    _series_step = None
+
+    def seriesStepRunning(self) -> bool:
+        """True while a series step is rewriting this series' sections."""
+        return self._series_step is not None
+
+    @contextmanager
+    def seriesStep(self, why : str = UNDO_STEP):
+        """Mark a series step as running while it rewrites the sections.
+
+        A series undo or redo (SeriesStates.undoState) restores and writes
+        its sections one by one, and puts the series attributes back only
+        after the last one. Its progress dialog runs the event loop on every
+        update, where a .jser opened from the Finder asks to save this
+        series. A save there wrote the restored sections with the series
+        attributes from before the step: undoing a brightness/contrast
+        profile rename saved sections carrying the old name under a series
+        file still naming the new one, and the series raised KeyError when it
+        was opened again (see _repointBCProfile). Changing the profiles or
+        the alignments (modifyBCProfiles, modifyAlignments) rewrites every
+        section the same way, and a save part-way wrote sections that
+        disagreed about which profiles or alignments exist.
+        saveJser refuses while this is set, and the GUI's save, close, open
+        and backup paths check it first and skip with a notice, so the step
+        finishes on the series it began on. A step inside another leaves the
+        outer one marked when it ends.
+
+            Params:
+                why (str): what the step is doing, for the notice ("this
+                    series is <why>")
+        """
+        outer = self._series_step
+        self._series_step = why
+        try:
+            yield
+        finally:
+            self._series_step = outer
+
+    def setPassWriteHook(self, hook):
+        """Call hook(section) after a pass over the section files writes one.
+
+        A pass loads and writes its own copies of the sections. The field
+        keeps the copies it loaded before, of the section shown and the
+        flickered-away one, and every save writes those back
+        (MainWindow.saveAllData). A save during the pass, or after a pass
+        that stopped part-way, would put back what the pass changed, so the
+        field refreshes its copies from each file as it is written. A .jser
+        opened from the Finder at a progress update saves this series that
+        way, before the pass ends.
+
+            Params:
+                hook (callable): called with the Section just written, or
+                    None to stop
+        """
+        self._pass_write_hook = hook
+
+    def passWroteSection(self, section):
+        """Tell the running pass, and the hook, that a section was written.
+
+        Called by Section.save after every write; does nothing outside a
+        pass. If the hook raises, the pass stops there, and the section's
+        change is still added to the undo history (see enumerateSections).
+
+            Params:
+                section (Section): the section just written
+        """
+        if not self._running_passes:
+            return
+        self._running_passes[-1].sectionWritten(section)
+        if self._pass_write_hook is not None:
+            self._pass_write_hook(section)
 
     def getObjectSections(self, obj_names) -> set:
         """Return the set of section numbers that contain any of the objects.
@@ -1811,7 +2056,7 @@ class Series():
                 snums.update(obj_data.traces.keys())
         return snums
 
-    def _forEachObjectSection(self, obj_names, message, edit, series_states=None, eta=True):
+    def _forEachObjectSection(self, obj_names, message, edit, series_states=None, eta=True, writes_after=False):
         """Run an edit on every section a set of objects appears on.
 
         The loop the bulk object operations all need: visit only the sections
@@ -1833,12 +2078,15 @@ class Series():
                 edit (callable): called with each Section; returns True if
                     that section was modified and should be saved
                 series_states (dict): optional dict for GUI undo states
+                writes_after (bool): True if the caller logs after the loop
+                    (see enumerateSections)
         """
         for snum, section in self.enumerateSections(
             message=message,
             series_states=series_states,
             section_numbers=self.getObjectSections(obj_names),
             eta=eta,
+            writes_after=writes_after,
         ):
             if edit(section):
                 section.save()
@@ -1905,20 +2153,25 @@ class Series():
         # or they keep naming an alignment this rewrite is about to remove
         self.remapStoredAlignments(alignment_dict)
 
-        for snum, section in self.enumerateSections(
-            message="Modifying alignments...",
-            series_states=series_states,
-            breakable=False
-        ):
-            old_tforms = section.tforms.copy()
-            new_tforms = {}
-            for new_a, old_a in alignment_dict.items():
-                if old_a is None or old_a not in old_tforms:
-                    continue
-                else:
-                    new_tforms[new_a] = old_tforms[old_a]
-            section.tforms = new_tforms
-            section.save()
+        # A .jser save part-way would write sections that disagree about
+        # which alignments exist, and the window raised opening that file:
+        # the series refuses such a save while the loop runs.
+        with self.seriesStep("in the middle of changing its alignments"):
+            for snum, section in self.enumerateSections(
+                message="Modifying alignments...",
+                series_states=series_states,
+                breakable=False,
+                writes_after=log_event,
+            ):
+                old_tforms = section.tforms.copy()
+                new_tforms = {}
+                for new_a, old_a in alignment_dict.items():
+                    if old_a is None or old_a not in old_tforms:
+                        continue
+                    else:
+                        new_tforms[new_a] = old_tforms[old_a]
+                section.tforms = new_tforms
+                section.save()
         
         if log_event:
             for new_a, old_a in alignment_dict.items():
@@ -1946,27 +2199,36 @@ class Series():
         # every section, and Series.bc_profiles raises when the sections disagree
         # about which profiles exist, so the undo has to be all-or-nothing rather
         # than dissolvable into per-section undos.
-        for snum, section in self.enumerateSections(
-            message="Modifying brightness/contrast profiles...",
-            series_states=series_states,
-            breakable=False
+        # A .jser save part-way would write sections that disagree about
+        # which profiles exist, under a series file naming the displayed
+        # profile from before the change: the series refuses such a save
+        # while the loop runs. The caller points bc_profile at the renamed
+        # profile after this returns, with no event loop turn in between.
+        with self.seriesStep(
+            "in the middle of changing its brightness/contrast profiles"
         ):
-            old_profiles = section.bc_profiles.copy()
-            # SeriesIterator records a per-section undo only when a section
-            # reports modified traces, transforms or flags, and bc_profiles is
-            # none of those, so hand the old profiles to the series state here.
-            if series_states is not None:
-                series_states.recordBCProfiles(snum, old_profiles)
-            new_profiles = {}
-            for new_p, old_p in profiles_dict.items():
-                if old_p is None:
-                    continue
-                elif old_p not in old_profiles:
-                    continue
-                else:
-                    new_profiles[new_p] = old_profiles[old_p]
-            section.bc_profiles = new_profiles
-            section.save()
+            for snum, section in self.enumerateSections(
+                message="Modifying brightness/contrast profiles...",
+                series_states=series_states,
+                breakable=False,
+                writes_after=log_event,
+            ):
+                old_profiles = section.bc_profiles.copy()
+                # SeriesIterator records a per-section undo only when a section
+                # reports modified traces, transforms or flags, and bc_profiles is
+                # none of those, so hand the old profiles to the series state here.
+                if series_states is not None:
+                    series_states.recordBCProfiles(snum, old_profiles)
+                new_profiles = {}
+                for new_p, old_p in profiles_dict.items():
+                    if old_p is None:
+                        continue
+                    elif old_p not in old_profiles:
+                        continue
+                    else:
+                        new_profiles[new_p] = old_profiles[old_p]
+                section.bc_profiles = new_profiles
+                section.save()
         
         if log_event:
             for new_p, old_p in profiles_dict.items():
@@ -2053,7 +2315,8 @@ class Series():
             if cross_sectioned:
 
                 for snum, section in self.enumerateSections(
-                    message="Creating ztrace..."
+                    message="Creating ztrace...",
+                    writes_after=True,
                 ):
 
                     if obj_name in section.contours:
@@ -2069,7 +2332,8 @@ class Series():
             else:
 
                 for snum, section in self.enumerateSections(
-                    message="Creating ztrace..."
+                    message="Creating ztrace...",
+                    writes_after=True,
                 ):
 
                     if obj_name in section.contours:
@@ -2229,7 +2493,7 @@ class Series():
                     # the columnar store never heard, and the end-of-section
                     # resync that repaired it came too late for a multi-object
                     # delete: the guard fired on the NEXT object's first
-                    # removal, mid-edit, on the same section (Patrick's
+                    # removal, mid-edit, on the same section (a user's
                     # report, 2026-08-28, deleting every object on beta-3).
                     # With every trace routed through removeTrace the store
                     # keeps step by itself and no resync is needed at all.
@@ -2315,7 +2579,8 @@ class Series():
         for snum, section in self.enumerateSections(
                 message="Copying object(s)...",
                 series_states=series_states,
-                section_numbers=self.getObjectSections(obj_names)
+                section_numbers=self.getObjectSections(obj_names),
+                writes_after=True,
         ):
 
             modified = False
@@ -2529,10 +2794,15 @@ class Series():
 
         ## Modify object on every section
         attrs_migrated = False
+        section_numbers = self.getObjectSections(obj_names)
         for snum, section in self.enumerateSections(
             message="Modifying object(s)...",
             series_states=series_states,
-            section_numbers=self.getObjectSections(obj_names)
+            section_numbers=section_numbers,
+            # an object with no traces has its attrs moved after the loop
+            writes_after=bool(name) and not any(
+                n in self.sections for n in section_numbers
+            ),
         ):
 
             ## Move object attrs
@@ -2955,12 +3225,11 @@ class Series():
         Trace.getList: points, color, closed, negative, hidden, fill mode and
         tags), "lookalikes" (how many traces under that name on the section
         have that identity, the record's own included) and "lookalike_ordinal"
-        (its place among them, from 0), plus the same under "other_" on a pair
-        record. Traces that differ in anything saved are not lookalikes, so
-        each is found as the only match wherever it moved; the place only
-        chooses between traces whose data is the same. At delete time a
-        changed count sets the record aside (see _resolveByLookalikes). Each
-        contour is read once per scan.
+        (its place among them, from 0). Traces that differ in anything saved
+        are not lookalikes, so each is found as the only match wherever it
+        moved; the place only chooses between traces whose data is the same.
+        At delete time a changed count sets the record aside (see
+        _resolveByLookalikes). Each contour is read once per scan.
         """
         positions = {}
 
@@ -2982,18 +3251,12 @@ class Series():
             return identity, len(indexes), indexes.index(index)
 
         for record in records:
-            for prefix, name_key, index_key in (
-                ("", "name", "index"),
-                ("other_", "other_name", "other_index"),
-            ):
-                if name_key not in record:
-                    continue
-                placed = place(record[name_key], record.get(index_key))
-                if placed is None:
-                    continue
-                (record[f"{prefix}identity"],
-                 record[f"{prefix}lookalikes"],
-                 record[f"{prefix}lookalike_ordinal"]) = placed
+            placed = place(record["name"], record.get("index"))
+            if placed is None:
+                continue
+            (record["identity"],
+             record["lookalikes"],
+             record["lookalike_ordinal"]) = placed
 
     @classmethod
     def _traceIdentity(cls, trace) -> tuple:
@@ -3303,7 +3566,7 @@ class Series():
 
     @classmethod
     def _duplicatePairs(cls, entries : list, threshold : float, mag : float = None):
-        """Yield every pair of differently-named traces on a section that overlap.
+        """Yield every pair of traces on a section that overlap.
 
         ``entries`` is one tuple per trace,
         ``(xmin, ymin, xmax, ymax, area, name, index, trace)``, where the bounds
@@ -3313,9 +3576,10 @@ class Series():
         before ``b`` in (name, index) order so the output does not depend on
         which order the section's contours were walked in.
 
-        Comparing across names means comparing every trace on the section with
-        every other, and a dense autosegmented section carries enough traces
-        that measuring an overlap ratio for each of those pairs is not viable:
+        Duplicates can sit under one name or under two, so every trace on the
+        section is compared with every other, and a dense autosegmented section
+        has enough traces that measuring an overlap ratio for each of those
+        pairs is not viable:
         Trace.getOverlapRatio rasterizes both polygons, which costs about 3 ms a
         pair. Two filters keep the number of ratios measured proportional to the
         number of traces rather than to its square:
@@ -3388,8 +3652,6 @@ class Series():
                 bxmin, bymin, bxmax, bymax, barea, bname, bindex, btrace = b
                 if bxmin > axmax + tol:
                     break  # sorted by xmin: nothing further can reach a
-                if aname == bname:
-                    continue  # same-name duplicates are deleteDuplicateTraces'
                 if atrace.closed != btrace.closed:
                     continue  # as in Trace.overlaps
                 if aymax + tol < bymin or bymax + tol < aymin:
@@ -3443,47 +3705,45 @@ class Series():
                 if Trace.ratioIsOverlap(ratio, threshold):
                     yield first, second, ratio, False
 
-    def findDifferentlyNamedDuplicates(self, threshold : float,
-                                       include_locked=False) -> list:
-        """Find traces that duplicate each other under two different names.
+    def findDuplicateTraces(self, threshold : float,
+                            include_locked=False) -> list:
+        """Find traces that duplicate each other, grouped by structure.
 
-        The same-name case is Series.deleteDuplicateTraces, and it stays exactly
-        as it is: that comparison only ever sees traces already grouped under one
-        contour name, so two people tracing one structure under two names produce
-        a duplicate it cannot find. This scans across names instead, comparing
-        every trace on a section with every other one, and reports what it finds.
+        One scan for both kinds of duplicate: a structure traced twice under
+        one name, and a structure traced under two names, which is what two
+        people tracing it produce. Every trace on a section is compared with
+        every other (see _duplicatePairs), and the overlapping pairs are
+        joined into groups: a structure traced three times is one group of
+        three, not three pairs. The joining is transitive, so A over B and B
+        over C is one group even if A and C fall just short of each other.
 
-        This scan modifies nothing. Which of the two names is the right one is a
-        judgment about the data rather than something geometry can settle, so
-        this operation never chooses: the review list it feeds asks the person
-        reading it, one row at a time, and deleteDifferentlyNamedDuplicates
-        applies only the choices actually made. A row nobody answered is left
-        alone rather than resolved by any rule, because every rule available
-        here ("keep the name on more sections", "keep the larger trace") would
-        be geometry answering a question about the data. Locked objects are
-        skipped unless ``include_locked`` is True, matching findPixelDustTraces
-        and findEmptyTraces; a locked object surfaced that way can still not
-        have a trace deleted (see deleteDifferentlyNamedDuplicates).
+        This scan modifies nothing. Which name to keep is a question about the
+        data, so combineDuplicateTraces only acts on a name the caller picks.
+        Locked objects are skipped unless ``include_locked`` is True, matching
+        findPixelDustTraces and findEmptyTraces; even then, combining never
+        deletes a trace of a locked object (see combineDuplicateTraces).
 
-        Overlap is decided exactly as it is for same-name duplicates, by
-        Trace.overlaps' two tests: an identical point sequence, or an overlap
-        ratio above ``threshold``. See _duplicatePairs for how the comparison is
-        kept affordable across a whole section.
+        Overlap is decided as Trace.overlaps decides it: an identical point
+        sequence, or an overlap ratio above ``threshold``.
 
             Params:
                 threshold (float): the overlap ratio above which two traces
                     count as duplicates
                 include_locked (bool): True to also consider locked objects
             Returns:
-                (list): one record per pair (see _cleanupRecord), describing the
-                    first trace of the pair, with the second carried alongside
-                    under the "other_" keys, plus the measured "ratio"
+                (list): one dict per group, in section order: "section";
+                    "members", one record per trace (see _cleanupRecord, with
+                    the lookalike count of _recordLookalikes), in (name,
+                    index) order; "names", the distinct object names, sorted;
+                    "count", the number of traces; "ratio", the lowest overlap
+                    ratio among the pairs that joined the group (1.0 for a
+                    point-for-point match); and "location", the first
+                    member's
         """
-        candidates = []
+        groups = []
         for snum, section in self.enumerateSections(
-            message="Scanning for duplicates named differently...",
+            message="Scanning for duplicate traces...",
         ):
-            section_start = len(candidates)
             tform = section.tform
             entries = []
             for cname in section.contours:
@@ -3496,151 +3756,202 @@ class Series():
                     ## the untransformed polygon area, in the same coordinates
                     ## getOverlapRatio rasterizes, for the ceiling in
                     ## _duplicatePairs. Not the physical area: that is measured
-                    ## through the section transform, below, for the pairs that
-                    ## survive.
+                    ## through the section transform, below, for the traces
+                    ## that end up in a group.
                     _, area, _, _ = traceGeometry(trace.points, True)
                     entries.append(
                         (xmin, ymin, xmax, ymax, abs(area), cname, index, trace)
                     )
 
-            for first, second, ratio, points_match in self._duplicatePairs(
+            ## union-find over (name, index): each overlapping pair is an edge
+            ## and each group is a connected component
+            parent = {}
+
+            def find(key):
+                parent.setdefault(key, key)
+                while parent[key] != key:
+                    parent[key] = parent[parent[key]]
+                    key = parent[key]
+                return key
+
+            traces = {}
+            edges = []
+            for first, second, ratio, _points_match in self._duplicatePairs(
                 entries, threshold, section.mag
             ):
-                fname, findex, ftrace = first[5], first[6], first[7]
-                sname, sindex, strace = second[5], second[6], second[7]
-                if points_match:
-                    reason = f"Point-for-point match with '{sname}'"
-                else:
-                    reason = (
-                        f"Overlap {ratio:.4g} with '{sname}' "
-                        f"(above {threshold:.4g})"
+                fkey, skey = (first[5], first[6]), (second[5], second[6])
+                traces[fkey], traces[skey] = first[7], second[7]
+                froot, sroot = find(fkey), find(skey)
+                if froot != sroot:
+                    parent[sroot] = froot
+                edges.append((fkey, ratio))
+            if not edges:
+                continue
+
+            keys_by_root = {}
+            for key in traces:
+                keys_by_root.setdefault(find(key), []).append(key)
+            lowest = {}
+            for key, ratio in edges:
+                root = find(key)
+                lowest[root] = min(lowest.get(root, ratio), ratio)
+
+            section_groups = []
+            all_members = []
+            for root, keys in keys_by_root.items():
+                keys.sort()
+                members = [
+                    self._cleanupRecord(
+                        name, snum, index, traces[(name, index)], reason="",
+                        area=self._traceArea(traces[(name, index)], tform),
                     )
-                record = self._cleanupRecord(
-                    fname, snum, findex, ftrace, reason=reason,
-                    area=self._traceArea(ftrace, tform),
-                )
-                other = self._cleanupRecord(
-                    sname, snum, sindex, strace, reason=reason,
-                    area=self._traceArea(strace, tform),
-                )
-                record["ratio"] = ratio
-                record["other_name"] = other["name"]
-                record["other_index"] = other["index"]
-                record["other_points"] = other["points"]
-                record["other_location"] = other["location"]
-                record["other_area"] = other["area"]
-                record["other_match"] = other["match"]
-                candidates.append(record)
-            self._recordLookalikes(section, candidates[section_start:])
+                    for name, index in keys
+                ]
+                all_members.extend(members)
+                section_groups.append({
+                    "section": snum,
+                    "members": members,
+                    "names": sorted({m["name"] for m in members}),
+                    "count": len(members),
+                    "ratio": float(lowest[root]),
+                    "location": members[0]["location"],
+                })
+            self._recordLookalikes(section, all_members)
+            section_groups.sort(
+                key=lambda g: (g["members"][0]["name"], g["members"][0]["index"])
+            )
+            groups.extend(section_groups)
 
-        return candidates
+        return groups
 
-    def deleteDifferentlyNamedDuplicates(self, choices : list,
-                                         series_states=None,
-                                         log_event=True,
-                                         ambiguous : list = None) -> list:
-        """Delete the unkept side of cross-name duplicate pairs the user chose.
+    @staticmethod
+    def duplicateKeptMember(members : list, keep : str):
+        """The member of a duplicate group that combining under ``keep`` keeps.
 
-        The removal half of findDifferentlyNamedDuplicates. Each choice is a
-        ``(record, keep)`` tuple: ``record`` is a pair record from that scan and
-        ``keep`` names which of the pair's two traces to keep, ``"first"`` for
-        the record's own trace (its "name") or ``"other"`` for the one carried
-        under the "other_" keys. The trace that was not kept is deleted; both
-        traces of the pair survive if no choice was made.
-
-        **Nothing is inferred.** A choice that is neither ``"first"`` nor
-        ``"other"`` -- ``None`` above all, which is what an unanswered row
-        carries -- is skipped, not resolved by a default. Silence is not a
-        selection: the caller has to say which name is right, because that is
-        the one thing the geometry cannot say.
-
-        **A locked object never loses a trace here**, even when the scan that
-        produced the record was run with ``include_locked=True`` and so put the
-        locked object on the list. Deleting a trace changes quantitative data,
-        which is exactly what locking an object refuses; the lock is checked
-        against the object being *deleted from*, since keeping a trace does not
-        modify it.
-
-        Deletion runs through deleteMalformedTraces, the same path the
-        pixel-dust and empty-trace clean-ups use, so it is one undoable
-        operation (enumerateSections records the undo state into
-        ``series_states``) and each trace is re-found after its section is
-        reloaded by its recorded index and color+points signature rather than
-        by identity.
+        A name can hold more than one trace of the group (a structure traced
+        twice under one name), so the name alone does not pick a trace. The
+        one with the most points is kept, as the most detailed tracing, then
+        the first in its contour. The dialog reads this too, to know which
+        traces a combine removed.
 
             Params:
-                choices (list): (record, keep) tuples, described above
+                members (list): the group's member records
+                keep (str): the object name chosen
+            Returns:
+                (dict): the member record kept, or None when no member has
+                    that name
+        """
+        candidates = [m for m in members if m["name"] == keep]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda m: (-m["points"], m["index"]))
+
+    def combineDuplicateTraces(self, choices : list, series_states=None,
+                               log_event=True, ambiguous : list = None) -> list:
+        """Combine each chosen duplicate group into one trace.
+
+        Each choice is a ``(group, keep)`` tuple: ``group`` from
+        findDuplicateTraces and ``keep`` the object name to keep, one of the
+        group's own "names". One trace under that name survives (see
+        duplicateKeptMember) and takes the tags of every other trace in the
+        group; the others are deleted.
+
+        **Nothing is inferred.** A choice whose ``keep`` is empty, None, or not
+        one of the group's names is skipped.
+
+        **A locked object never loses a trace here.** A group that would delete
+        a trace of a locked object is skipped whole. Keeping a locked trace is
+        allowed: the others are deleted and only its tags change, which leaves
+        every measurement of it as it was.
+
+        **A group is combined whole or not at all.** Sections are loaded fresh,
+        so each member is re-found the way deleteMalformedTraces re-finds a
+        record (see _resolveRecordedTraces). If any member of a group cannot be
+        found, or more than one trace could be it, the group is left alone;
+        the members set aside for the second reason go into ``ambiguous``.
+
+        All the chosen groups are combined in one pass of enumerateSections,
+        so they are one undo step.
+
+            Params:
+                choices (list): (group, keep) tuples, described above
                 series_states (dict): optional dict of undo states for GUI
                 log_event (bool): True if events should be logged
-                ambiguous (list): optional; receives each (record, keep) tuple
-                    left alone because more than one identical trace could be
-                    the one to delete (see deleteMalformedTraces)
+                ambiguous (list): optional; receives each member record set
+                    aside because more than one trace could be it
             Returns:
-                (list): the (record, keep) tuples whose trace was found and
-                    deleted, so a caller can prune exactly those rows
+                (list): the (group, keep) tuples that were combined
         """
-        targets = []
+        plans = {}
         for choice in choices:
-            record, keep = choice
-            if keep == "first":
-                delete_name = record["other_name"]
-                delete_index = record.get("other_index")
-                delete_lookalikes = record.get("other_lookalikes")
-                delete_ordinal = record.get("other_lookalike_ordinal")
-                delete_identity = record.get("other_identity")
-                delete_match = record["other_match"]
-                keep_name = record["name"]
-            elif keep == "other":
-                delete_name = record["name"]
-                delete_index = record.get("index")
-                delete_lookalikes = record.get("lookalikes")
-                delete_ordinal = record.get("lookalike_ordinal")
-                delete_identity = record.get("identity")
-                delete_match = record["match"]
-                keep_name = record["other_name"]
-            else:
+            group, keep = choice
+            if not keep or keep not in group["names"]:
                 continue  # no choice made: never guess which name is right
-            if self.getAttr(delete_name, "locked"):
+            kept = self.duplicateKeptMember(group["members"], keep)
+            doomed = [m for m in group["members"] if m is not kept]
+            if any(self.getAttr(m["name"], "locked") for m in doomed):
                 continue  # deleting a trace is a quantitative change
-            targets.append({
-                "name": delete_name,
-                "section": record["section"],
-                # tells identical traces under one name apart
-                "index": delete_index,
-                "lookalikes": delete_lookalikes,
-                "lookalike_ordinal": delete_ordinal,
-                "identity": delete_identity,
-                "match": delete_match,
-                ## carried through deleteMalformedTraces, which returns the very
-                ## dicts it deleted, so the log and the return value can name
-                ## the pair each deletion came from
-                "keep_name": keep_name,
-                "choice": choice,
-            })
+            plans.setdefault(group["section"], []).append(
+                (choice, keep, kept, doomed)
+            )
 
-        if not targets:
+        if not plans:
             return []
 
-        unsure = []
-        deleted = self.deleteMalformedTraces(
-            targets,
+        combined = []
+        for snum, section in self.enumerateSections(
+            message="Combining duplicate traces...",
             series_states=series_states,
-            message="Deleting duplicates named differently...",
-            ambiguous=unsure,
-        )
-        if ambiguous is not None:
-            ambiguous.extend(target["choice"] for target in unsure)
+            section_numbers=sorted(plans),
+        ):
+            section_plans = plans.get(snum, [])
+            records = [
+                member
+                for _choice, _keep, kept, doomed in section_plans
+                for member in [kept] + doomed
+            ]
+            found, unsure = self._resolveRecordedTraces(section, records)
+            if ambiguous is not None:
+                ambiguous.extend(unsure)
 
-        if log_event:
-            for target in deleted:
-                self.addLog(
-                    target["name"],
-                    target["section"],
-                    "Delete duplicate trace named differently "
-                    f"(kept '{target['keep_name']}')",
-                )
+            used = set()
+            kept_names = set()
+            for choice, keep, kept, doomed in section_plans:
+                members = [kept] + doomed
+                if any(id(m) not in found for m in members):
+                    continue  # changed since the scan: leave the group whole
+                traces = [found[id(m)] for m in members]
+                ids = {id(t) for t in traces}
+                if len(ids) != len(traces) or ids & used:
+                    continue  # two members on one trace: never guess
+                used |= ids
+                kept_trace = traces[0]
+                for trace in traces[1:]:
+                    kept_trace.mergeTags(trace)
+                    section.removeTrace(trace, log_event=log_event)
+                    if log_event:
+                        self.addLog(
+                            trace.name, snum,
+                            f"Combine duplicate traces (kept '{keep}')",
+                        )
+                kept_names.add(kept_trace.name)
+                combined.append(choice)
 
-        return [target["choice"] for target in deleted]
+            if kept_names:
+                ## mergeTags rewrote the kept traces' tags in place, outside
+                ## Section: name their contours as modified so the undo state
+                ## records them, and rebuild the columnar store, which no hook
+                ## told about the new tags (see Section.resyncColumnarStore)
+                section.modified_contours.update(kept_names)
+                section.resyncColumnarStore()
+                # here, not after the pass: a series opened at a later
+                # progress update closes this one, and asks to save it only
+                # if it is marked modified. Before the save, which can stop
+                # the pass (see Series.passWroteSection)
+                self.modified = True
+                section.save()
+
+        return combined
 
     def editObjectRadius(self, obj_names : list, new_rad : float, series_states=None):
         """Change the radii of all traces of an object.
@@ -3725,7 +4036,8 @@ class Series():
             return True
 
         self._forEachObjectSection(
-            obj_names, "Removing trace tags...", edit, series_states
+            obj_names, "Removing trace tags...", edit, series_states,
+            writes_after=log_event,
         )
 
         if log_event:
@@ -3794,6 +4106,7 @@ class Series():
         self._forEachObjectSection(
             obj_names, "Reapplying custom color palette...", edit, series_states,
             eta=True,   # the first bar with a time estimate (2026-09-14); every operation bar has one since fork #421
+            writes_after=log_event,
         )
 
         if log_event:
@@ -3835,6 +4148,7 @@ class Series():
             "Hiding object(s)..." if hide else "Unhiding object(s)...",
             edit,
             series_states,
+            writes_after=log_event,
         )
 
         if log_event:
@@ -3915,7 +4229,8 @@ class Series():
         for snum, section in self.enumerateSections(
             message="Restoring visibility...",
             series_states=series_states,
-            section_numbers=section_numbers
+            section_numbers=section_numbers,
+            writes_after=log_event,
         ):
             modified = False
             for name, by_section in snapshot.items():
@@ -3956,7 +4271,8 @@ class Series():
         """
         for snum, section in self.enumerateSections(
             message="Hiding traces..." if hidden else "Unhiding traces...",
-            series_states=series_states
+            series_states=series_states,
+            writes_after=log_event,
         ):
             for trace in section.tracesAsList():
                 trace.setHidden(hidden)
@@ -4171,7 +4487,8 @@ class Series():
         try:
             for snum, section in self.enumerateSections(
                 message="Importing traces...",
-                series_states=series_states
+                series_states=series_states,
+                writes_after=True,
             ):
                 ## Skip if section not requested or does not exist in other series
                 in_srange = srange is None or snum in range(*srange)
@@ -4332,7 +4649,8 @@ class Series():
         for s_snum, s_section in self.enumerateSections(
             message="Importing alignments...",
             series_states=series_states,
-            breakable=False
+            breakable=False,
+            writes_after=True,
         ):
             if s_snum in other.sections:
                 o_section = other.loadSection(s_snum)
@@ -4375,7 +4693,10 @@ class Series():
                 import_as (list): the list of (profile to import, name for profile in current series)
                 log_event (bool): True if the event should be logged
         """
-        for s_snum, s_section in self.enumerateSections(message="Importing brightness/contrast profiles..."):
+        for s_snum, s_section in self.enumerateSections(
+            message="Importing brightness/contrast profiles...",
+            writes_after=True,
+        ):
             if s_snum in other.sections:
                 o_section = other.loadSection(s_snum)
                 for profile, new_name in import_as:
@@ -4429,7 +4750,8 @@ class Series():
         """
         for snum, section in self.enumerateSections(
             message="Importing flags...",
-            series_states=series_states
+            series_states=series_states,
+            writes_after=log_event,
         ):
             if snum not in other.sections:  # skip if section does not exist in other series
                 continue
@@ -4500,59 +4822,6 @@ class Series():
                 g = group
         return g
     
-    def deleteDuplicateTraces(self, threshold : float, include_locked=False, series_states=None, log_event=True):
-        """Delete all duplicate traces in the series (keep tags).
-        
-            Params:
-                threshold (float): the threshold for overlapping traces to be considered duplicates
-                series_states (dict): optional dict of undo states for GUI
-                log_event (bool): True if event should be logged
-        """
-        removed = {}
-        for snum, section in self.enumerateSections(
-            message="Removing duplicate traces...",
-            series_states=series_states
-        ):
-            found_on_section = False
-            for cname in section.contours:
-                if not include_locked and self.getAttr(cname, "locked"):
-                    continue
-                i = 1
-                while i < len(section.contours[cname]):
-                    trace1 = section.contours[cname][i]
-                    # check against all previous traces
-                    for j in range(i-1, -1, -1):
-                        trace2 = section.contours[cname][j]
-                        # if overlaps, remove trace and break
-                        if trace1.overlaps(trace2, threshold=threshold,
-                                           mag=section.mag):
-                            if snum not in removed:
-                                removed[snum] = set()
-                            removed[snum].add(cname)
-                            found_on_section = True
-                            trace1.mergeTags(trace2)
-                            section.removeTrace(trace2)
-                            i -= 1
-                            break
-                    i += 1
-            if found_on_section:
-                # `section.removeTrace(trace2)` is a hooked mutation and the
-                # store follows it, but `trace1.mergeTags(trace2)` above rewrote
-                # `tags` in place on a trace the section keeps -- outside
-                # `Section`, so nothing repaired trace1's row. It only diverges
-                # when the two duplicates carry different tags, which is exactly
-                # the messy series this clean-up is run on. Without the rebuild
-                # the save below logs the drift instead of absorbing it silently
-                # (D11), and the user's next edit to trace1 raises
-                # `ColumnarDualWriteMismatch`.
-                section.resyncColumnarStore()
-                section.save()
-
-        if log_event:
-            self.addLog(None, None, "Delete all duplicate traces")
-
-        return removed
-
     def addLog(self, obj_name : str, snum : int, event : str):
         """Add a log to the log set.
         
@@ -5322,6 +5591,75 @@ class Series():
                 editors.add(l.user)
         return editors
 
+    def usesBackupDefaults(self) -> bool:
+        """Return True if this series takes its backup folder and auto-backup
+        from the user's defaults (`default_backup_dir`, `default_autobackup`)
+        instead of settings of its own (`backup_dir`, `autobackup`).
+
+        The Backup Settings dialog records the choice per series under
+        `backup_use_defaults`. A series it has never saved has no such key,
+        and its own stored values cannot answer either: getOption stores the
+        default (off, no folder) the first time it reads one, so "never set
+        up" and "set to off with no folder" look the same. A series with a
+        folder or with auto-backup on was set up by someone and keeps its
+        own; any other series had no backups and takes the defaults.
+
+        The key is read here and written by setBackupUsesDefaults, never
+        through getOption: getOption would store a default for it, and one
+        default cannot be right for both kinds of series above.
+        """
+        if not self.isWelcomeSeries():
+            store = self._settingsStore()
+            if store.contains(self.code, "backup_use_defaults"):
+                return bool(store.value(self.code, "backup_use_defaults", bool))
+        return not (self.getOption("autobackup") or self.getOption("backup_dir"))
+
+    def setBackupUsesDefaults(self, value : bool):
+        """Record whether this series uses the user's backup defaults."""
+        if self.isWelcomeSeries():
+            return
+        self._settingsStore().set_value(self.code, "backup_use_defaults", bool(value))
+
+    def expandBackupFolder(self, folder : str) -> str:
+        """Replace {series} in a folder with this series' code.
+
+        The code is whatever was typed in the series code dialog, so path
+        separators become "_", and so does every dot in a code made only of
+        dots: "." or ".." would name the folder itself or its parent.
+        """
+        code = (self.code or self.name).replace("/", "_").replace("\\", "_")
+        if not code.strip("."):
+            code = "_" * max(len(code), 1)
+        return folder.replace("{series}", code)
+
+    def autobackupOn(self) -> bool:
+        """Return True if this series backs up on every save."""
+        if self.usesBackupDefaults():
+            return bool(self.getOption("default_autobackup"))
+        return bool(self.getOption("autobackup"))
+
+    def backupFolder(self, create : bool = False) -> str:
+        """Return the backup folder in effect for this series ("" if none).
+
+            Params:
+                create (bool): make the folder if it comes from the default
+                    folder, `{series}` names part of it, and the part before
+                    `{series}` exists. A folder the user picked whole is never
+                    created: a missing one is reported, as before.
+        """
+        if not self.usesBackupDefaults():
+            return self.getOption("backup_dir")
+        template = self.getOption("default_backup_dir")
+        folder = self.expandBackupFolder(template)
+        i = template.find("{series}")
+        if create and i != -1 and not os.path.isdir(folder):
+            if os.path.isdir(os.path.dirname(template[:i])):
+                try:
+                    os.makedirs(folder, exist_ok=True)
+                except OSError:
+                    pass  # reported by the caller as a missing folder
+        return folder
+
     def getBackupPath(self, comment : str = "", check_existing : bool = True):
         """Get the file path for a backup file for this series.
         
@@ -5368,8 +5706,14 @@ class Series():
         fname_list = [s.strip() for s in fname_list]
         fname = dl.join(fname_list)
         fname = dl.join(fname.split())
+        # Every part is text from a series file or a settings field, so a
+        # separator would put the file in another folder, and an absolute
+        # code would make os.path.join drop the backup folder. ":" goes
+        # too: on Windows "C:" starts a drive and any other colon writes an
+        # alternate data stream.
+        fname = fname.replace("/", "_").replace("\\", "_").replace(":", "_")
 
-        folder = self.getOption("backup_dir")
+        folder = self.backupFolder()
         fp = os.path.join(folder, fname)
 
         if check_existing and os.path.isfile(f"{fp}.jser"):
@@ -5541,7 +5885,7 @@ class Series():
                     if attrs["user_columns"][col_name] not in new_opts:
                         del(attrs["user_columns"][col_name])
             # and from palette buttons, by the same rule: a value that is no
-            # longer an option is cleared everywhere (his call, 2026-09-28)
+            # longer an option is cleared everywhere
             for button, columns in list(self._paletteColumnDefaults()):
                 if col_name in columns and columns[col_name] not in new_opts:
                     self._notePaletteChange(button, (col_name, columns[col_name]), None)
@@ -5725,7 +6069,8 @@ class Series():
         for snum, section in self.enumerateSections(
             message="Splitting object...",
             series_states=series_states,
-            section_numbers=self.getObjectSections([name])
+            section_numbers=self.getObjectSections([name]),
+            writes_after=True,
         ):
             if name in section.contours:
                 traces = section.contours[name].getTraces()
@@ -5851,10 +6196,34 @@ class Series():
                 raise Exception("Sections have differently named brightness/contrast profiles.")
         return bc_profiles
 
+    def _repointBCProfile(self):
+        """Point the displayed brightness/contrast profile at one every section has.
+
+        Section.brightness and Section.contrast index bc_profiles by
+        series.bc_profile, so a series whose sections lack that profile raises
+        KeyError as soon as the field shows a section. A series saved while a
+        profile rename was being undone was in that state: the sections had
+        their old profile names back and the series file still named the new
+        one. Such a save is refused now (seriesStep); a series already saved
+        that way opens on the default profile, or on the first profile every
+        section has. Sections that share no profile are left as they are: no
+        name fits them all, and the error that follows names the one held.
+        Called once the series data holds every section (__init__, openJser).
+        """
+        profiles = [
+            set(d["bc_profiles"]) for d in self.data["sections"].values()
+        ]
+        if not profiles:
+            return
+        common = set.intersection(*profiles)
+        if self.bc_profile in common or not common:
+            return
+        self.bc_profile = "default" if "default" in common else sorted(common)[0]
+
     
 class SeriesIterator():
 
-    def __init__(self, series : Series, show_progress : bool, message : str, series_states, breakable=True, section_numbers=None, eta=True):
+    def __init__(self, series : Series, show_progress : bool, message : str, series_states, breakable=True, section_numbers=None, eta=True, writes_after=False):
         """Create the series iterator object.
 
             Params:
@@ -5865,14 +6234,19 @@ class SeriesIterator():
                 breakable (bool): True if series state is breakable
                 section_numbers (iterable): if given, restrict iteration to
                     these section numbers
+                writes_after (bool): stop at the last progress update too
+                    if the series closed (see Series.enumerateSections)
         """
         self.series = series
         self.section = None
+        # True once the loop body saves the section it was given
+        self.written = False
         self.show_progress = show_progress
         self.message = message
         self.series_states = series_states
         self.section_subset = None if section_numbers is None else set(section_numbers)
         self.eta = eta
+        self.writes_after = writes_after
         if self.series_states is not None:
             self.series_states.addState(breakable)
 
@@ -5903,19 +6277,21 @@ class SeriesIterator():
     def __next__(self):
         """Return the next section."""
         # update the series states of the previous section if requested
-        if self.series_states and self.section and (
-            self.section.getAllModifiedNames() or 
-            self.section.tformsModified() or
-            self.section.flags_modified
-        ):
-            self.series_states[self.section.n].addState(
-                self.section, self.series
-            )
-            self.series_states.addSectionUndo(self.section.n)
+        self._recordSection()
 
         if self.sni < len(self.section_numbers):
             if self.show_progress:
                     self.reporter.set_progress(self.sni / len(self.section_numbers) * 100)
+            # the progress update above, or the loop body, ran the event
+            # loop, where another series can open and close this one
+            if self.series.closed:
+                done = self.sni
+                total = len(self.section_numbers)
+                raise SeriesClosedError(
+                    f"Series {self.series.name} was closed while this ran: "
+                    f"{self.message} It stopped part-way, after {done} of "
+                    f"{total} sections."
+                )
             snum = self.section_numbers[self.sni]
             self.section = self.series.loadSection(snum)
             self.sni += 1
@@ -5932,7 +6308,44 @@ class SeriesIterator():
                 # is always 1 -- except for an empty subset (e.g. every
                 # requested section was invalid), where it would be 0/0
                 self.reporter.set_progress(100)
+            # the last update, or the last section's loop body, ran the event
+            # loop too. A pass that writes series data after its sections
+            # would write it to a closed series and end as if it finished
+            if self.writes_after and self.series.closed:
+                total = len(self.section_numbers)
+                raise SeriesClosedError(
+                    f"Series {self.series.name} was closed while this ran: "
+                    f"{self.message} It stopped part-way, after all {total} "
+                    "sections and before the series data that goes with them."
+                )
             raise StopIteration
+
+    def _recordSection(self):
+        """Add the last section's change to the undo history, once."""
+        section, self.section = self.section, None
+        self.written = False
+        if self.series_states and section and (
+            section.getAllModifiedNames() or
+            section.tformsModified() or
+            section.flags_modified
+        ):
+            self.series_states[section.n].addState(section, self.series)
+            self.series_states.addSectionUndo(section.n)
+
+    def sectionWritten(self, section):
+        """Note that the loop body saved the section it was given."""
+        if section is self.section:
+            self.written = True
+
+    def recordWritten(self):
+        """Add the undo state of a section the pass wrote and stopped on.
+
+        A loop body that raised or broke out after saving its section never
+        reaches the __next__ that adds it. A change that was not written is
+        left out: undo would put back a state the file never had.
+        """
+        if self.written:
+            self._recordSection()
 
     def finishProgress(self):
         """Close the progress dialog, however the iteration ended.

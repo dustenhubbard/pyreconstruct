@@ -1,4 +1,4 @@
-"""Four GUI-tail findings from the review fleet (2026-08-28).
+"""Four GUI-tail findings from the 2026-08-28 review.
 
 The palette-button collision is pinned in test_palette_hide_menus.py; this
 file carries the rest: the plotter's leaked series, the sticky restart flag,

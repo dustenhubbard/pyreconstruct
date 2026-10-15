@@ -5,5 +5,6 @@ from .conversions import (
     groupsToVolume,
     zarrToNewSeries,
     createZarrName,
-    rechunk
+    rechunk,
+    ZarrRefused,
 )

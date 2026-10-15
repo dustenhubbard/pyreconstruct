@@ -80,7 +80,7 @@ Inspect object measurements and work with large autosegmented series in the `.js
 
 ## Install
 
-Download the current stable release, **v1.23.0**, for your computer.
+Download the current stable release, **v1.24.0**, for your computer.
 
 </div>
 <div class="pr-downloads" markdown>
@@ -93,7 +93,7 @@ Download the current stable release, **v1.23.0**, for your computer.
 
 64-bit · Windows 10 or later
 
-[Download for Windows :material-arrow-down:](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.23.0/PyReconstruct-1.23.0-Windows-x86_64-Setup.exe){ .md-button }
+[Download for Windows :material-arrow-down:](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-Windows-x86_64-Setup.exe){ .md-button }
 
 Includes Python. Builds are unsigned; see the [first-launch instructions](USER_GUIDE.md#1-installing-pyreconstruct) if Windows shows a SmartScreen warning.
 { .pr-small }
@@ -108,10 +108,10 @@ Includes Python. Builds are unsigned; see the [first-launch instructions](USER_G
 
 macOS 12 or later
 
-[Apple Silicon :material-arrow-down:](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.23.0/PyReconstruct-1.23.0-macOS-arm64.dmg){ .md-button }
-[Intel :material-arrow-down:](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.23.0/PyReconstruct-1.23.0-macOS-x86_64.dmg){ .md-button }
+[Apple Silicon :material-arrow-down:](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-macOS-arm64.dmg){ .md-button }
+[Intel :material-arrow-down:](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-macOS-x86_64.dmg){ .md-button }
 
-Includes Python. See the [first-launch instructions](USER_GUIDE.md#1-installing-pyreconstruct).
+Includes Python. Signed and notarized by Apple.
 { .pr-small }
 
 </div>
@@ -124,9 +124,9 @@ Includes Python. See the [first-launch instructions](USER_GUIDE.md#1-installing-
 
 64-bit · glibc 2.28 or later
 
-[Download for Linux :material-arrow-down:](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.23.0/PyReconstruct-1.23.0-Linux-installer.tar.gz){ .md-button }
+[Download AppImage :material-arrow-down:](https://github.com/dustenhubbard/PyReconstruct/releases/download/v1.24.0/PyReconstruct-1.24.0-linux-x86_64.AppImage){ .md-button }
 
-Requires Python 3.11. Extract and run `bash install.sh`.
+Includes Python. Or install with `curl -fsSL https://pyreconstruct.org/install.sh | bash`.
 { .pr-small }
 
 </div>
@@ -142,7 +142,7 @@ Requires Python 3.11. Extract and run `bash install.sh`.
 
 ## Documentation {#where-to-go-next}
 
-The user guide, performance notes, and developer setup.
+The user guide, performance notes, developer setup, and the Harris lab wiki.
 
 </div>
 <div class="pr-resource-links" markdown>
@@ -154,6 +154,8 @@ The user guide, performance notes, and developer setup.
 [**Developer resources** <span>Set up a source install with uv ↗</span>](DEV_UV.md)
 
 [**Contribute on GitHub** <span>Source code, issues, and contributions ↗</span>](https://github.com/dustenhubbard/PyReconstruct)
+
+[**Harris lab wiki** <span>Lab protocols and EM image processing guides ↗</span>](https://cloud.wikis.utexas.edu/wiki/spaces/khlab/overview)
 
 </div>
 </div>

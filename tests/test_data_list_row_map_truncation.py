@@ -133,8 +133,8 @@ def test_trace_list_starts_in_sync(trace_table):  # noqa: F811
 
 
 def test_trace_list_truncates_when_a_filter_shrinks_the_table(trace_table):  # noqa: F811
-    """The same defect in ``TraceTableWidget.rows``, which the backlog item
-    for ``displayed_flags`` does not name."""
+    """The same defect in ``TraceTableWidget.rows``, which the original
+    ``displayed_flags`` report does not name."""
     trace_table.re_filters = {MULTI_TRACE_CONTOUR}
     trace_table.createTable(trace_table.section)
 

@@ -30,7 +30,7 @@ Modes:
 A value belongs to at most one pick-one set. A tag is one plain string on
 the trace, so "shaft" cannot say whether it answers "Protrusion type" or
 "Location", and clearing one set would wipe the other's choice (found
-2026-09-23 on Kristen's vocabulary). ``add``, ``edit`` and ``renameTag``
+2026-09-23 on a lab's tag vocabulary). ``add``, ``edit`` and ``renameTag``
 refuse such a duplicate; loading and merging keep the earlier set's claim and
 drop the value from the later one. Pick-many sets are free to share values.
 

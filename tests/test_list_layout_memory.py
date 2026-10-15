@@ -1,6 +1,6 @@
 """The list_layout option: a series remembers its open lists.
 
-Patrick works with undocked lists, and until now every launch started bare:
+A user works with undocked lists, and until now every launch started bare:
 nothing saved which lists were open, floating, or where. The manager can now
 capture its layout as a JSON-friendly dict and replay it; the main window
 writes it to the series-scoped ``list_layout`` option when a series closes
@@ -75,7 +75,7 @@ def test_layout_roundtrips_docked_tabs_and_a_tiny_float(qapp, dock_mainwindow):
     floater = open_list(manager, "ztrace", qapp)
     floater.setFloating(True)
     settle(qapp)
-    floater.resize(150, 140)                     # Patrick's tiny list
+    floater.resize(150, 140)                     # a user's tiny list
     settle(qapp)
 
     layout = manager.captureLayout()

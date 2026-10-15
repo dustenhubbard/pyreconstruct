@@ -2,8 +2,8 @@
 
 The bug this pins, reported twice against the "Set Attributes" dialog opened
 from an object selection (once by a Windows user whose report circulated for
-a week as a suspected platform color defect, once by the maintainer's own
-click test): the color swatch is gray and the picker opens on white even
+a week as a suspected platform color defect, once in a second report): the
+color swatch is gray and the picker opens on white even
 though the object has a perfectly good color. ``editAttributes`` constructed
 ``TraceDialog`` with ``name`` and ``tags`` but never passed ``color``, so the
 swatch was unseeded for every object, always.
@@ -22,7 +22,7 @@ confirmed a color in the picker, which ``ColorButton`` now records in its
 The seed itself comes from ``object_color_seed``, and it is SERIES-WIDE: one
 agreed color shows solid, any disagreement shows the predominant color as a
 split, wherever in the series the minority traces live. A first cut answered
-from the open section only, and the maintainer's click test caught the gap
+from the open section only, and a second pass caught the gap
 the same day: recolor one trace, move to an adjacent section, open the dialog
 on the same object, no split. ``SeriesData``'s per-trace records carry color
 now (exactly as they carry tags) so the series-wide answer costs no section
@@ -154,7 +154,7 @@ def test_seed_is_the_objects_color(qapp, tmp_path):
 
 
 def test_a_recolored_trace_on_another_section_flags_mixed(qapp, tmp_path):
-    """The maintainer's click-test repro, pinned.
+    """The second report's repro, pinned.
 
     Recolor an object on ONE of its sections, then ask for the seed the way
     the dialog does when opened from any other section. The first cut of

@@ -205,10 +205,10 @@ def test_accept_rejects_non_integer_seed(qapp, monkeypatch):
 
 # --- the live picker: one, embedded, bound to the selected swatch -----------
 #
-# The old page opened a modal QColorDialog per swatch (his bug report,
-# 2026-09-14: "picking a color dismisses the color picker window every time").
+# The old page opened a modal QColorDialog per swatch (reported 2026-09-14:
+# "picking a color dismisses the color picker window every time").
 # The picker is now a child widget of the page; these pin the mechanics the
-# design pass called load-bearing.
+# design depends on.
 
 def _rgb(color):
     return [color.red(), color.green(), color.blue()]

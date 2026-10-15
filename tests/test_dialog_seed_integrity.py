@@ -1,6 +1,6 @@
 """Two dialogs that changed real data before, or without, the user's OK.
 
-Both found by the review fleet (2026-08-28), both the same disease: a dialog
+Both found on review (2026-08-28), both the same disease: a dialog
 is a PROPOSAL, and nothing it does before `accept()` may write into the
 series or misstate what the user already had.
 

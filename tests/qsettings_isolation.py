@@ -90,8 +90,8 @@ The two combine as follows:
   should be touching the store there.
 - neither: silent.
 
-A run that fails on something the developer cannot control, in his normal
-working configuration, teaches him to ignore the one message that matters.
+A run that fails on something the developer cannot control, in their normal
+working configuration, teaches them to ignore the one message that matters.
 """
 
 import atexit
@@ -105,6 +105,7 @@ import tempfile
 import time
 import traceback
 import warnings
+from pathlib import Path
 
 import pytest
 
@@ -524,11 +525,14 @@ def _build_isolated_class(qsettings, root):
 
             if len(formats) == 1 and len(strings) == 1 and args[0] is strings[0]:
                 # QSettings(fileName, format): an explicit file, not a domain.
-                # Nothing in this repository uses it; redirect the basename into
-                # the isolation root rather than trust a path from a test.
-                target = os.path.join(root, "explicit", os.path.basename(strings[0]))
-                os.makedirs(os.path.dirname(target), exist_ok=True)
-                super().__init__(target, ini)
+                # The geometry tests use it for a scratch file under their
+                # `tmp_path`. Redirected under the isolation root rather than
+                # trusted, with its directories kept: two tests that each ask
+                # for `<their tmp_path>/scratch.ini` get two files. Keeping
+                # only the basename shared one file across them, and a window
+                # closed in one test saved its geometry into the file the next
+                # test expected to find empty.
+                super().__init__(_explicit_target(root, strings[0]), ini)
             else:
                 organization = strings[0] if strings else ORG
                 application = strings[1] if len(strings) > 1 else ""
@@ -538,6 +542,21 @@ def _build_isolated_class(qsettings, root):
                 self.setParent(parent)
 
     return IsolatedQSettings
+
+
+def _explicit_target(root, file_name):
+    """Where an explicit `QSettings(fileName, format)` is redirected to.
+
+    The caller's absolute path is replayed under `<root>/explicit/` with its
+    anchor dropped (the leading separator, or the drive on Windows), so
+    distinct files stay distinct and nothing a test names resolves outside the
+    root. `abspath` folds any `..` first.
+    """
+    path = Path(os.path.abspath(file_name))
+    parts = path.parts[1:] if path.anchor else path.parts
+    target = os.path.join(root, "explicit", *parts)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    return target
 
 
 def _rebind(module_names_holding, replacement):

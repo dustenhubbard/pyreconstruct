@@ -64,7 +64,7 @@ def test_a_dev_only_key_is_copied_into_the_shared_store(ini_settings):
 def test_on_a_conflict_the_stable_value_wins(ini_settings):
     """Where both apps hold a key the stable app's value stays: the user set
     most things twice to the same value, and where they differ, stable is
-    the app for real work (his call, 2026-09-27)."""
+    the app for real work (since 2026-09-27)."""
     dev = ini_settings("dev")
     dev.setValue("username", "dev-name")
     dev.setValue("roll_average", True)

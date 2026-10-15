@@ -154,6 +154,30 @@ def test_an_unparseable_prerelease_tag_is_still_offered():
     assert _tags(live, "prerelease") == "v1.22.0-nightly-build"
 
 
+@pytest.mark.parametrize("feed,newest", [
+    # two nightlies the same day, the earlier one listed first
+    (["1.24.0.dev202610081315", "1.24.0.dev202610081840"], "1.24.0.dev202610081840"),
+    # a dated (8-digit) nightly listed above the same day's timed one
+    (["1.24.0.dev20261008", "1.24.0.dev202610081408", "1.24.0.dev20261007"],
+     "1.24.0.dev202610081408"),
+    # an older timed nightly listed above the next release's dated one
+    (["1.24.0.dev202610081840", "1.25.0.dev20261009"], "1.25.0.dev20261009"),
+])
+def test_the_highest_nightly_wins_whatever_the_feed_order(feed, newest):
+    """GitHub's list is not in version order, so the pick compares tags."""
+    live = [_rel(f"v{v}", prerelease=True) for v in feed] + [_rel("v1.23.0")]
+
+    assert _tags(live, "prerelease") == f"v{newest}"
+    assert _tags(live, "release") == "v1.23.0"
+
+
+def test_a_parseable_nightly_ranks_above_an_unparseable_prerelease_tag():
+    live = [_rel("v1.22.0-nightly-build", prerelease=True),
+            _rel("v1.24.0.dev20261008", prerelease=True)]
+
+    assert _tags(live, "prerelease") == "v1.24.0.dev20261008"
+
+
 @pytest.mark.parametrize("channel", ["prerelease", "release", "stable", "edge", "developer"])
 def test_no_releases_at_all_returns_none(channel):
     """Including the legacy channel names, which `normalize_channel` remaps."""

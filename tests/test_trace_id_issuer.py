@@ -269,9 +269,9 @@ def test_derive_for_section_hands_its_own_index_to_every_derivation(monkeypatch)
     and rebinds the attribute (`self._taken = set(self._taken)`) hands an object
     that IS `issuer._taken` at probe time, so the pin passed while per-trace
     cost went 12.1 -> 50.4 us across 4k -> 16k traces. Those figures are this
-    PR's own re-measurement of review-wave-b F07's sabotage, not F07's record
-    (F07 filed 18.7 -> 21.7 -> 53.1 us on its host); every number here is
-    machine-dependent and shape-only (review-247 N07).
+    PR's own re-measurement of the sabotage, not the earlier record
+    (18.7 -> 21.7 -> 53.1 us on another host); every number here is
+    machine-dependent and shape-only.
 
     So the reference is captured ONCE, before the pass, and everything is
     asserted against that one object:
@@ -293,7 +293,7 @@ def test_derive_for_section_hands_its_own_index_to_every_derivation(monkeypatch)
     flat 4.6 -> 3.6 us baseline). It is also plainly observable, because
     ordinary iteration DOES call `__iter__` on a `set` subclass. So the index
     below is a `_MembershipSpy` and `iter_calls == 0` is asserted: that pins
-    the whole traversal class rather than one spelling of it (review-247 F08).
+    the whole traversal class rather than one spelling of it.
 
     WHAT IS OUT OF REACH -- TWO SPELLINGS, NOT A CLASS
     -------------------------------------------------
@@ -328,8 +328,8 @@ def test_derive_for_section_hands_its_own_index_to_every_derivation(monkeypatch)
     assert len(handed) == len(out) == 2
     assert all(handed), (
         "deriveForSection handed something other than the index it started "
-        "with -- either a per-call copy of it or a per-trace rebind of the "
-        "attribute -- and both re-pay the O(n**2) copy the F01 fix removed"
+        "with: either a per-call copy of it or a per-trace rebind of the "
+        "attribute. Both re-pay the O(n**2) per-trace copy"
     )
     assert issuer._taken is index, (
         "deriveForSection rebound the series index instead of mutating it, so "
@@ -428,10 +428,10 @@ def test_every_value_a_stored_row_can_hold_is_still_accepted():
 def test_an_exhausted_salt_range_raises_rather_than_going_random():
     """The deliberate deviation from the flag precedent.
 
-    `Flag.deriveID` falls back to `generateID()` -- a random id -- when salting
-    is exhausted. A random id produced by a migration is precisely the failure
-    that docstring records, so this raises instead. Forced by shrinking the salt
-    range to zero, which is the only way to reach the branch.
+    `Flag.deriveID` keeps salting with no cap. A random id produced by a
+    migration is precisely the failure that docstring records, so this raises
+    when its salts run out. Forced by shrinking the salt range to zero, which
+    is the only way to reach the branch.
     """
     import PyReconstruct.modules.datatypes.trace_id as trace_id_module
 
@@ -516,7 +516,7 @@ def test_migration_takes_the_series_index_not_the_sections():
 
     The body used to pass section number 1 BOTH times, which pinned something
     this docstring never claimed: that re-deriving the SAME section's content
-    hands out fresh ids. S1 falsified that as a desirable property --
+    hands out fresh ids. Deriving ids at load made that a bad property:
     `Series.loadSection` builds a fresh `Section` per call with no cache, so
     salt-bumping on re-derivation would reissue every id on a section per
     scroll and leak a section's worth of taken-set per load. Re-derivation is
@@ -660,7 +660,7 @@ def test_deriving_over_a_real_series_gives_one_id_per_trace(real_series):
 
 
 def test_the_issuer_is_exported_through_the_datatypes_package():
-    """The `datatypes/__init__.py` export, taken in this PR.
+    """The issuer is exported from `datatypes/__init__.py`.
 
     Two things ride on this one line. Identity, first: the package must hand
     out the same objects this suite tests, not a second copy of the module.

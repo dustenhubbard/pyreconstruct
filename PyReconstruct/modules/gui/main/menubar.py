@@ -223,8 +223,7 @@ def return_series_menu(self):
                 "text": "Clean up",
                 "opts":
                 [
-                    ("removeduplicates_act", "Remove duplicate traces...", "", self.deleteDuplicateTraces),
-                    ("finddiffnamedduplicates_act", "Find duplicates named differently...", "", self.findDifferentlyNamedDuplicates),
+                    ("duplicates_act", "Duplicates...", "", self.reviewDuplicateTraces),
                     ("removepixeldust_act", "Remove pixel-dust traces...", "", self.removePixelDustTraces),
                     ("removeempty_act", "Remove empty traces...", "", self.removeEmptyTraces),
                     ("repairselfcrossings_act", "Repair self-crossing traces...", "", self.repairSelfCrossingTraces),
@@ -380,7 +379,7 @@ def return_view_menu(self):
         [
             # remappable; also the Lists pill in the status bar. Collapse
             # hides the docked lists, the next toggle brings the same set back.
-            ("togglelists_act", "Show/hide lists", self.series, self.toggleLists),
+            ("togglelists_act", "Show/Hide lists", self.series, self.toggleLists),
             None,
             ("copyscreen_act", "Copy view to clipboard", "", lambda : self.saveFieldView(False)),
             ("savescreen_act", "Save view to file", "", lambda : self.saveFieldView(True)),
@@ -389,8 +388,8 @@ def return_view_menu(self):
             None,
             ("fillopacity_act", "Edit fill opacity...", "", self.setFillOpacity),
             # Series-wide sibling of the object menus' selection-scoped
-            # "Reapply custom color palette to existing objects..." (added 2026-08-12, his placement
-            # call). It sits beside "Edit fill opacity..." because that is the
+            # "Reapply custom color palette to existing objects..." (added
+            # 2026-08-12). It sits beside "Edit fill opacity..." because that is the
             # one View section about how every object is painted; it is also
             # the only row in this menu that edits series data, which its
             # confirm dialog owns up to. Locked objects are SKIPPED rather
@@ -474,11 +473,11 @@ def _other_flavor_label(self=None):
 def return_help_menu(self):
     """Return help menu.
 
-    Ordered in five groups, separator between each (his layout call,
-    2026-08-26): the search field, then what this build IS, then updates,
-    then the What's-new pop-up, then the shortcuts list, then one flat
-    group for reporting a problem (his order, 2026-09-27, #459): copy the
-    report, send it to us or file it, the log tools, and the links last.
+    Ordered in seven groups, separator between each: the search field, then
+    what this build IS, then updates, then the other build's download, then
+    the What's-new pop-up, then the shortcuts list, then one flat group for
+    reporting a problem in the order the steps happen: copy the report, send
+    it to us or file it, the log tools, and the links last.
     The search field itself is inserted at the very top by
     MainWindow.createMenuBar, which also focuses it when Help opens.
     """
@@ -491,8 +490,8 @@ def return_help_menu(self):
             # 1. the search field's remappable keyboard carrier. The visible
             # field is a QWidgetAction inserted above this row in
             # createMenuBar, and createMenuBar then takes THIS row back off
-            # the menu (his consolidation call, 2026-08-27: the field shows
-            # the chord itself). The tuple stays because a QWidgetAction
+            # the menu, since the field shows the chord itself. The tuple
+            # stays because a QWidgetAction
             # cannot take the series-form shortcut lookup, so the remappable
             # key lives here, riding the window with no visible row.
             # series form: the key is user-configurable, looked up by act_name
@@ -509,7 +508,7 @@ def return_help_menu(self):
             ("toggleupdatecheck_act", "Automatically check for updates", "checkbox",
              self.toggleUpdateCheckOnStartup),
             None,
-            # Its own group (his call, 2026-08-26): getting the OTHER build is
+            # Its own group: getting the OTHER build is
             # a different errand from keeping this one current.
             # The other build's download page, labeled by what THIS build is:
             # the stable app offers Dev, the Dev app offers stable. Resolved
@@ -524,7 +523,7 @@ def return_help_menu(self):
             # menubar's other checkables this one resyncs on every Help open
             # (see MainWindow.createMenuBar), because the dialog can flip the
             # preference behind the menu's back.
-            # Checked means OFF, matching the wording (his call, 2026-08-26):
+            # Checked means OFF, matching the wording:
             # the tick IS the stored suppression flag.
             ("togglewhatsnew_act", "Turn off What's new pop-up", "checkbox",
              self.toggleWhatsNewPopup),
@@ -533,7 +532,7 @@ def return_help_menu(self):
             ("shortcutshelp_act", "Shortcuts list", "?", self.displayShortcuts),
             None,
             # 6. reporting a problem, one flat list in the order the steps
-            # happen (his call, 2026-09-27, #459). The old "Report issues
+            # happen. The old "Report issues
             # (GitHub)" submenu is gone; its rows sit here directly.
             # Copy the report first, then send it to us or file it...
             ("copydiag_act", "Copy diagnostic report...", "", self.copyDiagnosticReport),
