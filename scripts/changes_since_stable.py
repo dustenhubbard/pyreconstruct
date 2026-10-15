@@ -66,9 +66,18 @@ HEADING_RE = re.compile(r"^#{1,6}(?:[ \t]|$)")
 LIST_ITEM_RE = re.compile(r"^( {0,3}(?:[-*+]|\d{1,9}[.)]))(?= |$)( *)(.*)$")
 
 # The seven kinds of HTML block, as CommonMark starts and ends them: what the
-# line that opens one starts with, and what the line that closes it contains
-# (the opening line itself, for the first five). Only the last cannot
-# interrupt a paragraph.
+# line that opens one starts with, and whether a line (indentation removed)
+# closes it. The first five close on a line that contains their closing text,
+# the opening line included; the last two close at a blank line. Only the
+# last cannot interrupt a paragraph.
+def closes_on(closing):
+    return lambda text: closing in text
+
+
+def blank_line(text):
+    return not text.strip()
+
+
 HTML_BLOCK_TAGS = (
     "address|article|aside|base|basefont|blockquote|body|caption|center|col|"
     "colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|"
@@ -79,14 +88,14 @@ HTML_BLOCK_TAGS = (
 HTML_ATTRIBUTE = r"""\s+[a-zA-Z_:][a-zA-Z0-9:._-]*(?:\s*=\s*(?:[^"'=<>`\x00-\x20]+|'[^']*'|"[^"]*"))?"""
 HTML_BLOCKS = [
     (re.compile(r"^<(?:script|pre|style|textarea)(?=\s|>|$)", re.I),
-     re.compile(r"</(?:script|pre|style|textarea)>", re.I)),
-    (re.compile(r"^<!--"), re.compile(r"-->")),
-    (re.compile(r"^<\?"), re.compile(r"\?>")),
-    (re.compile(r"^<![A-Z]"), re.compile(r">")),
-    (re.compile(r"^<!\[CDATA\["), re.compile(r"\]\]>")),
-    (re.compile(rf"^</?(?:{HTML_BLOCK_TAGS})(?=\s|/?>|$)", re.I), re.compile(r"^$")),
+     re.compile(r"</(?:script|pre|style|textarea)>", re.I).search),
+    (re.compile(r"^<!--"), closes_on("-->")),
+    (re.compile(r"^<\?"), closes_on("?>")),
+    (re.compile(r"^<![A-Z]"), closes_on(">")),
+    (re.compile(r"^<!\[CDATA\["), closes_on("]]>")),
+    (re.compile(rf"^</?(?:{HTML_BLOCK_TAGS})(?=\s|/?>|$)", re.I), blank_line),
     (re.compile(rf"^(?:<[A-Za-z][A-Za-z0-9-]*(?:{HTML_ATTRIBUTE})*\s*/?>|</[A-Za-z][A-Za-z0-9-]*\s*>)\s*$"),
-     re.compile(r"^$")),
+     blank_line),
 ]
 
 # A bulleted item with text, at the left margin, which is where every
@@ -166,29 +175,29 @@ def fence_closes(text, fence):
 
 
 def html_open(text, after_paragraph):
-    """The pattern that ends the HTML block ``text`` (indentation removed)
-    starts, else None. After a line of paragraph text, a line that is only a
-    tag is more of the paragraph instead."""
+    """The test for the line that ends the HTML block ``text`` (indentation
+    removed) starts, else None. After a line of paragraph text, a line that is
+    only a tag is more of the paragraph instead."""
     kinds = HTML_BLOCKS[:-1] if after_paragraph else HTML_BLOCKS
     return next((end for start, end in kinds if start.match(text)), None)
 
 
 def block_open(text, after_paragraph):
-    """The fence, or the end of the HTML block, that ``text`` (indentation
+    """The fence, or the end test of the HTML block, that ``text`` (indentation
     removed) opens and leaves open, else None."""
     fence = fence_open(text)
     if fence:
         return fence
     end = html_open(text, after_paragraph)
-    return end if end and not end.search(text) else None
+    return end if end and not end(text) else None
 
 
 def block_closes(text, block, depth):
     """Whether ``text``, ``depth`` columns into its container, closes ``block``
-    (a fence or the end of an HTML block, as ``block_open`` gives it)."""
+    (a fence or the end test of an HTML block, as ``block_open`` gives it)."""
     if isinstance(block, tuple):
         return depth < 4 and fence_closes(text, block)
-    return bool(block.search(text))
+    return bool(block(text))
 
 
 def list_item(line, after_paragraph):
