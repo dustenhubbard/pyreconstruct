@@ -97,7 +97,7 @@ def _shown(layer, section, dim, window):
     return shown
 
 
-def _exact_index(layer, px, py, dim, window):
+def _exact_index(layer, px, py, dim, window, n):
     """The Zarr column and row under a screen pixel's center, in exact arithmetic.
 
     Computed from the field window with fractions, independently of the code
@@ -105,12 +105,11 @@ def _exact_index(layer, px, py, dim, window):
     """
     pw, ph = (Fraction(d) for d in dim)
     wx, wy, ww, wh = (Fraction(v) for v in window)
-    p = layer.placement
-    zx, zy, zmag = Fraction(p.window_x), Fraction(p.window_y), Fraction(p.mag)
+    zx, zy, zmag = Fraction(layer.zarr_x), Fraction(layer.zarr_y), Fraction(layer.zarr_mag)
     fx = wx + (px + Fraction(1, 2)) * ww / pw
     fy = wy + (ph - py - Fraction(1, 2)) * wh / ph
-    x = (fx - zx) / zmag - Fraction(p.col_shift)
-    y = Fraction(p.raw_rows) - (fy - zy) / zmag - Fraction(p.row_shift)
+    x = (fx - zx) / zmag
+    y = n - (fy - zy) / zmag
     near_edge = min(
         abs(x - round(x)), abs(y - round(y))
     ) < Fraction(1, 10**9)
@@ -129,7 +128,7 @@ def _mismatches(layer, section, ids, dim, window):
     bad = []
     for py in range(dim[1]):
         for px in range(dim[0]):
-            c, r, near_edge = _exact_index(layer, px, py, dim, window)
+            c, r, near_edge = _exact_index(layer, px, py, dim, window, n)
             want = int(ids[r, c]) if 0 <= c < n and 0 <= r < n else None
             got = layer.getID(px, py)
             got = None if got is None else int(got)
@@ -148,8 +147,8 @@ def _window(layer, mag, shift, dim, zoom):
     screen pixels.
     """
     return [
-        shift[0] * layer.placement.mag,
-        shift[1] * layer.placement.mag,
+        shift[0] * layer.zarr_mag,
+        shift[1] * layer.zarr_mag,
         dim[0] * mag / zoom,
         dim[1] * mag / zoom,
     ]
@@ -197,7 +196,7 @@ def test_pixel_center_on_the_overlay_edge(qapp, real_series, tmp_path):
     shows the label; the second's is exactly the right edge, outside it.
     """
     layer, section, mag, ids = _build(real_series, tmp_path, n=1)
-    zmag = layer.placement.mag
+    zmag = layer.zarr_mag
     dim = (2, 1)
     window = [-0.5 * zmag, 0, 2 * zmag, 1 * zmag]
     shown = _shown(layer, section, dim, window)
@@ -249,7 +248,7 @@ def test_click_after_partial_pan_merges_the_drawn_labels(
     """
     layer, section, mag, ids = _build(real_series, tmp_path)
     dim = (32, 32)
-    window = [0.2 * layer.placement.mag, 0.7 * layer.placement.mag, dim[0] * mag, dim[1] * mag]
+    window = [0.2 * layer.zarr_mag, 0.7 * layer.zarr_mag, dim[0] * mag, dim[1] * mag]
     shown = _shown(layer, section, dim, window)
 
     clicks = [(3, 0), (7, 0)]
@@ -305,7 +304,7 @@ def test_rgb_overlay_matches_geometry(qapp, real_series, tmp_path):
     bad = []
     for py in range(dim[1]):
         for px in range(dim[0]):
-            c, r, near_edge = _exact_index(layer, px, py, dim, window)
+            c, r, near_edge = _exact_index(layer, px, py, dim, window, n)
             if near_edge or not (0 <= c < n and 0 <= r < n):
                 continue
             color = img.pixelColor(px, py)

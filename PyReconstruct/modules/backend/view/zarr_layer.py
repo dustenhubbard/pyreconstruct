@@ -59,17 +59,21 @@ class ZarrLayer():
         self.is_labels = is_label_array(overlay)
         self.zarr = label_volume(overlay) if self.is_labels else overlay
 
-        # where the overlay sits, worked out the way label import places
-        # the traces it makes, so each label is drawn where it imports
+        # get relevant data from overlay zarr
+        self.offset = get_label_offset(overlay, raw)
+
+        # where the overlay sits, from the calculation label import shares
         self.placement = label_placement(
             self.resolution,
             self.raw_resolution,
-            get_label_offset(overlay, raw),
+            self.offset,
             raw.attrs["window"],
             raw.attrs["sections"],
             get_true_mag(raw),
             raw.shape[-2],
         )
+        self.zarr_mag = self.placement.overlay_mag
+        self.zarr_x, self.zarr_y, self.zarr_s = self.placement.overlay_origin()
 
         # defaults
         self.selected_ids = []
@@ -78,12 +82,13 @@ class ZarrLayer():
         if self.is_labels:
             self.id_colors = {}
     
-    def _screenGrid(self, pixmap_dim, window):
+    def _screenGrid(self, pixmap_dim, window, bh):
         """Map the screen onto zarr pixel coordinates.
 
             Params:
                 pixmap_dim (tuple): the w and h of the screen in pixels
                 window (list): the x, y, w, and h of the field window
+                bh (int): the zarr height in pixels (rows count down from its top)
             Returns:
                 (tuple) the zarr x and y at the screen's top left corner and the
                 screen pixels per zarr pixel in x and y, or None for an empty view
@@ -92,10 +97,10 @@ class ZarrLayer():
         window_x, window_y, window_w, window_h = tuple(window)
         if pixmap_w <= 0 or pixmap_h <= 0 or window_w <= 0 or window_h <= 0:
             return None
-        mag = self.placement.mag
-        wxmin, wymin = self.placement.to_label(window_x, window_y + window_h)
-        sx = pixmap_w * mag / window_w
-        sy = pixmap_h * mag / window_h
+        wxmin = (window_x - self.zarr_x) / self.zarr_mag
+        wymin = bh - (window_y + window_h - self.zarr_y) / self.zarr_mag
+        sx = pixmap_w * self.zarr_mag / window_w
+        sy = pixmap_h * self.zarr_mag / window_h
         return wxmin, wymin, sx, sy
 
     def getID(self, pix_x : int, pix_y : int):
@@ -115,13 +120,13 @@ class ZarrLayer():
         
         # check if the section is within the range
         bz, bh, bw = self.zarr.shape
-        z = self.placement.slice_index(self.section.n)
-        if z is None or z >= bz:
+        z = round(self.section.n - self.zarr_s)
+        if not 0 <= z < bz:
             return None
         
         # the zarr pixel under the screen pixel's center, by the same mapping
         # generateZarrLayer draws with
-        grid = self._screenGrid(self.pixmap_dim, self.series.window)
+        grid = self._screenGrid(self.pixmap_dim, self.series.window, bh)
         if grid is None:
             return None
         wxmin, wymin, sx, sy = grid
@@ -164,8 +169,8 @@ class ZarrLayer():
         if not self.is_labels:
             return []
         bz = self.zarr.shape[0]
-        z = self.placement.slice_index(self.section.n)
-        if z is None or z >= bz:
+        z = round(self.section.n - self.zarr_s)
+        if not 0 <= z < bz:
             return []
         present = np.unique(self.zarr[z])
         return [int(v) for v in present.tolist() if v != 0]
@@ -211,8 +216,8 @@ class ZarrLayer():
             bz, bh, bw = self.zarr.shape[1:]
         
         # check if the section is within the range
-        z = self.placement.slice_index(section.n)
-        if z is None or z >= bz:
+        z = round(section.n - self.zarr_s)
+        if not 0 <= z < bz:
             return None
         
         # save and unpack window and pixmap values
@@ -222,7 +227,7 @@ class ZarrLayer():
 
         # the zarr pixel under each screen pixel's center, one index per
         # screen column and one per screen row (see _zarrIndex)
-        grid = self._screenGrid(pixmap_dim, window)
+        grid = self._screenGrid(pixmap_dim, window, bh)
         if grid is None:
             return None
         wxmin, wymin, sx, sy = grid

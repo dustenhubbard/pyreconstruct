@@ -1009,6 +1009,8 @@ def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
     raw = get_zarr_array(data_zg, "raw")
     resolution, raw_resolution = get_label_resolutions(labels_array, raw, series, raw_attrs)
 
+    offset = get_label_offset(labels_array, raw)
+
     ## by section: the first axis of a (1, z, y, x) array is its channel,
     ## and read as the section it sent a whole volume to findContours
     labels = label_volume(labels_array)
@@ -1017,7 +1019,7 @@ def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
     placement = label_placement(
         resolution,
         raw_resolution,
-        get_label_offset(labels_array, raw),
+        offset,
         attrs["window"],
         attrs["sections"],
         attrs["true_mag"],
