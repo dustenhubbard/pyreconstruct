@@ -340,7 +340,7 @@ def test_copy_does_not_carry_foreign_attributes():
     naming the fields: an attribute nothing in ``Trace`` declares is not part of
     a trace, and cloning it made the copy depend on ``Trace`` having an instance
     dict shaped exactly like its fields. Nothing in the codebase attaches such
-    an attribute to a ``Trace`` (the Phase 1 call-site audit swept for it), so
+    an attribute to a ``Trace`` (a call-site audit swept for it), so
     this pins the new behavior rather than protecting a caller.
     """
     orig = make_square_trace()

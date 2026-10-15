@@ -1,7 +1,7 @@
 """A focused trace list with no selected row must not crash "Edit attributes".
 
-Found by the Codex click test on 2026-09-24 (artifacts/clicktest/2026-09-23-tag-sets
-in the hub): after OK on Set Attributes the trace list keeps focus but loses its
+Seen on 2026-09-24: after OK on Set Attributes the trace list keeps focus but
+loses its
 selection, and the next Cmd+E raised ``TypeError: 'NoneType' object is not
 iterable`` from ``TraceTableWidget.getTraces``. ``getSelected`` returns None for
 an empty selection, and the ``trace_function`` wrapper handed that None to

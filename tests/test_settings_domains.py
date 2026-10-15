@@ -39,7 +39,7 @@ DEV = "PyReconstruct Dev"
 STABLE_DOMAIN = ("KHLab", "PyReconstruct")
 DEV_DOMAIN = ("KHLab", DEV)
 
-# Section 4 of the design (hub specs/settings-sync-two-apps-2026-09-27.md):
+# Section 4 of the design (2026-09-27):
 # the keys that must differ between the two installed apps, and nothing else.
 SPEC_PER_APP = {
     "suppress_whatsnew",

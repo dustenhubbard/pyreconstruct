@@ -1,4 +1,4 @@
-"""Menu-label style guard (context-menu UX overhaul, phase 1).
+"""Menu-label style guard.
 
 Menu items use the ASCII ellipsis "..." rather than the Unicode "…" so the
 whole menu corpus reads consistently. This test scans the modules that define

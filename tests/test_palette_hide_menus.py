@@ -1,7 +1,7 @@
 """Right-click a palette group to hide it.
 
 The View menu keeps every visibility toggle; this adds the direct road from
-the widget itself (his ask, 2026-08-26): right-click the scale bar, the
+the widget itself (since 2026-08-26): right-click the scale bar, the
 section increment buttons, or the brightness/contrast sliders and hide that
 group without a trip to the menu bar.
 
@@ -89,7 +89,7 @@ def test_arming_is_idempotent_across_rebuilds(qapp, main_window, gui_dialogs):
 
 
 def test_view_checkmarks_follow_a_right_click_hide(qapp, main_window, gui_dialogs):
-    """The bug his click test found: hiding a group from its own right-click
+    """The bug the first version had: hiding a group from its own right-click
     left the View checkbox still ticked. Every visibility change now pushes a
     resync (MousePalette.saveVisibilityState), so both roads agree."""
     palette = main_window.mouse_palette

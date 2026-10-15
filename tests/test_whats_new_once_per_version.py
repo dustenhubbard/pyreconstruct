@@ -383,8 +383,8 @@ def test_startup_shows_the_notes_once_per_version_in_the_real_window(
     assert dialog.isModal() is False                      # never blocks startup
     rendered = dialog._notes.toPlainText()
     assert "Added the shiny new thing." in rendered
-    # the maintainer byline is its own always-visible label below the notes --
-    # not inside the scrollable browser -- exactly once, all the way through the
+    # the footer line is its own always-visible label below the notes, not
+    # inside the scrollable browser, exactly once, all the way through the
     # real startup handler and dialog
     assert F.MAINTAINER_BYLINE not in rendered
     # the byline label carries link markup, so compare what it *renders*: the
@@ -499,7 +499,7 @@ def test_help_toggle_reflects_the_stored_state_when_the_menu_opens(main_window):
     main_window.syncWhatsNewPopupToggle()
 
     # The row reads "Turn off What's new pop-up", so a TICK is the disabled
-    # state (his call, 2026-08-26): the checkmark and the stored suppression
+    # state (since 2026-08-26): the checkmark and the stored suppression
     # flag are the same thing.
     #
     # freshly built with nothing stored: the popup is on, so the row is clear
@@ -524,7 +524,7 @@ def test_help_toggle_reenables_the_popup(main_window):
     flips the checked state and then runs the handler, so this covers the
     polarity in ``toggleWhatsNewPopup`` -- the handler reads the state the
     click just produced, and getting that backwards would persist the
-    opposite of every click. Checked means OFF here (his call, 2026-08-26),
+    opposite of every click. Checked means OFF here (since 2026-08-26),
     matching the row's wording. The re-enabled preference is then read back
     through the pure gate to show the popup is eligible again.
     """

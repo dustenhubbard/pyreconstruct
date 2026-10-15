@@ -269,9 +269,9 @@ def test_derive_for_section_hands_its_own_index_to_every_derivation(monkeypatch)
     and rebinds the attribute (`self._taken = set(self._taken)`) hands an object
     that IS `issuer._taken` at probe time, so the pin passed while per-trace
     cost went 12.1 -> 50.4 us across 4k -> 16k traces. Those figures are this
-    PR's own re-measurement of review-wave-b F07's sabotage, not F07's record
-    (F07 filed 18.7 -> 21.7 -> 53.1 us on its host); every number here is
-    machine-dependent and shape-only (review-247 N07).
+    PR's own re-measurement of the sabotage, not the earlier record
+    (18.7 -> 21.7 -> 53.1 us on another host); every number here is
+    machine-dependent and shape-only.
 
     So the reference is captured ONCE, before the pass, and everything is
     asserted against that one object:

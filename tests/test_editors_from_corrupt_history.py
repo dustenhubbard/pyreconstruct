@@ -741,7 +741,7 @@ def test_the_writer_produced_hazard_no_longer_reaches_the_series(series, capsys)
     is copied through byte for byte on open and save -- which is why the
     read-side anchor is not made redundant by the writer no longer producing
     it. What changed is what the series then claims. bob's head carries six
-    comma fields of its own and always parsed (with his pasted name cut at the
+    comma fields of its own and always parsed (with the pasted name cut at the
     newline); it is the orphaned TAIL that used to swallow the row after it.
     carol now keeps that row, no timestamp is reported as an editor, and the
     loss is printed instead of passing in silence.

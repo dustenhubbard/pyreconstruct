@@ -343,7 +343,7 @@ def test_mouse_move_width_changes_do_not_move_the_readout(main_window, qtbot):
 
     The readout is right-anchored (stretch=0, which test_banner_paints above
     protects), so any width change moves its left edge with the cursor: the
-    jitter he saw on the first main-line click test. The detail label's
+    jitter seen on the first run with a live cursor. The detail label's
     minimum width absorbs ordinary coordinate churn.
     """
     readout = main_window.status_readout
@@ -414,7 +414,7 @@ def test_press_right_after_popup_close_is_swallowed(main_window, qtbot):
 
 def test_section_popup_lists_everything_in_a_bounded_box(main_window, qtbot):
     """The whole series is in the list, the box never nears screen height,
-    and the current section starts selected (his call: full range, bounded
+    and the current section starts selected (full range, bounded
     popup)."""
     popup = main_window.sectionJumpFromStatusBar()
     qtbot.wait(20)
@@ -483,7 +483,7 @@ def test_section_menu_always_ends_above_the_pill(main_window, qtbot):
     """The menu's bottom edge must sit above the segment, never on it.
 
     A QMenu taller than the screen gets clamped to the full screen and its
-    bottom scroll arrow lands exactly on the pill (his click-test report),
+    bottom scroll arrow lands exactly on the pill (seen on a tall series),
     so the row count is fitted to the space above the bar and the geometry
     is pinned here.
     """
@@ -503,7 +503,7 @@ def test_section_menu_always_ends_above_the_pill(main_window, qtbot):
 def test_typing_accumulates_multi_digit_numbers(main_window, qtbot, monkeypatch):
     """Digits typed one at a time must build one number, then Enter jumps.
 
-    The exact click-test failure: inside a QMenu, each digit fed the menu's
+    The exact failure: inside a QMenu, each digit fed the menu's
     single-keystroke type-select, so the highlight jumped on the first digit
     and a three-digit number could never be typed. The popup owns its own
     focus; the field is an ordinary line edit.
@@ -595,7 +595,7 @@ def test_sidebar_icon_is_bigger_than_the_text_it_replaced(qapp):
 
 
 def test_lists_pill_hover_names_the_live_shortcut(qapp, main_window, gui_dialogs):
-    """The hover reads the collapse binding from the live action (his ask,
+    """The hover reads the collapse binding from the live action (since
     2026-08-25), platform-rendered, so a rebind updates it on the menubar
     rebuild. The bare-widget default stays plain "Lists" (test above)."""
     tooltip = main_window.status_readout.lists_segment.toolTip()

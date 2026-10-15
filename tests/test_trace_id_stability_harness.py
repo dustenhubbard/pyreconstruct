@@ -52,7 +52,7 @@ harness with no red test to flip is a harness that will not notice.
   issued id is opaque and random, nothing writes it to a file, and the reload
   derives a fresh one from content. Same cause, other direction.
 
-TWO ROWS ARE RESERVED TO THE MAINTAINER AND ARE NOT GUESSED AT
+TWO ROWS ARE RESERVED BY DESIGN AND ARE NOT GUESSED AT
 ---------------------------------------------------------------
 `trace_id.py`'s closing section reserves split-object `_{n}` traces (Q4: same
 trace edited, or new trace?) and palette traces (Q3: templates rather than
@@ -222,11 +222,10 @@ CARRY_TABLE = (
         verdict="unexercised BY DECISION",
         tests=(),
         reason=(
-            "Reserved to the maintainer. `trace_id.py`'s closing section: the "
-            "module 'decides nothing about split-object traces (Series split, "
-            "renamed `_{n}`) ... those two rows of the carry table are "
-            "semantics the maintainer owns and they are unimplemented on "
-            "purpose'; the spec files it as Q4. Whether a split's output is the "
+            "Reserved by design. `trace_id.py`'s closing section: the "
+            "module decides nothing about split-object traces (Series split, "
+            "renamed `_{n}`); those two rows of the carry table are "
+            "unimplemented on purpose. That is Q4. Whether a split's output is the "
             "same annotation under a new name or a set of new annotations is "
             "the question, and asserting either answer here would decide it by "
             "accident. What the code does today is reported in the pull "
@@ -239,7 +238,7 @@ CARRY_TABLE = (
         verdict="unexercised BY DECISION",
         tests=(),
         reason=(
-            "Reserved to the maintainer, spec Q3. Palette traces are templates "
+            "Reserved by design (Q3). Palette traces are templates "
             "rather than annotations and the store's own docstring notes they "
             "'may want no id at all'. They also never reach a `SectionColumns` "
             "-- `series.palette_traces` is a plain list of `Trace` objects on "
@@ -391,7 +390,7 @@ def test_every_carry_table_row_is_exercised_or_listed_unexercised():
 
 
 def test_the_two_reserved_rows_are_present_and_unexercised():
-    """Done criterion: the maintainer's two rows are REPORTED, not guessed at.
+    """The two reserved rows are REPORTED, not guessed at.
 
     Named individually rather than left to the count above, because the failure
     this guards is somebody helpfully adding an assertion for one of them: the
@@ -404,7 +403,7 @@ def test_the_two_reserved_rows_are_present_and_unexercised():
         if entry["verdict"].endswith("BY DECISION")
     }
     assert len(reserved) == 2, (
-        "expected exactly the two rows trace_id.py reserves to the maintainer "
+        "expected exactly the two rows trace_id.py reserves by design "
         f"(split-object `_{{n}}` traces, palette traces), found: {sorted(reserved)}"
     )
     assert any("split-object" in row for row in reserved)

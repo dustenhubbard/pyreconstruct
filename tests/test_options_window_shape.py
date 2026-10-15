@@ -1,6 +1,6 @@
 """Series > Options opens as a proper window: big, zoomable, with a Colors tab.
 
-His asks from the click test (2026-09-14): a larger default size, the
+Three changes (2026-09-14): a larger default size, the
 autoseg colors page on its own Colors tab, and the maximize and minimize
 buttons in the title bar.
 """
