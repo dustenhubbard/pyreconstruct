@@ -844,6 +844,44 @@ def test_undoing_a_copy_or_split_redone_on_one_section_gives_back_the_old_host(
     assert _saved_host_tree(window, tmp_path / "undone.jser") == before
 
 
+@pytest.mark.parametrize("then", ["draw", "reopen", "undo"])
+def test_redoing_a_copy_on_one_section_drops_a_host_it_made_redundant(
+        window, main_window_dialogs, monkeypatch, tmp_path, then):
+    """Y on s3 is hosted by C on s4, the name T's copy takes, and by H. The
+    copy gives C the host H, so H drops from Y's hosts as C's host. Redo on
+    s2 alone after an undo there drops it again, and the saved tree stays
+    the same after an unrelated draw or a reopen. An undo on s2 after the
+    redo gives Y its host H back."""
+    Y = "hl_y"
+    _, s2, s3, s4 = _setup(window)
+    made = T + "_copy"
+    _draw_on(window, s4, made)
+    _draw_on(window, s3, Y)
+    window.series.setObjHosts([Y], [made, H])
+    before = _saved_host_tree(window, tmp_path / "before.jser")
+    _copy_or_split_t(window, monkeypatch, "copy")
+    forward = _saved_host_tree(window, tmp_path / "forward.jser")
+    assert forward[Y] == [made] and forward[made] == [H]
+    _trigger_on(window, main_window_dialogs, s2, window.undo_act, "all")
+    _trigger_on(window, main_window_dialogs, s2, window.redo_act, "section")
+    path = tmp_path / "redone.jser"
+    assert _saved_host_tree(window, path) == forward
+    if then == "draw":
+        _draw_on(window, s3, SPARE)
+        assert _saved_host_tree(window, tmp_path / "drawn.jser") == forward
+    elif then == "reopen":
+        from PyReconstruct.modules.datatypes import Series
+
+        other = Series.openJser(str(path))
+        try:
+            assert other.host_tree.getDict() == forward
+        finally:
+            other.close()
+    else:
+        _trigger_on(window, main_window_dialogs, s2, window.undo_act, "section")
+        assert _saved_host_tree(window, tmp_path / "undone.jser") == before
+
+
 def _copy_where_h_hosts_moved_t(window, monkeypatch, tmp_path):
     """H on s1 and T on s2, not linked. A copy moves T and makes H its
     host; the import below reads that copy."""
