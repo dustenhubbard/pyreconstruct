@@ -136,6 +136,7 @@ class FieldWidgetBase:
                 series (Series): the new series to load
         """
         self.series = series
+        series.setPassWriteHook(self.refreshPassWrite)
 
         ## Initialize hover columns from series option
         from PyReconstruct.modules.gui.dialog.hover_columns import HoverColumnsDialog
@@ -414,6 +415,15 @@ class FieldWidgetBase:
         
         ALSO updates the lists.
         """
+        # An edit made while a scissors cut is open (an arrow key moving the
+        # alignment, a paste) is recorded here, and the picked-up trace is
+        # outside the section until the cut ends. The state would hold the
+        # section without it, so undoing and redoing the edit took the trace
+        # out again after a save had put it back. The cut is backed out first,
+        # as a save does. A finished cut records its own state here too, and
+        # lineRelease clears is_line_tracing before that, so it is left alone.
+        self.cancelOpenScissorsCut()
+
         # save the current state
         section_states = self.series_states[self.series.current_section]
         section_states.addState(self.section, self.series)
@@ -527,7 +537,13 @@ class FieldWidgetBase:
         alignments_before = set(self.series.alignments)
         groups_before = set(self.series.object_groups.getGroupList())
 
+        series = self.series
         self.series_states.undoState(redo)
+        # another series can open at the undo's last progress update. The
+        # undo still finished on the series it began on, and the field now
+        # holds the new one, which a reload would mark modified
+        if self.series is not series:
+            return
         self.reload()
         self.table_manager.recreateTables()
         # a series undo can change palette buttons' object defaults (a custom
@@ -649,6 +665,11 @@ class FieldWidgetBase:
         # remembered for propagation recording no longer applies
         self.tform_before_change = None
 
+        # an open scissors cut ends here with its trace back: left open across
+        # the reload, finishing it would add a second copy beside the one
+        # read back from the file
+        self.cancelOpenScissorsCut()
+
         # reload the actual sections
         self.section = self.series.loadSection(self.series.current_section)
         self.section_layer.section = self.section
@@ -671,6 +692,31 @@ class FieldWidgetBase:
         # notify that the series has been modified
         self.mainwindow.seriesModified(True)
     
+    def refreshPassWrite(self, written) -> None:
+        """Reload the held copies of a section a pass over the files wrote.
+
+        Series.setPassWriteHook calls this right after each write, before
+        the next progress update, so the copies match the file even when the
+        pass stops part-way. The action saved the field before its pass and
+        reloads it after, so nothing unsaved is dropped here.
+
+            Params:
+                written (Section): the pass's own copy, just saved
+        """
+        # a series opened during the pass is the field's now
+        if written.series is not self.series:
+            return
+        # the field's own copy, saved during the pass (the save prompt)
+        if written is self.section or written is self.b_section:
+            return
+        if self.section is not None and self.section.n == written.n:
+            self.section = self.series.loadSection(written.n)
+            self.section_layer.section = self.section
+            self.table_manager.changeSection(self.section)
+        if self.b_section is not None and self.b_section.n == written.n:
+            self.b_section = self.series.loadSection(written.n)
+            self.b_section_layer.section = self.b_section
+
     def reloadImage(self) -> None:
         """Reload the section images (used if transform or image source is modified)."""
         self.section_layer.loadImage()

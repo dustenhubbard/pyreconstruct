@@ -22,8 +22,8 @@ origin to this fork. Measured at fork commit `8e9e185` against upstream
 | crop_1 | 6 MB | 2,209 | 1.12 s -> 0.33 s |
 | ZGBJY | 7 MB | 2,511 | 1.73 s -> 0.41 s |
 | crop_2 | 92 MB | 27,525 | 18.9 s -> 4.8 s |
-| GBSFW | 127 MB | 61,121 | 28.3 s -> 8.8 s |
-| NVWXP | 187 MB | 83,126 | 38.8 s -> 12.0 s |
+| large_a | 127 MB | 61,121 | 28.3 s -> 8.8 s |
+| large_b | 187 MB | 83,126 | 38.8 s -> 12.0 s |
 | crop_3 | 312 MB | 89,388 | 63.2 s -> 17.0 s |
 
 A later re-measurement on a different dataset (a real 407 MB autosegmented series

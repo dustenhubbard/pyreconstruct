@@ -28,12 +28,15 @@ import os
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 from PyReconstruct.modules.datatypes.trace_id import TRACE_ID_LENGTH
 
 from conftest import SERIES_FIXTURE
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _idsBySectionContour(series):
@@ -172,6 +175,7 @@ def test_two_independent_processes_agree_on_every_id(series_jser, tmp_path):
     script.write_text(
         "import json, os, sys\n"
         "os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')\n"
+        "import PyReconstruct\n"
         "from PyReconstruct.modules.datatypes import Series\n"
         "series = Series.openJser(sys.argv[1])\n"
         "ids = {}\n"
@@ -183,7 +187,7 @@ def test_two_independent_processes_agree_on_every_id(series_jser, tmp_path):
         "            key = f'{snum}|{name}|{index}'\n"
         "            ids[key] = section._columns.getID(row)\n"
         "with open(sys.argv[2], 'w') as f:\n"
-        "    json.dump(ids, f, sort_keys=True)\n"
+        "    json.dump({'package': PyReconstruct.__file__, 'ids': ids}, f)\n"
         "series.close()\n"
     )
 
@@ -194,12 +198,26 @@ def test_two_independent_processes_agree_on_every_id(series_jser, tmp_path):
         jser = workdir / "series.jser"
         shutil.copy(series_jser, jser)
         out = workdir / "ids.json"
-        env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
+        # The script runs from tmp_path, so without this the interpreter's
+        # installed PyReconstruct answers the import, which from a worktree
+        # sharing another checkout's editable venv is that checkout's code.
+        env = dict(
+            os.environ,
+            QT_QPA_PLATFORM="offscreen",
+            PYTHONPATH=os.pathsep.join(
+                filter(None, [str(REPO_ROOT), os.environ.get("PYTHONPATH")])
+            ),
+        )
         subprocess.run(
             [sys.executable, str(script), str(jser), str(out)],
             check=True, env=env, capture_output=True,
         )
-        results.append(json.loads(out.read_text()))
+        result = json.loads(out.read_text())
+        assert Path(result["package"]).resolve().is_relative_to(REPO_ROOT), (
+            f"the subprocess imported {result['package']}, not the "
+            f"PyReconstruct in {REPO_ROOT}"
+        )
+        results.append(result["ids"])
 
     assert results[0], "the subprocesses collected no traces"
     assert results[0] == results[1], (

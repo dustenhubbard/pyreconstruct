@@ -212,9 +212,10 @@ def test_dialog_renders_the_note_above_the_notes_on_a_dev_build(qapp):
         assert lay.indexOf(dialog._note) < lay.indexOf(dialog._notes)
         assert dialog._notes.toPlainText().lstrip().startswith("1.23.0")
         assert dialog.windowTitle() == f"What's new in PyReconstruct {NIGHTLY}"
-        # no release-date line: the only italic labels are the orienter and the footer
+        # the stable's date is on its version heading in the notes, not a label
         texts = [label.text() for label in dialog.findChildren(QLabel)]
         assert not any("Released" in t for t in texts)
+        assert "1.23.0 — September 27, 2026" in dialog._notes.toPlainText()
     finally:
         dialog.close()
         dialog.deleteLater()
@@ -231,7 +232,7 @@ def test_dialog_adds_no_note_widget_on_a_stable_build(qapp):
         assert dialog._note is None
         texts = [label.text() for label in dialog.findChildren(QLabel)]
         assert not any("nightly build" in t for t in texts)
-        assert any("Released" in t for t in texts)   # inside its color span
+        assert "1.23.0 — September 27, 2026" in dialog._notes.toPlainText()
     finally:
         dialog.close()
         dialog.deleteLater()

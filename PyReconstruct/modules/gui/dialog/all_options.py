@@ -24,7 +24,12 @@ from PyReconstruct.modules.datatypes import Series
 from PyReconstruct.modules.backend.func.utils import (
     zarr_worker_count, MAX_ZARR_WORKERS,
 )
-from PyReconstruct.modules.datatypes.default_settings import validPinnedLength
+from PyReconstruct.modules.datatypes.default_settings import (
+    MAX_SCALE_BAR_THICKNESS,
+    MIN_SCALE_BAR_THICKNESS,
+    clampScaleBarThickness,
+    validPinnedLength,
+)
 
 
 def cpuSliderReadout(percent : int) -> str:
@@ -370,6 +375,8 @@ class AllOptionsDialog(QDialog):
         sbw = self.series.getOption("scale_bar_width", use_defaults)
         sb_mode = self.series.getOption("scale_bar_mode", use_defaults)
         sb_len = self.series.getOption("scale_bar_length_um", use_defaults)
+        sb_thick = clampScaleBarThickness(
+            self.series.getOption("scale_bar_thickness", use_defaults))
         structure = [
             [("check",
               ("show numbers", self.series.getOption("show_scale_bar_text", use_defaults)),
@@ -385,10 +392,14 @@ class AllOptionsDialog(QDialog):
             ["Scale bar size (percent of field width):"],
             [("slider", sbw, {"minimum": 20, "maximum": 100, "suffix": "%"})],
             ["Fixed length (µm):", ("float", sb_len)],
-            ["Far enough out or in that the fixed length will not fit the field"],
+            ["Far enough out or in that the fixed length will not fit the size above"],
             ["legibly, the bar steps by whole decades and the label follows"],
             ["(5 µm becomes 0.5 µm or 50 µm), so the bar always measures what"],
             ["it says."],
+            ["Scale bar thickness (pixels):"],
+            [("slider", sb_thick, {"minimum": MIN_SCALE_BAR_THICKNESS,
+                                   "maximum": MAX_SCALE_BAR_THICKNESS,
+                                   "suffix": " px"})],
         ]
 
         def setOption(response):
@@ -408,12 +419,16 @@ class AllOptionsDialog(QDialog):
             # the bar itself apply to the same value.
             if validPinnedLength(response[3]):
                 self.series.setOption("scale_bar_length_um", float(response[3]))
+            self.series.setOption("scale_bar_thickness", response[4])
 
         self.addOptionWidget("scale_bar", structure, setOption)
-        # the size slider previews on the field as it moves (see _previewScaleBar)
-        for field in self.all_widgets["scale_bar"].inputs:
-            if field.type == "slider":
-                field.widget.slider.valueChanged.connect(self._previewScaleBar)
+        # the size and thickness sliders preview on the field as they move
+        # (see _previewScaleBar); the size slider is the first of the two
+        sliders = [field.widget.slider
+                   for field in self.all_widgets["scale_bar"].inputs
+                   if field.type == "slider"]
+        sliders[0].valueChanged.connect(self._previewScaleBar)
+        sliders[1].valueChanged.connect(self._previewScaleBarThickness)
 
         # show_ztraces
         structure = [
@@ -617,6 +632,14 @@ class AllOptionsDialog(QDialog):
         palette = self._palette()
         if palette is not None:
             palette.previewScaleBarWidth(percent)
+            self._scale_bar_previewed = True
+
+    def _previewScaleBarThickness(self, thickness):
+        """Change the field's scale bar thickness as the slider moves; the
+        same contract as _previewScaleBar."""
+        palette = self._palette()
+        if palette is not None:
+            palette.previewScaleBarThickness(thickness)
             self._scale_bar_previewed = True
 
     def reject(self):

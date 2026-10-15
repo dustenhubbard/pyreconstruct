@@ -69,12 +69,14 @@ def per_app_domain():
 # tests/test_settings_domains.py pins that every key the app stores is
 # classified the way the design intends.
 #
-#   suppress_whatsnew        each app's own popup choice (the stable app has
-#                            the popup off; a Dev install exists to show what
-#                            changed)
+#   suppress_whatsnew        each app's own popup choice: a "Don't show again"
+#                            in one app must not silence the other
 #   last_whatsnew_version    version lines differ (1.23.0 versus
 #                            1.24.0.dev<date>); a nightly writing a higher
 #                            version would hide every future stable popup
+#   whatsnew_popup_reset_applied
+#                            the one-time reset of the two keys above ran in
+#                            this store (first_launch.reset_whats_new_popup_once)
 #   last_update_check_epoch  the 24h throttle is per feed; a stable check
 #                            must not silence the Dev check for a day
 #   window/geometry          the two apps run side by side; one shared blob
@@ -83,12 +85,14 @@ def per_app_domain():
 #                            follows its own feed, so a nightly version must
 #                            not show up in the stable app
 #
-# The What's new keys mirror WHATSNEW_KEY and WHATSNEW_SUPPRESS_KEY in
-# gui/main/first_launch.py as literals: constants cannot import from gui.
-# test_settings_domains.py checks the literals stay in step.
+# The What's new keys mirror WHATSNEW_KEY, WHATSNEW_SUPPRESS_KEY and
+# WHATSNEW_RESET_MARKER in gui/main/first_launch.py as literals: constants
+# cannot import from gui. test_settings_domains.py checks the literals stay in
+# step.
 PER_APP_KEYS = frozenset({
     "suppress_whatsnew",
     "last_whatsnew_version",
+    "whatsnew_popup_reset_applied",
     "last_update_check_epoch",
     "window/geometry",
     "update_notice_version",

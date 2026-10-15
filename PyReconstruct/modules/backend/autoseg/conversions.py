@@ -61,11 +61,12 @@ def get_voxel_size_um(zarr_array):
     """Get the (z, y, x) voxel size of a zarr in µm.
 
     Reads ``resolution`` or ``voxel_size``. Neuroglancer stores these in nm, so
-    they are divided by 1000 unless ``units`` says µm. Raises KeyError if the
-    zarr has neither attribute.
+    they are divided by 1000 unless ``units`` says µm. Four entries are
+    channel first, as in ``as_nm``. Raises KeyError if the zarr has neither
+    attribute.
     """
 
-    voxel_size = get_resolution(zarr_array)
+    voxel_size = _spatial_axes(get_resolution(zarr_array))
 
     return [
         v if um else v / 1000
@@ -73,23 +74,45 @@ def get_voxel_size_um(zarr_array):
     ]
 
 
+def _spatial_axes(entries):
+    """The (z, y, x) entries of per-axis zarr metadata.
+
+    Four entries are channel first, so the leading one is dropped. Any other
+    length comes back as it is.
+    """
+
+    return list(entries[-3:]) if len(entries) == 4 else entries
+
+
 def _in_um(zarr_array, n):
-    """For each of n axes, True if the zarr's ``units`` say µm (default nm)."""
+    """For each of n spatial axes, True if the zarr's ``units`` say µm (default nm).
+
+    A four-entry ``units`` list is channel first like the values it describes,
+    so its last three entries name the spatial axes.
+    """
 
     units = zarr_array.attrs.get("units", "nm")
     if isinstance(units, str):
         units = [units] * n
+    else:
+        units = _spatial_axes(units)
 
     return [str(u).lower() in ("um", "µm", "μm", "micrometer", "micron") for u in units]
 
 
 def as_nm(values, zarr_array):
-    """Sizes or offsets given in a zarr's ``units``, in nm.
+    """Sizes or offsets given in a zarr's ``units``, in nm per (z, y, x) axis.
+
+    Four values are channel first, so the channel entry is dropped before the
+    rest are paired with ``units``, which may name three axes or four. Paired
+    as given, four values against three units came back as channel, z and y.
 
     µm values round to a millionth of a nm, so a grid declared in µm reads
     the same as that grid in nm (0.0041 µm is 4.1 nm, not
     4.1000000000000005). nm values come back as they are.
     """
+
+    values = _spatial_axes(values)
 
     return [
         round(v * 1000, 6) if um else v
@@ -101,8 +124,9 @@ def get_label_offset(labels_array, raw):
     """Where a labels array starts against raw, in nm per (z, y, x) axis.
 
     Both offsets are positions in the same space, so an offset the two
-    arrays share moves neither. Labels with no ``offset`` start at raw's
-    corner, as they always have.
+    arrays share moves neither. A four-entry offset is channel first, so
+    only its spatial axes are compared. Labels with no ``offset`` start at
+    raw's corner, as they always have.
     """
 
     if "offset" not in labels_array.attrs:
@@ -163,21 +187,16 @@ def get_thickness(zarr_array):
         return 0.05  # the default section thickness, as get_true_mag defaults
 
 
-def _spatial_resolution(resolution):
-    """Drop a leading channel axis from four-entry label resolution metadata."""
-
-    return resolution[-3:] if len(resolution) == 4 else resolution
-
-
 def get_label_resolutions(labels_array, raw, series=None, raw_attrs=None):
     """Get the (labels, raw) resolutions for a label import.
 
     Both come back in nm, whatever ``units`` each array declares. Missing or
     zero raw axes use the exporter's grid: the first exported section's
     thickness and the saved export mag (or raw's metadata/default mag). Missing or
-    zero label axes share raw's grid. Four-entry label metadata is channel-first;
-    only its last three spatial axes are used. The existing metadata/default
-    fallback applies when the series section is unavailable.
+    zero label axes share raw's grid. Four-entry metadata on either array is
+    channel first; ``as_nm`` keeps only its last three spatial axes. The
+    existing metadata/default fallback applies when the series section is
+    unavailable.
     """
 
     try:
@@ -199,7 +218,7 @@ def get_label_resolutions(labels_array, raw, series=None, raw_attrs=None):
             raise ValueError("Cannot recover a nonzero series resolution for this Zarr.")
 
     try:
-        labels_res = _spatial_resolution(as_nm(get_resolution(labels_array), labels_array))
+        labels_res = as_nm(get_resolution(labels_array), labels_array)
     except KeyError:
         labels_res = [0, 0, 0]
 
@@ -657,6 +676,7 @@ def getLabelsToObjectsData(data_fp: str, group: str, raw_attrs: dict = None, ser
 
     raw = get_zarr_array(data_zg, "raw")
     labels_array = get_zarr_array(data_zg, group)
+    label_volume(labels_array)  # refuses several channels before any section starts
     sections = (raw.attrs if raw_attrs is None else raw_attrs)["sections"]
 
     resolution_z = get_label_resolutions(labels_array, raw, series, raw_attrs)[0][0]
@@ -758,7 +778,8 @@ def exterior_to_points(ext: list[np.ndarray], offset, resolution, raw, window, t
 
     ext[:,1] += offset[1] / resolution[1]  # y
     ext[:,1] *= -1
-    ext[:,1] += raw.shape[1] * (raw_resolution[1] / resolution[1])
+    ## y is second to last in (z, y, x) and in channel first (1, z, y, x)
+    ext[:,1] += raw.shape[-2] * (raw_resolution[1] / resolution[1])
 
     ## Convert to coordinates
     ext *= mag
@@ -893,6 +914,108 @@ def exportTraces(data_zg,
                 section.save()
 
 
+class _FirstChannel:
+    """Channel 0 of a (1, z, y, x) array, read and written as (z, y, x).
+
+    Every index goes straight to the array, so nothing is read until a slice
+    is asked for.
+    """
+
+    def __init__(self, array):
+        self.array = array
+        self.shape = tuple(array.shape[1:])
+
+    def __len__(self):
+        return self.shape[0]
+
+    def __getitem__(self, key):
+        return self.array[_channelKey(key)]
+
+    def __setitem__(self, key, value):
+        self.array[_channelKey(key)] = value
+
+
+def _channelKey(key):
+    return (0, *key) if isinstance(key, tuple) else (0, key)
+
+
+class ZarrRefused(ValueError):
+    """A Zarr array PyReconstruct does not read, refused on purpose.
+
+    The message says what to save instead, so the GUI shows it as a notice.
+    Any other error is unexpected and reaches the error report.
+    """
+
+
+def label_volume(labels_array):
+    """A labels array as (z, y, x), the way import and the overlay index it.
+
+    A 4D array is channel first, as its four-entry ``voxel_size`` is read.
+    One integer channel is the labels, as ``is_label_array`` counts it. With
+    more channels nothing says which one is, and a float channel is a
+    prediction rather than label ids, so either is refused.
+    """
+
+    shape = getattr(labels_array, "shape", None)
+    if shape is None or len(shape) != 4:
+        return labels_array
+    if shape[0] != 1:
+        raise ZarrRefused(
+            f"This Zarr label array has {shape[0]} channels. PyReconstruct imports "
+            "labels from a single channel, so save them as (z, y, x) or (1, z, y, x)."
+        )
+    if not np.issubdtype(labels_array.dtype, np.integer):
+        raise ZarrRefused(
+            f"This Zarr label array is {labels_array.dtype}, not an integer type. "
+            "PyReconstruct imports label ids, so save a prediction as integer "
+            "labels before importing it."
+        )
+    return _FirstChannel(labels_array)
+
+
+def raw_volume(raw):
+    """A raw image array as (z, y, x), one grayscale image per section.
+
+    A 4D array is channel first, as its four-entry ``voxel_size`` is read,
+    and one channel is the images. Each section is stored and drawn as a
+    single grayscale image, so several channels are refused rather than
+    read as sections.
+    """
+
+    shape = raw.shape
+    if len(shape) == 3:
+        return raw
+    if len(shape) == 4 and shape[0] == 1:
+        return _FirstChannel(raw)
+    if len(shape) == 4:
+        raise ZarrRefused(
+            f"This Zarr raw array has {shape[0]} channels. PyReconstruct shows "
+            "each section as one grayscale image, so save raw as (z, y, x) or "
+            "(1, z, y, x)."
+        )
+    raise ZarrRefused(
+        f"This Zarr raw array has {len(shape)} axes. PyReconstruct reads raw "
+        "as (z, y, x) or (1, z, y, x)."
+    )
+
+
+def is_label_array(array):
+    """True if an overlay array holds label ids rather than an image.
+
+    (z, y, x) arrays are labels, as they always were. A 4D array is channel
+    first, and it is labels only as one integer channel. RGB images and
+    affinities have three channels, and a float channel is a prediction.
+    """
+
+    shape = array.shape
+    if len(shape) == 3:
+        return True
+    return (
+        len(shape) == 4 and shape[0] == 1
+        and np.issubdtype(array.dtype, np.integer)
+    )
+
+
 def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
     """Import label data for a single section.
     
@@ -912,6 +1035,10 @@ def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
 
     offset = get_label_offset(labels_array, raw)
     z_offset = round(offset[0] / resolution[0])
+
+    ## by section: the first axis of a (1, z, y, x) array is its channel,
+    ## and read as the section it sent a whole volume to findContours
+    labels = label_volume(labels_array)
 
     attrs = raw.attrs if raw_attrs is None else raw_attrs
     window = attrs["window"]
@@ -942,14 +1069,14 @@ def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
         return
     # the high bound stays best-effort: array-likes without a shape fall
     # through to the BoundsCheckError catch below, as they always did
-    shape = getattr(labels_array, "shape", None)
+    shape = getattr(labels, "shape", None)
     if shape is not None and zi >= shape[0]:
         return
 
     section = series.loadSection(snum)
 
     try:
-        arr = labels_array[zi]
+        arr = labels[zi]
     except zarr.errors.BoundsCheckError:  # return if out of bounds
         return
 
@@ -1052,12 +1179,15 @@ def zarrToNewSeries(zarr_fp : str, label_groups : list, name : str):
     ## are worked out here and passed to it, not stored on the source.
     ng_zarr = zarr.open(zarr_fp, "r")
     raw = get_zarr_array(ng_zarr, "raw")  # assume "raw" exists as zarr path
+    ## by section, before anything is written: a (1, z, y, x) raw is its one
+    ## channel, and several channels are refused
+    volume = raw_volume(raw)
 
     ## Get true mag
     true_mag = get_true_mag(raw)
 
     ## Set window
-    z, y, x = raw.shape
+    z, y, x = volume.shape
     window = [0, 0, x * true_mag, y * true_mag]
 
     ## Set the sections
@@ -1101,7 +1231,7 @@ def zarrToNewSeries(zarr_fp : str, label_groups : list, name : str):
             src = f"section{snum:0{n_digits}d}"
             print(f"Working on {src}...")
 
-            images.create_dataset(src, data=raw[i])
+            images.create_dataset(src, data=volume[i])
 
             img_loc = os.path.join(images_dir, "scale_1", src)
             image_locations.append(img_loc)

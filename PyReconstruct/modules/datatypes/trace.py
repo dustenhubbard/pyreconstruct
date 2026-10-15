@@ -1183,8 +1183,12 @@ def convertMode(arg):
                 # draws a None style at full opacity, so it goes out as solid.
                 mode = 13
             # Reconstruct keeps the fill condition only as the sign of the
-            # mode, so "always" has no form of its own and goes out as selected.
-            if arg[1] == "unselected":
+            # mode: positive fills a selected trace, negative an unselected
+            # one. The sign matches TraceLayer.drawTrace, which fills a trace
+            # only while it is unselected unless its condition is "selected"
+            # or "always", so "none" goes out negative like "unselected".
+            # "always" has no form of its own and goes out as selected.
+            if arg[1] not in ("selected", "always"):
                 mode *= -1
         return mode
 

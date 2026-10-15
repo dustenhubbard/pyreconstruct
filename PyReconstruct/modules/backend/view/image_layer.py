@@ -48,15 +48,7 @@ class ImageLayer():
         # if the image folder is a zarr file
         if self.is_zarr_file:
             if os.path.isdir(self.series.src_dir):
-                self.zg = zarr.open(self.series.src_dir)
-                # special expection: zarr is in previous format
-                if self.section.src in self.zg:
-                    # reorganize the zarr file (move images into scale_1 folder)
-                    self.zg.create_group("scale_1", overwrite=True)
-                    for g in self.zg:
-                        if g != "scale_1":
-                            self.zg.move(g, os.path.join("scale_1", g))
-                # gather scales
+                # gather scales; an old flat zarr is read as it is (scale 1)
                 self.scales = self.section.zarr_scales
                 if not self.scales:
                     self.image_found = False
@@ -68,7 +60,7 @@ class ImageLayer():
             else:
                 self.image_found = False
             if self.image_found:
-                self.image = self.zg[f"scale_{self.selected_scale}"][self.section.src]
+                self.image = self._openScale(self.selected_scale)
                 self.bh, self.bw = (n * self.selected_scale for n in self.image.shape)
                 self.base_corners = [(0, 0), (0, self.bh), (self.bw, self.bh), (self.bw, 0)]
                 self.image_found = True
@@ -91,7 +83,23 @@ class ImageLayer():
                 # premultiplied at full depth first
                 self._draw_image = _drawableImage(loaded, self.image)
                 self._pixels = _PixelView(self._draw_image)
-    
+
+    def _openScale(self, scale : int):
+        """This section's zarr image at one scale, opened read-only.
+
+        A flat zarr's image is the array at its root (Section.zarrPath).
+
+            Params:
+                scale (int): the scale level, one of self.scales
+            Returns:
+                (zarr.Array) the image array
+        """
+        return zarr.open_array(
+            self.series.src_dir,
+            mode="r",
+            path=self.section.zarrPath(scale),
+        )
+
     def _calcTformCorners(self, base_pixmap : QPixmap, tform : Transform) -> tuple:
         """Calculate the vector for each corner of a transformed image.
         
@@ -227,7 +235,7 @@ class ImageLayer():
                     scale_level = scale
                     break
             if self.selected_scale != scale_level:
-                self.image = self.zg[f"scale_{scale_level}"][self.section.src]
+                self.image = self._openScale(scale_level)
                 self.selected_scale = scale_level
         else:
             scale_level = 1

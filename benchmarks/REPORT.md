@@ -101,8 +101,8 @@ The old "Peak RAM" column was therefore not comparable down its own length:
 | series | size | `saveJser` ran? | upstream peak RSS | traces |
 |---|--:|:--:|--:|--:|
 | `crop_2` | 92 MB | yes | 743 MB | 27,525 |
-| `GBSFW` | 127 MB | yes | 1079 MB | 61,121 |
-| `NVWXP` | 187 MB | yes | 1403 MB | 83,126 |
+| `large_a` | 127 MB | yes | 1079 MB | 61,121 |
+| `large_b` | 187 MB | yes | 1403 MB | 83,126 |
 | `crop_3` | 312 MB | **no** | 383 MB | 89,388 |
 | `crop_4` | 701 MB | **no** | 629 MB | 204,622 |
 
@@ -113,7 +113,7 @@ series.
 
 - **Withdrawn:** every peak-RSS figure in the old table, and the open/refresh
   timings for `crop_4` and `crop_ROIsmall` (cold/warm means).
-- **Unaffected:** timings for `crop_1`, `ZGBJY`, `crop_2`, `GBSFW`, `NVWXP`,
+- **Unaffected:** timings for `crop_1`, `ZGBJY`, `crop_2`, `large_a`, `large_b`,
   `crop_3`, whose reps were uniformly warm. The ~3-4× open+refresh speedup was
   never what was wrong. The *memory regression* was overstated by roughly 3×, and
   its attribution to this fork was never tested at all.
@@ -158,10 +158,10 @@ pre-Phase-0 `results.jsonl` exits 2.
 **None of the eight original lab series could be found on this machine.** All four
 parent directories the harness pointed at (`autoseg_large_slow_1`,
 `autoseg_large_slow_2`, `autoseg_large_slow_3` and `cropped_small_class` under
-`/home/dusten/projects/testing/`) no longer exist, and a size-and-name sweep of
+`<data root>/`) no longer exist, and a size-and-name sweep of
 `/data` (`data1`-`data6`) and `/home` turned up no `.jser` matching any of the eight
-names and nothing above 430 MB except unrelated 17 GB SSVQM exports. So none of
-`crop_1`, `ZGBJY`, `crop_2`, `GBSFW`, `NVWXP`, `crop_3`, `crop_4` or
+names and nothing above 430 MB except unrelated 17 GB exports. So none of
+`crop_1`, `ZGBJY`, `crop_2`, `large_a`, `large_b`, `crop_3`, `crop_4` or
 `crop_ROIsmall` could be re-measured. Stated explicitly rather than silently
 skipped, per the plan's own manifest rule. (The sweep was breadth-limited, so this
 is "not found", not a proof of deletion; the files may exist on other lab storage.)
@@ -172,22 +172,22 @@ answered locally):
 
 | label | size | sections | traces | provenance |
 |---|--:|--:|--:|---|
-| `WVHJM_407` | 407 MB | 318 | 161,767 | real, copied from `/data/data5/vijay/LYNDS/WVHJM_20260203_ROI_D011_with_labels.jser` |
-| `WVHJM_x2` | 745 MB | 636 | 323,534 | synthetic, sections replicated ×2 |
-| `WVHJM_x3` | 1118 MB | 954 | 485,301 | synthetic, sections replicated ×3 |
+| `large_c_407` | 407 MB | 318 | 161,767 | real lab series |
+| `large_c_x2` | 745 MB | 636 | 323,534 | synthetic, sections replicated ×2 |
+| `large_c_x3` | 1118 MB | 954 | 485,301 | synthetic, sections replicated ×3 |
 
 All three, plus the series spec and the run log, are left in place on this machine
-at `/home/dusten/projects/testing/bench_phase0/` (~2.3 GB), so the matrix can be
+at `<data root>/bench_phase0/` (~2.3 GB), so the matrix can be
 re-run without regenerating anything. The two synthetic files are reproducible from
 the real one:
 
 ```bash
-uv run python benchmarks/make_scaled_series.py WVHJM_407.jser WVHJM_x2.jser --factor 2
-uv run python benchmarks/make_scaled_series.py WVHJM_407.jser WVHJM_x3.jser --factor 3
+uv run python benchmarks/make_scaled_series.py large_c_407.jser large_c_x2.jser --factor 2
+uv run python benchmarks/make_scaled_series.py large_c_407.jser large_c_x3.jser --factor 3
 ```
 
-The scaled pair brackets the two withdrawn rows: `WVHJM_x2` sits in `crop_4`'s
-size class (701 MB) and `WVHJM_x3` matches `crop_ROIsmall`'s trace count almost
+The scaled pair brackets the two withdrawn rows: `large_c_x2` sits in `crop_4`'s
+size class (701 MB) and `large_c_x3` matches `crop_ROIsmall`'s trace count almost
 exactly (485,301 vs 492,574). Geometry, tag vocabulary and row layout are inherited
 from real autoseg data, so the per-trace work is representative; only the volume is
 synthetic.
@@ -217,20 +217,20 @@ table). Raw data: `results_phase0.jsonl`; aggregation: `summary_phase0.csv`.
 
 | series | size | traces | cond | open (up→fork) | refresh (up→fork) | open+refresh | peak RSS (up→fork) | RSS ratio |
 |---|--:|--:|:--:|---|---|--:|---|--:|
-| `WVHJM_407` | 407 MB | 161,767 | cold | 127.95→34.92 s | 84.33→27.25 s | 3.42× | 2047→2948 MB | **1.44×** |
-| `WVHJM_407` | 407 MB | 161,767 | warm | 84.20→25.25 s | 85.91→26.38 s | 3.30× | 469→964 MB | **2.05×** |
-| `WVHJM_x2` | 745 MB | 323,534 | cold | 263.59→75.56 s | 170.12→50.32 s | 3.44× | 3850→5636 MB | **1.46×** |
-| `WVHJM_x2` | 745 MB | 323,534 | warm | 168.25→49.93 s | 172.16→53.51 s | 3.29× | 743→1773 MB | **2.39×** |
-| `WVHJM_x3` | 1118 MB | 485,301 | cold | 387.56→101.18 s | 253.05→74.46 s | 3.65× | 5690→8392 MB | **1.48×** |
-| `WVHJM_x3` | 1118 MB | 485,301 | warm | 253.73→74.67 s | 258.38→80.64 s | 3.30× | 1009→2577 MB | **2.55×** |
+| `large_c_407` | 407 MB | 161,767 | cold | 127.95→34.92 s | 84.33→27.25 s | 3.42× | 2047→2948 MB | **1.44×** |
+| `large_c_407` | 407 MB | 161,767 | warm | 84.20→25.25 s | 85.91→26.38 s | 3.30× | 469→964 MB | **2.05×** |
+| `large_c_x2` | 745 MB | 323,534 | cold | 263.59→75.56 s | 170.12→50.32 s | 3.44× | 3850→5636 MB | **1.46×** |
+| `large_c_x2` | 745 MB | 323,534 | warm | 168.25→49.93 s | 172.16→53.51 s | 3.29× | 743→1773 MB | **2.39×** |
+| `large_c_x3` | 1118 MB | 485,301 | cold | 387.56→101.18 s | 253.05→74.46 s | 3.65× | 5690→8392 MB | **1.48×** |
+| `large_c_x3` | 1118 MB | 485,301 | warm | 253.73→74.67 s | 258.38→80.64 s | 3.30× | 1009→2577 MB | **2.55×** |
 
 ### The steady-state memory regression is real: ~2.4-2.6× warm-vs-warm
 
 This is the defensible replacement for the withdrawn figures, and it independently
 reproduces what the plan predicted from the old warm reps (2.5× / 2.7×):
 
-- `WVHJM_x2`: 743 → 1773 MB (**2.39×**)
-- `WVHJM_x3`: 1009 → 2577 MB (**2.55×**)
+- `large_c_x2`: 743 → 1773 MB (**2.39×**)
+- `large_c_x3`: 1009 → 2577 MB (**2.55×**)
 
 The regression grows mildly with trace count (2.05× at 162k traces, 2.39× at 324k,
 2.55× at 485k), consistent with per-trace retained state rather than a fixed
@@ -244,15 +244,15 @@ spikes when cold too*, something the old harness never measured:
 
 | series | checkout | warm peak | cold peak | cold overhead | warm→cold |
 |---|---|--:|--:|--:|--:|
-| `WVHJM_407` | upstream | 469 MB | 2047 MB | +1577 MB | 4.36× |
-| `WVHJM_407` | fork | 964 MB | 2948 MB | +1984 MB | 3.06× |
-| `WVHJM_x2` | upstream | 743 MB | 3850 MB | +3107 MB | 5.18× |
-| `WVHJM_x2` | fork | 1773 MB | 5636 MB | +3864 MB | 3.18× |
-| `WVHJM_x3` | upstream | 1009 MB | 5690 MB | +4680 MB | 5.64× |
-| `WVHJM_x3` | fork | 2577 MB | 8392 MB | +5816 MB | 3.26× |
+| `large_c_407` | upstream | 469 MB | 2047 MB | +1577 MB | 4.36× |
+| `large_c_407` | fork | 964 MB | 2948 MB | +1984 MB | 3.06× |
+| `large_c_x2` | upstream | 743 MB | 3850 MB | +3107 MB | 5.18× |
+| `large_c_x2` | fork | 1773 MB | 5636 MB | +3864 MB | 3.18× |
+| `large_c_x3` | upstream | 1009 MB | 5690 MB | +4680 MB | 5.64× |
+| `large_c_x3` | fork | 2577 MB | 8392 MB | +5816 MB | 3.26× |
 
 **Attribution:** of the fork's cold spike, the portion in excess of upstream's is
-407 MB of 1984 MB on `WVHJM_407` (**20.5%**), 757 MB of 3864 MB on `x2`
+407 MB of 1984 MB on `large_c_407` (**20.5%**), 757 MB of 3864 MB on `x2`
 (**19.6%**), and 1135 MB of 5816 MB on `x3` (**19.5%**). The figure is stable at
 about a fifth across a 3× size range, so:
 
@@ -264,7 +264,7 @@ In relative terms upstream's cold spike is *worse* (4.4-5.6× its warm baseline 
 the fork's 3.1-3.3×), because the fork's warm baseline is already higher.
 
 The cold peak is also **transient, not retained**. Resident size immediately after
-open, versus the peak during it (`WVHJM_x2`):
+open, versus the peak during it (`large_c_x2`):
 
 | checkout | condition | RSS after open | peak RSS during open |
 |---|---|--:|--:|
@@ -286,11 +286,11 @@ correction intact.
 ### Measurement quality
 
 `peak_rss_spread_pct` is **0.0-0.7% on every one of the twelve groups**. The memory
-conclusions are insensitive to load. Timing spread is 0.1-7.2% except `WVHJM_x3`
+conclusions are insensitive to load. Timing spread is 0.1-7.2% except `large_c_x3`
 fork cold at 14.2%, where one of three reps overlapped a concurrent profiling run;
 the median is robust to that single outlier, which is why 3 reps were used
 instead of 2.
-Some `WVHJM_407` reps and some `x2`/`x3` reps ran alongside profiling work on the
+Some `large_c_407` reps and some `x2`/`x3` reps ran alongside profiling work on the
 same 96-thread box; because checkout order is rotated per rep, such load hits both
 checkouts rather than biasing the ratio.
 
@@ -351,7 +351,7 @@ Three refinements to the audit's framing:
    > The 24.7 s is a *measurement* and stands: it is stages B + C of the table
    > above (8.37 + 16.35), the decode and object-construction cost of one pass.
    > The redundant second pass is also real: instrumenting the fork counts
-   > **318 `Section` builds at open and 318 more at refresh** on `WVHJM_407`.
+   > **318 `Section` builds at open and 318 more at refresh** on `large_c_407`.
    >
    > What was wrong was the *inference* that a cache recovers that 24.7 s. It
    > does not, and the Section cache was **built, measured and REJECTED**:
@@ -360,8 +360,8 @@ Three refinements to the audit's framing:
    >   **8.21 s** where this refinement implied ~24.7 s: geometry, not
    >   `Section` construction, dominates what `refresh()` actually redoes.
    >   (Conditions differ and are not interchangeable: the 8.21 s and +2217 MB
-   >   were measured on `WVHJM_407` (318 sections), the stage table above on
-   >   `WVHJM_x2` (636 sections). The direction of the result is not in doubt:
+   >   were measured on `large_c_407` (318 sections), the stage table above on
+   >   `large_c_x2` (636 sections). The direction of the result is not in doubt:
    >   the saving is smaller than the per-pass decode+construction cost of a
    >   half-sized series. Still, do not subtract one figure from the other);
    > - it costs **+2217 MB RSS (3.65× steady state)**, i.e. ~270 MB retained per
@@ -403,11 +403,11 @@ Three refinements to the audit's framing:
    > >   `series.getAttr(name, "alignment")` (`series_data.py:148-159`). Change
    > >   the alignment and every trace's length, area, centroid and radius
    > >   change while every section file on disk stays byte-identical.
-   > >   Measured on `rhhks276`: switching `d001` to `default` modifies
+   > >   Measured on a 276-section lab series: switching `d001` to `default` modifies
    > >   **0 of 276 section files**, and changes the geometry of
-   > >   `RH276.refresh.stalerows` (94.6%, 118,479 of 125,218 trace rows). An
+   > >   `S276.refresh.stalerows` (94.6%, 118,479 of 125,218 trace rows). An
    > >   (mtime,size) key would have skipped all 276 sections;
-   > >   `RH276.refresh.falseskip` (272) of them needed recomputation;
+   > >   `S276.refresh.falseskip` (272) of them needed recomputation;
    > > - **that is not an edge case, it is the main path.** Three of the four
    > >   production callers of `refresh()` fire *only* on an alignment change:
    > >   `state_manager.py:548-550` is guarded by `alignmentPreferencesChanged`
@@ -430,7 +430,7 @@ Three refinements to the audit's framing:
    > >   its caller. So the key is inverted on the alignment paths, not on every
    > >   path that reaches this refresh.
    > >
-   > > The prize itself is real. Geometry is `RH276.refresh.geomshare` (62.5%)
+   > > The prize itself is real. Geometry is `S276.refresh.geomshare` (62.5%)
    > > of a refresh, against 32.0% for the parse, which is why the cache
    > > recovered so little of the 24.7 s. A correct key has to include the
    > > resolved alignment, and how much that costs depends on which alignment
@@ -481,7 +481,7 @@ both regimes are reported.
 
 ### 6a. Dense view: a large autoseg series filling the window
 
-`WVHJM_407` at `5ac6c2b`, `--fit` (483 traces in view), cProfile over one full
+`large_c_407` at `5ac6c2b`, `--fit` (483 traces in view), cProfile over one full
 session, wall 10.973 s. Self time (cProfile `tottime`):
 
 | rank | self % | cum % | function | location |
@@ -711,10 +711,10 @@ measured on the real path or on a script.**
 | 2.05-2.55× warm memory regression (§4) | **measurement** | `ru_maxrss`, warm-vs-warm, spread 0.0-0.7% | **stands**; addressed by #98 (Phase 1d) |
 | ~80/20 cold-spike attribution (§4) | **measurement** | cold vs warm peaks, both checkouts | **stands** |
 | stage table A-D, incl. 24.7 s decode+construction (§5) | **measurement** | `decompose_open.py` on the real pass | **stands as a decomposition** |
-| "caching Sections is worth that 24.7 s" (§5.3) | **projection** (inference from the decomposition) | nothing (no cache existed) | **REJECTED**: a perfect cache saves 8.21 s at +2217 MB (`WVHJM_407`), plus a data-loss landmine |
+| "caching Sections is worth that 24.7 s" (§5.3) | **projection** (inference from the decomposition) | nothing (no cache existed) | **REJECTED**: a perfect cache saves 8.21 s at +2217 MB (`large_c_407`), plus a data-loss landmine |
 | `isAnchorPoint` 22.8× (§7) | **projection** (micro-benchmark) | `cv2.filter2D` vs the scalar loop, in isolation | **held up**: 13.7× measured end-to-end on a lasso sweep (#97) |
 | `cv2.polylines` 22-26× (§7) | **projection** (micro-benchmark) | one polylines call, all traces, single color, no opacity | **REJECTED**: real per-trace loop is 1814 ms vs QPainter's 155 ms (~12× slower) |
-| "skip geometry for sections whose file is unchanged, mtime/size keyed" (§5.3 correction) | **projection** (inference from the cache rejection) | nothing (never built) | **REJECTED**: geometry depends on `series.alignment`, not the file. On `rhhks276` an alignment change modifies 0/276 section files and 94.6% of trace geometry; the key would falsely skip 272 sections. `SeriesData` also does not retain the data, contrary to the premise |
+| "skip geometry for sections whose file is unchanged, mtime/size keyed" (§5.3 correction) | **projection** (inference from the cache rejection) | nothing (never built) | **REJECTED**: geometry depends on `series.alignment`, not the file. On a 276-section lab series an alignment change modifies 0/276 section files and 94.6% of trace geometry; the key would falsely skip 272 sections. `SeriesData` also does not retain the data, contrary to the premise |
 
 Delivered so far, with measured end-to-end figures:
 

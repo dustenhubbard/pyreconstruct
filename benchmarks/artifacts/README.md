@@ -2,7 +2,7 @@
 
 | file | what it is |
 |---|---|
-| `session_dense_autoseg.flamegraph.svg` | py-spy flamegraph, dense view (`WVHJM_407` `--fit`, 483 traces in view) at `5ac6c2b`. Open in a browser. |
+| `session_dense_autoseg.flamegraph.svg` | py-spy flamegraph, dense view (`large_c_407` `--fit`, 483 traces in view) at `5ac6c2b`. Open in a browser. |
 | `session_dense_autoseg.speedscope.json.gz` | py-spy speedscope for the same regime, 99 Hz, 31,135 samples. `gunzip` first, then load at speedscope.app or feed to `../rank_hotspots.py`. |
 | `session_shapes2.flamegraph.svg` | py-spy flamegraph, sparse/gesture-heavy view (`shapes2.jser`, 41 traces) at `8e9e185`. |
 | `session_shapes2.speedscope.json` | py-spy speedscope for the same, 99 Hz, 2564 samples. |

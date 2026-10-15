@@ -432,12 +432,16 @@ class FieldWidgetObject(FieldWidgetTrace):
 
         self.mainwindow.saveAllData()
 
+        series = self.series
         ambiguous = []
-        repaired = self.series.repairSelfCrossingTraces(
+        repaired = series.repairSelfCrossingTraces(
             records,
             series_states=self.series_states,
             ambiguous=ambiguous,
         )
+        if self.series is not series:
+            # opened at the last progress update (see combineDuplicateTraces)
+            return []
 
         if repaired:
             self.table_manager.updateObjects({r["name"] for r in repaired})
@@ -472,12 +476,16 @@ class FieldWidgetObject(FieldWidgetTrace):
         # persist field edits to section data before reloading sections
         self.mainwindow.saveAllData()
 
+        series = self.series
         ambiguous = []
-        deleted = self.series.deleteMalformedTraces(
+        deleted = series.deleteMalformedTraces(
             records,
             series_states=self.series_states,
             ambiguous=ambiguous,
         )
+        if self.series is not series:
+            # opened at the last progress update (see combineDuplicateTraces)
+            return []
 
         if deleted:
             self.table_manager.updateObjects({r["name"] for r in deleted})
@@ -488,6 +496,9 @@ class FieldWidgetObject(FieldWidgetTrace):
             (r["name"], r["section"], r.get("index"), r["match"])
             for r in ambiguous
         ])
+        if self.series is not series:
+            # opened under the notice: the next one names the series left
+            return []
 
         missed = len(records) - len(deleted) - len(ambiguous)
         if missed:
@@ -513,6 +524,8 @@ class FieldWidgetObject(FieldWidgetTrace):
         Series.combineDuplicateTraces refuses a group that would delete a
         trace of a locked object, and one whose traces changed since the scan.
         This layer says which, so no row goes uncombined without a reason.
+        It suggests keeping a locked object's name only when that would let
+        every refused row combine.
         """
         if not choices:
             return []
@@ -521,29 +534,42 @@ class FieldWidgetObject(FieldWidgetTrace):
         # explain itself; the series checks the lock again regardless
         locked_names = set()
         locked_rows = 0
+        # keeping a locked name saves a row only when the row holds one
+        # locked trace. With two (a row of one locked name always has two),
+        # every pick deletes a locked trace, and only unlocking helps.
+        keeping_helps = True
         valid = []
         for group, keep in choices:
             if not keep or keep not in group["names"]:
                 continue
             valid.append((group, keep))
             kept = self.series.duplicateKeptMember(group["members"], keep)
-            names = {
-                m["name"] for m in group["members"] if m is not kept
-                and self.series.getAttr(m["name"], "locked")
-            }
+            locked = [
+                m for m in group["members"]
+                if self.series.getAttr(m["name"], "locked")
+            ]
+            names = {m["name"] for m in locked if m is not kept}
             if names:
                 locked_names |= names
                 locked_rows += 1
+                keeping_helps = keeping_helps and len(locked) == 1
 
         # persist field edits to section data before reloading sections
         self.mainwindow.saveAllData()
 
+        series = self.series
         ambiguous = []
-        applied = self.series.combineDuplicateTraces(
+        applied = series.combineDuplicateTraces(
             valid,
             series_states=self.series_states,
             ambiguous=ambiguous,
         )
+        if self.series is not series:
+            # a .jser opened from the Finder during the combine's progress
+            # dialog: the tables, field and title are that series' now, and
+            # the rows and notices name the series left (see
+            # MainWindow._closeCleanupLists)
+            return []
 
         if applied:
             names = set()
@@ -556,22 +582,34 @@ class FieldWidgetObject(FieldWidgetTrace):
         if locked_names:
             rows = "1 row" if locked_rows == 1 else f"{locked_rows} rows"
             plural = len(locked_names) > 1
+            if keeping_helps:
+                advice = (
+                    "Unlock them, or keep their names, and combine again."
+                    if plural else
+                    "Unlock it, or keep its name, and combine again."
+                )
+            else:
+                advice = (
+                    "Unlock them and combine again." if plural
+                    else "Unlock it and combine again."
+                )
             notify(
                 f"PyReconstruct did not combine {rows} because "
                 f"{'they' if locked_rows > 1 else 'it'} would delete traces "
                 f"of {'locked objects' if plural else 'a locked object'}:"
                 "\n\n" + "\n".join(f"  {n}" for n in sorted(locked_names))
-                + "\n\n" + (
-                    "Unlock them, or keep their names, and combine again."
-                    if plural else
-                    "Unlock it, or keep its name, and combine again."
-                )
+                + "\n\n" + advice
             )
+            if self.series is not series:
+                # opened under the notice: the rest name the series left
+                return []
 
         notifyAmbiguousTraces([
             (m["name"], m["section"], m.get("index"), m["match"])
             for m in ambiguous
         ], verb="combine")
+        if self.series is not series:
+            return []
 
         # a row can go uncombined for its lock (said above), for identical
         # traces it cannot tell apart (said just above), or because a trace

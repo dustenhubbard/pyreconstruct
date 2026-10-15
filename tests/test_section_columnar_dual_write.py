@@ -3006,7 +3006,7 @@ def test_deleting_an_object_leaves_every_touched_section_consistent(real_series)
 
 
 def test_mass_delete_of_several_objects_on_one_section(real_series):
-    """Patrick's beta-3 report (2026-08-28): select every object, delete, raise.
+    """A beta-3 report (2026-08-28): select every object, delete, raise.
 
     The shape that raised needs two ingredients on ONE section: an object
     whose contour holds MORE than one trace, deleted BEFORE another object.

@@ -157,7 +157,7 @@ def test_unsaved_notify_still_asks_a_real_user(monkeypatch, button, expected):
     assert args[3:] == (QMessageBox.Yes, QMessageBox.No)
 
 
-def test_no_prompt_helper_is_left_without_an_offscreen_branch(qapp):
+def test_no_prompt_helper_is_left_without_an_offscreen_branch(qapp, monkeypatch):
     """Every prompt in `gui.utils.utils` returns with nobody present.
 
     A list rather than a loop over the module, because these four are the ones
@@ -165,7 +165,9 @@ def test_no_prompt_helper_is_left_without_an_offscreen_branch(qapp):
     `notify` and `notifyConfirm` end in `input()` offscreen, which raises under
     pytest's output capture rather than hanging, so they are exercised through
     their console branch here only to pin that they do not sit on a modal.
+    Unattended, that branch skips `input()`, so the variable is cleared here.
     """
+    monkeypatch.delenv(gui_utils.UNATTENDED_ENV_VAR, raising=False)
     assert gui_utils.saveNotify() == "yes"
     assert gui_utils.unsavedNotify() is True
 

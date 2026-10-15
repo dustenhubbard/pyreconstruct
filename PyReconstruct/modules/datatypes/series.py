@@ -56,6 +56,26 @@ class SeriesOptionError(Exception):
     """Raised when an option read from the series file has the wrong shape."""
 
 
+class SeriesClosedError(FileNotFoundError):
+    """Raised when a section pass reaches a section of a closed series.
+
+    A progress dialog runs the event loop on each update, so another series
+    can open under any pass that shows one (a .jser opened from the Finder
+    reaches the window there), and opening it closes this series and deletes
+    its working files. The pass stops before it reads the next section
+    instead of failing on the missing file, or reading files the series that
+    replaced it now owns. A FileNotFoundError still, so a caller that handles
+    that one handles this the same.
+
+    Not quiet: a pass that writes may have saved some sections and not the
+    rest, so the app's exception hook reports it like any other error. A
+    pass with series data to write after its last section (writes_after)
+    stops at the last update too, after every section is done. Only
+    a caller that loses nothing by stopping (the read-only pixel-dust and
+    Duplicates scans in MainWindow) catches it and ends without a word.
+    """
+
+
 def _checkColumnsOption(option_name : str, value):
     """Raise if a ``*_columns`` option is not a list of (name, shown) pairs.
 
@@ -106,6 +126,43 @@ def _checkColumnsOption(option_name : str, value):
                 f"entry {i} has a {type(pair[0]).__name__} where the column "
                 f"name should be"
             )
+
+
+#: The data lists whose column choices are stored in the series, one option
+#: each. A column added to one of their defaults reaches an older series
+#: through `addMissingColumns`, which `Series.updateJSON` runs on load.
+LIST_COLUMN_OPTIONS = (
+    "object_columns",
+    "trace_columns",
+    "section_columns",
+    "ztrace_columns",
+    "flag_columns",
+)
+
+
+def addMissingColumns(columns : list, defaults : list) -> bool:
+    """Append each default column that `columns` lacks, in place.
+
+    The one rule for a list-column option written before a default existed:
+    the missing column goes at the end with its default shown value, and
+    every stored column keeps its place and its shown/hidden choice. Names
+    already present are left alone, so running it again adds nothing, and a
+    column that is not a default (an object list's own user column) stays.
+
+        Params:
+            columns (list): the stored (name, shown) pairs, updated in place
+            defaults (list): the option's default (name, shown) pairs
+        Returns:
+            (bool): True if a column was added
+    """
+    present = {name for name, _ in columns}
+    added = False
+    for name, shown in defaults:
+        if name not in present:
+            columns.append((name, shown))
+            present.add(name)
+            added = True
+    return added
 def contourNameCollisions(jser_data : dict) -> dict:
     """Find the object names a load would fold together, without loading.
 
@@ -257,6 +314,8 @@ def applyContourRenames(series_data : dict, renames : dict, collisions : dict):
     if isinstance(host_tree, dict):
         rebuilt = {}
         for obj_name, hosts in host_tree.items():
+            if isinstance(hosts, str):
+                hosts = [hosts]  # one host as a bare string, as HostTree.add reads it
             if not isinstance(hosts, list):
                 rebuilt[obj_name] = hosts  # shape this code does not know: keep
                 continue
@@ -327,6 +386,17 @@ def _default_progress_reporter_factory():
         from PyReconstruct.modules.backend.progress import QtProgressReporter
         _PROGRESS_REPORTER_FACTORY = QtProgressReporter
     return _PROGRESS_REPORTER_FACTORY
+
+
+def _openingText(name: str) -> str:
+    """The progress text while a series opens, naming the series.
+
+    An open runs one of two passes: `openJser` unpacking the .jser, or the
+    series-data pass in `Series.__init__` that a recovered or already-unpacked
+    working folder takes instead. Both say this, with the name the window
+    title shows once the series is open.
+    """
+    return f"Opening {name}..."
 
 
 _NOTIFIER = None
@@ -536,6 +606,8 @@ class Series():
         self.modified_ztraces = set()
         self.modified_objects = set()
         self.leave_open = False
+        # set by close(); a section pass stops on it (SeriesClosedError)
+        self.closed = False
 
         # possible zarr overlay
         self.zarr_overlay_fp = None
@@ -552,7 +624,14 @@ class Series():
         # keep track of relevant overall series data
         self.data = SeriesData(self)
         if get_series_data:
-            self.data.refresh()
+            if self.isWelcomeSeries():
+                # The welcome series PyReconstruct opens at launch is one
+                # bundled section with no traces, read in well under a
+                # millisecond. Its bar only flashed "Loading series data..."
+                # before the user had chosen any series, so it gets none.
+                self.data.refresh(show_progress=False)
+            else:
+                self.data.refresh(message=_openingText(self.name))
 
         # objects for non-GUI users
         self.objects = Objects(self)
@@ -716,7 +795,7 @@ class Series():
         # 2026); the bar itself only appears after Qt's minimum duration, so a
         # small local file still opens without a flash.
         factory = progress if progress is not None else _default_progress_reporter_factory()
-        reporter = factory(text="Opening series...")
+        reporter = factory(text=_openingText(sname))
         try:
             jser_data, collisions = Series._readJserForOpen(fp, notifier)
         except BaseException:
@@ -861,7 +940,7 @@ class Series():
         finally:
             # The dialog closes only at 100%, which a failure never reaches:
             # the raise above used to leave the window-modal "Opening
-            # series..." dialog standing behind the error that follows it
+            # <name>..." dialog standing behind the error that follows it
             # (found 2026-08-28) -- the same shape saveJser's finally already
             # fixes. Cancel returns pass through here too; finishing a
             # reporter twice is harmless.
@@ -877,10 +956,12 @@ class Series():
         progress lets Qt deliver queued events, so a second save (a shortcut, a
         menu action, an autosave) can start inside the first. Two saves of one
         series at once have nothing to gain and every way to collide, so the
-        second is refused with a message, writes nothing, and raises. The
-        message promises nothing about the first save: if the refusal's
+        second is refused with a notice, writes nothing, and raises. The
+        notice promises nothing about the first save: if the refusal's
         exception reaches it, it stops like any failed save and keeps the old
-        file. Nothing in the app queues saves, so refusing is the whole fix.
+        file. The GUI checks `jserSaveRunning` before it gets here, so in the
+        app the refusal is the notice alone.
+        Nothing in the app queues saves, so refusing is the whole fix.
         See `_saveJser` for what a save does.
 
             Params:
@@ -906,9 +987,17 @@ class Series():
     def refuseNestedSave(self, target : str) -> SeriesSaveError:
         """Tell the user a save was skipped because one is running.
 
-        Shows the message and returns the error for the caller to raise. Save
-        As calls it before moving the series, since a move followed by a
-        refused save would leave the series pointing at a path with no file.
+        Shows the message and returns the error for the caller to raise. The
+        GUI's save, close and backup paths call it themselves, before anything
+        is written or closed, and return without raising: raised from a menu
+        action, the error reaches the exception hook, which opens the
+        error-report window anyway. Save As also calls it before moving the
+        series, since a move followed by a refused save would leave the series
+        pointing at a path with no file.
+
+        The message is a plain notice, not the "Save failed" report window. A
+        skipped save is expected and nothing failed, so there is nothing to
+        report.
 
             Params:
                 target (str): the path the skipped save would have written
@@ -918,13 +1007,15 @@ class Series():
         err = SeriesSaveError(
             "this series is already being saved, so this save was skipped."
         )
-        self._surfaceSaveError(
-            target, err,
-            message=(
-                "Save skipped: this series is already being saved.\n\n"
-                f"This save wrote nothing to:\n{target}"
-            ),
-        )
+        message = "Save skipped: this series is already being saved."
+        if target:
+            message += f"\n\nThis save wrote nothing to:\n{target}"
+        try:
+            shown = self._notifier().notify(message)
+        except Exception:
+            shown = False  # the notice must never stop the refusal
+        if not shown:
+            print(message)
         return err
 
     def _saveJser(self, save_fp : str = None, close : bool = False):
@@ -1231,16 +1322,23 @@ class Series():
     
     def close(self):
         """Clear the hidden directory of the series."""
-        
+
         if self.isWelcomeSeries() or self.leave_open:
+            # closed even so: a series left open for the one replacing it in
+            # the same hidden dir must not go on editing that one's files
+            self.closed = True
             return
-        
+
         if os.path.isdir(self.hidden_dir):
-            
+
             for f in os.listdir(self.hidden_dir):
                 os.remove(os.path.join(self.hidden_dir, f))
-                
+
             os.rmdir(self.hidden_dir)
+
+        # only once its files are gone: a close that raised part-way (a
+        # locked working file) leaves the series in the window, still usable
+        self.closed = True
     
     @staticmethod
     def updateJSON(series_data : dict):
@@ -1261,7 +1359,18 @@ class Series():
         for key in list(series_data["options"].keys()):
             if key not in empty_series["options"]:
                 del series_data["options"][key]
-        
+
+        # backfill list columns added since the file was written, so the
+        # settings dialog and the lists agree before any list opens. A
+        # malformed value is left for getOption to report by name.
+        for key in LIST_COLUMN_OPTIONS:
+            columns = series_data["options"][key]
+            try:
+                _checkColumnsOption(key, columns)
+            except SeriesOptionError:
+                continue
+            addMissingColumns(columns, empty_series["options"][key])
+
         # check for backup_dir key
         if "backup_dir" in series_data:
             del series_data["backup_dir"]
@@ -1755,7 +1864,7 @@ class Series():
         section = Section(section_num, self)
         return section
     
-    def enumerateSections(self, show_progress : bool = True, message : str = "Loading series data...", series_states=None, breakable=True, section_numbers=None, eta=True):
+    def enumerateSections(self, show_progress : bool = True, message : str = "Loading series data...", series_states=None, breakable=True, section_numbers=None, eta=True, writes_after=False):
         """Allow iteration through the sections.
 
         Proper use in a for loop: for snum, section in series.enumerateSections():
@@ -1772,12 +1881,16 @@ class Series():
                     of the pass has run to make one (fork #421: every
                     operation's bar carries one; the series-open pass in
                     SeriesData.refresh opts out, his call of 2026-09-14)
+                writes_after (bool): True if the caller writes series data
+                    after the last section (object attributes, the series
+                    file): a series closed at the last progress update then
+                    stops the pass with SeriesClosedError, as at the others
             Returns:
                 (generator): yielding (section number, Section) pairs
         """
         iterator = SeriesIterator(
             self, show_progress, message, series_states, breakable,
-            section_numbers, eta=eta,
+            section_numbers, eta=eta, writes_after=writes_after,
         )
         ## A generator around the iterator, for the finally alone. The
         ## iterator's window-modal progress dialog has no cancel button and
@@ -1787,10 +1900,61 @@ class Series():
         ## force-quit as the only exit (found 2026-08-28). Abandoning a
         ## generator closes it (GeneratorExit), so the finally runs on every
         ## road out: exhaustion, break, and an exception in the body.
+        self._running_passes = self._running_passes + (iterator,)
         try:
             yield from iterator
         finally:
-            iterator.finishProgress()
+            self._running_passes = tuple(
+                p for p in self._running_passes if p is not iterator
+            )
+            try:
+                iterator.recordWritten()
+            finally:
+                iterator.finishProgress()
+
+    ## The passes enumerateSections is running on this series, innermost
+    ## last, and the callable told of each section file one of them writes
+    ## (see setPassWriteHook).
+    _running_passes: tuple["SeriesIterator", ...] = ()
+    _pass_write_hook = None
+
+    def sectionPassRunning(self) -> bool:
+        """True while enumerateSections is going through this series."""
+        return bool(self._running_passes)
+
+    def setPassWriteHook(self, hook):
+        """Call hook(section) after a pass over the section files writes one.
+
+        A pass loads and writes its own copies of the sections. The field
+        keeps the copies it loaded before, of the section shown and the
+        flickered-away one, and every save writes those back
+        (MainWindow.saveAllData). A save during the pass, or after a pass
+        that stopped part-way, would put back what the pass changed, so the
+        field refreshes its copies from each file as it is written. A .jser
+        opened from the Finder at a progress update saves this series that
+        way, before the pass ends.
+
+            Params:
+                hook (callable): called with the Section just written, or
+                    None to stop
+        """
+        self._pass_write_hook = hook
+
+    def passWroteSection(self, section):
+        """Tell the running pass, and the hook, that a section was written.
+
+        Called by Section.save after every write; does nothing outside a
+        pass. If the hook raises, the pass stops there, and the section's
+        change is still added to the undo history (see enumerateSections).
+
+            Params:
+                section (Section): the section just written
+        """
+        if not self._running_passes:
+            return
+        self._running_passes[-1].sectionWritten(section)
+        if self._pass_write_hook is not None:
+            self._pass_write_hook(section)
 
     def getObjectSections(self, obj_names) -> set:
         """Return the set of section numbers that contain any of the objects.
@@ -1811,7 +1975,7 @@ class Series():
                 snums.update(obj_data.traces.keys())
         return snums
 
-    def _forEachObjectSection(self, obj_names, message, edit, series_states=None, eta=True):
+    def _forEachObjectSection(self, obj_names, message, edit, series_states=None, eta=True, writes_after=False):
         """Run an edit on every section a set of objects appears on.
 
         The loop the bulk object operations all need: visit only the sections
@@ -1833,12 +1997,15 @@ class Series():
                 edit (callable): called with each Section; returns True if
                     that section was modified and should be saved
                 series_states (dict): optional dict for GUI undo states
+                writes_after (bool): True if the caller logs after the loop
+                    (see enumerateSections)
         """
         for snum, section in self.enumerateSections(
             message=message,
             series_states=series_states,
             section_numbers=self.getObjectSections(obj_names),
             eta=eta,
+            writes_after=writes_after,
         ):
             if edit(section):
                 section.save()
@@ -1908,7 +2075,8 @@ class Series():
         for snum, section in self.enumerateSections(
             message="Modifying alignments...",
             series_states=series_states,
-            breakable=False
+            breakable=False,
+            writes_after=log_event,
         ):
             old_tforms = section.tforms.copy()
             new_tforms = {}
@@ -1949,7 +2117,8 @@ class Series():
         for snum, section in self.enumerateSections(
             message="Modifying brightness/contrast profiles...",
             series_states=series_states,
-            breakable=False
+            breakable=False,
+            writes_after=log_event,
         ):
             old_profiles = section.bc_profiles.copy()
             # SeriesIterator records a per-section undo only when a section
@@ -2053,7 +2222,8 @@ class Series():
             if cross_sectioned:
 
                 for snum, section in self.enumerateSections(
-                    message="Creating ztrace..."
+                    message="Creating ztrace...",
+                    writes_after=True,
                 ):
 
                     if obj_name in section.contours:
@@ -2069,7 +2239,8 @@ class Series():
             else:
 
                 for snum, section in self.enumerateSections(
-                    message="Creating ztrace..."
+                    message="Creating ztrace...",
+                    writes_after=True,
                 ):
 
                     if obj_name in section.contours:
@@ -2229,7 +2400,7 @@ class Series():
                     # the columnar store never heard, and the end-of-section
                     # resync that repaired it came too late for a multi-object
                     # delete: the guard fired on the NEXT object's first
-                    # removal, mid-edit, on the same section (Patrick's
+                    # removal, mid-edit, on the same section (a user's
                     # report, 2026-08-28, deleting every object on beta-3).
                     # With every trace routed through removeTrace the store
                     # keeps step by itself and no resync is needed at all.
@@ -2315,7 +2486,8 @@ class Series():
         for snum, section in self.enumerateSections(
                 message="Copying object(s)...",
                 series_states=series_states,
-                section_numbers=self.getObjectSections(obj_names)
+                section_numbers=self.getObjectSections(obj_names),
+                writes_after=True,
         ):
 
             modified = False
@@ -2529,10 +2701,15 @@ class Series():
 
         ## Modify object on every section
         attrs_migrated = False
+        section_numbers = self.getObjectSections(obj_names)
         for snum, section in self.enumerateSections(
             message="Modifying object(s)...",
             series_states=series_states,
-            section_numbers=self.getObjectSections(obj_names)
+            section_numbers=section_numbers,
+            # an object with no traces has its attrs moved after the loop
+            writes_after=bool(name) and not any(
+                n in self.sections for n in section_numbers
+            ),
         ):
 
             ## Move object attrs
@@ -3674,10 +3851,13 @@ class Series():
                 ## told about the new tags (see Section.resyncColumnarStore)
                 section.modified_contours.update(kept_names)
                 section.resyncColumnarStore()
+                # here, not after the pass: a series opened at a later
+                # progress update closes this one, and asks to save it only
+                # if it is marked modified. Before the save, which can stop
+                # the pass (see Series.passWroteSection)
+                self.modified = True
                 section.save()
 
-        if combined:
-            self.modified = True
         return combined
 
     def editObjectRadius(self, obj_names : list, new_rad : float, series_states=None):
@@ -3763,7 +3943,8 @@ class Series():
             return True
 
         self._forEachObjectSection(
-            obj_names, "Removing trace tags...", edit, series_states
+            obj_names, "Removing trace tags...", edit, series_states,
+            writes_after=log_event,
         )
 
         if log_event:
@@ -3832,6 +4013,7 @@ class Series():
         self._forEachObjectSection(
             obj_names, "Reapplying custom color palette...", edit, series_states,
             eta=True,   # the first bar with a time estimate (2026-09-14); every operation bar has one since fork #421
+            writes_after=log_event,
         )
 
         if log_event:
@@ -3873,6 +4055,7 @@ class Series():
             "Hiding object(s)..." if hide else "Unhiding object(s)...",
             edit,
             series_states,
+            writes_after=log_event,
         )
 
         if log_event:
@@ -3953,7 +4136,8 @@ class Series():
         for snum, section in self.enumerateSections(
             message="Restoring visibility...",
             series_states=series_states,
-            section_numbers=section_numbers
+            section_numbers=section_numbers,
+            writes_after=log_event,
         ):
             modified = False
             for name, by_section in snapshot.items():
@@ -3994,7 +4178,8 @@ class Series():
         """
         for snum, section in self.enumerateSections(
             message="Hiding traces..." if hidden else "Unhiding traces...",
-            series_states=series_states
+            series_states=series_states,
+            writes_after=log_event,
         ):
             for trace in section.tracesAsList():
                 trace.setHidden(hidden)
@@ -4209,7 +4394,8 @@ class Series():
         try:
             for snum, section in self.enumerateSections(
                 message="Importing traces...",
-                series_states=series_states
+                series_states=series_states,
+                writes_after=True,
             ):
                 ## Skip if section not requested or does not exist in other series
                 in_srange = srange is None or snum in range(*srange)
@@ -4370,7 +4556,8 @@ class Series():
         for s_snum, s_section in self.enumerateSections(
             message="Importing alignments...",
             series_states=series_states,
-            breakable=False
+            breakable=False,
+            writes_after=True,
         ):
             if s_snum in other.sections:
                 o_section = other.loadSection(s_snum)
@@ -4413,7 +4600,10 @@ class Series():
                 import_as (list): the list of (profile to import, name for profile in current series)
                 log_event (bool): True if the event should be logged
         """
-        for s_snum, s_section in self.enumerateSections(message="Importing brightness/contrast profiles..."):
+        for s_snum, s_section in self.enumerateSections(
+            message="Importing brightness/contrast profiles...",
+            writes_after=True,
+        ):
             if s_snum in other.sections:
                 o_section = other.loadSection(s_snum)
                 for profile, new_name in import_as:
@@ -4467,7 +4657,8 @@ class Series():
         """
         for snum, section in self.enumerateSections(
             message="Importing flags...",
-            series_states=series_states
+            series_states=series_states,
+            writes_after=log_event,
         ):
             if snum not in other.sections:  # skip if section does not exist in other series
                 continue
@@ -5422,6 +5613,12 @@ class Series():
         fname_list = [s.strip() for s in fname_list]
         fname = dl.join(fname_list)
         fname = dl.join(fname.split())
+        # Every part is text from a series file or a settings field, so a
+        # separator would put the file in another folder, and an absolute
+        # code would make os.path.join drop the backup folder. ":" goes
+        # too: on Windows "C:" starts a drive and any other colon writes an
+        # alternate data stream.
+        fname = fname.replace("/", "_").replace("\\", "_").replace(":", "_")
 
         folder = self.backupFolder()
         fp = os.path.join(folder, fname)
@@ -5779,7 +5976,8 @@ class Series():
         for snum, section in self.enumerateSections(
             message="Splitting object...",
             series_states=series_states,
-            section_numbers=self.getObjectSections([name])
+            section_numbers=self.getObjectSections([name]),
+            writes_after=True,
         ):
             if name in section.contours:
                 traces = section.contours[name].getTraces()
@@ -5908,7 +6106,7 @@ class Series():
     
 class SeriesIterator():
 
-    def __init__(self, series : Series, show_progress : bool, message : str, series_states, breakable=True, section_numbers=None, eta=True):
+    def __init__(self, series : Series, show_progress : bool, message : str, series_states, breakable=True, section_numbers=None, eta=True, writes_after=False):
         """Create the series iterator object.
 
             Params:
@@ -5919,14 +6117,19 @@ class SeriesIterator():
                 breakable (bool): True if series state is breakable
                 section_numbers (iterable): if given, restrict iteration to
                     these section numbers
+                writes_after (bool): stop at the last progress update too
+                    if the series closed (see Series.enumerateSections)
         """
         self.series = series
         self.section = None
+        # True once the loop body saves the section it was given
+        self.written = False
         self.show_progress = show_progress
         self.message = message
         self.series_states = series_states
         self.section_subset = None if section_numbers is None else set(section_numbers)
         self.eta = eta
+        self.writes_after = writes_after
         if self.series_states is not None:
             self.series_states.addState(breakable)
 
@@ -5957,19 +6160,21 @@ class SeriesIterator():
     def __next__(self):
         """Return the next section."""
         # update the series states of the previous section if requested
-        if self.series_states and self.section and (
-            self.section.getAllModifiedNames() or 
-            self.section.tformsModified() or
-            self.section.flags_modified
-        ):
-            self.series_states[self.section.n].addState(
-                self.section, self.series
-            )
-            self.series_states.addSectionUndo(self.section.n)
+        self._recordSection()
 
         if self.sni < len(self.section_numbers):
             if self.show_progress:
                     self.reporter.set_progress(self.sni / len(self.section_numbers) * 100)
+            # the progress update above, or the loop body, ran the event
+            # loop, where another series can open and close this one
+            if self.series.closed:
+                done = self.sni
+                total = len(self.section_numbers)
+                raise SeriesClosedError(
+                    f"Series {self.series.name} was closed while this ran: "
+                    f"{self.message} It stopped part-way, after {done} of "
+                    f"{total} sections."
+                )
             snum = self.section_numbers[self.sni]
             self.section = self.series.loadSection(snum)
             self.sni += 1
@@ -5986,7 +6191,44 @@ class SeriesIterator():
                 # is always 1 -- except for an empty subset (e.g. every
                 # requested section was invalid), where it would be 0/0
                 self.reporter.set_progress(100)
+            # the last update, or the last section's loop body, ran the event
+            # loop too. A pass that writes series data after its sections
+            # would write it to a closed series and end as if it finished
+            if self.writes_after and self.series.closed:
+                total = len(self.section_numbers)
+                raise SeriesClosedError(
+                    f"Series {self.series.name} was closed while this ran: "
+                    f"{self.message} It stopped part-way, after all {total} "
+                    "sections and before the series data that goes with them."
+                )
             raise StopIteration
+
+    def _recordSection(self):
+        """Add the last section's change to the undo history, once."""
+        section, self.section = self.section, None
+        self.written = False
+        if self.series_states and section and (
+            section.getAllModifiedNames() or
+            section.tformsModified() or
+            section.flags_modified
+        ):
+            self.series_states[section.n].addState(section, self.series)
+            self.series_states.addSectionUndo(section.n)
+
+    def sectionWritten(self, section):
+        """Note that the loop body saved the section it was given."""
+        if section is self.section:
+            self.written = True
+
+    def recordWritten(self):
+        """Add the undo state of a section the pass wrote and stopped on.
+
+        A loop body that raised or broke out after saving its section never
+        reaches the __next__ that adds it. A change that was not written is
+        left out: undo would put back a state the file never had.
+        """
+        if self.written:
+            self._recordSection()
 
     def finishProgress(self):
         """Close the progress dialog, however the iteration ended.

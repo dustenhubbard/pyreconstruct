@@ -369,8 +369,15 @@ def test_a_save_writes_the_temp_file_in_pieces(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------
 
 class RecordingNotifier(NullNotifier):
+    """``errors`` is what the GUI shows in a report window, ``notices`` a plain box."""
+
     def __init__(self):
         self.errors = []
+        self.notices = []
+
+    def notify(self, message):
+        self.notices.append(message)
+        return True
 
     def notify_error(self, message, report):
         self.errors.append(message)
@@ -587,10 +594,12 @@ def test_a_save_started_during_a_save_is_refused_and_the_file_stays_whole(tmp_pa
         assert written in (outer_bytes, inner["bytes"])
         assert written == outer_bytes, "the inner save was refused, so the outer one wrote"
         assert isinstance(inner["result"], SeriesSaveError)
-        assert len(notifier.errors) == 1
-        assert "already being saved" in notifier.errors[0]
-        assert "left unchanged" not in notifier.errors[0]
-        assert "wrote nothing" in notifier.errors[0]
+        # a skipped save is a notice, not a failure with a report to file
+        assert notifier.errors == []
+        assert len(notifier.notices) == 1
+        assert "already being saved" in notifier.notices[0]
+        assert "left unchanged" not in notifier.notices[0]
+        assert "wrote nothing" in notifier.notices[0]
         assert temp_files(series.jser_fp) == []
 
         # the guard is released: the next save goes through and picks up the edit
@@ -628,8 +637,9 @@ def test_a_refusal_that_reaches_the_outer_save_stops_it_cleanly(tmp_path):
 
         assert open(series.jser_fp, "rb").read() == good
         assert temp_files(series.jser_fp) == []
-        assert len(notifier.errors) == 1
-        assert notifier.errors[0].startswith("Save skipped")
+        assert notifier.errors == []
+        assert len(notifier.notices) == 1
+        assert notifier.notices[0].startswith("Save skipped")
     finally:
         series.close()
 

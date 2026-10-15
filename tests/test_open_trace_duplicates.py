@@ -1,6 +1,6 @@
-"""Duplicate detection for open traces (reported by Lyndsey Kirk).
+"""Duplicate detection for open traces.
 
-Her lab's cfa traces are about 98% open lines, and the duplicate scan was
+One lab's cfa traces are about 98% open lines, and the duplicate scan was
 missing pairs that are obvious by eye: one reported pair measured 0.2581 and
 0.25894 in length, 0.33% apart, and was not flagged at a 95% overlap threshold.
 
@@ -26,7 +26,7 @@ What is pinned here:
     `Trace.overlaps` and not just through the ratio
   * the same five hold when the two tracings have *different point counts*,
     which is the realistic case and the one that matters: `pointsMatch` has an
-    absolute 1e-2 tolerance, so at her 0.25 um scale it rescues a pair whose
+    absolute 1e-2 tolerance, so at the reported 0.25 um scale it rescues a pair whose
     point counts happen to agree, and independent tracings' counts do not
   * genuinely different open traces are still not flagged -- a metric that says
     yes to everything would satisfy every assertion above
@@ -46,7 +46,7 @@ from PyReconstruct.modules.datatypes.trace import Trace
 
 THRESHOLD = 0.95
 
-## Her scale: a cfa profile about 0.25 um long.
+## The reported scale: a cfa profile about 0.25 um long.
 SCALE = 0.25
 
 ## The magnification every ratio here is measured at, in um per image pixel. The
@@ -350,8 +350,8 @@ def test_point_density_does_not_change_the_answer():
 #           OPEN_TRACE_MATCH_MIN_PIXELS * mag,
 #           OPEN_TRACE_MATCH_MAX_PIXELS * mag)
 #
-# The two cases below are the two real traces from her series that the fraction
-# alone gets wrong, one at each end. Both are quoted in image pixels at her own
+# The two cases below are the two real traces from the reported series that the fraction
+# alone gets wrong, one at each end. Both are quoted in image pixels at its own
 # magnification, which is the only unit in which they mean anything.
 # ---------------------------------------------------------------------------
 
@@ -366,7 +366,7 @@ def line_px(length_px, y_px, n, mag=LK_MAG):
 def test_tolerance_is_the_fraction_between_the_two_bounds():
     """Where the fraction lies inside the bounds, nothing has changed.
 
-    A 123 px trace is the median open trace in her series: 2% of it is 2.5 px,
+    A 123 px trace is the median open trace in the reported series: 2% of it is 2.5 px,
     comfortably between 1 and 5, so the clamp is inert and the fraction decides.
     """
     d = Trace.openCurveTolerance(LK_MAG, 123 * LK_MAG, 130 * LK_MAG)
@@ -375,7 +375,7 @@ def test_tolerance_is_the_fraction_between_the_two_bounds():
 
 
 def test_tolerance_is_bounded_below_at_one_pixel():
-    """Her shortest genuine duplicate pair, which the fraction alone missed.
+    """The shortest genuine duplicate pair reported, which the fraction alone missed.
 
     ``s195 d000cfa052axi011`` traces #0 and #1: a 29 px arc traced twice, the two
     tracings 0.72 px apart at worst. 2% of 29 px is 0.58 px, so an unbounded
@@ -404,7 +404,7 @@ def test_the_floor_is_load_bearing_for_that_pair(monkeypatch):
 def test_tolerance_is_bounded_above_at_five_pixels():
     """Two DIFFERENT structures 10 px apart along a 6,846 px trace.
 
-    6,846 px is the 95th percentile open trace in her series, so 2% of it is
+    6,846 px is the 95th percentile open trace in the reported series, so 2% of it is
     137 px: at an unbounded fraction two unrelated profiles running 10 px apart
     lie within tolerance of each other everywhere, and the ratio is exactly 1.0.
     The ceiling of 5 px is what refuses them.
@@ -626,7 +626,7 @@ def _groups(groups):
 
 
 def test_cross_name_scan_finds_open_duplicate(tmp_path):
-    """Her case, end to end: a near-straight open pair under two names."""
+    """The reported case, end to end: a near-straight open pair under two names."""
     series = _load_series(tmp_path)
     snum = _first_snum(series)
     section = series.loadSection(snum)

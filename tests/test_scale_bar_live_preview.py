@@ -62,16 +62,24 @@ def test_ok_keeps_the_previewed_size(main_window, qapp):
     assert main_window.mouse_palette.sb.width() == _expected(main_window, target)
 
 
-def test_a_pinned_bar_ignores_the_width_preview(main_window, qapp):
+def test_a_pinned_bar_takes_the_width_preview_as_its_cap(main_window, qapp):
+    """A pinned bar is the size of its length, but never wider than the size
+    the slider sets, so the preview narrows it and steps it a decade."""
     series = main_window.series
     series.setOption("scale_bar_mode", "micron_pinned")
     series.setOption("scale_bar_length_um", 5.0)
-    main_window.mouse_palette.reset()
-    before = main_window.mouse_palette.sb.width()
+    palette = main_window.mouse_palette
+    palette.reset()
+    # 5 µm across 300 px, inside 100 % of the field
+    series.window[2] = 5.0 / 300 * main_window.field.pixmap_dim[0]
+    palette.previewScaleBarWidth(100)
+    palette.setScale()
+    assert palette.sb.width() == 300
 
-    main_window.mouse_palette.previewScaleBarWidth(100)
+    palette.previewScaleBarWidth(20)
 
-    assert main_window.mouse_palette.sb.width() == before
+    assert palette.sb.width() <= _expected(main_window, 20)
+    assert palette.sb.currentLength()[0] == pytest.approx(0.5)
 
 
 def test_a_dialog_with_no_window_behind_it_does_not_mind(qapp, main_window):

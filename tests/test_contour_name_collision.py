@@ -215,6 +215,35 @@ def test_rename_carries_attrs_groups_and_hosts():
     assert series_data["host_tree"] == {"square": ["my_star"]}
 
 
+@pytest.mark.parametrize("host_tree", [
+    {"my object": ["host"], "child": ["my object"]},
+    # the reader also accepts a bare string for a single host
+    {"my object": "host", "child": "my object"},
+], ids=["list", "string"])
+def test_rename_repoints_host_tree_keys_and_hosts(host_tree):
+    """Both host_tree shapes the reader accepts follow a rename."""
+    series_data = {"obj_attrs": {}, "object_groups": {}, "host_tree": host_tree}
+
+    applyContourRenames(series_data, {"my object": "my_object"}, {})
+
+    assert series_data["host_tree"] == {
+        "my_object": ["host"], "child": ["my_object"]
+    }
+
+
+def test_merge_unions_a_string_host_with_a_list():
+    """A bare-string entry merges with a list entry like two lists do."""
+    series_data = {"host_tree": {"my trace": "h1", "my,trace": ["h2"]}}
+
+    applyContourRenames(
+        series_data,
+        {"my trace": "my_trace", "my,trace": "my_trace"},
+        {"my_trace": ["my trace", "my,trace"]},
+    )
+
+    assert series_data["host_tree"] == {"my_trace": ["h1", "h2"]}
+
+
 def test_merge_keeps_the_union_of_groups_and_hosts():
     """Group and host membership is additive, so a merge unions it."""
     series_data = {

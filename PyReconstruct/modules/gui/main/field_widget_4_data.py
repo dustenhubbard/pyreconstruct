@@ -223,6 +223,9 @@ class FieldWidgetData(FieldWidgetObject):
             Params:
                 to_end (bool): True propagates to the end, False propagates to beginning
         """
+        # the field's section is written below without saveAllData, so an
+        # open scissors cut has to put its trace back here
+        self.cancelOpenScissorsCut()
         # Reading each candidate section can take time before propagation
         # itself begins. Acknowledge the command before even this preparation.
         checking = getProgbar("Checking sections for propagation...", cancel=False)
@@ -517,8 +520,12 @@ class FieldWidgetData(FieldWidgetObject):
         # while the rest of the series stays at the new one
         self.series_states.addState(breakable=False)
         mag_states = []
+        # writes_after: the z-traces, log, reload and tables below go through
+        # self.series, which is the series opened in its place if one opened
+        # at the last update
         for snum, section in self.series.enumerateSections(
-            message="Changing series magnification..."
+            message="Changing series magnification...",
+            writes_after=True,
         ):
             # the state before the change, read from the section's file
             section_states = self.series_states[section]

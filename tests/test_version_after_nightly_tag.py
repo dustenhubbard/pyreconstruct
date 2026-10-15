@@ -16,7 +16,11 @@ test extra lists it too; before that these tests skipped in CI.
 The last group runs the "Compute version" step of build-installers.yml against
 such a repository. Tag builds keep taking their version from setuptools_scm,
 and that step fails the build unless the version equals the tag, so a nightly
-or stable installer carries exactly the tag's version.
+or stable installer carries exactly the tag's version. Those repositories
+carry annotated tags, as nightly.yml and the stable recipe in
+docs/RELEASE_CHANNELS.md make them. git describe prefers an annotated tag on
+the same commit, so a lightweight stable tag on a nightly's commit builds as
+the nightly; the last tests pin that and the recipe's `git tag -a`.
 """
 import os
 from pathlib import Path
@@ -33,6 +37,7 @@ from packaging.version import Version
 ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 WORKFLOW = ROOT / ".github" / "workflows" / "build-installers.yml"
+RELEASE_DOC = ROOT / "docs" / "RELEASE_CHANNELS.md"
 STEP = "Compute version"
 BUILD_JOBS = ("build", "build-linux")
 
@@ -43,8 +48,20 @@ GIT_ENV = dict(
     GIT_CONFIG_NOSYSTEM="1",
 )
 # An override in the developer's shell would mask the scheme under test.
-for _k in [k for k in GIT_ENV if k.startswith("SETUPTOOLS_SCM_PRETEND_VERSION")]:
+PRETEND = "SETUPTOOLS_SCM_PRETEND_VERSION"
+for _k in [k for k in GIT_ENV if k.startswith(PRETEND)]:
     del GIT_ENV[_k]
+
+
+def _scm_version(**kwargs):
+    """setuptools_scm.get_version, blind to an override in the shell.
+
+    The call runs in this process, so it reads os.environ, not GIT_ENV.
+    """
+    with pytest.MonkeyPatch.context() as mp:
+        for k in [k for k in os.environ if k.startswith(PRETEND)]:
+            mp.delenv(k)
+        return setuptools_scm.get_version(**kwargs)
 
 
 def _scm_config():
@@ -72,8 +89,14 @@ def _repo(tmp_path, tag):
     return tmp_path
 
 
+def _annotated_tag(cwd, tag):
+    _git(cwd, "tag", "-a", tag, "-m", tag)
+
+
 def _full_clone(tmp_path, past_nightly=True):
     """A stable tag, a later nightly tag, and optionally a commit past it.
+
+    Both tags are annotated, as the real ones are.
 
     The repository carries the real [tool.setuptools_scm] table, so the
     version comes from the same settings a clone of main builds with.
@@ -87,10 +110,10 @@ def _full_clone(tmp_path, past_nightly=True):
     _git(tmp_path, "init", "-q", "-b", "main")
     _git(tmp_path, "add", "-A")
     _git(tmp_path, "commit", "-q", "-m", "one")
-    _git(tmp_path, "tag", "v1.23.0")
+    _annotated_tag(tmp_path, "v1.23.0")
     (tmp_path / "a.txt").write_text("2")
     _git(tmp_path, "commit", "-q", "-am", "two")
-    _git(tmp_path, "tag", "v1.24.0.dev20260929")
+    _annotated_tag(tmp_path, "v1.24.0.dev20260929")
     if past_nightly:
         (tmp_path / "a.txt").write_text("3")
         _git(tmp_path, "commit", "-q", "-am", "three")
@@ -104,7 +127,7 @@ def _full_clone(tmp_path, past_nightly=True):
 def test_one_commit_past_a_tag_resolves(tmp_path, tag, public):
     repo = _repo(tmp_path, tag)
     cfg = _scm_config()
-    v = setuptools_scm.get_version(
+    v = _scm_version(
         root=str(repo),
         version_scheme=cfg["version_scheme"],
         local_scheme="node-and-date",
@@ -118,7 +141,7 @@ def test_on_the_tag_itself_the_version_is_the_tag(tmp_path):
     repo = _repo(tmp_path, "v9.9.9")
     _git(repo, "tag", "v1.24.0.dev20260928")
     cfg = _scm_config()
-    assert setuptools_scm.get_version(
+    assert _scm_version(
         root=str(repo), version_scheme=cfg["version_scheme"]) == "1.24.0.dev20260928"
 
 
@@ -126,7 +149,16 @@ def test_the_default_scheme_is_the_one_that_fails(tmp_path):
     """The premise, pinned: guess-next-dev raises one commit past a nightly."""
     repo = _repo(tmp_path, "v1.24.0.dev20260927")
     with pytest.raises(Exception, match="devX"):
-        setuptools_scm.get_version(root=str(repo), version_scheme="guess-next-dev")
+        _scm_version(root=str(repo), version_scheme="guess-next-dev")
+
+
+def test_an_override_in_the_shell_does_not_mask_the_scheme(tmp_path, monkeypatch):
+    monkeypatch.setenv(PRETEND, "0.0.1")
+    repo = _repo(tmp_path, "v9.9.9")
+    _git(repo, "tag", "v1.24.0.dev20260928")
+    assert _scm_version(
+        root=str(repo), version_scheme=_scm_config()["version_scheme"]
+    ) == "1.24.0.dev20260928"
 
 
 def _cli_version(repo):
@@ -162,7 +194,7 @@ def test_the_build_refuses_a_fallback_and_a_version_that_is_not_the_tag(job):
     script = _compute_version_script(job)
     assert 'V="$(python -m setuptools_scm)"' in script
     assert "0.0.0*|*unknown*)" in script
-    assert r"(\.dev[0-9]{8})?$" in script          # nightly tags are checked too
+    assert r"(\.dev[0-9]{8}([0-9]{4})?)?$" in script   # nightly tags are checked too
     assert '"$V" != "${GITHUB_REF_NAME#v}"' in script
     assert 'echo "PYR_VERSION=$V" >> "$GITHUB_ENV"' in script
     assert 'echo "PYR_PUBLIC=${V%%+*}" >> "$GITHUB_ENV"' in script
@@ -209,7 +241,7 @@ def test_a_tag_build_carries_exactly_the_tag_version(
 def test_a_stable_tag_build_carries_exactly_the_stable_version(tmp_path, job):
     (tmp_path / "repo").mkdir()
     repo = _full_clone(tmp_path / "repo", past_nightly=False)
-    _git(repo, "tag", "v1.24.0")                 # the stable cut on the same commit
+    _annotated_tag(repo, "v1.24.0")              # the stable cut on the same commit
     result, exported = _run_step(tmp_path, repo, job, "v1.24.0")
     assert result.returncode == 0, result.stdout + result.stderr
     assert exported == {"PYR_VERSION": "1.24.0", "PYR_PUBLIC": "1.24.0"}
@@ -238,3 +270,55 @@ def test_a_clone_without_tags_is_refused_not_built_as_the_fallback(tmp_path, job
     assert result.returncode != 0
     assert "fallback version (0.0.0+unknown" in result.stdout
     assert exported == {}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Linux workflow shell integration")
+@pytest.mark.parametrize("job", BUILD_JOBS)
+def test_a_timed_nightly_tag_build_carries_exactly_the_tag_version(tmp_path, job):
+    """A 12-digit vX.Y.Z.devYYYYMMDDHHMM tag, cut since 2026-10-08, builds as
+    exactly that version."""
+    (tmp_path / "repo").mkdir()
+    repo = _full_clone(tmp_path / "repo", past_nightly=True)
+    _git(repo, "tag", "v1.24.0.dev202610081315")
+    result, exported = _run_step(tmp_path, repo, job, "v1.24.0.dev202610081315")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert exported == {"PYR_VERSION": "1.24.0.dev202610081315",
+                        "PYR_PUBLIC": "1.24.0.dev202610081315"}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Linux workflow shell integration")
+@pytest.mark.parametrize("job", BUILD_JOBS)
+def test_a_timed_nightly_build_past_its_tag_is_refused(tmp_path, job):
+    """The timed tag is real and HEAD is one commit past it, so the version is
+    the tag plus a commit hash, and its public part alone matches the tag."""
+    (tmp_path / "repo").mkdir()
+    repo = _full_clone(tmp_path / "repo", past_nightly=True)
+    _git(repo, "tag", "v1.24.0.dev202610081315")
+    (repo / "a.txt").write_text("4")
+    _git(repo, "commit", "-q", "-am", "four")
+    assert Version(_cli_version(repo)).public == "1.24.0.dev202610081315"
+    result, exported = _run_step(tmp_path, repo, job, "v1.24.0.dev202610081315")
+    assert result.returncode != 0
+    assert "for the tag v1.24.0.dev202610081315" in result.stdout
+    assert exported == {}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Linux workflow shell integration")
+@pytest.mark.parametrize("job", BUILD_JOBS)
+def test_a_lightweight_stable_tag_on_a_nightly_commit_is_refused(tmp_path, job):
+    """git describe picks the annotated nightly over the lightweight stable tag,
+    so the version is the nightly's and the step refuses the stable build."""
+    (tmp_path / "repo").mkdir()
+    repo = _full_clone(tmp_path / "repo", past_nightly=False)
+    _git(repo, "tag", "v1.24.0")
+    assert _cli_version(repo) == "1.24.0.dev20260929"
+    result, exported = _run_step(tmp_path, repo, job, "v1.24.0")
+    assert result.returncode != 0
+    assert "produced 1.24.0.dev20260929 for the tag v1.24.0" in result.stdout
+    assert exported == {}
+
+
+def test_the_stable_recipe_makes_an_annotated_tag():
+    recipe = RELEASE_DOC.read_text().split("## Stable releases", 1)[1]
+    tags = re.findall(r"^git tag .*$", recipe, re.MULTILINE)
+    assert tags and all(re.match(r"git tag -a v\d+\.\d+\.\d+ -m ", t) for t in tags), tags
