@@ -194,6 +194,23 @@ def test_a_delete_takes_the_kept_ids_of_the_name_out_of_sight(ids, tree):
     assert tree.getHosts("T") == ["H"]
 
 
+def test_a_registry_built_beside_the_series_own_has_no_tree_to_tell(series, ids, tree):
+    """A second SeriesData for the same series has its own registry. The
+    tree holds the ids of the first, so the second's traces do not reach
+    it, and the first's links stand."""
+    ids.ensure(1, "H")
+    ids.ensure(2, "T")
+    tree.add("T", ["H"])
+    other = ObjectIds(series)
+    for snum, name in enumerate(("H", "T", "K"), 1):
+        other.ensure(snum, name)
+    other.drop(3, "K", keep=True)
+    other.drop(1, "H")
+    assert tree.holdsIds(ids) and not tree.holdsIds(other)
+    assert tree.keptIds("K") == set()
+    assert tree.getHosts("T") == ["H"]
+
+
 def test_restoring_kept_ids_leaves_an_id_with_traces_alone(ids, tree):
     h = ids.ensure(1, "H")
     tree.add("T", ["H"])

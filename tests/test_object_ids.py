@@ -196,6 +196,25 @@ def test_loading_gives_each_object_one_id(series):
     )
 
 
+def test_a_series_data_built_beside_the_series_own_saves_sections(series):
+    """A SeriesData built for an open series, refreshed, then put in place
+    of the series' own: its registry is not the one the host tree holds, and
+    a section saved through it keeps its ids in step all the same."""
+    from PyReconstruct.modules.datatypes.series_data import SeriesData
+
+    data = SeriesData(series)
+    data.refresh()
+    series.data = data
+    snum = _empty_sections(series, 1)[0]
+    section = series.loadSection(snum)
+    _draw(series, section, H)
+    section.save()
+    assert data.object_ids.peek(snum, H) is not None
+    _erase(section, H)
+    section.save()
+    assert data.object_ids.live(H) == set()
+
+
 def test_a_refresh_keeps_the_ids(series):
     before = dict(_ids(series).placed)
     series.data.refresh()

@@ -52,8 +52,16 @@ class ObjectIds():
         self.version = 0
 
     def _tree(self):
-        """The host tree that keeps ids for names with no traces, or None."""
-        return getattr(self.series, "host_tree", None)
+        """The host tree that keeps ids for names with no traces, or None.
+
+        A tree holds the ids of one registry for its life, the one its
+        series had when the tree was built. A registry built beside it (a
+        second SeriesData for the same series) has no tree to tell.
+        """
+        tree = getattr(self.series, "host_tree", None)
+        if tree is None or not tree.holdsIds(self):
+            return None
+        return tree
 
     def issue(self, name : str) -> int:
         """A fresh id for the name, placed nowhere. The host tree issues one

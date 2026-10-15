@@ -38,7 +38,8 @@ class HostTree():
         """
         self.series = series
         ids = getattr(getattr(series, "data", None), "object_ids", None)
-        # a tree with no series keeps its own ids; every name then holds a
+        # the registry whose ids the links join, for the life of the tree. A
+        # tree with no series keeps its own ids; every name then holds a
         # kept id, and the tree behaves as a plain name tree
         self._ids = ids if ids is not None else ObjectIds()
         self._reset(set(), set())
@@ -79,6 +80,10 @@ class HostTree():
         # objects under one name), so it is not just the visible links
         self._exact = False
         self._trimmed : list = []
+
+    def holdsIds(self, ids) -> bool:
+        """True if the links join the ids of this registry (ObjectIds._tree)."""
+        return ids is self._ids
 
     # the ids kept for names without traces
     def visible(self, oid : int) -> bool:
