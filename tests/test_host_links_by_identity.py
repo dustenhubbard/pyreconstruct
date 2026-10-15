@@ -767,6 +767,83 @@ def test_redoing_an_import_on_one_section_keeps_a_host_it_made_redundant(
     assert _saved_host_tree(window, tmp_path / "redone.jser") == {T: [H, X]}
 
 
+def _copy_or_split_t(window, monkeypatch, action):
+    """Copy or split T from the object list; the name T's copy takes."""
+    _object_list(window, monkeypatch, [T])
+    if action == "copy":
+        window.field.copyObjects()
+        return T + "_copy"
+    window.field.splitObject()
+    return T + "_1"
+
+
+@pytest.mark.parametrize("then", ["clear", "draw", "reopen"])
+@pytest.mark.parametrize("action", ["copy", "split"])
+def test_redoing_a_copy_or_split_on_one_section_clears_a_host_still_reachable(
+        window, main_window_dialogs, monkeypatch, tmp_path, action, then):
+    """X on s3 is hosted by H and hosts T; C on s4, the name T's copy takes,
+    is hosted by H. The copy or split clears C's host H and gives it X, so
+    H is still C's host through X. Redo on s2 alone after an undo there
+    takes H away again: clearing C's hosts leaves none, and the saved tree
+    stays the same after an unrelated draw or a reopen."""
+    _, s2, s3, s4 = _setup(window)
+    made = T + ("_copy" if action == "copy" else "_1")
+    _draw_on(window, s3, X)
+    _draw_on(window, s4, made)
+    window.series.setObjHosts([X], [H])
+    window.series.setObjHosts([T], [X])
+    window.series.setObjHosts([made], [H])
+    _copy_or_split_t(window, monkeypatch, action)
+    forward = _saved_host_tree(window, tmp_path / "forward.jser")
+    assert forward[made] == [X]
+    _trigger_on(window, main_window_dialogs, s2, window.undo_act, "all")
+    _trigger_on(window, main_window_dialogs, s2, window.redo_act, "section")
+    path = tmp_path / "redone.jser"
+    assert _saved_host_tree(window, path) == forward
+    if then == "clear":
+        _object_list(window, monkeypatch, [made])
+        window.field.clearHosts()
+        assert made not in _saved_host_tree(window, tmp_path / "cleared.jser")
+    elif then == "draw":
+        _draw_on(window, s3, SPARE)
+        assert _saved_host_tree(window, tmp_path / "drawn.jser") == forward
+    else:
+        from PyReconstruct.modules.datatypes import Series
+
+        other = Series.openJser(str(path))
+        try:
+            assert other.host_tree.getDict() == forward
+        finally:
+            other.close()
+
+
+@pytest.mark.parametrize("between", [False, True])
+@pytest.mark.parametrize("action", ["copy", "split"])
+def test_undoing_a_copy_or_split_redone_on_one_section_gives_back_the_old_host(
+        window, main_window_dialogs, monkeypatch, tmp_path, action, between):
+    """C on s3, the name T's copy takes, is hosted by O on s4. The copy or
+    split gives C the host H instead. After an undo on every section, redo
+    on s2 alone gives C the host H again, and an undo on s2 after it gives
+    C back O, also with a draw on s2 done and undone in between."""
+    O = "hl_old_host"
+    _, s2, s3, s4 = _setup(window)
+    made = T + ("_copy" if action == "copy" else "_1")
+    _draw_on(window, s3, made)
+    _draw_on(window, s4, O)
+    window.series.setObjHosts([made], [O])
+    before = _saved_host_tree(window, tmp_path / "before.jser")
+    _copy_or_split_t(window, monkeypatch, action)
+    assert _saved_host_tree(window, tmp_path / "forward.jser")[made] == [H]
+    _trigger_on(window, main_window_dialogs, s2, window.undo_act, "all")
+    _trigger_on(window, main_window_dialogs, s2, window.redo_act, "section")
+    assert _saved_host_tree(window, tmp_path / "redone.jser")[made] == [H]
+    if between:
+        _draw_on(window, s2, SPARE)
+        _trigger_on(window, main_window_dialogs, s2, window.undo_act, "section")
+    _trigger_on(window, main_window_dialogs, s2, window.undo_act, "section")
+    assert _saved_host_tree(window, tmp_path / "undone.jser") == before
+
+
 def _copy_where_h_hosts_moved_t(window, monkeypatch, tmp_path):
     """H on s1 and T on s2, not linked. A copy moves T and makes H its
     host; the import below reads that copy."""
