@@ -3996,7 +3996,7 @@ def test_importTraces_hands_back_the_contours_own_objects_and_may_hand_back_the_
     A `ContourView.importTraces` would therefore have to adopt a foreign row
     into this store. That is an id-carry question ("the id follows the
     surviving `Trace`"), not an append. The id half is answered:
-    `appendRow(foreign_id=...)` exists and is tested above -- so what is left
+    `appendRow(foreign_id=...)` exists and is tested above. What is left
     for the port is which store the adopted row belongs to, and threading the
     foreign id from `other`'s store to this one, which nothing does today.
 

@@ -328,7 +328,7 @@ def test_derive_for_section_hands_its_own_index_to_every_derivation(monkeypatch)
     assert len(handed) == len(out) == 2
     assert all(handed), (
         "deriveForSection handed something other than the index it started "
-        "with -- either a per-call copy of it or a per-trace rebind of the "
+        "with: either a per-call copy of it or a per-trace rebind of the "
         "attribute. Both re-pay the O(n**2) per-trace copy"
     )
     assert issuer._taken is index, (
