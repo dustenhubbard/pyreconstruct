@@ -333,10 +333,11 @@ def test_startup_keeps_a_fresh_stable_install_quiet(redirected_store, monkeypatc
 
     # Cleared again here as well as during setup. Events run between setup
     # and this point, and a window from an earlier test is only queued for
-    # deletion, so its 750 ms What's-new timer can still be pending. If it
-    # fires then, it finds no last-seen version and records the running one
-    # (a stable version on a shallow checkout), and the reset below reads an
-    # upgrade. No code after this line processes events.
+    # deletion. Its 750 ms What's-new timer used to stay pending and could
+    # fire there, find no last-seen version and record the running one (a
+    # stable version on a shallow checkout), so the reset below read an
+    # upgrade. closeEvent stops that timer now; this stays as a second line,
+    # since no code after it processes events.
     _clear(redirected_store)
     had_username = redirected_store.value("username")
     redirected_store.remove("username")
