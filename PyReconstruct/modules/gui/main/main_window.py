@@ -11,7 +11,10 @@ from PySide6.QtCore import QEvent
 
 from .main_imports import *
 
-from PyReconstruct.modules.datatypes.section import zarrHasScaleLevels
+from PyReconstruct.modules.datatypes.section import Section, zarrHasScaleLevels
+from PyReconstruct.modules.backend.image_name_match import (
+    matchByNumber, zarrImageNames,
+)
 from PyReconstruct.modules.datatypes.series import (
     SeriesClosedError,
     SeriesOpenError,
@@ -933,6 +936,13 @@ class MainWindow(QMainWindow):
         if self.field:
             self.field.reloadImage()
         self.seriesModified(True)
+
+        # a zarr holding none of the series' image names may still be its
+        # zarr, with the images named another way
+        if (not self.field.section_layer.image_found and
+            self.field.section_layer.is_zarr_file and
+            user_is_present()):
+            self.offerZarrImageNames()
         
         # prompt user to scale zarr images if not scaled
         if (self.field.section_layer.image_found and
@@ -964,6 +974,81 @@ class MainWindow(QMainWindow):
             return not zarrHasScaleLevels(src_dir)
         except OSError:
             return False
+
+    def offerZarrImageNames(self) -> bool:
+        """Offer the image names of the zarr the series points at.
+
+        For a zarr that holds none of the series' image names: when every
+        section pairs with one image there by the number in its image name,
+        the pairs and a few sections' traces over the proposed images are
+        shown, and on confirmation the names are applied to the open series
+        the way Edit all image sources does. The zarr is never changed. When
+        the names cannot be paired, a notice says why and nothing changes.
+
+            Returns:
+                (bool) True if the image names were changed
+        """
+        zarr_dir = self.series.src_dir
+        try:
+            zarr_names = zarrImageNames(zarr_dir)
+        except OSError:
+            return False
+        series_names = {
+            snum: Section.imageName(data["src"])
+            for snum, data in self.series.data["sections"].items()
+        }
+        if any(name in zarr_names for name in series_names.values()):
+            # some section has its image here: a missing image, not a naming
+            return False
+        zarr_name = os.path.basename(os.path.normpath(zarr_dir))
+        match, reason = matchByNumber(series_names, sorted(zarr_names))
+        if match is None:
+            notify(
+                f"No section image in this series is in {zarr_name}, and the "
+                f"names cannot be matched by number: {reason}.\n"
+                "The image names were not changed."
+            )
+            return False
+        dialog = MatchImageNamesDialog(self, self.series, series_names, match, zarr_dir)
+        if not dialog.exec():
+            return False
+        self.setImageNames(match["names"], f"Use the image names in {zarr_name}")
+        return True
+
+    def setImageNames(self, names : dict, event : str = None):
+        """Set the image name of every section in the open series.
+
+        The field is saved first, so the traces drawn since the last save
+        reach the files the pass reloads. Each section is written to the
+        series' working folder; the series file changes when the user saves.
+
+            Params:
+                names (dict): section number: the new image name
+                event (str): the log entry, or None to log nothing
+        """
+        # the loop reloads every section from disk and field.reload() swaps the
+        # disk copies into the field, so unsaved edits on the current and
+        # flickered sections must be written first or they are lost
+        self.saveAllData()
+
+        # writes_after: the window goes on to mark the series modified, and
+        # after a switch that is the series opened in its place
+        snum = None
+        for snum, section in self.series.enumerateSections(
+            message="Modifying section image sources...",
+            writes_after=True,
+        ):
+            section.src = Section.imageName(names[snum])
+            section.save()
+
+        if event:
+            self.series.addLog(None, snum, event)
+
+        self.field.reload()
+        self.field.reloadImage()
+
+        self.field.table_manager.updateSections(list(self.series.sections.keys()))
+        self.seriesModified(True)
 
     def srcToZarr(self, create_new=True):
         """Convert the series images to scaled zarr."""

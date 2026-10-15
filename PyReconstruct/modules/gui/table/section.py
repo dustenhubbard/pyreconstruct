@@ -566,30 +566,14 @@ class SectionTableWidget(DataTable):
         if len(s) != 2:
             return
         max_digits = len(str(max(self.series.sections.keys())))
-
-        # the loop reloads every section from disk and field.reload() swaps the
-        # disk copies into the field, so unsaved edits on the current and
-        # flickered sections must be written first or they are lost
-        self.mainwindow.saveAllData()
-
-        # writes_after: the window goes on to mark the series modified, and
-        # after a switch that is the series opened in its place
-        for snum, section in self.series.enumerateSections(
-            message="Modifying section image sources...",
-            writes_after=True,
-        ):
-            section_src = s[0] + str(snum).zfill(max_digits) + s[1]
-            section.src = Section.imageName(section_src)
-            section.save()
-    
-        if log_event:
-            self.series.addLog(None, snum, f"Change section image source to {new_src}")
-
-        self.mainwindow.field.reload()
-        self.mainwindow.field.reloadImage()
-
-        self.manager.updateSections(list(self.series.sections.keys()))
-        self.mainwindow.seriesModified(True)
+        names = {
+            snum: s[0] + str(snum).zfill(max_digits) + s[1]
+            for snum in self.series.sections
+        }
+        self.mainwindow.setImageNames(
+            names,
+            f"Change section image source to {new_src}" if log_event else None,
+        )
     
     def reorderSections(self):
         """Reorder the sections so that they are in order."""
