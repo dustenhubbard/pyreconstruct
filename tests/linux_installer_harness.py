@@ -16,6 +16,7 @@ AppImage it just built:
 """
 
 import argparse
+import gc
 import hashlib
 import json
 import threading
@@ -63,6 +64,11 @@ class FakeGitHub:
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
 
     def __enter__(self):
+        # Collect garbage now, on this thread, before the server's threads
+        # start. A collection that runs on one of them can free a Qt object an
+        # earlier GUI test left behind; PySide then runs that deletion on the
+        # main thread later, and on Linux it crashed the whole suite there.
+        gc.collect()
         self.thread.start()
         return self
 
