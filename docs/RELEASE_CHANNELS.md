@@ -70,7 +70,7 @@ history, or with that stable for the first nightly. Only tags in the built
 commit's history count, so rebuilding an older nightly after a newer release
 exists still measures it from its own baseline. Nightlies do not require a
 `WHATS_NEW.md` section and skip the
-in-app What's New popup. `Help` > `What's new` in the Dev app shows the newest
+in-app What's New popup. `Help` > `What's new` in PyReconstruct Dev shows the newest
 stable section at or below the nightly's base version, with a line above it
 that links the nightly's own release page as the live changelog.
 
