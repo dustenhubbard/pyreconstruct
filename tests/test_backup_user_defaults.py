@@ -414,31 +414,83 @@ def test_the_box_is_stored_as_a_folder_ending_in_series(base, on, stored):
         assert Series.splitSeriesFolderTemplate(stored) == (base, True)
 
 
-@pytest.mark.parametrize("code, name", [("C:ABC", "C_ABC"), ("A:B:C", "A_B_C")])
-def test_a_drive_in_the_code_stays_inside_the_picked_folder(code, name):
-    """With Windows paths, "C:ABC" after a separator still names a folder
-    under the picked one once the colon is replaced."""
+@pytest.fixture
+def windows_paths(monkeypatch):
+    """Windows path rules for the series module only; no Windows I/O."""
     import ntpath
 
+    from PyReconstruct.modules.datatypes import series as series_module
+
+    monkeypatch.setattr(series_module, "os", SimpleNamespace(path=ntpath))
+    return ntpath
+
+
+@pytest.fixture
+def posix_paths(monkeypatch):
+    """macOS and Linux path rules for the series module only."""
+    import posixpath
+
+    from PyReconstruct.modules.datatypes import series as series_module
+
+    monkeypatch.setattr(series_module, "os", SimpleNamespace(path=posixpath))
+    return posixpath
+
+
+@pytest.mark.parametrize("code, name", [("C:ABC", "C_ABC"), ("A:B:C", "A_B_C")])
+def test_a_drive_in_the_code_stays_inside_the_picked_folder(windows_paths, code, name):
     series = _series(code)
     folder = series.expandBackupFolder(
         Series.joinSeriesFolderTemplate("D:\\Backups", True)
     )
     assert folder == "D:\\Backups\\" + name
-    assert ntpath.dirname(folder) == "D:\\Backups"
-    assert ntpath.splitdrive(ntpath.join("D:\\Backups", series.backupFolderName()))[0] == "D:"
+    assert windows_paths.dirname(folder) == "D:\\Backups"
+    assert windows_paths.splitdrive(folder)[0] == "D:"
+
+
+@pytest.mark.parametrize("code", ["C:ABC", "A:B:C", ":"])
+def test_a_colon_code_keeps_its_v1_24_folder_on_macos_and_linux(posix_paths, code, tmp_path):
+    store = DictSettingsStore()
+    series = _series(code, store)
+    _set_defaults(series, Series.joinSeriesFolderTemplate(str(tmp_path), True))
+    assert series.backupFolder() == str(tmp_path / code)
+    assert series.backupFolder() == _stable_folder(store, series)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="a folder name with ':' is not valid on Windows")
+@pytest.mark.gui
+def test_the_dialog_keeps_a_colon_code_in_its_v1_24_folder(qapp, tmp_path):
+    """Real paths: the folder v1.24.0 made keeps getting the backups."""
+    store = DictSettingsStore()
+    series = _series("C:ABC", store)
+    _set_defaults(series, str(tmp_path / "{series}"))
+    (tmp_path / "C:ABC").mkdir()
+
+    _dialog(series).set()
+
+    assert store.value(None, "default_backup_dir", str) == str(tmp_path / "{series}")
+    assert series.backupFolder(create=True) == str(tmp_path / "C:ABC")
+    assert series.backupFolder() == _stable_folder(store, series)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["C:ABC"]
 
 
 @pytest.mark.gui
-def test_the_dialog_checkbox_keeps_a_windows_drive_code_inside_the_folder(qapp):
+def test_the_dialog_checkbox_keeps_a_windows_drive_code_inside_the_folder(qapp, monkeypatch):
     import ntpath
+
+    from PyReconstruct.modules.datatypes import series as series_module
 
     series = _series("C:ABC")
     dialog = _dialog(series)
     dialog.default_dir_widget.le.setText("D:\\Backups")
     dialog.default_series_cb.setChecked(True)
     dialog.set()
-    assert ntpath.dirname(series.backupFolder()) == "D:\\Backups"
+    stored = series.getOption("default_backup_dir")
+    assert stored == "D:\\Backups\\{series}"
+
+    monkeypatch.setattr(series_module, "os", SimpleNamespace(path=ntpath))
+    folder = series.expandBackupFolder(stored)
+    assert folder == "D:\\Backups\\C_ABC"
+    assert ntpath.dirname(folder) == "D:\\Backups"
 
 
 @pytest.mark.gui

@@ -5632,13 +5632,15 @@ class Series():
         """Return this series' code as a safe folder name.
 
         The code is whatever was typed in the series code dialog, so path
-        separators and ":" become "_" (on Windows "C:ABC" would name a folder
-        on another drive), and so does every dot in a code made only of dots:
-        "." or ".." would name the folder itself or its parent.
+        separators become "_", and so does every dot in a code made only of
+        dots: "." or ".." would name the folder itself or its parent. On
+        Windows ":" becomes "_" too, since a folder name there cannot hold
+        one. Elsewhere a colon is a valid folder name and stays, so a code
+        such as "C:ABC" keeps the folder v1.24.0 gave it.
         """
-        code = self.code or self.name
-        for c in ("/", "\\", ":"):
-            code = code.replace(c, "_")
+        code = (self.code or self.name).replace("/", "_").replace("\\", "_")
+        if os.path.sep == "\\":
+            code = code.replace(":", "_")
         if not code.strip("."):
             code = "_" * max(len(code), 1)
         return code
@@ -5652,9 +5654,11 @@ class Series():
         """Split a default folder that ends in {series} into (base, True).
 
         The Backup Settings checkbox for a subfolder per series stands for a
-        stored folder ending in {series}, the form v1.24.0 reads, so every
-        version that shares these settings backs up to the same place. Any
-        other folder comes back as (folder, False).
+        stored folder ending in {series}, the form v1.24.0 reads, so v1.24.0
+        sharing these settings resolves the same folder. The one exception is
+        a series code with ":" on Windows, where v1.24.0's folder cannot be
+        made (see backupFolderName). Any other folder comes back as
+        (folder, False).
         """
         token = "{series}"
         trimmed = folder.rstrip("/\\")
