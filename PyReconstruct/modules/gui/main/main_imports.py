@@ -63,6 +63,7 @@ from PyReconstruct.modules.gui.dialog import (
     MalformedContoursDialog,
     PixelDustDialog,
     DuplicateTracesDialog,
+    MatchImageNamesDialog,
 )
 
 from PyReconstruct.modules.gui.popup import (
