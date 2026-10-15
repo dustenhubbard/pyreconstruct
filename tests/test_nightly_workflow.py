@@ -53,7 +53,7 @@ NOW = "2026-10-08T13:15"
 # ---- the workflow file ------------------------------------------------------
 def test_runs_once_a_day_and_by_hand_with_a_version_override():
     text = source(NIGHTLY)
-    assert '- cron: "0 6 * * *"' in text
+    assert '- cron: "17 2 * * *"' in text
     assert text.count("- cron:") == 1, "one nightly a day means one schedule"
     dispatch = text.split("  workflow_dispatch:\n", 1)[1].split("\npermissions:", 1)[0]
     assert "version:" in dispatch
