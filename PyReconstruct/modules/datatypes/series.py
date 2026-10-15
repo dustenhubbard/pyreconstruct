@@ -5,6 +5,7 @@ import json
 import shutil
 import secrets
 from datetime import datetime, timezone
+from contextlib import contextmanager
 from copy import copy, deepcopy
 from pathlib import Path
 from typing import Union
@@ -632,6 +633,7 @@ class Series():
                 self.data.refresh(show_progress=False)
             else:
                 self.data.refresh(message=_openingText(self.name))
+            self._repointBCProfile()
 
         # objects for non-GUI users
         self.objects = Objects(self)
@@ -933,6 +935,9 @@ class Series():
                     return None
                 progress += 1
                 reporter.set_progress(progress/final_value * 100)
+            # the series data is complete here, as after the refresh in
+            # __init__: a displayed profile no section has is repointed now
+            series._repointBCProfile()
 
         except BaseException:
             shutil.rmtree(hidden_dir, ignore_errors=True)
@@ -962,18 +967,25 @@ class Series():
         file. The GUI checks `jserSaveRunning` before it gets here, so in the
         app the refusal is the notice alone.
         Nothing in the app queues saves, so refusing is the whole fix.
+        A save while a series undo or redo is restoring the sections is
+        refused the same way (see `seriesStep`): it would write the restored
+        sections with the series attributes from before the step.
         See `_saveJser` for what a save does.
 
             Params:
                 save_fp (str): the optional override filepath to save the jser file
                 close (bool): True if series should be closed after saving
             Raises:
-                SeriesSaveError: if another save of this series is running, or
-                    if the series cannot be written without losing a section.
-                    The existing .jser is not replaced in either case.
+                SeriesSaveError: if another save of this series is running, if
+                    a series undo or redo is running, or if the series cannot
+                    be written without losing a section. The existing .jser is
+                    not replaced in any of these cases.
         """
+        target = self.jser_fp if not save_fp else save_fp
         if self.jserSaveRunning():
-            raise self.refuseNestedSave(self.jser_fp if not save_fp else save_fp)
+            raise self.refuseNestedSave(target)
+        if self.seriesStepRunning():
+            raise self.refuseSaveDuringStep(target)
         self._jser_save_running = True
         try:
             self._saveJser(save_fp, close)
@@ -1004,10 +1016,33 @@ class Series():
             Returns:
                 (SeriesSaveError) the error, not raised
         """
-        err = SeriesSaveError(
-            "this series is already being saved, so this save was skipped."
-        )
-        message = "Save skipped: this series is already being saved."
+        return self._refuseSkippedSave("already being saved", target)
+
+    def refuseSaveDuringStep(self, target : str) -> SeriesSaveError:
+        """Tell the user a save was skipped because a series undo or redo is running.
+
+        As refuseNestedSave: the notice, and the error for the caller to
+        raise. The GUI's save, close, open and backup paths call it before
+        anything is written, asked or closed, and return without raising, so
+        the step goes on and finishes on the series it began on (see
+        seriesStep).
+
+            Params:
+                target (str): the path the skipped save would have written
+            Returns:
+                (SeriesSaveError) the error, not raised
+        """
+        return self._refuseSkippedSave("in the middle of an undo or redo", target)
+
+    def _refuseSkippedSave(self, why : str, target : str) -> SeriesSaveError:
+        """Show the notice for a skipped save and return its error, not raised.
+
+            Params:
+                why (str): what the series is busy with, in the user's terms
+                target (str): the path the skipped save would have written
+        """
+        err = SeriesSaveError(f"this series is {why}, so this save was skipped.")
+        message = f"Save skipped: this series is {why}."
         if target:
             message += f"\n\nThis save wrote nothing to:\n{target}"
         try:
@@ -1921,6 +1956,36 @@ class Series():
     def sectionPassRunning(self) -> bool:
         """True while enumerateSections is going through this series."""
         return bool(self._running_passes)
+
+    ## True while a series undo or redo is restoring this series' sections
+    ## (SeriesStates.undoState); saveJser refuses meanwhile
+    _series_step_running = False
+
+    def seriesStepRunning(self) -> bool:
+        """True while a series undo or redo is restoring this series."""
+        return self._series_step_running
+
+    @contextmanager
+    def seriesStep(self):
+        """Mark a series undo or redo as running while it restores the sections.
+
+        The step restores and writes its sections one by one, and puts the
+        series attributes back only after the last one. Its progress dialog
+        runs the event loop on every update, where a .jser opened from the
+        Finder asks to save this series. A save there wrote the restored
+        sections with the series attributes from before the step: undoing a
+        brightness/contrast profile rename saved sections carrying the old
+        name under a series file still naming the new one, and the series
+        raised KeyError when it was opened again (see _repointBCProfile).
+        saveJser refuses while this is set, and the GUI's save, close, open
+        and backup paths check it first and skip with a notice, so the step
+        finishes on the series it began on.
+        """
+        self._series_step_running = True
+        try:
+            yield
+        finally:
+            self._series_step_running = False
 
     def setPassWriteHook(self, hook):
         """Call hook(section) after a pass over the section files writes one.
@@ -6102,6 +6167,30 @@ class Series():
             if bc_profiles != p:
                 raise Exception("Sections have differently named brightness/contrast profiles.")
         return bc_profiles
+
+    def _repointBCProfile(self):
+        """Point the displayed brightness/contrast profile at one every section has.
+
+        Section.brightness and Section.contrast index bc_profiles by
+        series.bc_profile, so a series whose sections lack that profile raises
+        KeyError as soon as the field shows a section. A series saved while a
+        profile rename was being undone was in that state: the sections had
+        their old profile names back and the series file still named the new
+        one. Such a save is refused now (seriesStep); a series already saved
+        that way opens on the default profile, or on the first profile every
+        section has. Sections that share no profile are left as they are: no
+        name fits them all, and the error that follows names the one held.
+        Called once the series data holds every section (__init__, openJser).
+        """
+        profiles = [
+            set(d["bc_profiles"]) for d in self.data["sections"].values()
+        ]
+        if not profiles:
+            return
+        common = set.intersection(*profiles)
+        if self.bc_profile in common or not common:
+            return
+        self.bc_profile = "default" if "default" in common else sorted(common)[0]
 
     
 class SeriesIterator():
