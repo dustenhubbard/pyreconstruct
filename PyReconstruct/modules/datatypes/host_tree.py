@@ -193,7 +193,7 @@ class HostTree():
         name_of = self._ids.name_of
         return {
             (t, h) for t, h in before.linksMadeSince(self, names)
-            if name_of.get(h) not in self.getHosts(name_of.get(t), True)
+            if name_of[h] not in self.getHosts(name_of[t], True)
         }
 
     def restoreLinks(self, links, taken=()):
