@@ -268,6 +268,48 @@ LEGACY_COPY_MARKER = "meta/copied_from_khlab"
 # legacy_copy_pending; tests clear it between cases.
 _copy_pending: dict[str, bool] = {}
 
+# Old stores whose file failed to parse this session, by application name,
+# with the size and modification time the file had then.
+_unparsable_legacy: dict[str, tuple[int, int]] = {}
+
+
+def _file_stamp(path):
+    """(size, modification time) of a settings file, or None when there is
+    no such file (the Windows registry, a store never written)."""
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return stat.st_size, stat.st_mtime_ns
+
+
+def _read_legacy_keys(app, old=None):
+    """The keys ``KHLab / <app>`` holds, or None when it cannot be read.
+
+    Qt parses a settings file once per process and parses it again only when
+    the file's size or time changes. A later ``QSettings`` on the same file is
+    handed that first parse and reports no error, even when the parse stopped
+    partway through a damaged file. So a file that failed to parse counts as
+    unreadable until it changes; the next launch reads it afresh. A file that
+    could not be opened is not parsed, so it is simply tried again.
+    """
+    from PySide6.QtCore import QSettings
+
+    if old is None:
+        old = QSettings(LEGACY_SETTINGS_ORG, app)
+        old.setFallbacksEnabled(False)
+    stamp = _file_stamp(old.fileName())
+    if stamp is not None and _unparsable_legacy.get(app) == stamp:
+        return None
+    keys = [key for key in old.allKeys() if key != LEGACY_COPY_MARKER]
+    status = old.status()
+    if status != QSettings.NoError:
+        if status == QSettings.FormatError and stamp is not None:
+            _unparsable_legacy[app] = stamp
+        return None
+    _unparsable_legacy.pop(app, None)
+    return keys
+
 
 def legacy_copy_pending(app):
     """True while ``PyReconstruct / <app>`` still owes a copy from ``KHLab``.
@@ -293,15 +335,22 @@ def legacy_copy_pending(app):
         if new.contains(LEGACY_COPY_MARKER):
             pending = False
         else:
-            old = QSettings(LEGACY_SETTINGS_ORG, app)
-            old.setFallbacksEnabled(False)
-            pending = (
-                bool(old.allKeys()) or old.status() != QSettings.NoError
-            )
+            keys = _read_legacy_keys(app)
+            pending = keys is None or bool(keys)
     except Exception:
         return True
     _copy_pending[app] = pending
     return pending
+
+
+def per_app_copy_pending():
+    """True while this app's own store still owes its copy from ``KHLab``.
+
+    The per-app keys (window position, What's new state, update bookkeeping)
+    live there and never pass through the fold, so only that store's own copy
+    matters for them.
+    """
+    return legacy_copy_pending(settings_app())
 
 
 def shared_copy_pending(suffix=""):
@@ -374,8 +423,8 @@ def _copy_legacy_domain(app, mark_always):
             return []
     old = QSettings(LEGACY_SETTINGS_ORG, app)
     old.setFallbacksEnabled(False)
-    keys = [key for key in old.allKeys() if key != LEGACY_COPY_MARKER]
-    if old.status() != QSettings.NoError:
+    keys = _read_legacy_keys(app, old)
+    if keys is None:
         return None
     if not keys and not mark_always:
         return []

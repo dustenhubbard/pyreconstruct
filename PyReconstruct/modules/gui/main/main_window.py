@@ -27,7 +27,7 @@ from .status_readout import FieldStatusReadout, StatusSegment
 from .wheel_steps import WheelSteps, zoom_factor
 from PyReconstruct.modules.constants.settings_domain import (
     copy_legacy_series_settings_once, domain_for, fold_series_settings_once,
-    shared_copy_pending,
+    per_app_copy_pending, shared_copy_pending,
 )
 from PyReconstruct.modules.datatypes.series_owner import app_display_name
 
@@ -451,9 +451,12 @@ class MainWindow(QMainWindow):
         setMainWindow(self)
 
         ## Set theme
-        self.setTheme(self.series.getOption("theme"))
+        self.applyTheme(self.series.getOption("theme"))
 
         self.show()
+        # compared on close, to tell a window the user moved from one left
+        # where it opened
+        self._shown_geometry = self.saveGeometry()
 
         ## Resolve the username silently -- no prompt on launch
         self.resolveUsernameStartup()
@@ -5177,7 +5180,7 @@ class MainWindow(QMainWindow):
         if confirmed:
             self.field.generateView()
             self.mouse_palette.reset()
-            self.setTheme(self.series.getOption("theme"))
+            self.applyTheme(self.series.getOption("theme"))
     
     def optimizeBC(self, sections : list = None):
         """Optimize the brightness and contrast of the series.
@@ -5415,7 +5418,7 @@ class MainWindow(QMainWindow):
         self.viewer.setFocus()
     
     def setTheme(self, new_theme=None):
-        """Change the theme."""
+        """Change the theme and save it. With no theme given, ask for one."""
         if new_theme is None:
             theme = self.series.getOption("theme")
             structure = [
@@ -5434,19 +5437,34 @@ class MainWindow(QMainWindow):
                 new_theme = "qdark"
             else:
                 return
-        
+
+        self.applyTheme(new_theme, save=True)
+
+    def applyTheme(self, theme, save=False):
+        """Show ``theme``; with ``save``, store it as the user's choice.
+
+        Startup and the options dialog apply the theme already stored, so
+        they do not save it. Saving there would store the default read while
+        the old settings are still being copied, and the copy never replaces
+        a stored value.
+        """
         app = QApplication.instance()
-        if new_theme == "default":
-            self.series.setOption("theme", "default")
-            app.setStyleSheet("")
-            app.setPalette(app.style().standardPalette())
-        elif new_theme == "qdark":
+        if theme == "qdark":
             try:
                 import qdarkstyle
             except:
                 notify("Unable to import dark theme.")
                 return
-            self.series.setOption("theme", "qdark")
+        elif theme != "default":
+            return
+
+        # saved before the lists re-measure below, which read it
+        if save:
+            self.series.setOption("theme", theme)
+        if theme == "default":
+            app.setStyleSheet("")
+            app.setPalette(app.style().standardPalette())
+        else:
             app.setStyleSheet(
                 qdarkstyle.load_stylesheet_pyside6() + 
                 qdark_addon
@@ -5856,8 +5874,15 @@ class MainWindow(QMainWindow):
         # without deleting them.
         self.update_check_timer.stop()
         self.whats_new_timer.stop()
-        # persist window geometry so size/position survive a restart
-        windowGeometrySettings().setValue("window/geometry", self.saveGeometry())
+        # persist window geometry so size/position survive a restart. While
+        # this app's store still owes its copy from the old settings, a window
+        # left where it opened is not saved: the copy brings the old position
+        geometry = self.saveGeometry()
+        if (
+            geometry != getattr(self, "_shown_geometry", None)
+            or not per_app_copy_pending()
+        ):
+            windowGeometrySettings().setValue("window/geometry", geometry)
         if self.viewer and not self.viewer.is_closed:
             self.viewer.close()
         # launch a pending update installer now that the close is committed

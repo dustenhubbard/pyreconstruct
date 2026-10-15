@@ -52,6 +52,7 @@ def _wipe():
     from PyReconstruct.modules.constants import settings_domain
 
     getattr(settings_domain, "_copy_pending", {}).clear()
+    getattr(settings_domain, "_unparsable_legacy", {}).clear()
     for org in (SETTINGS_ORG, LEGACY_SETTINGS_ORG):
         for app in _apps():
             s = _settings(org, app)
@@ -400,7 +401,9 @@ def test_the_window_copies_the_open_series(main_window, clean):
 
 
 def _unreadable_legacy(monkeypatch, app):
-    """Make ``KHLab / <app>`` report a read error, as a damaged store would."""
+    """Make ``KHLab / <app>`` report a read error, as a store that cannot be
+    opened would. A damaged file is test_a_damaged_old_file_*: Qt keeps its
+    parse, so it cannot recover within a session the way this one does."""
     import PySide6.QtCore as qtcore
 
     cls = qtcore.QSettings
@@ -410,7 +413,7 @@ def _unreadable_legacy(monkeypatch, app):
         if (self.organizationName(), self.applicationName()) == (
             LEGACY_SETTINGS_ORG, app,
         ):
-            return cls.FormatError
+            return cls.AccessError
         return real_status(self)
 
     monkeypatch.setattr(cls, "status", status)
@@ -867,3 +870,276 @@ def test_an_old_store_that_cannot_be_read_is_still_owed(clean, monkeypatch):
 
     assert legacy_copy_pending(SHARED_APP) is True
     assert QSettingsStore().may_save_defaults(None) is False
+
+
+def _keep(*keys, apps=(SHARED_APP,)):
+    """Remove ``keys`` from both organizations' ``apps`` stores."""
+    for org in (SETTINGS_ORG, LEGACY_SETTINGS_ORG):
+        for app in apps:
+            s = _settings(org, app)
+            for key in keys:
+                s.remove(key)
+            s.sync()
+
+
+@pytest.fixture
+def failed_copy(clean, monkeypatch, request):
+    """A launch whose copy of ``request.param``'s old store failed: the shared
+    store's own (``SHARED_APP``) or only the Dev store's (``DEV``).
+
+    Yields the app whose old store to seed; call the returned function once it
+    is seeded to run the failed launch."""
+    app = request.param
+    if app == DEV:
+        monkeypatch.setenv("PYRECON_APP_NAME", DEV)
+
+    def launch():
+        with monkeypatch.context() as broken:
+            _unreadable_legacy(broken, app)
+            assert _launch().complete is False
+
+    return app, launch
+
+
+def _retry():
+    assert _launch().complete is True
+    return _settings(SETTINGS_ORG, SHARED_APP)
+
+
+@pytest.mark.parametrize(
+    "failed_copy", [SHARED_APP, DEV], indirect=True, ids=["shared", "dev"],
+)
+def test_building_the_file_menu_keeps_the_old_recent_list(
+    failed_copy, real_store_series, tmp_path,
+):
+    """The File menu prunes missing paths from the recent list it reads, and
+    saved that list every time it was built. After a failed copy the list
+    read is empty, and saving it kept the old one from ever coming back."""
+    from PyReconstruct.modules.gui.utils import getOpenRecentMenu
+
+    app, launch = failed_copy
+    recent = str(tmp_path / "recent.jser")
+    open(recent, "w").close()
+    _keep("recently_opened_series", apps=(SHARED_APP, app))
+    _legacy(app, recently_opened_series=f'["{recent}"]')
+    try:
+        launch()
+        getOpenRecentMenu(real_store_series, lambda **kw: None)
+        assert not _settings(SETTINGS_ORG, SHARED_APP).contains(
+            "recently_opened_series"
+        )
+        assert _retry().value("recently_opened_series") == f'["{recent}"]'
+    finally:
+        _keep("recently_opened_series", apps=(SHARED_APP, app))
+
+
+def test_clear_recents_empties_the_list_while_the_copy_is_owed(
+    real_store_series, main_window, clean, monkeypatch,
+):
+    _keep("recently_opened_series")
+    _legacy(SHARED_APP, recently_opened_series='["/legacy/probe.jser"]')
+    try:
+        with monkeypatch.context() as broken:
+            _unreadable_legacy(broken, SHARED_APP)
+            assert _launch().complete is False
+
+        main_window.clearRecentSeries()
+
+        assert _retry().value("recently_opened_series") == "[]"
+    finally:
+        _keep("recently_opened_series")
+
+
+def test_the_menu_still_prunes_missing_paths_once_copied(real_store_series, clean):
+    from PyReconstruct.modules.gui.utils import getOpenRecentMenu
+
+    _keep("recently_opened_series")
+    try:
+        assert copy_legacy_settings_once().complete is True
+        real_store_series.setOption(
+            "recently_opened_series", ["/no/such/probe.jser"]
+        )
+        getOpenRecentMenu(real_store_series, lambda **kw: None)
+        assert real_store_series.getOption("recently_opened_series") == []
+    finally:
+        _keep("recently_opened_series")
+
+
+@pytest.mark.parametrize(
+    "failed_copy", [SHARED_APP, DEV], indirect=True, ids=["shared", "dev"],
+)
+@pytest.mark.parametrize("key", ["theme", "recently_opened_series"])
+def test_a_window_opened_after_a_failed_copy_keeps_the_old_value(
+    failed_copy, request, tmp_path, key,
+):
+    """Opening the window applies the theme and builds the File menu. Neither
+    may save what it read while the old value is still to come."""
+    app, launch = failed_copy
+    recent = tmp_path / "recent.jser"
+    recent.touch()
+    value = "qdark" if key == "theme" else f'["{recent}"]'
+    _keep(key, apps=(SHARED_APP, app))
+    _legacy(app, **{key: value})
+    try:
+        launch()
+        request.getfixturevalue("main_window")
+        assert not _settings(SETTINGS_ORG, SHARED_APP).contains(key)
+        assert _retry().value(key) == value
+    finally:
+        _keep(key, apps=(SHARED_APP, app))
+
+
+@pytest.mark.parametrize(
+    "failed_copy", [SHARED_APP, DEV], indirect=True, ids=["shared", "dev"],
+)
+def test_applying_the_stored_theme_saves_nothing(failed_copy, real_store_series):
+    from types import SimpleNamespace
+
+    from PyReconstruct.modules.gui.main.main_window import MainWindow
+
+    app, launch = failed_copy
+    window = SimpleNamespace(series=real_store_series, field=None)
+    _keep("theme", apps=(SHARED_APP, app))
+    _legacy(app, theme="qdark")
+    try:
+        launch()
+        MainWindow.applyTheme(window, real_store_series.getOption("theme"))
+        assert _retry().value("theme") == "qdark"
+    finally:
+        _keep("theme", apps=(SHARED_APP, app))
+        MainWindow.applyTheme(window, "default")
+
+
+def test_a_theme_chosen_while_the_copy_is_owed_is_saved(
+    real_store_series, main_window, clean, monkeypatch,
+):
+    from PyReconstruct.modules.gui.main import main_window as main_window_module
+
+    _keep("theme")
+    _legacy(SHARED_APP, theme="qdark")
+    try:
+        with monkeypatch.context() as broken:
+            _unreadable_legacy(broken, SHARED_APP)
+            assert _launch().complete is False
+
+        monkeypatch.setattr(
+            main_window_module.QuickDialog, "get",
+            lambda *a, **kw: ([[("default", True), ("dark", False)]], True),
+        )
+        main_window.setTheme()
+
+        assert _retry().value("theme") == "default"
+    finally:
+        _keep("theme")
+
+
+@pytest.mark.parametrize("moved", [False, True])
+def test_closing_the_window_keeps_the_old_position_unless_it_moved(
+    request, clean, monkeypatch, moved,
+):
+    """The close saves the window's position. While the copy is owed, a
+    window left where it opened is the default position, not a choice, and
+    saving it would hide the one the copy brings."""
+    from PySide6.QtCore import QByteArray
+
+    _keep("window/geometry")
+    _legacy(SHARED_APP, **{"window/geometry": QByteArray(b"legacy probe")})
+    try:
+        with monkeypatch.context() as broken:
+            _unreadable_legacy(broken, SHARED_APP)
+            assert _launch().complete is False
+
+        window = request.getfixturevalue("main_window")
+        if moved:
+            window.move(window.x() + 40, window.y() + 30)
+        window.series.modified = False
+        assert window.close() is True
+
+        stored = _retry().value("window/geometry")
+        if moved:
+            assert bytes(stored) != b"legacy probe"
+        else:
+            assert bytes(stored) == b"legacy probe"
+    finally:
+        _keep("window/geometry")
+
+
+def test_the_whats_new_popup_waits_for_the_copy(clean, monkeypatch):
+    """The popup records the version it shows. Shown after a failed copy, it
+    also ignored a stored "don't show", and the version it saved replaced the
+    one the copy was to bring."""
+    from PyReconstruct.modules.gui.dialog.whats_new import maybe_show_whats_new
+
+    keys = ("suppress_whatsnew", "last_whatsnew_version")
+    new = _settings(SETTINGS_ORG, SHARED_APP)
+    before = {key: new.value(key) for key in keys if new.contains(key)}
+    _keep(*keys)
+    _legacy(SHARED_APP, suppress_whatsnew=True, last_whatsnew_version="1.24.0")
+    try:
+        with monkeypatch.context() as broken:
+            _unreadable_legacy(broken, SHARED_APP)
+            assert _launch().complete is False
+
+        shown = []
+        assert maybe_show_whats_new(
+            None, settings=_settings(SETTINGS_ORG, SHARED_APP),
+            current="1.24.1", show=lambda *a: shown.append(a),
+        ) is False
+        assert shown == []
+
+        stored = _retry()
+        assert stored.value("last_whatsnew_version") == "1.24.0"
+        assert stored.value("suppress_whatsnew", type=bool) is True
+    finally:
+        _keep(*keys)
+        new = _settings(SETTINGS_ORG, SHARED_APP)
+        for key, value in before.items():
+            new.setValue(key, value)
+        new.sync()
+
+
+def _damaged_series_store(code):
+    from pathlib import Path
+
+    path = Path(_settings(LEGACY_SETTINGS_ORG, f"{SHARED_APP}-{code}").fileName())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[broken\nentry=value\n")
+    return path
+
+
+def test_a_damaged_old_file_stays_owed_when_opened_again(clean):
+    """Qt keeps the first parse of a file for the session, and a second
+    QSettings on it reports no error. The copy did not count that as a
+    repaired file."""
+    code = "LEGACYDAMAGED"
+    path = _damaged_series_store(code)
+    try:
+        assert copy_legacy_series_settings_once(code).complete is False
+        assert copy_legacy_series_settings_once(code).complete is False
+        assert not _settings(SETTINGS_ORG, f"{SHARED_APP}-{code}").contains(
+            LEGACY_COPY_MARKER
+        )
+    finally:
+        path.unlink()
+        new = _settings(SETTINGS_ORG, f"{SHARED_APP}-{code}")
+        new.remove(LEGACY_COPY_MARKER)
+        new.remove("broken/entry")
+        new.sync()
+
+
+def test_a_damaged_old_file_copies_once_it_is_fixed(clean):
+    code = "LEGACYDAMAGED"
+    path = _damaged_series_store(code)
+    try:
+        assert copy_legacy_series_settings_once(code).complete is False
+        path.write_text("[General]\nlegacy_probe_fixed=yes\n")
+
+        assert copy_legacy_series_settings_once(code).complete is True
+        new = _settings(SETTINGS_ORG, f"{SHARED_APP}-{code}")
+        assert new.value("legacy_probe_fixed") == "yes"
+    finally:
+        path.unlink()
+        new = _settings(SETTINGS_ORG, f"{SHARED_APP}-{code}")
+        for key in (LEGACY_COPY_MARKER, "legacy_probe_fixed", "broken/entry"):
+            new.remove(key)
+        new.sync()
