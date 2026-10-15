@@ -1,4 +1,4 @@
-"""A saved view that shows no part of the section image is set to the image.
+"""A saved view that shows no part of the section image offers to go to it.
 
 A series can be saved with a view window that lies entirely outside its
 image. The reported file carried ``window = [-9.06913, -0.94384, 1, 1]`` on
@@ -6,11 +6,13 @@ an image at the origin: opening it, and locating its images, showed a black
 field with no image and no trace, and only ``View > Set view to image``
 brought both back.
 
-Now the field sets such a view to the image when the series opens and when
-its images are located, and says so in the status bar. A view that overlaps
-the image at all is kept, so a zoom and position the user chose survive a
-reopen, and any view is kept when no image is found, since a series without
-images is viewed by its traces.
+Now, when the series opens and when its images are located, a view that
+misses the image raises one prompt. "Set view to image" sets the view to the
+image; "Keep saved view", Escape and the close box leave the saved position
+and zoom as they were, since that view can be one the user chose (the 3D
+scene's double-click writes a one-micron view at the point clicked). A view
+that overlaps the image at all asks nothing, and neither does any view when
+no image is found, since a series without images is viewed by its traces.
 
 The window came from the legacy XML import, which kept the lower-left
 corner of the Reconstruct viewport and gave it a one-micron size. The import
@@ -35,11 +37,8 @@ from PyReconstruct.modules.backend.func import xml_json_conversions as conv
 from PyReconstruct.modules.backend.progress import NullProgressReporter
 from PyReconstruct.modules.constants import blank_section, blank_series
 from PyReconstruct.modules.datatypes import Series
-from PyReconstruct.modules.gui.main.field_widget_7_view import (
-    VIEW_OFF_IMAGE_NOTICE,
-    viewMissesBounds,
-)
-from test_field_status_readout import paint_the_field
+from PyReconstruct.modules.gui.main.field_widget_7_view import viewMissesBounds
+from PyReconstruct.modules.gui.utils import utils as gui_utils
 
 
 REPORTED_WINDOW = [-9.06913, -0.94384, 1, 1]
@@ -97,7 +96,28 @@ def covers(window, bounds):
 
 
 @pytest.fixture
-def open_series(qapp, qsettings_snapshot, main_window_dialogs):
+def view_prompt(monkeypatch):
+    """Answer the view prompt and record the view it was asked over.
+
+    Replaces the helper `main_window.py` calls, after `main_window_dialogs`
+    has, so a test scripts the answers in `answers` (True picks "Set view to
+    image", and an empty queue keeps the view, as dismissing it does) and
+    reads the window each prompt saw in `seen`.
+    """
+    from PyReconstruct.modules.gui.main import main_window as mw
+
+    prompt = types.SimpleNamespace(answers=[], seen=[])
+
+    def answer(parent):
+        prompt.seen.append(list(parent.series.window))
+        return prompt.answers.pop(0) if prompt.answers else False
+
+    monkeypatch.setattr(mw, "viewOffImageNotify", answer)
+    return prompt
+
+
+@pytest.fixture
+def open_series(qapp, qsettings_snapshot, main_window_dialogs, view_prompt):
     """Open a real `MainWindow` on a jser, torn down as the `main_window`
     fixture does it (see its docstring for why each step matters)."""
     from PySide6.QtCore import QSettings
@@ -157,32 +177,153 @@ def test_a_window_that_only_touches_or_leaves_the_image_misses_it(window):
     assert viewMissesBounds(window, IMAGE_BOUNDS)
 
 
+# ---- the prompt itself ---------------------------------------------------
+
+@pytest.fixture
+def message_box(qapp, monkeypatch):
+    """A user at the screen, and a `QMessageBox.exec` that answers at once.
+
+    `exec` is replaced so no modal loop runs: `press` decides what the user
+    does to the box, given the box, and the real button handling does the
+    rest. Records each box shown in `shown`.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.delenv(gui_utils.UNATTENDED_ENV_VAR, raising=False)
+    monkeypatch.setattr(gui_utils, "qt_offscreen", False)
+    monkeypatch.setattr(gui_utils, "mainwindow", None)
+    box = types.SimpleNamespace(press=None, shown=[])
+
+    def exec_(mbox):
+        # the title is not read back: macOS drops a message box's title
+        box.shown.append((
+            mbox.text(),
+            [b.text() for b in mbox.buttons()],
+            mbox.defaultButton().text(),
+        ))
+        box.press(mbox)
+        return 0
+
+    monkeypatch.setattr(QMessageBox, "exec", exec_)
+    return box
+
+
+def _button(mbox, label):
+    return next(b for b in mbox.buttons() if b.text() == label)
+
+
+def test_the_prompt_says_why_the_field_is_black_and_names_both_choices(
+    message_box
+):
+    message_box.press = lambda mbox: _button(mbox, "Keep saved view").click()
+
+    gui_utils.viewOffImageNotify()
+
+    assert message_box.shown == [(
+        "The saved view is outside the image, so the field looks black.",
+        ["Set view to image", "Keep saved view"],
+        "Set view to image",
+    )]
+
+
+def test_set_view_to_image_accepts_the_prompt(message_box):
+    message_box.press = lambda mbox: _button(mbox, "Set view to image").click()
+    assert gui_utils.viewOffImageNotify() is True
+
+
+def test_keep_saved_view_declines_the_prompt(message_box):
+    message_box.press = lambda mbox: _button(mbox, "Keep saved view").click()
+    assert gui_utils.viewOffImageNotify() is False
+
+
+def test_escape_dismisses_the_prompt_and_keeps_the_view(message_box):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    message_box.press = lambda mbox: QTest.keyClick(mbox, Qt.Key_Escape)
+    assert gui_utils.viewOffImageNotify() is False
+
+
+def test_the_close_box_dismisses_the_prompt_and_keeps_the_view(message_box):
+    message_box.press = lambda mbox: mbox.close()
+    assert gui_utils.viewOffImageNotify() is False
+
+
+def test_with_nobody_at_the_screen_the_view_is_kept_without_asking(
+    message_box, monkeypatch
+):
+    monkeypatch.setattr(gui_utils, "qt_offscreen", True)
+
+    assert gui_utils.viewOffImageNotify() is False
+    assert message_box.shown == []
+
+
 # ---- opening a series -----------------------------------------------------
 
-def test_a_saved_view_outside_the_image_opens_on_the_image(
-    series_jser, tmp_path, open_series
+def test_a_saved_view_outside_the_image_offers_the_image_and_goes_there(
+    series_jser, tmp_path, open_series, view_prompt
 ):
     write_image(tmp_path / "image.png")
     prepare(series_jser, REPORTED_WINDOW, image_dir=tmp_path)
+    view_prompt.answers.append(True)
 
     window = open_series(series_jser)
     field = window.field
 
+    assert len(view_prompt.seen) == 1
+    assert center(view_prompt.seen[0]) == pytest.approx(center(REPORTED_WINDOW))
     assert field.section_layer.image_found
     assert field.imageBounds() == pytest.approx(IMAGE_BOUNDS)
     assert covers(field.series.window, IMAGE_BOUNDS)
     assert not field.viewIsOffImage()
-    # the notice survives the repaint that follows an open
-    paint_the_field(window)
-    assert window.statusbar.currentMessage() == VIEW_OFF_IMAGE_NOTICE
+
+
+def test_declining_the_prompt_on_open_keeps_the_saved_view(
+    series_jser, tmp_path, open_series, view_prompt
+):
+    write_image(tmp_path / "image.png")
+    prepare(series_jser, REPORTED_WINDOW, image_dir=tmp_path)
+    view_prompt.answers.append(False)
+
+    window = open_series(series_jser)
+    field = window.field
+
+    assert len(view_prompt.seen) == 1
+    # the window is fitted to the field again as it settles, around the same
+    # center: the saved one-micron view, not the image
+    assert center(field.series.window) == pytest.approx(center(REPORTED_WINDOW))
+    assert max(field.series.window[2:]) == pytest.approx(1.0, abs=0.1)
+    assert field.viewIsOffImage()
+
+
+def test_a_view_chosen_in_the_3d_scene_survives_a_reopen_when_kept(
+    series_jser, tmp_path, open_series, view_prompt
+):
+    """The 3D scene's double-click writes a one-micron view at the point
+    clicked, which can lie outside the image. Reopening asks, and keeping it
+    leaves it where it was."""
+    write_image(tmp_path / "image.png")
+    prepare(series_jser, [1.0, 1.0, 2.0, 1.5], image_dir=tmp_path)
+    window = open_series(series_jser)
+    assert view_prompt.seen == []
+
+    window.field.moveTo(window.series.current_section, 100.0, 100.0)
+    chosen = list(window.series.window)
+    assert center(chosen) == pytest.approx((100.0, 100.0))
+    window.saveToJser()
+
+    window.openSeries(jser_fp=str(series_jser))
+
+    assert len(view_prompt.seen) == 1
+    assert window.series.window == pytest.approx(chosen)
 
 
 @pytest.mark.parametrize("saved", [
     [1.0, 1.0, 2.0, 1.5],        # a zoomed-in view inside the image
     [-0.5, -0.5, 1.0, 1.0],      # a view over one corner of the image
 ])
-def test_a_saved_view_over_any_part_of_the_image_is_kept(
-    series_jser, tmp_path, open_series, saved
+def test_a_saved_view_over_any_part_of_the_image_opens_without_a_prompt(
+    series_jser, tmp_path, open_series, view_prompt, saved
 ):
     write_image(tmp_path / "image.png")
     prepare(series_jser, saved, image_dir=tmp_path)
@@ -190,75 +331,95 @@ def test_a_saved_view_over_any_part_of_the_image_is_kept(
     window = open_series(series_jser)
     field = window.field
 
+    assert view_prompt.seen == []
     assert field.section_layer.image_found
     assert not viewMissesBounds(saved, field.imageBounds())
     # the open only fits the saved window to the field's size and
     # proportions, which scales it around the same center
     assert center(field.series.window) == pytest.approx(center(saved))
     assert not covers(field.series.window, IMAGE_BOUNDS)
-    assert window.statusbar.currentMessage() == ""
 
 
-def test_a_saved_view_is_kept_when_the_series_has_no_image(
-    series_jser, open_series
+def test_a_series_with_no_image_opens_without_a_prompt(
+    series_jser, open_series, view_prompt
 ):
     prepare(series_jser, REPORTED_WINDOW)
 
     window = open_series(series_jser)
     field = window.field
 
+    assert view_prompt.seen == []
     assert not field.section_layer.image_found
     assert field.imageBounds() is None
     assert not field.viewIsOffImage()
     assert center(field.series.window) == pytest.approx(center(REPORTED_WINDOW))
-    assert window.statusbar.currentMessage() == ""
 
 
 # ---- locating the images --------------------------------------------------
 
-def test_locating_the_images_sets_an_outside_view_to_the_image(
-    series_jser, tmp_path, open_series
-):
+def _open_without_images(series_jser, tmp_path, open_series, saved):
+    """Open with the images in a folder the series does not point at, and
+    not beside the jser either, so it opens with no image and asks nothing."""
     images = tmp_path / "images"
     images.mkdir()
     write_image(images / "image.png")
-    # the series points at a folder that is gone, and the image is not beside
-    # the jser either, so it opens with no image and the view where it was
-    prepare(series_jser, REPORTED_WINDOW, image_dir=tmp_path / "elsewhere")
-
+    prepare(series_jser, saved, image_dir=tmp_path / "elsewhere")
     window = open_series(series_jser)
-    field = window.field
-    assert not field.section_layer.image_found
-    assert center(field.series.window) == pytest.approx(center(REPORTED_WINDOW))
+    assert not window.field.section_layer.image_found
+    assert center(window.field.series.window) == pytest.approx(center(saved))
+    return window, images
+
+
+def test_locating_the_images_offers_the_image_and_goes_there(
+    series_jser, tmp_path, open_series, view_prompt
+):
+    window, images = _open_without_images(
+        series_jser, tmp_path, open_series, REPORTED_WINDOW
+    )
+    assert view_prompt.seen == []
+    view_prompt.answers.append(True)
 
     window.changeSrcDir(str(images))
+    field = window.field
 
+    assert len(view_prompt.seen) == 1
     assert field.section_layer.image_found
     assert covers(field.series.window, IMAGE_BOUNDS)
     assert not field.viewIsOffImage()
-    paint_the_field(window)
-    assert window.statusbar.currentMessage() == VIEW_OFF_IMAGE_NOTICE
 
 
-def test_locating_the_images_keeps_a_view_that_overlaps_them(
-    series_jser, tmp_path, open_series
+def test_declining_the_prompt_after_locating_the_images_keeps_the_view(
+    series_jser, tmp_path, open_series, view_prompt
 ):
-    images = tmp_path / "images"
-    images.mkdir()
-    write_image(images / "image.png")
-    saved = [1.0, 1.0, 2.0, 1.5]
-    prepare(series_jser, saved, image_dir=tmp_path / "elsewhere")
-
-    window = open_series(series_jser)
-    field = window.field
-    assert not field.section_layer.image_found
+    window, images = _open_without_images(
+        series_jser, tmp_path, open_series, REPORTED_WINDOW
+    )
+    before = list(window.series.window)
 
     window.changeSrcDir(str(images))
+    field = window.field
 
+    assert len(view_prompt.seen) == 1
+    assert field.section_layer.image_found
+    assert field.series.window == before
+    assert field.viewIsOffImage()
+
+
+def test_locating_the_images_keeps_a_view_that_overlaps_them_unasked(
+    series_jser, tmp_path, open_series, view_prompt
+):
+    saved = [1.0, 1.0, 2.0, 1.5]
+    window, images = _open_without_images(
+        series_jser, tmp_path, open_series, saved
+    )
+
+    window.changeSrcDir(str(images))
+    field = window.field
+
+    assert view_prompt.seen == []
     assert field.section_layer.image_found
     assert center(field.series.window) == pytest.approx(center(saved))
     assert not covers(field.series.window, IMAGE_BOUNDS)
-    assert window.statusbar.currentMessage() == ""
 
 
 # ---- the writer: the legacy XML import -----------------------------------
@@ -330,3 +491,26 @@ def test_a_series_imported_from_xml_opens_on_its_image(
     assert field.section_layer.image_found
     assert field.imageBounds() == pytest.approx(IMAGE_BOUNDS)
     assert covers(field.series.window, IMAGE_BOUNDS)
+    assert main_window_dialogs.view_off_image_prompts == 0
+
+
+def test_canceling_the_save_prompt_leaves_the_open_series_alone(
+    main_window, main_window_dialogs, tmp_path
+):
+    """Importing asks first whether to save the series already open.
+    Canceling there stops the import, and the open series keeps its view."""
+    folder = tmp_path / "xml"
+    folder.mkdir()
+    ser = _write_legacy_series(folder)
+    before = main_window.series
+    main_window.series.window = [100.0, 100.0, 1.0, 1.0]
+    main_window.series.modified = True
+    main_window_dialogs.save_response = "cancel"
+
+    main_window.newFromXML(str(ser))
+
+    assert main_window_dialogs.save_prompts == 1
+    assert main_window.series is before
+    assert main_window.series.window == [100.0, 100.0, 1.0, 1.0]
+    # nor is the import's Save As offered for a series that never opened
+    assert main_window_dialogs.dialogs == []

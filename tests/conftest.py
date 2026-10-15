@@ -222,6 +222,10 @@ class DialogRecorder:
             callers, following the same pattern as ``responses``. Empty means
             "cancel", so an undo that unexpectedly reaches the prompt is a
             no-op a test can assert on rather than a silent scope change.
+        view_off_image_responses (list): queue of answers handed to
+            successive ``viewOffImageNotify()`` callers, True for "Set view
+            to image". Empty means the saved view is kept, as dismissing the
+            prompt does.
         undo_warning_accepted (bool): what ``noUndoWarning()`` returns.
     """
 
@@ -240,6 +244,8 @@ class DialogRecorder:
         self.message_box_response = None
         self.linked_undo_responses = []
         self.linked_undo_prompts = 0
+        self.view_off_image_responses = []
+        self.view_off_image_prompts = 0
 
     def notify(self, message, *args, **kwargs):
         self.notices.append(message)
@@ -279,6 +285,13 @@ class DialogRecorder:
         if self.linked_undo_responses:
             return self.linked_undo_responses.pop(0)
         return "cancel"
+
+    def viewOffImageNotify(self, *args, **kwargs):
+        """Stand-in for the "saved view is outside the image" prompt."""
+        self.view_off_image_prompts += 1
+        if self.view_off_image_responses:
+            return self.view_off_image_responses.pop(0)
+        return False
 
     def messageBox(self, *args, **kwargs):
         """Stand-in for the QMessageBox statics. Records (title, text)."""
@@ -626,8 +639,9 @@ def main_window_dialogs(monkeypatch):
     The construction path no longer needs this (see the note above), but a test
     that *drives* a menu action does: `main_window.py` binds `notify`,
     `notifyConfirm`, `saveNotify`, `unsavedNotify`, `linkedUndoNotify`,
-    `noUndoWarning` and `getProgbar` into its own namespace, and calls
-    `QMessageBox`, `QInputDialog`, `QuickDialog` and `FileDialog` directly.
+    `viewOffImageNotify`, `noUndoWarning` and `getProgbar` into its own
+    namespace, and calls `QMessageBox`, `QInputDialog`, `QuickDialog` and
+    `FileDialog` directly.
 
     Offscreen, `notify` and `notifyConfirm` now fall through to their console
     branch, whose `input()` raises under pytest's capture and *hangs* under
@@ -657,6 +671,7 @@ def main_window_dialogs(monkeypatch):
         ("saveNotify", recorder.saveNotify),
         ("unsavedNotify", recorder.unsavedNotify),
         ("linkedUndoNotify", recorder.linkedUndoNotify),
+        ("viewOffImageNotify", recorder.viewOffImageNotify),
         ("noUndoWarning", recorder.noUndoWarning),
         ("getProgbar", recorder.progbar),
     ):

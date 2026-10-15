@@ -16,10 +16,6 @@ from .field_widget_6_paint import FieldWidgetPaint
 from .status_readout import SEPARATOR
 
 
-# what the status bar says when a view that missed the image was set to it
-VIEW_OFF_IMAGE_NOTICE = "The view was outside the image, so it was set to the image."
-
-
 def viewMissesBounds(window : list, bounds : tuple) -> bool:
     """Whether a view window and a bounding box share no area.
 
@@ -308,36 +304,16 @@ class FieldWidgetView(FieldWidgetPaint):
     def viewIsOffImage(self) -> bool:
         """Whether the view window misses the section image entirely.
 
-        False when no image is loaded: a series without images is viewed by
-        its traces, and that view is wherever the user left it.
+        The reported case was a saved window of [-9.07, -0.94, 1, 1] on an
+        image at the origin, which opened to a black field with the traces
+        off screen as well. False when no image is loaded: a series without
+        images is viewed by its traces, and that view is wherever the user
+        left it.
         """
         bounds = self.imageBounds()
         if bounds is None:
             return False
         return viewMissesBounds(self.series.window, bounds)
-
-    def homeIfViewOffImage(self) -> bool:
-        """Set the view to the image when the view misses it, and say so.
-
-        A series can carry a view that shows no part of its image: the
-        reported case was a saved window of [-9.07, -0.94, 1, 1] on an
-        image at the origin, which opened to a black field with the traces
-        off screen as well. Called when a series opens and when its images
-        are located, after the image has loaded. A view that overlaps the
-        image at all is left alone, so a zoom and position the user chose
-        survive a reopen. The notice goes to the status bar's temporary
-        message slot, which the field's readout no longer overwrites
-        (updateStatusBar); a dialog on open would stop the series from
-        opening until it was dismissed.
-
-            Returns:
-                (bool): True if the view was moved
-        """
-        if not self.viewIsOffImage():
-            return False
-        self.home()
-        self.mainwindow.statusBar().showMessage(VIEW_OFF_IMAGE_NOTICE, 8000)
-        return True
 
     def moveTo(self, snum : int, x : float, y : float):
         """Move to a specified section number and coordinates (used from 3D scene).

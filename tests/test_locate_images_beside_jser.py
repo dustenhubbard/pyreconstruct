@@ -64,9 +64,9 @@ class _FieldStub:
         self.reloads += 1
         self.section_layer.loadImage()
 
-    def homeIfViewOffImage(self):
-        # changeSrcDir asks the field to set a view that misses the newly
-        # found image to the image; this stub has no view, so nothing moves
+    def viewIsOffImage(self):
+        # changeSrcDir asks whether the view misses the newly found image;
+        # this stub has no view to miss it, so nothing is offered
         return False
 
 
@@ -84,6 +84,9 @@ class _MainWindowStub:
     def changeSrcDir(self, *args, **kwargs):
         """Delegate to the REAL method - it is what assigns series.src_dir."""
         return mw.MainWindow.changeSrcDir(self, *args, **kwargs)
+
+    def offerHomeIfViewOffImage(self):
+        return mw.MainWindow.offerHomeIfViewOffImage(self)
 
 
 def _series_with_images(tmp_path):
