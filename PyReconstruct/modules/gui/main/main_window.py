@@ -5506,6 +5506,11 @@ class MainWindow(QMainWindow):
         if not confirmed or not response:
             o_series.close()
             return
+
+        # Hosts, the second box on the Attributes tab
+        import_hosts = (
+            "attributes" in response and response["attributes"][0][1][1]
+        )
         
         if "traces" in response:
             (
@@ -5548,6 +5553,14 @@ class MainWindow(QMainWindow):
                 keep_below, 
                 self.field.series_states
             )
+
+            # hosts checked on the Attributes tab come in with these traces,
+            # as part of the same undo step: merge them before the next
+            # import starts its own, and record on each section the links
+            # they made there, or a redo of that section alone leaves them out
+            if import_hosts:
+                self.series.importHostTree(o_series)
+                self.field.series_states.recordLinksMade()
         
         if "z-traces" in response:
             regex_filters = response["z-traces"][0]
@@ -5574,7 +5587,7 @@ class MainWindow(QMainWindow):
             bools = [b for n, b in response["attributes"][0]]
             if bools[0]:
                 self.series.importObjectGroups(o_series)
-            if bools[1]:
+            if bools[1] and "traces" not in response:
                 self.series.importHostTree(o_series)
             if bools[2]:
                 self.series.importUserCols(o_series)
