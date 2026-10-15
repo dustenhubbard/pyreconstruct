@@ -2845,6 +2845,11 @@ class MainWindow(QMainWindow):
         if self.series.jserSaveRunning():
             self.series.refuseNestedSave(self.series.backupFolder())
             return
+        # the same for a backup while a series undo or redo restores the
+        # sections: the series file would not match them yet
+        if self.series.seriesStepRunning():
+            self.series.refuseSaveDuringStep(self.series.backupFolder())
+            return
 
         # make sure the backup directory exists
         if not os.path.isdir(self.series.backupFolder(create=True)):
@@ -2917,6 +2922,15 @@ class MainWindow(QMainWindow):
         if self.series.jserSaveRunning():
             self.series.refuseNestedSave(self.series.jser_fp)
             return "cancel"
+        # The same while a series undo or redo restores the sections (a .jser
+        # opened from the Finder arrives at its progress updates): the series
+        # attributes are put back only after the last section, so a save here
+        # would write a series file that does not match them. Refused before
+        # the prompt, so the step finishes on this series and the open is
+        # skipped with the notice.
+        if self.series.seriesStepRunning():
+            self.series.refuseSaveDuringStep(self.series.jser_fp)
+            return "cancel"
 
         ## Populate hidden files with unsaved data
         self.saveAllData()
@@ -2972,6 +2986,9 @@ class MainWindow(QMainWindow):
         # series moves, which would leave it pointed at a path with no file.
         if self.series.jserSaveRunning():
             self.series.refuseNestedSave("")
+            return "cancel"
+        if self.series.seriesStepRunning():
+            self.series.refuseSaveDuringStep("")
             return "cancel"
 
         ## Store series data in hidden files
@@ -3034,6 +3051,9 @@ class MainWindow(QMainWindow):
         # other callers; this one has to come first.
         if self.series.jserSaveRunning():
             self.series.refuseNestedSave(self.series.backupFolder())
+            return
+        if self.series.seriesStepRunning():
+            self.series.refuseSaveDuringStep(self.series.backupFolder())
             return
 
         self.saveAllData()
