@@ -240,6 +240,29 @@ def test_an_object_delete_still_takes_its_links_out_of_the_file(series, tmp_path
     assert saved_links(series, tmp_path / "deleted.jser") == {}
 
 
+def test_redoing_the_rename_of_a_traceless_host_leaves_the_old_name_out(
+        series, tmp_path):
+    """H loses its traces to a section delete and keeps its links. Renaming
+    it moves the links to the new name; the old name has no object left.
+    The redo of that rename must not show the old name again."""
+    from PyReconstruct.modules.backend.func.state_manager import SeriesStates
+
+    where = setup(series)
+    series.deleteSections([where[H]])
+    series.data.refresh()
+    assert H not in series.data["objects"]
+    states = SeriesStates(series)
+    series.editObjectAttributes([H], name="kl_renamed", series_states=states)
+    renamed = {T: ["kl_renamed"], K: ["kl_renamed"]}
+    assert saved_links(series, tmp_path / "renamed.jser") == renamed
+
+    for step in range(2):
+        states.undoState()
+        assert saved_links(series, tmp_path / f"undo-{step}.jser") == SAVED_BEFORE
+        states.undoState(redo=True)
+        assert saved_links(series, tmp_path / f"redo-{step}.jser") == renamed
+
+
 def _record(states, section, edit):
     """An action recorded the way the field records one: the state first,
     then the series data, then the save."""
