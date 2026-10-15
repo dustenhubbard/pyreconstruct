@@ -4,7 +4,7 @@
 Both imports end the same way once the import returns: reload the section,
 rebuild the tables, then rebuild the alignment menus if the names changed,
 and only then show the success notice. `MainWindow._finishTransformImport`
-holds those steps for both. A cancelled or failed import runs none of them.
+holds those steps for both. A canceled or failed import runs none of them.
 
 The steps are recorded by wrapping the real methods on a live `MainWindow`,
 so each one still does its work.
@@ -88,7 +88,7 @@ def test_txt_import_runs_the_completion_steps_in_order(
 
 
 @pytest.mark.gui
-def test_txt_import_cancelled_at_the_file_dialog_runs_no_steps(
+def test_txt_import_canceled_at_the_file_dialog_runs_no_steps(
     main_window, steps
 ):
     # no scripted file response: the dialog returns "" as a cancel does
@@ -131,7 +131,7 @@ def test_swift_import_runs_the_completion_steps_in_order(
 
 
 @pytest.mark.gui
-def test_swift_import_cancelled_at_the_scale_dialog_runs_no_steps(
+def test_swift_import_canceled_at_the_scale_dialog_runs_no_steps(
     main_window, main_window_dialogs, steps, tmp_path
 ):
     window = main_window
