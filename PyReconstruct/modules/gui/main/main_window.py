@@ -2845,8 +2845,9 @@ class MainWindow(QMainWindow):
         if self.series.jserSaveRunning():
             self.series.refuseNestedSave(self.series.backupFolder())
             return
-        # the same for a backup while a series undo or redo restores the
-        # sections: the series file would not match them yet
+        # the same for a backup while a series step (an undo or redo, or a
+        # change to the profiles or alignments) rewrites the sections: the
+        # sections and the series file would not match yet
         if self.series.seriesStepRunning():
             self.series.refuseSaveDuringStep(self.series.backupFolder())
             return
@@ -2922,12 +2923,13 @@ class MainWindow(QMainWindow):
         if self.series.jserSaveRunning():
             self.series.refuseNestedSave(self.series.jser_fp)
             return "cancel"
-        # The same while a series undo or redo restores the sections (a .jser
-        # opened from the Finder arrives at its progress updates): the series
-        # attributes are put back only after the last section, so a save here
-        # would write a series file that does not match them. Refused before
-        # the prompt, so the step finishes on this series and the open is
-        # skipped with the notice.
+        # The same while a series step rewrites the sections (a .jser opened
+        # from the Finder arrives at its progress updates): an undo or redo
+        # puts the series attributes back only after the last section, and a
+        # change to the profiles or alignments has rewritten some sections and
+        # not the rest, so a save here would write them out of step (see
+        # Series.seriesStep). Refused before the prompt, so the step finishes
+        # on this series and the open is skipped with the notice.
         if self.series.seriesStepRunning():
             self.series.refuseSaveDuringStep(self.series.jser_fp)
             return "cancel"
