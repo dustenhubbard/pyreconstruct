@@ -413,10 +413,11 @@ def github_release_url(version=None):
     return f"{base}/tag/v{v}" if v and _safe_version(v) else base
 
 
-# A nightly's version as nightly.yml tags it, X.Y.Z.devYYYYMMDD, without the v.
-# A source checkout of main is a dev release too (1.24.0.dev20261005+g41462b60d)
-# but has no release of its own, and its local part keeps it from matching.
-_NIGHTLY_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+\.dev\d{8}$")
+# A nightly's version as nightly.yml tags it, without the v: X.Y.Z.devYYYYMMDDHHMM
+# since 2026-10-08, X.Y.Z.devYYYYMMDD before. A source checkout of main is a
+# dev release too (1.24.0.dev20261005+g41462b60d) but has no release of its
+# own, and its local part keeps it from matching.
+_NIGHTLY_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+\.dev\d{8}(?:\d{4})?$")
 
 
 def nightly_release_url(version):
@@ -648,9 +649,9 @@ def whats_new_content(current, last_seen=None, cap=3, text=None, on_demand=False
     stable were running, with ``note`` set above them: the section
     ``latest_stable_section`` picks stands in for the running version in every
     rule above, so a nightly lists exactly what the stable it is built on lists,
-    and the header still names the version actually running. The release date
-    line is left out, since the date belongs to the stable and is already in the
-    body's section heading. A dev build with no stable section at or below its
+    and the header still names the version actually running. ``date`` is None,
+    since the date belongs to the stable and is already in the body's section
+    heading. A dev build with no stable section at or below its
     base (nothing bundled, or notes that start after it) falls through to the
     generic body like any other version without a section, and carries no note.
     One updated from the stable it shows, or from past it, has no section in

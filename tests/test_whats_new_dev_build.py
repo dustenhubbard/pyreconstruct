@@ -53,6 +53,7 @@ NOTES = """# What's New
 """
 
 NIGHTLY = "1.24.0.dev20261007"
+TIMED_NIGHTLY = "1.24.0.dev202610081315"   # tagged with the UTC time since 2026-10-08
 SOURCE_CHECKOUT = "1.24.0.dev5+g0123abc"
 STABLE = "1.23.0"
 
@@ -79,7 +80,7 @@ def test_latest_stable_section_takes_a_section_landed_ahead_of_its_tag():
 
 
 # ---- the builder on a dev build ---------------------------------------------
-@pytest.mark.parametrize("dev", [NIGHTLY, SOURCE_CHECKOUT])
+@pytest.mark.parametrize("dev", [NIGHTLY, TIMED_NIGHTLY, SOURCE_CHECKOUT])
 def test_dev_build_shows_the_latest_stable_notes_with_the_note_first(dev):
     c = F.whats_new_content(dev, on_demand=True, text=NOTES)
     assert c["version"] == dev                       # the header names what runs
@@ -189,7 +190,11 @@ def test_nightly_release_url_is_the_builds_own_page_or_the_index():
         f"https://github.com/{GITHUB_REPO}/releases/tag/v{NIGHTLY}"
     )
     assert F.nightly_release_url("v" + NIGHTLY) == F.nightly_release_url(NIGHTLY)
+    assert F.nightly_release_url(TIMED_NIGHTLY) == (
+        f"https://github.com/{GITHUB_REPO}/releases/tag/v{TIMED_NIGHTLY}"
+    )
     index = f"https://github.com/{GITHUB_REPO}/releases"
+    assert F.nightly_release_url("1.24.0.dev2026100813") == index   # neither tag shape
     assert F.nightly_release_url(SOURCE_CHECKOUT) == index   # +g local part: no release
     assert F.nightly_release_url("1.24.0.dev5") == index     # not a dated nightly tag
     assert F.nightly_release_url("1.24.0") == index          # not a dev version at all
