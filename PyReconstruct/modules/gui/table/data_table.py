@@ -36,9 +36,9 @@ class _ListBody(QMainWindow):
 
     Qt sizes a docked QDockWidget from its CONTENT widget's sizeHint, so the
     width floor lives here: the default hint (~256px) obscured the tail of the
-    object list's menu bar. Columns may still overflow -- some are deliberately
-    very wide -- but every menu in the list's own bar is reachable at the
-    default width.
+    object list's menu bar. Columns may still overflow, since some are
+    deliberately very wide, but every menu in the list's own bar is reachable
+    at the default width.
     """
 
     def sizeHint(self):
@@ -139,8 +139,8 @@ class DataTable(QDockWidget):
         """Shape a list's floating life; runs on every float and re-dock.
 
         Floating: Qt makes a floating dock a TOOL window, which sits above its
-        parent forever -- the main window could never cover a floated list even
-        when focused. Swapping to plain window flags makes it an ordinary
+        parent forever, so the main window could never cover a floated list
+        even when focused. Swapping to plain window flags makes it an ordinary
         window with a native title bar. The cost is that dragging a native
         title bar cannot re-dock, so a "Dock this list" menubar action appears
         while floating; setFloating(False) still re-docks fine under the
@@ -241,7 +241,7 @@ class DataTable(QDockWidget):
         The tab already names the list, so the title bar under it was the same
         name again plus the float and close buttons, a second title for no
         gain. Closing moved to the tab's own X; floating is dragging the tab
-        out. A list docked ALONE has no tab bar, so it keeps its title bar --
+        out. A list docked ALONE has no tab bar, so it keeps its title bar:
         without it there would be nothing to drag and no way to close. Floating
         lists always run with the native frame (None here); an empty QWidget is
         what Qt documents for suppressing a dock title bar.
@@ -659,11 +659,11 @@ class DataTable(QDockWidget):
         )
     
     def _titleBarContextMenu(self, event) -> bool:
-        """Offer float/dock/close on a TITLE BAR right-click. Returns True
-        when the click was on the title bar (or a floating list's frame area)
-        and the menu was shown; content clicks return False and keep the
-        trace/object menu. Kept as an attribute so the tests can reach the
-        menu popup() shows."""
+        """Show the undock/close menu on a docked list's TITLE BAR
+        right-click. Returns True when it showed the menu; content clicks
+        and any click on a floating list return False, so content keeps the
+        trace/object menu and a floating frame keeps the OS's own. The menu
+        is kept as an attribute so the tests can reach what popup() shows."""
         # floating lists run under the native frame, whose right-click is
         # the OS's; their road back is the "Dock this list" menubar button
         if (

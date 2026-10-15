@@ -397,7 +397,7 @@ class MainWindow(QMainWindow):
         ## NORMAL status-bar widget, not a permanent one: permanent widgets are
         ## right-anchored, which read as a jarring change for no reason a
         ## regular user could see. A normal widget sits on the left like the
-        ## old readout did, and still fixes the original blanking bug -- menu
+        ## old readout did, and still fixes the original blanking bug: menu
         ## status-tip events clear the TEMPORARY message, and the readout is a
         ## widget now, not a message.
         ## The one trade: while a real showMessage notice is up (the curation
@@ -3355,8 +3355,8 @@ class MainWindow(QMainWindow):
         touching the menu, so the checkmarks disagreed.
         MousePalette.saveVisibilityState calls this after every visibility
         change, from either road, which is a push rather than a menu-open pull:
-        connecting to a menu's aboutToShow was tried and is not viable here --
-        the View attribute is not the menubar's View menu, and walking the live
+        connecting to a menu's aboutToShow was tried and is not viable here.
+        The View attribute is not the menubar's View menu, and walking the live
         menubar for the real one invalidates the actions createMenuBar is still
         assigning.
 
@@ -5634,8 +5634,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """Save all data to files when the user exits."""
         # capture the list layout FIRST: saveToJser(close=True) closes the
-        # series, and capturing after it recorded nothing -- undocked lists did
-        # not survive a relaunch. A canceled close leaves the early capture
+        # series, and capturing after it recorded nothing, so undocked lists
+        # did not survive a relaunch. A canceled close leaves the early capture
         # behind, which is merely current.
         self._captureListLayout()
         response = self.saveToJser(notify=True, close=True)
