@@ -514,3 +514,38 @@ def test_canceling_the_save_prompt_leaves_the_open_series_alone(
     assert main_window.series.window == [100.0, 100.0, 1.0, 1.0]
     # nor is the import's Save As offered for a series that never opened
     assert main_window_dialogs.dialogs == []
+
+
+def test_canceling_the_save_prompt_stops_a_zarr_import_too(
+    series_jser, tmp_path, open_series, main_window_dialogs, monkeypatch
+):
+    """New from NG Zarr asks the same question first. Canceling there leaves
+    the open series on the view it had, with no Save As offered, rather than
+    setting it to its image."""
+    from PyReconstruct.modules.gui.main import main_window as mw
+
+    write_image(tmp_path / "image.png")
+    # a view over part of the image, so opening asks nothing and setting the
+    # view to the image would move it
+    prepare(series_jser, [1.0, 1.0, 0.5, 0.5], image_dir=tmp_path)
+    window = open_series(series_jser)
+    before = window.series
+    kept = list(before.window)
+    assert window.field.section_layer.image_found
+    assert not covers(kept, IMAGE_BOUNDS)
+
+    zarr = tmp_path / "volume.zarr"
+    zarr.mkdir()
+    monkeypatch.setattr(mw, "zarrToNewSeries", lambda *args: object())
+    main_window_dialogs.dialogs.clear()
+    main_window_dialogs.file_responses.append(str(zarr))
+    main_window_dialogs.responses.append((["imported", []], True))
+    before.modified = True
+    main_window_dialogs.save_response = "cancel"
+
+    window.newFromNgZarr()
+
+    assert main_window_dialogs.save_prompts == 1
+    assert window.series is before
+    assert window.series.window == pytest.approx(kept)
+    assert main_window_dialogs.dialogs == ["Select Zarr File", "New from NG Zarr"]
