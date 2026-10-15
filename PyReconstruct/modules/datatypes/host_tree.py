@@ -177,17 +177,49 @@ class HostTree():
             if name_of.get(t) in names or name_of.get(h) in names
         }
 
-    def restoreLinks(self, links):
+    def linksTakenSince(self, before, names) -> set:
+        """The links the tree before has and this tree has not, with an end
+        under one of the names, whose traveler no longer has the host here.
+        Those were replaced (a copy into a name that exists clears its hosts
+        first); a link taken off only because the host became a host of
+        another host (checkRedundantHosts) is not one of them.
+
+            Params:
+                before (HostTree): an earlier copy of this tree
+                names: the object names
+            Returns:
+                (set): (traveler id, host id) for each such link
+        """
+        name_of = self._ids.name_of
+        return {
+            (t, h) for t, h in before.linksMadeSince(self, names)
+            if name_of.get(h) not in self.getHosts(name_of.get(t), True)
+        }
+
+    def restoreLinks(self, links, taken=()):
         """Make again links a series undo took with its copy of the tree,
         as a section redo brings back the ids they join
-        (FieldState.links_made).
+        (FieldState.links_made), after taking away again the links its
+        action took away for the same names (links_taken).
+
+        A link that would make an object a host of itself, directly or
+        through a chain, is refused as add() refuses it. The redo of one
+        section replays only the links of its own names, so the action may
+        have broken that chain on a section not redone yet (a copy clears
+        the hosts of an existing name on the section it copies to).
 
             Params:
                 links: (traveler id, host id) pairs
+                taken: (traveler id, host id) pairs
         """
+        self._removeEdges(set(taken))
         links = set(links)
         self._addMembers({oid for edge in links for oid in edge})
-        self._addEdges(links)
+        for t, h in sorted(links):
+            pair = self._pairOf(t, h)
+            if pair is not None and pair[0] in self.getHosts(pair[1], True):
+                continue
+            self._addEdges({(t, h)})
 
     def renamedIds(self, first : int, last : int) -> set:
         """The kept ids still out of sight from the renames numbered first
