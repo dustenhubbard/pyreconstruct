@@ -39,21 +39,21 @@ area / length / radius) is exact across the board.
 Two further wins landed after the open-path work, both measured end-to-end on
 the real gestures:
 
-- **Lasso select and merge** on trace-dense sections: a cached anchor mask
-  (exact - zero mismatches against the previous scalar code) took a scripted
-  lasso sweep from 13.67 s to 1.00 s - **13.7x faster**.
+- **Lasso select and merge**: a cached anchor mask (exact - zero mismatches
+  against the previous scalar code) took a scripted lasso sweep from 8.83 s to
+  0.75 s - **11.8x faster**.
 - **Dense-view rendering**: batching the per-point Qt allocation on the paint
-  path (pixel-identical by construction) made dense full-frame redraws **1.59x
-  faster** (13.16 s to 8.27 s).
+  path (pixel-identical by construction) made dense full-frame redraws **1.42x
+  faster** (8.36 s to 5.88 s).
 
 ## Memory
 
 Feret diameters are now computed on demand instead of being precomputed and
-retained for every trace. The retained size of a closed trace's cached data is a
-constant **392 bytes at any point count** (previously 648 bytes at 4 points,
-rising to 16,520 bytes at 500 points) - about **75% less** trace-data memory on
-a 20,000-trace series at 64 points per trace, and 88% less on the shipped
-example series.
+retained for every trace. The retained size of a closed trace's cached data no
+longer grows with its point count (previously about 1 KB at 4 points, rising to
+about 9 KB at 500 points) - about **75% less** trace-data memory on a
+20,000-trace series at 64 points per trace, and about two-thirds less on the
+shipped example series.
 
 ## Full report and method
 
