@@ -842,11 +842,24 @@ class Series():
         if self.alignment != "no-alignment" and alignment_dict[self.alignment] is None:
             self.alignment = "no-alignment"
 
-        for snum, section in self.enumerateSections(
+        # the series undo state is saved here, before any object is changed
+        sections = self.enumerateSections(
             message="Modifying alignments...",
             series_states=series_states,
             breakable=False
-        ):
+        )
+
+        # objects set to a renamed alignment follow it to its new name
+        renamed = {}
+        for new_a, old_a in alignment_dict.items():
+            if old_a is not None and alignment_dict.get(old_a) is None:
+                renamed.setdefault(old_a, []).append(new_a)
+        for obj_name in list(self.obj_attrs):
+            new_names = renamed.get(self.obj_attrs[obj_name].get("alignment"), [])
+            if len(new_names) == 1:
+                self.setAttr(obj_name, "alignment", new_names[0])
+
+        for snum, section in sections:
             old_tforms = section.tforms.copy()
             new_tforms = {}
             for new_a, old_a in alignment_dict.items():

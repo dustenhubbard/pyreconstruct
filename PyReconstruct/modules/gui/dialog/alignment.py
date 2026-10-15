@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
 )
 
 from PyReconstruct.modules.gui.utils import notify
-from PyReconstruct.modules.datatypes.objects import Objects, SeriesObject
 
 class AlignmentDialog(QDialog):
 
@@ -207,20 +206,6 @@ class AlignmentList(QTableWidget):
             alignment == "no-alignment"):
             return
         self.adict[new_name] = self.adict[alignment]
-
-        ## Set objs to new alignment name
-        
-        series_objs = Objects(self.series).getNames()
-
-        for obj in series_objs:
-
-            obj_data = SeriesObject(self.series, obj)
-
-            if not obj_data.alignment == alignment:
-                continue
-
-            self.series.setAttr(obj, "alignment", new_name)
-
         self.adict[alignment] = None
         
         self.createTable()
