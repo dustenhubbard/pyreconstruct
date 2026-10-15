@@ -580,6 +580,50 @@ def test_redoing_a_rename_on_one_section_makes_its_links_again(
     assert window.series.object_groups.getObjectGroups(T) == {"g"}
     assert _saved_host_tree(window, tmp_path / "grouped.jser") == {T: [X]}
 
+
+@pytest.mark.parametrize("undo_scope", ["all", "section"])
+def test_redoing_an_import_on_one_section_makes_its_links_again(
+        window, main_window_dialogs, monkeypatch, tmp_path, undo_scope):
+    """H on s1 and T on s2, not linked. A copy moves T and makes H its
+    host. Series > Import series data > From another series brings both
+    in, preferring the copy, with object attributes. Undo takes back the
+    import (on every section, or on s2 alone) and redo on s2 alone brings
+    T back hosted by H."""
+    from PyReconstruct.modules.datatypes import Series
+    import PyReconstruct.modules.gui.main.main_window as mw
+
+    _, s2, _, _ = _setup(window)
+    window.series.host_tree.clearHosts(T)
+    window.saveAllData()
+    path = tmp_path / "copy.jser"
+    window.series.saveJser(str(path))
+    copy = Series.openJser(str(path))
+    try:
+        section = copy.loadSection(s2)
+        section.selected_traces = list(section.contours[T])
+        section.translateTraces(1.0, 1.0)
+        section.save()
+        copy.setObjHosts([T], [H])
+        copy.saveJser(str(path))
+    finally:
+        copy.close()
+    monkeypatch.setattr(mw.FileDialog, "get", lambda *a, **k: str(path))
+    monkeypatch.setattr(mw.ImportSeriesDialog, "exec", lambda self: (
+        {"traces": [None, [], [], 0.95, True, True, True, "other", "other"]}, True,
+    ))
+    window.importfromseries_act.trigger()
+    assert _saved_host_tree(window, tmp_path / "imported.jser") == {T: [H]}
+
+    window.changeSection(s2)
+    imported = sorted(t.points for t in window.field.section.contours[T])
+    for action, scope in [(window.undo_act, undo_scope), (window.redo_act, "section")]:
+        main_window_dialogs.linked_undo_responses = [scope]
+        assert action.isEnabled()
+        action.trigger()
+    assert sorted(t.points for t in window.field.section.contours[T]) == imported
+    assert _hosts(window) == [H]
+    assert _saved_host_tree(window, tmp_path / "redone.jser") == {T: [H]}
+
 # --------------------------------------------------------------------------- #
 # save
 # --------------------------------------------------------------------------- #

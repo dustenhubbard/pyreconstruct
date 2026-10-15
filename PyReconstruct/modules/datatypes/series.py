@@ -4538,6 +4538,10 @@ class Series():
             self.importUserCols(other, regex_filters, restrict_to)
             self.importTagSets(other)
 
+            ## The sections were recorded before the links came in
+            if series_states is not None:
+                series_states.recordLinksMade()
+
         ## Import history
         if log_event:
             
