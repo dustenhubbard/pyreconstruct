@@ -475,8 +475,14 @@ class FieldWidgetBase:
         if not self.section.tform.equals(tform_before):
             self.tform_before_change = None
 
-        # update the data/tables
-        self.updateData()
+        # update the data/tables. A redo of an action that kept the objects
+        # it emptied (an import) keeps them again, with their attributes,
+        # rather than deleting them as an erase would
+        redone = redo and len(section_states.undo_states) > undos_before
+        keeps_emptied = redone and getattr(
+            section_states.current_state, "keeps_emptied", False
+        )
+        self.updateData(log_events=not keeps_emptied)
 
         # updateData gave each object the step recreated the current
         # alignment; put back the pin the object had, and show it in the lists
@@ -724,17 +730,20 @@ class FieldWidgetBase:
         """
         self.table_manager.newTable(list_type, self.section, selected_only=selected_only)
     
-    def updateData(self, clear_tracking=True) -> None:
+    def updateData(self, clear_tracking=True, log_events=True) -> None:
         """Update the series data object and the tables.
-        
+
             Params:
                 clear_tracking (bool): True if tracking vars in Section and Series should be cleared after they are checked
+                log_events (bool): False to keep an object the section no
+                    longer has traces of, as an import does (SeriesData.updateSection)
         """
         # update the series data tracker
         self.series.data.updateSection(
-            self.section, 
+            self.section,
             update_traces=True,
-            all_traces=False
+            all_traces=False,
+            log_events=log_events
         )
 
         self.table_manager.updateAll(clear_tracking)
