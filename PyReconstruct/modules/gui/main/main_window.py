@@ -27,6 +27,7 @@ from .status_readout import FieldStatusReadout, StatusSegment
 from .wheel_steps import WheelSteps, zoom_factor
 from PyReconstruct.modules.constants.settings_domain import (
     copy_legacy_series_settings_once, domain_for, fold_series_settings_once,
+    shared_copy_pending,
 )
 from PyReconstruct.modules.datatypes.series_owner import app_display_name
 
@@ -1167,7 +1168,10 @@ class MainWindow(QMainWindow):
         ``self.series.user``.
         """
         from PyReconstruct.modules.gui.main.first_launch import resolve_username
-        resolve_username(QSettings(*domain_for("username")), self.series)
+        # while the copy from the old settings is owed, the stored name may
+        # still arrive; the OS login is the default meanwhile, unsaved
+        if not shared_copy_pending():
+            resolve_username(QSettings(*domain_for("username")), self.series)
         self.notifyNewEditor()
 
     def applyUpdateCheckDefaultStartup(self):
@@ -1432,6 +1436,7 @@ class MainWindow(QMainWindow):
         if (
             not self.series or self.series.isWelcomeSeries()
             or field is None or not hasattr(field, "table_manager")
+            or not self.series.maySaveOwnValue("list_layout")
         ):
             return
         self.series.setOption(
@@ -5459,6 +5464,11 @@ class MainWindow(QMainWindow):
             if self.series.isWelcomeSeries():
                 return
             series_fp = self.series.jser_fp
+
+        # the list is rebuilt from what was read, so saving it before the old
+        # settings are copied would drop the stored one
+        if not self.series.maySaveOwnValue("recently_opened_series"):
+            return
         
         opened = self.series.getOption("recently_opened_series")
 

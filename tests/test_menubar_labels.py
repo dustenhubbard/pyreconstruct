@@ -67,6 +67,9 @@ class _SeriesStub(_Anything):
     def setOption(self, name, value):
         self.opts[name] = value
 
+    def maySaveOwnValue(self, name):
+        return True
+
 
 class _MainWindowStub(_Anything):
     def __init__(self, series=None):
