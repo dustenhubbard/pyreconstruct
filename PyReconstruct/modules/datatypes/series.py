@@ -2608,12 +2608,13 @@ class Series():
                 section.save()
 
         ## Assign object attrs to copies
+        cleared = set()
         for obj_name, copy_name in zip(obj_names, copy_names):
-            self.objects.copyObjAttrs(obj_name, copy_name)
+            cleared |= self.objects.copyObjAttrs(obj_name, copy_name)
 
         ## The sections were recorded before the copies had hosts
         if series_states is not None:
-            series_states.recordLinksMade()
+            series_states.recordLinksMade(cleared)
 
         self.modified = True
 
@@ -6096,12 +6097,13 @@ class Series():
                 section.save()
 
         ## Assign original attrs to new objects
+        cleared = set()
         for obj in new_names:
-            self.objects.assignCopyAttrs(obj, alignment, obj_groups, host)
+            cleared |= self.objects.assignCopyAttrs(obj, alignment, obj_groups, host)
 
         ## The sections were recorded before the new objects had hosts
         if series_states is not None:
-            series_states.recordLinksMade()
+            series_states.recordLinksMade(cleared)
         
         if log_event:
             self.addLog(name, None, "Split into individual objects per trace")
@@ -6132,12 +6134,15 @@ class Series():
 
         return new_names
 
-    def setObjHosts(self, obj_names : list, host_names : list):
+    def setObjHosts(self, obj_names : list, host_names : list) -> set:
         """Set the host for object(s).
         
             Params:
                 obj_names (list): the names of the objects with hosts to set
                 host_name (list): the name of the host to set
+            Returns:
+                (set): (traveler id, host id) for each link the objects had
+                    before, cleared to set the new hosts (HostTree.clearHosts)
         """
         # ensure that hosts exist
         for n in host_names:
@@ -6149,9 +6154,11 @@ class Series():
             if bool(set(obj_names) & set(self.getObjHosts(hn, traverse=True))):  # if any intersection exists between the two
                 raise Exception("Objects cannot be hosts of each other.")
 
+        cleared = set()
         for obj_name in obj_names:
-            self.host_tree.clearHosts(obj_name)
+            cleared |= self.host_tree.clearHosts(obj_name)
             self.host_tree.add(obj_name, host_names.copy())
+        return cleared
     
     def getObjHosts(self, obj_name : str, traverse=False, only_secondary=False):
         """Get the host(s) for an object.

@@ -194,30 +194,33 @@ class HostTree():
             if name_of.get(t) in names or name_of.get(h) in names
         }
 
-    def linksTakenSince(self, before, names) -> set:
-        """The links the tree before has and this tree has not, with an end
-        under one of the names, whose traveler no longer has the host here.
-        Those were replaced (a copy into a name that exists clears its hosts
-        first); a link taken off only because the host became a host of
-        another host (checkRedundantHosts) is not one of them.
+    def linksTaken(self, cleared, names) -> set:
+        """The links of cleared this tree no longer has, with an end under
+        one of the names: the links a clear of an object's hosts took away
+        and the hosts set after it did not make again (Series.setObjHosts,
+        a copy into a name that exists). A link the tree took off only
+        because its host became a host of another host
+        (checkRedundantHosts) was not cleared, so it is not one of them.
 
             Params:
-                before (HostTree): an earlier copy of this tree
+                cleared: (traveler id, host id) pairs the clear took away
                 names: the object names
             Returns:
                 (set): (traveler id, host id) for each such link
         """
         name_of = self._ids.name_of
+        names = set(names)
         return {
-            (t, h) for t, h in before.linksMadeSince(self, names)
-            if name_of[h] not in self.getHosts(name_of[t], True)
+            (t, h) for t, h in set(cleared) - self._edges
+            if name_of.get(t) in names or name_of.get(h) in names
         }
 
-    def restoreLinks(self, links, taken=()):
+    def restoreLinks(self, links, taken=()) -> tuple:
         """Make again links a series undo took with its copy of the tree,
         as a section redo brings back the ids they join
         (FieldState.links_made), after taking away again the links its
-        action took away for the same names (links_taken).
+        action cleared for the same names (links_taken). Then a host that
+        is also a host of another host comes off, as add() takes it off.
 
         A link that would make an object a host of itself, directly or
         through a chain, is refused as add() refuses it. The redo of one
@@ -228,10 +231,34 @@ class HostTree():
             Params:
                 links: (traveler id, host id) pairs
                 taken: (traveler id, host id) pairs
+            Returns:
+                (set, set): the links this made and the links it took away,
+                    for the section undo that follows (undoRestoredLinks)
         """
+        edges = set(self._edges)
         self._removeEdges(set(taken))
         links = set(links)
         self._addMembers({oid for edge in links for oid in edge})
+        self._addOneByOne(links)
+        self.checkRedundantHosts()
+        return self._edges - edges, edges - self._edges
+
+    def undoRestoredLinks(self, made, taken):
+        """Take away the links a section redo made and make again the links
+        it took away (restoreLinks), as the undo of that section returns
+        the tree to what it was before the redo.
+
+            Params:
+                made: (traveler id, host id) pairs the redo made
+                taken: (traveler id, host id) pairs the redo took away
+        """
+        self._removeEdges(set(made))
+        self._addOneByOne(set(taken))
+        self.checkRedundantHosts()
+
+    def _addOneByOne(self, links : set):
+        """Add the links in order, refusing one that would make an object a
+        host of itself, directly or through a chain, as add() does."""
         for t, h in sorted(links):
             pair = self._pairOf(t, h)
             if pair is not None and pair[0] in self.getHosts(pair[1], True):
@@ -476,12 +503,13 @@ class HostTree():
         oids = self._visibleIds(name)
         return oids or {self._reserve(name)}
 
-    def _dropVisible(self, t_name : str, h_name : str):
-        """Remove the visible links from t_name's objects to h_name's."""
+    def _dropVisible(self, t_name : str, h_name : str) -> set:
+        """Remove the visible links from t_name's objects to h_name's, and
+        return them."""
         t_ids, h_ids = self._visibleIds(t_name), self._visibleIds(h_name)
-        self._removeEdges(
-            {(t, h) for t, h in self._edges if t in t_ids and h in h_ids}
-        )
+        gone = {(t, h) for t, h in self._edges if t in t_ids and h in h_ids}
+        self._removeEdges(gone)
+        return gone
 
     # writes
     def add(self, obj_name : str, hosts : list):
@@ -623,14 +651,19 @@ class HostTree():
         finally:
             self._hidden = frozenset()
     
-    def clearHosts(self, obj_name : str):
+    def clearHosts(self, obj_name : str) -> set:
         """Clear ONLY THE HOSTS for a specific object.
 
         Only the links on screen: a link to a host that is gone now is
         dormant, and comes back with that host.
+
+            Returns:
+                (set): (traveler id, host id) for each link taken away
         """
+        cleared = set()
         for host in self.getHosts(obj_name):
-            self._dropVisible(obj_name, host)
+            cleared |= self._dropVisible(obj_name, host)
+        return cleared
 
     def dropDormant(self):
         """Forget the links with an end that cannot come back. Called when

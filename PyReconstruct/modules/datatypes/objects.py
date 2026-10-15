@@ -87,8 +87,9 @@ class Objects():
             self.series.getObjHosts(source_obj)  # hosts
         )
 
-    def assignCopyAttrs(self, target_obj, alignment: str, groups: list, hosts: str) -> None:
-        """Assign relevant attributes to copied objects."""
+    def assignCopyAttrs(self, target_obj, alignment: str, groups: list, hosts: str) -> set:
+        """Assign relevant attributes to copied objects, and return the host
+        links the target had before (Series.setObjHosts)."""
 
         ## Alignments
         self.series.setAttr(
@@ -100,13 +101,14 @@ class Objects():
             self.series.object_groups.add(group, target_obj)  # groups
 
         ## Hosts
-        self.series.setObjHosts([target_obj], hosts)
+        return self.series.setObjHosts([target_obj], hosts)
 
-    def copyObjAttrs(self, source_obj: str, target_obj: str) -> None:
-        """Copy relavant obj attrs to another obj."""
+    def copyObjAttrs(self, source_obj: str, target_obj: str) -> set:
+        """Copy relavant obj attrs to another obj, and return the host links
+        the target had before (Series.setObjHosts)."""
 
         alignment, groups, hosts = self.getSourceAttrs(source_obj)
-        self.assignCopyAttrs(target_obj, alignment, groups, hosts)        
+        return self.assignCopyAttrs(target_obj, alignment, groups, hosts)
         
     
 class SeriesObject():
