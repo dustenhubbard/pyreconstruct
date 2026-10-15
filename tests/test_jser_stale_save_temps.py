@@ -254,3 +254,23 @@ def test_jser_recovery_without_reading_jser_keeps_save_temps(series_jser):
         assert hidden_stale.exists()
     finally:
         series.close()
+
+
+def test_jser_recovery_keeps_section_temp_and_does_not_load_it(series_jser):
+    series = Series.openJser(str(series_jser), progress=NullProgressReporter)
+    snum = min(series.sections)
+    section_name = series.sections[snum]
+    # A crash between Section.save's temp write and its rename leaves this.
+    section_temp = Path(series.hidden_dir) / f"{section_name}.tmp"
+    section_temp.write_bytes(b"newer section state, never renamed")
+    series_jser.write_bytes(b"invalid JSON")
+    recovered = Series.openJser(str(series_jser), progress=NullProgressReporter)
+    try:
+        assert recovered.leave_open
+        # The temp may be truncated, so recovery loads the section file only.
+        assert recovered.sections[snum] == section_name
+        assert not any(n.endswith(".tmp") for n in recovered.sections.values())
+        recovered.close()
+        assert section_temp.read_bytes() == b"newer section state, never renamed"
+    finally:
+        series.close()
