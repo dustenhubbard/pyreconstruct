@@ -15,6 +15,7 @@ import sys
 import textwrap
 
 import pytest
+import yaml
 
 from test_nightly_workflow import NIGHTLY_RE_SHELL
 from test_pruning_preserves_release_tags import workflow_script
@@ -29,49 +30,91 @@ STEPS = ["Refuse any ref but main", None, "Resolve the nightly", "Resolve the ve
 linux_only = pytest.mark.skipif(os.name == "nt", reason="Linux workflow shell integration")
 
 
+class GitHubLoader(yaml.SafeLoader):
+    """YAML as GitHub reads it: only true and false are booleans, so the
+    top-level ``on:`` stays the string "on" (YAML 1.1 would make it True)."""
+
+
+GitHubLoader.yaml_implicit_resolvers = {
+    first: [(tag, regexp) for tag, regexp in resolvers if tag != "tag:yaml.org,2002:bool"]
+    for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+GitHubLoader.add_implicit_resolver(
+    "tag:yaml.org,2002:bool", re.compile(r"^(?:true|false)$"), list("tf"))
+
+
 def source():
     return WORKFLOW.read_text()
 
 
-def block(text, key):
-    """The lines under a top-level ``key:``, up to the next top-level key."""
-    return text.split(f"\n{key}:\n", 1)[1].split("\n\n", 1)[0]
+def workflow(text=None):
+    return yaml.load(source() if text is None else text, Loader=GitHubLoader)
+
+
+def all_uses(node):
+    """Every ``uses:`` value anywhere in the parsed workflow."""
+    if isinstance(node, dict):
+        return [v for k, v in node.items() if k == "uses"] + [
+            u for v in node.values() for u in all_uses(v)]
+    if isinstance(node, list):
+        return [u for v in node for u in all_uses(v)]
+    return []
 
 
 # ---- the workflow file ------------------------------------------------------
 def test_runs_only_by_hand_with_a_nightly_and_a_version_input():
-    triggers = block(source(), "on")
-    assert re.findall(r"^  (\S+):", triggers, re.MULTILINE) == ["workflow_dispatch"]
-    assert re.findall(r"^      (\S+):", triggers, re.MULTILINE) == ["nightly", "version"]
-    assert triggers.count("required: false") == 2
-    assert triggers.count('default: ""') == 2
+    triggers = workflow()["on"]
+    assert list(triggers) == ["workflow_dispatch"]
+    inputs = triggers["workflow_dispatch"]["inputs"]
+    assert list(inputs) == ["nightly", "version"]
+    for name, spec in inputs.items():
+        assert sorted(spec) == ["default", "description", "required"], name
+        assert (spec["required"], spec["default"]) == (False, ""), name
+
+
+def test_a_trigger_after_a_blank_line_is_still_seen():
+    """A blank line does not end a YAML mapping, so a schedule added below the
+    inputs is a second trigger, one that would run the release unattended."""
+    schedule = '\n  schedule:\n    - cron: "17 2 * * *"\n'
+    text = source().replace("\n\npermissions:", schedule + "\npermissions:", 1)
+    assert list(workflow(text)["on"]) == ["workflow_dispatch", "schedule"]
 
 
 def test_permissions_are_the_tag_push_and_the_dispatch_only():
-    text = source()
-    perms = re.findall(r"^  (\S+: \S+)", block(text, "permissions"), re.MULTILINE)
-    assert perms == ["contents: write", "actions: write"]
-    assert text.count("permissions:") == 1, "no job widens them"
-    assert block(text, "concurrency") == "  group: stable\n  cancel-in-progress: false"
+    doc = workflow()
+    assert doc["permissions"] == {"contents": "write", "actions": "write"}
+    assert all("permissions" not in job for job in doc["jobs"].values()), "no job widens them"
+    assert doc["concurrency"] == {"group": "stable", "cancel-in-progress": False}
+
+
+def test_the_first_step_refuses_any_ref_but_main():
+    first = workflow()["jobs"]["promote"]["steps"][0]
+    assert first["name"] == "Refuse any ref but main"
+    assert "if" not in first, "a skipped refusal is no refusal"
+    assert '[ "$GITHUB_REF" != "refs/heads/main" ]' in first["run"]
+    assert "exit 1" in first["run"]
 
 
 def test_one_job_runs_the_steps_in_order_and_checks_out_main_with_tags():
-    jobs = source().split("\njobs:\n", 1)[1]
-    assert re.findall(r"^  (\S+):", jobs, re.MULTILINE) == ["promote"]
-    steps = re.findall(r"^      - (?:name: (.+)|uses: (\S+))", jobs, re.MULTILINE)
-    assert [name or None for name, _uses in steps] == STEPS
-    assert steps[1][1].startswith("actions/checkout@")
-    checkout = jobs.split("uses: actions/checkout@", 1)[1].split("\n\n", 1)[0]
-    for setting in ("ref: main", "fetch-depth: 0", "fetch-tags: true"):
-        assert f"          {setting}" in checkout, setting
+    jobs = workflow()["jobs"]
+    assert list(jobs) == ["promote"]
+    steps = jobs["promote"]["steps"]
+    assert [step.get("name") for step in steps] == STEPS
+    checkout = steps[1]
+    assert checkout["uses"].startswith("actions/checkout@")
+    assert checkout["with"] == {"ref": "main", "fetch-depth": 0, "fetch-tags": True}
+    assert not any("if" in step for step in steps), "every step runs on every run"
 
 
 def test_actions_are_pinned_to_a_sha_with_a_version_comment():
-    uses = re.findall(r"uses: (\S+)(.*)", WORKFLOW.read_text())
+    uses = all_uses(workflow())
     assert uses
-    for action, rest in uses:
+    # The comment is not in the parsed document, so it is read from the line.
+    lines = dict(re.findall(r"^\s*-?\s*uses: (\S+)(.*)$", source(), re.MULTILINE))
+    assert sorted(lines) == sorted(uses)
+    for action in uses:
         assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", action), action
-        assert re.search(r"#\s*v\d", rest), (action, "no version comment")
+        assert re.match(r"\s*#\s*v\d", lines[action]), (action, "no version comment")
 
 
 def test_writes_go_only_to_this_repository():
