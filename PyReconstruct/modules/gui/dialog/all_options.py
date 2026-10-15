@@ -24,11 +24,10 @@ from PyReconstruct.modules.datatypes import Series
 from PyReconstruct.modules.backend.func.utils import (
     zarr_worker_count, MAX_ZARR_WORKERS,
 )
-from PyReconstruct.modules.datatypes.default_settings import (
-    MAX_SCALE_BAR_THICKNESS,
-    MIN_SCALE_BAR_THICKNESS,
-    clampScaleBarThickness,
-    validPinnedLength,
+from .scale_bar_settings import (
+    scaleBarStructure,
+    storeScaleBarResponse,
+    wireScaleBarControls,
 )
 
 
@@ -357,78 +356,20 @@ class AllOptionsDialog(QDialog):
             
         self.addOptionWidget("theme", structure, setOption)
 
-        # scale bar opts
-
-        # scale_bar_width is a percentage of the field width and runs 20-100
-        # (see MousePalette.createSB). The slider carries that range itself, so
-        # the number on screen is the number stored. It used to be squeezed onto
-        # an 0-100 groove on the way in and squeezed back on the way out, which
-        # was invisible to the user and did not round trip: 60 of the 81 values
-        # the option can hold came back one lower, the default of 25 included,
-        # so pressing OK without touching anything narrowed the scale bar.
-        #
-        # The mode radio picks which of the two quantities below is in force.
-        # Both are kept and both are always editable, so switching modes and
-        # switching back returns the bar to exactly where it was. The default
-        # mode is the historic screen-fraction one, so an installation that
-        # never touches this radio sees no change at all.
-        sbw = self.series.getOption("scale_bar_width", use_defaults)
-        sb_mode = self.series.getOption("scale_bar_mode", use_defaults)
-        sb_len = self.series.getOption("scale_bar_length_um", use_defaults)
-        sb_thick = clampScaleBarThickness(
-            self.series.getOption("scale_bar_thickness", use_defaults))
-        structure = [
-            [("check",
-              ("show numbers", self.series.getOption("show_scale_bar_text", use_defaults)),
-              ("show ticks", self.series.getOption("show_scale_bar_ticks", use_defaults))
-            )],
-            ["Scale bar sizing:"],
-            [("radio",
-              ("Fixed share of the screen (the µm figure changes as you zoom)",
-               sb_mode != "micron_pinned"),
-              ("Fixed length in µm (the bar's width changes as you zoom)",
-               sb_mode == "micron_pinned"),
-            )],
-            ["Scale bar size (percent of field width):"],
-            [("slider", sbw, {"minimum": 20, "maximum": 100, "suffix": "%"})],
-            ["Fixed length (µm):", ("float", sb_len)],
-            ["Far enough out or in that the fixed length will not fit the size above"],
-            ["legibly, the bar steps by whole decades and the label follows"],
-            ["(5 µm becomes 0.5 µm or 50 µm), so the bar always measures what"],
-            ["it says."],
-            ["Scale bar thickness (pixels):"],
-            [("slider", sb_thick, {"minimum": MIN_SCALE_BAR_THICKNESS,
-                                   "maximum": MAX_SCALE_BAR_THICKNESS,
-                                   "suffix": " px"})],
-        ]
-
-        def setOption(response):
-
-            self.series.setOption("show_scale_bar_text", response[0][0][1])
-            self.series.setOption("show_scale_bar_ticks", response[0][1][1])
-            self.series.setOption(
-                "scale_bar_mode",
-                "micron_pinned" if response[1][1][1] else "screen_fraction",
-            )
-            self.series.setOption("scale_bar_width", response[2])
-            # an empty or nonsensical box keeps the stored length rather than
-            # pinning the bar to nothing.  "Nonsensical" has to mean more than
-            # `<= 0`: `inf > 0` is True and `1e400` parses to inf, and this key
-            # is global, so storing one would crash the palette on every launch
-            # from here on.  validPinnedLength is the predicate the palette and
-            # the bar itself apply to the same value.
-            if validPinnedLength(response[3]):
-                self.series.setOption("scale_bar_length_um", float(response[3]))
-            self.series.setOption("scale_bar_thickness", response[4])
-
-        self.addOptionWidget("scale_bar", structure, setOption)
-        # the size and thickness sliders preview on the field as they move
-        # (see _previewScaleBar); the size slider is the first of the two
-        sliders = [field.widget.slider
-                   for field in self.all_widgets["scale_bar"].inputs
-                   if field.type == "slider"]
-        sliders[0].valueChanged.connect(self._previewScaleBar)
-        sliders[1].valueChanged.connect(self._previewScaleBarThickness)
+        # scale bar opts: built, stored and wired by scale_bar_settings, which
+        # also builds the bar's right-click "Scale bar settings..." dialog, so
+        # the two cannot drift apart. Both quantities the mode radio picks
+        # between are kept, so switching modes and back is lossless, and the
+        # default mode is the historic screen-fraction one.
+        self.addOptionWidget(
+            "scale_bar",
+            scaleBarStructure(self.series, use_defaults),
+            lambda response: storeScaleBarResponse(self.series, response),
+        )
+        # every control previews on the field as it changes; nothing is
+        # stored until OK, and Cancel restores (see _previewScaleBar)
+        wireScaleBarControls(
+            self.all_widgets["scale_bar"], self.series, self._previewScaleBar)
 
         # show_ztraces
         structure = [
@@ -622,25 +563,18 @@ class AllOptionsDialog(QDialog):
         """The main window's mouse palette, or None when there is no window."""
         return getattr(self.parent(), "mouse_palette", None)
 
-    def _previewScaleBar(self, percent):
-        """Resize the field's scale bar as the slider moves; nothing is stored.
+    def _previewScaleBar(self, settings):
+        """Show the field's scale bar as the Scale Bar group would draw it;
+        nothing is stored.
 
-        The slider previews the size live, so it can be judged before OK
-        without closing and reopening the window. OK stores the option and the
-        caller rebuilds the palette; Cancel puts the bar back through
+        Every control previews live, so a change can be judged before OK
+        without closing and reopening the window. OK stores the options and
+        the caller rebuilds the palette; Cancel puts the bar back through
         restoreScaleBar.
         """
         palette = self._palette()
         if palette is not None:
-            palette.previewScaleBarWidth(percent)
-            self._scale_bar_previewed = True
-
-    def _previewScaleBarThickness(self, thickness):
-        """Change the field's scale bar thickness as the slider moves; the
-        same contract as _previewScaleBar."""
-        palette = self._palette()
-        if palette is not None:
-            palette.previewScaleBarThickness(thickness)
+            palette.previewScaleBar(settings)
             self._scale_bar_previewed = True
 
     def reject(self):

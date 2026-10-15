@@ -262,7 +262,7 @@ default_settings = {
     "scale_bar_mode": "screen_fraction",  # "screen_fraction" | "micron_pinned"  # MFO
     "scale_bar_width": 25,  # displayed as this percentage of the screen (min should be 20)
     "scale_bar_length_um": 5.0,  # microns; used in "micron_pinned" mode  # MFO
-    "scale_bar_thickness": 6,  # pixels, the bar alone; see clampScaleBarThickness  # MFO
+    "scale_bar_thickness": 15,  # pixels, the bar alone; see clampScaleBarThickness  # MFO
     "show_scale_bar_text": True,
     "show_scale_bar_ticks": True,
 }
@@ -272,7 +272,7 @@ default_settings = {
 # still has a black line inside its 1 px white edge.
 MIN_SCALE_BAR_THICKNESS = 3
 MAX_SCALE_BAR_THICKNESS = 25
-DEFAULT_SCALE_BAR_THICKNESS = 6  # pixels
+DEFAULT_SCALE_BAR_THICKNESS = 15  # pixels; a stored value is never rewritten
 
 
 def clampScaleBarThickness(value) -> int:
@@ -332,6 +332,23 @@ def validPinnedLength(value) -> bool:
     except (TypeError, ValueError):
         return False
     return math.isfinite(value) and MIN_PINNED_UM <= value <= MAX_PINNED_UM
+
+
+def pinnedLengthFor(mode, length):
+    """The length a bar in sizing `mode` is pinned to, or None for the
+    screen-fraction bar.
+
+    A length that fails validPinnedLength gives None too, not just a mode
+    other than "micron_pinned": a stored inf would otherwise raise out of
+    `ScaleBar.__init__`, i.e. out of `MousePalette.__init__`, on every launch.
+    Falling back to the screen-fraction bar leaves the user a running
+    application and a control they can fix the value in. The palette applies
+    it to the stored options and the scale bar settings preview to the ones
+    on screen, so the two cannot disagree.
+    """
+    if mode != "micron_pinned":
+        return None
+    return float(length) if validPinnedLength(length) else None
 
 
 default_series_settings = {

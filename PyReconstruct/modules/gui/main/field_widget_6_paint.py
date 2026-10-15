@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import (
     QPoint, 
     QLine,
+    QRect,
 )
 from PySide6.QtGui import (
     QPen,
@@ -26,6 +27,46 @@ from .field_widget_5_mouse import (
     STAMP, 
     HOST
 )
+
+def hoverDisplayPosition(field, size, prefer_right, scale_bar=None, others=(), margin=3):
+    """Where the hover box goes: the top-left point of one field corner.
+
+    The box used to go in a bottom corner chosen only by the tool palette's
+    side, which by default is the corner the scale bar sits in, so the box
+    covered the bar. Now the corners are tried in order (the usual bottom
+    one, the other bottom one, then the top ones in the same order), and
+    the first that covers neither the scale bar nor any other palette widget
+    wins. If every corner covers something, covering the scale bar counts
+    worst, then covering more widgets, then being later in that order. The
+    scale bar itself is never moved or hidden.
+
+    Run when the box is placed, not on every paint.
+
+        Params:
+            field (QRect): the field, in the box's parent's coordinates
+            size (QSize): the box's size
+            prefer_right (bool): True for the bottom-right corner first
+            scale_bar (QRect): the scale bar on show, or None
+            others (list[QRect]): the other palette widgets on show
+            margin (int): the gap between the box and the field's edge
+        Returns:
+            (QPoint): where to move the box
+    """
+    left = field.x() + margin
+    right = field.x() + field.width() - size.width() - margin
+    top = field.y() + margin
+    bottom = field.y() + field.height() - size.height() - margin
+    near, far = (right, left) if prefer_right else (left, right)
+    corners = [QPoint(near, bottom), QPoint(far, bottom),
+               QPoint(near, top), QPoint(far, top)]
+
+    def cost(order):
+        box = QRect(corners[order], size)
+        covers_bar = scale_bar is not None and box.intersects(scale_bar)
+        return (covers_bar, sum(box.intersects(r) for r in others), order)
+
+    return corners[min(range(len(corners)), key=cost)]
+
 
 class FieldWidgetPaint(FieldWidgetMouse):
     """
@@ -489,18 +530,16 @@ class FieldWidgetPaint(FieldWidgetMouse):
         elif h > self.height() - 6:
             h = self.height() - 6
         self.hover_display.resize(self.width() // 5, h)
-        # move to proper location
-        right_justified = self.mainwindow.mouse_palette.mode_x <= .5
-        if right_justified:
-            self.hover_display.move(
-                self.x() + self.width() - self.hover_display.width() - 3,
-                self.y() + self.height() - self.hover_display.height() - 3
-            )
-        else:
-            self.hover_display.move(
-                self.x() + 3,
-                self.y() + self.height() - self.hover_display.height() - 3
-            )
+        # move to a corner opposite the tool palette, clear of the scale bar
+        palette = self.mainwindow.mouse_palette
+        scale_bar, others = palette.hoverObstacles()
+        self.hover_display.move(hoverDisplayPosition(
+            self.geometry(),
+            self.hover_display.size(),
+            prefer_right=palette.mode_x <= .5,
+            scale_bar=scale_bar,
+            others=others,
+        ))
         # scroll all the way down
         sb = self.hover_display.verticalScrollBar()
         sb.setValue(sb.maximum())

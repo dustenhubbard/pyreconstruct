@@ -249,19 +249,22 @@ def test_the_menu_offers_a_length_and_automatic_only_while_one_is_set(
     palette.reset()
 
     texts, _ = _menu_texts(palette)
-    assert texts == ["Set the scale bar length...", "Hide the scale bar"]
+    assert texts == ["Scale bar settings...",
+                     "Set the scale bar length...", "Hide the scale bar"]
 
     _set_window(main_window, 0.01)
     _answer(monkeypatch, ([3.0], True))
     palette.setSBLength()
     texts, actions = _menu_texts(palette)
-    assert texts == ["Set the scale bar length...",
+    assert texts == ["Scale bar settings...",
+                     "Set the scale bar length...",
                      "Size the scale bar automatically",
                      "Hide the scale bar"]
 
     actions["Size the scale bar automatically"].trigger()
     assert palette.sb.override_length is None
-    assert _menu_texts(palette)[0] == ["Set the scale bar length...",
+    assert _menu_texts(palette)[0] == ["Scale bar settings...",
+                                       "Set the scale bar length...",
                                        "Hide the scale bar"]
 
 
@@ -410,6 +413,7 @@ def test_cancel_sets_nothing(main_window, local_series_settings, monkeypatch):
 # ----------------------------------------------------------- the thickness
 
 from PyReconstruct.modules.datatypes.default_settings import (  # noqa: E402
+    DEFAULT_SCALE_BAR_THICKNESS,
     MAX_SCALE_BAR_THICKNESS,
     MIN_SCALE_BAR_THICKNESS,
     clampScaleBarThickness,
@@ -439,15 +443,18 @@ class _StubManager:
 
 
 def test_the_thickness_default_and_range():
-    """Thinner than the 25 px bar it replaces; 25 can still be set."""
-    assert default_settings["scale_bar_thickness"] == 6
+    """15 px by default (his choice, 2026-10-15; it was 6); 3 to 25 can be set.
+    The default only reaches a store with no value in it: a stored thickness,
+    6 included, is never rewritten."""
+    assert default_settings["scale_bar_thickness"] == 15
+    assert DEFAULT_SCALE_BAR_THICKNESS == 15
     assert isinstance(default_settings["scale_bar_thickness"], int)
     assert (MIN_SCALE_BAR_THICKNESS, MAX_SCALE_BAR_THICKNESS) == (3, 25)
     assert clampScaleBarThickness(1) == 3
     assert clampScaleBarThickness(99) == 25
     assert clampScaleBarThickness(12) == 12
     for junk in (None, "abc", float("inf")):
-        assert clampScaleBarThickness(junk) == 6
+        assert clampScaleBarThickness(junk) == 15
 
 
 @pytest.mark.parametrize("text, ticks, extra", [
@@ -561,7 +568,7 @@ def test_the_palette_builds_the_bar_at_the_stored_thickness(
     series = local_series_settings(main_window)
     palette = main_window.mouse_palette
     palette.reset()
-    assert palette.sb.thickness == 6
+    assert palette.sb.thickness == 15
     bottom = palette.sb.y() + palette.sb.height()
 
     series.setOption("scale_bar_thickness", 20)
@@ -578,18 +585,18 @@ def test_the_thickness_slider_previews_stores_on_ok_and_cancel_restores(
     series = local_series_settings(main_window)
     palette = main_window.mouse_palette
     palette.reset()
-    height_at_6 = palette.sb.height()
+    height_at_15 = palette.sb.height()
 
     dlg = AllOptionsDialog(main_window, series)
-    _thickness_slider(dlg).setValue(15)
+    _thickness_slider(dlg).setValue(24)
     qapp.processEvents()
-    assert palette.sb.thickness == 15
-    assert palette.sb.height() == height_at_6 + 9
-    assert series.getOption("scale_bar_thickness") == 6, "a preview stored it"
+    assert palette.sb.thickness == 24
+    assert palette.sb.height() == height_at_15 + 9
+    assert series.getOption("scale_bar_thickness") == 15, "a preview stored it"
     dlg.reject()
     qapp.processEvents()
-    assert palette.sb.thickness == 6
-    assert palette.sb.height() == height_at_6
+    assert palette.sb.thickness == 15
+    assert palette.sb.height() == height_at_15
 
     dlg = AllOptionsDialog(main_window, series)
     _thickness_slider(dlg).setValue(12)
