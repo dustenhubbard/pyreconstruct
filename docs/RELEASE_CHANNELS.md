@@ -42,7 +42,8 @@ the leading `v`.
 
 ## The nightly build
 
-`.github/workflows/nightly.yml` checks `main` daily at 06:00 UTC. If there are
+`.github/workflows/nightly.yml` checks `main` daily at 02:17 UTC. GitHub can
+start a scheduled run hours late, so the build may land later. If there are
 new commits since the last release on either channel, it tags `main` and
 explicitly dispatches `build-installers.yml` on that tag. The explicit
 workflow dispatch is necessary because a tag pushed with `GITHUB_TOKEN`
