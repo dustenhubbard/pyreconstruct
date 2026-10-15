@@ -1400,21 +1400,26 @@ class SeriesStates():
         # so records here instead (bc_profiles).
         sections = set(state.undo_lens.keys()) | set(state.bc_profiles.keys())
         if sections:
-            for snum, section in self.series.enumerateSections(
-                message=("Re" if redo else "Un") + "doing action..."
-            ):
-                if snum not in sections:
-                    continue
-                # the mag only; the section's own step puts back its traces
-                state.swapMag(section)
-                if snum in state.undo_lens:
-                    states = self[snum]
-                    if redo:
-                        states.redoState(section, self.series)
-                    else:
-                        states.undoState(section, self.series)
-                state.swapBCProfiles(section)
-                section.save()
+            # the series attributes are put back only after this loop, so a
+            # .jser save at one of its progress updates would write the
+            # restored sections with the attributes from before the step.
+            # The series refuses such a save while the loop runs
+            with self.series.seriesStep():
+                for snum, section in self.series.enumerateSections(
+                    message=("Re" if redo else "Un") + "doing action..."
+                ):
+                    if snum not in sections:
+                        continue
+                    # the mag only; the section's own step puts back its traces
+                    state.swapMag(section)
+                    if snum in state.undo_lens:
+                        states = self[snum]
+                        if redo:
+                            states.redoState(section, self.series)
+                        else:
+                            states.undoState(section, self.series)
+                    state.swapBCProfiles(section)
+                    section.save()
         
         # undo/redo the series attributes
         state.applySeriesAttributes(self.series, pre_series_attrs)
