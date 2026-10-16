@@ -16,6 +16,7 @@ from PyReconstruct.modules.backend.threading import ThreadPoolProgBar
 from PyReconstruct.modules.calc import reducePoints
 
 from .palette import AUTOSEG_TRACE_PREFIX, DEFAULT_AUTOSEG_PALETTE, palette_color
+from .placement import label_placement
 
 ## Serializes every write importSection makes into SHARED series state. The
 ## import fans out over up to ten workers, and both mutations below are races
@@ -758,40 +759,15 @@ def getExteriors(mask : np.ndarray) -> list[np.ndarray]:
     return exteriors
 
 
-def exterior_to_points(ext: list[np.ndarray], offset, resolution, raw, window, tform, mag, raw_resolution=None):
+def exterior_to_points(ext: list[np.ndarray], placement, tform):
     """Convert exterior to trace points.
 
-    ``ext`` is in label pixels. ``raw_resolution`` (default: the same as
-    ``resolution``) gives the height of raw in label pixels for the y flip.
-    ``offset`` is already relative to raw, from ``get_label_offset``; raw's
-    own offset must not be applied a second time here.
+    ``ext`` is in label pixels, placed in the field by ``placement``
+    (see ``label_placement``), then mapped back through the section
+    transform.
     """
 
-    if raw_resolution is None:
-        raw_resolution = resolution
-
-    ## Convert to float
-    ext = ext.astype(np.float64)
-
-    ## Add offset to coordinates
-    ext[:,0] += offset[2] / resolution[2]  # x
-
-    ext[:,1] += offset[1] / resolution[1]  # y
-    ext[:,1] *= -1
-    ## y is second to last in (z, y, x) and in channel first (1, z, y, x)
-    ext[:,1] += raw.shape[-2] * (raw_resolution[1] / resolution[1])
-
-    ## Convert to coordinates
-    ext *= mag
-            
-    ## Add origin back (if ROI originaly exported with offset)
-    ext[:,0] += window[0]
-    ext[:,1] += window[1]
-            
-    ## Apply reverse transform
-    trace_points = tform.map(ext.tolist(), inverted=True)
-
-    return trace_points
+    return tform.map(placement.to_field(ext).tolist(), inverted=True)
 
 
 def exportSection(data_zg,
@@ -1034,16 +1010,21 @@ def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
     resolution, raw_resolution = get_label_resolutions(labels_array, raw, series, raw_attrs)
 
     offset = get_label_offset(labels_array, raw)
-    z_offset = round(offset[0] / resolution[0])
 
     ## by section: the first axis of a (1, z, y, x) array is its channel,
     ## and read as the section it sent a whole volume to findContours
     labels = label_volume(labels_array)
 
     attrs = raw.attrs if raw_attrs is None else raw_attrs
-    window = attrs["window"]
-    sections = attrs["sections"]
-    mag = attrs["true_mag"] / raw_resolution[-1] * resolution[-1]
+    placement = label_placement(
+        resolution,
+        raw_resolution,
+        offset,
+        attrs["window"],
+        attrs["sections"],
+        attrs["true_mag"],
+        raw.shape[-2],
+    )
 
     ## Get section transformation
     try:
@@ -1054,18 +1035,14 @@ def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
 
     if snum not in series.sections:  # section not in the current series
         return
-    if snum not in sections:  # section not in the zarr's export window
-        return
-
-    ## Load section and corresponding data
-    z = sections.index(snum)
 
     ## Explicit bounds, both ends: a z below the labels dataset's offset used
     ## to reach zarr as a NEGATIVE index, which wraps to the far end of the
     ## array and silently imported another section's labels (found
-    ## 2026-08-28). Only the high end ever raised.
-    zi = z - z_offset
-    if zi < 0:
+    ## 2026-08-28). Only the high end ever raised. slice_index is None for a
+    ## section outside the zarr's export window and below the labels.
+    zi = placement.slice_index(snum)
+    if zi is None:
         return
     # the high bound stays best-effort: array-likes without a shape fall
     # through to the BoundsCheckError catch below, as they always did
@@ -1079,51 +1056,6 @@ def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
         arr = labels[zi]
     except zarr.errors.BoundsCheckError:  # return if out of bounds
         return
-
-    pixmap_dim = (arr.shape[1], arr.shape[0])
-
-    ## Modify window to adjust for offset and resolution
-    zarr_window = window.copy()
-
-    field_width = pixmap_dim[0] * mag
-    field_height = pixmap_dim[1] * mag
-
-    field_offset_x = offset[2] / resolution[2] * mag
-    field_offset_y = offset[1] / resolution[1] * mag
-    field_offset_y = field_height - field_offset_y  # account for zarr origin at top of image
-
-    zarr_window[0] += field_offset_x
-    zarr_window[1] += field_offset_y
-    zarr_window[2] = field_width
-    zarr_window[3] = field_height
-
-    # # exclude areas that already have good traces (TEMPORARILY REMOVED)
-
-    # # get groups/tags that are good
-    # gts = []
-    # for zg in data_zg:
-    #     if zg.startswith("labels_"):
-    #         gts.append(zg[len("labels_"):])
-        
-    # # gather traces with these groups or tags
-    # traces = []
-    # for trace in section.tracesAsList():
-    #     for tag in trace.tags:
-    #         if tag in gts:
-    #             traces.append(trace)
-    #             continue
-    #     for g in gts:
-    #         if trace.name in series.object_groups.getGroupObjects(g):
-    #             traces.append(trace)
-
-    # slayer = SectionLayer(section, series, load_image_layer=False)
-    # exclude_arr = slayer.generateLabelsArray(
-    #     pixmap_dim,
-    #     zarr_window,
-    #     traces,
-    #     tform
-    # )
-    # arr[exclude_arr != 0] = 0
 
     ## Iterate through label ids
     if ids is None:
@@ -1150,7 +1082,7 @@ def importSection(data_zg, group, snum, series, ids=None, raw_attrs=None):
 
             trace = Trace(name=trace_name, color=trace_color)
             trace.points = exterior_to_points(
-                ext, offset, resolution, raw, window, tform, mag, raw_resolution
+                ext, placement, tform
             )
             trace.fill_mode = ("transparent", "unselected")
             

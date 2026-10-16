@@ -5651,17 +5651,63 @@ class Series():
             return
         self._settingsStore().set_value(self.code, "backup_use_defaults", bool(value))
 
-    def expandBackupFolder(self, folder : str) -> str:
-        """Replace {series} in a folder with this series' code.
+    def backupFolderName(self) -> str:
+        """Return this series' code as a safe folder name.
 
         The code is whatever was typed in the series code dialog, so path
         separators become "_", and so does every dot in a code made only of
-        dots: "." or ".." would name the folder itself or its parent.
+        dots: "." or ".." would name the folder itself or its parent. On
+        Windows ":" becomes "_" too, since a folder name there cannot hold
+        one. Elsewhere a colon is a valid folder name and stays, so a code
+        such as "C:ABC" keeps the folder v1.24.0 gave it.
         """
         code = (self.code or self.name).replace("/", "_").replace("\\", "_")
+        if os.path.sep == "\\":
+            code = code.replace(":", "_")
         if not code.strip("."):
             code = "_" * max(len(code), 1)
-        return folder.replace("{series}", code)
+        return code
+
+    def expandBackupFolder(self, folder : str) -> str:
+        """Replace {series} in a folder with this series' code."""
+        return folder.replace("{series}", self.backupFolderName())
+
+    @staticmethod
+    def splitSeriesFolderTemplate(folder : str) -> tuple:
+        """Split a default folder that ends in {series} into (base, True).
+
+        The Backup Settings checkbox for a subfolder per series stands for a
+        stored folder ending in {series}, the form v1.24.0 reads, so v1.24.0
+        sharing these settings resolves the same folder. The one exception is
+        a series code with ":" on Windows, where v1.24.0's folder cannot be
+        made (see backupFolderName). Any other folder comes back as
+        (folder, False).
+        """
+        token = "{series}"
+        trimmed = folder.rstrip("/\\")
+        if trimmed.endswith(token):
+            base = trimmed[:-len(token)]
+            if base[-1:] in ("/", "\\") and token not in base:
+                stripped = base.rstrip("/\\")
+                # keep the separator of a root such as "/" or "C:\"
+                if stripped and not stripped.endswith(":"):
+                    base = stripped
+                return base, True
+        return folder, False
+
+    @staticmethod
+    def joinSeriesFolderTemplate(base : str, series_folder : bool) -> str:
+        """Return the default folder to store for a base folder and the box.
+
+        The inverse of splitSeriesFolderTemplate. A base that already holds
+        {series} is stored as it is, so the code is never added twice.
+        """
+        if not base or not series_folder or "{series}" in base:
+            return base
+        sep = "\\" if "\\" in base and "/" not in base else "/"
+        if base[-1] in ("/", "\\"):
+            return base + "{series}"
+        return base + sep + "{series}"
 
     def autobackupOn(self) -> bool:
         """Return True if this series backs up on every save."""

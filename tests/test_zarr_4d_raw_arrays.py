@@ -14,6 +14,7 @@ import pytest
 import zarr
 
 from PyReconstruct.modules.backend.autoseg import conversions
+from PyReconstruct.modules.backend.autoseg.placement import label_placement
 from PyReconstruct.modules.datatypes import Transform
 
 
@@ -116,11 +117,15 @@ def test_unreadable_raw_is_refused_before_anything_is_written(tmp_path, monkeypa
 
 def test_label_y_flips_around_the_height_of_a_one_channel_raw():
     ext = np.array([[6, 4], [14, 12]])
-    args = ([0, 0, 0], [50, 4, 4])
-    rest = ([0, 0, 0.192, 0.128], Transform.identity(), 0.004)
-    flat = conversions.exterior_to_points(ext, *args, np.zeros((2, 32, 48)), *rest)
-    channel = conversions.exterior_to_points(ext, *args, np.zeros((1, 2, 32, 48)), *rest)
-    assert channel == flat
+
+    def points(raw):
+        placement = label_placement(
+            [50, 4, 4], [50, 4, 4], [0, 0, 0], [0, 0, 0.192, 0.128],
+            [0, 1], 0.004, raw.shape[-2],
+        )
+        return conversions.exterior_to_points(ext, placement, Transform.identity())
+
+    assert points(np.zeros((1, 2, 32, 48))) == points(np.zeros((2, 32, 48)))
 
 
 @pytest.fixture

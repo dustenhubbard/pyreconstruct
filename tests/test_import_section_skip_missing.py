@@ -30,6 +30,7 @@ class _Series:
 
 def _fake_zarr():
     return types.SimpleNamespace(
+        shape=(3, 4, 4),
         attrs={
             "window": [0.0, 0.0, 1.0, 1.0],
             "sections": [5, 6, 7],
