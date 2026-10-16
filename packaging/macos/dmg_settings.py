@@ -2,6 +2,7 @@
 # Finder view (.DS_Store) itself and never runs Finder or AppleScript, so it
 # works on headless CI runners. make_dmg.sh passes:
 #   -D app=<path to the .app>  -D background=<path to dmg-background.png>
+#   -D icon=<path to the flavor's .icns>   (the mounted volume's icon)
 #   -D guide=<path to Read Before First Launch.html>   (unsigned apps only)
 # The positions must match the chevron drawn by make_dmg_background.py.
 # window_rect is the whole window, title bar included. The heights leave room
@@ -21,6 +22,7 @@ symlinks = {"Applications": "/Applications"}
 hide_extensions = [app_name]
 
 background = defines["background"]
+icon = defines.get("icon")
 icon_size = 160
 text_size = 12
 show_toolbar = False
