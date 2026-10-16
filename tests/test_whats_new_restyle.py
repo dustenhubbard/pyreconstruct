@@ -891,25 +891,32 @@ def test_menu_items_and_paths_ending_in_dots_take_the_code_style(qapp):
 
 
 def test_a_pipeline_breaks_after_the_pipe_without_a_leading_blank(qapp):
-    """The space after "|" in inline code is the run's one break: at the
-    widths the notes take (the dialog is at least 700 px wide), the second
-    line starts at "bash", never at a no-break space. Narrower than the
-    command up to the pipe, Qt has to break inside the run anyway."""
+    """The space after "|" in inline code is the run's one break: at every
+    width that fits the line up to the pipe but not the whole command, the
+    second line starts at "bash", never at a no-break space. The widths are
+    measured, since the code font differs by platform; narrower than the pipe,
+    Qt has to break inside the run anyway."""
     dlg = _menu_item_dialog()
     try:
         doc = dlg._notes.document()
         block = next(b for b in _blocks(dlg) if "curl" in b.text())
         text = block.text()
-        assert "| bash" in text
-        broke = False
-        for width in range(420, 700, 7):
+        pipe = text.index("| bash")
+        doc.setTextWidth(4000)
+        line = block.layout().lineAt(0)
+        fmt = block.blockFormat()
+        left = fmt.leftMargin() + fmt.textIndent() + 2 * doc.documentMargin()
+        fits_pipe = left + line.cursorToX(pipe + 1)[0] + 8
+        fits_all = left + line.cursorToX(text.index("bash") + len("bash."))[0] - 8
+        assert fits_pipe < fits_all
+        for width in range(int(fits_pipe), int(fits_all), 3):
             doc.setTextWidth(width)
             layout = block.layout()
-            for i in range(1, layout.lineCount()):
-                start = layout.lineAt(i).textStart()
+            starts = [layout.lineAt(i).textStart() for i in range(1, layout.lineCount())]
+            assert starts, width
+            for start in starts:
                 assert text[start] != "\u00a0", (width, text[start:start + 8])
-                broke |= text[start:start + 4] == "bash"
-        assert broke
+            assert text[starts[-1]:starts[-1] + 4] == "bash", (width, starts)
     finally:
         dlg.deleteLater()
 
