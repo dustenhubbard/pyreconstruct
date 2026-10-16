@@ -1,10 +1,7 @@
-"""Shared setup for the regressions from the reviews of the settings move.
+"""Shared setup for the tests of the copy from the old ``KHLab`` settings.
 
-``tests/test_settings_copy_review_r1.py`` to ``_r3.py`` keep, as tests, the
-probes three review rounds used to show where a value the program saved on its
-own could win over the one the copy from ``KHLab`` was still to bring. Every
-store here is one of the suite's redirected stores; ``empty_stores`` checks that
-before it empties any of them.
+Every store here is one of the suite's redirected stores; ``empty_stores``
+checks that before it empties any of them.
 """
 
 from PySide6.QtCore import QSettings
@@ -17,7 +14,7 @@ from PyReconstruct.modules.datatypes.series import Series
 DEV = "PyReconstruct Dev"
 DAMAGED = "[broken\nentry=value\n"
 # the global stores, and the per-series stores of the bare series below
-_APPS = (D.SHARED_APP, DEV, f"{D.SHARED_APP}-REVIEW", f"{DEV}-REVIEW")
+_APPS = (D.SHARED_APP, DEV, f"{D.SHARED_APP}-COPYTEST", f"{DEV}-COPYTEST")
 
 
 def _empty(settings):
@@ -38,7 +35,7 @@ def empty_stores(*apps):
             _empty(QSettings(org, app))
 
 
-def review_store(monkeypatch):
+def bare_series_store(monkeypatch):
     """Empty global stores, and a bare series reading them through the
     QSettings store. Yields the series and the old and new shared stores; a
     test module makes it its ``setup_store`` fixture."""
@@ -46,7 +43,7 @@ def review_store(monkeypatch):
     empty_stores(*_APPS)
     series = Series.__new__(Series)
     series.options = {}
-    series.code = "REVIEW"
+    series.code = "COPYTEST"
     series.jser_fp = "/new.jser"
     monkeypatch.setattr(series, "isWelcomeSeries", lambda: False)
     series.setSettingsStore(QSettingsStore())
